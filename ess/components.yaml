@@ -1,9 +1,10 @@
 components:
   - component: spindle-control
-    summary: Holds environments and deployments, and decides admission.
+    summary: Holds environments, deployments, targets and instances; decides admission and placement.
     owns:
       domains:
         - spindle.deployment
+        - spindle.placement
     accepts:
       commands:
         - spindle.deployment.DeclareEnvironment
@@ -11,6 +12,12 @@ components:
         - spindle.deployment.DecideAdmission
         - spindle.deployment.StartDeployment
         - spindle.deployment.StopDeployment
+        - spindle.placement.DeclareTarget
+        - spindle.placement.RetireTarget
+        - spindle.placement.PlanInstance
+        - spindle.placement.PlaceInstance
+        - spindle.placement.LaunchInstance
+        - spindle.placement.ReportExit
     publishes:
       events:
         - spindle.deployment.EnvironmentDeclared
@@ -19,4 +26,11 @@ components:
         - spindle.deployment.DeploymentRefused
         - spindle.deployment.DeploymentStarted
         - spindle.deployment.DeploymentStopped
+        - spindle.placement.TargetDeclared
+        - spindle.placement.TargetRetired
+        - spindle.placement.InstancePlanned
+        - spindle.placement.InstancePlaced
+        - spindle.placement.InstanceRefused
+        - spindle.placement.InstanceLaunched
+        - spindle.placement.InstanceExited
     reached_by: in_process
