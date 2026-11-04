@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:spindle-admission-rules-are-declared
 kind: story
-status: draft
+status: active
 title: spindle.deployment declares the admission rules
 relations:
 - serves: vision:spindle
@@ -12,7 +12,10 @@ scope:
   path: docs/design/spindle.md
 - confidence: cited
   path: ess/domains/deployment.yaml
-revision: 4
+revision: 6
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-04T21:33:53Z", actor: "human:timo", revision: 5, decided_on: {"recorded":{"review_outcome":2}}}
+- {from: "proposed", to: "active", at: "2026-11-04T21:33:53Z", actor: "human:timo", revision: 6, decided_on: {"recorded":{"review_outcome":2}}}
 ---
 ## Story
 

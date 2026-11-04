@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:spindle-conforms-to-its-specification
 kind: story
-status: draft
+status: active
 title: Spindle conforms to its own specification
 relations:
 - decomposes: epic:m0-run-in-process
@@ -17,7 +17,10 @@ scope:
   path: Taskfile.yml
 - confidence: inferred
   path: crates/spindle-conformance
-revision: 6
+revision: 8
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-04T21:33:53Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"review_outcome":2}}}
+- {from: "proposed", to: "active", at: "2026-11-04T21:33:53Z", actor: "human:timo", revision: 8, decided_on: {"recorded":{"review_outcome":2}}}
 ---
 # Spindle conforms to its own specification
 

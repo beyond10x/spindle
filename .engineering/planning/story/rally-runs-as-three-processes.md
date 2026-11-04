@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:rally-runs-as-three-processes
 kind: story
-status: draft
+status: active
 title: Rally runs as three processes
 relations:
 - decomposes: epic:m1-m3-rally-in-three-vms
@@ -19,7 +19,10 @@ scope:
   path: crates/spindle-host
 - confidence: inferred
   path: examples/environments
-revision: 5
+revision: 7
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-04T21:33:53Z", actor: "human:timo", revision: 6}
+- {from: "proposed", to: "active", at: "2026-11-04T21:33:53Z", actor: "human:timo", revision: 7}
 ---
 # Rally runs as three processes
 
