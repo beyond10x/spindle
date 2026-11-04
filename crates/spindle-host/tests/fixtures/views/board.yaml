@@ -1,0 +1,135 @@
+domain: tasks.board
+summary: Tasks opened at a time and later closed, read as lists.
+types:
+  - name: tasks.board.TaskId
+    kind: newtype
+    of: String
+entities:
+  - name: tasks.board.Task
+    identity:
+      name: task_id
+      type: tasks.board.TaskId
+    fields:
+      - name: title
+        type: String
+      - name: opened_at
+        type: Timestamp
+    lifecycle:
+      initial: Open
+      states: [Open, Done]
+      terminal: [Done]
+      transitions:
+        - name: close
+          from: [Open]
+          to: Done
+errors:
+  - name: tasks.board.TaskNotFound
+    summary: No task carries the id.
+    fields: []
+  - name: tasks.board.AlreadyDone
+    summary: The task is already closed.
+    fields: []
+commands:
+  - name: tasks.board.OpenTask
+    input:
+      - name: task_id
+        type: tasks.board.TaskId
+      - name: title
+        type: String
+      - name: opened_at
+        type: Timestamp
+    outcomes:
+      - name: opened
+        creates: tasks.board.Task
+        instance: task_id
+        sets:
+          title: input.title
+          opened_at: input.opened_at
+        emits: [tasks.board.TaskOpened]
+        payload:
+          tasks.board.TaskOpened: {task_id: input.task_id}
+        summary: The task opens.
+  - name: tasks.board.CloseTask
+    input:
+      - name: task_id
+        type: tasks.board.TaskId
+    outcomes:
+      - name: no-such-task
+        unknown_instance: true
+        error: tasks.board.TaskNotFound
+        summary: No task carries the id.
+      - name: already-done
+        when_subject: {predicate: state == Done}
+        error: tasks.board.AlreadyDone
+        summary: A closed task stays closed.
+      - name: closed
+        moves: tasks.board.Task.close
+        instance: task_id
+        emits: [tasks.board.TaskClosed]
+        payload:
+          tasks.board.TaskClosed: {task_id: input.task_id}
+        summary: The task is closed.
+events:
+  - name: tasks.board.TaskOpened
+    fields:
+      - name: task_id
+        type: tasks.board.TaskId
+  - name: tasks.board.TaskClosed
+    fields:
+      - name: task_id
+        type: tasks.board.TaskId
+views:
+  - name: tasks.board.AllTasks
+    source: tasks.board.Task
+    consistency: read_your_writes
+    fields:
+      - name: task_id
+        type: tasks.board.TaskId
+      - name: state
+        type: tasks.board.Task.State
+      - name: title
+        type: String
+  - name: tasks.board.OpenTasks
+    source: tasks.board.Task
+    consistency: read_your_writes
+    filter: state == Open
+    fields:
+      - name: task_id
+        type: tasks.board.TaskId
+      - name: state
+        type: tasks.board.Task.State
+      - name: title
+        type: String
+  - name: tasks.board.NewestTasks
+    source: tasks.board.Task
+    consistency: eventual
+    order_by:
+      - opened_at desc
+    fields:
+      - name: task_id
+        type: tasks.board.TaskId
+      - name: title
+        type: String
+      - name: opened_at
+        type: Timestamp
+  - name: tasks.board.ChoreTasks
+    source: tasks.board.Task
+    consistency: read_your_writes
+    filter: title == Chores
+    fields:
+      - name: task_id
+        type: tasks.board.TaskId
+      - name: title
+        type: String
+  - name: tasks.board.TasksTitled
+    source: tasks.board.Task
+    consistency: read_your_writes
+    params:
+      - name: wanted
+        type: String
+    filter: title == param.wanted
+    fields:
+      - name: task_id
+        type: tasks.board.TaskId
+      - name: title
+        type: String

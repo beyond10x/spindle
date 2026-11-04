@@ -82,11 +82,25 @@ pub trait Store {
     /// [`StoreError::Conflict`] when the instance is not at `change.expected`, and
     /// [`StoreError::Backend`] when the store cannot be written.
     fn commit(&mut self, change: &Change) -> Result<(), StoreError>;
+
+    /// Every instance of `entity`, each with its identity, ordered by the identity's canonical
+    /// JSON text: one order on every store, whatever order the instances were written in. Each
+    /// carries the row and the version [`Store::load`] would answer for it.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read.
+    fn scan(&mut self, entity: &str) -> Result<Vec<(Value, Stored)>, StoreError>;
 }
 
 /// The key an instance is held under: its entity and its identity as canonical JSON text.
 fn key(entity: &str, identity: &Value) -> (String, String) {
     (entity.to_owned(), identity.to_string())
+}
+
+/// The identity an instance key's canonical JSON text names.
+pub(crate) fn identity_from_key(text: &str) -> Result<Value, StoreError> {
+    serde_json::from_str(text)
+        .map_err(|error| StoreError::Backend(format!("a stored identity {text}: {error}")))
 }
 
 /// Instances held only while the process runs: `store.ephemeral`, or `store.durable` bound to
@@ -129,5 +143,13 @@ impl Store for MemoryStore {
         );
         self.events.extend(change.events.iter().cloned());
         Ok(())
+    }
+
+    fn scan(&mut self, entity: &str) -> Result<Vec<(Value, Stored)>, StoreError> {
+        self.rows
+            .iter()
+            .filter(|((held, _), _)| held == entity)
+            .map(|((_, identity), stored)| Ok((identity_from_key(identity)?, stored.clone())))
+            .collect()
     }
 }

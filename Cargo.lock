@@ -866,6 +866,7 @@ version = "0.1.0"
 dependencies = [
  "ess-compiler",
  "ess-domain",
+ "ess-primitives",
  "serde_json",
  "spindle-capability",
  "spindle-channel",
