@@ -138,6 +138,7 @@ fn an_initramfs_larger_than_the_requested_memory_is_refused_before_anything_star
 }
 
 #[test]
+#[ignore = "starts the launcher's user and network namespace: needs unprivileged user namespaces (task check:vm)"]
 fn a_launch_that_failed_can_be_retried_with_the_same_instance_id() {
     let dummy = dummy(4096);
     let plan = plan(

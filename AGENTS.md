@@ -68,13 +68,16 @@ task check
 
 Steps (`Taskfile.yml`): `aep plan artifact validate`, `ess specify validate` on `ess` and
 `examples/rally/ess`, `cargo fmt --all -- --check`,
-`cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace --locked`.
-
-VM tests are `#[ignore]`d. `task check:vm` runs them on a host with `/dev/kvm`, `qemu-system-x86_64`,
-`unshare`, `nsenter` and `ip`; the Firecracker cases also need `SPINDLE_FIRECRACKER` (the binary)
-and `SPINDLE_FIRECRACKER_KERNEL` (an uncompressed guest `vmlinux`), and are skipped without them. The ESS pin is the `tag` of `ess-compiler`, `ess-domain` and
-`ess-primitives` in `Cargo.toml`; CI installs the `ess` CLI of the same version
+`cargo clippy --workspace --all-targets --locked -- -D warnings`,
+`cargo test --workspace --locked --no-fail-fast`. The ESS pin is the `tag` of `ess-compiler`,
+`ess-domain` and `ess-primitives` in `Cargo.toml`; CI installs the `ess` CLI of the same version
 (`.github/workflows/ci.yml`). Move them together.
+
+VM tests, and tests that start a user namespace, are `#[ignore]`d: CI runners refuse
+unprivileged user namespaces. `task check:vm` runs them on a host with `/dev/kvm`,
+`qemu-system-x86_64`, `unshare`, `nsenter` and `ip`; the Firecracker cases also need
+`SPINDLE_FIRECRACKER` (the binary) and `SPINDLE_FIRECRACKER_KERNEL` (an uncompressed guest
+`vmlinux`).
 
 ## Publishing
 
