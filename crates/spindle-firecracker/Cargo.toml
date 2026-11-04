@@ -1,0 +1,25 @@
+[package]
+name = "spindle-firecracker"
+description = "Launch Spindle guests as Firecracker microVMs, without root, on a bridge inside a user and network namespace."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "spindle-guest-init"
+path = "src/bin/spindle-guest-init.rs"
+
+[dependencies]
+clap = { version = "4.6", features = ["derive"] }
+libc = "0.2"
+serde_json = "1"
+spindle-target = { path = "../spindle-target" }
+thiserror = "2"
+
+[dev-dependencies]
+spindle-capability = { path = "../spindle-capability" }
+spindle-spec = { path = "../spindle-spec" }
+tempfile = "3"
