@@ -18,8 +18,10 @@ const STATE: &str = "state";
 /// Why a view cannot be answered here: the constructs a read of the source's own rows does not
 /// cover, named.
 ///
-/// A filter is read only where it is the one comparison `state == <State>`, as the compiler
-/// parsed it; any other filter is named with its text.
+/// A filter is read only where it reads the lifecycle state and nothing else, as the compiler
+/// parsed it: `state == <State>`, `state != <State>`, `state: {in: [..]}` or `{none_of: [..]}`,
+/// combined by `any`, `all` and `not`. Any other filter is named with its text and refused whole,
+/// since evaluating it over the state alone would answer a subset of its rows.
 pub(crate) fn unsupported(view: &ResolvedView) -> Option<String> {
     if !view.params.is_empty() {
         Some("parameters".to_owned())
@@ -35,23 +37,39 @@ pub(crate) fn unsupported(view: &ResolvedView) -> Option<String> {
         Some("paging".to_owned())
     } else {
         match &view.filter {
-            Some(filter) if !is_state_comparison(filter) => Some(format!(
-                "the filter `{filter}`; only `state == <State>` is read"
+            Some(filter) if !reads_only_state(filter) => Some(format!(
+                "the filter `{filter}`; only comparisons of `state` with a state, \
+                 combined by `any`, `all` and `not`, are read"
             )),
             _ => None,
         }
     }
 }
 
-/// Whether `filter` is `state == <State>`: the state fact compared for equality with a literal.
-fn is_state_comparison(filter: &Predicate) -> bool {
+/// Whether `filter` reads the state fact and nothing else: each leaf compares it for equality or
+/// inequality with a text literal, or lists the states it is or is not among, and every inner
+/// node is `any`, `all` or `not`. The parser bounds the nesting at `MAX_PREDICATE_DEPTH`.
+fn reads_only_state(filter: &Predicate) -> bool {
+    let is_state = |path: &FactPath| path.segments() == [STATE];
+    let all_text = |values: &[FactValue]| {
+        values
+            .iter()
+            .all(|value| matches!(value, FactValue::Text(_)))
+    };
     match filter {
         Predicate::Compare {
             left: Operand::Fact(path),
-            op: CompareOp::Eq,
+            op: CompareOp::Eq | CompareOp::Ne,
             right: Operand::Literal(FactValue::Text(_)),
             ..
-        } => path.segments() == [STATE],
+        } => is_state(path),
+        Predicate::AnyOf { path, values } | Predicate::NoneOf { path, values } => {
+            is_state(path) && all_text(values)
+        }
+        Predicate::Any(children) | Predicate::All(children) => {
+            children.iter().all(reads_only_state)
+        }
+        Predicate::Not(child) => reads_only_state(child),
         _ => false,
     }
 }

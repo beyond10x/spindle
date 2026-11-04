@@ -1,0 +1,139 @@
+domain: parcels.depot
+summary: Parcels packed, shipped and delivered, read as lists over several states.
+types:
+  - name: parcels.depot.ParcelId
+    kind: newtype
+    of: String
+entities:
+  - name: parcels.depot.Parcel
+    identity:
+      name: parcel_id
+      type: parcels.depot.ParcelId
+    fields:
+      - name: label
+        type: String
+    lifecycle:
+      initial: Packed
+      states: [Packed, Shipped, Delivered]
+      terminal: [Delivered]
+      transitions:
+        - name: ship
+          from: [Packed]
+          to: Shipped
+        - name: deliver
+          from: [Shipped]
+          to: Delivered
+errors:
+  - name: parcels.depot.ParcelNotFound
+    summary: No parcel carries the id.
+    fields: []
+  - name: parcels.depot.NotPacked
+    summary: Only a packed parcel ships.
+    fields: []
+  - name: parcels.depot.NotShipped
+    summary: Only a shipped parcel is delivered.
+    fields: []
+commands:
+  - name: parcels.depot.PackParcel
+    input:
+      - name: parcel_id
+        type: parcels.depot.ParcelId
+      - name: label
+        type: String
+    outcomes:
+      - name: packed
+        creates: parcels.depot.Parcel
+        instance: parcel_id
+        sets:
+          label: input.label
+        emits: [parcels.depot.ParcelPacked]
+        payload:
+          parcels.depot.ParcelPacked: {parcel_id: input.parcel_id}
+        summary: The parcel is packed.
+  - name: parcels.depot.ShipParcel
+    input:
+      - name: parcel_id
+        type: parcels.depot.ParcelId
+    outcomes:
+      - name: no-such-parcel
+        unknown_instance: true
+        error: parcels.depot.ParcelNotFound
+        summary: No parcel carries the id.
+      - name: not-packed
+        when_subject: {predicate: state != Packed}
+        error: parcels.depot.NotPacked
+        summary: Only a packed parcel ships.
+      - name: shipped
+        moves: parcels.depot.Parcel.ship
+        instance: parcel_id
+        emits: [parcels.depot.ParcelShipped]
+        payload:
+          parcels.depot.ParcelShipped: {parcel_id: input.parcel_id}
+        summary: The parcel ships.
+  - name: parcels.depot.DeliverParcel
+    input:
+      - name: parcel_id
+        type: parcels.depot.ParcelId
+    outcomes:
+      - name: no-such-parcel
+        unknown_instance: true
+        error: parcels.depot.ParcelNotFound
+        summary: No parcel carries the id.
+      - name: not-shipped
+        when_subject: {predicate: state != Shipped}
+        error: parcels.depot.NotShipped
+        summary: Only a shipped parcel is delivered.
+      - name: delivered
+        moves: parcels.depot.Parcel.deliver
+        instance: parcel_id
+        emits: [parcels.depot.ParcelDelivered]
+        payload:
+          parcels.depot.ParcelDelivered: {parcel_id: input.parcel_id}
+        summary: The parcel is delivered.
+events:
+  - name: parcels.depot.ParcelPacked
+    fields:
+      - name: parcel_id
+        type: parcels.depot.ParcelId
+  - name: parcels.depot.ParcelShipped
+    fields:
+      - name: parcel_id
+        type: parcels.depot.ParcelId
+  - name: parcels.depot.ParcelDelivered
+    fields:
+      - name: parcel_id
+        type: parcels.depot.ParcelId
+views:
+  - name: parcels.depot.Undelivered
+    source: parcels.depot.Parcel
+    consistency: read_your_writes
+    filter:
+      any: [state == Packed, state == Shipped]
+    fields:
+      - name: parcel_id
+        type: parcels.depot.ParcelId
+      - name: state
+        type: parcels.depot.Parcel.State
+  - name: parcels.depot.UndeliveredOrFragile
+    source: parcels.depot.Parcel
+    consistency: read_your_writes
+    filter:
+      any: [state == Packed, label == Fragile]
+    fields:
+      - name: parcel_id
+        type: parcels.depot.ParcelId
+      - name: label
+        type: String
+  - name: parcels.depot.Moving
+    source: parcels.depot.Parcel
+    consistency: read_your_writes
+    filter:
+      all:
+        - not: state == Packed
+        - state: {in: [Shipped, Delivered]}
+        - state != Delivered
+    fields:
+      - name: parcel_id
+        type: parcels.depot.ParcelId
+      - name: state
+        type: parcels.depot.Parcel.State

@@ -1,0 +1,9 @@
+components:
+  - component: depot
+    owns:
+      domains: [parcels.depot]
+    accepts:
+      commands: [parcels.depot.PackParcel, parcels.depot.ShipParcel, parcels.depot.DeliverParcel]
+    publishes:
+      events: [parcels.depot.ParcelPacked, parcels.depot.ParcelShipped, parcels.depot.ParcelDelivered]
+    reached_by: in_process
