@@ -17,7 +17,7 @@ scope:
   path: Taskfile.yml
 - confidence: inferred
   path: crates/spindle-conformance
-revision: 8
+revision: 9
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-04T21:33:53Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"review_outcome":2}}}
 - {from: "proposed", to: "active", at: "2026-11-04T21:33:53Z", actor: "human:timo", revision: 8, decided_on: {"recorded":{"review_outcome":2}}}
@@ -71,3 +71,11 @@ self-conformance" item), `README.md`, `AGENTS.md`, `Cargo.lock`.
 ## Shared with story:control-process-serves-the-api
 
 `Taskfile.yml`: this story adds a `check:conformance` step to `check`; story:control-process-serves-the-api changes `build` and `check` to build `ui/` first. Different lines of one file: if both land in one wave, the wave coordinator resolves `Taskfile.yml` at integration, as it does `Cargo.lock`.
+
+## Any specification (added 2026-11-04, on a downstream request)
+
+The in-process target takes the specification path and the suite as arguments, not only `ess/`,
+so a synthesized suite of another specification runs against the kernel through the same target.
+
+- `the_target_runs_a_suite_of_another_specification` — a neutral fixture specification outside
+  `ess/` and its synthesized suite run through the target; the report counts its scenarios.
