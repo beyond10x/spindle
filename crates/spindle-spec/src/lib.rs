@@ -1,7 +1,8 @@
 //! Loading a specification.
 //!
-//! A specification is a directory of ESS source documents. Loading reads every `.yaml`/`.yml`
-//! file under it in path order, parses them together (a type declared in one file may be used in
+//! A specification is a directory of ESS source documents. Loading reads the files its
+//! `ess-inputs.yaml` lists, in that order, or without one every `.yaml`/`.yml` file under it in
+//! path order; it parses them together (a type declared in one file may be used in
 //! another), assembles them and compiles them with `ess-compiler`. The result is the resolved
 //! [`EssIr`]: every reference checked, every guard a typed [`Predicate`](ess_primitives) — the same
 //! IR `ess specify compile` produces, because it is the same code.
@@ -38,6 +39,14 @@ pub enum LoadError {
     /// The directory holds no source document.
     #[error("{0} holds no .yaml or .yml file")]
     Empty(PathBuf),
+    /// The directory's `ess-inputs.yaml` could not be read as a manifest.
+    #[error("{path}: {reason}")]
+    Manifest {
+        /// The manifest.
+        path: PathBuf,
+        /// What is wrong with it.
+        reason: String,
+    },
     /// ESS refused the documents. Each entry is one diagnostic, as ESS renders it.
     #[error("ess refused the specification:\n{}", .0.join("\n"))]
     Refused(Vec<String>),
@@ -128,9 +137,50 @@ fn discover(root: &Path) -> Result<Vec<PathBuf>, LoadError> {
     if metadata.is_file() {
         return Ok(vec![root.to_path_buf()]);
     }
+    let manifest = root.join(MANIFEST);
+    if manifest.is_file() {
+        return listed(root, &manifest);
+    }
     let mut found = Vec::new();
     walk(root, &mut found)?;
     found.sort();
+    Ok(found)
+}
+
+/// The manifest `ess` reads in a specification directory: when present, its `specification` list
+/// is the set of source documents, in that order, as `ess specify validate --path` reads them.
+const MANIFEST: &str = "ess-inputs.yaml";
+
+fn listed(root: &Path, manifest: &Path) -> Result<Vec<PathBuf>, LoadError> {
+    let refuse = |reason: String| LoadError::Manifest {
+        path: manifest.to_path_buf(),
+        reason,
+    };
+    let text = fs::read_to_string(manifest).map_err(|source| LoadError::Io {
+        path: manifest.to_path_buf(),
+        source,
+    })?;
+    let document: ess_yaml::Value =
+        ess_yaml::from_str(&text).map_err(|error| refuse(error.to_string()))?;
+    let format = document.get("format").and_then(ess_yaml::Value::as_str);
+    if !format.is_some_and(|format| format.starts_with("ess-inputs/")) {
+        return Err(refuse("format is not ess-inputs/<n>".to_owned()));
+    }
+    let entries = document
+        .get("specification")
+        .and_then(ess_yaml::Value::as_sequence)
+        .ok_or_else(|| refuse("no specification list".to_owned()))?;
+    let mut found = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let relative = entry
+            .as_str()
+            .ok_or_else(|| refuse("a specification entry is not a path".to_owned()))?;
+        let path = root.join(relative);
+        if !path.is_file() {
+            return Err(refuse(format!("lists {relative}, which does not exist")));
+        }
+        found.push(path);
+    }
     Ok(found)
 }
 
