@@ -1,0 +1,123 @@
+components:
+  - component: rally-table
+    summary: Holds the match, moves the ball on each tick and moves paddles on request.
+    owns:
+      domains:
+        - rally.table
+    accepts:
+      commands:
+        - rally.table.OpenMatch
+        - rally.table.Tick
+        - rally.table.MovePaddle
+    publishes:
+      events:
+        - rally.table.BallMoved
+        - rally.table.PointScored
+        - rally.table.MatchWon
+        - rally.table.PaddleMoved
+    reached_by: network
+
+  - component: rally-player-west
+    summary: Plays the west side.
+    owns:
+      domains:
+        - rally.west
+    accepts:
+      commands:
+        - rally.west.ObserveBall
+    publishes:
+      events:
+        - rally.west.PaddleMoveRequested
+        - rally.west.BallSeen
+    reached_by: in_process
+
+  - component: rally-player-east
+    summary: Plays the east side.
+    owns:
+      domains:
+        - rally.east
+    accepts:
+      commands:
+        - rally.east.ObserveBall
+    publishes:
+      events:
+        - rally.east.PaddleMoveRequested
+        - rally.east.BallSeen
+    reached_by: in_process
+
+bindings:
+  - id: tick
+    when:
+      periodic:
+        every: PT1S
+        anchor: host_activation
+        first: after_period
+        cadence: fixed_rate
+        overlap: serial_per_instance
+        missed: one_pending_drop_excess
+        lifetime: host_instance
+        cancellation: stop_acknowledged
+        host:
+          owner: rally-table
+          authority: match-clock
+          eligibility: host_boolean
+          context_fields:
+            - name: match_id
+              type: rally.table.MatchId
+          read_fields: []
+    invoke:
+      command: rally.table.Tick
+    mapping:
+      match_id: host_context.match_id
+    delivery: at_most_once
+    on_failure: drop
+
+  - id: west-watches
+    when:
+      event: rally.table.BallMoved
+    invoke:
+      command: rally.west.ObserveBall
+    mapping:
+      match_id: event.match_id
+      ball_x: event.ball_x
+      ball_y: event.ball_y
+      paddle_y: event.west_paddle_y
+    delivery: at_most_once
+    on_failure: drop
+
+  - id: east-watches
+    when:
+      event: rally.table.BallMoved
+    invoke:
+      command: rally.east.ObserveBall
+    mapping:
+      match_id: event.match_id
+      ball_x: event.ball_x
+      ball_y: event.ball_y
+      paddle_y: event.east_paddle_y
+    delivery: at_most_once
+    on_failure: drop
+
+  - id: west-moves
+    when:
+      event: rally.west.PaddleMoveRequested
+    invoke:
+      command: rally.table.MovePaddle
+    mapping:
+      match_id: event.match_id
+      side: event.side
+      step: event.step
+    delivery: at_most_once
+    on_failure: drop
+
+  - id: east-moves
+    when:
+      event: rally.east.PaddleMoveRequested
+    invoke:
+      command: rally.table.MovePaddle
+    mapping:
+      match_id: event.match_id
+      side: event.side
+      step: event.step
+    delivery: at_most_once
+    on_failure: drop

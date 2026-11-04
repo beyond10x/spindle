@@ -1,0 +1,13 @@
+format: ess/34
+system: rally
+version: v1
+
+summary: >-
+  Rally is a two-player paddle-and-ball game on an integer grid. The table moves the ball one cell
+  per tick, bounces it off walls and paddles and counts points; each player watches the ball and
+  asks the table to move its paddle toward it. The three parts talk only through bindings.
+
+domains:
+  - rally.table
+  - rally.west
+  - rally.east

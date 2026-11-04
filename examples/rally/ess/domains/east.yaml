@@ -1,0 +1,115 @@
+domain: rally.east
+
+summary: >-
+  The east player. It watches every ball movement and asks the table to move its paddle one row
+  toward the ball: up when the ball is above the paddle, down when below, nothing when level.
+
+entities:
+  - name: rally.east.Player
+    identity:
+      name: match_id
+      type: rally.table.MatchId
+    fields:
+      - name: paddle_y
+        type: Integer
+      - name: ball_x
+        type: Integer
+      - name: ball_y
+        type: Integer
+    lifecycle:
+      initial: Watching
+      states: [Watching]
+      terminal: [Watching]
+
+commands:
+  - name: rally.east.ObserveBall
+    input:
+      - name: match_id
+        type: rally.table.MatchId
+      - name: ball_x
+        type: Integer
+      - name: ball_y
+        type: Integer
+      - name: paddle_y
+        type: Integer
+    outcomes:
+      - name: first-sight
+        unknown_instance: true
+        creates: rally.east.Player
+        instance: match_id
+        sets: &seen
+          paddle_y: input.paddle_y
+          ball_x: input.ball_x
+          ball_y: input.ball_y
+        emits: [rally.east.BallSeen]
+        payload: &noted
+          rally.east.BallSeen:
+            match_id: input.match_id
+            ball_x: input.ball_x
+            ball_y: input.ball_y
+            paddle_y: input.paddle_y
+        summary: The first ball movement of a match seats the player; it asks for nothing yet.
+
+      - name: up
+        when_subject: {predicate: input.ball_y < input.paddle_y}
+        updates: rally.east.Player
+        instance: match_id
+        sets: *seen
+        emits: [rally.east.PaddleMoveRequested]
+        payload:
+          rally.east.PaddleMoveRequested: {match_id: input.match_id, side: East, step: Up}
+        summary: The ball is above the paddle, so the player asks to move up.
+
+      - name: down
+        when_subject: {predicate: input.ball_y > input.paddle_y}
+        updates: rally.east.Player
+        instance: match_id
+        sets: *seen
+        emits: [rally.east.PaddleMoveRequested]
+        payload:
+          rally.east.PaddleMoveRequested: {match_id: input.match_id, side: East, step: Down}
+        summary: The ball is below the paddle, so the player asks to move down.
+
+      - name: hold
+        updates: rally.east.Player
+        instance: match_id
+        sets: *seen
+        emits: [rally.east.BallSeen]
+        payload: *noted
+        summary: The ball is level with the paddle, so the player holds.
+
+events:
+  - name: rally.east.PaddleMoveRequested
+    fields:
+      - name: match_id
+        type: rally.table.MatchId
+      - name: side
+        type: rally.table.Side
+      - name: step
+        type: rally.table.Vertical
+
+  # Emitted where the player asks for nothing, so that outcome is observable.
+  - name: rally.east.BallSeen
+    fields:
+      - name: match_id
+        type: rally.table.MatchId
+      - name: ball_x
+        type: Integer
+      - name: ball_y
+        type: Integer
+      - name: paddle_y
+        type: Integer
+
+views:
+  - name: rally.east.PlayerState
+    source: rally.east.Player
+    consistency: read_your_writes
+    fields:
+      - name: match_id
+        type: rally.table.MatchId
+      - name: paddle_y
+        type: Integer
+      - name: ball_x
+        type: Integer
+      - name: ball_y
+        type: Integer

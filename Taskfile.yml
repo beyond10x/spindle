@@ -6,6 +6,7 @@ tasks:
     cmds:
       - aep plan artifact validate
       - ess specify validate --path ess
+      - ess specify validate --path examples/rally/ess
       - cargo fmt --all -- --check
       - cargo clippy --workspace --all-targets --locked -- -D warnings
       - cargo test --workspace --locked

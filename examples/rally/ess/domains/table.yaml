@@ -1,0 +1,503 @@
+domain: rally.table
+
+summary: >-
+  One match on a grid 16 columns wide (x 0 to 15) and 9 rows high (y 0 at the top to 8). The west
+  paddle stands in column 0 and the east paddle in column 15, each one cell tall; the ball travels
+  in columns 1 to 14, one cell across and one cell up or down per tick.
+
+types:
+  - name: rally.table.MatchId
+    kind: newtype
+    of: String
+
+  - name: rally.table.Side
+    kind: enum
+    variants: [West, East]
+
+  - name: rally.table.Vertical
+    kind: enum
+    variants: [Up, Down]
+
+entities:
+  - name: rally.table.Match
+    identity:
+      name: match_id
+      type: rally.table.MatchId
+    fields:
+      - name: ball_x
+        type: Integer
+      - name: ball_y
+        type: Integer
+      - name: heading_x
+        type: rally.table.Side
+      - name: heading_y
+        type: rally.table.Vertical
+      - name: west_paddle_y
+        type: Integer
+      - name: east_paddle_y
+        type: Integer
+      - name: west_score
+        type: Integer
+      - name: east_score
+        type: Integer
+      - name: target_score
+        type: Integer
+      - name: west_needs
+        type: Integer
+      - name: east_needs
+        type: Integer
+      - name: winner
+        type: Optional<rally.table.Side>
+    lifecycle:
+      initial: Serving
+      states: [Serving, InPlay, Won]
+      terminal: [Won]
+      transitions:
+        - name: serve
+          from: [Serving]
+          to: InPlay
+        - name: score
+          from: [InPlay]
+          to: Serving
+        - name: win
+          from: [InPlay]
+          to: Won
+
+errors:
+  - name: rally.table.MatchNotFound
+    summary: No match carries the id the command names.
+    fields:
+      - name: match_id
+        type: rally.table.MatchId
+
+commands:
+  - name: rally.table.OpenMatch
+    input:
+      - name: match_id
+        type: rally.table.MatchId
+      - name: target_score
+        type: Integer
+    outcomes:
+      - name: opened
+        creates: rally.table.Match
+        instance: match_id
+        sets:
+          ball_x: 8
+          ball_y: 4
+          heading_x: West
+          heading_y: Up
+          west_paddle_y: 4
+          east_paddle_y: 4
+          west_score: 0
+          east_score: 0
+          target_score: input.target_score
+          west_needs: input.target_score
+          east_needs: input.target_score
+        emits: [rally.table.BallMoved]
+        payload:
+          rally.table.BallMoved:
+            match_id: input.match_id
+            ball_x: 8
+            ball_y: 4
+            heading_x: West
+            heading_y: Up
+            west_paddle_y: 4
+            east_paddle_y: 4
+        summary: The ball waits in the middle of the grid, both paddles level with it.
+
+  # One step of the ball. Within the held-state step the first declared branch whose guard holds
+  # answers: serve, a miss, a paddle return, a wall bounce, or a plain diagonal move.
+  - name: rally.table.Tick
+    input:
+      - name: match_id
+        type: rally.table.MatchId
+    outcomes:
+      - name: no-such-match
+        unknown_instance: true
+        error: rally.table.MatchNotFound
+        summary: No match carries this id, so nothing moved.
+
+      - name: match-over
+        when_subject: {predicate: state == Won}
+        preserves: rally.table.Match
+        instance: match_id
+        summary: A won match stays as it is; later ticks change nothing.
+
+      - name: served
+        when_subject: {predicate: state == Serving}
+        moves: rally.table.Match.serve
+        instance: match_id
+        emits: [rally.table.BallMoved]
+        payload:
+          rally.table.BallMoved:
+            match_id: input.match_id
+            ball_x: {subject: ball_x}
+            ball_y: {subject: ball_y}
+            heading_x: {subject: heading_x}
+            heading_y: {subject: heading_y}
+            west_paddle_y: {subject: west_paddle_y}
+            east_paddle_y: {subject: east_paddle_y}
+        summary: The ball leaves the middle of the grid.
+
+      - name: east-wins
+        when_subject:
+          predicate:
+            all: [state == InPlay, ball_x == 1, heading_x == West, ball_y != west_paddle_y, east_needs == 1]
+        moves: rally.table.Match.win
+        instance: match_id
+        sets:
+          east_score: {increment: 1}
+          east_needs: {increment: -1}
+          winner: East
+        emits: [rally.table.PointScored, rally.table.MatchWon]
+        payload:
+          rally.table.PointScored: {match_id: input.match_id, side: East}
+          rally.table.MatchWon: {match_id: input.match_id, winner: East}
+        summary: The ball passes the west paddle and east reaches the target score.
+
+      - name: east-scores
+        when_subject:
+          predicate:
+            all: [state == InPlay, ball_x == 1, heading_x == West, ball_y != west_paddle_y]
+        moves: rally.table.Match.score
+        instance: match_id
+        sets:
+          east_score: {increment: 1}
+          east_needs: {increment: -1}
+          ball_x: 8
+          ball_y: 4
+          heading_x: West
+        emits: [rally.table.PointScored]
+        payload:
+          rally.table.PointScored: {match_id: input.match_id, side: East}
+        summary: The ball passes the west paddle; it goes back to the middle, served toward west.
+
+      - name: west-wins
+        when_subject:
+          predicate:
+            all: [state == InPlay, ball_x == 14, heading_x == East, ball_y != east_paddle_y, west_needs == 1]
+        moves: rally.table.Match.win
+        instance: match_id
+        sets:
+          west_score: {increment: 1}
+          west_needs: {increment: -1}
+          winner: West
+        emits: [rally.table.PointScored, rally.table.MatchWon]
+        payload:
+          rally.table.PointScored: {match_id: input.match_id, side: West}
+          rally.table.MatchWon: {match_id: input.match_id, winner: West}
+        summary: The ball passes the east paddle and west reaches the target score.
+
+      - name: west-scores
+        when_subject:
+          predicate:
+            all: [state == InPlay, ball_x == 14, heading_x == East, ball_y != east_paddle_y]
+        moves: rally.table.Match.score
+        instance: match_id
+        sets:
+          west_score: {increment: 1}
+          west_needs: {increment: -1}
+          ball_x: 8
+          ball_y: 4
+          heading_x: East
+        emits: [rally.table.PointScored]
+        payload:
+          rally.table.PointScored: {match_id: input.match_id, side: West}
+        summary: The ball passes the east paddle; it goes back to the middle, served toward east.
+
+      - name: west-returns
+        when_subject:
+          predicate:
+            all: [state == InPlay, ball_x == 1, heading_x == West]
+        updates: rally.table.Match
+        instance: match_id
+        sets:
+          heading_x: East
+        emits: [rally.table.BallMoved]
+        payload:
+          rally.table.BallMoved:
+            match_id: input.match_id
+            ball_x: {subject: ball_x}
+            ball_y: {subject: ball_y}
+            heading_x: East
+            heading_y: {subject: heading_y}
+            west_paddle_y: {subject: west_paddle_y}
+            east_paddle_y: {subject: east_paddle_y}
+        summary: The west paddle is level with the ball and sends it back east.
+
+      - name: east-returns
+        when_subject:
+          predicate:
+            all: [state == InPlay, ball_x == 14, heading_x == East]
+        updates: rally.table.Match
+        instance: match_id
+        sets:
+          heading_x: West
+        emits: [rally.table.BallMoved]
+        payload:
+          rally.table.BallMoved:
+            match_id: input.match_id
+            ball_x: {subject: ball_x}
+            ball_y: {subject: ball_y}
+            heading_x: West
+            heading_y: {subject: heading_y}
+            west_paddle_y: {subject: west_paddle_y}
+            east_paddle_y: {subject: east_paddle_y}
+        summary: The east paddle is level with the ball and sends it back west.
+
+      - name: top-wall
+        when_subject:
+          predicate:
+            all: [state == InPlay, ball_y == 0, heading_y == Up]
+        updates: rally.table.Match
+        instance: match_id
+        sets:
+          heading_y: Down
+        emits: [rally.table.BallMoved]
+        payload:
+          rally.table.BallMoved:
+            match_id: input.match_id
+            ball_x: {subject: ball_x}
+            ball_y: {subject: ball_y}
+            heading_x: {subject: heading_x}
+            heading_y: Down
+            west_paddle_y: {subject: west_paddle_y}
+            east_paddle_y: {subject: east_paddle_y}
+        summary: The ball meets the top wall and turns down.
+
+      - name: bottom-wall
+        when_subject:
+          predicate:
+            all: [state == InPlay, ball_y == 8, heading_y == Down]
+        updates: rally.table.Match
+        instance: match_id
+        sets:
+          heading_y: Up
+        emits: [rally.table.BallMoved]
+        payload:
+          rally.table.BallMoved:
+            match_id: input.match_id
+            ball_x: {subject: ball_x}
+            ball_y: {subject: ball_y}
+            heading_x: {subject: heading_x}
+            heading_y: Up
+            west_paddle_y: {subject: west_paddle_y}
+            east_paddle_y: {subject: east_paddle_y}
+        summary: The ball meets the bottom wall and turns up.
+
+      - name: moved-east-up
+        when_subject:
+          predicate:
+            all: [state == InPlay, heading_x == East, heading_y == Up]
+        updates: rally.table.Match
+        instance: match_id
+        sets:
+          ball_x: {increment: 1}
+          ball_y: {increment: -1}
+        emits: [rally.table.BallMoved]
+        payload: &moved
+          rally.table.BallMoved:
+            match_id: input.match_id
+            ball_x: {subject: ball_x}
+            ball_y: {subject: ball_y}
+            heading_x: {subject: heading_x}
+            heading_y: {subject: heading_y}
+            west_paddle_y: {subject: west_paddle_y}
+            east_paddle_y: {subject: east_paddle_y}
+        summary: The ball moves one cell east and one up.
+
+      - name: moved-east-down
+        when_subject:
+          predicate:
+            all: [state == InPlay, heading_x == East, heading_y == Down]
+        updates: rally.table.Match
+        instance: match_id
+        sets:
+          ball_x: {increment: 1}
+          ball_y: {increment: 1}
+        emits: [rally.table.BallMoved]
+        payload: *moved
+        summary: The ball moves one cell east and one down.
+
+      - name: moved-west-up
+        when_subject:
+          predicate:
+            all: [state == InPlay, heading_x == West, heading_y == Up]
+        updates: rally.table.Match
+        instance: match_id
+        sets:
+          ball_x: {increment: -1}
+          ball_y: {increment: -1}
+        emits: [rally.table.BallMoved]
+        payload: *moved
+        summary: The ball moves one cell west and one up.
+
+      # The default: in play, heading west and down, and no guard above held.
+      - name: moved-west-down
+        updates: rally.table.Match
+        instance: match_id
+        sets:
+          ball_x: {increment: -1}
+          ball_y: {increment: 1}
+        emits: [rally.table.BallMoved]
+        payload: *moved
+        summary: The ball moves one cell west and one down.
+
+  # Moves one side's paddle one row. Up is toward row 0.
+  - name: rally.table.MovePaddle
+    input:
+      - name: match_id
+        type: rally.table.MatchId
+      - name: side
+        type: rally.table.Side
+      - name: step
+        type: rally.table.Vertical
+    outcomes:
+      - name: no-such-match
+        unknown_instance: true
+        error: rally.table.MatchNotFound
+        summary: No match carries this id, so nothing moved.
+
+      - name: match-over
+        when_subject: {predicate: state == Won}
+        preserves: rally.table.Match
+        instance: match_id
+        summary: A won match keeps its paddles where they are.
+
+      - name: at-edge
+        when_subject:
+          predicate:
+            any:
+              - {all: [input.side == West, input.step == Up, west_paddle_y == 0]}
+              - {all: [input.side == West, input.step == Down, west_paddle_y == 8]}
+              - {all: [input.side == East, input.step == Up, east_paddle_y == 0]}
+              - {all: [input.side == East, input.step == Down, east_paddle_y == 8]}
+        preserves: rally.table.Match
+        instance: match_id
+        summary: A paddle at the top or bottom row does not move past it.
+
+      - name: west-up
+        when_subject:
+          predicate:
+            all: [input.side == West, input.step == Up]
+        updates: rally.table.Match
+        instance: match_id
+        sets:
+          west_paddle_y: {increment: -1}
+        emits: [rally.table.PaddleMoved]
+        payload: &paddle
+          rally.table.PaddleMoved:
+            match_id: input.match_id
+            side: input.side
+            step: input.step
+        summary: The west paddle moves one row up.
+
+      - name: west-down
+        when_subject:
+          predicate:
+            all: [input.side == West, input.step == Down]
+        updates: rally.table.Match
+        instance: match_id
+        sets:
+          west_paddle_y: {increment: 1}
+        emits: [rally.table.PaddleMoved]
+        payload: *paddle
+        summary: The west paddle moves one row down.
+
+      - name: east-up
+        when_subject:
+          predicate:
+            all: [input.side == East, input.step == Up]
+        updates: rally.table.Match
+        instance: match_id
+        sets:
+          east_paddle_y: {increment: -1}
+        emits: [rally.table.PaddleMoved]
+        payload: *paddle
+        summary: The east paddle moves one row up.
+
+      # The default: the east paddle, one row down, with room below it.
+      - name: east-down
+        updates: rally.table.Match
+        instance: match_id
+        sets:
+          east_paddle_y: {increment: 1}
+        emits: [rally.table.PaddleMoved]
+        payload: *paddle
+        summary: The east paddle moves one row down.
+
+events:
+  # Where the ball stood when the tick began, the way it heads after it, and both paddles.
+  - name: rally.table.BallMoved
+    fields:
+      - name: match_id
+        type: rally.table.MatchId
+      - name: ball_x
+        type: Integer
+      - name: ball_y
+        type: Integer
+      - name: heading_x
+        type: rally.table.Side
+      - name: heading_y
+        type: rally.table.Vertical
+      - name: west_paddle_y
+        type: Integer
+      - name: east_paddle_y
+        type: Integer
+
+  - name: rally.table.PointScored
+    fields:
+      - name: match_id
+        type: rally.table.MatchId
+      - name: side
+        type: rally.table.Side
+
+  - name: rally.table.MatchWon
+    fields:
+      - name: match_id
+        type: rally.table.MatchId
+      - name: winner
+        type: rally.table.Side
+
+  - name: rally.table.PaddleMoved
+    fields:
+      - name: match_id
+        type: rally.table.MatchId
+      - name: side
+        type: rally.table.Side
+      - name: step
+        type: rally.table.Vertical
+
+views:
+  - name: rally.table.MatchState
+    source: rally.table.Match
+    consistency: read_your_writes
+    fields:
+      - name: match_id
+        type: rally.table.MatchId
+      - name: state
+        type: rally.table.Match.State
+      - name: ball_x
+        type: Integer
+      - name: ball_y
+        type: Integer
+      - name: heading_x
+        type: rally.table.Side
+      - name: heading_y
+        type: rally.table.Vertical
+      - name: west_paddle_y
+        type: Integer
+      - name: east_paddle_y
+        type: Integer
+      - name: west_score
+        type: Integer
+      - name: east_score
+        type: Integer
+      - name: target_score
+        type: Integer
+      - name: west_needs
+        type: Integer
+      - name: east_needs
+        type: Integer
+      - name: winner
+        type: Optional<rally.table.Side>

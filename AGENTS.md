@@ -7,10 +7,12 @@ environment, and (planned) executes it. Humans start at [`README.md`](README.md)
 
 ## Serves
 
-- **Specifications that run.** A compiled ESS model is the program; nothing is generated per
-  application.
-- **Semantics in the specification, technicals in the runtime.** Storage, timers, channels and
-  ingress are capabilities the runtime binds per environment.
+- **O4 — products run on the foundation.** A compiled ESS model is the program; a product's
+  specification runs without code generated per application.
+- **O2 — decisions as data, with evidence.** Capabilities are derived from the specification, and
+  admission records which implementation provides each one, or every one that is missing.
+- **O1 — governed reach.** Each component of a system can run in its own isolation unit, with the
+  technicals (storage, timers, channels, ingress) bound per environment.
 
 ## Map
 
