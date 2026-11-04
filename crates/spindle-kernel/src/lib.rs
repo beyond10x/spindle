@@ -21,7 +21,9 @@
 //!
 //! # Effects
 //!
-//! `creates:` stores a new instance in its initial state, `moves:` takes the declared transition,
+//! `creates:` stores a new instance in its initial state, under the identity its input or payload
+//! determines or, where neither does, one a [`Mint`] mints (a `Uuid` identity only, as a UUIDv4;
+//! see [`execute_minting`]), `moves:` takes the declared transition,
 //! `updates:` writes fields, `preserves:` and every refusal change nothing. A move that does not
 //! start from the state held answers the command's `wrong_state:` outcome, which reports its error
 //! or, with `refuses: false`, succeeds and changes nothing. Before a change is committed, every
@@ -41,6 +43,7 @@
 mod decider;
 mod execute;
 mod facts;
+mod mint;
 mod sqlite;
 mod store;
 mod supported;
@@ -51,7 +54,8 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 pub use decider::{Decider, External, NoExternals};
-pub use execute::execute;
+pub use execute::{execute, execute_minting};
+pub use mint::{Identity, Mint, Uuid, UuidV4};
 pub use sqlite::SqliteStore;
 pub use store::{Change, MemoryStore, Row, Store, StoreError, Stored};
 
