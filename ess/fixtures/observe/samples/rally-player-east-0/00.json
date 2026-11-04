@@ -1,0 +1,109 @@
+{
+  "instance_id": "rally-player-east-0",
+  "sequence": 0,
+  "at": "2026-11-04T10:00:01Z",
+  "period_ms": 1000,
+  "counters": [
+    {
+      "name": "command.rally.east.ObserveBall.first-sight",
+      "value": 1
+    },
+    {
+      "name": "command.rally.east.ObserveBall.up",
+      "value": 0
+    },
+    {
+      "name": "command.rally.east.ObserveBall.down",
+      "value": 0
+    },
+    {
+      "name": "command.rally.east.ObserveBall.hold",
+      "value": 0
+    },
+    {
+      "name": "event.rally.east.BallSeen.appended",
+      "value": 1
+    },
+    {
+      "name": "event.rally.east.PaddleMoveRequested.appended",
+      "value": 0
+    },
+    {
+      "name": "store.rows_written",
+      "value": 1
+    },
+    {
+      "name": "store.bytes_written",
+      "value": 96
+    },
+    {
+      "name": "binding.east-moves.sent",
+      "value": 0
+    },
+    {
+      "name": "binding.east-moves.delivered",
+      "value": 0
+    },
+    {
+      "name": "binding.east-moves.redelivered",
+      "value": 0
+    },
+    {
+      "name": "binding.east-moves.dropped",
+      "value": 0
+    },
+    {
+      "name": "binding.east-watches.sent",
+      "value": 0
+    },
+    {
+      "name": "binding.east-watches.delivered",
+      "value": 1
+    },
+    {
+      "name": "binding.east-watches.redelivered",
+      "value": 0
+    },
+    {
+      "name": "binding.east-watches.dropped",
+      "value": 0
+    }
+  ],
+  "histograms": [
+    {
+      "name": "command.rally.east.ObserveBall.duration_us",
+      "bounds": [
+        50,
+        100,
+        250,
+        500,
+        1000
+      ],
+      "counts": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "recent": [
+    {
+      "at": "2026-11-04T10:00:01.011Z",
+      "command": "rally.east.ObserveBall",
+      "outcome": "first-sight",
+      "events": [
+        "rally.east.BallSeen"
+      ]
+    }
+  ],
+  "resources": {
+    "cpu_seconds": 0.001,
+    "memory_bytes": 20132659,
+    "cpu_share": 0.001,
+    "memory_share": 0.3
+  },
+  "dropped_frames": 0
+}

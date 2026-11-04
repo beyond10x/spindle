@@ -5,6 +5,7 @@ components:
       domains:
         - spindle.deployment
         - spindle.placement
+        - spindle.observe
     accepts:
       commands:
         - spindle.deployment.DeclareEnvironment

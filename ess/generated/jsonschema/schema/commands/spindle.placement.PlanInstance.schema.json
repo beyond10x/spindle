@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/commands/spindle.placement.PlanInstance.schema.json",
+  "title": "Plan instance input",
+  "x-ess-name": "spindle.placement.PlanInstance",
+  "x-ess-kind": "command-input",
+  "type": "object",
+  "properties": {
+    "instance_id": {
+      "$ref": "#/$defs/spindle.placement.InstanceId"
+    },
+    "deployment_id": {
+      "$ref": "#/$defs/spindle.deployment.DeploymentId"
+    },
+    "component": {
+      "type": "string"
+    },
+    "settings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/spindle.placement.Setting"
+      }
+    },
+    "target_id": {
+      "$ref": "#/$defs/spindle.placement.TargetId"
+    },
+    "request": {
+      "$ref": "#/$defs/spindle.placement.Resources"
+    }
+  },
+  "required": [
+    "instance_id",
+    "deployment_id",
+    "component",
+    "settings",
+    "target_id",
+    "request"
+  ],
+  "additionalProperties": false,
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "7b7a73a462a8f72175be1029a8e0d7b3d466b6c4c89cb0c694ac14a157a4d594",
+    "contract_digest": "slice-sha256/2:1611b4295ede8c03799574bb4544a914945b7e4599e215409c545ce377a86d52",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.deployment.DeploymentId": {
+      "title": "DeploymentId",
+      "x-ess-name": "spindle.deployment.DeploymentId",
+      "x-ess-kind": "newtype",
+      "type": "string"
+    },
+    "spindle.placement.InstanceId": {
+      "title": "InstanceId",
+      "x-ess-name": "spindle.placement.InstanceId",
+      "x-ess-kind": "newtype",
+      "type": "string"
+    },
+    "spindle.placement.Resources": {
+      "title": "Resources",
+      "x-ess-name": "spindle.placement.Resources",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "vcpus": {
+          "type": "integer"
+        },
+        "memory_mib": {
+          "type": "integer"
+        },
+        "disk_mib": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "vcpus",
+        "memory_mib",
+        "disk_mib"
+      ],
+      "additionalProperties": false
+    },
+    "spindle.placement.Setting": {
+      "title": "Setting",
+      "x-ess-name": "spindle.placement.Setting",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "spindle.placement.TargetId": {
+      "title": "TargetId",
+      "x-ess-name": "spindle.placement.TargetId",
+      "x-ess-kind": "newtype",
+      "type": "string"
+    }
+  }
+}

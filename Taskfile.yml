@@ -1,5 +1,9 @@
 version: '3'
 
+vars:
+  OBSERVE_ROOTS: --root spindle.observe.Deployment --root spindle.observe.Catalogue --root spindle.observe.Sample --root spindle.observe.StateChange
+  OBSERVE_SCHEMAS: ess/generated/jsonschema/schema/types
+
 tasks:
   check:
     desc: The repository gate
@@ -7,6 +11,9 @@ tasks:
       - aep plan artifact validate
       - ess specify validate --path ess
       - ess specify validate --path examples/rally/ess
+      - task: check:the_observe_domain_validates
+      - task: check:the_generated_types_have_no_drift
+      - task: check:every_fixture_answer_validates_against_its_schema
       - cargo fmt --all -- --check
       - cargo clippy --workspace --all-targets --locked -- -D warnings
       - cargo test --workspace --locked --no-fail-fast
@@ -20,3 +27,38 @@ tasks:
     desc: Release build of b10x-spindle
     cmds:
       - cargo build --locked --release -p spindle-cli
+
+  generate:observe:
+    desc: Regenerate the observe API schema and types from ess/
+    cmds:
+      - ess generate --path ess --kind schema --schema-id-base https://beyond10x.github.io/spindle/schema/ --out ess/generated/jsonschema
+      - ess generate types --path ess --target rust --package spindle-observe-api --names short {{.OBSERVE_ROOTS}} --out crates/spindle-observe-api
+      - ess generate types --path ess --target typescript --names short {{.OBSERVE_ROOTS}} --out ui/src/api/generated
+
+  check:the_observe_domain_validates:
+    desc: spindle.observe validates and declares every API answer
+    cmds:
+      - ess specify validate --path ess --strict-requires
+      - ess generate types --path ess --target typescript --names short {{.OBSERVE_ROOTS}} --out ui/src/api/generated --check
+
+  check:the_generated_types_have_no_drift:
+    desc: The committed schema, Rust and TypeScript projections equal a fresh generation
+    cmds:
+      - ess generate --path ess --kind schema --schema-id-base https://beyond10x.github.io/spindle/schema/ --out ess/generated/jsonschema --check
+      - ess generate types --path ess --target rust --package spindle-observe-api --names short {{.OBSERVE_ROOTS}} --out crates/spindle-observe-api --check
+      - ess generate types --path ess --target typescript --names short {{.OBSERVE_ROOTS}} --out ui/src/api/generated --check
+      - cargo check --locked --manifest-path crates/spindle-observe-api/Cargo.toml --target-dir target/observe-api
+
+  check:every_fixture_answer_validates_against_its_schema:
+    desc: Every observe fixture validates against the schema of its answer
+    vars:
+      BUNDLES:
+        sh: mktemp -d
+    cmds:
+      - defer: rm -rf {{.BUNDLES}}
+      - for: [Deployment, Catalogue, Sample, StateChange]
+        cmd: ess generate schema import-document --path {{.OBSERVE_SCHEMAS}}/spindle.observe.{{.ITEM}}.schema.json --root spindle.observe.{{.ITEM}}.document --dialect draft-2020-12 --out {{.BUNDLES}}/{{.ITEM}}.json
+      - ess generate schema validate-bundle --bundle {{.BUNDLES}}/Deployment.json --root spindle.observe.Deployment.document ess/fixtures/observe/deployment.json
+      - ess generate schema validate-bundle --bundle {{.BUNDLES}}/Catalogue.json --root spindle.observe.Catalogue.document ess/fixtures/observe/catalogue/*.json
+      - ess generate schema validate-bundle --bundle {{.BUNDLES}}/Sample.json --root spindle.observe.Sample.document ess/fixtures/observe/samples/*/*.json
+      - ess generate schema validate-bundle --bundle {{.BUNDLES}}/StateChange.json --root spindle.observe.StateChange.document ess/fixtures/observe/state/*.json

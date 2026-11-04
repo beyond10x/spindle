@@ -1,0 +1,265 @@
+{
+  "component": "rally-table",
+  "counters": [
+    {
+      "name": "command.rally.table.MovePaddle.no-such-match",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.MovePaddle.match-over",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.MovePaddle.at-edge",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.MovePaddle.west-up",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.MovePaddle.west-down",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.MovePaddle.east-up",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.MovePaddle.east-down",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.OpenMatch.target-too-low",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.OpenMatch.opened",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.Tick.no-such-match",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.Tick.match-over",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.Tick.served",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.Tick.east-wins",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.Tick.east-scores",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.Tick.west-wins",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.Tick.west-scores",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.Tick.west-returns",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.Tick.east-returns",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.Tick.top-wall",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.Tick.bottom-wall",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.Tick.moved-east-up",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.Tick.moved-east-down",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.Tick.moved-west-up",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.Tick.moved-west-down",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.MovePaddle.duration_us",
+      "kind": "histogram",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.OpenMatch.duration_us",
+      "kind": "histogram",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.table.Tick.duration_us",
+      "kind": "histogram",
+      "source": "kernel"
+    },
+    {
+      "name": "event.rally.table.BallMoved.appended",
+      "kind": "counter",
+      "source": "store"
+    },
+    {
+      "name": "event.rally.table.MatchWon.appended",
+      "kind": "counter",
+      "source": "store"
+    },
+    {
+      "name": "event.rally.table.PaddleMoved.appended",
+      "kind": "counter",
+      "source": "store"
+    },
+    {
+      "name": "event.rally.table.PointScored.appended",
+      "kind": "counter",
+      "source": "store"
+    },
+    {
+      "name": "store.rows_written",
+      "kind": "counter",
+      "source": "store"
+    },
+    {
+      "name": "store.bytes_written",
+      "kind": "counter",
+      "source": "store"
+    },
+    {
+      "name": "binding.east-moves.sent",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.east-moves.delivered",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.east-moves.redelivered",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.east-moves.dropped",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.east-watches.sent",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.east-watches.delivered",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.east-watches.redelivered",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.east-watches.dropped",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.west-moves.sent",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.west-moves.delivered",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.west-moves.redelivered",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.west-moves.dropped",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.west-watches.sent",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.west-watches.delivered",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.west-watches.redelivered",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.west-watches.dropped",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "timer.tick.fired",
+      "kind": "counter",
+      "source": "timer"
+    },
+    {
+      "name": "timer.tick.late",
+      "kind": "counter",
+      "source": "timer"
+    },
+    {
+      "name": "timer.tick.dropped",
+      "kind": "counter",
+      "source": "timer"
+    }
+  ]
+}

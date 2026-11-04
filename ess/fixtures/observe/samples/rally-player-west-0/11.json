@@ -1,0 +1,133 @@
+{
+  "instance_id": "rally-player-west-0",
+  "sequence": 11,
+  "at": "2026-11-04T10:00:12Z",
+  "period_ms": 1000,
+  "counters": [
+    {
+      "name": "command.rally.west.ObserveBall.first-sight",
+      "value": 1
+    },
+    {
+      "name": "command.rally.west.ObserveBall.up",
+      "value": 2
+    },
+    {
+      "name": "command.rally.west.ObserveBall.down",
+      "value": 3
+    },
+    {
+      "name": "command.rally.west.ObserveBall.hold",
+      "value": 6
+    },
+    {
+      "name": "event.rally.west.BallSeen.appended",
+      "value": 7
+    },
+    {
+      "name": "event.rally.west.PaddleMoveRequested.appended",
+      "value": 5
+    },
+    {
+      "name": "store.rows_written",
+      "value": 12
+    },
+    {
+      "name": "store.bytes_written",
+      "value": 1152
+    },
+    {
+      "name": "binding.west-moves.sent",
+      "value": 5
+    },
+    {
+      "name": "binding.west-moves.delivered",
+      "value": 0
+    },
+    {
+      "name": "binding.west-moves.redelivered",
+      "value": 0
+    },
+    {
+      "name": "binding.west-moves.dropped",
+      "value": 0
+    },
+    {
+      "name": "binding.west-watches.sent",
+      "value": 0
+    },
+    {
+      "name": "binding.west-watches.delivered",
+      "value": 12
+    },
+    {
+      "name": "binding.west-watches.redelivered",
+      "value": 0
+    },
+    {
+      "name": "binding.west-watches.dropped",
+      "value": 0
+    }
+  ],
+  "histograms": [
+    {
+      "name": "command.rally.west.ObserveBall.duration_us",
+      "bounds": [
+        50,
+        100,
+        250,
+        500,
+        1000
+      ],
+      "counts": [
+        7,
+        3,
+        2,
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "recent": [
+    {
+      "at": "2026-11-04T10:00:12.011Z",
+      "command": "rally.west.ObserveBall",
+      "outcome": "hold",
+      "events": [
+        "rally.west.BallSeen"
+      ]
+    },
+    {
+      "at": "2026-11-04T10:00:11.011Z",
+      "command": "rally.west.ObserveBall",
+      "outcome": "down",
+      "events": [
+        "rally.west.PaddleMoveRequested"
+      ]
+    },
+    {
+      "at": "2026-11-04T10:00:10.011Z",
+      "command": "rally.west.ObserveBall",
+      "outcome": "hold",
+      "events": [
+        "rally.west.BallSeen"
+      ]
+    },
+    {
+      "at": "2026-11-04T10:00:09.011Z",
+      "command": "rally.west.ObserveBall",
+      "outcome": "up",
+      "events": [
+        "rally.west.PaddleMoveRequested"
+      ]
+    }
+  ],
+  "resources": {
+    "cpu_seconds": 0.012,
+    "memory_bytes": 20177715,
+    "cpu_share": 0.001,
+    "memory_share": 0.3007
+  },
+  "dropped_frames": 0
+}

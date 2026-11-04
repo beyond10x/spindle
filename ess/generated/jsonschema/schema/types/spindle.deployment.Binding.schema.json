@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.deployment.Binding.schema.json",
+  "$ref": "#/$defs/spindle.deployment.Binding",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "7b7a73a462a8f72175be1029a8e0d7b3d466b6c4c89cb0c694ac14a157a4d594",
+    "contract_digest": "slice-sha256/2:f3401fa2a10b19e36c05f702a850bb8c89553e73bfa0c50837ce2b5c56aac872",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.deployment.Binding": {
+      "title": "Binding",
+      "x-ess-name": "spindle.deployment.Binding",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "capability": {
+          "$ref": "#/$defs/spindle.deployment.CapabilityName"
+        },
+        "implementation": {
+          "$ref": "#/$defs/spindle.deployment.ImplementationName"
+        }
+      },
+      "required": [
+        "capability",
+        "implementation"
+      ],
+      "additionalProperties": false
+    },
+    "spindle.deployment.CapabilityName": {
+      "title": "CapabilityName",
+      "x-ess-name": "spindle.deployment.CapabilityName",
+      "x-ess-kind": "newtype",
+      "type": "string"
+    },
+    "spindle.deployment.ImplementationName": {
+      "title": "ImplementationName",
+      "x-ess-name": "spindle.deployment.ImplementationName",
+      "x-ess-kind": "newtype",
+      "type": "string"
+    }
+  }
+}
