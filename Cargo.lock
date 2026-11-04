@@ -815,6 +815,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "spindle-firecracker"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "libc",
+ "serde_json",
+ "spindle-capability",
+ "spindle-spec",
+ "spindle-target",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "spindle-kernel"
 version = "0.1.0"
 dependencies = [
