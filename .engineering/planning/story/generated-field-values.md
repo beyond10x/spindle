@@ -2,12 +2,24 @@
 format: aep.planning-md/3
 id: story:generated-field-values
 kind: story
-status: draft
+status: active
 title: Generated field values
 relations:
 - serves: vision:spindle
 - decomposes: epic:m0-run-in-process
-revision: 1
+scope:
+- confidence: inferred
+  path: crates/spindle-kernel/src/mint.rs
+- confidence: cited
+  path: crates/spindle-kernel/src/supported.rs
+- confidence: inferred
+  path: crates/spindle-kernel/src/values.rs
+- confidence: inferred
+  path: crates/spindle-kernel/tests/generated.rs
+revision: 5
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-04T21:50:10Z", actor: "human:timo", revision: 2}
+- {from: "proposed", to: "active", at: "2026-11-04T21:50:11Z", actor: "human:timo", revision: 3}
 ---
 # Generated field values
 
