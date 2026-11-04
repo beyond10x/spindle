@@ -3,7 +3,7 @@ title: Observe
 sidebar_position: 6
 description: What a running Spindle instance counts without the specification saying anything about metrics, the observe API contract and the observe UI.
 lede: Every effect of an instance passes through the runtime, so the runtime counts it, and the counters are derived from the specification like capabilities.
-source: crates/spindle-telemetry/src/lib.rs, crates/spindle-telemetry/tests, crates/spindle-target/src/sample.rs, crates/spindle-target/tests/sampling.rs, ess/domains/observe.yaml, Taskfile.yml, ui/, docs/design/observe.md
+source: crates/spindle-telemetry/src/lib.rs, crates/spindle-target/src/process.rs, crates/spindle-qemu/src/lib.rs, crates/spindle-firecracker/src/lib.rs, crates/spindle-telemetry/tests, crates/spindle-target/src/sample.rs, crates/spindle-target/tests/sampling.rs, ess/domains/observe.yaml, Taskfile.yml, ui/, docs/design/observe.md
 ---
 
 ## Counters
@@ -38,6 +38,26 @@ Each launcher samples what an instance costs the host from `/proc`: CPU seconds 
 time) and resident memory, and its share of the vCPUs and memory the instance asked for. A process
 instance without a limit reports no quota.
 
+## Telemetry
+
+An instance that starts the `spindle-telemetry` sender sends one `spindle-telemetry/1` frame every
+sample period (1 s by default) to the endpoint its launcher gives it in `SPINDLE_TELEMETRY`:
+
+| Target | Endpoint |
+|---|---|
+| process | `unix:<path>`, a Unix socket the caller listens on (`ProcessLauncher::with_telemetry`) |
+| QEMU microVM | `vsock:2:<port>`, a host vsock port; each guest gets a `vhost-vsock-device` (`QemuLauncher::with_telemetry`) |
+| Firecracker | `vsock:2:<port>`, forwarded by Firecracker to the Unix socket `vsock.sock_<port>` in the instance directory (`Firecracker::with_telemetry`) |
+
+A frame is one line of JSON with the shape of `spindle.observe.Sample`: the instance id, a
+sequence number, the cumulative counters and histogram buckets, the last answers and the
+instance's own readings (CPU seconds and memory in use, from `/proc/self` for a process and from
+`/proc/stat` and `/proc/meminfo` inside a guest). Counters are cumulative, so a lost frame loses
+no count. The sender runs on its own thread: with no collector, or a slow one, it drops frames and
+reports the number dropped in the next frame it delivers, and a command never waits for it.
+A frame counts as sent once it is written to the socket, which does not prove a collector read it.
+A Unix socket path must be UTF-8 and at most 107 bytes; the launcher refuses any other.
+
 ## The observe API and UI
 
 Spindle's own specification has a domain `spindle.observe` for the answers of the observe API:
@@ -51,8 +71,8 @@ those fixture answers: `pnpm dev` in `ui/` serves it with the fixtures on `127.0
 prints the URL to open, with the development token `dev`.
 
 :::caution[Planned]
-Nothing serves the observe API yet. Sending samples from each instance (`spindle-telemetry/1`
-frames over a Unix socket or vsock) and `b10x-spindle deploy`, a control process that launches the
+Nothing serves the observe API yet, and `b10x-spindle` does not start the sender yet: a component
+process that reports its telemetry, and `b10x-spindle deploy`, a control process that launches the
 instances, collects their samples, serves the API on `127.0.0.1` and embeds the UI, are planned.
 Until then the UI shows fixtures, not a running system. See [status](/docs/status) and
 [`docs/design/observe.md`](https://github.com/beyond10x/spindle/blob/main/docs/design/observe.md).

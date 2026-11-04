@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::catalogue::{Catalogue, Key, Kind};
 use crate::port::{Carried, Failure, Outcome, Record, Telemetry, Timed};
@@ -66,7 +66,7 @@ pub struct Snapshot {
 }
 
 /// One counter's value.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CounterValue {
     /// Its name.
     pub name: String,
@@ -75,7 +75,7 @@ pub struct CounterValue {
 }
 
 /// One histogram's buckets.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistogramValue {
     /// Its name.
     pub name: String,

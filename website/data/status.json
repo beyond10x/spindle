@@ -130,6 +130,13 @@
     },
     {
       "area": "Observe",
+      "detail": "An instance that starts the spindle-telemetry sender sends its cumulative counters and its own resource readings as spindle-telemetry/1 frames every second, over a Unix socket for a process and vsock for QEMU and Firecracker, and drops and counts frames no collector takes.",
+      "href": "/docs/concepts/observe",
+      "label": "Telemetry transport",
+      "status": "shipped"
+    },
+    {
+      "area": "Observe",
       "detail": "The spindle.observe domain specifies the API answers; their JSON Schema, Rust and TypeScript types are generated and drift-checked.",
       "href": "/docs/concepts/observe",
       "label": "The observe API contract",
@@ -175,13 +182,6 @@
       "detail": "The suite ESS synthesises from Spindle's own specification runs in task check.",
       "href": "/docs/concepts/specification",
       "label": "Self-conformance",
-      "status": "planned"
-    },
-    {
-      "area": "Observe",
-      "detail": "Each instance sends its counters and resource readings as spindle-telemetry/1 frames over a Unix socket or vsock.",
-      "href": "/docs/concepts/observe",
-      "label": "Telemetry transport",
       "status": "planned"
     },
     {

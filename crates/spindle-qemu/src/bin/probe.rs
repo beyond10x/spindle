@@ -36,6 +36,16 @@ enum Probe {
     },
     /// Print `cpus=<n>`, `mem_total_kib=<n>` and the launch plan's `instance=<id>`.
     Facts,
+    /// Count one command, start the telemetry sender `SPINDLE_TELEMETRY` names, and exit once it
+    /// has sent this many frames.
+    Telemetry {
+        /// The frames to send.
+        #[arg(long, default_value_t = 3)]
+        frames: u64,
+        /// Give up after this many seconds.
+        #[arg(long, default_value_t = 60)]
+        within: u64,
+    },
     /// Exit with this status.
     Exit {
         /// The exit status.
@@ -52,6 +62,9 @@ fn main() -> ExitCode {
             within,
         } => report(call(address, &message, Duration::from_secs(within))),
         Probe::Facts => report(facts()),
+        Probe::Telemetry { frames, within } => {
+            report(telemetry(frames, Duration::from_secs(within)))
+        }
         Probe::Exit { code } => ExitCode::from(code),
     }
 }
@@ -145,5 +158,46 @@ fn facts() -> Result<(), String> {
         "instance={}",
         plan["instance_id"].as_str().unwrap_or_default()
     );
+    Ok(())
+}
+
+fn telemetry(frames: u64, within: Duration) -> Result<(), String> {
+    use spindle_telemetry::{Catalogue, Counter, Counters, Key, Kind, Outcome, Record, Source};
+
+    let command = "probe.Ping";
+    let counters = std::sync::Arc::new(Counters::new(Catalogue {
+        component: "probe".to_owned(),
+        counters: vec![Counter {
+            name: format!("command.{command}.ok"),
+            kind: Kind::Counter,
+            source: Source::Kernel,
+            key: Key::Outcome {
+                command: command.to_owned(),
+                outcome: "ok".to_owned(),
+            },
+        }],
+    }));
+    spindle_telemetry::Telemetry::record(
+        counters.as_ref(),
+        Record::Command {
+            command,
+            outcome: Outcome::Declared("ok"),
+            elapsed: Duration::from_micros(5),
+        },
+    );
+    let sender =
+        spindle_telemetry::Sender::from_env(counters)?.ok_or("no SPINDLE_TELEMETRY is set")?;
+    let sent = sender.wait_until_sent(frames, within);
+    println!(
+        "telemetry sent={} dropped={}",
+        sender.sent(),
+        sender.dropped()
+    );
+    if !sent {
+        return Err(format!("{frames} frames were not sent within {within:?}"));
+    }
+    // The guest powers off when this probe exits; give the last frame time to leave it.
+    std::thread::sleep(Duration::from_secs(1));
+    sender.stop();
     Ok(())
 }

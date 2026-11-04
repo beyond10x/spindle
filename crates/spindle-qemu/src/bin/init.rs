@@ -3,8 +3,9 @@
 //! Mounts `/dev`, `/proc` and `/sys`; loads the modules listed in `/etc/spindle/modules`, each
 //! with the `<module>.<param>=` values of the kernel command line; brings up `lo` and gives `eth0`
 //! the `spindle.addr=<ipv4>/<prefix>` address of the kernel command line; runs the command the
-//! kernel passed after `--` as its child, relaying each line it writes with the prefix `guest| `;
-//! prints `spindle-init: exit code=<n>` or
+//! kernel passed after `--` as its child (with `SPINDLE_INSTANCE_ID` and, when the launcher gave
+//! one, the telemetry endpoint `SPINDLE_TELEMETRY` from the launch plan), relaying each line it
+//! writes with the prefix `guest| `; prints `spindle-init: exit code=<n>` or
 //! `spindle-init: exit signal=<n>` on the console; and powers the guest off. PID 1 never exits,
 //! because the kernel panics when it does.
 
@@ -76,6 +77,7 @@ fn run(argv: Vec<String>) -> String {
         .env_clear()
         .env("PATH", "/bin")
         .env("HOME", "/")
+        .envs(launch_variables())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn();
@@ -110,6 +112,25 @@ fn run(argv: Vec<String>) -> String {
             format!("code={NO_COMMAND}")
         }
     }
+}
+
+/// The variables the guest command gets from the launch plan: `SPINDLE_INSTANCE_ID`, and
+/// `SPINDLE_TELEMETRY` when the launcher gave the guest a telemetry endpoint.
+fn launch_variables() -> Vec<(String, String)> {
+    let Ok(text) = fs::read_to_string(spindle_qemu::LAUNCH_PLAN) else {
+        return Vec::new();
+    };
+    let Ok(plan) = serde_json::from_str::<serde_json::Value>(&text) else {
+        say("the launch plan is not JSON");
+        return Vec::new();
+    };
+    [
+        ("instance_id", "SPINDLE_INSTANCE_ID"),
+        ("telemetry", spindle_telemetry::ENV_TELEMETRY),
+    ]
+    .into_iter()
+    .filter_map(|(field, name)| Some((name.to_owned(), plan[field].as_str()?.to_owned())))
+    .collect()
 }
 
 /// Copy one output stream of the guest command to the console, each line prefixed with

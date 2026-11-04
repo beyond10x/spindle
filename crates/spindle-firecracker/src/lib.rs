@@ -60,6 +60,18 @@ pub const FIRECRACKER_INSERTS: &str = " pci=off virtio_mmio.device=4K@0xc0001000
 /// terminating NUL and what Firecracker inserts.
 pub const MAX_COMMAND_LINE: usize = 2048 - 1 - FIRECRACKER_INSERTS.len();
 
+/// What Firecracker 1.17 inserts besides [`FIRECRACKER_INSERTS`] for the vsock device of a launcher
+/// with telemetry ([`Firecracker::with_telemetry`]), measured on the guest console.
+pub const TELEMETRY_INSERTS: &str = " virtio_mmio.device=4K@0xc0002000:6";
+
+/// The vsock context id of every guest: each Firecracker has a vsock device of its own, so the id
+/// need not be unique on the host.
+pub const GUEST_CID: u32 = 3;
+
+/// The Unix socket in an instance directory that backs its vsock device. A guest connecting to
+/// port `p` of the host reaches the listener on `<it>_<p>`.
+pub const VSOCK_SOCKET: &str = "vsock.sock";
+
 /// The memory a guest needs besides its initramfs: kernel, page tables and the guest program.
 pub const BASE_MEMORY_MIB: u64 = 64;
 
@@ -148,6 +160,7 @@ pub struct Firecracker {
     namespace: Option<Arc<Namespace>>,
     taps: u32,
     live: Addresses,
+    telemetry: Option<u32>,
 }
 
 impl Firecracker {
@@ -185,7 +198,17 @@ impl Firecracker {
             namespace: None,
             taps: 0,
             live: Addresses::default(),
+            telemetry: None,
         }
+    }
+
+    /// The same launcher giving every guest a vsock device and `vsock:2:<port>` as its telemetry
+    /// endpoint (`SPINDLE_TELEMETRY` on the kernel command line). Firecracker forwards a guest
+    /// connection to the Unix socket [`FirecrackerVm::telemetry_socket`] names, where the caller
+    /// listens.
+    pub fn with_telemetry(mut self, port: u32) -> Self {
+        self.telemetry = Some(port);
+        self
     }
 
     pub fn kind(&self) -> TargetKind {
@@ -227,7 +250,7 @@ impl Firecracker {
         }
         validate_instance_id(&plan.instance_id)?;
         let address = guest_address(plan.listen)?;
-        let boot_args = kernel_command_line(plan)?;
+        let boot_args = telemetry_command_line(plan, self.telemetry)?;
         for (what, path) in [
             ("firecracker binary", &self.binary),
             ("guest kernel", kernel),
@@ -353,6 +376,9 @@ impl Firecracker {
             namespace,
             started,
             request: plan.request,
+            telemetry_socket: self
+                .telemetry
+                .map(|port| directory.join(format!("{VSOCK_SOCKET}_{port}"))),
         };
 
         let handle = File::open(directory).map_err(|source| {
@@ -387,6 +413,16 @@ impl Firecracker {
                 "guest_mac": format!("06:00:{a:02X}:{b:02X}:{c:02X}:{d:02X}"),
             }),
         )?;
+        if self.telemetry.is_some() {
+            api::put(
+                &socket,
+                "/vsock",
+                &serde_json::json!({
+                    "guest_cid": GUEST_CID,
+                    "uds_path": VSOCK_SOCKET,
+                }),
+            )?;
+        }
         api::put(
             &socket,
             "/actions",
@@ -439,11 +475,18 @@ pub struct FirecrackerVm {
     namespace: Arc<Namespace>,
     started: Instant,
     request: Resources,
+    telemetry_socket: Option<PathBuf>,
 }
 
 impl FirecrackerVm {
     pub fn instance_id(&self) -> &str {
         &self.instance_id
+    }
+
+    /// Where the caller listens for the guest's telemetry: `<instance dir>/vsock.sock_<port>`;
+    /// `None` for a launcher without telemetry.
+    pub fn telemetry_socket(&self) -> Option<&Path> {
+        self.telemetry_socket.as_deref()
     }
 
     /// The guest's serial console and Firecracker's own messages.
@@ -557,6 +600,9 @@ impl FirecrackerVm {
         if let Some(tap) = self.tap.take() {
             let _ = self.namespace.remove_tap(&tap);
             let _ = std::fs::remove_file(&self.socket);
+            if let Some(parent) = self.socket.parent() {
+                let _ = std::fs::remove_file(parent.join(VSOCK_SOCKET));
+            }
             self.live
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner())
@@ -681,6 +727,17 @@ fn carries(c: char) -> bool {
 /// The kernel command line `plan` boots with, before Firecracker inserts
 /// [`FIRECRACKER_INSERTS`]; refused when it cannot carry the plan.
 pub fn kernel_command_line(plan: &LaunchPlan) -> Result<String, LaunchError> {
+    telemetry_command_line(plan, None)
+}
+
+/// The kernel command line `plan` boots with when its guest reports telemetry to vsock port
+/// `telemetry` of the host: `SPINDLE_TELEMETRY=vsock:2:<port>` follows `SPINDLE_LISTEN`, and the
+/// limit is [`MAX_COMMAND_LINE`] less [`TELEMETRY_INSERTS`]. Without a port it is
+/// [`kernel_command_line`].
+pub fn telemetry_command_line(
+    plan: &LaunchPlan,
+    telemetry: Option<u32>,
+) -> Result<String, LaunchError> {
     let address = guest_address(plan.listen)?;
     let cmdline = match &plan.artifact {
         Artifact::Guest { cmdline, .. } => cmdline.trim(),
@@ -710,6 +767,12 @@ pub fn kernel_command_line(plan: &LaunchPlan) -> Result<String, LaunchError> {
             plan.listen.to_string(),
         ),
     ];
+    if let Some(port) = telemetry {
+        variables.push((
+            spindle_telemetry::ENV_TELEMETRY.to_string(),
+            spindle_telemetry::Endpoint::host_vsock(port).to_string(),
+        ));
+    }
     let mut peers: BTreeMap<String, (&str, Vec<String>)> = BTreeMap::new();
     for peer in &plan.peers {
         let name = format!(
@@ -775,12 +838,18 @@ pub fn kernel_command_line(plan: &LaunchPlan) -> Result<String, LaunchError> {
         args.push(cmdline.to_string());
     }
     let line = args.join(" ");
-    if line.len() > MAX_COMMAND_LINE {
+    let inserts = FIRECRACKER_INSERTS.len()
+        + if telemetry.is_some() {
+            TELEMETRY_INSERTS.len()
+        } else {
+            0
+        };
+    let most = 2048 - 1 - inserts;
+    if line.len() > most {
         return Err(LaunchError::InvalidPlan(format!(
-            "the kernel command line is {} bytes; the most is {MAX_COMMAND_LINE} (2048 less the \
-             NUL and the {} bytes Firecracker inserts)",
+            "the kernel command line is {} bytes; the most is {most} (2048 less the NUL and the \
+             {inserts} bytes Firecracker inserts)",
             line.len(),
-            FIRECRACKER_INSERTS.len()
         )));
     }
     Ok(line)

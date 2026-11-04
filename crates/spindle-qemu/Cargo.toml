@@ -22,6 +22,7 @@ libc = "0.2.191"
 ruzstd = "0.8.2"
 serde_json.workspace = true
 spindle-target = { path = "../spindle-target" }
+spindle-telemetry = { path = "../spindle-telemetry", default-features = false }
 thiserror.workspace = true
 
 [dev-dependencies]
