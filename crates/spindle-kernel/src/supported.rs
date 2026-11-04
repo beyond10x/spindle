@@ -38,20 +38,42 @@ pub(crate) fn check(ir: &EssIr, command: &ResolvedCommand) -> Result<(), Execute
                 entity.name, field.name, entity.identity.type_ref
             ));
         }
-        for field in outcome
-            .sets
+        // `{generated: true}` in the top-level field `instance:` names, on the event it names, is
+        // the identity mint; anywhere else it is a generated value of its own.
+        let creating = minted.and(
+            match outcome.subject.as_ref().map(|subject| &subject.instance) {
+                Some(ResolvedInstance::Observed { event, .. }) => Some(event),
+                _ => None,
+            },
+        );
+        let identity_fields = outcome
+            .payload
             .iter()
-            .chain(outcome.payload.iter().flat_map(|payload| &payload.fields))
-            .chain(&outcome.error_payload)
-        {
-            // `{generated: true}` in a payload field of the minted identity's name is the mint.
+            .filter(|payload| creating.is_some_and(|event| *event == payload.event))
+            .flat_map(|payload| &payload.fields);
+        let other_fields = outcome
+            .payload
+            .iter()
+            .filter(|payload| creating.is_none_or(|event| *event != payload.event))
+            .flat_map(|payload| &payload.fields);
+        for field in identity_fields {
             if matches!(field.value, ResolvedPayloadValue::Generated { .. })
                 && minted.is_some_and(|(_, identity)| identity.name == field.target)
                 && field.conversion.is_none()
             {
                 continue;
             }
-            if let Some(what) = value(field) {
+            if let Some(what) = value(ir, field) {
+                return refuse(&what);
+            }
+        }
+        for field in outcome
+            .sets
+            .iter()
+            .chain(other_fields)
+            .chain(&outcome.error_payload)
+        {
+            if let Some(what) = value(ir, field) {
                 return refuse(&what);
             }
         }
@@ -129,8 +151,15 @@ fn shape(outcome: &ResolvedOutcome) -> Option<&'static str> {
     }
 }
 
-/// The value source, named, when the kernel does not read it.
-fn value(field: &ResolvedPayloadField) -> Option<String> {
+/// The value source, named, when the kernel does not read it. A generated value is read where
+/// its type is one the runtime mints ([`crate::mint::minted`]), and the refusal of one that is
+/// not names the field and its type.
+fn value(ir: &EssIr, field: &ResolvedPayloadField) -> Option<String> {
+    let mintable = |present: bool| {
+        (!crate::mint::absent(&field.target_type, present)
+            && crate::mint::minted(ir, &field.target_type, present).is_none())
+        .then(|| crate::mint::unmintable(&field.target, &field.target_type))
+    };
     if let Some(conversion) = &field.conversion {
         return Some(format!(
             "the conversion `{conversion}` into `{}`",
@@ -144,8 +173,15 @@ fn value(field: &ResolvedPayloadField) -> Option<String> {
         | ResolvedPayloadValue::SubjectState { .. }
         | ResolvedPayloadValue::Increment { .. }
         | ResolvedPayloadValue::EmptyList
+        | ResolvedPayloadValue::PayloadRead { .. }
         | ResolvedPayloadValue::Cleared => None,
-        ResolvedPayloadValue::Struct { fields } => fields.iter().find_map(value),
+        ResolvedPayloadValue::Generated { present } => mintable(*present),
+        ResolvedPayloadValue::InputOrGenerated {
+            otherwise: None, ..
+        } => mintable(false),
+        ResolvedPayloadValue::Struct { fields } => {
+            fields.iter().find_map(|member| value(ir, member))
+        }
         other => Some(format!("the value source {}", other.describe())),
     }
 }

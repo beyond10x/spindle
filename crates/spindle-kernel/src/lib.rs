@@ -54,7 +54,7 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 pub use decider::{Decider, External, NoExternals};
-pub use execute::{execute, execute_minting};
+pub use execute::{execute, execute_at, execute_minting};
 pub use mint::{Identity, Mint, Uuid, UuidV4};
 pub use sqlite::SqliteStore;
 pub use store::{Change, MemoryStore, Row, Store, StoreError, Stored};

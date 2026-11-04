@@ -36,14 +36,22 @@ fn an_environment_without_identity_mint_refuses_such_a_specification() {
         .expect("a minted identity requires identity.mint");
     assert_eq!(
         reasons.iter().collect::<Vec<_>>(),
-        vec![&Reason {
-            kind: "outcome",
-            name: "mint.ticket.OpenTicket/opened".to_owned(),
-            because: "creates `mint.ticket.Ticket` under an identity `ticket_id` neither the \
-                      input nor the outcome determines"
-                .to_owned(),
-        }],
-        "only the creation that mints is a reason, not the one named by its input"
+        vec![
+            &Reason {
+                kind: "outcome",
+                name: "mint.ticket.OpenTicket/opened".to_owned(),
+                because: "creates `mint.ticket.Ticket` under an identity `ticket_id` neither the \
+                          input nor the outcome determines"
+                    .to_owned(),
+            },
+            &Reason {
+                kind: "outcome",
+                name: "mint.ticket.OpenTicket/opened".to_owned(),
+                because: "mints `mint.ticket.TicketQueued.ticket_id`".to_owned(),
+            },
+        ],
+        "only the creation that mints is a reason, not the one named by its input; \
+         `TicketQueued.ticket_id` is a generated value of its own"
     );
 
     let without = environment("\"store.durable\" = [\"memory\"]\n");

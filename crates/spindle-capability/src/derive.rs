@@ -6,7 +6,7 @@ use std::fmt;
 use ess_compiler::EssIr;
 use ess_compiler::ir::{
     ResolvedComponent, ResolvedCondition, ResolvedEffect, ResolvedInstance, ResolvedOutcome,
-    ResolvedPayloadValue,
+    ResolvedPayloadField, ResolvedPayloadValue,
 };
 use ess_domain::component::Reach;
 use ess_domain::view::Consistency;
@@ -169,6 +169,14 @@ pub fn derive(ir: &EssIr, component: Option<&str>) -> Option<Requirements> {
                     ),
                 );
             }
+            for (capability, because) in generated_mints(ir, outcome) {
+                need(
+                    capability,
+                    "outcome",
+                    format!("{name}/{}", outcome.name),
+                    because,
+                );
+            }
             let cause = match &outcome.condition {
                 ResolvedCondition::External { cause }
                 | ResolvedCondition::ExternalWhen { cause, .. }
@@ -265,6 +273,92 @@ fn minted_identity(ir: &EssIr, outcome: &ResolvedOutcome) -> Option<(String, Str
             field.name.clone(),
         )),
         Some(_) => None,
+    }
+}
+
+/// Every field `outcome` leaves to the runtime besides a minted creation identity, with the
+/// capability that supplies its value and why: `{generated: true}` in `sets:`, a payload or an
+/// error payload, a struct member marked so, and the `else:` of `{input: f, else: {generated:
+/// true}}`. The rule is the kernel's own, [`crate::mint::minted`]: a capability is named exactly
+/// where the kernel mints, none for a field it leaves absent ([`crate::mint::absent`]) or
+/// refuses by name.
+///
+/// The minted creation identity is the top-level field `instance:` names on the event
+/// `instance:` names, and only that (ESS `interpret::execute::emit`); a field of the same name
+/// anywhere else is a generated value of its own.
+fn generated_mints(ir: &EssIr, outcome: &ResolvedOutcome) -> Vec<(&'static str, String)> {
+    let mut mints = Vec::new();
+    let identity = minted_identity(ir, outcome).and_then(|(_, field)| {
+        let subject = outcome.subject.as_ref()?;
+        match &subject.instance {
+            ResolvedInstance::Observed { event, .. } => Some((event, field)),
+            ResolvedInstance::Supplied { .. } => None,
+        }
+    });
+    if let Some(subject) = &outcome.subject {
+        let entity = ir.entity(&subject.entity).name.to_string();
+        generated_in(ir, &entity, &outcome.sets, None, &mut mints);
+    }
+    for payload in &outcome.payload {
+        let event = payload.event.name().to_string();
+        let skip = identity
+            .as_ref()
+            .filter(|(creating, _)| **creating == payload.event)
+            .map(|(_, field)| field.as_str());
+        generated_in(ir, &event, &payload.fields, skip, &mut mints);
+    }
+    if let Some(error) = &outcome.error {
+        let error = error.name().to_string();
+        generated_in(ir, &error, &outcome.error_payload, None, &mut mints);
+    }
+    mints
+}
+
+/// The mints `fields` of `place` need; `identity` is the top-level field holding the minted
+/// creation identity, where these are the creating event's.
+fn generated_in(
+    ir: &EssIr,
+    place: &str,
+    fields: &[ResolvedPayloadField],
+    identity: Option<&str>,
+    mints: &mut Vec<(&'static str, String)>,
+) {
+    for field in fields {
+        let (present, fallback) = match &field.value {
+            ResolvedPayloadValue::Generated { .. }
+                if identity == Some(field.target.as_str()) && field.conversion.is_none() =>
+            {
+                continue;
+            }
+            ResolvedPayloadValue::Generated { present } => (*present, false),
+            ResolvedPayloadValue::InputOrGenerated {
+                otherwise: None, ..
+            } => (false, true),
+            ResolvedPayloadValue::Struct { fields } => {
+                let member = format!("{place}.{}", field.target);
+                generated_in(ir, &member, fields, None, mints);
+                continue;
+            }
+            _ => continue,
+        };
+        if crate::mint::absent(&field.target_type, present) {
+            continue;
+        }
+        let Some(shape) = crate::mint::minted(ir, &field.target_type, present) else {
+            continue;
+        };
+        let at = format!("`{place}.{}`", field.target);
+        let because = match (&shape, fallback) {
+            (crate::mint::Minted::Timestamp, false) => {
+                format!("stamps {at} with the current time")
+            }
+            (crate::mint::Minted::Timestamp, true) => {
+                format!("stamps {at} with the current time where the input sends none")
+            }
+            (_, false) => format!("mints {at}"),
+            (_, true) => format!("mints {at} where the input sends none"),
+        };
+        mints.push((shape.capability(), because));
     }
 }
 
