@@ -114,7 +114,8 @@ pub(crate) fn project(
 /// every store.
 ///
 /// A key ranks by its field's declared type, through `Optional` and newtypes: a `Timestamp` by the
-/// instant it names, not its spelling; a number by its value; anything else by its JSON value,
+/// instant it names, not its spelling, and one that names no instant below every one that does;
+/// a number by its exact value; anything else by its JSON value,
 /// text by its UTF-8 bytes. A field a row does not carry ranks below every value.
 pub(crate) fn order(ir: &EssIr, view: &ResolvedView, rows: &mut [(Value, Map<String, Value>)]) {
     let entity = ir.entity(&view.source);
@@ -175,24 +176,61 @@ fn rank(kind: Option<Primitive>, left: Option<&Value>, right: Option<&Value>) ->
     }
 }
 
+/// How two present values of one key rank. Every rule is a total order, as a sort needs: one
+/// rule that is not lets a third row reorder two others.
+///
+/// - `Timestamp`: a value that parses as an RFC 3339 instant ranks by that instant; one that does
+///   not (ESS admits any text as a `Timestamp`) ranks below every one that does, and two such
+///   values rank by their JSON value as below. Two spellings of one instant tie.
+/// - Numbers rank by their exact value, integer against float included, never through a lossy
+///   conversion.
+/// - Text ranks by its UTF-8 bytes, booleans `false` before `true`, and any other pair by the
+///   bytes of its JSON rendering.
 fn value(kind: Option<Primitive>, left: &Value, right: &Value) -> Ordering {
     if kind == Some(Primitive::Timestamp) {
         let instant = |value: &Value| value.as_str().and_then(Rfc3339Instant::parse_rfc3339);
-        if let (Some(left), Some(right)) = (instant(left), instant(right)) {
-            return left.cmp(&right);
+        match (instant(left), instant(right)) {
+            (Some(left), Some(right)) => return left.cmp(&right),
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (None, None) => {}
         }
     }
     match (left, right) {
-        (Value::Number(left), Value::Number(right)) => match (left.as_i64(), right.as_i64()) {
-            (Some(left), Some(right)) => left.cmp(&right),
-            _ => left
-                .as_f64()
-                .zip(right.as_f64())
-                .and_then(|(left, right)| left.partial_cmp(&right))
-                .unwrap_or(Ordering::Equal),
-        },
+        (Value::Number(left), Value::Number(right)) => number(left, right),
         (Value::String(left), Value::String(right)) => left.as_bytes().cmp(right.as_bytes()),
         (Value::Bool(left), Value::Bool(right)) => left.cmp(right),
         (left, right) => left.to_string().cmp(&right.to_string()),
+    }
+}
+
+/// Two JSON numbers by exact value. Integers compare as `i128`, which holds every `i64` and
+/// `u64`; an integer against a float compares through the float only where the rounded integer
+/// differs from it, since rounding keeps order; where they are equal the float is integral and
+/// compares exactly as an integer.
+fn number(left: &serde_json::Number, right: &serde_json::Number) -> Ordering {
+    let integer = |number: &serde_json::Number| {
+        number
+            .as_i64()
+            .map(i128::from)
+            .or_else(|| number.as_u64().map(i128::from))
+    };
+    let against = |integer: i128, float: Option<f64>| {
+        float.map_or(Ordering::Equal, |float| {
+            match (integer as f64).partial_cmp(&float) {
+                Some(Ordering::Equal) => integer.cmp(&(float as i128)),
+                ordering => ordering.unwrap_or(Ordering::Equal),
+            }
+        })
+    };
+    match (integer(left), integer(right)) {
+        (Some(left), Some(right)) => left.cmp(&right),
+        (Some(left), None) => against(left, right.as_f64()),
+        (None, Some(right)) => against(right, left.as_f64()).reverse(),
+        (None, None) => left
+            .as_f64()
+            .zip(right.as_f64())
+            .and_then(|(left, right)| left.partial_cmp(&right))
+            .unwrap_or(Ordering::Equal),
     }
 }
