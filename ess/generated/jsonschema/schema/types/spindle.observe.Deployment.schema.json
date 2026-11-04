@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.Deployment.schema.json",
+  "$ref": "#/$defs/spindle.observe.Deployment",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "7b7a73a462a8f72175be1029a8e0d7b3d466b6c4c89cb0c694ac14a157a4d594",
+    "contract_digest": "slice-sha256/2:2f81512860a874131328ad4d5b8908ffc328ef1cc95ce8e49ee1cf09f2a30005",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.Binding": {
+      "title": "Binding",
+      "description": "One binding of the system. A periodic binding fires a command of `to` on a schedule and has no `from` and no `event`; an event binding carries `event` from `from` to a command of `to`.",
+      "x-ess-name": "spindle.observe.Binding",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/spindle.observe.BindingKind"
+        },
+        "from": {
+          "description": "The component that publishes the event; absent for a periodic binding.",
+          "type": "string"
+        },
+        "to": {
+          "description": "The component that accepts the command.",
+          "type": "string"
+        },
+        "event": {
+          "description": "The qualified name of the event carried; absent for a periodic binding.",
+          "type": "string"
+        },
+        "command": {
+          "description": "The qualified name of the command the binding issues.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "to",
+        "command"
+      ],
+      "additionalProperties": false
+    },
+    "spindle.observe.BindingKind": {
+      "title": "BindingKind",
+      "x-ess-name": "spindle.observe.BindingKind",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "periodic",
+        "event"
+      ]
+    },
+    "spindle.observe.Component": {
+      "title": "Component",
+      "description": "One component of the system, with the domains it owns and what it accepts and serves.",
+      "x-ess-name": "spindle.observe.Component",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "domains": {
+          "description": "The qualified names of the domains the component owns.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "commands": {
+          "description": "The qualified names of the commands the component accepts.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "views": {
+          "description": "The qualified names of the views the component serves.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "domains",
+        "commands",
+        "views"
+      ],
+      "additionalProperties": false
+    },
+    "spindle.observe.DeployedInstance": {
+      "title": "DeployedInstance",
+      "description": "One instance of a component, where it was placed, what it requested and its state.",
+      "x-ess-name": "spindle.observe.DeployedInstance",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "instance_id": {
+          "$ref": "#/$defs/spindle.placement.InstanceId"
+        },
+        "component": {
+          "type": "string"
+        },
+        "target_kind": {
+          "$ref": "#/$defs/spindle.placement.TargetKind"
+        },
+        "target": {
+          "$ref": "#/$defs/spindle.placement.TargetId"
+        },
+        "state": {
+          "$ref": "#/$defs/spindle.placement.Instance.State"
+        },
+        "requested": {
+          "$ref": "#/$defs/spindle.placement.Resources"
+        },
+        "started_at": {
+          "description": "When the instance was launched; absent until it runs.",
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "instance_id",
+        "component",
+        "target_kind",
+        "target",
+        "state",
+        "requested"
+      ],
+      "additionalProperties": false
+    },
+    "spindle.observe.Deployment": {
+      "title": "Deployment",
+      "description": "The answer of `GET /api/deployment`, the system as deployed.",
+      "x-ess-name": "spindle.observe.Deployment",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "system": {
+          "description": "The system identifier of the deployed specification.",
+          "type": "string"
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/spindle.observe.Component"
+          }
+        },
+        "bindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/spindle.observe.Binding"
+          }
+        },
+        "instances": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/spindle.observe.DeployedInstance"
+          }
+        }
+      },
+      "required": [
+        "system",
+        "components",
+        "bindings",
+        "instances"
+      ],
+      "additionalProperties": false
+    },
+    "spindle.placement.Instance.State": {
+      "title": "State",
+      "x-ess-name": "spindle.placement.Instance.State",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "Exited",
+        "Placed",
+        "Planned",
+        "Refused",
+        "Running"
+      ]
+    },
+    "spindle.placement.InstanceId": {
+      "title": "InstanceId",
+      "x-ess-name": "spindle.placement.InstanceId",
+      "x-ess-kind": "newtype",
+      "type": "string"
+    },
+    "spindle.placement.Resources": {
+      "title": "Resources",
+      "x-ess-name": "spindle.placement.Resources",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "vcpus": {
+          "type": "integer"
+        },
+        "memory_mib": {
+          "type": "integer"
+        },
+        "disk_mib": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "vcpus",
+        "memory_mib",
+        "disk_mib"
+      ],
+      "additionalProperties": false
+    },
+    "spindle.placement.TargetId": {
+      "title": "TargetId",
+      "x-ess-name": "spindle.placement.TargetId",
+      "x-ess-kind": "newtype",
+      "type": "string"
+    },
+    "spindle.placement.TargetKind": {
+      "title": "TargetKind",
+      "x-ess-name": "spindle.placement.TargetKind",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "Process",
+        "QemuMicrovm",
+        "Firecracker",
+        "Docker",
+        "Compose",
+        "Kubernetes",
+        "Browser"
+      ]
+    }
+  }
+}

@@ -1,0 +1,245 @@
+domain: spindle.observe
+
+summary: >-
+  What the control process answers about a running deployment: the components and bindings of the
+  system, the instances with their target, request and state, the counters the runtime derives for
+  each component, and the samples each instance sends. Every noun here is an answer, read only; no
+  command changes it.
+
+naming:
+  wire: observe
+  display: Observe
+
+types:
+  - name: spindle.observe.Deployment
+    kind: struct
+    naming:
+      summary: The answer of `GET /api/deployment`, the system as deployed.
+    fields:
+      - name: system
+        type: String
+        summary: The system identifier of the deployed specification.
+      - name: components
+        type: List<spindle.observe.Component>
+      - name: bindings
+        type: List<spindle.observe.Binding>
+      - name: instances
+        type: List<spindle.observe.DeployedInstance>
+
+  - name: spindle.observe.Component
+    kind: struct
+    naming:
+      summary: One component of the system, with the domains it owns and what it accepts and serves.
+    fields:
+      - name: name
+        type: String
+      - name: domains
+        type: List<String>
+        summary: The qualified names of the domains the component owns.
+      - name: commands
+        type: List<String>
+        summary: The qualified names of the commands the component accepts.
+      - name: views
+        type: List<String>
+        summary: The qualified names of the views the component serves.
+
+  - name: spindle.observe.BindingKind
+    kind: enum
+    variants: [periodic, event]
+
+  - name: spindle.observe.Binding
+    kind: struct
+    naming:
+      summary: >-
+        One binding of the system. A periodic binding fires a command of `to` on a schedule and has
+        no `from` and no `event`; an event binding carries `event` from `from` to a command of `to`.
+    fields:
+      - name: name
+        type: String
+      - name: kind
+        type: spindle.observe.BindingKind
+      - name: from
+        type: Optional<String>
+        summary: The component that publishes the event; absent for a periodic binding.
+      - name: to
+        type: String
+        summary: The component that accepts the command.
+      - name: event
+        type: Optional<String>
+        summary: The qualified name of the event carried; absent for a periodic binding.
+      - name: command
+        type: String
+        summary: The qualified name of the command the binding issues.
+
+  - name: spindle.observe.DeployedInstance
+    kind: struct
+    naming:
+      summary: One instance of a component, where it was placed, what it requested and its state.
+    fields:
+      - name: instance_id
+        type: spindle.placement.InstanceId
+      - name: component
+        type: String
+      - name: target_kind
+        type: spindle.placement.TargetKind
+      - name: target
+        type: spindle.placement.TargetId
+      - name: state
+        type: spindle.placement.Instance.State
+      - name: requested
+        type: spindle.placement.Resources
+      - name: started_at
+        type: Optional<Timestamp>
+        summary: When the instance was launched; absent until it runs.
+
+  - name: spindle.observe.CounterKind
+    kind: enum
+    variants: [counter, histogram]
+
+  - name: spindle.observe.CounterSource
+    kind: enum
+    variants: [kernel, store, channel, timer, ingress, view, resource]
+
+  - name: spindle.observe.Catalogue
+    kind: struct
+    naming:
+      summary: >-
+        The answer of `GET /api/catalogue?component=`, every counter the runtime derives for one
+        component from the compiled specification.
+    fields:
+      - name: component
+        type: String
+      - name: counters
+        type: List<spindle.observe.Counter>
+
+  - name: spindle.observe.Counter
+    kind: struct
+    naming:
+      summary: One counter of the catalogue, by its dotted name, such as `command.rally.table.Tick.served`.
+    fields:
+      - name: name
+        type: String
+      - name: kind
+        type: spindle.observe.CounterKind
+      - name: source
+        type: spindle.observe.CounterSource
+
+  - name: spindle.observe.Sample
+    kind: struct
+    naming:
+      summary: >-
+        One `sample` message of `GET /api/stream`: the cumulative counters of one instance at one
+        instant. A lost sample is harmless, because the next one carries every total again.
+    fields:
+      - name: instance_id
+        type: spindle.placement.InstanceId
+      - name: sequence
+        type: Integer
+        summary: Monotonic per instance, starting at 0.
+      - name: at
+        type: Timestamp
+      - name: period_ms
+        type: Integer
+        summary: The sampling period the instance runs with, in milliseconds.
+      - name: counters
+        type: List<spindle.observe.CounterValue>
+      - name: histograms
+        type: List<spindle.observe.Histogram>
+      - name: recent
+        type: List<spindle.observe.RecentAnswer>
+        summary: The last command answers of the instance, newest first.
+      - name: resources
+        type: spindle.observe.ResourceReading
+      - name: dropped_frames
+        type: Integer
+        summary: Samples the instance dropped since launch because the control process was slow or gone.
+    invariants:
+      - sequence >= 0
+      - period_ms > 0
+      - dropped_frames >= 0
+
+  - name: spindle.observe.CounterValue
+    kind: struct
+    naming:
+      summary: The cumulative value of one counter of the catalogue.
+    fields:
+      - name: name
+        type: String
+      - name: value
+        type: Integer
+    invariants:
+      - value >= 0
+
+  - name: spindle.observe.Histogram
+    kind: struct
+    naming:
+      summary: >-
+        The cumulative buckets of one histogram of the catalogue. `bounds` are the inclusive upper
+        bounds of the buckets in ascending order; `counts` has one entry per bound and one more for
+        the values above the last bound.
+    fields:
+      - name: name
+        type: String
+      - name: bounds
+        type: List<Integer>
+      - name: counts
+        type: List<Integer>
+
+  - name: spindle.observe.Payload
+    kind: newtype
+    of: String
+    naming:
+      summary: An event payload as JSON text, truncated to at most 1 KiB.
+    invariants:
+      - value.utf8_bytes <= 1024
+
+  - name: spindle.observe.RecentAnswer
+    kind: struct
+    naming:
+      summary: One command the instance executed, its outcome and the events it appended.
+    fields:
+      - name: at
+        type: Timestamp
+      - name: command
+        type: String
+      - name: outcome
+        type: String
+      - name: events
+        type: List<String>
+      - name: payload
+        type: Optional<spindle.observe.Payload>
+        summary: The payload of the first event appended, if any.
+
+  - name: spindle.observe.ResourceReading
+    kind: struct
+    naming:
+      summary: >-
+        What the instance costs the host. A share is the reading against the instance's request:
+        `cpu_share` is CPU seconds over wall seconds times requested vCPUs, `memory_share` is memory
+        over requested MiB. An instance without a limit has no share.
+    fields:
+      - name: cpu_seconds
+        type: Binary64
+      - name: memory_bytes
+        type: Integer
+      - name: cpu_share
+        type: Optional<Binary64>
+      - name: memory_share
+        type: Optional<Binary64>
+    invariants:
+      - cpu_seconds >= 0
+      - memory_bytes >= 0
+
+  - name: spindle.observe.StateChange
+    kind: struct
+    naming:
+      summary: One `state` message of `GET /api/stream`, an instance moving from one state to another.
+    fields:
+      - name: instance_id
+        type: spindle.placement.InstanceId
+      - name: from
+        type: spindle.placement.Instance.State
+      - name: to
+        type: spindle.placement.Instance.State
+      - name: at
+        type: Timestamp

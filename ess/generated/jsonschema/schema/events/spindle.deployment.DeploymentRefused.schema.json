@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/events/spindle.deployment.DeploymentRefused.schema.json",
+  "title": "DeploymentRefused payload",
+  "x-ess-name": "spindle.deployment.DeploymentRefused",
+  "x-ess-kind": "event-payload",
+  "type": "object",
+  "properties": {
+    "deployment_id": {
+      "$ref": "#/$defs/spindle.deployment.DeploymentId"
+    }
+  },
+  "required": [
+    "deployment_id"
+  ],
+  "additionalProperties": false,
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "7b7a73a462a8f72175be1029a8e0d7b3d466b6c4c89cb0c694ac14a157a4d594",
+    "contract_digest": "slice-sha256/2:5a6109047dd05628c1c6242859d2efb776d7f540360242c76798c7c96a8f38b4",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.deployment.DeploymentId": {
+      "title": "DeploymentId",
+      "x-ess-name": "spindle.deployment.DeploymentId",
+      "x-ess-kind": "newtype",
+      "type": "string"
+    }
+  }
+}

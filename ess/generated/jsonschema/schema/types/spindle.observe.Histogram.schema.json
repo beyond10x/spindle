@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.Histogram.schema.json",
+  "$ref": "#/$defs/spindle.observe.Histogram",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "7b7a73a462a8f72175be1029a8e0d7b3d466b6c4c89cb0c694ac14a157a4d594",
+    "contract_digest": "slice-sha256/2:4d16c9f62c4f142031cc455f144de5d06caf7acc535ef461d45fdb269f2a3a22",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.Histogram": {
+      "title": "Histogram",
+      "description": "The cumulative buckets of one histogram of the catalogue. `bounds` are the inclusive upper bounds of the buckets in ascending order; `counts` has one entry per bound and one more for the values above the last bound.",
+      "x-ess-name": "spindle.observe.Histogram",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "bounds": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "counts": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "bounds",
+        "counts"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
