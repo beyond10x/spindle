@@ -58,7 +58,7 @@ pub fn env_name(name: &str) -> String {
 pub struct ProcessLauncher {
     console_dir: PathBuf,
     grace: Duration,
-    telemetry: Option<PathBuf>,
+    telemetry: Option<spindle_telemetry::Endpoint>,
 }
 
 impl ProcessLauncher {
@@ -81,9 +81,14 @@ impl ProcessLauncher {
     /// The same launcher giving every instance the Unix socket `socket` as its telemetry endpoint
     /// (`SPINDLE_TELEMETRY=unix:<socket>`). The caller listens on it; an instance identifies
     /// itself in every frame.
-    pub fn with_telemetry(mut self, socket: impl Into<PathBuf>) -> Self {
-        self.telemetry = Some(socket.into());
-        self
+    ///
+    /// Refused with [`LaunchError::InvalidPlan`] when the path is not UTF-8 or longer than
+    /// [`spindle_telemetry::MAX_UNIX_PATH`] bytes: the instance could never connect to it.
+    pub fn with_telemetry(mut self, socket: impl Into<PathBuf>) -> Result<Self, LaunchError> {
+        let endpoint = spindle_telemetry::Endpoint::unix(socket)
+            .map_err(|error| LaunchError::InvalidPlan(format!("telemetry endpoint: {error}")))?;
+        self.telemetry = Some(endpoint);
+        Ok(self)
     }
 }
 
@@ -110,7 +115,7 @@ impl Launcher for ProcessLauncher {
                 plan.instance_id
             )));
         }
-        let variables = variables(plan, self.telemetry.as_deref())?;
+        let variables = variables(plan, self.telemetry.as_ref())?;
 
         fs::create_dir_all(&self.console_dir).map_err(|source| LaunchError::Io {
             what: format!("creating {}", self.console_dir.display()),
@@ -191,7 +196,7 @@ fn is_file_name(id: &str) -> bool {
 
 fn variables(
     plan: &LaunchPlan,
-    telemetry: Option<&Path>,
+    telemetry: Option<&spindle_telemetry::Endpoint>,
 ) -> Result<BTreeMap<String, String>, LaunchError> {
     let mut variables = BTreeMap::new();
     let mut set = |name: String, value: String, from: &str| {
@@ -217,10 +222,10 @@ fn variables(
         plan.listen.to_string(),
         "the listen address",
     )?;
-    if let Some(socket) = telemetry {
+    if let Some(endpoint) = telemetry {
         set(
             spindle_telemetry::ENV_TELEMETRY.to_owned(),
-            spindle_telemetry::Endpoint::Unix(socket.to_path_buf()).to_string(),
+            endpoint.to_string(),
             "the telemetry endpoint",
         )?;
     }

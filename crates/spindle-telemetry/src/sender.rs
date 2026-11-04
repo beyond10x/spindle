@@ -61,8 +61,14 @@ impl SenderOptions {
     }
 
     /// The options a launcher gave this process: `SPINDLE_TELEMETRY`, `SPINDLE_INSTANCE_ID` and,
-    /// if set, `SPINDLE_TELEMETRY_PERIOD_MS`. `Ok(None)` when no endpoint was given.
+    /// if set, `SPINDLE_TELEMETRY_PERIOD_MS`. `Ok(None)` when no endpoint was given; a variable
+    /// that is set but not UTF-8 is an error, never an absent endpoint.
     pub fn from_env() -> Result<Option<Self>, String> {
+        for name in [ENV_TELEMETRY, ENV_INSTANCE_ID, ENV_TELEMETRY_PERIOD_MS] {
+            if let Err(std::env::VarError::NotUnicode(value)) = std::env::var(name) {
+                return Err(format!("{name}={} is not UTF-8", value.display()));
+            }
+        }
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
@@ -96,7 +102,10 @@ impl SenderOptions {
 /// What became of one frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Delivery {
-    /// Written whole to the collector's connection.
+    /// Written whole to the collector's socket. On a Unix socket that is not proof a collector
+    /// read it, or even accepted the connection: the kernel queues a connection a listener has
+    /// not accepted and takes writes into it until its buffer is full. A write that times out
+    /// is [`Self::Dropped`].
     Sent,
     /// Not delivered: no collector, or one too slow or gone. Counted in the next frames.
     Dropped,
@@ -174,11 +183,12 @@ impl Transmitter {
                 Err(_) => return self.drop_frame(),
             }
         }
+        let period = self.options.period;
         let written = self
             .connection
             .as_mut()
             .map_or(Err(io::ErrorKind::NotConnected.into()), |connection| {
-                connection.write_all(&line)
+                write_within(connection, &line, period)
             });
         match written {
             Ok(()) => {
@@ -189,7 +199,7 @@ impl Transmitter {
         }
     }
 
-    /// Frames sent.
+    /// Frames written whole to the socket; see [`Delivery::Sent`].
     pub fn sent(&self) -> u64 {
         self.sent
     }
@@ -204,6 +214,27 @@ impl Transmitter {
         self.dropped += 1;
         Delivery::Dropped
     }
+}
+
+/// Writes all of `bytes`, giving up once `within` has passed: each write waits at most what is
+/// left of it, so a collector that stops reading holds the sender one period at most.
+fn write_within(connection: &mut Connection, bytes: &[u8], within: Duration) -> io::Result<()> {
+    let deadline = Instant::now() + within;
+    let mut written = 0;
+    while written < bytes.len() {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        connection.set_write_timeout(left.max(Duration::from_micros(1)))?;
+        match connection.write(&bytes[written..]) {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(count) => written += count,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Default)]
@@ -226,7 +257,13 @@ pub struct Sender {
 
 impl Sender {
     /// Starts sending `counters` as `options` say; the first frame goes out at once.
+    ///
+    /// An endpoint [`Endpoint::check`] refuses is refused here, by name.
     pub fn start(counters: Arc<Counters>, options: SenderOptions) -> io::Result<Self> {
+        options
+            .endpoint
+            .check()
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
         let shared = Arc::new(Shared::default());
         let period = options.period;
         let mut transmitter = Transmitter::new(counters, options);
@@ -272,7 +309,7 @@ impl Sender {
         }
     }
 
-    /// Frames sent so far.
+    /// Frames written whole to the socket so far; see [`Delivery::Sent`].
     pub fn sent(&self) -> u64 {
         self.shared.sent.load(Ordering::Relaxed)
     }
@@ -294,7 +331,8 @@ impl Sender {
         true
     }
 
-    /// Stops sending and waits for the thread, at most one write timeout.
+    /// Stops sending and waits for the thread: at most one period for a connect and one write
+    /// timeout (also one period) for the frame it is writing.
     pub fn stop(mut self) {
         self.halt();
     }

@@ -39,20 +39,29 @@ fn open(counters: &Counters, times: u64) {
 fn options(socket: &Path, period: Duration) -> SenderOptions {
     SenderOptions::new(
         "rally-table-0",
-        Endpoint::Unix(socket.to_path_buf()),
+        Endpoint::unix(socket).expect("a Unix endpoint"),
         period,
     )
 }
 
-/// A directory for a collector's socket: under the target directory when a socket path there
-/// fits the 108 bytes of `sun_path`, otherwise under the system's temporary directory.
-fn directory() -> tempfile::TempDir {
+/// A directory under the target directory, and a collector socket in it named relative to the
+/// working directory of the test (the crate), so the path fits the 108 bytes of `sun_path`
+/// however deep the tree lies.
+fn directory() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
-    if dir.path().join("telemetry.sock").as_os_str().len() < 100 {
-        dir
-    } else {
-        tempfile::tempdir().expect("a directory")
-    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("the workspace");
+    let inside = dir
+        .path()
+        .canonicalize()
+        .expect("the directory")
+        .strip_prefix(&root)
+        .expect("the target directory is in the workspace")
+        .to_path_buf();
+    let socket = Path::new("../..").join(inside).join("telemetry.sock");
+    (dir, socket)
 }
 
 fn totals(frame: &spindle_telemetry::Frame) -> BTreeMap<String, u64> {
@@ -65,8 +74,7 @@ fn totals(frame: &spindle_telemetry::Frame) -> BTreeMap<String, u64> {
 
 #[test]
 fn a_lost_frame_loses_no_count() {
-    let dir = directory();
-    let socket = dir.path().join("telemetry.sock");
+    let (_dir, socket) = directory();
     let listener = UnixListener::bind(&socket).expect("the collector listens");
     let counters = counters();
     let mut transmitter =
@@ -104,8 +112,7 @@ fn a_lost_frame_loses_no_count() {
 
 #[test]
 fn a_missing_collector_drops_frames_and_counts_the_drops() {
-    let dir = directory();
-    let socket = dir.path().join("telemetry.sock");
+    let (_dir, socket) = directory();
     let counters = counters();
     let sender = spindle_telemetry::Sender::start(
         counters.clone(),
@@ -170,8 +177,7 @@ fn a_frame_validates_against_the_sample_schema() {
     .expect("the schema imports");
     let validator = bundle.validator(root).expect("the root compiles");
 
-    let dir = directory();
-    let socket = dir.path().join("telemetry.sock");
+    let (_dir, socket) = directory();
     let listener = UnixListener::bind(&socket).expect("the collector listens");
     let counters = counters();
     open(&counters, 2);
@@ -228,8 +234,7 @@ fn the_frame_carries_the_guest_resource_readings() {
     assert!(machine.cpu_seconds > 0.0, "{machine:?}");
     assert!(machine.memory_bytes > 0, "{machine:?}");
 
-    let dir = directory();
-    let socket = dir.path().join("telemetry.sock");
+    let (_dir, socket) = directory();
     let listener = UnixListener::bind(&socket).expect("the collector listens");
     let mut transmitter = Transmitter::new(
         counters(),

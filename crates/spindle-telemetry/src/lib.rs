@@ -54,13 +54,14 @@ mod kernel;
 mod port;
 mod resources;
 mod sender;
+mod sys;
 pub mod vsock;
 
 pub use catalogue::{Catalogue, Counter, Key, Kind, Source, catalogue};
 pub use counters::{CounterValue, Counters, DURATION_BOUNDS_US, HistogramValue, Snapshot};
 pub use endpoint::{
     Connection, DEFAULT_PERIOD, ENV_TELEMETRY, ENV_TELEMETRY_PERIOD_MS, Endpoint, EndpointError,
-    VSOCK_HOST_CID,
+    MAX_UNIX_PATH, VSOCK_HOST_CID,
 };
 pub use frame::{
     Answers, Frame, FrameReader, PAYLOAD_LIMIT, PROTOCOL, RecentAnswer, ResourceReading, timestamp,

@@ -3,11 +3,28 @@
 use std::io::BufReader;
 use std::net::SocketAddr;
 use std::os::unix::net::UnixListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use spindle_target::{Artifact, LaunchPlan, Launcher, ProcessLauncher, Resources};
 use spindle_telemetry::{ENV_TELEMETRY, Endpoint, FrameReader};
+
+/// `dir`, named relative to the working directory of the test and of the instances it starts
+/// (the crate), so a socket path in it fits the 108 bytes of `sun_path` however deep the tree
+/// lies.
+fn relative_to_the_crate(dir: &Path) -> PathBuf {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("the workspace");
+    let inside = dir
+        .canonicalize()
+        .expect("the directory")
+        .strip_prefix(&root)
+        .expect("the target directory is in the workspace")
+        .to_path_buf();
+    Path::new("../..").join(inside)
+}
 
 fn plan(instance_id: &str) -> LaunchPlan {
     LaunchPlan {
@@ -27,15 +44,11 @@ fn plan(instance_id: &str) -> LaunchPlan {
 #[test]
 fn a_process_instance_reports_over_a_unix_socket() {
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
-    // A socket path must fit the 108 bytes of `sun_path`; a deep target directory does not.
-    let short = tempfile::tempdir().expect("a directory");
-    let socket = if dir.path().join("telemetry.sock").as_os_str().len() < 100 {
-        dir.path().join("telemetry.sock")
-    } else {
-        short.path().join("telemetry.sock")
-    };
+    let socket = relative_to_the_crate(dir.path()).join("telemetry.sock");
     let listener = UnixListener::bind(&socket).expect("the collector listens");
-    let mut launcher = ProcessLauncher::new(dir.path().join("consoles")).with_telemetry(&socket);
+    let mut launcher = ProcessLauncher::new(dir.path().join("consoles"))
+        .with_telemetry(&socket)
+        .expect("the endpoint fits");
 
     let mut instance = launcher
         .launch(&plan("rally-table-0"))
@@ -85,9 +98,28 @@ fn a_process_instance_reports_over_a_unix_socket() {
         "sequence numbers increase: {sequences:?}"
     );
     let console = std::fs::read_to_string(instance.console()).expect("the console");
-    let expected = format!("env {ENV_TELEMETRY}={}", Endpoint::Unix(socket.clone()));
+    let expected = format!(
+        "env {ENV_TELEMETRY}={}",
+        Endpoint::unix(socket.clone()).expect("a Unix endpoint")
+    );
     assert!(
         console.lines().any(|line| line == expected),
         "the launcher sets {expected}:\n{console}"
     );
+}
+
+#[test]
+fn a_socket_path_an_instance_cannot_connect_to_is_refused_by_the_launcher() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let long = PathBuf::from(format!("/{}/c.sock", "d".repeat(120)));
+    let non_utf8 = PathBuf::from(std::ffi::OsStr::from_bytes(b"/run/spindle-\xff/c.sock"));
+    for (why, path) in [("too long", long), ("not UTF-8", non_utf8)] {
+        match ProcessLauncher::new("consoles").with_telemetry(&path) {
+            Err(spindle_target::LaunchError::InvalidPlan(message)) => {
+                assert!(message.contains("Unix socket path"), "{why}: {message}")
+            }
+            other => panic!("{why}: {path:?} is not refused: {other:?}"),
+        }
+    }
 }

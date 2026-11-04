@@ -68,7 +68,8 @@ fn process_ticks(stat: &str) -> io::Result<u64> {
     Ok(field(11)? + field(12)?)
 }
 
-/// The `cpu` line of `/proc/stat` less idle (4th) and iowait (5th); guest time is already in user.
+/// The `cpu` line of `/proc/stat` less idle (4th), iowait (5th) and steal (8th): steal is time
+/// the hypervisor ran something else, not the guest. Guest time is already in user.
 fn machine_ticks(stat: &str) -> io::Result<u64> {
     let line = stat
         .lines()
@@ -83,7 +84,7 @@ fn machine_ticks(stat: &str) -> io::Result<u64> {
     Ok(values
         .iter()
         .enumerate()
-        .filter(|(index, _)| *index != 3 && *index != 4)
+        .filter(|(index, _)| !matches!(index, 3 | 4 | 7))
         .map(|(_, value)| value)
         .sum())
 }
@@ -122,7 +123,7 @@ mod tests {
         let stat = "4242 (a name) with) S 1 2 3 4 5 6 7 8 9 10 31 9 0 0";
         assert_eq!(process_ticks(stat).expect("readable"), 40);
         let machine = "cpu  10 1 5 900 7 2 3 4 0 0\ncpu0 10 1 5 900 7 2 3 4 0 0\n";
-        assert_eq!(machine_ticks(machine).expect("readable"), 25);
+        assert_eq!(machine_ticks(machine).expect("readable"), 21);
         let meminfo = "MemTotal:       2000 kB\nMemFree:  100 kB\nMemAvailable:   500 kB\n";
         assert_eq!(meminfo_in_use(meminfo).expect("readable"), 1500 * 1024);
         assert_eq!(

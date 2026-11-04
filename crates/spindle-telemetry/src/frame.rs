@@ -36,7 +36,7 @@ pub struct Frame {
     pub recent: Vec<RecentAnswer>,
     /// The instance's own resource readings.
     pub resources: ResourceReading,
-    /// Frames dropped since launch because no collector took them.
+    /// Frames dropped since launch: not written whole to the socket within one period.
     pub dropped_frames: u64,
 }
 

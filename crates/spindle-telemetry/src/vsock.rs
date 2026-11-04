@@ -5,8 +5,10 @@
 
 use std::io::{self, Read, Write};
 use std::mem;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::time::{Duration, Instant};
+
+use crate::sys::{check, connect_within, set_timeout, stream_socket};
 
 /// Any context id, for a listener: `VMADDR_CID_ANY`.
 pub const CID_ANY: u32 = u32::MAX;
@@ -22,39 +24,8 @@ fn address(cid: u32, port: u32) -> libc::sockaddr_vm {
     address
 }
 
-fn check(result: libc::c_int) -> io::Result<libc::c_int> {
-    if result < 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(result)
-    }
-}
-
 fn socket() -> io::Result<OwnedFd> {
-    // SAFETY: a plain socket(2) call.
-    let fd =
-        check(unsafe { libc::socket(libc::AF_VSOCK, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) })?;
-    // SAFETY: the descriptor was just created and is owned by nothing else.
-    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
-}
-
-fn set_timeout(fd: RawFd, option: libc::c_int, timeout: Option<Duration>) -> io::Result<()> {
-    let timeout = timeout.unwrap_or(Duration::ZERO);
-    // SAFETY: timeval is plain old data; all-zero is a valid value.
-    let mut value: libc::timeval = unsafe { mem::zeroed() };
-    value.tv_sec = timeout.as_secs().try_into().unwrap_or(i32::MAX.into());
-    value.tv_usec = timeout.subsec_micros().into();
-    // SAFETY: `value` is a valid timeval for the duration of the call.
-    check(unsafe {
-        libc::setsockopt(
-            fd,
-            libc::SOL_SOCKET,
-            option,
-            (&raw const value).cast(),
-            mem::size_of::<libc::timeval>() as libc::socklen_t,
-        )
-    })
-    .map(drop)
+    stream_socket(libc::AF_VSOCK)
 }
 
 /// A connected vsock stream.
@@ -62,18 +33,19 @@ fn set_timeout(fd: RawFd, option: libc::c_int, timeout: Option<Duration>) -> io:
 pub struct VsockStream(OwnedFd);
 
 impl VsockStream {
-    /// Connects to `port` of the context `cid`.
-    pub fn connect(cid: u32, port: u32) -> io::Result<Self> {
+    /// Connects to `port` of the context `cid`, waiting at most `within`.
+    pub fn connect_within(cid: u32, port: u32, within: Duration) -> io::Result<Self> {
         let fd = socket()?;
         let address = address(cid, port);
         // SAFETY: `address` is a valid sockaddr_vm of the length given.
-        check(unsafe {
-            libc::connect(
-                fd.as_raw_fd(),
+        unsafe {
+            connect_within(
+                &fd,
                 (&raw const address).cast(),
                 mem::size_of::<libc::sockaddr_vm>() as libc::socklen_t,
+                within,
             )
-        })?;
+        }?;
         Ok(Self(fd))
     }
 

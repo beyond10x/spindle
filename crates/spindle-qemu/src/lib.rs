@@ -94,7 +94,6 @@ pub struct QemuLauncher {
     network: Network,
     shared: Arc<Shared>,
     telemetry: Option<u32>,
-    cids: Arc<AtomicU32>,
 }
 
 struct Checked<'a> {
@@ -114,7 +113,6 @@ impl QemuLauncher {
             network,
             shared: Arc::new(Shared::new()),
             telemetry: None,
-            cids: Arc::new(AtomicU32::new(first_cid())),
         }
     }
 
@@ -225,9 +223,16 @@ impl QemuLauncher {
     /// The QEMU argv (program first) [`launch`](Self::launch) runs for `plan`, inside the
     /// launcher's namespace.
     ///
-    /// With telemetry, the vsock device carries the context id the next launch takes.
+    /// With telemetry, each call takes a new guest context id for the vsock device ([`next_cid`]),
+    /// and is refused once the process has taken them all.
     pub fn command(&self, plan: &LaunchPlan) -> Result<Vec<String>, LaunchError> {
-        self.argv(plan, self.cids.load(Ordering::Relaxed))
+        self.check(plan)?;
+        let cid = if self.telemetry.is_some() {
+            next_cid()?
+        } else {
+            0
+        };
+        self.argv(plan, cid)
     }
 
     fn argv(&self, plan: &LaunchPlan, cid: u32) -> Result<Vec<String>, LaunchError> {
@@ -281,8 +286,7 @@ impl QemuLauncher {
     /// runs, write its initramfs (the artifact's, followed by an archive holding
     /// [`LAUNCH_PLAN`]), and start QEMU in the launcher's namespace.
     pub fn launch(&mut self, plan: &LaunchPlan) -> Result<QemuInstance, LaunchError> {
-        let cid = self.cids.fetch_add(1, Ordering::Relaxed);
-        let argv = self.argv(plan, cid)?;
+        let argv = self.command(plan)?;
         let checked = self.check(plan)?;
         let mut live = self.shared.live()?;
         if let Some(pid) = live.get(&plan.instance_id)
@@ -356,10 +360,24 @@ impl Launcher for QemuLauncher {
     }
 }
 
-/// The first guest context id of a launcher: 3 and up are guests, and the process id spreads the
-/// launchers of different processes 256 ids apart, since a context id is unique on the host.
-fn first_cid() -> u32 {
-    3 + ((std::process::id() & 0xffff) << 8)
+/// The most guest context ids one process gives out.
+pub const MAX_GUESTS_PER_PROCESS: u32 = 1024;
+
+static GUESTS: AtomicU32 = AtomicU32::new(0);
+
+/// The next guest context id of this process: `3 + ((pid - 1) << 10 | n)` for its `n`th guest,
+/// `n` below [`MAX_GUESTS_PER_PROCESS`]. A context id is unique on the host, and process ids
+/// lie in `1..=2^22`, so two processes never share one, and every launcher of one process
+/// draws from the same count. The result stays below `u32::MAX`, which means any context id.
+pub fn next_cid() -> Result<u32, LaunchError> {
+    let n = GUESTS.fetch_add(1, Ordering::Relaxed);
+    if n >= MAX_GUESTS_PER_PROCESS {
+        return Err(LaunchError::InvalidPlan(format!(
+            "this process has given out all {MAX_GUESTS_PER_PROCESS} of its vsock guest context ids"
+        )));
+    }
+    let pid = std::process::id().wrapping_sub(1) & 0x3f_ffff;
+    Ok(3 + ((pid << 10) | n))
 }
 
 fn launch_document(plan: &LaunchPlan, telemetry: Option<u32>) -> String {
