@@ -1,0 +1,19 @@
+[package]
+name = "spindle-channel"
+description = "Carry an event published by one component to the command it binds to in another, in process or over TCP."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ess-compiler.workspace = true
+ess-domain.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+spindle-spec.workspace = true
