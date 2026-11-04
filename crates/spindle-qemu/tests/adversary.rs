@@ -157,6 +157,7 @@ fn process_runs(pid: u32, marker: &str) -> bool {
 }
 
 #[test]
+#[ignore = "starts the launcher's user and network namespace: needs unprivileged user namespaces (task check:vm)"]
 fn waiting_with_duration_max_waits_until_the_instance_ends() {
     let Some(fake_qemu) = find_on_path("true") else {
         eprintln!("skipped: no `true` on PATH");
