@@ -1,0 +1,6 @@
+format: ess/34
+system: echo
+version: v1
+domains:
+  - echo.left
+  - echo.right

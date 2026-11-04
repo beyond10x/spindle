@@ -1,0 +1,5 @@
+format: ess/34
+system: memo
+version: v1
+domains:
+  - memo.notes

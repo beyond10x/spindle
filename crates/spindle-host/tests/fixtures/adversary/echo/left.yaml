@@ -1,0 +1,17 @@
+domain: echo.left
+events:
+  - name: echo.left.Sent
+    fields:
+      - name: n
+        type: Integer
+commands:
+  - name: echo.left.Send
+    input:
+      - name: n
+        type: Integer
+    outcomes:
+      - name: sent
+        emits: [echo.left.Sent]
+        payload:
+          echo.left.Sent:
+            n: input.n

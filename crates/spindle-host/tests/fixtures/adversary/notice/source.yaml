@@ -1,0 +1,22 @@
+domain: notice.source
+events:
+  - name: notice.source.Posted
+    fields:
+      - name: board_id
+        type: notice.sink.BoardId
+      - name: beat
+        type: String
+commands:
+  - name: notice.source.Post
+    input:
+      - name: board_id
+        type: notice.sink.BoardId
+      - name: beat
+        type: String
+    outcomes:
+      - name: posted
+        emits: [notice.source.Posted]
+        payload:
+          notice.source.Posted:
+            board_id: input.board_id
+            beat: input.beat
