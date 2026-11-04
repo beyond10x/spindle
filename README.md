@@ -20,6 +20,7 @@ cargo build --release -p spindle-cli
 target/release/b10x-spindle check ess
 target/release/b10x-spindle capabilities ess
 target/release/b10x-spindle admit ess --environment examples/environments/laptop.toml
+target/release/b10x-spindle play examples/rally/ess --environment examples/environments/laptop.toml
 target/release/b10x-spindle admit ess --environment examples/environments/microvm.toml
 ```
 
@@ -60,6 +61,11 @@ prefix; an exact key wins over it.
 - `ess/` — Spindle's own specification: environments, deployments, admission.
 - `crates/spindle-spec` — loads and compiles a specification with `ess-compiler`.
 - `crates/spindle-capability` — derivation, environments, admission.
+- `crates/spindle-kernel` — executes commands against the compiled model.
+- `crates/spindle-timer`, `crates/spindle-channel` — periodic bindings and event bindings.
+- `crates/spindle-target` — the deployment target contract and the process launcher.
+- `crates/spindle-qemu`, `crates/spindle-firecracker` — microVM launchers.
+- `crates/spindle-host` — runs every component of a system in one process.
 - `crates/spindle-cli` — the `b10x-spindle` binary.
 - `examples/` — environments and the `rally` example system.
 - `docs/design/spindle.md` — the design.

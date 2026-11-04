@@ -11,6 +11,11 @@ tasks:
       - cargo clippy --workspace --all-targets --locked -- -D warnings
       - cargo test --workspace --locked
 
+  check:vm:
+    desc: The VM tests, on a host with KVM
+    cmds:
+      - cargo test --locked -p spindle-qemu -p spindle-firecracker -- --include-ignored
+
   build:
     desc: Release build of b10x-spindle
     cmds:
