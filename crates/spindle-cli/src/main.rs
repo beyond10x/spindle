@@ -343,6 +343,17 @@ fn execute(spec: &Path, environment: &Path, state: Option<&Path>) -> Result<Exit
         println!("{}", serde_json::to_value(&admission)?);
         return Ok(ExitCode::from(REFUSED));
     };
+    if let Some(mint) = bindings.iter().find(|binding| {
+        binding.capability.as_str() == spindle_capability::Capability::IDENTITY_MINT
+            && binding.implementation != spindle_kernel::UuidV4::IMPLEMENTATION
+    }) {
+        bail!(
+            "identity.mint is bound to {} on {}; this build mints identities as {} only",
+            mint.implementation,
+            parsed.name,
+            spindle_kernel::UuidV4::IMPLEMENTATION
+        );
+    }
     let durable = bindings
         .iter()
         .find(|binding| binding.capability.as_str() == "store.durable")

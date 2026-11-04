@@ -4,7 +4,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use ess_compiler::EssIr;
-use ess_compiler::ir::{ResolvedComponent, ResolvedCondition};
+use ess_compiler::ir::{
+    ResolvedComponent, ResolvedCondition, ResolvedEffect, ResolvedInstance, ResolvedOutcome,
+    ResolvedPayloadValue,
+};
 use ess_domain::component::Reach;
 use ess_domain::view::Consistency;
 
@@ -30,6 +33,9 @@ impl Capability {
     pub const PROJECTION: &str = "projection";
     /// The prefix of an outcome decided outside the model.
     pub const EXTERNAL_PREFIX: &str = "external.";
+    /// A new instance whose identity neither the input nor the outcome determines: the runtime
+    /// mints it.
+    pub const IDENTITY_MINT: &str = "identity.mint";
 
     /// A capability with this name.
     pub fn new(name: impl Into<String>) -> Self {
@@ -152,6 +158,17 @@ pub fn derive(ir: &EssIr, component: Option<&str>) -> Option<Requirements> {
             continue;
         }
         for outcome in &command.outcomes {
+            if let Some((entity, field)) = minted_identity(ir, outcome) {
+                need(
+                    Capability::IDENTITY_MINT,
+                    "outcome",
+                    format!("{name}/{}", outcome.name),
+                    format!(
+                        "creates `{entity}` under an identity `{field}` neither the input nor the \
+                         outcome determines"
+                    ),
+                );
+            }
             let cause = match &outcome.condition {
                 ResolvedCondition::External { cause }
                 | ResolvedCondition::ExternalWhen { cause, .. }
@@ -223,6 +240,32 @@ pub fn derive(ir: &EssIr, component: Option<&str>) -> Option<Requirements> {
     }
 
     Some(requirements)
+}
+
+/// The entity and identity field of the instance `outcome` creates, where the runtime has to mint
+/// the identity: a `creates:` whose published identity field has no payload source, or the source
+/// `{generated: true}`. A creation whose identity is an input or another payload source mints
+/// nothing.
+fn minted_identity(ir: &EssIr, outcome: &ResolvedOutcome) -> Option<(String, String)> {
+    let subject = outcome.subject.as_ref()?;
+    let (ResolvedEffect::Creates, ResolvedInstance::Observed { event, field }) =
+        (&subject.effect, &subject.instance)
+    else {
+        return None;
+    };
+    let source = outcome
+        .payload
+        .iter()
+        .filter(|payload| payload.event == *event)
+        .flat_map(|payload| &payload.fields)
+        .find(|source| source.target == field.name);
+    match source.map(|source| &source.value) {
+        None | Some(ResolvedPayloadValue::Generated { .. }) => Some((
+            ir.entity(&subject.entity).name.to_string(),
+            field.name.clone(),
+        )),
+        Some(_) => None,
+    }
 }
 
 fn owner_publishing<'ir>(ir: &'ir EssIr, event: &str) -> Option<&'ir ResolvedComponent> {

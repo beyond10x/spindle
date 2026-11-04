@@ -265,6 +265,10 @@ impl Host {
                     Some("this host runs no such timer")
                 } else if capability == Capability::CLOCK && !runs(CLOCKS) {
                     Some("this host runs no such clock")
+                } else if capability == Capability::IDENTITY_MINT
+                    && !runs(&[spindle_kernel::UuidV4::IMPLEMENTATION])
+                {
+                    Some("this host mints identities as uuid-v4 only")
                 } else {
                     None
                 };

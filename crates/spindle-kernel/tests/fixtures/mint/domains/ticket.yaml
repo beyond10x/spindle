@@ -1,0 +1,87 @@
+domain: mint.ticket
+summary: A ticket opened without an id; the runtime mints one.
+types:
+  - name: mint.ticket.TicketId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: mint.ticket.Ticket
+    identity:
+      name: ticket_id
+      type: mint.ticket.TicketId
+    fields:
+      - name: title
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open, Closed]
+      terminal: [Closed]
+      transitions:
+        - name: close
+          from: [Open]
+          to: Closed
+commands:
+  - name: mint.ticket.OpenTicket
+    input:
+      - name: title
+        type: String
+    outcomes:
+      - name: opened
+        creates: mint.ticket.Ticket
+        instance: ticket_id
+        sets:
+          title: input.title
+        emits: [mint.ticket.TicketOpened, mint.ticket.TicketQueued]
+        payload:
+          mint.ticket.TicketOpened:
+            ticket_id: {generated: true}
+            title: input.title
+          mint.ticket.TicketQueued:
+            ticket_id: {generated: true}
+        summary: The ticket opens under an identity the runtime mints.
+  - name: mint.ticket.FileTicket
+    input:
+      - name: ticket_id
+        type: mint.ticket.TicketId
+      - name: title
+        type: String
+    outcomes:
+      - name: filed
+        creates: mint.ticket.Ticket
+        instance: ticket_id
+        sets:
+          title: input.title
+        emits: [mint.ticket.TicketOpened]
+        payload:
+          mint.ticket.TicketOpened:
+            ticket_id: input.ticket_id
+            title: input.title
+        summary: The ticket opens under the identity the caller names.
+  - name: mint.ticket.CloseTicket
+    input:
+      - name: ticket_id
+        type: mint.ticket.TicketId
+    outcomes:
+      - name: closed
+        moves: mint.ticket.Ticket.close
+        instance: ticket_id
+        emits: [mint.ticket.TicketClosed]
+        payload:
+          mint.ticket.TicketClosed:
+            ticket_id: input.ticket_id
+        summary: The ticket closes.
+events:
+  - name: mint.ticket.TicketOpened
+    fields:
+      - name: ticket_id
+        type: mint.ticket.TicketId
+      - name: title
+        type: String
+  - name: mint.ticket.TicketQueued
+    fields:
+      - name: ticket_id
+        type: mint.ticket.TicketId
+  - name: mint.ticket.TicketClosed
+    fields:
+      - name: ticket_id
+        type: mint.ticket.TicketId

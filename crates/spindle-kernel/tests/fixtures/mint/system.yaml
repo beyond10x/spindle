@@ -1,0 +1,36 @@
+format: ess/34
+system: mint
+version: v1
+summary: Tickets whose identity the runtime mints, and labels whose identity it cannot.
+domains:
+  - mint.ticket
+  - mint.label
+components:
+  - component: desk
+    summary: Opens and closes tickets.
+    owns:
+      domains:
+        - mint.ticket
+    accepts:
+      commands:
+        - mint.ticket.OpenTicket
+        - mint.ticket.FileTicket
+        - mint.ticket.CloseTicket
+    publishes:
+      events:
+        - mint.ticket.TicketOpened
+        - mint.ticket.TicketQueued
+        - mint.ticket.TicketClosed
+    reached_by: in_process
+  - component: shelf
+    summary: Opens labels.
+    owns:
+      domains:
+        - mint.label
+    accepts:
+      commands:
+        - mint.label.OpenLabel
+    publishes:
+      events:
+        - mint.label.LabelOpened
+    reached_by: in_process
