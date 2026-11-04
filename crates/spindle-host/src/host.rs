@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ess_compiler::EssIr;
-use ess_compiler::ir::ResolvedMappingValue;
+use ess_compiler::ir::{ResolvedMappingValue, ResolvedView};
 use ess_domain::binding::Failure;
 use serde_json::{Map, Value};
 use spindle_capability::{Capability, Environment};
@@ -14,6 +14,7 @@ use spindle_channel::{ChannelError, Receiver, RouteError, Router, Sender, in_pro
 use spindle_kernel::{
     DeclaredError, ExecuteError, Executed, MemoryStore, NoExternals, SqliteStore, Store, StoreError,
 };
+use spindle_telemetry::{Counters, CountingStore, Sink};
 use spindle_timer::{BindingName, Clock, CompleteError, LifetimeError, Timer};
 
 use crate::admission::{Placements, Refusal, admit};
@@ -185,6 +186,8 @@ struct Component {
     store: Box<dyn Store>,
     sender: Sender,
     position: u64,
+    counters: Arc<Counters>,
+    sink: Sink,
 }
 
 struct Periodic {
@@ -265,6 +268,10 @@ impl Host {
                     Some("this host runs no such timer")
                 } else if capability == Capability::CLOCK && !runs(CLOCKS) {
                     Some("this host runs no such clock")
+                } else if capability == Capability::IDENTITY_MINT
+                    && !runs(&[spindle_kernel::UuidV4::IMPLEMENTATION])
+                {
+                    Some("this host mints identities as uuid-v4 only")
                 } else {
                     None
                 };
@@ -285,26 +292,36 @@ impl Host {
                     "{name} has its channel bound to {channel}; this host carries bindings {IN_PROCESS} only"
                 )));
             }
+            let counters = Arc::new(Counters::new(
+                spindle_telemetry::catalogue(&ir, name)
+                    .ok_or_else(|| HostError::Unsupported(format!("no component {name}")))?,
+            ));
+            let sink = Sink::new(counters.clone());
             let store: Box<dyn Store> = match bound(Capability::STORE_DURABLE)
                 .or_else(|| bound("store.ephemeral"))
             {
-                None | Some("memory") => Box::new(MemoryStore::default()),
-                Some("sqlite") => {
-                    Box::new(SqliteStore::open(&state.join(format!("{name}.sqlite")))?)
+                None | Some("memory") => {
+                    Box::new(CountingStore::new(MemoryStore::default(), sink.clone()))
                 }
+                Some("sqlite") => Box::new(CountingStore::new(
+                    SqliteStore::open(&state.join(format!("{name}.sqlite")))?,
+                    sink.clone(),
+                )),
                 Some(other) => {
                     return Err(HostError::Unsupported(format!(
                         "{name} has its state bound to {other}, which this host has no store for"
                     )));
                 }
             };
-            let sender = Sender::new(name, router.clone())?;
+            let sender = Sender::new(name, router.clone())?.with_telemetry(sink.clone());
             components.insert(
                 name.clone(),
                 Component {
                     store,
                     sender,
                     position: 0,
+                    counters,
+                    sink,
                 },
             );
         }
@@ -320,7 +337,11 @@ impl Host {
             if let Some(component) = components.get_mut(&from) {
                 component.sender.connect(&to, near);
             }
-            receivers.push(Receiver::new(&to, far));
+            let sink = components
+                .get(&to)
+                .map(|component| component.sink.clone())
+                .unwrap_or_default();
+            receivers.push(Receiver::new(&to, far).with_telemetry(sink));
         }
 
         let mut periodic = BTreeMap::new();
@@ -370,7 +391,12 @@ impl Host {
             );
         }
 
-        let timer = Timer::new(&ir);
+        let mut timer = Timer::new(&ir);
+        for periodic in periodic.values() {
+            if let Some(component) = components.get(&periodic.component) {
+                timer.bind_telemetry(&periodic.name, component.sink.clone())?;
+            }
+        }
         Ok(Self {
             ir,
             clock,
@@ -385,6 +411,14 @@ impl Host {
     /// What admission bound for each component.
     pub fn placements(&self) -> &Placements {
         &self.placements
+    }
+
+    /// The counters of `component`, laid out by its catalogue; `None` when no such component
+    /// runs here.
+    pub fn counters(&self, component: &str) -> Option<&Counters> {
+        self.components
+            .get(component)
+            .map(|component| component.counters.as_ref())
     }
 
     /// The names of the specification's periodic bindings.
@@ -519,45 +553,54 @@ impl Host {
         Ok(report)
     }
 
-    /// The row `view` answers for the instance `identity` names; `None` when no instance has it.
+    /// The row `view` answers for the instance `identity` names; `None` when no instance has it,
+    /// or when the view's filter does not hold for it.
     ///
-    /// The row is read from the store of the component that owns the view's source.
+    /// The row is read from the store of the component that owns the view's source. A view's
+    /// `consistency` changes nothing here: every component's store is in this process, so an
+    /// `eventual` view reads the same store a `read_your_writes` one does.
     ///
     /// # Errors
-    /// [`HostError::NoView`], [`HostError::Unsupported`] for a view that is more than a one-row
-    /// projection of its source, and [`HostError::Store`] when the store cannot be read.
+    /// [`HostError::NoView`], [`HostError::Unsupported`] for a view [`Host::list`] cannot answer,
+    /// and [`HostError::Store`] when the store cannot be read.
     pub fn view(
         &mut self,
         view: &str,
         identity: &Value,
     ) -> Result<Option<Map<String, Value>>, HostError> {
-        let declared = self
-            .ir
-            .views()
-            .iter()
-            .find_map(|(name, declared)| (name.to_string() == view).then_some(declared))
-            .ok_or_else(|| HostError::NoView(view.to_owned()))?;
-        if let Some(construct) = crate::view::unsupported(declared) {
-            return Err(HostError::Unsupported(format!(
-                "view {view} declares {construct}"
-            )));
-        }
-        let entity = self.ir.entity(&declared.source);
-        let owner = self
-            .ir
-            .components()
-            .values()
-            .find(|component| component.owns.contains(&entity.domain))
-            .map(|component| component.name.as_str().to_owned())
-            .ok_or_else(|| {
-                HostError::Unsupported(format!("no component owns {}", entity.domain))
-            })?;
-        let component = self
-            .components
-            .get_mut(&owner)
-            .ok_or_else(|| HostError::Unsupported(format!("{owner} is not running")))?;
-        let stored = component.store.load(&entity.name.to_string(), identity)?;
-        Ok(stored.map(|stored| crate::view::project(&self.ir, declared, identity, &stored.row)))
+        let (declared, owner) = readable(&self.ir, view)?;
+        let entity = self.ir.entity(&declared.source).name.to_string();
+        let stored = store_of(&mut self.components, &owner)?.load(&entity, identity)?;
+        Ok(stored
+            .filter(|stored| crate::view::holds(declared, &stored.row))
+            .map(|stored| crate::view::project(&self.ir, declared, identity, &stored.row)))
+    }
+
+    /// Every row `view` holds: each instance of its source its filter keeps, projected, in the
+    /// order its `order_by` ranks them, ties and a view without `order_by` by identity.
+    ///
+    /// The filter read is `state == <State>` alone, as the compiler parsed it. Read from the
+    /// same store as [`Host::view`], for either consistency.
+    ///
+    /// # Errors
+    /// [`HostError::NoView`]; [`HostError::Unsupported`], naming the construct, for a view that
+    /// declares parameters, computed fields, an aggregation, paging, fields read through a
+    /// reference, a default row for an absent identity, or any other filter; and
+    /// [`HostError::Store`] when the store cannot be read.
+    pub fn list(&mut self, view: &str) -> Result<Vec<Map<String, Value>>, HostError> {
+        let (declared, owner) = readable(&self.ir, view)?;
+        let entity = self.ir.entity(&declared.source).name.to_string();
+        let mut rows = store_of(&mut self.components, &owner)?
+            .scan(&entity)?
+            .into_iter()
+            .filter(|(_, stored)| crate::view::holds(declared, &stored.row))
+            .map(|(identity, stored)| {
+                let row = crate::view::project(&self.ir, declared, &identity, &stored.row);
+                (identity, row)
+            })
+            .collect::<Vec<_>>();
+        crate::view::order(&self.ir, declared, &mut rows);
+        Ok(rows.into_iter().map(|(_, row)| row).collect())
     }
 
     /// Executes one command on `component` and sends the events it emitted.
@@ -573,13 +616,16 @@ impl Host {
             .components
             .get_mut(component)
             .ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
-        let executed = match spindle_kernel::execute(
+        let started = Instant::now();
+        let result = spindle_kernel::execute(
             &self.ir,
             held.store.as_mut(),
             &mut NoExternals,
             command,
             input,
-        ) {
+        );
+        held.sink.executed(command, &result, started.elapsed());
+        let executed = match result {
             Ok(executed) => executed,
             Err(error) => return Ok(Err(error)),
         };
@@ -683,7 +729,7 @@ impl Host {
     /// Takes every envelope still in flight off its channel without running it.
     fn discard(&mut self) -> Result<(), HostError> {
         for receiver in &mut self.receivers {
-            while receiver.receive(Duration::ZERO)?.is_some() {}
+            receiver.discard()?;
         }
         Ok(())
     }
@@ -707,4 +753,37 @@ fn accepting(ir: &EssIr, command: &str) -> Option<String> {
                 .any(|accepted| accepted.to_string() == command)
         })
         .map(|component| component.name.as_str().to_owned())
+}
+
+/// The view named `view`, where this host can answer it, and the component that owns its source.
+fn readable<'ir>(ir: &'ir EssIr, view: &str) -> Result<(&'ir ResolvedView, String), HostError> {
+    let declared = ir
+        .views()
+        .iter()
+        .find_map(|(name, declared)| (name.to_string() == view).then_some(declared))
+        .ok_or_else(|| HostError::NoView(view.to_owned()))?;
+    if let Some(construct) = crate::view::unsupported(declared) {
+        return Err(HostError::Unsupported(format!(
+            "view {view} declares {construct}"
+        )));
+    }
+    let entity = ir.entity(&declared.source);
+    let owner = ir
+        .components()
+        .values()
+        .find(|component| component.owns.contains(&entity.domain))
+        .map(|component| component.name.as_str().to_owned())
+        .ok_or_else(|| HostError::Unsupported(format!("no component owns {}", entity.domain)))?;
+    Ok((declared, owner))
+}
+
+/// The store of the running component `owner`.
+fn store_of<'a>(
+    components: &'a mut BTreeMap<String, Component>,
+    owner: &str,
+) -> Result<&'a mut dyn Store, HostError> {
+    components
+        .get_mut(owner)
+        .map(|component| component.store.as_mut() as &mut dyn Store)
+        .ok_or_else(|| HostError::Unsupported(format!("{owner} is not running")))
 }

@@ -1,0 +1,35 @@
+domain: mint.label
+summary: A label opened without an id, whose identity is text the runtime does not mint.
+entities:
+  - name: mint.label.Label
+    identity:
+      name: label_id
+      type: String
+    fields:
+      - name: text
+        type: String
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+commands:
+  - name: mint.label.OpenLabel
+    input:
+      - name: text
+        type: String
+    outcomes:
+      - name: opened
+        creates: mint.label.Label
+        instance: label_id
+        sets:
+          text: input.text
+        emits: [mint.label.LabelOpened]
+        payload:
+          mint.label.LabelOpened:
+            label_id: {generated: true}
+        summary: The label opens under an identity the runtime would have to mint.
+events:
+  - name: mint.label.LabelOpened
+    fields:
+      - name: label_id
+        type: String

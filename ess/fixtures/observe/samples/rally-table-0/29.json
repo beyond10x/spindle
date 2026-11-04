@@ -1,0 +1,305 @@
+{
+  "instance_id": "rally-table-0",
+  "sequence": 29,
+  "at": "2026-11-04T10:00:30Z",
+  "period_ms": 1000,
+  "counters": [
+    {
+      "name": "command.rally.table.MovePaddle.no-such-match",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.MovePaddle.match-over",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.MovePaddle.at-edge",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.MovePaddle.west-up",
+      "value": 7
+    },
+    {
+      "name": "command.rally.table.MovePaddle.west-down",
+      "value": 7
+    },
+    {
+      "name": "command.rally.table.MovePaddle.east-up",
+      "value": 7
+    },
+    {
+      "name": "command.rally.table.MovePaddle.east-down",
+      "value": 7
+    },
+    {
+      "name": "command.rally.table.OpenMatch.target-too-low",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.OpenMatch.opened",
+      "value": 1
+    },
+    {
+      "name": "command.rally.table.Tick.no-such-match",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.Tick.match-over",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.Tick.served",
+      "value": 2
+    },
+    {
+      "name": "command.rally.table.Tick.east-wins",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.Tick.east-scores",
+      "value": 1
+    },
+    {
+      "name": "command.rally.table.Tick.west-wins",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.Tick.west-scores",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.Tick.west-returns",
+      "value": 2
+    },
+    {
+      "name": "command.rally.table.Tick.east-returns",
+      "value": 4
+    },
+    {
+      "name": "command.rally.table.Tick.top-wall",
+      "value": 4
+    },
+    {
+      "name": "command.rally.table.Tick.bottom-wall",
+      "value": 2
+    },
+    {
+      "name": "command.rally.table.Tick.moved-east-up",
+      "value": 3
+    },
+    {
+      "name": "command.rally.table.Tick.moved-east-down",
+      "value": 4
+    },
+    {
+      "name": "command.rally.table.Tick.moved-west-up",
+      "value": 4
+    },
+    {
+      "name": "command.rally.table.Tick.moved-west-down",
+      "value": 4
+    },
+    {
+      "name": "event.rally.table.BallMoved.appended",
+      "value": 30
+    },
+    {
+      "name": "event.rally.table.MatchWon.appended",
+      "value": 0
+    },
+    {
+      "name": "event.rally.table.PaddleMoved.appended",
+      "value": 28
+    },
+    {
+      "name": "event.rally.table.PointScored.appended",
+      "value": 1
+    },
+    {
+      "name": "store.rows_written",
+      "value": 59
+    },
+    {
+      "name": "store.bytes_written",
+      "value": 5664
+    },
+    {
+      "name": "binding.east-moves.sent",
+      "value": 0
+    },
+    {
+      "name": "binding.east-moves.delivered",
+      "value": 14
+    },
+    {
+      "name": "binding.east-moves.redelivered",
+      "value": 0
+    },
+    {
+      "name": "binding.east-moves.dropped",
+      "value": 0
+    },
+    {
+      "name": "binding.east-watches.sent",
+      "value": 29
+    },
+    {
+      "name": "binding.east-watches.delivered",
+      "value": 29
+    },
+    {
+      "name": "binding.east-watches.redelivered",
+      "value": 0
+    },
+    {
+      "name": "binding.east-watches.dropped",
+      "value": 0
+    },
+    {
+      "name": "binding.west-moves.sent",
+      "value": 0
+    },
+    {
+      "name": "binding.west-moves.delivered",
+      "value": 14
+    },
+    {
+      "name": "binding.west-moves.redelivered",
+      "value": 0
+    },
+    {
+      "name": "binding.west-moves.dropped",
+      "value": 0
+    },
+    {
+      "name": "binding.west-watches.sent",
+      "value": 29
+    },
+    {
+      "name": "binding.west-watches.delivered",
+      "value": 29
+    },
+    {
+      "name": "binding.west-watches.redelivered",
+      "value": 0
+    },
+    {
+      "name": "binding.west-watches.dropped",
+      "value": 0
+    },
+    {
+      "name": "timer.tick.fired",
+      "value": 30
+    },
+    {
+      "name": "timer.tick.late",
+      "value": 0
+    },
+    {
+      "name": "timer.tick.dropped",
+      "value": 0
+    }
+  ],
+  "histograms": [
+    {
+      "name": "command.rally.table.MovePaddle.duration_us",
+      "bounds": [
+        50,
+        100,
+        250,
+        500,
+        1000
+      ],
+      "counts": [
+        16,
+        8,
+        4,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "command.rally.table.OpenMatch.duration_us",
+      "bounds": [
+        50,
+        100,
+        250,
+        500,
+        1000
+      ],
+      "counts": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "command.rally.table.Tick.duration_us",
+      "bounds": [
+        50,
+        100,
+        250,
+        500,
+        1000
+      ],
+      "counts": [
+        18,
+        9,
+        3,
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "recent": [
+    {
+      "at": "2026-11-04T10:00:30.002Z",
+      "command": "rally.table.Tick",
+      "outcome": "east-returns",
+      "events": [
+        "rally.table.BallMoved"
+      ],
+      "payload": "{\"match_id\":\"m-1\",\"ball_x\":13,\"ball_y\":2}"
+    },
+    {
+      "at": "2026-11-04T10:00:29.002Z",
+      "command": "rally.table.Tick",
+      "outcome": "moved-west-down",
+      "events": [
+        "rally.table.BallMoved"
+      ],
+      "payload": "{\"match_id\":\"m-1\",\"ball_x\":12,\"ball_y\":1}"
+    },
+    {
+      "at": "2026-11-04T10:00:28.002Z",
+      "command": "rally.table.Tick",
+      "outcome": "moved-west-up",
+      "events": [
+        "rally.table.BallMoved"
+      ],
+      "payload": "{\"match_id\":\"m-1\",\"ball_x\":11,\"ball_y\":0}"
+    },
+    {
+      "at": "2026-11-04T10:00:27.002Z",
+      "command": "rally.table.Tick",
+      "outcome": "top-wall",
+      "events": [
+        "rally.table.BallMoved"
+      ],
+      "payload": "{\"match_id\":\"m-1\",\"ball_x\":10,\"ball_y\":8}"
+    }
+  ],
+  "resources": {
+    "cpu_seconds": 0.12,
+    "memory_bytes": 40384102,
+    "cpu_share": 0.004,
+    "memory_share": 0.3009
+  },
+  "dropped_frames": 0
+}

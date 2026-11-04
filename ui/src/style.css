@@ -1,0 +1,28 @@
+:root {
+  --bg: #111418;
+  --panel: #181c22;
+  --fg: #d8dde3;
+  --muted: #7d8794;
+  --border: #2c333c;
+  --accent: #6cb6ff;
+  --good: #5fd38d;
+  --bad: #ff7b72;
+  color-scheme: dark;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+body {
+  margin: 0;
+}
+
+a {
+  color: var(--accent);
+}
+
+h3 {
+  font-size: 13px;
+  margin: 12px 0 4px;
+}

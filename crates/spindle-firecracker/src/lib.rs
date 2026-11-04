@@ -35,7 +35,8 @@ use std::time::{Duration, Instant};
 pub use initramfs::Initramfs;
 use namespace::Namespace;
 pub use spindle_target::{
-    Artifact, Exit, LaunchPlan, Launcher, Peer, ResourceKind, Resources, Running, TargetKind,
+    Artifact, Exit, LaunchPlan, Launcher, Peer, ResourceKind, ResourceSample, Resources, Running,
+    TargetKind,
 };
 
 /// The variable naming the Firecracker binary; `firecracker` on `PATH` otherwise.
@@ -332,6 +333,7 @@ impl Firecracker {
             .stdin(Stdio::null())
             .stdout(console_out)
             .stderr(console_err);
+        let started = Instant::now();
         let child = match namespace.spawn(command) {
             Ok(child) => child,
             Err(source) => {
@@ -349,6 +351,8 @@ impl Firecracker {
             address,
             live: Arc::clone(&self.live),
             namespace,
+            started,
+            request: plan.request,
         };
 
         let handle = File::open(directory).map_err(|source| {
@@ -433,6 +437,8 @@ pub struct FirecrackerVm {
     address: Ipv4Addr,
     live: Addresses,
     namespace: Arc<Namespace>,
+    started: Instant,
+    request: Resources,
 }
 
 impl FirecrackerVm {
@@ -460,6 +466,20 @@ impl FirecrackerVm {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
+    }
+
+    /// What Firecracker costs the host now (its `/proc/<pid>`, the VMM included) against the
+    /// vCPUs and memory the plan asked for; `None` once the VM has ended.
+    pub fn resources(&self) -> Option<ResourceSample> {
+        if self.outcome.is_some() {
+            return None;
+        }
+        let usage = spindle_target::process_usage(self.child.id()).ok()?;
+        Some(ResourceSample::of(
+            usage,
+            self.started.elapsed(),
+            &self.request,
+        ))
     }
 
     /// Kill the VM if it still runs, and report how it ended: a VM stopped here reports
@@ -593,6 +613,10 @@ impl Running for FirecrackerVm {
 
     fn stop(&mut self) -> Result<Exit, spindle_target::LaunchError> {
         Ok(FirecrackerVm::stop(self)?)
+    }
+
+    fn resources(&self) -> Option<ResourceSample> {
+        FirecrackerVm::resources(self)
     }
 }
 

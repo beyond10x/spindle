@@ -1,5 +1,7 @@
 //! `b10x-spindle`: load an ESS specification, derive what it needs, admit it, and run or play it.
 
+mod decisions;
+
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -10,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use decisions::Answers;
 use signal_hook::consts::{SIGINT, SIGTERM};
 use spindle_capability::{Admission, Environment, Requirements};
 use spindle_host::{Host, HostError, SystemClock, rally};
@@ -50,6 +53,20 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Print the counters an instance of one component reports, derived from the specification.
+    ///
+    /// One line per counter or histogram: its name, its kind and the part of the runtime that
+    /// measures it.
+    Metrics {
+        /// The specification directory.
+        spec: PathBuf,
+        /// The component.
+        #[arg(long)]
+        component: String,
+        /// Print JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Admit a specification against an environment: bind every capability or name what is missing.
     ///
     /// Exits 0 when admitted and 3 when refused.
@@ -72,6 +89,10 @@ enum Command {
     /// `"external": {"<outcome>": true | false}` answering the command's external causes. Each
     /// line prints one JSON result: the outcome with its events and declared error, or a failure.
     /// Exits 3, running nothing, when admission is refused.
+    ///
+    /// An external cause the line does not answer is answered by `--decisions`, then by
+    /// `--answer-default`; one nothing answers fails that line, naming the outcome, and the run
+    /// goes on.
     Run {
         /// The specification directory.
         spec: PathBuf,
@@ -81,6 +102,14 @@ enum Command {
         /// The state file: required where `store.durable` is bound to `sqlite`, refused otherwise.
         #[arg(long)]
         state: Option<PathBuf>,
+        /// A TOML file of answers, `<outcome> = true | false`, at the top level for every command
+        /// or under a `["<command>"]` table for one; a command's table wins over the top level.
+        #[arg(long)]
+        decisions: Option<PathBuf>,
+        /// Answer every remaining external cause "does not hold" on a command that declares a
+        /// default branch, so the model selects as it would without it.
+        #[arg(long)]
+        answer_default: bool,
     },
     /// Play the rally example in this terminal: every component in one process, one tick per
     /// period of its periodic binding, the grid redrawn after each.
@@ -179,6 +208,25 @@ fn run(cli: Cli) -> Result<ExitCode> {
             }
             Ok(ExitCode::SUCCESS)
         }
+        Command::Metrics {
+            spec,
+            component,
+            json,
+        } => {
+            let loaded = spindle_spec::load(&spec)?;
+            let catalogue =
+                spindle_telemetry::catalogue(&loaded.ir, &component).with_context(|| {
+                    format!("{} declares no component {component:?}", spec.display())
+                })?;
+            if json {
+                println!("{:#}", serde_json::to_value(&catalogue)?);
+            } else {
+                for counter in &catalogue.counters {
+                    println!("{} {} {}", counter.name, counter.kind, counter.source);
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Admit {
             spec,
             environment,
@@ -219,7 +267,15 @@ fn run(cli: Cli) -> Result<ExitCode> {
             spec,
             environment,
             state,
-        } => execute(&spec, &environment, state.as_deref()),
+            decisions,
+            answer_default,
+        } => execute(
+            &spec,
+            &environment,
+            state.as_deref(),
+            decisions.as_deref(),
+            answer_default,
+        ),
         Command::Play {
             spec,
             environment,
@@ -233,6 +289,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
 const OPEN_MATCH: &str = "rally.table.OpenMatch";
 /// The view a rally frame is drawn from.
 const MATCH_STATE: &str = "rally.table.MatchState";
+/// The component whose counters play prints under the board.
+const TABLE: &str = "rally-table";
 /// Clears the terminal and moves the cursor home.
 const CLEAR: &str = "\x1b[2J\x1b[H";
 
@@ -278,6 +336,9 @@ fn play(spec: &Path, environment: &Path, target_score: i64, match_id: &str) -> R
             .view(MATCH_STATE, &serde_json::json!(match_id))?
             .with_context(|| format!("no match {match_id}"))?;
         write!(out, "{CLEAR}{}", rally::frame(&view)?)?;
+        if let Some(counters) = host.counters(TABLE) {
+            write!(out, "{}", counted(counters))?;
+        }
         out.flush()?;
         if rally::winner(&view).is_some() {
             host.stop();
@@ -310,6 +371,17 @@ fn play(spec: &Path, environment: &Path, target_score: i64, match_id: &str) -> R
     }
 }
 
+/// Every counter of `counters` that is not zero, one per line.
+fn counted(counters: &spindle_telemetry::Counters) -> String {
+    counters
+        .snapshot()
+        .counters
+        .iter()
+        .filter(|counter| counter.value > 0)
+        .map(|counter| format!("{} {}\n", counter.name, counter.value))
+        .collect()
+}
+
 /// The exit status of a run a signal stopped is this plus the signal's number.
 const SIGNALLED: u8 = 128;
 /// How often a wait looks for a signal.
@@ -330,8 +402,15 @@ fn wait_until(deadline: Instant, signalled: &AtomicUsize) -> Option<u8> {
     }
 }
 
-fn execute(spec: &Path, environment: &Path, state: Option<&Path>) -> Result<ExitCode> {
+fn execute(
+    spec: &Path,
+    environment: &Path,
+    state: Option<&Path>,
+    decisions: Option<&Path>,
+    answer_default: bool,
+) -> Result<ExitCode> {
     let loaded = spindle_spec::load(spec)?;
+    let answers = Answers::load(&loaded.ir, decisions, answer_default)?;
     let requirements = spindle_capability::derive(&loaded.ir, None)
         .with_context(|| format!("deriving the capabilities of {}", spec.display()))?;
     let text = std::fs::read_to_string(environment)
@@ -343,6 +422,17 @@ fn execute(spec: &Path, environment: &Path, state: Option<&Path>) -> Result<Exit
         println!("{}", serde_json::to_value(&admission)?);
         return Ok(ExitCode::from(REFUSED));
     };
+    if let Some(mint) = bindings.iter().find(|binding| {
+        binding.capability.as_str() == spindle_capability::Capability::IDENTITY_MINT
+            && binding.implementation != spindle_kernel::UuidV4::IMPLEMENTATION
+    }) {
+        bail!(
+            "identity.mint is bound to {} on {}; this build mints identities as {} only",
+            mint.implementation,
+            parsed.name,
+            spindle_kernel::UuidV4::IMPLEMENTATION
+        );
+    }
     let durable = bindings
         .iter()
         .find(|binding| binding.capability.as_str() == "store.durable")
@@ -381,7 +471,7 @@ fn execute(spec: &Path, environment: &Path, state: Option<&Path>) -> Result<Exit
             Err(error) => serde_json::json!({
                 "failure": {"kind": "invalid_request", "message": error.to_string()},
             }),
-            Ok(request) => answer(&loaded.ir, store.as_mut(), &request),
+            Ok(request) => answer(&loaded.ir, store.as_mut(), &answers, &request),
         };
         writeln!(out, "{result}")?;
         out.flush()?;
@@ -390,19 +480,13 @@ fn execute(spec: &Path, environment: &Path, state: Option<&Path>) -> Result<Exit
 }
 
 /// The result line for one request.
-fn answer(ir: &spindle_spec::EssIr, store: &mut dyn Store, request: &Request) -> serde_json::Value {
-    let mut decider = |question: &External<'_>| {
-        request
-            .external
-            .get(question.outcome)
-            .copied()
-            .ok_or_else(|| {
-                format!(
-                    "the request answers no `external.{}` for `{}`: {}",
-                    question.outcome, question.capability, question.cause
-                )
-            })
-    };
+fn answer(
+    ir: &spindle_spec::EssIr,
+    store: &mut dyn Store,
+    answers: &Answers,
+    request: &Request,
+) -> serde_json::Value {
+    let mut decider = |question: &External<'_>| answers.decide(&request.external, question);
     match spindle_kernel::execute(ir, store, &mut decider, &request.command, &request.input) {
         Ok(executed) => {
             let mut result = serde_json::json!({"command": request.command});

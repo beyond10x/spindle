@@ -19,7 +19,7 @@ environment, and executes it. Humans start at [`README.md`](README.md); the desi
 | path | what |
 |---|---|
 | `.engineering/` | the AEP store (`aep.project/5`, protocol `adp/1`, profile `development.standard`) |
-| `ess/` | Spindle's own specification, `spindle.deployment` (`format: ess/34`) |
+| `ess/` | Spindle's own specification: `spindle.deployment`, `spindle.placement`, `spindle.observe` (the observe API answers); `ess/fixtures/observe/` holds API fixtures, `ess/generated/` the generated JSON Schema (`task generate:observe`) |
 | `crates/spindle-spec/` | `load`/`compile`: source files → `EssIr`, through `ess-domain` and `ess-compiler` only |
 | `crates/spindle-capability/` | `derive` (IR → requirements with reasons), `Environment` (`spindle-environment/1`, TOML), `admit` |
 | `crates/spindle-kernel/` | executes commands against the compiled IR: guards, outcomes, entity and newtype invariants, events; SQLite or memory store |
@@ -28,8 +28,11 @@ environment, and executes it. Humans start at [`README.md`](README.md); the desi
 | `crates/spindle-target/` | the deployment target contract: `Launcher`, `LaunchPlan`, `Running`, `Exit`, `place`/`start`; the process launcher |
 | `crates/spindle-qemu/` | `QemuLauncher`: QEMU `microvm` with the host kernel, a Rust `/init` in a cpio initramfs, a private user and network namespace |
 | `crates/spindle-firecracker/` | Firecracker launcher: API socket, taps on a bridge inside a private user and network namespace |
-| `crates/spindle-host/` | every component of a system in one process: per-component admission and store, the timer on an injected clock, in-process channels, one-row view reads; `rally::frame` |
-| `crates/spindle-cli/` | `b10x-spindle`: `check`, `capabilities`, `admit`, `run`, `play` (exit 3 = refused) |
+| `crates/spindle-telemetry/` | the `Telemetry` port: atomic counters and fixed-bucket histograms per instance, `CountingStore`, the counter catalogue derived from the IR |
+| `crates/spindle-host/` | every component of a system in one process: per-component admission and store, the timer on an injected clock, in-process channels, one-row and list view reads; `rally::frame` |
+| `crates/spindle-cli/` | `b10x-spindle`: `check`, `capabilities`, `admit`, `run`, `metrics`, `play` (exit 3 = refused) |
+| `crates/spindle-observe-api/` | generated Rust types of the observe API; outside the workspace, drift-checked by `task check` |
+| `ui/` | the observe UI: Vue 3 + TypeScript, Vite, pnpm; `ui/src/api/generated/` is generated |
 | `examples/environments/` | `laptop.toml`, `microvm.toml` |
 | `examples/rally/` | the example system: one table, two players, three components |
 | `docs/design/spindle.md` | design, decisions (§11), milestones (§12), the rally showcase (§13) |
@@ -67,7 +70,9 @@ task check
 ```
 
 Steps (`Taskfile.yml`): `aep plan artifact validate`, `ess specify validate` on `ess` and
-`examples/rally/ess`, `cargo fmt --all -- --check`,
+`examples/rally/ess`, the three observe contract checks (`check:the_observe_domain_validates`,
+`check:the_generated_types_have_no_drift`, `check:every_fixture_answer_validates_against_its_schema`),
+`check:ui` (`pnpm` test, typecheck and build in `ui/`), `cargo fmt --all -- --check`,
 `cargo clippy --workspace --all-targets --locked -- -D warnings`,
 `cargo test --workspace --locked --no-fail-fast`. The ESS pin is the `tag` of `ess-compiler`,
 `ess-domain` and `ess-primitives` in `Cargo.toml`; CI installs the `ess` CLI of the same version

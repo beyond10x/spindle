@@ -1,0 +1,90 @@
+{
+  "component": "rally-player-east",
+  "counters": [
+    {
+      "name": "command.rally.east.ObserveBall.first-sight",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.east.ObserveBall.up",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.east.ObserveBall.down",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.east.ObserveBall.hold",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.east.ObserveBall.duration_us",
+      "kind": "histogram",
+      "source": "kernel"
+    },
+    {
+      "name": "event.rally.east.BallSeen.appended",
+      "kind": "counter",
+      "source": "store"
+    },
+    {
+      "name": "event.rally.east.PaddleMoveRequested.appended",
+      "kind": "counter",
+      "source": "store"
+    },
+    {
+      "name": "store.rows_written",
+      "kind": "counter",
+      "source": "store"
+    },
+    {
+      "name": "store.bytes_written",
+      "kind": "counter",
+      "source": "store"
+    },
+    {
+      "name": "binding.east-moves.sent",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.east-moves.delivered",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.east-moves.redelivered",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.east-moves.dropped",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.east-watches.sent",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.east-watches.delivered",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.east-watches.redelivered",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.east-watches.dropped",
+      "kind": "counter",
+      "source": "channel"
+    }
+  ]
+}

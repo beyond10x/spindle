@@ -1,0 +1,97 @@
+domain: probe.review
+summary: Submissions a fraud desk may flag and a reviewer may escalate, and decisions an owner may veto.
+entities:
+  - name: probe.review.Submission
+    identity:
+      name: submission_id
+      type: String
+    fields:
+      - name: amount
+        type: Integer
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+  - name: probe.review.Decision
+    identity:
+      name: decision_id
+      type: String
+    fields:
+      - name: approve
+        type: Boolean
+    lifecycle:
+      initial: Approved
+      states: [Approved]
+      terminal: [Approved]
+errors:
+  - name: probe.review.Flagged
+    summary: The fraud desk flagged the submission.
+    fields: []
+  - name: probe.review.Escalated
+    summary: A reviewer escalated the submission.
+    fields: []
+  - name: probe.review.Vetoed
+    summary: The owner vetoed the decision.
+    fields: []
+  - name: probe.review.Declined
+    summary: The decision declines.
+    fields: []
+commands:
+  - name: probe.review.Submit
+    input:
+      - name: submission_id
+        type: String
+      - name: amount
+        type: Integer
+    outcomes:
+      - name: flagged
+        external: the fraud desk flags the submission
+        error: probe.review.Flagged
+        summary: The fraud desk may flag any submission.
+      - name: escalated
+        external: a reviewer escalates the submission
+        error: probe.review.Escalated
+        summary: A reviewer may escalate any submission.
+      - name: submitted
+        creates: probe.review.Submission
+        instance: submission_id
+        sets:
+          amount: input.amount
+        emits: [probe.review.Submitted]
+        payload:
+          probe.review.Submitted: {submission_id: input.submission_id}
+        summary: The submission is accepted.
+  - name: probe.review.Decide
+    input:
+      - name: decision_id
+        type: String
+      - name: approve
+        type: Boolean
+    outcomes:
+      - name: declined
+        when: not approve
+        error: probe.review.Declined
+        summary: A declining decision is refused.
+      - name: vetoed
+        external: the owner vetoes the decision
+        error: probe.review.Vetoed
+        summary: The owner may veto an approving decision.
+      - name: approved
+        when: approve
+        creates: probe.review.Decision
+        instance: decision_id
+        sets:
+          approve: input.approve
+        emits: [probe.review.Approved]
+        payload:
+          probe.review.Approved: {decision_id: input.decision_id}
+        summary: An approving decision is recorded.
+events:
+  - name: probe.review.Submitted
+    fields:
+      - name: submission_id
+        type: String
+  - name: probe.review.Approved
+    fields:
+      - name: decision_id
+        type: String

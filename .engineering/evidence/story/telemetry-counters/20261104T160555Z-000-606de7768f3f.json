@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-04T16:05:55Z",
+  "actor": "human:timo",
+  "artifact": "story:telemetry-counters",
+  "kind": "story",
+  "revision": 3,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "task check steps on wave/2 9749007: aep and ess validate exit 0, observe contract checks exit 0, check:ui 29 vitest passed, fmt and clippy exit 0, cargo test --workspace 192 passed, 0 failed, 22 ignored"
+  }
+}

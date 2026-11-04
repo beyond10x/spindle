@@ -2,16 +2,17 @@
 format: aep.planning-md/3
 id: story:launcher-resource-sampling
 kind: story
-status: active
+status: implemented
 title: Resource sampling by the launcher
 relations:
 - serves: vision:spindle
 - decomposes: epic:observe
 - depends_on: story:deployment-target-contract
-revision: 3
+revision: 4
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-04T10:45:52Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-04T10:45:52Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-04T16:05:55Z", actor: "human:timo", revision: 4, decided_on: {"recorded":{"test_result":1}}}
 ---
 # Resource sampling by the launcher
 
