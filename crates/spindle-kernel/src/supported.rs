@@ -51,7 +51,7 @@ pub(crate) fn check(ir: &EssIr, command: &ResolvedCommand) -> Result<(), Execute
             {
                 continue;
             }
-            if let Some(what) = value(field) {
+            if let Some(what) = value(ir, field) {
                 return refuse(&what);
             }
         }
@@ -129,8 +129,15 @@ fn shape(outcome: &ResolvedOutcome) -> Option<&'static str> {
     }
 }
 
-/// The value source, named, when the kernel does not read it.
-fn value(field: &ResolvedPayloadField) -> Option<String> {
+/// The value source, named, when the kernel does not read it. A generated value is read where
+/// its type is one the runtime mints ([`crate::mint::minted`]), and the refusal of one that is
+/// not names the field and its type.
+fn value(ir: &EssIr, field: &ResolvedPayloadField) -> Option<String> {
+    let mintable = |present: bool| {
+        (!crate::mint::absent(&field.target_type, present)
+            && crate::mint::minted(ir, &field.target_type, present).is_none())
+        .then(|| crate::mint::unmintable(&field.target, &field.target_type))
+    };
     if let Some(conversion) = &field.conversion {
         return Some(format!(
             "the conversion `{conversion}` into `{}`",
@@ -144,8 +151,15 @@ fn value(field: &ResolvedPayloadField) -> Option<String> {
         | ResolvedPayloadValue::SubjectState { .. }
         | ResolvedPayloadValue::Increment { .. }
         | ResolvedPayloadValue::EmptyList
+        | ResolvedPayloadValue::PayloadRead { .. }
         | ResolvedPayloadValue::Cleared => None,
-        ResolvedPayloadValue::Struct { fields } => fields.iter().find_map(value),
+        ResolvedPayloadValue::Generated { present } => mintable(*present),
+        ResolvedPayloadValue::InputOrGenerated {
+            otherwise: None, ..
+        } => mintable(false),
+        ResolvedPayloadValue::Struct { fields } => {
+            fields.iter().find_map(|member| value(ir, member))
+        }
         other => Some(format!("the value source {}", other.describe())),
     }
 }

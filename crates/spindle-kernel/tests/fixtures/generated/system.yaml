@@ -1,0 +1,23 @@
+format: ess/34
+system: forge
+version: v1
+summary: Batches whose serial, sequence, stamp and token the runtime mints.
+domains:
+  - forge.batch
+components:
+  - component: kiln
+    summary: Starts, relabels and weighs batches.
+    owns:
+      domains:
+        - forge.batch
+    accepts:
+      commands:
+        - forge.batch.StartBatch
+        - forge.batch.RelabelBatch
+        - forge.batch.WeighBatch
+    publishes:
+      events:
+        - forge.batch.BatchStarted
+        - forge.batch.BatchRelabelled
+        - forge.batch.BatchWeighed
+    reached_by: in_process

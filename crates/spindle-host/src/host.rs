@@ -12,7 +12,8 @@ use serde_json::{Map, Value};
 use spindle_capability::{Capability, Environment};
 use spindle_channel::{ChannelError, Receiver, RouteError, Router, Sender, in_process};
 use spindle_kernel::{
-    DeclaredError, ExecuteError, Executed, MemoryStore, NoExternals, SqliteStore, Store, StoreError,
+    DeclaredError, ExecuteError, Executed, MemoryStore, NoExternals, SqliteStore, Store,
+    StoreError, UuidV4,
 };
 use spindle_telemetry::{Counters, CountingStore, Sink};
 use spindle_timer::{BindingName, Clock, CompleteError, LifetimeError, Timer};
@@ -617,10 +618,13 @@ impl Host {
             .get_mut(component)
             .ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
         let started = Instant::now();
-        let result = spindle_kernel::execute(
+        let clock = &self.clock;
+        let result = spindle_kernel::execute_at(
             &self.ir,
             held.store.as_mut(),
             &mut NoExternals,
+            &mut UuidV4,
+            &|| clock.wall(),
             command,
             input,
         );

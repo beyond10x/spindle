@@ -5,10 +5,11 @@ use std::fmt;
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::{
-    ResolvedComponent, ResolvedCondition, ResolvedEffect, ResolvedInstance, ResolvedOutcome,
-    ResolvedPayloadValue,
+    ResolvedBody, ResolvedComponent, ResolvedCondition, ResolvedEffect, ResolvedInstance,
+    ResolvedOutcome, ResolvedPayloadField, ResolvedPayloadValue, ResolvedTypeRef,
 };
 use ess_domain::component::Reach;
+use ess_domain::types::{MAX_TYPE_DEPTH, Primitive};
 use ess_domain::view::Consistency;
 
 /// A capability name: `store.durable`, `timer`, `external.<command>.<outcome>`.
@@ -169,6 +170,14 @@ pub fn derive(ir: &EssIr, component: Option<&str>) -> Option<Requirements> {
                     ),
                 );
             }
+            for (capability, because) in generated_mints(ir, outcome) {
+                need(
+                    capability,
+                    "outcome",
+                    format!("{name}/{}", outcome.name),
+                    because,
+                );
+            }
             let cause = match &outcome.condition {
                 ResolvedCondition::External { cause }
                 | ResolvedCondition::ExternalWhen { cause, .. }
@@ -266,6 +275,93 @@ fn minted_identity(ir: &EssIr, outcome: &ResolvedOutcome) -> Option<(String, Str
         )),
         Some(_) => None,
     }
+}
+
+/// Every field `outcome` leaves to the runtime besides a minted creation identity, with the
+/// capability that supplies its value and why: `{generated: true}` in `sets:`, a payload or an
+/// error payload, a struct member marked so, and the `else:` of `{input: f, else: {generated:
+/// true}}`. A `Uuid`, a `String` or an `Integer` (or a newtype of one) is minted through
+/// `identity.mint`, a `Timestamp` read from the `clock`. An `Optional` field without `present:
+/// true` is left absent and needs nothing; a type of any other kind is no mint the runtime has,
+/// and the kernel refuses it by name.
+fn generated_mints(ir: &EssIr, outcome: &ResolvedOutcome) -> Vec<(&'static str, String)> {
+    let mut mints = Vec::new();
+    let identity = minted_identity(ir, outcome).map(|(_, field)| field);
+    if let Some(subject) = &outcome.subject {
+        let entity = ir.entity(&subject.entity).name.to_string();
+        generated_in(ir, &entity, &outcome.sets, None, &mut mints);
+    }
+    for payload in &outcome.payload {
+        let event = payload.event.name().to_string();
+        generated_in(ir, &event, &payload.fields, identity.as_deref(), &mut mints);
+    }
+    if let Some(error) = &outcome.error {
+        let error = error.name().to_string();
+        generated_in(ir, &error, &outcome.error_payload, None, &mut mints);
+    }
+    mints
+}
+
+fn generated_in(
+    ir: &EssIr,
+    owner: &str,
+    fields: &[ResolvedPayloadField],
+    identity: Option<&str>,
+    mints: &mut Vec<(&'static str, String)>,
+) {
+    for field in fields {
+        let (present, fallback) = match &field.value {
+            ResolvedPayloadValue::Generated { .. }
+                if identity == Some(field.target.as_str()) && field.conversion.is_none() =>
+            {
+                continue;
+            }
+            ResolvedPayloadValue::Generated { present } => (*present, false),
+            ResolvedPayloadValue::InputOrGenerated {
+                otherwise: None, ..
+            } => (false, true),
+            ResolvedPayloadValue::Struct { fields } => {
+                generated_in(ir, owner, fields, None, mints);
+                continue;
+            }
+            _ => continue,
+        };
+        if !present && field.target_type.is_optional() {
+            continue;
+        }
+        let place = format!("`{owner}.{}`", field.target);
+        let mint = match primitive_under(ir, field.target_type.required()) {
+            Some(Primitive::Uuid | Primitive::String | Primitive::Integer) if fallback => (
+                Capability::IDENTITY_MINT,
+                format!("mints {place} where the input sends none"),
+            ),
+            Some(Primitive::Uuid | Primitive::String | Primitive::Integer) => {
+                (Capability::IDENTITY_MINT, format!("mints {place}"))
+            }
+            Some(Primitive::Timestamp) => (
+                Capability::CLOCK,
+                format!("stamps {place} with the current time"),
+            ),
+            _ => continue,
+        };
+        mints.push(mint);
+    }
+}
+
+/// The primitive under every newtype of `kind`, where it is one.
+fn primitive_under(ir: &EssIr, kind: &ResolvedTypeRef) -> Option<Primitive> {
+    let mut kind = kind;
+    for _ in 0..=MAX_TYPE_DEPTH {
+        match kind {
+            ResolvedTypeRef::Primitive { name } => return Some(*name),
+            ResolvedTypeRef::Declared { name } => match &ir.named_type(name).body {
+                ResolvedBody::Newtype { of, .. } => kind = of,
+                _ => return None,
+            },
+            _ => return None,
+        }
+    }
+    None
 }
 
 fn owner_publishing<'ir>(ir: &'ir EssIr, event: &str) -> Option<&'ir ResolvedComponent> {

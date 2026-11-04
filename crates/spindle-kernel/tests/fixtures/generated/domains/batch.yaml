@@ -1,0 +1,136 @@
+domain: forge.batch
+summary: A batch started under the caller's id, whose serial, sequence, stamp and token the runtime mints.
+types:
+  - name: forge.batch.BatchId
+    kind: newtype
+    of: Uuid
+  - name: forge.batch.Serial
+    kind: newtype
+    of: String
+entities:
+  - name: forge.batch.Batch
+    identity:
+      name: batch_id
+      type: forge.batch.BatchId
+    fields:
+      - name: serial
+        type: forge.batch.Serial
+      - name: sequence
+        type: Integer
+      - name: fired_at
+        type: Timestamp
+      - name: token
+        type: Uuid
+      - name: label
+        type: String
+      - name: note
+        type: Optional<String>
+      - name: weight
+        type: Optional<Decimal>
+    lifecycle:
+      initial: Fired
+      states: [Fired]
+      terminal: [Fired]
+errors:
+  - name: forge.batch.BlankLabel
+    summary: The new label is empty.
+    fields:
+      - name: incident
+        type: Uuid
+commands:
+  - name: forge.batch.StartBatch
+    input:
+      - name: batch_id
+        type: forge.batch.BatchId
+      - name: label
+        type: Optional<String>
+    outcomes:
+      - name: started
+        creates: forge.batch.Batch
+        instance: batch_id
+        sets:
+          serial: {generated: true}
+          sequence: {payload: forge.batch.BatchStarted.sequence}
+          fired_at: {generated: true}
+          token: {generated: true}
+          label: {input: label, else: {generated: true}}
+          note: {generated: true, present: true}
+        emits: [forge.batch.BatchStarted]
+        payload:
+          forge.batch.BatchStarted:
+            batch_id: input.batch_id
+            sequence: {generated: true}
+        summary: The batch starts; the runtime mints its serial, sequence, stamp, token and note, and its label where none is sent.
+  - name: forge.batch.RelabelBatch
+    input:
+      - name: batch_id
+        type: forge.batch.BatchId
+      - name: label
+        type: String
+    outcomes:
+      - name: blank
+        when: label == ""
+        error: forge.batch.BlankLabel
+        payload:
+          forge.batch.BlankLabel:
+            incident: {generated: true}
+        summary: An empty label is refused under an incident the runtime mints.
+      - name: relabelled
+        updates: forge.batch.Batch
+        instance: batch_id
+        sets:
+          label: input.label
+        emits: [forge.batch.BatchRelabelled]
+        payload:
+          forge.batch.BatchRelabelled:
+            batch_id: input.batch_id
+        summary: The batch takes the new label and keeps every minted field.
+  - name: forge.batch.WeighBatch
+    input:
+      - name: batch_id
+        type: forge.batch.BatchId
+    outcomes:
+      - name: weighed
+        updates: forge.batch.Batch
+        instance: batch_id
+        sets:
+          weight: {generated: true, present: true}
+        emits: [forge.batch.BatchWeighed]
+        payload:
+          forge.batch.BatchWeighed:
+            batch_id: input.batch_id
+        summary: The batch is weighed at a weight the runtime would have to mint.
+events:
+  - name: forge.batch.BatchStarted
+    fields:
+      - name: batch_id
+        type: forge.batch.BatchId
+      - name: sequence
+        type: Integer
+  - name: forge.batch.BatchRelabelled
+    fields:
+      - name: batch_id
+        type: forge.batch.BatchId
+  - name: forge.batch.BatchWeighed
+    fields:
+      - name: batch_id
+        type: forge.batch.BatchId
+views:
+  - name: forge.batch.BatchCard
+    source: forge.batch.Batch
+    consistency: read_your_writes
+    fields:
+      - name: batch_id
+        type: forge.batch.BatchId
+      - name: serial
+        type: forge.batch.Serial
+      - name: sequence
+        type: Integer
+      - name: fired_at
+        type: Timestamp
+      - name: token
+        type: Uuid
+      - name: label
+        type: String
+      - name: note
+        type: Optional<String>

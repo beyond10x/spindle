@@ -7,17 +7,20 @@
 //! [`EssIr::literal_primitive`], the one question every ESS consumer asks of a literal.
 
 use ess_compiler::EssIr;
-use ess_compiler::ir::{ResolvedPayloadField, ResolvedPayloadValue};
+use ess_compiler::ir::{ResolvedOutcome, ResolvedPayloadField, ResolvedPayloadValue};
+use ess_domain::QualifiedName;
 use ess_domain::types::Primitive;
 use ess_primitives::facts::Number;
 use serde_json::{Map, Value};
 
 use crate::ExecuteError;
+use crate::mint::Generator;
 use crate::store::Row;
 
 /// What a determined field may read: the command's input and the addressed instance as it was
 /// immediately before the outcome.
-pub(crate) struct Sources<'a> {
+#[derive(Clone, Copy)]
+pub(crate) struct Sources<'a, 'm> {
     pub(crate) ir: &'a EssIr,
     pub(crate) input: &'a Map<String, Value>,
     pub(crate) before: Option<&'a Row>,
@@ -28,9 +31,17 @@ pub(crate) struct Sources<'a> {
     /// The identity this outcome minted for the instance it creates, under the identity field's
     /// name: what `{generated: true}` in a field of that name reads.
     pub(crate) minted: Option<(&'a str, &'a Value)>,
+    /// The outcome the fields are this run's of: where `{payload: <Event>.<field>}` finds the
+    /// source it reads.
+    pub(crate) outcome: &'a ResolvedOutcome,
+    /// The entity, event or error whose fields these are, as a generated field's mint is asked
+    /// for it.
+    pub(crate) owner: &'a QualifiedName,
+    /// The values this run mints for its generated fields, each once.
+    pub(crate) generator: &'a Generator<'m>,
 }
 
-impl Sources<'_> {
+impl<'a> Sources<'a, '_> {
     /// The value `field` takes; `None` where it is absent.
     pub(crate) fn value(
         &self,
@@ -64,6 +75,39 @@ impl Sources<'_> {
             {
                 Ok(self.minted.map(|(_, value)| value.clone()))
             }
+            ResolvedPayloadValue::Generated { present } => self.generated(field, *present),
+            ResolvedPayloadValue::InputOrGenerated {
+                field: read,
+                otherwise: None,
+                ..
+            } => match read_input(self.input, read) {
+                Some(value) => Ok(Some(value)),
+                None => self.generated(field, false),
+            },
+            ResolvedPayloadValue::PayloadRead {
+                event, field: read, ..
+            } => {
+                let source = self
+                    .outcome
+                    .payload
+                    .iter()
+                    .filter(|payload| payload.event == *event)
+                    .flat_map(|payload| &payload.fields)
+                    .find(|source| source.target == *read)
+                    .ok_or_else(|| ExecuteError::NoValue {
+                        what: format!(
+                            "`{}`, which stores `{}.{read}` the outcome does not fill",
+                            field.target,
+                            event.name()
+                        ),
+                    })?;
+                Sources {
+                    owner: event.name(),
+                    error: false,
+                    ..*self
+                }
+                .value(source)
+            }
             ResolvedPayloadValue::EmptyList => Ok(Some(Value::Array(Vec::new()))),
             ResolvedPayloadValue::Cleared => Ok(None),
             ResolvedPayloadValue::Struct { fields } => {
@@ -95,7 +139,22 @@ impl Sources<'_> {
         Ok(object)
     }
 
-    fn before(&self, field: &ResolvedPayloadField) -> Result<&Row, ExecuteError> {
+    /// The value this run mints for the generated `field`.
+    fn generated(
+        &self,
+        field: &ResolvedPayloadField,
+        present: bool,
+    ) -> Result<Option<Value>, ExecuteError> {
+        self.generator.generated(
+            self.ir,
+            self.outcome.name.as_str(),
+            self.owner,
+            field,
+            present,
+        )
+    }
+
+    fn before(&self, field: &ResolvedPayloadField) -> Result<&'a Row, ExecuteError> {
         self.before.ok_or_else(|| ExecuteError::NoValue {
             what: format!("`{}`, which reads an instance none holds", field.target),
         })

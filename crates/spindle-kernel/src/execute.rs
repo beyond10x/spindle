@@ -1,19 +1,21 @@
 //! One command, from input to committed change.
 
 use std::collections::BTreeMap;
+use std::time::SystemTime;
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::{
     EventHandle, PrecedencePlan, ResolvedCommand, ResolvedCondition, ResolvedEffect,
     ResolvedEntity, ResolvedField, ResolvedInstance, ResolvedOutcome,
 };
+use ess_domain::QualifiedName;
 use ess_domain::command::precedence::Phase;
 use ess_primitives::predicate::{Predicate, Truth};
 use serde_json::{Map, Value};
 
 use crate::decider::{Decider, External};
 use crate::facts::Facts;
-use crate::mint::{IDENTITY_MINT, Identity, Mint, UuidV4};
+use crate::mint::{Generator, IDENTITY_MINT, Identity, Mint, UuidV4};
 use crate::store::{Change, Row, Store, Stored};
 use crate::values::Sources;
 use crate::{DeclaredError, Event, ExecuteError, Executed};
@@ -46,6 +48,10 @@ pub fn execute(
 /// and the value is the new instance's identity and every event payload field of the identity's
 /// name.
 ///
+/// A field marked `{generated: true}` other than that identity is minted from its type through
+/// `mint` too; a generated `Timestamp` is the machine's current time ([`execute_at`] takes a
+/// clock instead).
+///
 /// # Errors
 /// As [`execute`].
 pub fn execute_minting(
@@ -53,6 +59,23 @@ pub fn execute_minting(
     store: &mut dyn Store,
     decider: &mut dyn Decider,
     mint: &mut dyn Mint,
+    command: &str,
+    input: &Map<String, Value>,
+) -> Result<Executed, ExecuteError> {
+    execute_at(ir, store, decider, mint, &SystemTime::now, command, input)
+}
+
+/// [`execute_minting`], stamping every generated `Timestamp` with the civil time `now` answers:
+/// the clock an environment binds as `clock`.
+///
+/// # Errors
+/// As [`execute`].
+pub fn execute_at(
+    ir: &EssIr,
+    store: &mut dyn Store,
+    decider: &mut dyn Decider,
+    mint: &mut dyn Mint,
+    now: &dyn Fn() -> SystemTime,
     command: &str,
     input: &Map<String, Value>,
 ) -> Result<Executed, ExecuteError> {
@@ -90,7 +113,7 @@ pub fn execute_minting(
         store,
         decider,
         held,
-        mint,
+        generator: Generator::new(mint, now, command),
         minted: None,
     };
     match run.select()? {
@@ -122,12 +145,12 @@ struct Run<'a, 'ir> {
     store: &'a mut dyn Store,
     decider: &'a mut dyn Decider,
     held: Option<Addressed<'ir>>,
-    mint: &'a mut dyn Mint,
+    generator: Generator<'a>,
     /// The identity this run minted, under the identity field's name.
     minted: Option<(String, Value)>,
 }
 
-impl<'ir> Run<'_, 'ir> {
+impl<'a, 'ir> Run<'a, 'ir> {
     /// Reads the outcomes in the order of the command's precedence plan; the first whose
     /// condition holds is selected.
     fn select(&mut self) -> Result<Selected<'ir>, ExecuteError> {
@@ -391,7 +414,11 @@ impl<'ir> Run<'_, 'ir> {
                     .unwrap_or(&entity.lifecycle.initial)
                     .to_string();
                 let mut fields = BTreeMap::new();
-                write(&self.sources(None), outcome, &mut fields)?;
+                write(
+                    &self.sources(outcome, &entity.name, None),
+                    outcome,
+                    &mut fields,
+                )?;
                 let events = self.emit(outcome, None)?;
                 (
                     Some(Change {
@@ -424,7 +451,7 @@ impl<'ir> Run<'_, 'ir> {
                     }
                     after.state = transition.to.to_string();
                 }
-                let sources = self.sources(Some(&stored.row));
+                let sources = self.sources(outcome, &entity.name, Some(&stored.row));
                 write(&sources, outcome, &mut after.fields)?;
                 let events = self.emit(outcome, Some(&stored.row))?;
                 let change = (!matches!(effect, ResolvedEffect::Preserves)).then(|| Change {
@@ -473,7 +500,7 @@ impl<'ir> Run<'_, 'ir> {
             .filter(|payload| payload.event == *event)
             .flat_map(|payload| &payload.fields)
             .find(|source| source.target == field.name)
-            .map(|source| self.sources(None).value(source))
+            .map(|source| self.sources(outcome, event.name(), None).value(source))
             .transpose()?
             .flatten()
             .ok_or_else(|| ExecuteError::Unsupported {
@@ -496,7 +523,7 @@ impl<'ir> Run<'_, 'ir> {
         field: &ResolvedField,
     ) -> Result<Value, ExecuteError> {
         let entity_name = entity.name.to_string();
-        let uuid = self.mint.uuid(&Identity {
+        let uuid = self.generator.uuid(&Identity {
             capability: IDENTITY_MINT,
             command: self.command,
             outcome: outcome.name.as_str(),
@@ -531,7 +558,13 @@ impl<'ir> Run<'_, 'ir> {
         Ok(())
     }
 
-    fn sources<'s>(&'s self, before: Option<&'s Row>) -> Sources<'s> {
+    /// What the fields of `owner` in `outcome` read, with the instance as it was `before`.
+    fn sources<'s>(
+        &'s self,
+        outcome: &'s ResolvedOutcome,
+        owner: &'s QualifiedName,
+        before: Option<&'s Row>,
+    ) -> Sources<'s, 'a> {
         Sources {
             ir: self.ir,
             input: self.input,
@@ -541,6 +574,9 @@ impl<'ir> Run<'_, 'ir> {
                 .minted
                 .as_ref()
                 .map(|(name, value)| (name.as_str(), value)),
+            outcome,
+            owner,
+            generator: &self.generator,
         }
     }
 
@@ -550,7 +586,6 @@ impl<'ir> Run<'_, 'ir> {
         outcome: &ResolvedOutcome,
         before: Option<&Row>,
     ) -> Result<Vec<Event>, ExecuteError> {
-        let sources = self.sources(before);
         outcome
             .emits
             .iter()
@@ -560,7 +595,7 @@ impl<'ir> Run<'_, 'ir> {
                     .iter()
                     .find(|payload| payload.event == *event)
                     .map_or(&[][..], |payload| payload.fields.as_slice());
-                let mut payload = sources.object(fields)?;
+                let mut payload = self.sources(outcome, event.name(), before).object(fields)?;
                 // A minted identity is published in every field of its name the event declares,
                 // where the outcome gives that field no source of its own.
                 if let Some((name, minted)) = &self.minted
@@ -590,7 +625,7 @@ impl<'ir> Run<'_, 'ir> {
         };
         let sources = Sources {
             error: true,
-            ..self.sources(before)
+            ..self.sources(outcome, error.name(), before)
         };
         Ok(Some(DeclaredError {
             name: error.name().to_string(),
@@ -619,7 +654,7 @@ fn both(first: Truth, second: impl FnOnce() -> Truth) -> Truth {
 /// Writes `outcome`'s `sets:` into `fields`, reading the instance as it was before. Each value is
 /// checked against the type its target declares, as ESS checks a sum or a written value.
 fn write(
-    sources: &Sources<'_>,
+    sources: &Sources<'_, '_>,
     outcome: &ResolvedOutcome,
     fields: &mut BTreeMap<String, Value>,
 ) -> Result<(), ExecuteError> {
