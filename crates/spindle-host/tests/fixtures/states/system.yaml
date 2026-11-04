@@ -1,0 +1,5 @@
+format: ess/34
+system: parcels
+version: v1
+domains:
+  - parcels.depot

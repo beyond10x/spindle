@@ -579,7 +579,9 @@ impl Host {
     /// Every row `view` holds: each instance of its source its filter keeps, projected, in the
     /// order its `order_by` ranks them, ties and a view without `order_by` by identity.
     ///
-    /// The filter read is `state == <State>` alone, as the compiler parsed it. Read from the
+    /// The filter read is one over the lifecycle state alone, as the compiler parsed it:
+    /// `state == <State>` and `!=`, `in` and `none_of` over states, combined by `any`, `all` and
+    /// `not`, and evaluated by ESS. Read from the
     /// same store as [`Host::view`], for either consistency.
     ///
     /// # Errors
