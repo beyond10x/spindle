@@ -254,5 +254,6 @@ store.bytes_written counter store
 ## Next
 
 - [The rally example](/docs/examples/rally) explains the three components and their bindings.
-- [CLI reference](/docs/reference/cli) has `run`, which executes commands read as JSON lines.
+- [CLI reference](/docs/reference/cli) has `run`, which executes commands read as JSON lines or replays
+  an `ess-scenario` document with `--scenario`.
 - [Status](/docs/status) says what is shipped and what is planned.

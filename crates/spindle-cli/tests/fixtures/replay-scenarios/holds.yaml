@@ -1,0 +1,27 @@
+type: ess-scenario/1
+domain: desk.ticket
+scenario: two-opened-tickets-are-listed
+summary: Two tickets open, each under an identity the runtime mints, and both are listed as open.
+arrange:
+  - instance: printer
+    entity: desk.ticket.Ticket
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: desk.ticket.OpenTicket
+    input:
+      title: printer
+    outcome: opened
+    events:
+      - event: desk.ticket.TicketOpened
+        payload: {title: printer}
+    capture: {instance: printer, event: desk.ticket.TicketOpened, field: ticket_id}
+  - at: 2026-01-05T09:01:00Z
+    command: desk.ticket.OpenTicket
+    input:
+      title: kettle
+    outcome: opened
+assert:
+  - view: desk.ticket.OpenTickets
+    contains: {title: kettle}
+  - view: desk.ticket.OpenTickets
+    contains: {ticket_id: {$instance: printer}, title: printer}

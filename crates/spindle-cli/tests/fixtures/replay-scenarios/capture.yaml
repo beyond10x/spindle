@@ -1,0 +1,25 @@
+type: ess-scenario/1
+domain: desk.ticket
+scenario: a-minted-ticket-closes-by-its-captured-id
+summary: The identity a ticket was opened under closes it.
+arrange:
+  - instance: printer
+    entity: desk.ticket.Ticket
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: desk.ticket.OpenTicket
+    input:
+      title: printer
+    outcome: opened
+    capture: {instance: printer, event: desk.ticket.TicketOpened, field: ticket_id}
+  - at: 2026-01-05T09:01:00Z
+    command: desk.ticket.CloseTicket
+    input:
+      ticket_id: {$instance: printer}
+    outcome: closed
+    events:
+      - event: desk.ticket.TicketClosed
+        payload: {ticket_id: {$instance: printer}}
+assert:
+  - view: desk.ticket.AllTickets
+    contains: {ticket_id: {$instance: printer}, state: Closed}

@@ -1,0 +1,21 @@
+format: ess/34
+system: desk
+version: v1
+summary: Tickets the runtime opens under an identity it mints, closes, and lists.
+domains:
+  - desk.ticket
+components:
+  - component: desk
+    summary: Opens, closes and lists tickets.
+    owns:
+      domains:
+        - desk.ticket
+    accepts:
+      commands:
+        - desk.ticket.OpenTicket
+        - desk.ticket.CloseTicket
+    publishes:
+      events:
+        - desk.ticket.TicketOpened
+        - desk.ticket.TicketClosed
+    reached_by: in_process

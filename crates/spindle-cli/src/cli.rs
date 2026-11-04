@@ -78,6 +78,13 @@ pub enum Command {
     /// An external cause the line does not answer is answered by `--decisions`, then by
     /// `--answer-default`; one nothing answers fails that line, naming the outcome, and the run
     /// goes on.
+    ///
+    /// With `--scenario`, replays an `ess-scenario` document instead of reading stdin: every
+    /// component in one process on empty stores, the document read and checked by ESS, its steps
+    /// run and compared by ESS's conformance runner. Prints each timeline act and assertion that
+    /// holds; exits 0 when all hold. At the first that does not, prints it with what was expected
+    /// and what was observed, runs nothing after it and exits 1. A document ESS refuses exits 1
+    /// with ESS's diagnostic before any step runs.
     Run {
         /// The specification directory.
         spec: PathBuf,
@@ -95,6 +102,9 @@ pub enum Command {
         /// default branch, so the model selects as it would without it.
         #[arg(long)]
         answer_default: bool,
+        /// The `ess-scenario` document to replay.
+        #[arg(long, conflicts_with_all = ["state", "decisions", "answer_default"])]
+        scenario: Option<PathBuf>,
     },
     /// Play the rally example in this terminal: every component in one process, one tick per
     /// period of its periodic binding, the grid redrawn after each.
