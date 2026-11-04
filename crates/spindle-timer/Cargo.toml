@@ -1,0 +1,17 @@
+[package]
+name = "spindle-timer"
+description = "Schedule the periodic bindings of a compiled ESS specification against a clock."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ess-compiler.workspace = true
+ess-domain.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+spindle-spec.workspace = true
