@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-04T18:28:09Z",
+  "actor": "human:timo",
+  "artifact": "story:rally-specification",
+  "kind": "story",
+  "revision": 1,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "CI Gate on main 2ae4516 (run 41870648576): task check passed, including cargo test --workspace (204 passed, 0 failed) and ess specify validate of ess and examples/rally/ess, which hold this story's acceptance tests"
+  }
+}
