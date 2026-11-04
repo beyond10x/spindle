@@ -844,6 +844,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "spindle-target"
+version = "0.1.0"
+dependencies = [
+ "ess-compiler",
+ "rustix",
+ "serde",
+ "serde_json",
+ "spindle-capability",
+ "spindle-spec",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "spindle-timer"
 version = "0.1.0"
 dependencies = [
