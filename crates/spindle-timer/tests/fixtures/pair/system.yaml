@@ -1,0 +1,6 @@
+format: ess/34
+system: relay
+version: v1
+domains:
+  - relay.source
+  - relay.sink
