@@ -68,7 +68,10 @@ fn run_mints_each_new_identity_and_names_the_one_it_cannot_mint() {
             let identity = result["events"][0]["payload"]["ticket_id"]
                 .as_str()
                 .unwrap_or_else(|| panic!("a minted identity in {result}"));
-            assert_eq!(result["events"][1]["payload"]["ticket_id"], identity);
+            assert_ne!(
+                result["events"][1]["payload"]["ticket_id"], identity,
+                "only the event `instance:` names carries the identity"
+            );
             identity.to_owned()
         })
         .collect::<Vec<_>>();

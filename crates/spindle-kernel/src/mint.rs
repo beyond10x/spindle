@@ -7,9 +7,10 @@
 //!
 //! Any other field an outcome marks `{generated: true}` (in `sets:`, a payload or an error, and
 //! the `else:` of `{input: f, else: {generated: true}}`) is minted from its declared type
-//! ([`minted`]): a `Uuid`, a `String` and an `Integer` from a UUID the same [`Mint`] answers, a
-//! `Timestamp` from the clock the run is given. Each such field is minted once per command run
-//! ([`Generator`]), so `{payload: <Event>.<field>}` in `sets:` stores what the event published.
+//! (`spindle_capability::mint::minted`, the rule derivation reads too): a `Uuid`, a `String` and
+//! an `Integer` from a UUID the same [`Mint`] answers, a `Timestamp` from the clock the run is
+//! given. Each such field is minted once per command run ([`Generator`]), so
+//! `{payload: <Event>.<field>}` in `sets:` stores what the event published.
 
 use std::cell::RefCell;
 use std::time::SystemTime;
@@ -22,6 +23,7 @@ use ess_compiler::ir::{
 use ess_domain::QualifiedName;
 use ess_domain::types::{MAX_TYPE_DEPTH, Primitive};
 use serde_json::Value;
+pub(crate) use spindle_capability::mint::{Minted, absent, minted};
 pub use uuid::Uuid;
 
 use crate::ExecuteError;
@@ -73,102 +75,8 @@ pub(crate) fn is_uuid(ir: &EssIr, kind: &ResolvedTypeRef) -> bool {
     false
 }
 
-/// What a field the runtime mints, `{generated: true}` on anything but a minted creation identity,
-/// is minted as: the shape of its declared type underneath every newtype.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Minted {
-    /// A `Uuid`: a fresh UUID from the [`Mint`].
-    Uuid,
-    /// A `String`: a fresh UUID's text from the [`Mint`], after the prefix a newtype declares.
-    Text {
-        /// The prefix the outermost newtype that declares one requires.
-        prefix: Option<String>,
-    },
-    /// An `Integer`: the low 53 bits of a fresh UUID from the [`Mint`], so it is exact in every
-    /// JSON reader.
-    Integer,
-    /// A `Timestamp`: the civil time the run is given, in UTC, RFC 3339.
-    Timestamp,
-}
-
-/// The characters a minted text holds besides its prefix: a hyphenated lower-case UUID's.
-const MINTED_TEXT: &str = "0123456789abcdef-";
-
 /// The low 53 bits: the integers every JSON reader holds exactly.
 const INTEGER_BITS: u128 = (1 << 53) - 1;
-
-/// How a field of `kind` is minted, where the runtime mints it; `None` where it does not.
-///
-/// The runtime mints a `Uuid`, a `String`, an `Integer` and a `Timestamp`, and a newtype of one
-/// that declares no invariant. A `String` newtype's alphabet must admit the minted text and its
-/// prefix, and a newtype of anything but a `String` may declare neither. `present` is the mint
-/// of `{generated: true, present: true}`: an `Optional` field is minted as its required type.
-/// Without it an `Optional` field stays absent, as ESS's interpreter leaves it
-/// (`interpret::execute::mint`), so it is minted as nothing.
-pub(crate) fn minted(ir: &EssIr, kind: &ResolvedTypeRef, present: bool) -> Option<Minted> {
-    let mut kind = if present { kind.required() } else { kind };
-    let mut prefix: Option<&str> = None;
-    let mut alphabets: Vec<&str> = Vec::new();
-    for _ in 0..=MAX_TYPE_DEPTH {
-        match kind {
-            ResolvedTypeRef::Primitive { name } => {
-                let minted = match name {
-                    Primitive::Uuid => Minted::Uuid,
-                    Primitive::String => Minted::Text {
-                        prefix: prefix.map(str::to_owned),
-                    },
-                    Primitive::Integer => Minted::Integer,
-                    Primitive::Timestamp => Minted::Timestamp,
-                    _ => return None,
-                };
-                let text = matches!(minted, Minted::Text { .. });
-                if !text && (prefix.is_some() || !alphabets.is_empty()) {
-                    return None;
-                }
-                let admitted = |character: char| {
-                    alphabets
-                        .iter()
-                        .all(|alphabet| alphabet.contains(character))
-                };
-                return prefix
-                    .unwrap_or_default()
-                    .chars()
-                    .chain(MINTED_TEXT.chars())
-                    .all(admitted)
-                    .then_some(minted);
-            }
-            ResolvedTypeRef::Declared { name } => match &ir.named_type(name).body {
-                ResolvedBody::Newtype {
-                    of,
-                    alphabet,
-                    prefix: declared,
-                    invariants,
-                } if invariants.is_empty() => {
-                    if let Some(declared) = declared {
-                        match prefix {
-                            None => prefix = Some(declared),
-                            Some(outer) if outer.starts_with(declared.as_str()) => {}
-                            Some(_) => return None,
-                        }
-                    }
-                    if let Some(alphabet) = alphabet {
-                        alphabets.push(alphabet);
-                    }
-                    kind = of;
-                }
-                _ => return None,
-            },
-            _ => return None,
-        }
-    }
-    None
-}
-
-/// Whether a `{generated: true}` over `kind` leaves the field absent: an `Optional` field without
-/// `present: true`, the value that claims least, as ESS's interpreter mints it.
-pub(crate) fn absent(kind: &ResolvedTypeRef, present: bool) -> bool {
-    !present && kind.is_optional()
-}
 
 /// The values one command run mints for its generated fields, each minted once: a field read
 /// twice, in a payload and again through `{payload: <Event>.<field>}` in `sets:`, reads the same
@@ -246,7 +154,13 @@ impl<'m> Generator<'m> {
                     })
                 },
                 self.now,
-            );
+            )
+            .map_err(|error| {
+                ExecuteError::InvalidValue(format!(
+                    "the value minted for `{owner}.{}` in `{}/{outcome}` would be {error}",
+                    field.target, self.command
+                ))
+            })?;
             crate::typed::validate(ir, &field.target_type, &value).map_err(|error| {
                 ExecuteError::InvalidValue(format!(
                     "the value minted for `{owner}.{}` in `{}/{outcome}` would hold {error}",
@@ -269,28 +183,44 @@ pub(crate) fn unmintable(field: &str, kind: &ResolvedTypeRef) -> String {
 }
 
 /// The value one [`Minted`] shape takes, the UUID it needs drawn from `uuid` and the time from
-/// `now`.
+/// `now`; the reason where `now` is a time RFC 3339 does not spell (before the Unix epoch's
+/// representable range or past year 9999).
 pub(crate) fn value(
     minted: &Minted,
     uuid: impl FnOnce() -> Uuid,
     now: &dyn Fn() -> SystemTime,
-) -> Value {
+) -> Result<Value, String> {
     match minted {
-        Minted::Uuid => Value::String(uuid().hyphenated().to_string()),
-        Minted::Text { prefix } => Value::String(format!(
+        Minted::Uuid => Ok(Value::String(uuid().hyphenated().to_string())),
+        Minted::Text { prefix } => Ok(Value::String(format!(
             "{}{}",
             prefix.as_deref().unwrap_or_default(),
             uuid().hyphenated()
-        )),
+        ))),
         Minted::Integer => {
             let low = uuid().as_u128() & INTEGER_BITS;
-            Value::from(u64::try_from(low).unwrap_or_default())
+            u64::try_from(low)
+                .map(Value::from)
+                .map_err(|_| format!("{low} is past the integers a JSON reader holds"))
         }
-        Minted::Timestamp => Value::String(
-            time::OffsetDateTime::from(now())
+        Minted::Timestamp => {
+            let at = now();
+            let unrepresentable = || format!("{at:?}, a time no RFC 3339 instant names");
+            let since = match at.duration_since(SystemTime::UNIX_EPOCH) {
+                Ok(after) => time::Duration::try_from(after).ok(),
+                Err(before) => time::Duration::try_from(before.duration())
+                    .ok()
+                    .and_then(|before| before.checked_neg()),
+            }
+            .ok_or_else(unrepresentable)?;
+            time::OffsetDateTime::UNIX_EPOCH
+                .checked_add(since)
+                .filter(|stamp| (0..=9999).contains(&stamp.year()))
+                .ok_or_else(unrepresentable)?
                 .format(&time::format_description::well_known::Rfc3339)
-                .unwrap_or_default(),
-        ),
+                .map(Value::String)
+                .map_err(|_| unrepresentable())
+        }
     }
 }
 

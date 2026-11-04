@@ -7,7 +7,7 @@
 //! [`EssIr::literal_primitive`], the one question every ESS consumer asks of a literal.
 
 use ess_compiler::EssIr;
-use ess_compiler::ir::{ResolvedOutcome, ResolvedPayloadField, ResolvedPayloadValue};
+use ess_compiler::ir::{EventHandle, ResolvedOutcome, ResolvedPayloadField, ResolvedPayloadValue};
 use ess_domain::QualifiedName;
 use ess_domain::types::Primitive;
 use ess_primitives::facts::Number;
@@ -29,8 +29,12 @@ pub(crate) struct Sources<'a, 'm> {
     /// `error_value`, beyond10x/ess#458) rather than a value nothing determines.
     pub(crate) error: bool,
     /// The identity this outcome minted for the instance it creates, under the identity field's
-    /// name: what `{generated: true}` in a field of that name reads.
+    /// name, where these fields are the top-level fields of the creating event: what
+    /// `{generated: true}` in a field of that name reads there, and nowhere else.
     pub(crate) minted: Option<(&'a str, &'a Value)>,
+    /// The identity this outcome minted, with the event that publishes it, whatever fields these
+    /// are: what a `{payload: <Event>.<field>}` read of the creating event sees.
+    pub(crate) creation: Option<(&'a EventHandle, &'a str, &'a Value)>,
     /// The outcome the fields are this run's of: where `{payload: <Event>.<field>}` finds the
     /// source it reads.
     pub(crate) outcome: &'a ResolvedOutcome,
@@ -104,6 +108,10 @@ impl<'a> Sources<'a, '_> {
                 Sources {
                     owner: event.name(),
                     error: false,
+                    minted: self
+                        .creation
+                        .filter(|(creating, _, _)| *creating == event)
+                        .map(|(_, name, value)| (name, value)),
                     ..*self
                 }
                 .value(source)
@@ -111,9 +119,15 @@ impl<'a> Sources<'a, '_> {
             ResolvedPayloadValue::EmptyList => Ok(Some(Value::Array(Vec::new()))),
             ResolvedPayloadValue::Cleared => Ok(None),
             ResolvedPayloadValue::Struct { fields } => {
+                // A member is never the minted identity: only the top-level field `instance:`
+                // names on the creating event is (ESS `interpret::execute::emit`).
+                let members_sources = Sources {
+                    minted: None,
+                    ..*self
+                };
                 let mut members = Map::new();
                 for member in fields {
-                    if let Some(value) = self.value(member)? {
+                    if let Some(value) = members_sources.value(member)? {
                         members.insert(member.target.clone(), value);
                     }
                 }

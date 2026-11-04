@@ -146,8 +146,9 @@ struct Run<'a, 'ir> {
     decider: &'a mut dyn Decider,
     held: Option<Addressed<'ir>>,
     generator: Generator<'a>,
-    /// The identity this run minted, under the identity field's name.
-    minted: Option<(String, Value)>,
+    /// The identity this run minted: the creating event that publishes it, and the identity
+    /// field's name.
+    minted: Option<(&'ir EventHandle, String, Value)>,
 }
 
 impl<'a, 'ir> Run<'a, 'ir> {
@@ -387,9 +388,9 @@ impl<'a, 'ir> Run<'a, 'ir> {
             (ResolvedEffect::Creates, ResolvedInstance::Observed { event, field }) => {
                 if let Some((created, named)) = crate::mint::slot(self.ir, outcome) {
                     let minted = self.mint_identity(outcome, created, named)?;
-                    self.minted = Some((named.name.clone(), minted));
+                    self.minted = Some((event, named.name.clone(), minted));
                 }
-                let identity = if let Some((_, minted)) = &self.minted {
+                let identity = if let Some((_, _, minted)) = &self.minted {
                     minted.clone()
                 } else {
                     self.determined_identity(outcome, event, field)?
@@ -415,7 +416,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     .to_string();
                 let mut fields = BTreeMap::new();
                 write(
-                    &self.sources(outcome, &entity.name, None),
+                    &self.sources(outcome, &entity.name, None, None),
                     outcome,
                     &mut fields,
                 )?;
@@ -451,7 +452,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     }
                     after.state = transition.to.to_string();
                 }
-                let sources = self.sources(outcome, &entity.name, Some(&stored.row));
+                let sources = self.sources(outcome, &entity.name, None, Some(&stored.row));
                 write(&sources, outcome, &mut after.fields)?;
                 let events = self.emit(outcome, Some(&stored.row))?;
                 let change = (!matches!(effect, ResolvedEffect::Preserves)).then(|| Change {
@@ -500,7 +501,10 @@ impl<'a, 'ir> Run<'a, 'ir> {
             .filter(|payload| payload.event == *event)
             .flat_map(|payload| &payload.fields)
             .find(|source| source.target == field.name)
-            .map(|source| self.sources(outcome, event.name(), None).value(source))
+            .map(|source| {
+                self.sources(outcome, event.name(), Some(event), None)
+                    .value(source)
+            })
             .transpose()?
             .flatten()
             .ok_or_else(|| ExecuteError::Unsupported {
@@ -558,11 +562,13 @@ impl<'a, 'ir> Run<'a, 'ir> {
         Ok(())
     }
 
-    /// What the fields of `owner` in `outcome` read, with the instance as it was `before`.
+    /// What the fields of `owner` in `outcome` read, with the instance as it was `before`;
+    /// `filling` is the event whose top-level payload fields these are, where they are one's.
     fn sources<'s>(
         &'s self,
         outcome: &'s ResolvedOutcome,
         owner: &'s QualifiedName,
+        filling: Option<&EventHandle>,
         before: Option<&'s Row>,
     ) -> Sources<'s, 'a> {
         Sources {
@@ -573,7 +579,12 @@ impl<'a, 'ir> Run<'a, 'ir> {
             minted: self
                 .minted
                 .as_ref()
-                .map(|(name, value)| (name.as_str(), value)),
+                .filter(|(creating, _, _)| filling.is_some_and(|filling| filling == *creating))
+                .map(|(_, name, value)| (name.as_str(), value)),
+            creation: self
+                .minted
+                .as_ref()
+                .map(|(creating, name, value)| (*creating, name.as_str(), value)),
             outcome,
             owner,
             generator: &self.generator,
@@ -595,10 +606,14 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     .iter()
                     .find(|payload| payload.event == *event)
                     .map_or(&[][..], |payload| payload.fields.as_slice());
-                let mut payload = self.sources(outcome, event.name(), before).object(fields)?;
-                // A minted identity is published in every field of its name the event declares,
-                // where the outcome gives that field no source of its own.
-                if let Some((name, minted)) = &self.minted
+                let mut payload = self
+                    .sources(outcome, event.name(), Some(event), before)
+                    .object(fields)?;
+                // A minted identity is published in the field `instance:` names on the event
+                // `instance:` names, where the outcome gives that field no source of its own,
+                // and on no other event (ESS `interpret::execute::emit`).
+                if let Some((creating, name, minted)) = &self.minted
+                    && *creating == event
                     && !fields.iter().any(|source| source.target == *name)
                     && self.ir.events().get(event.name()).is_some_and(|declared| {
                         declared.fields.iter().any(|field| field.name == *name)
@@ -625,7 +640,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
         };
         let sources = Sources {
             error: true,
-            ..self.sources(outcome, error.name(), before)
+            ..self.sources(outcome, error.name(), None, before)
         };
         Ok(Some(DeclaredError {
             name: error.name().to_string(),

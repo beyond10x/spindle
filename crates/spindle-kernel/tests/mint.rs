@@ -59,9 +59,13 @@ fn a_creation_without_an_id_input_mints_one_and_emits_it() {
         asked,
         vec![
             "identity.mint for mint.ticket.OpenTicket/opened: mint.ticket.Ticket.ticket_id"
-                .to_owned()
+                .to_owned(),
+            "identity.mint for mint.ticket.OpenTicket/opened: mint.ticket.TicketQueued.ticket_id"
+                .to_owned(),
         ],
-        "the mint is asked once, for the identity"
+        "the mint is asked for the identity, and once more for `TicketQueued.ticket_id`, which \
+         is not the event `instance:` names and so is a generated value of its own (ESS \
+         `interpret::execute::emit`)"
     );
     assert_eq!(opened.outcome, "opened");
     assert_eq!(opened.error, None);
@@ -79,7 +83,7 @@ fn a_creation_without_an_id_input_mints_one_and_emits_it() {
             ),
             ("mint.ticket.TicketQueued", json!({"ticket_id": MINTED})),
         ],
-        "every event payload field of the identity's name carries the minted value"
+        "this mint answers one UUID to every request, so both events show it"
     );
 
     let stored = store
@@ -128,9 +132,10 @@ fn minted_identities_are_unique_across_creations() {
             .as_str()
             .expect("the identity is text")
             .to_owned();
-        assert_eq!(
+        assert_ne!(
             opened.events[1].payload["ticket_id"], identity,
-            "both events of one creation carry the same identity"
+            "only the event `instance:` names carries the identity; `TicketQueued.ticket_id` is \
+             minted on its own (ESS `interpret::execute::emit`)"
         );
         let parsed = Uuid::parse_str(&identity).expect("the identity is a UUID");
         assert_eq!(parsed.get_version_num(), 4, "{identity} is a UUIDv4");

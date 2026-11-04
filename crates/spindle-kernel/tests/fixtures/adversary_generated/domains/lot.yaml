@@ -1,0 +1,149 @@
+domain: forge.lot
+summary: A lot opened under an identity the runtime mints, with generated struct members, two published sequences and fields of types the runtime cannot mint.
+types:
+  - name: forge.lot.LotId
+    kind: newtype
+    of: Uuid
+  - name: forge.lot.Code
+    kind: newtype
+    of: String
+    prefix: "cd_"
+    alphabet: "_0123456789abcdef-"
+  - name: forge.lot.Origin
+    kind: struct
+    fields:
+      - {name: lot_id, type: Integer}
+      - {name: note, type: String}
+  - name: forge.lot.Mark
+    kind: struct
+    fields:
+      - {name: code, type: forge.lot.Code}
+      - {name: at, type: Timestamp}
+      - {name: seq, type: Integer}
+  - name: forge.lot.Rank
+    kind: newtype
+    of: Integer
+    invariants:
+      - 'value >= 0'
+  - name: forge.lot.Digits
+    kind: newtype
+    of: String
+    alphabet: "0123456789"
+entities:
+  - name: forge.lot.Lot
+    identity:
+      name: lot_id
+      type: forge.lot.LotId
+    fields:
+      - {name: mark, type: Optional<forge.lot.Mark>}
+      - {name: origin, type: Optional<forge.lot.Origin>}
+      - {name: first, type: Optional<Integer>}
+      - {name: second, type: Optional<Integer>}
+      - {name: rank, type: Optional<forge.lot.Rank>}
+      - {name: digits, type: Optional<forge.lot.Digits>}
+      - {name: stamped, type: Optional<Timestamp>}
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+commands:
+  - name: forge.lot.OpenLot
+    input:
+      - {name: note, type: String}
+    outcomes:
+      - name: opened
+        creates: forge.lot.Lot
+        instance: lot_id
+        sets:
+          mark: {payload: forge.lot.LotOpened.mark}
+          first: {payload: forge.lot.LotOpened.seq}
+          second: {payload: forge.lot.LotCounted.seq}
+        emits: [forge.lot.LotOpened, forge.lot.LotCounted]
+        payload:
+          forge.lot.LotOpened:
+            lot_id: {generated: true}
+            seq: {generated: true}
+            mark:
+              code: {generated: true}
+              at: {generated: true}
+              seq: {generated: true}
+          forge.lot.LotCounted:
+            lot_id: {generated: true}
+            seq: {generated: true}
+        summary: The lot opens under a minted identity; its mark and two sequences are minted into the events and stored from there.
+  - name: forge.lot.TraceLot
+    input:
+      - {name: note, type: String}
+    outcomes:
+      - name: traced
+        creates: forge.lot.Lot
+        instance: lot_id
+        sets:
+          origin: {payload: forge.lot.LotTraced.origin}
+        emits: [forge.lot.LotTraced]
+        payload:
+          forge.lot.LotTraced:
+            lot_id: {generated: true}
+            origin:
+              lot_id: {generated: true}
+              note: input.note
+        summary: The lot opens under a minted identity with an origin whose member the runtime mints.
+  - name: forge.lot.RankLot
+    input:
+      - {name: lot_id, type: forge.lot.LotId}
+    outcomes:
+      - name: ranked
+        updates: forge.lot.Lot
+        instance: lot_id
+        sets:
+          rank: {generated: true, present: true}
+        emits: [forge.lot.LotChanged]
+        payload:
+          forge.lot.LotChanged:
+            lot_id: input.lot_id
+        summary: The lot takes a rank whose newtype declares an invariant.
+  - name: forge.lot.DigitLot
+    input:
+      - {name: lot_id, type: forge.lot.LotId}
+    outcomes:
+      - name: digited
+        updates: forge.lot.Lot
+        instance: lot_id
+        sets:
+          digits: {generated: true, present: true}
+        emits: [forge.lot.LotChanged]
+        payload:
+          forge.lot.LotChanged:
+            lot_id: input.lot_id
+        summary: The lot takes digits whose alphabet admits no minted text.
+  - name: forge.lot.StampLot
+    input:
+      - {name: lot_id, type: forge.lot.LotId}
+    outcomes:
+      - name: stamped
+        updates: forge.lot.Lot
+        instance: lot_id
+        sets:
+          stamped: {generated: true, present: true}
+        emits: [forge.lot.LotChanged]
+        payload:
+          forge.lot.LotChanged:
+            lot_id: input.lot_id
+        summary: The lot is stamped with the current time.
+events:
+  - name: forge.lot.LotOpened
+    fields:
+      - {name: lot_id, type: forge.lot.LotId}
+      - {name: seq, type: Integer}
+      - {name: mark, type: forge.lot.Mark}
+  - name: forge.lot.LotCounted
+    fields:
+      - {name: lot_id, type: Integer}
+      - {name: seq, type: Integer}
+  - name: forge.lot.LotTraced
+    fields:
+      - {name: lot_id, type: forge.lot.LotId}
+      - {name: origin, type: forge.lot.Origin}
+  - name: forge.lot.LotChanged
+    fields:
+      - {name: lot_id, type: forge.lot.LotId}

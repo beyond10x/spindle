@@ -1,0 +1,26 @@
+format: ess/34
+system: forge
+version: v1
+summary: Lots whose identity, marks and sequences the runtime mints.
+domains:
+  - forge.lot
+components:
+  - component: yard
+    summary: Opens, ranks, digits and stamps lots.
+    owns:
+      domains:
+        - forge.lot
+    accepts:
+      commands:
+        - forge.lot.OpenLot
+        - forge.lot.TraceLot
+        - forge.lot.RankLot
+        - forge.lot.DigitLot
+        - forge.lot.StampLot
+    publishes:
+      events:
+        - forge.lot.LotOpened
+        - forge.lot.LotCounted
+        - forge.lot.LotTraced
+        - forge.lot.LotChanged
+    reached_by: in_process

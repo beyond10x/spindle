@@ -38,19 +38,41 @@ pub(crate) fn check(ir: &EssIr, command: &ResolvedCommand) -> Result<(), Execute
                 entity.name, field.name, entity.identity.type_ref
             ));
         }
-        for field in outcome
-            .sets
+        // `{generated: true}` in the top-level field `instance:` names, on the event it names, is
+        // the identity mint; anywhere else it is a generated value of its own.
+        let creating = minted.and(
+            match outcome.subject.as_ref().map(|subject| &subject.instance) {
+                Some(ResolvedInstance::Observed { event, .. }) => Some(event),
+                _ => None,
+            },
+        );
+        let identity_fields = outcome
+            .payload
             .iter()
-            .chain(outcome.payload.iter().flat_map(|payload| &payload.fields))
-            .chain(&outcome.error_payload)
-        {
-            // `{generated: true}` in a payload field of the minted identity's name is the mint.
+            .filter(|payload| creating.is_some_and(|event| *event == payload.event))
+            .flat_map(|payload| &payload.fields);
+        let other_fields = outcome
+            .payload
+            .iter()
+            .filter(|payload| creating.is_none_or(|event| *event != payload.event))
+            .flat_map(|payload| &payload.fields);
+        for field in identity_fields {
             if matches!(field.value, ResolvedPayloadValue::Generated { .. })
                 && minted.is_some_and(|(_, identity)| identity.name == field.target)
                 && field.conversion.is_none()
             {
                 continue;
             }
+            if let Some(what) = value(ir, field) {
+                return refuse(&what);
+            }
+        }
+        for field in outcome
+            .sets
+            .iter()
+            .chain(other_fields)
+            .chain(&outcome.error_payload)
+        {
             if let Some(what) = value(ir, field) {
                 return refuse(&what);
             }
