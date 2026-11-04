@@ -78,7 +78,7 @@ that already exists, and `creates:` never replaces an instance.
 
 :::caution[Planned]
 Rally as three `b10x-spindle run` processes joined by `tcp` channels, and each component in its
-own microVM, are planned. The design's showcase is the second: three environments with
-`channel = tcp`, one per microVM, with admission the only step that differs from the laptop. See
-[status](/docs/status).
+own microVM, are planned. The design's showcase is the second: one deployment to the environment
+`microvm` (`channel = tcp`), its three components placed on three microVM targets, with admission
+the only step that differs from the laptop. See [status](/docs/status).
 :::
