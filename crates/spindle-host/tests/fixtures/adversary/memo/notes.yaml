@@ -1,0 +1,53 @@
+domain: memo.notes
+types:
+  - name: memo.notes.NoteId
+    kind: newtype
+    of: String
+entities:
+  - name: memo.notes.Note
+    identity:
+      name: note_id
+      type: memo.notes.NoteId
+    fields:
+      - name: title
+        type: String
+      - name: remark
+        type: Optional<String>
+        presence: null_when_absent
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+commands:
+  - name: memo.notes.Write
+    input:
+      - name: note_id
+        type: memo.notes.NoteId
+      - name: title
+        type: String
+    outcomes:
+      - name: written
+        creates: memo.notes.Note
+        instance: note_id
+        sets:
+          title: input.title
+        emits: [memo.notes.Written]
+        payload:
+          memo.notes.Written:
+            note_id: input.note_id
+events:
+  - name: memo.notes.Written
+    fields:
+      - name: note_id
+        type: memo.notes.NoteId
+views:
+  - name: memo.notes.NoteState
+    source: memo.notes.Note
+    consistency: read_your_writes
+    fields:
+      - name: note_id
+        type: memo.notes.NoteId
+      - name: title
+        type: String
+      - name: remark
+        type: Optional<String>

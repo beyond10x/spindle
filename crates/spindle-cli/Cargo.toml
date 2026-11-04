@@ -1,6 +1,6 @@
 [package]
 name = "spindle-cli"
-description = "b10x-spindle: check, derive capabilities for and admit an ESS specification."
+description = "b10x-spindle: check, derive capabilities for, admit, run and play an ESS specification."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -20,6 +20,9 @@ serde_json.workspace = true
 spindle-capability.workspace = true
 spindle-spec.workspace = true
 spindle-kernel = { path = "../spindle-kernel" }
+spindle-host = { path = "../spindle-host" }
+signal-hook = "0.3"
+tempfile = "3"
 
 [dev-dependencies]
-tempfile = "3"
+rustix = { version = "1", features = ["process"] }

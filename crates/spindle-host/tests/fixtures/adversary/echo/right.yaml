@@ -1,0 +1,17 @@
+domain: echo.right
+events:
+  - name: echo.right.Answered
+    fields:
+      - name: n
+        type: Integer
+commands:
+  - name: echo.right.Answer
+    input:
+      - name: n
+        type: Integer
+    outcomes:
+      - name: answered
+        emits: [echo.right.Answered]
+        payload:
+          echo.right.Answered:
+            n: input.n

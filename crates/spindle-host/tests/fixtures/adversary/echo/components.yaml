@@ -1,0 +1,36 @@
+components:
+  - component: echo-left
+    owns:
+      domains: [echo.left]
+    accepts:
+      commands: [echo.left.Send]
+    publishes:
+      events: [echo.left.Sent]
+    reached_by: in_process
+  - component: echo-right
+    owns:
+      domains: [echo.right]
+    accepts:
+      commands: [echo.right.Answer]
+    publishes:
+      events: [echo.right.Answered]
+    reached_by: in_process
+bindings:
+  - id: left-to-right
+    when:
+      event: echo.left.Sent
+    invoke:
+      command: echo.right.Answer
+    mapping:
+      n: event.n
+    delivery: at_most_once
+    on_failure: drop
+  - id: right-to-left
+    when:
+      event: echo.right.Answered
+    invoke:
+      command: echo.left.Send
+    mapping:
+      n: event.n
+    delivery: at_most_once
+    on_failure: drop

@@ -1,0 +1,6 @@
+format: ess/34
+system: notice
+version: v1
+domains:
+  - notice.source
+  - notice.sink

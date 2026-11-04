@@ -70,6 +70,12 @@ errors:
       - name: match_id
         type: rally.table.MatchId
 
+  - name: rally.table.TargetScoreTooLow
+    summary: A match is played to at least one point.
+    fields:
+      - name: target_score
+        type: Integer
+
 commands:
   - name: rally.table.OpenMatch
     input:
@@ -78,6 +84,11 @@ commands:
       - name: target_score
         type: Integer
     outcomes:
+      - name: target-too-low
+        when: target_score < 1
+        error: rally.table.TargetScoreTooLow
+        summary: A match to no points could never be won, so it does not open.
+
       - name: opened
         creates: rally.table.Match
         instance: match_id

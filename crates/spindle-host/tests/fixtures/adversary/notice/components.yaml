@@ -1,0 +1,28 @@
+components:
+  - component: notice-source
+    owns:
+      domains: [notice.source]
+    accepts:
+      commands: [notice.source.Post]
+    publishes:
+      events: [notice.source.Posted]
+    reached_by: in_process
+  - component: notice-sink
+    owns:
+      domains: [notice.sink]
+    accepts:
+      commands: [notice.sink.OpenBoard, notice.sink.Pin]
+    publishes:
+      events: [notice.sink.BoardOpened, notice.sink.Pinned]
+    reached_by: in_process
+bindings:
+  - id: pin-post
+    when:
+      event: notice.source.Posted
+    invoke:
+      command: notice.sink.Pin
+    mapping:
+      board_id: event.board_id
+      beat: event.beat
+    delivery: at_least_once
+    on_failure: retry
