@@ -119,10 +119,24 @@ What `spindle.deployment` declares, and what stays a runtime rule outside the mo
   capability in the deployment's `requires` has a binding, no binding names a capability outside
   `requires`, and `missing` is empty; a capability bound twice is refused before the deployment is
   read (`bound-twice`), any other mismatch is refused as `not-decided`. Both answer
-  `AdmissionDecisionInvalid` and change nothing.
+  `AdmissionDecisionInvalid` and change nothing. ESS answers input refusals first, then whether
+  the deployment exists, and answers the state conflict only when the branch the decision selects
+  moves the deployment: an invalid decision on a deployment already decided selects `not-decided`,
+  which does not move it, so only a valid one answers `wrong-state`.
 - **A refusal names what is missing.** `refused` is eligible only when `missing` names at least one
-  capability, and `DeploymentRefused` carries that list. A decision that would refuse naming
-  nothing is `not-decided`.
+  capability and none of them among the decision's own bindings; `DeploymentRefused` carries that
+  list. Any other refusal is `not-decided`.
+- **That `missing` names only required capabilities is a runtime rule.** `spindle_capability::admit`
+  builds `missing` from the requirements it admits, so the runtime never refuses naming a
+  capability outside `requires`. The model does not guard it: ESS synthesis cannot witness a
+  forced external outcome whose guard relates an input list to a stored list, and the guard cost
+  the `refused` scenario and every scenario through `Refused`
+  (`crates/spindle-kernel/tests/adversary_admission.rs::adversary_admission_names_only_required_capabilities_missing_at_runtime`).
+- **That the environment provides each binding is a runtime rule.** `admitted` does not read the
+  environment's `provides`: the kernel does not yet evaluate a guard over a related row. The
+  check is `spindle_capability::admit`, which binds only an implementation the environment
+  document lists for the capability, and names every required capability it lists none for as
+  missing (`crates/spindle-capability/tests/admission.rs`).
 - **Preference order is a runtime rule.** The model holds the bindings admission chose, not their
   rank. The rank is the order of each capability's list in the environment document, most
   preferred first, and `spindle_capability::admit` takes the first

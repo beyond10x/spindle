@@ -127,7 +127,7 @@ errors:
   - name: spindle.deployment.AdmissionDecisionInvalid
     summary: >-
       The decision binds a capability twice, leaves a required one unbound, binds one that is not
-      required, or refuses naming no capability, so nothing moved.
+      required, or refuses naming no capability or one it binds, so nothing moved.
     fields: []
 
 commands:
@@ -232,12 +232,18 @@ commands:
         sets:
           bindings: input.bindings
         summary: >-
-          Every required capability is bound to one implementation the environment provides, and
-          nothing that is not required is bound.
+          Every required capability is bound to exactly one implementation, and nothing that is not
+          required is bound.
 
       - name: refused
         external: at least one required capability has no implementation in the environment
-        when: missing.count >= 1
+        when:
+          all:
+            - missing.count >= 1
+            - forall:
+                in: missing
+                as: m
+                that: {not: {exists: {in: bindings, as: b, that: b.capability == m}}}
         moves: spindle.deployment.Deployment.refuse
         instance: deployment_id
         emits:
@@ -248,18 +254,24 @@ commands:
             missing: input.missing
         sets:
           missing: input.missing
-        summary: The deployment is refused, naming every capability the environment lacks.
+        summary: >-
+          The deployment is refused. `missing` is not empty and names no capability the decision
+          binds.
 
       - name: wrong-state
         wrong_state: true
         error: spindle.deployment.DeploymentStateConflict
-        summary: Admission was already decided, so nothing moved.
+        summary: >-
+          The decision is valid for the deployment, but its admission was already decided, so
+          nothing moved. An invalid decision is answered `bound-twice` or `not-decided` whatever
+          the state.
 
       - name: not-decided
         error: spindle.deployment.AdmissionDecisionInvalid
         summary: >-
-          The decision neither binds exactly the required capabilities nor names a missing one, so
-          nothing moved.
+          The decision neither binds exactly the required capabilities nor refuses naming at least
+          one capability it does not bind, so nothing moved, whether or not admission was already
+          decided.
 
   - name: spindle.deployment.StartDeployment
     naming:
