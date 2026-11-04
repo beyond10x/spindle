@@ -7,6 +7,7 @@ tasks:
       - aep plan artifact validate
       - ess specify validate --path ess
       - ess specify validate --path examples/rally/ess
+      - task: docs-check
       - cargo fmt --all -- --check
       - cargo clippy --workspace --all-targets --locked -- -D warnings
       - cargo test --workspace --locked --no-fail-fast
@@ -20,3 +21,20 @@ tasks:
     desc: Release build of b10x-spindle
     cmds:
       - cargo build --locked --release -p spindle-cli
+
+  docs-generate:
+    desc: Rewrite the generated pages under website/
+    cmds:
+      - cargo run -q --locked -p spindle-docs -- generate
+
+  docs-check:
+    desc: Fail when a generated page is missing, stale or edited by hand, or a status item names a missing test
+    cmds:
+      - cargo run -q --locked -p spindle-docs -- generate --check
+
+  website:
+    desc: Install the site's locked dependencies and build it, as the documentation workflow does
+    dir: website
+    cmds:
+      - npm ci --allow-git=root
+      - npm run build

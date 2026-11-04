@@ -1,4 +1,11 @@
+<p align="center"><img src="website/static/img/logo.svg" alt="Spindle" width="96" height="96"></p>
+
 # Spindle
+
+Documentation: <https://beyond10x.github.io/spindle/> ·
+[Getting started](https://beyond10x.github.io/spindle/docs/getting-started) ·
+[CLI](https://beyond10x.github.io/spindle/docs/reference/cli) ·
+[Status](https://beyond10x.github.io/spindle/docs/status)
 
 Spindle runs ESS specifications. A specification says what an application means — entities,
 commands, guards, events, bindings, views. Spindle supplies everything technical underneath: where
@@ -10,8 +17,11 @@ where Spindle runs. **Admission** binds each required capability to one implemen
 and names every capability the environment lacks. The same specification runs on a laptop with an
 in-process channel and in a microVM with a TCP one; admission is the only step that differs.
 
-Status: early. Loading, capability derivation and admission work. The executor, channels, timers
-and the microVM deployment are planned (see [`docs/design/spindle.md`](docs/design/spindle.md) §12).
+Status: early. Loading, capability derivation, admission, command execution and the rally example
+in one process work; the process, QEMU and Firecracker launchers exist as libraries. Running each
+component in its own process or microVM, HTTP ingress, deployment and observation are planned. The
+[status page](https://beyond10x.github.io/spindle/docs/status) lists each item with the test that
+holds it; the design is [`docs/design/spindle.md`](docs/design/spindle.md).
 
 ## Try it
 
@@ -67,7 +77,9 @@ prefix; an exact key wins over it.
 - `crates/spindle-qemu`, `crates/spindle-firecracker` — microVM launchers.
 - `crates/spindle-host` — runs every component of a system in one process.
 - `crates/spindle-cli` — the `b10x-spindle` binary.
+- `crates/spindle-docs` — generates the site's CLI reference and status page.
 - `examples/` — environments and the `rally` example system.
+- `website/` — the documentation site (Docusaurus).
 - `docs/design/spindle.md` — the design.
 
 Agents start at [`AGENTS.md`](AGENTS.md).

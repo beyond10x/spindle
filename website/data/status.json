@@ -1,0 +1,167 @@
+{
+  "asOf": "2026-11-04",
+  "format": "b10x-status/1",
+  "items": [
+    {
+      "area": "Specification",
+      "detail": "A directory of ESS documents is compiled by ess-compiler to the resolved IR; a document ESS refuses is refused with ESS's diagnostics.",
+      "href": "/docs/concepts/specification",
+      "label": "Load and compile",
+      "status": "shipped"
+    },
+    {
+      "area": "Capabilities",
+      "detail": "Entities need store.durable, periodic bindings timer and clock, cross-component bindings channel, external outcomes external.<command>.<outcome>.",
+      "href": "/docs/concepts/capabilities",
+      "label": "Derived from the specification",
+      "status": "shipped"
+    },
+    {
+      "area": "Capabilities",
+      "detail": "capabilities --component lists only what one component needs when it runs on its own.",
+      "href": "/docs/concepts/capabilities",
+      "label": "Per component",
+      "status": "shipped"
+    },
+    {
+      "area": "Admission",
+      "detail": "Each required capability is bound to the first implementation the environment lists for it; an exact key wins over a prefix key.",
+      "href": "/docs/concepts/environment-and-admission",
+      "label": "Bind by preference",
+      "status": "shipped"
+    },
+    {
+      "area": "Admission",
+      "detail": "A refused admission names every capability without an implementation and exits 3.",
+      "href": "/docs/concepts/environment-and-admission",
+      "label": "Refusal names what is missing",
+      "status": "shipped"
+    },
+    {
+      "area": "Execution",
+      "detail": "spindle-kernel selects the outcome by the IR's conditions and guards, applies its effect and emits its events; b10x-spindle run reads commands as JSON lines.",
+      "href": "/docs/reference/cli",
+      "label": "Commands against the compiled model",
+      "status": "shipped"
+    },
+    {
+      "area": "Execution",
+      "detail": "The store follows the store.durable binding; SQLite state survives a restart.",
+      "href": "/docs/concepts/environment-and-admission",
+      "label": "Memory and SQLite stores",
+      "status": "shipped"
+    },
+    {
+      "area": "Bindings",
+      "detail": "spindle-timer yields due ticks for periodic bindings on an injected clock, honouring the ESS periodic profile.",
+      "href": "/docs/concepts/components-and-bindings",
+      "label": "Periodic bindings",
+      "status": "shipped"
+    },
+    {
+      "area": "Bindings",
+      "detail": "spindle-channel carries an event to the command it binds to, in process or as length-prefixed JSON frames over TCP; at_least_once redelivers.",
+      "href": "/docs/concepts/components-and-bindings",
+      "label": "Event bindings in process and over TCP",
+      "status": "shipped"
+    },
+    {
+      "area": "Rally",
+      "detail": "b10x-spindle play runs the three rally components in one process with in-process channels until a side wins.",
+      "href": "/docs/examples/rally",
+      "label": "Every component in one process",
+      "status": "shipped"
+    },
+    {
+      "area": "Targets",
+      "detail": "Placement refuses an instance above its target's ceiling; the process launcher starts and stops an instance and reports its exit.",
+      "href": "/docs/concepts/deployment-targets",
+      "label": "The target contract and the process launcher",
+      "status": "shipped"
+    },
+    {
+      "area": "Targets",
+      "detail": "A library launcher: one qemu-system-x86_64 -M microvm per instance with KVM, without root. Its tests run on a host with /dev/kvm (task check:vm), not in CI.",
+      "href": "/docs/concepts/deployment-targets",
+      "label": "QEMU microvm launcher",
+      "status": "shipped"
+    },
+    {
+      "area": "Targets",
+      "detail": "A library launcher: Firecracker VMs on a bridge inside a user and network namespace, without root. Its tests need /dev/kvm, the Firecracker binary and a guest kernel (task check:vm), not in CI.",
+      "href": "/docs/concepts/deployment-targets",
+      "label": "Firecracker launcher",
+      "status": "shipped"
+    },
+    {
+      "area": "Rally",
+      "detail": "Three b10x-spindle run processes, one per component, joined by TCP channels.",
+      "href": "/docs/examples/rally",
+      "label": "Three processes",
+      "status": "planned"
+    },
+    {
+      "area": "Rally",
+      "detail": "Each rally component in its own microVM, joined by TCP channels across the VM network.",
+      "href": "/docs/examples/rally",
+      "label": "Three microVMs",
+      "status": "planned"
+    },
+    {
+      "area": "Execution",
+      "detail": "run serves the accepted commands and views over HTTP on 127.0.0.1 where ingress.network is bound.",
+      "href": "/docs/concepts/capabilities",
+      "label": "HTTP ingress",
+      "status": "planned"
+    },
+    {
+      "area": "Execution",
+      "detail": "run --decisions answers external outcomes from a file instead of per line.",
+      "href": "/docs/concepts/capabilities",
+      "label": "External decisions from a file",
+      "status": "planned"
+    },
+    {
+      "area": "Execution",
+      "detail": "An identity neither the input nor the payload supplies is minted through a derived identity.mint capability.",
+      "href": "/docs/concepts/capabilities",
+      "label": "Minted creation identities",
+      "status": "planned"
+    },
+    {
+      "area": "Execution",
+      "detail": "List views over every instance with a state filter and an order.",
+      "href": "/docs/concepts/specification",
+      "label": "List views with filters",
+      "status": "planned"
+    },
+    {
+      "area": "Conformance",
+      "detail": "run --scenario replays an ess-scenario/1 timeline; the suite ESS synthesises from Spindle's own specification runs in task check.",
+      "href": "/docs/concepts/specification",
+      "label": "Scenario replay and self-conformance",
+      "status": "planned"
+    },
+    {
+      "area": "Observe",
+      "detail": "Counters derived from the IR, b10x-spindle metrics, b10x-spindle deploy as a control process with a read-only API, and a browser UI (design: docs/design/observe.md).",
+      "href": "/docs/concepts/deployment-targets",
+      "label": "Telemetry, deploy and the observe UI",
+      "status": "planned"
+    },
+    {
+      "area": "Deploy",
+      "detail": "Upload a bundle to deploy it; design milestone M4, no story yet.",
+      "href": "/docs/concepts/deployment-targets",
+      "label": "Bundle, deploy service and registry",
+      "status": "planned"
+    },
+    {
+      "area": "Deploy",
+      "detail": "Cells across threads, ownership leases with fencing, snapshots; design milestone M5, no story yet.",
+      "href": "/docs/concepts/deployment-targets",
+      "label": "Cells, ownership and snapshots",
+      "status": "planned"
+    }
+  ]
+}

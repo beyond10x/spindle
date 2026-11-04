@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16" role="img" aria-label="Spindle">
+  <path d="M8 0.75 V15.25" stroke="#158073" stroke-width="2" stroke-linecap="round"/>
+  <path d="M8 2 C14 5 14 11 8 14 C2 11 2 5 8 2 Z" fill="#158073"/>
+  <g fill="none" stroke="#f6a04d" stroke-width="1.3" stroke-linecap="round">
+    <path d="M8 2.5 C11 5.5 11 10.5 8 13.5"/>
+    <path d="M8 2.5 C5 5.5 5 10.5 8 13.5"/>
+  </g>
+</svg>
