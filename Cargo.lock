@@ -485,6 +485,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "spindle-channel"
+version = "0.1.0"
+dependencies = [
+ "ess-compiler",
+ "ess-domain",
+ "serde",
+ "serde_json",
+ "spindle-spec",
+ "thiserror",
+]
+
+[[package]]
 name = "spindle-cli"
 version = "0.1.0"
 dependencies = [
