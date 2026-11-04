@@ -12,7 +12,7 @@ use rustix::process::{Pid, Signal, WaitId, WaitIdOptions, kill_process_group, wa
 
 use crate::{
     Artifact, Exit, LaunchError, LaunchPlan, Launcher, ResourceKind, ResourceSample, Resources,
-    Running, TargetKind, process_group_usage, refuse_unenforced,
+    Running, TargetKind, process_group_usage, process_usage, refuse_unenforced,
 };
 
 /// The instance's id.
@@ -345,11 +345,17 @@ impl Running for ProcessInstance {
 
     /// The sum over the instance's process group, so a child it started counts; `None` once
     /// the instance has ended. Shares are `None` too: this launcher holds it to no limit.
+    ///
+    /// The instance has ended once its leader has, whether or not [`wait`](Running::wait) has
+    /// reaped it yet: a leader that exited and is not yet reaped (a zombie) is still a member of
+    /// its group, and is not sampled as running.
     fn resources(&self) -> Option<ResourceSample> {
         if self.exit.is_some() || self.reaped {
             return None;
         }
-        let usage = process_group_usage(self.pid.as_raw_nonzero().get().unsigned_abs()).ok()?;
+        let leader = self.pid.as_raw_nonzero().get().unsigned_abs();
+        process_usage(leader).ok()?;
+        let usage = process_group_usage(leader).ok()?;
         Some(ResourceSample::of(
             usage,
             self.started.elapsed(),

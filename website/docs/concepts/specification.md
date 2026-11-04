@@ -15,7 +15,9 @@ a queue.
 ## Loading
 
 `spindle-spec` reads the files the directory's `ess-inputs.yaml` lists, in that order, or, without
-one, every `.yaml` and `.yml` file under the directory in path order. It parses them together (a type declared in one file may be used in another), assembles them and compiles them
+one, every `.yaml` and `.yml` file under the directory in path order. A manifest `ess` refuses is
+refused here too: a format other than `ess-inputs/1` or `ess-inputs/2`, an entry that is absolute,
+climbs out with `..` or repeats another, and an entry that passes through a symlink. It parses them together (a type declared in one file may be used in another), assembles them and compiles them
 with `ess-compiler`. The result is the resolved IR: every reference checked, every guard a typed
 ESS predicate. It is the same IR `ess specify compile` produces, because it is the same code.
 

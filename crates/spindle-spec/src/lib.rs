@@ -10,6 +10,7 @@
 //! Spindle never re-implements ESS parsing or validation. A document `ess specify validate`
 //! refuses is refused here too, with the compiler's own diagnostics.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -149,6 +150,10 @@ fn discover(root: &Path) -> Result<Vec<PathBuf>, LoadError> {
 
 /// The manifest `ess` reads in a specification directory: when present, its `specification` list
 /// is the set of source documents, in that order, as `ess specify validate --path` reads them.
+/// What `ess` refuses in one is refused here: a format other than `ess-inputs/1` or
+/// `ess-inputs/2`, an entry that is absolute or has an empty, `.` or `..` segment, an entry listed
+/// twice across both lists, a root or an entry segment that is a symlink, and an entry that is
+/// not a regular file.
 const MANIFEST: &str = "ess-inputs.yaml";
 
 fn listed(root: &Path, manifest: &Path) -> Result<Vec<PathBuf>, LoadError> {
@@ -162,26 +167,86 @@ fn listed(root: &Path, manifest: &Path) -> Result<Vec<PathBuf>, LoadError> {
     })?;
     let document: ess_yaml::Value =
         ess_yaml::from_str(&text).map_err(|error| refuse(error.to_string()))?;
-    let format = document.get("format").and_then(ess_yaml::Value::as_str);
-    if !format.is_some_and(|format| format.starts_with("ess-inputs/")) {
-        return Err(refuse("format is not ess-inputs/<n>".to_owned()));
+    match document.get("format").and_then(ess_yaml::Value::as_str) {
+        Some("ess-inputs/2") => {}
+        Some("ess-inputs/1") if document.get("requires").is_none() => {}
+        Some("ess-inputs/1") => {
+            return Err(refuse("`requires` needs format ess-inputs/2".to_owned()));
+        }
+        _ => {
+            return Err(refuse(
+                "format is not ess-inputs/1 or ess-inputs/2".to_owned(),
+            ));
+        }
     }
-    let entries = document
-        .get("specification")
-        .and_then(ess_yaml::Value::as_sequence)
-        .ok_or_else(|| refuse("no specification list".to_owned()))?;
-    let mut found = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let relative = entry
-            .as_str()
-            .ok_or_else(|| refuse("a specification entry is not a path".to_owned()))?;
-        let path = root.join(relative);
-        if !path.is_file() {
-            return Err(refuse(format!("lists {relative}, which does not exist")));
+    let list = |role: &str| -> Result<Vec<&str>, LoadError> {
+        let entries = match document.get(role) {
+            None => return Ok(Vec::new()),
+            Some(entries) => entries
+                .as_sequence()
+                .ok_or_else(|| refuse(format!("{role} is not a list")))?,
+        };
+        entries
+            .iter()
+            .map(|entry| {
+                entry
+                    .as_str()
+                    .ok_or_else(|| refuse(format!("a {role} entry is not a path")))
+            })
+            .collect()
+    };
+    let specification = list("specification")?;
+    let mut seen = BTreeSet::new();
+    for entry in specification.iter().chain(&list("scenarios")?) {
+        if !contained(entry) {
+            return Err(refuse(format!(
+                "lists {entry:?}: use a nonempty root-relative path with no empty or dot segments, \
+                 backslash, colon or control character"
+            )));
+        }
+        if !seen.insert(*entry) {
+            return Err(refuse(format!("lists {entry:?} more than once")));
+        }
+    }
+    let unlinked = |path: &Path| fs::symlink_metadata(path).map(|metadata| metadata.file_type());
+    if unlinked(&root.components().collect::<PathBuf>()).is_ok_and(|kind| kind.is_symlink()) {
+        return Err(refuse(
+            "the specification root is a symlink; select its real directory".to_owned(),
+        ));
+    }
+    let mut found = Vec::with_capacity(specification.len());
+    for relative in specification {
+        let mut path = root.to_path_buf();
+        for segment in relative.split('/') {
+            path.push(segment);
+            match unlinked(&path) {
+                Err(_) => return Err(refuse(format!("lists {relative}, which does not exist"))),
+                Ok(kind) if kind.is_symlink() => {
+                    return Err(refuse(format!("lists {relative}, which passes a symlink")));
+                }
+                Ok(_) => {}
+            }
+        }
+        if !unlinked(&path).is_ok_and(|kind| kind.is_file()) {
+            return Err(refuse(format!(
+                "lists {relative}, which is not a regular file"
+            )));
         }
         found.push(path);
     }
     Ok(found)
+}
+
+/// Whether `entry` is a manifest path `ess` accepts: relative, every `/`-separated segment
+/// nonempty and neither `.` nor `..`, and no backslash, colon or control character. A path that
+/// passes cannot leave the root except through a symlink, which [`listed`] refuses as well.
+fn contained(entry: &str) -> bool {
+    !entry
+        .split('/')
+        .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+        && !entry
+            .chars()
+            .any(|c| c == '\\' || c == ':' || c.is_control())
 }
 
 fn walk(directory: &Path, found: &mut Vec<PathBuf>) -> Result<(), LoadError> {

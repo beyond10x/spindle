@@ -1,7 +1,9 @@
 //! The two ends a component holds: a sender for the events it publishes, a receiver for the
 //! commands bound to it.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::ops::Bound;
 use std::time::{Duration, Instant};
 
 use ess_domain::binding::{Delivery, Failure};
@@ -227,14 +229,13 @@ impl Sender {
             }
             flight.envelope.attempt += 1;
             flight.sent_at = now;
-            let envelope = flight.envelope.clone();
-            let to = envelope.to.clone();
-            let binding = envelope.binding.clone();
-            if let Err(error) = send(&mut self.channels, envelope) {
-                failures.push((to, error));
-            } else {
-                self.sink.carried(&binding, Carried::Redelivered);
-                resent += 1;
+            match send(&mut self.channels, flight.envelope.clone()) {
+                Ok(()) => {
+                    self.sink
+                        .carried(&flight.envelope.binding, Carried::Redelivered);
+                    resent += 1;
+                }
+                Err(failure) => failures.push(failure),
             }
         }
         settle(resent, failures)
@@ -261,8 +262,12 @@ impl Sender {
         let again = (envelope.delivery == Delivery::AtMostOnce
             && envelope.on_failure == Failure::Retry)
             .then(|| envelope.clone());
-        let to = envelope.to.clone();
-        let binding = envelope.binding.clone();
+        // Every envelope a sender holds was mapped by its router, so the binding is recorded under
+        // the router's own name for it, and no send copies a string to record it.
+        let binding = match self.router.route(&envelope.binding) {
+            Some(route) => Cow::Borrowed(route.binding.as_str()),
+            None => Cow::Owned(envelope.binding.clone()),
+        };
         let first = envelope.attempt == 1;
         let tracked = envelope.delivery == Delivery::AtLeastOnce;
         match send(&mut self.channels, envelope) {
@@ -277,7 +282,7 @@ impl Sender {
                 );
                 *sent += 1;
             }
-            Err(error) => {
+            Err(failure) => {
                 match again {
                     Some(mut envelope) => {
                         envelope.attempt += 1;
@@ -286,22 +291,33 @@ impl Sender {
                     None if !tracked => self.sink.carried(&binding, Carried::Dropped),
                     None => {}
                 }
-                failures.push((to, error));
+                failures.push(failure);
             }
         }
     }
 }
 
+/// Sends `envelope` on its destination's channel; a failure comes back with the destination,
+/// copied only then.
 fn send(
     channels: &mut BTreeMap<String, Box<dyn Channel>>,
     envelope: Envelope,
-) -> Result<(), ChannelError> {
-    match channels.get_mut(&envelope.to) {
-        Some(channel) => channel.send(Frame::Deliver(envelope)),
-        None => Err(ChannelError::NotConnected {
-            binding: envelope.binding,
-            component: envelope.to,
-        }),
+) -> Result<(), (String, ChannelError)> {
+    let to = envelope.to.as_str();
+    match channels
+        .range_mut::<str, _>((Bound::Included(to), Bound::Included(to)))
+        .next()
+    {
+        Some((component, channel)) => channel
+            .send(Frame::Deliver(envelope))
+            .map_err(|error| (component.clone(), error)),
+        None => Err((
+            envelope.to.clone(),
+            ChannelError::NotConnected {
+                binding: envelope.binding,
+                component: envelope.to,
+            },
+        )),
     }
 }
 

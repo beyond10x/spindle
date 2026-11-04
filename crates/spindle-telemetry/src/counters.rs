@@ -251,12 +251,15 @@ impl Telemetry for Counters {
             } => match self.index.commands.get(command) {
                 None => false,
                 Some(index) => {
-                    self.observe(index.duration, elapsed);
                     let position = match outcome {
                         Outcome::Declared(outcome) => index.outcomes.get(outcome).copied(),
                         Outcome::Failed(failure) => index.failed[failure.index()],
                     };
-                    self.add(position, 1)
+                    let counted = self.add(position, 1);
+                    if counted {
+                        self.observe(index.duration, elapsed);
+                    }
+                    counted
                 }
             },
             Record::Appended { event } => self.add(self.index.appended.get(event).copied(), 1),
