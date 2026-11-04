@@ -1,0 +1,21 @@
+[package]
+name = "spindle-cli"
+description = "b10x-spindle: check, derive capabilities for and admit an ESS specification."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "b10x-spindle"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+spindle-capability.workspace = true
+spindle-spec.workspace = true

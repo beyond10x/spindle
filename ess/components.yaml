@@ -1,0 +1,22 @@
+components:
+  - component: spindle-control
+    summary: Holds environments and deployments, and decides admission.
+    owns:
+      domains:
+        - spindle.deployment
+    accepts:
+      commands:
+        - spindle.deployment.DeclareEnvironment
+        - spindle.deployment.OfferBundle
+        - spindle.deployment.DecideAdmission
+        - spindle.deployment.StartDeployment
+        - spindle.deployment.StopDeployment
+    publishes:
+      events:
+        - spindle.deployment.EnvironmentDeclared
+        - spindle.deployment.BundleOffered
+        - spindle.deployment.DeploymentAdmitted
+        - spindle.deployment.DeploymentRefused
+        - spindle.deployment.DeploymentStarted
+        - spindle.deployment.DeploymentStopped
+    reached_by: in_process

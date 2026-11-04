@@ -1,0 +1,13 @@
+format = "spindle-environment/1"
+name = "microvm"
+os = "linux"
+arch = "x86_64"
+
+[provides]
+"store.durable" = ["sqlite"]
+"store.ephemeral" = ["memory"]
+clock = ["system"]
+timer = ["tokio"]
+channel = ["tcp"]
+projection = ["in-process"]
+"ingress.network" = ["http"]

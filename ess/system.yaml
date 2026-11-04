@@ -1,0 +1,11 @@
+format: ess/34
+system: spindle
+version: v1
+
+summary: >-
+  Spindle loads a specification bundle and runs it as a live system. An environment declares the
+  capabilities it provides and which implementation backs each one; admission decides, per
+  bundle and environment, whether the bundle runs and with which implementations.
+
+domains:
+  - spindle.deployment

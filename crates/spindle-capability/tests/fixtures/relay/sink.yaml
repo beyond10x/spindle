@@ -1,0 +1,17 @@
+domain: relay.sink
+events:
+  - name: relay.sink.Heard
+    fields:
+      - name: beat
+        type: String
+commands:
+  - name: relay.sink.Hear
+    input:
+      - name: beat
+        type: String
+    outcomes:
+      - name: heard
+        emits: [relay.sink.Heard]
+        payload:
+          relay.sink.Heard:
+            beat: input.beat

@@ -1,0 +1,385 @@
+# Spindle: deploy a specification, and a generic runtime runs it
+
+Design, 2026-11-04. Started as a brainstorm; § 3a and § 11 record the operator's decisions of that
+day. "The case study" below is a production call-routing service (calls, agents, offers, a backend
+that bridges media) whose code and specification were traced outside this repository; only
+neutral facts about it appear here.
+
+The survey behind § 2 read ESS 0.58.0 (conclusions re-checked on 0.85.0), substrate, entity-runtime,
+eventlog, canon, mantle, loom and workflow on 2026-11-04. Operator decision, 2026-11-04: service-sdk
+is out of scope, not read and not depended on; Spindle works at a lower, more technical level.
+
+---
+
+## 1. The idea
+
+Today ESS models the **domain**: entities, lifecycles, commands with outcomes, events, views,
+actors, components, bindings. It is used to derive contracts and conformance suites, and its
+interpreter (`ess-conformance` `interpret/execute.rs`) runs a model in memory as a test oracle.
+
+The idea: make the specification the deploy unit.
+
+```mermaid
+flowchart LR
+  A[ESS domain spec<br/>what the system means] --> L[lowering]
+  O[overlay spec<br/>how it must run:<br/>partitions, atomicity, timers,<br/>delivery, durability, budgets] --> L
+  M[mechanism modules<br/>pure functions: scoring,<br/>backoff, ranking] --> L
+  L --> K[kernel program<br/>versioned, loadable,<br/>digest-addressed]
+  K --> B[bundle: tar.gz + manifest]
+  B -->|upload = deploy| D[deploy service]
+  D --> V[microVM / confined workload]
+  V --> R[b10x-ess-runtime<br/>generic binary, event loop]
+  R --> S[substrate:<br/>files, processes, network,<br/>secrets, endpoints]
+```
+
+Two properties make it worth more than code generation:
+
+1. **One semantics, three uses.** The kernel program is executed by the production runtime, by the
+   conformance oracle, and by a deterministic simulator. A spec that passes conformance in the
+   simulator runs with the same instruction semantics in production; there is no generated code
+   that can drift from the model.
+2. **Deterministic steps.** Every state change is a pure step `(cell state, message) → (new state,
+   events, effects)`. Recovery is replay, failover is handing over a log position, and every
+   production incident can be replayed offline.
+
+## 2. Where the pieces stand (verified in the source files above)
+
+| need | nearest existing piece | state |
+|---|---|---|
+| execute commands from a model | ESS model interpreter, `interpret/execute.rs:348` | shipped, test-only; its design forbids use as a runtime (`ess-model-driven-interpretation-design-v0.1.md:150-161`) |
+| deterministic guard + transition kernel | entity-runtime `entity-core`, IO-free, `decide_before_load` / `continue_with` | shipped 0.30.3; no loop, no timers |
+| ESS → kernel lowering | `ess/crates/generate/ess-entity-runtime` | library only, refuses about 41 constructs, no CLI verb |
+| loadable compiled model | none; `EssIr` is unversioned and Serialize-only (`formats.md:161`) | gap |
+| guard expressions | `ess_primitives::predicate::Predicate`, three-valued, typed | shipped; no arithmetic |
+| communicating machines, channels, logical timers | `ess-protospec/1` sidecar, `ess verify protocol run\|explore` | experimental, model evidence only |
+| durable log, snapshots, projections | eventlog 0.9.1 (file, SQLite, PostgreSQL) | shipped; no timers, no push subscription |
+| wire bindings | `ess-http/1` (origin/main), `ess-transport/1,2` (NATS subjects) | shipped as contracts; consumer side "not decided" |
+| confined execution, egress, secrets | substrate 0.16.1, contract bundle 0.25.0 | shipped; exec needs a timeout, `network_ingress` reserved, no workload/endpoint families |
+| microVM | substrate Firecracker driver | proposed; dev nodes have no KVM (`ROADMAP.md:31,48`) |
+| VM worker hosting a substrate daemon | mantle (EC2, KubeVirt) | shipped 0.2.0, per-worker VM |
+| "generic binary + declared spec + controller" | loom: `agent serve --spec`, `b10x-loom-operator` | shipped for agents on Kubernetes |
+| bundle formats | `ess-release-bundle/1`, `ess-runtime/1`, `ess-environment/1` | shipped; target Helm |
+| service registry | none; static endpoint maps in `ess-environment/1` | gap |
+| durable timers, leases at service level | none (`workflow` lists them as planned) | gap |
+
+## 3. Three layers of a specification
+
+The case study shows what a running service depends on beyond the domain. Sorted by where each
+fact belongs:
+
+| layer | says | example from the case study | home |
+|---|---|---|---|
+| **domain** | what exists, which moves are legal, what each command decides | a call is `Queued → Connecting → Bridged → Ended`; ending an ended call is accepted and changes nothing | ESS, unchanged |
+| **mechanism** | how a decision is computed when the domain leaves it open | call score = `rank·0.99 + fifo·0.01`; backoff = `1s·2^n`, cap 30 s, jitter < 500 ms; an unanswered offer is withdrawn after 45 s | overlay + pure modules |
+| **run** | what the implementation must guarantee that no single command shows | one writer per account; an agent is in at most one pending offer cluster-wide; outbound connect is at-least-once and the receiver dedups by `seq`; FIFO is by the caller's `queued_at`, not arrival; state survives restart | overlay |
+
+In the case study's specification, every mechanism and run fact above exists only as a YAML comment
+citing a source line (verified: comments stripped, no duration, period or score formula remains).
+That is the gap this design closes.
+
+## 3a. Semantics in the specification, technicals in the runtime
+
+Operator decision, 2026-11-04: from the application's side a specification states **semantics**;
+the **technical** realisation comes from the runtime and is hidden from the application. A
+specification never names SQLite, NATS, Redis, Firecracker or an HTTP library. It says what it
+needs in its own terms, and the runtime supplies an implementation the environment has.
+
+| the specification says (semantic) | a capability the runtime derives | implementations an environment may have |
+|---|---|---|
+| an entity outlives a restart | `store.durable` | eventlog over SQLite, PostgreSQL or file |
+| an entity exists only while the process runs | `store.ephemeral` | in-memory |
+| a guard reads `now` | `clock` | host clock, simulated clock |
+| a binding is `periodic`, or a deadline | `timer` | timer wheel rebuilt from the log |
+| a component is `reached_by: network` | `ingress.network` | HTTP listener, substrate endpoint |
+| a binding crosses to another component | `channel` | in-process queue, TCP between VMs, NATS |
+| an outcome is decided `external:` | `external.<cause>` | a named port: HTTP call, named service, a test double |
+| a view is `eventual` | `projection` | eventlog projection, in-memory index |
+
+**Capabilities are derived, never authored.** The runtime reads the compiled specification and
+lists what it requires; a bundle's author does not write a requirement list, so it cannot drift from
+the specification.
+
+**Environment.** Where Spindle runs (OS, arch, substrate backend, a microVM or a laptop) is an
+environment, and an environment declares which capabilities it provides and which implementation
+backs each one. The same bundle can run on a laptop with `store.durable = sqlite` and
+`channel = in-process`, and in three microVMs with `channel = tcp`.
+
+**Admission.** Offering a bundle to an environment yields one of:
+
+- admitted, with exactly one implementation bound to every required capability;
+- refused, naming every capability the environment lacks.
+
+Several implementations for one capability are chosen by a preference order in the environment,
+never by the bundle. This is the domain Spindle specifies about itself: `ess/domains/deployment.yaml`.
+
+**Overlay: open.** Whether a separate overlay document is needed is undecided (operator,
+2026-11-04: "it might have an overlay or not"). The facts in § 3 that are run-level (partition key,
+atomicity scope) have two possible homes: an optional overlay, or defaults the runtime applies
+(one cell per entity instance; atomicity is one command on one instance). Spindle starts with the
+defaults and adds an overlay only when an example cannot run correctly without one.
+
+### Why an overlay and not more ESS
+
+Per operator: an addition goes into ESS only if it helps without the VM use case.
+
+| candidate fact | useful without a runtime? | goes to |
+|---|---|---|
+| set-level uniqueness ("a matched element cannot be matched again"); ESS refused `unique:` on a view | yes: conformance could check it | ESS (proposal) |
+| per-entity deadline ("expires 45 s after it entered `Connecting`") | yes: conformance could drive time and check the move | ESS (proposal) |
+| a store two components share | yes: today's boundary spec cannot state the second coupling | ESS (proposal) |
+| partition key, ownership, atomicity scope | no | overlay |
+| delivery and dedup keys on outbound calls | partly (bindings already carry `delivery:`) | overlay, refining the binding |
+| scoring and backoff formulas | no (ESS records "synthesize arbitrary business algorithms" as a non-goal) | mechanism module |
+| durability, snapshots, retention | no | overlay |
+| latency and throughput budgets | no | overlay |
+| placement (thread, VM, replica count) | no | deployment document, not the overlay |
+
+The overlay references the domain spec by digest, as `ess-realization/1` and `ess-transport/1`
+already do. ESS keeps its boundary rules (`AGENTS.md`: no `ess-ir/2` plan, no generic facet
+registry), and the overlay is free to be runtime-specific.
+
+## 4. The running app
+
+```mermaid
+flowchart TB
+  subgraph app[app = one bundle]
+    subgraph c1[component: router<br/>stateful, partition = account]
+      p1[cell acct-1<br/>single-threaded loop]
+      p2[cell acct-2]
+      p3[cell ...]
+    end
+    subgraph c2[component: ingress<br/>stateless, replicas 2..n]
+      h1[HTTP / NATS adapter]
+    end
+    subgraph c3[component: projections<br/>stateless readers]
+      v1[view: queue position]
+    end
+  end
+  h1 -- channel: commands, keyed --> p1
+  p1 -- effect: request --> ext[(outbound port:<br/>telephony platform)]
+  ext -- reply as message --> p1
+  p1 -- log --> log[(event log)]
+  log --> v1
+```
+
+| unit | meaning | concurrency | declared in |
+|---|---|---|---|
+| app | components + channels, one deploy | many VMs possible | bundle manifest |
+| component | one kind of state machine with one partition key, or stateless | pool of workers | overlay |
+| cell | all instances sharing one partition-key value | one deterministic loop; no locks inside | overlay (`partition`) |
+| channel | typed queue between components: delivery, order scope, bound, overflow rule | in-process queue or network, same meaning | overlay |
+| effect | outbound request, timer, publish | executed after the step commits (outbox) | kernel program |
+| timer | durable wake-up addressed to a cell | stored in the cell's log | kernel program |
+
+Concurrency comes from many cells; a cell itself is serial. This is the model of Erlang/OTP
+processes, Orleans grains and Restate services, and a Rust runtime can carry it on a thread-per-core
+or a work-stealing scheduler. The semantics never depend on placement: two cells on one thread and
+two cells in two VMs exchange the same messages with the same guarantees, so placement and replica
+counts are a deployment decision changed without touching the spec.
+
+**Atomicity across entities.** The hard case in the case study is the match: one step must move a
+call and reserve an agent. The overlay names the atomicity scope, and the lowering refuses a kernel
+program whose step touches two cells. Two ways to satisfy it:
+
+| option | how | cost |
+|---|---|---|
+| **A. co-locate** | partition = account, so the call and the agent are in one cell | one account's throughput is one core; simplest; matches how the case study already runs (one actor per account) |
+| **B. reserve-then-commit** | the agent cell grants a lease, the call cell commits, the lease is confirmed or expires | scales past one core per account; needs a timeout and a compensation on every step |
+
+Recommendation for a prototype: A. The case study runs A today and its throughput is dominated by
+the outbound round trip (case study § 4).
+
+## 5. The kernel program and its instruction set
+
+Not bytecode: a typed, structured program per handler, a tree of the instructions below. A handler
+is selected by message type; it runs to completion inside one step; it never blocks.
+
+| group | instruction | meaning |
+|---|---|---|
+| read | `load(entity, id)` | read one instance from the cell |
+| | `scan(index, filter, order, limit)` | ordered read over a cell-local index (views lowered to indexes) |
+| decide | `guard(pred) else refuse(error)` | three-valued; `unknown` refuses |
+| | `branch [(pred, block)…] otherwise block` | outcome selection, precedence from the ESS selection plan |
+| write | `create`, `set`, `move(transition)`, `delete` | checked against the lifecycle and invariants before commit |
+| | `emit(event, payload)` | appended to the cell log in the same commit |
+| compute | `eval(expr)` | total expression language: ESS predicates plus integer/decimal/duration arithmetic, min/max, clamp |
+| | `call_pure(module, fn, args)` | WASM function, no imports, fuel-limited, deterministic; for scoring and ranking |
+| | `random(seed_scope)` | deterministic PRNG seeded from (cell, log position), for jitter |
+| coordinate | `send(channel, key, msg)` | to another cell or component; delivered after commit |
+| | `request(port, req, correlate)` | outbound call through a declared port; the reply, timeout or failure returns as a message |
+| | `claim(index, filter, order)` | take the first matching element and mark it taken in the same step: the matching primitive |
+| | `lease(target, ttl)` / `release` | option B above |
+| time | `timer_set(name, at \| after)`, `timer_cancel(name)` | durable; fires as a message; a re-set replaces |
+| | `every(period, handler)` | cell-scoped sweep, lowered to a self-re-arming timer |
+| | `now` | the step's clock, fixed per step and recorded in the log |
+| identity | `dedup(key, window)` | the second message with the key gets the first reply |
+
+Step semantics:
+
+1. A message arrives at a cell (command, reply, timer, delivered event).
+2. The handler runs against the cell state; reads see only the cell.
+3. The result is one record: events, state delta, outbox (sends, requests, timer changes),
+   the step's `now` and PRNG position.
+4. The record is appended durably; then the outbox is executed.
+5. A crash between 4 and the outbox replays the outbox from the log; ports are at-least-once and
+   the receiver dedups (the overlay names the key).
+
+The instruction set is small enough to implement twice (Rust runtime, and the oracle inside
+`ess-conformance`), which is what keeps the simulator and production on one semantics.
+
+### Lowering examples from the case study
+
+| behaviour | lowered to |
+|---|---|
+| submit a call | `guard(not exists) else refuse(AlreadyQueued)`; `create`; `emit(CallQueued)`; `send(trigger-eval)` |
+| match | on `every(1s)` and on availability messages: `claim(available_agents, selection ∈ call.selections, order by score)`; `set(call.agent)`; `move(dispatch)`; `request(platform.connect, {seq, call, agent})`; `timer_set(offer-timeout, after 45s)` |
+| offer not answered | `timer(offer-timeout)` → `move(requeue)`; `release(agent)` |
+| connect failed, transient | `eval(backoff = min(1s·2^n, 30s) + random(0..500ms))`; `timer_set(retry, after backoff)` |
+| backend reports bridged | `dedup(call, seq)`; `move(bridge)`; `timer_cancel(offer-timeout)` |
+| hang-up | `move(end)`; `emit(CallEnded)`; idempotent: `guard(state != Ended) else accept` |
+| agent available again | inbound status message → `set(agent.line_status)`; availability recomputed by `eval`; no timer (the platform owns wrap-up) |
+
+Things the case study does that this set cannot express without a new instruction: a 60 s pass
+that reads another system's database and repairs state from it. That is the "shared store" item in
+§ 3; in the runtime it becomes a `request(port: platform-db, query)` on `every(60s)` and the diff is
+applied by `eval` + `set`. It is expressible, but only as an explicit port, which is the point.
+
+## 6. Runtime architecture
+
+```mermaid
+flowchart LR
+  subgraph vm[microVM or confined workload]
+    I[ingress adapters<br/>ess-http/1, ess-transport] --> Rt[router:<br/>partition key → cell owner]
+    Rt --> X[cell executors<br/>thread per core]
+    X --> J[(cell log + snapshots<br/>eventlog)]
+    X --> T[timer wheel<br/>rebuilt from log]
+    X --> OB[outbox executor]
+    OB --> P[ports: HTTP, NATS, DB<br/>via substrate egress]
+    J --> PR[projections → views]
+  end
+  CP[control plane:<br/>deploy, ownership, drain, migrate] --> Rt
+  REG[(registry:<br/>component → endpoints, digests)] --- CP
+```
+
+- **Ownership.** A cell has exactly one live owner. Ownership is a lease in the control plane,
+  fenced by log position: the new owner replays to the fence before taking traffic. The case study
+  shows what happens without fencing (every replica owns every shard; double connects possible).
+- **Durability.** One log per cell (or per component with cell id in the record); snapshot every N
+  records; snapshots are caches and can be dropped.
+- **Timers** live in the log as records; the in-memory wheel is rebuilt on replay.
+- **Ports** are the only I/O. Each is declared in the overlay with protocol, delivery, dedup key,
+  timeout, and the substrate egress aperture it needs. A bundle that uses an undeclared port does
+  not load.
+- **Views** are projections over the log, with the consistency the ESS view declares
+  (`read_your_writes` reads through the owning cell; `eventual` reads the projection).
+
+## 7. Deploy
+
+| step | what happens | refuses when |
+|---|---|---|
+| 1. bundle | `tar.gz`: ESS sources, overlay, mechanism `.wasm`, compiled kernel program, manifest (digests, ESS version, kernel-program format version, runtime ABI, ports, egress, stores) | a digest does not match the sources |
+| 2. upload | deploy service stores it by digest | a format version the runtime does not read |
+| 3. verify | recompile and compare digests; run the ESS conformance suite against the kernel program in the simulator; run the overlay's run-level checks (uniqueness, ownership) under simulated faults | a scenario fails, a run-level check fails |
+| 4. diff | `ess verify diff` against the running revision; classify each change as compatible, needs state migration, or breaking | breaking without a migration in the bundle |
+| 5. place | provision VM or confined workload through substrate; register endpoints | a capability is missing (ingress, KVM) |
+| 6. cut over | per cell: drain, fence, new revision replays (with migration), takes traffic | replay fails; then the old revision keeps the cell |
+| 7. rollback | re-fence to the old revision while the new log suffix is compatible | the new revision wrote events the old one cannot read |
+
+State migration is the part with no existing design (`ess-capabilities.md` § 6: `DataMigration`
+is historical and unimplemented). A live call router cannot be redeployed by "stop, start".
+
+## 8. Can a Rust VM carry an async, high-throughput service?
+
+Yes, with these conditions (design reasoning, not measured):
+
+- **Interpretation cost.** A step is a few dozen instructions over in-memory state. In the case
+  study, the reimplementation's own README reports a matcher hot path at p50 ≈ 180 µs and an
+  end-to-end connect of about 150 ms dominated by the platform round trip (claims from that README,
+  not measured here). An interpreter adding microseconds per step is not the bottleneck there.
+- **Hot computation** (scoring over many candidates) runs in `call_pure` WASM or, later, as a
+  native built-in named in the overlay, not as interpreted expressions.
+- **Back-pressure** is a channel property in the overlay (bound, overflow: block, shed, or refuse
+  the command), so overload behaviour is part of the spec and testable in the simulator.
+- **Determinism and async coexist** because every await is outside the step: a request is an
+  effect, its reply is the next message.
+
+## 9. Q1 in brief: replicate from specs alone
+
+The full analysis is kept outside this repository. What it shows:
+
+| class of fact | in the spec today | clean-room result |
+|---|---|---|
+| lifecycles, commands, outcomes, idempotent edge cases | typed | reproduced; conformance holds them |
+| timers, backoff, scoring formula | YAML comments only | lost if comments count as docs; guessed otherwise |
+| second coupling (direct reads/writes of another system's DB) | stated as unmodellable | service cannot cold-start |
+| cluster ownership, dedup, durability, wire formats of the log | absent | invented; behaviour under failover unknown |
+
+The domain spec is enough to reproduce the contract and the edge cases written as outcomes. It is
+not enough to reproduce a service that behaves the same: every fact that decides *which* agent,
+*when*, and *what happens on failure* is mechanism or run level.
+
+## 10. Q2 in brief: does the logic lower to a generic instruction set?
+
+Yes for every step of the traced slice (§ 5 table), with two conditions:
+
+1. `claim` (atomic take from an ordered index) and durable timers are first-class instructions.
+   Without them the matcher and the offer timeout are not expressible.
+2. Scoring is a pure module. The case study's scoring formula and tie-breaker have already diverged
+   once between two implementations written from the same code; a pure module is one copy for all.
+
+No step needed a general-purpose loop over unbounded data inside a handler; the sweeps are timers
+plus bounded `scan`.
+
+## 11. Decisions and open questions
+
+Decided by the operator, 2026-11-04:
+
+| decision | consequence |
+|---|---|
+| its own repository, `beyond10x/spindle`; binary `b10x-spindle` | ESS gets at most the three proposals in § 3 |
+| guards are ESS's: `ess_primitives::predicate::Predicate`, compiled by `ess-compiler` | no second guard dialect; Spindle depends on ESS crates at a released tag |
+| application specs carry semantics only; technicals come from the runtime (§ 3a) | capabilities are derived from the spec; environments bind implementations |
+| service-sdk is out of scope | not read, not depended on |
+| an overlay may or may not exist | defaults first (§ 3a) |
+| Spindle itself is specified in ESS and planned in AEP | `ess/`, `.engineering/planning/` |
+| showcase: a two-player paddle-and-ball game, three components, each in its own microVM, talking over channels | `examples/rally` (§ 13) |
+
+Open:
+
+| question | default |
+|---|---|
+| does the kernel program extend `entity-core` or stand alone | stand alone at first, with ESS `Predicate` for guards; revisit once the instruction set settles |
+| arithmetic beyond `increment:` | none in M0; the `rally` example is written on an integer grid with `increment: 1` / `-1` |
+| AppSpec above ESS | deferred: the measured gaps are below ESS, not above |
+| substrate gaps (ingress, workload/endpoint, Firecracker) | M0–M2 run as host processes; microVMs once substrate's Firecracker driver exists or with a local Firecracker launcher |
+
+## 12. Milestones (simplest path first)
+
+| # | deliverable | proves |
+|---|---|---|
+| M0 | load and compile an ESS spec; derive its capabilities; admit it against an environment; run commands on one thread with in-memory and SQLite eventlog stores; `b10x-spindle check`, `admit`, `run` | spec → load → admit → serve, no codegen |
+| M1 | bindings between components over channels (in-process, then TCP); periodic bindings on a durable timer; `external:` through named ports | timers and effects in one semantics |
+| M2 | `examples/rally` as three processes on one host | the showcase, before VMs |
+| M3 | each component of `rally` in its own microVM, channels over the VM network | "three things deployed, each in one Firecracker" |
+| M4 | bundle (`tar.gz` + manifest), deploy service, registry | "upload = deploy" |
+| M5 | cells across threads; ownership leases with fencing; snapshots | concurrency and HA semantics |
+
+## 13. Showcase: `rally`
+
+An original two-player paddle-and-ball game, written as an ESS system of three components. It is
+our own design (rules, names, look); it borrows only the genre.
+
+| component | owns | does |
+|---|---|---|
+| `rally-table` | the match: ball position and direction on a grid, both paddles, score, serve, winner | on each `Tick` (periodic binding) moves the ball by one cell; bounces off walls and paddles; a ball past a paddle is a point; first to a target score wins |
+| `rally-player-west` | one player: its paddle, its view of the ball | on `BallMoved` decides by rule whether to move its paddle up, down or hold, and asks the table to move it |
+| `rally-player-east` | the same rules for the other side | the same |
+
+Communication is bindings only: the table publishes `BallMoved`, `PointScored`, `MatchWon`; each
+player's binding turns `BallMoved` into its own `ObserveBall` command, and the player's
+`PaddleMoveRequested` event binds to the table's `MovePaddle`. Every value change is a guard plus
+`increment:` on integer fields, so the game needs no arithmetic the language lacks.
+
+Deployed, it is three environments with `channel = tcp`, one per microVM. On a laptop the same
+bundle runs with `channel = in-process`, and admission is the only thing that differs.
+

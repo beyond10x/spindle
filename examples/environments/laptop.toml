@@ -1,0 +1,15 @@
+format = "spindle-environment/1"
+name = "laptop"
+os = "linux"
+arch = "x86_64"
+
+[provides]
+"store.durable" = ["sqlite", "memory"]
+"store.ephemeral" = ["memory"]
+clock = ["system"]
+timer = ["tokio"]
+channel = ["in-process"]
+projection = ["in-process"]
+"ingress.network" = ["http-loopback"]
+"ingress.command_line" = ["terminal"]
+"external.*" = ["operator-prompt"]

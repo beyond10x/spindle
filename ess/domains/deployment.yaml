@@ -1,0 +1,320 @@
+domain: spindle.deployment
+
+summary: >-
+  A bundle is offered to an environment, admitted or refused against the capabilities that
+  environment provides, then started and stopped.
+
+naming:
+  wire: deployments
+  display: Deployments
+
+types:
+  - name: spindle.deployment.DeploymentId
+    kind: newtype
+    of: String
+
+  - name: spindle.deployment.BundleDigest
+    kind: newtype
+    of: String
+
+  - name: spindle.deployment.EnvironmentId
+    kind: newtype
+    of: String
+
+  - name: spindle.deployment.CapabilityName
+    kind: newtype
+    of: String
+
+  - name: spindle.deployment.ImplementationName
+    kind: newtype
+    of: String
+
+  - name: spindle.deployment.Binding
+    kind: struct
+    fields:
+      - name: capability
+        type: spindle.deployment.CapabilityName
+      - name: implementation
+        type: spindle.deployment.ImplementationName
+
+entities:
+  - name: spindle.deployment.Environment
+
+    identity:
+      name: environment_id
+      type: spindle.deployment.EnvironmentId
+
+    fields:
+      - name: os
+        type: String
+      - name: arch
+        type: String
+      - name: provides
+        type: List<spindle.deployment.Binding>
+
+    lifecycle:
+      initial: Declared
+      states: [Declared]
+      terminal: [Declared]
+      transitions: []
+
+  - name: spindle.deployment.Deployment
+
+    identity:
+      name: deployment_id
+      type: spindle.deployment.DeploymentId
+
+    fields:
+      - name: bundle
+        type: spindle.deployment.BundleDigest
+      - name: environment_id
+        type: spindle.deployment.EnvironmentId
+      - name: requires
+        type: List<spindle.deployment.CapabilityName>
+      - name: bindings
+        type: List<spindle.deployment.Binding>
+      - name: missing
+        type: List<spindle.deployment.CapabilityName>
+
+    relations:
+      - name: environment
+        kind: references
+        target: spindle.deployment.Environment
+        cardinality: one
+        via: environment_id
+
+    lifecycle:
+      initial: Offered
+      states: [Offered, Admitted, Refused, Running, Stopped]
+      terminal: [Refused, Stopped]
+      transitions:
+        - name: admit
+          from: [Offered]
+          to: Admitted
+        - name: refuse
+          from: [Offered]
+          to: Refused
+        - name: start
+          from: [Admitted]
+          to: Running
+        - name: stop
+          from: [Admitted, Running]
+          to: Stopped
+
+actors:
+  - name: spindle.deployment.Operator
+    may:
+      - spindle.deployment.DeclareEnvironment
+      - spindle.deployment.OfferBundle
+      - spindle.deployment.StartDeployment
+      - spindle.deployment.StopDeployment
+    naming:
+      display: Operator
+
+  - name: spindle.deployment.Admission
+    may:
+      - spindle.deployment.DecideAdmission
+    naming:
+      display: Admission
+
+errors:
+  - name: spindle.deployment.DeploymentStateConflict
+    summary: The deployment is not in a state this command acts from, so nothing moved.
+    fields:
+      - name: state
+        type: spindle.deployment.Deployment.State
+
+commands:
+  - name: spindle.deployment.DeclareEnvironment
+    naming:
+      wire: declare-environment
+      display: Declare environment
+    input:
+      - name: environment_id
+        type: spindle.deployment.EnvironmentId
+      - name: os
+        type: String
+      - name: arch
+        type: String
+      - name: provides
+        type: List<spindle.deployment.Binding>
+    outcomes:
+      - name: declared
+        creates: spindle.deployment.Environment
+        instance: environment_id
+        emits:
+          - spindle.deployment.EnvironmentDeclared
+        payload:
+          spindle.deployment.EnvironmentDeclared:
+            environment_id: input.environment_id
+        sets:
+          os: input.os
+          arch: input.arch
+          provides: input.provides
+        summary: The environment and the capabilities it provides are recorded.
+
+  - name: spindle.deployment.OfferBundle
+    naming:
+      wire: offer-bundle
+      display: Offer bundle
+    input:
+      - name: deployment_id
+        type: spindle.deployment.DeploymentId
+      - name: bundle
+        type: spindle.deployment.BundleDigest
+      - name: environment_id
+        type: spindle.deployment.EnvironmentId
+      - name: requires
+        type: List<spindle.deployment.CapabilityName>
+    outcomes:
+      - name: offered
+        creates: spindle.deployment.Deployment
+        instance: deployment_id
+        emits:
+          - spindle.deployment.BundleOffered
+        payload:
+          spindle.deployment.BundleOffered:
+            deployment_id: input.deployment_id
+            bundle: input.bundle
+        sets:
+          bundle: input.bundle
+          environment_id: input.environment_id
+          requires: input.requires
+        summary: >-
+          The bundle is offered to the environment with the capabilities its specification
+          requires, derived from the specification and never written by the bundle's author.
+
+  - name: spindle.deployment.DecideAdmission
+    naming:
+      wire: decide-admission
+      display: Decide admission
+    input:
+      - name: deployment_id
+        type: spindle.deployment.DeploymentId
+      - name: bindings
+        type: List<spindle.deployment.Binding>
+      - name: missing
+        type: List<spindle.deployment.CapabilityName>
+    outcomes:
+      - name: admitted
+        moves: spindle.deployment.Deployment.admit
+        instance: deployment_id
+        emits:
+          - spindle.deployment.DeploymentAdmitted
+        payload:
+          spindle.deployment.DeploymentAdmitted:
+            deployment_id: input.deployment_id
+        sets:
+          bindings: input.bindings
+        summary: Every required capability is bound to one implementation the environment provides.
+
+      - name: refused
+        external: at least one required capability has no implementation in the environment
+        moves: spindle.deployment.Deployment.refuse
+        instance: deployment_id
+        emits:
+          - spindle.deployment.DeploymentRefused
+        payload:
+          spindle.deployment.DeploymentRefused:
+            deployment_id: input.deployment_id
+        sets:
+          missing: input.missing
+        summary: The deployment is refused, naming every capability the environment lacks.
+
+      - name: wrong-state
+        wrong_state: true
+        error: spindle.deployment.DeploymentStateConflict
+        summary: Admission was already decided, so nothing moved.
+
+  - name: spindle.deployment.StartDeployment
+    naming:
+      wire: start-deployment
+      display: Start deployment
+    input:
+      - name: deployment_id
+        type: spindle.deployment.DeploymentId
+    outcomes:
+      - name: started
+        moves: spindle.deployment.Deployment.start
+        instance: deployment_id
+        emits:
+          - spindle.deployment.DeploymentStarted
+        payload:
+          spindle.deployment.DeploymentStarted:
+            deployment_id: input.deployment_id
+        summary: The runtime loads the bundle with its bindings and starts its loop.
+
+      - name: wrong-state
+        wrong_state: true
+        error: spindle.deployment.DeploymentStateConflict
+        summary: Only an admitted deployment starts.
+
+  - name: spindle.deployment.StopDeployment
+    naming:
+      wire: stop-deployment
+      display: Stop deployment
+    input:
+      - name: deployment_id
+        type: spindle.deployment.DeploymentId
+    outcomes:
+      - name: stopped
+        moves: spindle.deployment.Deployment.stop
+        instance: deployment_id
+        emits:
+          - spindle.deployment.DeploymentStopped
+        payload:
+          spindle.deployment.DeploymentStopped:
+            deployment_id: input.deployment_id
+        summary: The loop drains and the deployment ends.
+
+      - name: already-ended
+        wrong_state: true
+        refuses: false
+        summary: A refused or stopped deployment stays as it is.
+
+events:
+  - name: spindle.deployment.EnvironmentDeclared
+    fields:
+      - name: environment_id
+        type: spindle.deployment.EnvironmentId
+
+  - name: spindle.deployment.BundleOffered
+    fields:
+      - name: deployment_id
+        type: spindle.deployment.DeploymentId
+      - name: bundle
+        type: spindle.deployment.BundleDigest
+
+  - name: spindle.deployment.DeploymentAdmitted
+    fields:
+      - name: deployment_id
+        type: spindle.deployment.DeploymentId
+
+  - name: spindle.deployment.DeploymentRefused
+    fields:
+      - name: deployment_id
+        type: spindle.deployment.DeploymentId
+
+  - name: spindle.deployment.DeploymentStarted
+    fields:
+      - name: deployment_id
+        type: spindle.deployment.DeploymentId
+
+  - name: spindle.deployment.DeploymentStopped
+    fields:
+      - name: deployment_id
+        type: spindle.deployment.DeploymentId
+
+views:
+  - name: spindle.deployment.DeploymentState
+    source: spindle.deployment.Deployment
+    consistency: read_your_writes
+    fields:
+      - name: deployment_id
+        type: spindle.deployment.DeploymentId
+      - name: state
+        type: spindle.deployment.Deployment.State
+      - name: bindings
+        type: List<spindle.deployment.Binding>
+      - name: missing
+        type: List<spindle.deployment.CapabilityName>
