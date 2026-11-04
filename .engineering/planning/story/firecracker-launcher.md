@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:firecracker-launcher
 kind: story
-status: active
+status: implemented
 title: A Firecracker launcher
 relations:
 - serves: vision:spindle
@@ -11,10 +11,11 @@ relations:
 scope:
 - confidence: cited
   path: crates/spindle-firecracker
-revision: 5
+revision: 6
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-04T09:17:19Z", actor: "human:timo", revision: 4}
 - {from: "proposed", to: "active", at: "2026-11-04T09:17:19Z", actor: "human:timo", revision: 5}
+- {from: "active", to: "implemented", at: "2026-11-04T10:52:47Z", actor: "human:timo", revision: 6, decided_on: {"recorded":{"test_result":1}}}
 ---
 # A Firecracker launcher
 

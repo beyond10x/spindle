@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:rally-is-watchable-in-a-terminal
 kind: story
-status: active
+status: implemented
 title: Watch a rally match in a terminal
 relations:
 - decomposes: epic:m1-m3-rally-in-three-vms
@@ -15,10 +15,11 @@ scope:
   path: crates/spindle-cli/src/main.rs
 - confidence: cited
   path: crates/spindle-host
-revision: 5
+revision: 6
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-04T07:28:12Z", actor: "human:timo", revision: 4}
 - {from: "proposed", to: "active", at: "2026-11-04T07:28:12Z", actor: "human:timo", revision: 5}
+- {from: "active", to: "implemented", at: "2026-11-04T10:52:46Z", actor: "human:timo", revision: 6, decided_on: {"recorded":{"test_result":1}}}
 ---
 # Watch a rally match in a terminal
 
