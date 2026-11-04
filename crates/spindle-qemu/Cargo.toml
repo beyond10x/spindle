@@ -1,0 +1,30 @@
+[package]
+name = "spindle-qemu"
+description = "Launch spindle instances as QEMU microVMs: a static guest, a Rust init, one socket network."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "spindle-qemu-init"
+path = "src/bin/init.rs"
+
+[[bin]]
+name = "spindle-qemu-probe"
+path = "src/bin/probe.rs"
+
+[dependencies]
+clap.workspace = true
+libc = "0.2.191"
+ruzstd = "0.8.2"
+serde_json.workspace = true
+spindle-target = { path = "../spindle-target" }
+thiserror.workspace = true
+
+[dev-dependencies]
+spindle-capability = { path = "../spindle-capability" }
+spindle-spec = { path = "../spindle-spec" }
+tempfile = "3"
