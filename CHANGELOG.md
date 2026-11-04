@@ -16,6 +16,17 @@ Spindle has no release yet. Everything below is on `main` and unreleased.
 
 ### Added
 
+- `b10x-spindle metrics`: the counters and histograms one component reports, derived from the
+  specification (`spindle-telemetry`); `play` prints the table's non-zero counters under the grid.
+- `b10x-spindle run --decisions <file>` and `--answer-default`: answer external outcomes without a
+  per-line `external` object.
+- List views with a `state ==` filter and `order_by`; minted `Uuid` identities through the derived
+  `identity.mint` capability (bound to `uuid-v4` in both example environments).
+- Host-side CPU and memory sampling per launched instance, and its share of the request.
+- The `spindle.observe` domain with generated JSON Schema, Rust (`spindle-observe-api`) and
+  TypeScript types, and the observe UI in `ui/` (Vue 3) built and tested on fixture answers.
+- A specification directory is read through its `ess-inputs.yaml` when it has one. ESS moved to
+  0.86.0.
 - `b10x-spindle play`: the rally example's three components in one process, redrawn in the
   terminal after every tick until a side wins (`spindle-host`).
 - `b10x-spindle run`: admit a specification, then execute commands read as JSON lines on stdin

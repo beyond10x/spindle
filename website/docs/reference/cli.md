@@ -17,6 +17,7 @@ Exit statuses: `0` success, `1` an error (printed on stderr as `b10x-spindle: â€
 |---|---|
 | [`check`](#check) | Compile a specification and print what it declares |
 | [`capabilities`](#capabilities) | Print the capabilities a specification, or one component of it, requires, and why |
+| [`metrics`](#metrics) | Print the counters an instance of one component reports, derived from the specification |
 | [`admit`](#admit) | Admit a specification against an environment: bind every capability or name what is missing |
 | [`run`](#run) | Admit a specification, then execute commands read as JSON lines on stdin |
 | [`play`](#play) | Play the rally example in this terminal: every component in one process, one tick per period of its periodic binding, the grid redrawn after each |
@@ -48,6 +49,22 @@ b10x-spindle capabilities [OPTIONS] <SPEC>
 | `--component <COMPONENT>` | no |  | Only what this component needs when it runs on its own |
 | `--json` | no |  | Print JSON instead of text |
 
+## `metrics`
+
+Print the counters an instance of one component reports, derived from the specification.
+
+One line per counter or histogram: its name, its kind and the part of the runtime that measures it.
+
+```console
+b10x-spindle metrics [OPTIONS] --component <COMPONENT> <SPEC>
+```
+
+| Argument | Required | Default | Meaning |
+|---|---|---|---|
+| `<SPEC>` | yes |  | The specification directory |
+| `--component <COMPONENT>` | yes |  | The component |
+| `--json` | no |  | Print JSON instead of text |
+
 ## `admit`
 
 Admit a specification against an environment: bind every capability or name what is missing.
@@ -71,6 +88,8 @@ Admit a specification, then execute commands read as JSON lines on stdin.
 
 Each line is `{"command": "<qualified name>", "input": {...}}`, with an optional `"external": {"<outcome>": true | false}` answering the command's external causes. Each line prints one JSON result: the outcome with its events and declared error, or a failure. Exits 3, running nothing, when admission is refused.
 
+An external cause the line does not answer is answered by `--decisions`, then by `--answer-default`; one nothing answers fails that line, naming the outcome, and the run goes on.
+
 ```console
 b10x-spindle run [OPTIONS] --environment <ENVIRONMENT> <SPEC>
 ```
@@ -80,6 +99,8 @@ b10x-spindle run [OPTIONS] --environment <ENVIRONMENT> <SPEC>
 | `<SPEC>` | yes |  | The specification directory |
 | `--environment <ENVIRONMENT>` | yes |  | The `spindle-environment/1` document |
 | `--state <STATE>` | no |  | The state file: required where `store.durable` is bound to `sqlite`, refused otherwise |
+| `--decisions <DECISIONS>` | no |  | A TOML file of answers, `<outcome> = true \| false`, at the top level for every command or under a `["<command>"]` table for one; a command's table wins over the top level |
+| `--answer-default` | no |  | Answer every remaining external cause "does not hold" on a command that declares a default branch, so the model selects as it would without it |
 
 ## `play`
 

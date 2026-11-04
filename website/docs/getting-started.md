@@ -23,7 +23,7 @@ The last lines of the build:
 
 ```text
    Compiling spindle-cli v0.1.0 (…/spindle/crates/spindle-cli)
-    Finished `release` profile [optimized] target(s) in 1m 05s
+    Finished `release` profile [optimized] target(s) in 37.59s
 ```
 
 The binary is `target/release/b10x-spindle`. The commands below call it `b10x-spindle`; put
@@ -96,6 +96,7 @@ arch = "x86_64"
 [provides]
 "store.durable" = ["sqlite", "memory"]
 "store.ephemeral" = ["memory"]
+"identity.mint" = ["uuid-v4"]
 clock = ["system"]
 timer = ["tokio"]
 channel = ["in-process"]
@@ -136,7 +137,8 @@ Exit status 3 means refused ([environment and admission](/docs/concepts/environm
 `play` runs all three rally components in one process: each is admitted on its own, the timer
 fires the table's `Tick` once a second, and in-process channels carry `BallMoved` to the players
 and their paddle moves back to the table. The terminal is redrawn from the table's `MatchState`
-view after every tick until a side has won (three points by default):
+view after every tick, with the table's non-zero counters under the grid, until a side has won
+(three points by default):
 
 ```console
 $ b10x-spindle play examples/rally/ess --environment examples/environments/laptop.toml
@@ -157,6 +159,12 @@ west needs 3    east needs 3
 |                |
 |                |
 +----------------+
+command.rally.table.OpenMatch.opened 1
+event.rally.table.BallMoved.appended 1
+binding.east-watches.sent 1
+binding.west-watches.sent 1
+store.rows_written 1
+store.bytes_written 359
 ```
 
 and the last, 30 seconds and 31 frames later, with exit status 0:
@@ -175,6 +183,29 @@ west needs 3    east needs 0
 |                |
 +----------------+
 East wins
+command.rally.table.MovePaddle.west-up 12
+command.rally.table.MovePaddle.west-down 10
+command.rally.table.MovePaddle.east-up 12
+command.rally.table.MovePaddle.east-down 10
+command.rally.table.OpenMatch.opened 1
+command.rally.table.Tick.served 3
+command.rally.table.Tick.east-wins 1
+command.rally.table.Tick.east-scores 2
+command.rally.table.Tick.top-wall 2
+command.rally.table.Tick.bottom-wall 1
+command.rally.table.Tick.moved-west-up 11
+command.rally.table.Tick.moved-west-down 10
+event.rally.table.BallMoved.appended 28
+event.rally.table.MatchWon.appended 1
+event.rally.table.PaddleMoved.appended 44
+event.rally.table.PointScored.appended 3
+binding.east-moves.delivered 22
+binding.east-watches.sent 28
+binding.west-moves.delivered 22
+binding.west-watches.sent 28
+timer.tick.fired 30
+store.rows_written 75
+store.bytes_written 23947
 ```
 
 `play` refuses an environment this one-process host cannot run. With `microvm.toml` the channel
@@ -185,6 +216,39 @@ $ b10x-spindle play examples/rally/ess --environment examples/environments/micro
 b10x-spindle: unsupported: rally-player-east has its channel bound to tcp; this host carries bindings in-process only
 $ echo $?
 1
+```
+
+## See what it counts
+
+The counters under the grid are derived from the specification, like the capabilities. `metrics`
+prints every counter and histogram one component reports, and the part of the runtime that
+measures it ([observe](/docs/concepts/observe)):
+
+```console
+$ b10x-spindle metrics examples/rally/ess --component rally-player-west
+command.rally.west.ObserveBall.first-sight counter kernel
+command.rally.west.ObserveBall.up counter kernel
+command.rally.west.ObserveBall.down counter kernel
+command.rally.west.ObserveBall.hold counter kernel
+command.rally.west.ObserveBall.failed.unsupported counter kernel
+command.rally.west.ObserveBall.failed.invalid_input counter kernel
+command.rally.west.ObserveBall.failed.undecidable counter kernel
+command.rally.west.ObserveBall.failed.undecided counter kernel
+command.rally.west.ObserveBall.failed.no_value counter kernel
+command.rally.west.ObserveBall.failed.invalid_value counter kernel
+command.rally.west.ObserveBall.failed.broken_invariant counter kernel
+command.rally.west.ObserveBall.failed.undeclared counter kernel
+command.rally.west.ObserveBall.failed.store counter kernel
+command.rally.west.ObserveBall.duration_us histogram kernel
+event.rally.west.BallSeen.appended counter store
+event.rally.west.PaddleMoveRequested.appended counter store
+binding.west-moves.sent counter channel
+binding.west-moves.redelivered counter channel
+binding.west-moves.dropped counter channel
+binding.west-watches.delivered counter channel
+binding.west-watches.dropped counter channel
+store.rows_written counter store
+store.bytes_written counter store
 ```
 
 ## Next

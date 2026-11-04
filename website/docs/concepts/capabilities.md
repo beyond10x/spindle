@@ -3,7 +3,7 @@ title: Capabilities
 sidebar_position: 2
 description: The technical needs of a specification, derived from what it declares and never written down by its author.
 lede: Capabilities are derived from the specification, never authored, so they cannot drift from it.
-source: crates/spindle-capability/src/derive.rs, crates/spindle-capability/tests/admission.rs, README.md
+source: crates/spindle-capability/src/derive.rs, crates/spindle-capability/tests/admission.rs, crates/spindle-capability/tests/mint.rs, crates/spindle-cli/src/cli.rs, crates/spindle-cli/tests/decisions.rs, README.md
 ---
 
 A capability is something technical a specification needs from the runtime: a durable store, a
@@ -22,6 +22,7 @@ needs.
 | `ingress.command_line` | a component with `reached_by: command_line` |
 | `projection` | a view with `consistency: eventual` |
 | `external.<command>.<outcome>` | an outcome whose condition is `external:` |
+| `identity.mint` | a `creates:` outcome whose identity is neither an input nor a payload source |
 
 Each capability carries its reasons: the kind of declaration (`entity`, `binding`, `component`,
 `view`, `outcome`), its name, and what about it needs the capability. `b10x-spindle capabilities`
@@ -56,7 +57,14 @@ timer
 A new capability is a new derivation rule in `crates/spindle-capability/src/derive.rs` with a test.
 A specification never gains a field that lists capabilities.
 
+## Answering external outcomes
+
+An `external.*` capability is an outcome the model cannot decide on its own. `b10x-spindle run`
+answers it per command: from the line's `"external"` object, then from a `--decisions` TOML file
+(`<outcome> = true | false` at the top level for every command, or under a `["<command>"]` table
+for one), then, with `--answer-default`, "does not hold" on a command that declares a default
+branch. A line nothing answers fails, naming the outcome, and the run goes on.
+
 :::caution[Planned]
-Deriving `identity.mint` for identities the runtime must mint, serving `ingress.network` over HTTP,
-and answering `external.*` outcomes from a decisions file are planned; see [status](/docs/status).
+Serving `ingress.network` over HTTP is planned; see [status](/docs/status).
 :::

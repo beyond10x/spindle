@@ -77,6 +77,7 @@ const config: Config = {
             {label: 'Environment and admission', to: '/docs/concepts/environment-and-admission'},
             {label: 'Components and bindings', to: '/docs/concepts/components-and-bindings'},
             {label: 'Deployment targets', to: '/docs/concepts/deployment-targets'},
+            {label: 'Observe', to: '/docs/concepts/observe'},
             {label: 'Rally', to: '/docs/examples/rally'},
             {label: 'CLI', to: '/docs/reference/cli'},
             {label: 'Status', to: '/docs/status'},

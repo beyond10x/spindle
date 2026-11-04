@@ -39,6 +39,9 @@ The QEMU and Firecracker launchers are libraries: no `b10x-spindle` command star
 tests need `/dev/kvm` and are ignored in CI; `task check:vm` runs them on a host that has it
 (Firecracker also needs the Firecracker binary and a guest kernel).
 
+Each launcher also samples, from `/proc`, the CPU seconds and resident memory an instance costs
+the host and its share of the request ([observe](/docs/concepts/observe)).
+
 :::caution[Planned]
 Running each rally component in its own microVM, `b10x-spindle deploy` as a control process that
 places, launches and observes instances, a bundle that is uploaded to deploy, and cells with

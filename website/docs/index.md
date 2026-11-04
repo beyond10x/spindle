@@ -26,9 +26,11 @@ predicates evaluated by ESS. The same specification runs on a laptop with an in-
 on a TCP channel elsewhere; admission is the only step that differs.
 
 :::caution[Early]
-Loading, capability derivation, admission, command execution and the rally example in one process
-work today. The process, QEMU and Firecracker launchers exist as libraries. Running each component
-in its own process or microVM, HTTP ingress, deployment and observation are planned. The
+Loading, capability derivation, admission, command execution with list views and minted
+identities, external decisions from a file, per-component counters, and the rally example in one
+process work today. The process, QEMU and Firecracker launchers exist as libraries and sample each
+instance's CPU and memory. The observe UI runs on fixture data. Running each component in its own
+process or microVM, HTTP ingress, deployment and a live observe API are planned. The
 [status page](/docs/status) lists each item with the test that holds it.
 :::
 
@@ -51,6 +53,6 @@ in its own process or microVM, HTTP ingress, deployment and observation are plan
 
 - [Getting started](/docs/getting-started): build `b10x-spindle` and run it on the rally example.
 - [Concepts](/docs/concepts/specification): specification, capabilities, environment and
-  admission, components and bindings, deployment targets.
+  admission, components and bindings, deployment targets, observe.
 - [The rally example](/docs/examples/rally): three components, one tick per second, a winner.
 - [CLI reference](/docs/reference/cli): every command and argument.

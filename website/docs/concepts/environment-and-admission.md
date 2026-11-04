@@ -20,6 +20,7 @@ arch = "x86_64"
 [provides]
 "store.durable" = ["sqlite"]
 "store.ephemeral" = ["memory"]
+"identity.mint" = ["uuid-v4"]
 clock = ["system"]
 timer = ["tokio"]
 channel = ["tcp"]
@@ -66,6 +67,7 @@ Admission binds names. The parts that run today act on these bindings:
 | `channel` | `in-process` in the one-process host (`play`); the `tcp` channel exists as a library |
 | `timer` | `tokio`, the name the shipped environments give `spindle-timer`'s schedule |
 | `clock` | `system` |
+| `identity.mint` | `uuid-v4` |
 
 The one-process host refuses, as unsupported, a binding it cannot run, such as a `tcp` channel or
 any `external.*` outcome. `ingress.network` is admitted but not served yet.

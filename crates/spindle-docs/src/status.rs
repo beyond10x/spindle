@@ -1,8 +1,9 @@
 //! The status data, `website/data/status.json` (`b10x-status/1`), and the status page,
 //! `website/docs/status.md`, both from [`CAPABILITIES`].
 //!
-//! Every `shipped` item names the test on `main` that holds it as `file::function`, and
-//! [`missing_tests`] refuses an item whose test does not exist. A `planned` item is a story of
+//! Every `shipped` item names the test on `main` that holds it as `file::name`: a Rust `fn`, a
+//! Vitest `test('…')` in a `.ts` file, or a task in `Taskfile.yml`. [`missing_tests`] refuses an
+//! item whose test does not exist. A `planned` item is a story of
 //! the planning store that is not implemented, or a milestone of the design (§ 12) with no story
 //! yet.
 
@@ -159,6 +160,55 @@ pub const CAPABILITIES: &[Capability] = &[
         "/docs/concepts/deployment-targets",
         "crates/spindle-firecracker/tests/firecracker.rs::a_firecracker_instance_boots_and_runs_b10x_spindle",
     ),
+    shipped(
+        "Execution",
+        "External decisions from a file",
+        "run --decisions answers external outcomes from a TOML file, per command or for all; --answer-default takes a command's default branch.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-cli/tests/decisions.rs::a_decisions_file_answers_every_external_outcome",
+    ),
+    shipped(
+        "Execution",
+        "Minted creation identities",
+        "A creation whose identity no input or payload supplies needs identity.mint; a Uuid identity is minted as a UUIDv4 and emitted.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-kernel/tests/mint.rs::a_creation_without_an_id_input_mints_one_and_emits_it",
+    ),
+    shipped(
+        "Execution",
+        "List views with filters",
+        "List views over every instance of an entity, with a state filter and an order.",
+        "/docs/concepts/specification",
+        "crates/spindle-host/tests/views.rs::a_state_filter_keeps_only_instances_in_that_state",
+    ),
+    shipped(
+        "Observe",
+        "Counters derived from the specification",
+        "spindle-telemetry counts commands by outcome, events, bindings, timer ticks and store writes per component; b10x-spindle metrics prints the catalogue, play prints the table's counters.",
+        "/docs/concepts/observe",
+        "crates/spindle-telemetry/tests/catalogue.rs::every_command_outcome_and_event_of_a_component_has_a_counter",
+    ),
+    shipped(
+        "Observe",
+        "Host-side resource sampling",
+        "Launchers read CPU seconds and resident memory per instance from /proc and its share of the requested quota.",
+        "/docs/concepts/observe",
+        "crates/spindle-target/tests/sampling.rs::cpu_share_is_cpu_seconds_over_wall_time_and_requested_vcpus",
+    ),
+    shipped(
+        "Observe",
+        "The observe API contract",
+        "The spindle.observe domain specifies the API answers; their JSON Schema, Rust and TypeScript types are generated and drift-checked.",
+        "/docs/concepts/observe",
+        "Taskfile.yml::check:the_generated_types_have_no_drift",
+    ),
+    shipped(
+        "Observe",
+        "The observe UI, on fixtures",
+        "A Vue 3 app in ui/ with topology, instance and view screens, built and tested on fixture answers; no live data until the control process exists.",
+        "/docs/concepts/observe",
+        "ui/src/screens/TopologyScreen.test.ts::the_topology_shows_one_card_per_component_and_one_edge_per_binding",
+    ),
     planned(
         "Rally",
         "Three processes",
@@ -178,24 +228,6 @@ pub const CAPABILITIES: &[Capability] = &[
         "/docs/concepts/capabilities",
     ),
     planned(
-        "Execution",
-        "External decisions from a file",
-        "run --decisions answers external outcomes from a file instead of per line.",
-        "/docs/concepts/capabilities",
-    ),
-    planned(
-        "Execution",
-        "Minted creation identities",
-        "An identity neither the input nor the payload supplies is minted through a derived identity.mint capability.",
-        "/docs/concepts/capabilities",
-    ),
-    planned(
-        "Execution",
-        "List views with filters",
-        "List views over every instance with a state filter and an order.",
-        "/docs/concepts/specification",
-    ),
-    planned(
         "Conformance",
         "Scenario replay and self-conformance",
         "run --scenario replays an ess-scenario/1 timeline; the suite ESS synthesises from Spindle's own specification runs in task check.",
@@ -203,9 +235,15 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     planned(
         "Observe",
-        "Telemetry, deploy and the observe UI",
-        "Counters derived from the IR, b10x-spindle metrics, b10x-spindle deploy as a control process with a read-only API, and a browser UI (design: docs/design/observe.md).",
-        "/docs/concepts/deployment-targets",
+        "Telemetry transport",
+        "Each instance sends its counters and resource readings as spindle-telemetry/1 frames over a Unix socket or vsock.",
+        "/docs/concepts/observe",
+    ),
+    planned(
+        "Observe",
+        "The control process",
+        "b10x-spindle deploy places and launches instances, collects their samples and serves the read-only observe API on 127.0.0.1; the UI then shows live data and is embedded in the binary.",
+        "/docs/concepts/observe",
     ),
     planned(
         "Deploy",
@@ -235,8 +273,14 @@ pub fn missing_tests(root: &Path) -> Vec<String> {
             missing.push(format!("{}: {test} is not file::function", c.label));
             continue;
         };
-        let found = fs::read_to_string(root.join(file))
-            .is_ok_and(|text| text.contains(&format!("fn {function}(")));
+        let needle = if file.ends_with(".rs") {
+            format!("fn {function}(")
+        } else if file.ends_with(".ts") {
+            format!("test('{function}'")
+        } else {
+            format!("{function}:")
+        };
+        let found = fs::read_to_string(root.join(file)).is_ok_and(|text| text.contains(&needle));
         if !found {
             missing.push(format!("{}: no test {test}", c.label));
         }

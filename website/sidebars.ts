@@ -14,6 +14,7 @@ const sidebars: SidebarsConfig = {
         'concepts/environment-and-admission',
         'concepts/components-and-bindings',
         'concepts/deployment-targets',
+        'concepts/observe',
       ],
     },
     {

@@ -17,9 +17,11 @@ where Spindle runs. **Admission** binds each required capability to one implemen
 and names every capability the environment lacks. The same specification runs on a laptop with an
 in-process channel and in a microVM with a TCP one; admission is the only step that differs.
 
-Status: early. Loading, capability derivation, admission, command execution and the rally example
-in one process work; the process, QEMU and Firecracker launchers exist as libraries. Running each
-component in its own process or microVM, HTTP ingress, deployment and observation are planned. The
+Status: early. Loading, capability derivation, admission, command execution (with list views,
+minted identities and external decisions from a file), per-component counters and the rally example
+in one process work; the process, QEMU and Firecracker launchers exist as libraries and sample each
+instance's CPU and memory; the observe UI runs on fixture data. Running each component in its own
+process or microVM, HTTP ingress, deployment and a live observe API are planned. The
 [status page](https://beyond10x.github.io/spindle/docs/status) lists each item with the test that
 holds it; the design is [`docs/design/spindle.md`](docs/design/spindle.md).
 

@@ -94,6 +94,55 @@
       "status": "shipped"
     },
     {
+      "area": "Execution",
+      "detail": "run --decisions answers external outcomes from a TOML file, per command or for all; --answer-default takes a command's default branch.",
+      "href": "/docs/concepts/capabilities",
+      "label": "External decisions from a file",
+      "status": "shipped"
+    },
+    {
+      "area": "Execution",
+      "detail": "A creation whose identity no input or payload supplies needs identity.mint; a Uuid identity is minted as a UUIDv4 and emitted.",
+      "href": "/docs/concepts/capabilities",
+      "label": "Minted creation identities",
+      "status": "shipped"
+    },
+    {
+      "area": "Execution",
+      "detail": "List views over every instance of an entity, with a state filter and an order.",
+      "href": "/docs/concepts/specification",
+      "label": "List views with filters",
+      "status": "shipped"
+    },
+    {
+      "area": "Observe",
+      "detail": "spindle-telemetry counts commands by outcome, events, bindings, timer ticks and store writes per component; b10x-spindle metrics prints the catalogue, play prints the table's counters.",
+      "href": "/docs/concepts/observe",
+      "label": "Counters derived from the specification",
+      "status": "shipped"
+    },
+    {
+      "area": "Observe",
+      "detail": "Launchers read CPU seconds and resident memory per instance from /proc and its share of the requested quota.",
+      "href": "/docs/concepts/observe",
+      "label": "Host-side resource sampling",
+      "status": "shipped"
+    },
+    {
+      "area": "Observe",
+      "detail": "The spindle.observe domain specifies the API answers; their JSON Schema, Rust and TypeScript types are generated and drift-checked.",
+      "href": "/docs/concepts/observe",
+      "label": "The observe API contract",
+      "status": "shipped"
+    },
+    {
+      "area": "Observe",
+      "detail": "A Vue 3 app in ui/ with topology, instance and view screens, built and tested on fixture answers; no live data until the control process exists.",
+      "href": "/docs/concepts/observe",
+      "label": "The observe UI, on fixtures",
+      "status": "shipped"
+    },
+    {
       "area": "Rally",
       "detail": "Three b10x-spindle run processes, one per component, joined by TCP channels.",
       "href": "/docs/examples/rally",
@@ -115,27 +164,6 @@
       "status": "planned"
     },
     {
-      "area": "Execution",
-      "detail": "run --decisions answers external outcomes from a file instead of per line.",
-      "href": "/docs/concepts/capabilities",
-      "label": "External decisions from a file",
-      "status": "planned"
-    },
-    {
-      "area": "Execution",
-      "detail": "An identity neither the input nor the payload supplies is minted through a derived identity.mint capability.",
-      "href": "/docs/concepts/capabilities",
-      "label": "Minted creation identities",
-      "status": "planned"
-    },
-    {
-      "area": "Execution",
-      "detail": "List views over every instance with a state filter and an order.",
-      "href": "/docs/concepts/specification",
-      "label": "List views with filters",
-      "status": "planned"
-    },
-    {
       "area": "Conformance",
       "detail": "run --scenario replays an ess-scenario/1 timeline; the suite ESS synthesises from Spindle's own specification runs in task check.",
       "href": "/docs/concepts/specification",
@@ -144,9 +172,16 @@
     },
     {
       "area": "Observe",
-      "detail": "Counters derived from the IR, b10x-spindle metrics, b10x-spindle deploy as a control process with a read-only API, and a browser UI (design: docs/design/observe.md).",
-      "href": "/docs/concepts/deployment-targets",
-      "label": "Telemetry, deploy and the observe UI",
+      "detail": "Each instance sends its counters and resource readings as spindle-telemetry/1 frames over a Unix socket or vsock.",
+      "href": "/docs/concepts/observe",
+      "label": "Telemetry transport",
+      "status": "planned"
+    },
+    {
+      "area": "Observe",
+      "detail": "b10x-spindle deploy places and launches instances, collects their samples and serves the read-only observe API on 127.0.0.1; the UI then shows live data and is embedded in the binary.",
+      "href": "/docs/concepts/observe",
+      "label": "The control process",
       "status": "planned"
     },
     {
