@@ -835,6 +835,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "ess-compiler",
  "rustix",
  "serde",
  "serde_json",
@@ -844,6 +845,7 @@ dependencies = [
  "spindle-kernel",
  "spindle-spec",
  "tempfile",
+ "toml",
 ]
 
 [[package]]

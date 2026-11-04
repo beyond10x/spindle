@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+ess-compiler.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 spindle-capability.workspace = true
@@ -23,6 +24,7 @@ spindle-kernel = { path = "../spindle-kernel" }
 spindle-host = { path = "../spindle-host" }
 signal-hook = "0.3"
 tempfile = "3"
+toml.workspace = true
 
 [dev-dependencies]
 rustix = { version = "1", features = ["process"] }
