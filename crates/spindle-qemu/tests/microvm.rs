@@ -613,3 +613,55 @@ fn stop_kills_a_running_instance() {
         }
     );
 }
+
+#[test]
+#[ignore = "boots QEMU microVMs: needs /dev/kvm, qemu-system-x86_64, the host kernel and its virtio modules, unshare, nsenter, ip and the x86_64-unknown-linux-musl target"]
+fn a_qemu_instance_reports_its_share_of_the_requested_quota() {
+    let host = host();
+    let dir = tempfile::tempdir_in(&host.work).expect("a work directory");
+    let initramfs = image_with_probe(host, dir.path());
+    let mut launcher = launcher(host, dir.path());
+    let listen = guest_address(8, 7000);
+    let request = Resources {
+        vcpus: 2,
+        memory_mib: 256,
+        disk_mib: 0,
+    };
+    let mut vm = launcher
+        .launch(&plan(
+            "sampled",
+            guest(
+                host,
+                initramfs,
+                &format!("/bin/spindle-qemu-probe serve {listen}"),
+            ),
+            request,
+            listen,
+        ))
+        .expect("the microVM starts");
+    assert_eq!(vm.wait(Duration::from_secs(2)).expect("waits"), None);
+
+    let sample = vm.resources().expect("a running microVM is sampled");
+    let cpu_share = sample.cpu_seconds / (sample.wall_seconds * 2.0);
+    let memory_share = sample.memory_bytes as f64 / (256.0 * 1024.0 * 1024.0);
+    assert!(sample.cpu_seconds > 0.0, "QEMU has used CPU: {sample:?}");
+    assert!(
+        sample.memory_bytes >= 8 << 20,
+        "QEMU holds memory: {sample:?}"
+    );
+    assert!(sample.wall_seconds >= 2.0, "{sample:?}");
+    let close = |share: Option<f64>, expected: f64| {
+        share.is_some_and(|share| (share - expected).abs() <= expected.abs() * 1e-12)
+    };
+    assert!(
+        close(sample.cpu_share, cpu_share),
+        "cpu_share is cpu_seconds / (wall_seconds * 2 vCPUs) = {cpu_share}: {sample:?}"
+    );
+    assert!(
+        close(sample.memory_share, memory_share),
+        "memory_share is memory_bytes / 256 MiB = {memory_share}: {sample:?}"
+    );
+
+    vm.stop().expect("stops");
+    assert_eq!(vm.resources(), None, "a stopped microVM is not sampled");
+}

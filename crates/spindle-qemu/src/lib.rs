@@ -33,8 +33,8 @@ pub use cpio::Initramfs;
 pub use guest::{GuestError, GuestImage, LAUNCH_PLAN, MODULE_LIST};
 pub use kernel::{GUEST_MODULES, GuestModule, HostKernel, KernelMissing, kernel_release_of};
 pub use spindle_target::{
-    Artifact, Exit, LaunchError, LaunchPlan, Launcher, Peer, ResourceKind, Resources, Running,
-    TargetKind,
+    Artifact, Exit, LaunchError, LaunchPlan, Launcher, Peer, ResourceKind, ResourceSample,
+    Resources, Running, TargetKind,
 };
 pub use static_build::{BuildError, GUEST_TARGET, StaticBinaries};
 
@@ -286,6 +286,7 @@ impl QemuLauncher {
         let errors = output
             .try_clone()
             .map_err(io_error(format!("opening {}", log.display())))?;
+        let started = Instant::now();
         let child = self
             .shared
             .spawn_entered(&argv, output.into(), errors.into())?;
@@ -299,6 +300,8 @@ impl QemuLauncher {
             child,
             exit: None,
             shared: Arc::clone(&self.shared),
+            started,
+            request: plan.request,
         })
     }
 }
@@ -355,6 +358,8 @@ pub struct QemuInstance {
     child: Child,
     exit: Option<Exit>,
     shared: Arc<Shared>,
+    started: Instant,
+    request: Resources,
 }
 
 impl QemuInstance {
@@ -403,6 +408,20 @@ impl QemuInstance {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
+    }
+
+    /// What QEMU costs the host now (its `/proc/<pid>`, the VMM included) against the vCPUs and
+    /// memory the plan asked for; `None` once the instance has ended.
+    pub fn resources(&self) -> Option<ResourceSample> {
+        if self.exit.is_some() || !namespace::runs(self.child.id()) {
+            return None;
+        }
+        let usage = spindle_target::process_usage(self.child.id()).ok()?;
+        Some(ResourceSample::of(
+            usage,
+            self.started.elapsed(),
+            &self.request,
+        ))
     }
 
     /// End the instance: kill QEMU if it still runs. An instance that already ended reports how.
@@ -461,6 +480,10 @@ impl Running for QemuInstance {
 
     fn stop(&mut self) -> Result<Exit, LaunchError> {
         QemuInstance::stop(self)
+    }
+
+    fn resources(&self) -> Option<ResourceSample> {
+        QemuInstance::resources(self)
     }
 }
 
