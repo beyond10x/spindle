@@ -14,6 +14,7 @@ tasks:
       - task: check:the_observe_domain_validates
       - task: check:the_generated_types_have_no_drift
       - task: check:every_fixture_answer_validates_against_its_schema
+      - task: check:ui
       - cargo fmt --all -- --check
       - cargo clippy --workspace --all-targets --locked -- -D warnings
       - cargo test --workspace --locked --no-fail-fast
@@ -22,6 +23,15 @@ tasks:
     desc: The VM tests, on a host with KVM
     cmds:
       - cargo test --locked -p spindle-qemu -p spindle-firecracker -- --include-ignored
+
+  check:ui:
+    desc: The observe UI's tests, typecheck and build
+    dir: ui
+    cmds:
+      - pnpm install --frozen-lockfile
+      - pnpm test
+      - pnpm typecheck
+      - pnpm build
 
   build:
     desc: Release build of b10x-spindle

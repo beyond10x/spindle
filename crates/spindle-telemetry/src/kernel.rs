@@ -78,6 +78,10 @@ impl<S: Store> Store for CountingStore<S> {
         self.inner.load(entity, identity)
     }
 
+    fn scan(&mut self, entity: &str) -> Result<Vec<(Value, Stored)>, StoreError> {
+        self.inner.scan(entity)
+    }
+
     fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
         self.inner.commit(change)?;
         let mut length = Length::default();

@@ -66,6 +66,7 @@ prefix; an exact key wins over it.
 - `crates/spindle-timer`, `crates/spindle-channel` — periodic bindings and event bindings.
 - `crates/spindle-target` — the deployment target contract and the process launcher.
 - `crates/spindle-qemu`, `crates/spindle-firecracker` — microVM launchers.
+- `crates/spindle-telemetry` — counters and histograms per instance, and their catalogue derived from the specification.
 - `crates/spindle-host` — runs every component of a system in one process.
 - `crates/spindle-cli` — the `b10x-spindle` binary.
 - `examples/` — environments and the `rally` example system.
