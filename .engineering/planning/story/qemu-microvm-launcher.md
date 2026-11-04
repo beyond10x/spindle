@@ -11,9 +11,7 @@ relations:
 scope:
 - confidence: cited
   path: crates/spindle-qemu
-- confidence: cited
-  path: examples/rally/vm
-revision: 6
+revision: 8
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-04T09:17:18Z", actor: "human:timo", revision: 4}
 - {from: "proposed", to: "active", at: "2026-11-04T09:17:19Z", actor: "human:timo", revision: 5}
@@ -35,10 +33,17 @@ QEMU socket network, captures the console, and reports the exit.
 - `two_qemu_instances_reach_each_other_over_tcp`.
 - `vcpus_and_memory_are_passed_to_the_vm`.
 
+All three are in `crates/spindle-qemu/tests/microvm.rs` and run under `task check:vm`.
+
 ## Scope
 
-`crates/spindle-qemu/` (new; implements the `Launcher` port from `spindle-target` once that crate is on the integration branch), `examples/rally/vm/`.
+- `crates/spindle-qemu/` — cited.
+
+`examples/rally/vm/` was in the first scope and was never created: the initramfs, the static build
+and the guest init live in `crates/spindle-qemu/src/` (`cpio.rs`, `static_build.rs`,
+`bin/init.rs`). Taken out of the typed scope by a plan review on 2026-11-04.
 
 ## Open
 
-The guest kernel: download a published one with a checksum, or build one.
+The guest kernel: the launcher boots the host kernel (`crates/spindle-qemu/src/kernel.rs`); a
+published kernel with a checksum was not needed.
