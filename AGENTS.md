@@ -30,9 +30,11 @@ environment, and executes it. Humans start at [`README.md`](README.md); the desi
 | `crates/spindle-firecracker/` | Firecracker launcher: API socket, taps on a bridge inside a private user and network namespace |
 | `crates/spindle-telemetry/` | the `Telemetry` port: atomic counters and fixed-bucket histograms per instance, `CountingStore`, the counter catalogue derived from the IR |
 | `crates/spindle-host/` | every component of a system in one process: per-component admission and store, the timer on an injected clock, in-process channels, one-row and list view reads; `rally::frame` |
-| `crates/spindle-cli/` | `b10x-spindle`: `check`, `capabilities`, `admit`, `run`, `metrics`, `play` (exit 3 = refused) |
+| `crates/spindle-cli/` | `b10x-spindle`: `check`, `capabilities`, `admit`, `run`, `metrics`, `play` (exit 3 = refused); the clap definitions are `spindle_cli::cli` |
 | `crates/spindle-observe-api/` | generated Rust types of the observe API; outside the workspace, drift-checked by `task check` |
+| `crates/spindle-docs/` | generates `website/docs/reference/cli.md`, `website/docs/status.md` and `website/data/status.json`; binds a built site to its commit (`provenance`) |
 | `ui/` | the observe UI: Vue 3 + TypeScript, Vite, pnpm; `ui/src/api/generated/` is generated |
+| `website/` | the documentation site, Docusaurus pinned to `@beyond10x/docs-system`; logo in `website/static/img/` |
 | `examples/environments/` | `laptop.toml`, `microvm.toml` |
 | `examples/rally/` | the example system: one table, two players, three components |
 | `docs/design/spindle.md` | design, decisions (§11), milestones (§12), the rally showcase (§13) |
@@ -72,7 +74,7 @@ task check
 Steps (`Taskfile.yml`): `aep plan artifact validate`, `ess specify validate` on `ess` and
 `examples/rally/ess`, the three observe contract checks (`check:the_observe_domain_validates`,
 `check:the_generated_types_have_no_drift`, `check:every_fixture_answer_validates_against_its_schema`),
-`check:ui` (`pnpm` test, typecheck and build in `ui/`), `cargo fmt --all -- --check`,
+`check:ui` (`pnpm` test, typecheck and build in `ui/`), `task docs-check`, `cargo fmt --all -- --check`,
 `cargo clippy --workspace --all-targets --locked -- -D warnings`,
 `cargo test --workspace --locked --no-fail-fast`. The ESS pin is the `tag` of `ess-compiler`,
 `ess-domain` and `ess-primitives` in `Cargo.toml`; CI installs the `ess` CLI of the same version
@@ -83,6 +85,28 @@ unprivileged user namespaces. `task check:vm` runs them on a host with `/dev/kvm
 `qemu-system-x86_64`, `unshare`, `nsenter` and `ip`; the Firecracker cases also need
 `SPINDLE_FIRECRACKER` (the binary) and `SPINDLE_FIRECRACKER_KERNEL` (an uncompressed guest
 `vmlinux`).
+
+## Documentation
+
+The site is `website/`, published at <https://beyond10x.github.io/spindle/>. Humans read
+[`README.md`](README.md); the site holds the concepts, getting started, the rally example, the CLI
+reference and the status page.
+
+- Generated, never edited by hand: `website/docs/reference/cli.md` (from `spindle_cli::cli`) and
+  `website/docs/status.md` with `website/data/status.json` (from `crates/spindle-docs/src/status.rs`).
+  `task docs-generate` rewrites them; `task docs-check` fails on drift.
+- A `shipped` status item names its test as `file::function`; `generate` refuses one that does
+  not exist (`crates/spindle-docs/src/status.rs::every_shipped_item_names_a_test_that_exists`).
+  Anything not on `main` is `planned`.
+- A change to a command, a capability rule or a crate changes the site, `README.md` and this file
+  in the same commit. Commands on a page are run and their output pasted from the run.
+- Hand-written pages stay passive Markdown: no `{` and no capitalised tag outside code
+  (`generate --check` refuses them). Admonition titles use brackets, `:::caution[Planned]`.
+- Build the site: `task website` (`npm ci --allow-git=root`, `npm run build`). Workflows:
+  `.github/workflows/pages.yml` (`Documentation validation`: generated-page check, site build,
+  `spindle-docs` tests and provenance, artifact `b10x-project-site` on `main`) and
+  `.github/workflows/b10x-docs-site.yml` (`Documentation site`: deploys through the Website's
+  `project-site.yml` after a green bot push to `main`).
 
 ## Publishing
 

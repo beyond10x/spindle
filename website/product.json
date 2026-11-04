@@ -1,0 +1,75 @@
+{
+  "format": "b10x-product-landing/1",
+  "product": {
+    "name": "Spindle",
+    "mark": "Sp",
+    "eyebrow": "Early · loading, admission and in-process runs work",
+    "promise": [
+      "Deploy the specification.",
+      "Spindle runs it."
+    ],
+    "lede": "Spindle runs ESS specifications as written. It compiles a specification with the ESS compiler, derives the capabilities it needs from what it declares, admits it against an environment that names an implementation for each, and executes its commands, bindings and timers against the compiled model. No code is generated per application.",
+    "description": "Spindle runs ESS specifications: derives the capabilities they need, admits them against an environment, and executes the compiled model.",
+    "actions": [
+      {
+        "label": "Get started",
+        "href": "/docs/getting-started",
+        "kind": "primary"
+      },
+      {
+        "label": "The rally example",
+        "href": "/docs/examples/rally"
+      },
+      {
+        "label": "Source",
+        "href": "https://github.com/beyond10x/spindle"
+      }
+    ],
+    "meta": "Early · ESS · Rust · Apache-2.0",
+    "kpis": ["shipped", "planned"]
+  },
+  "sections": [
+    {
+      "kind": "flow",
+      "eyebrow": "How it runs",
+      "title": "From a specification to a running system.",
+      "lede": "The specification says what the application means; the environment says what is available where it runs.",
+      "steps": [
+        {"label": "check", "title": "Compile", "description": "ess-compiler turns the specification directory into the resolved IR Spindle executes."},
+        {"label": "capabilities", "title": "Derive", "description": "Entities, bindings, views and external outcomes become capabilities, each with the declaration that needs it."},
+        {"label": "admit", "title": "Admit", "description": "Each capability is bound to the environment's preferred implementation, or the deployment is refused with every missing one named."},
+        {"label": "run / play", "title": "Execute", "description": "Commands run against the compiled model; timers fire periodic bindings and channels carry events between components."}
+      ]
+    },
+    {
+      "kind": "features",
+      "eyebrow": "What it does",
+      "title": "Semantics in the specification, technicals in the runtime.",
+      "lede": "A specification never names a database, a protocol or a queue.",
+      "items": [
+        {"title": "Capabilities are derived", "description": "Nobody writes a requirement list, so it cannot drift from the specification.", "status": "shipped", "href": "/docs/concepts/capabilities"},
+        {"title": "Admission or a named refusal", "description": "One implementation per capability, chosen by the environment's preference order, or every missing capability named.", "status": "shipped", "href": "/docs/concepts/environment-and-admission"},
+        {"title": "The model is the program", "description": "Guards are ESS predicates evaluated by ESS; outcomes, effects and events come from the compiled IR.", "status": "shipped", "href": "/docs/concepts/specification"},
+        {"title": "Components joined by bindings", "description": "Periodic bindings on a timer, event bindings over in-process or TCP channels.", "status": "shipped", "href": "/docs/concepts/components-and-bindings"},
+        {"title": "Process, QEMU and Firecracker targets", "description": "One launcher contract; microVM launchers without root, tested on a host with KVM.", "status": "shipped", "href": "/docs/concepts/deployment-targets"},
+        {"title": "Counters derived like capabilities", "description": "Every command outcome, event, binding and timer tick of a component is counted, with no metric in the specification.", "status": "shipped", "href": "/docs/concepts/observe"},
+        {"title": "A live observe API and UI", "description": "A control process that launches instances and serves their counters to the browser UI.", "status": "planned", "href": "/docs/concepts/observe"},
+        {"title": "Rally in three microVMs", "description": "Each component of the example in its own VM, joined over the VM network.", "status": "planned", "href": "/docs/examples/rally"}
+      ]
+    },
+    {
+      "kind": "status",
+      "eyebrow": "Status",
+      "title": "Shipped and planned.",
+      "items": "data/status.json"
+    },
+    {
+      "kind": "related",
+      "eyebrow": "Built on",
+      "title": "Where Spindle sits.",
+      "tools": [
+        {"id": "ess", "relation": "specifies", "via": "Spindle compiles every specification with ess-compiler and is itself specified in ESS"}
+      ]
+    }
+  ]
+}

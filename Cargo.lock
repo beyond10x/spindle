@@ -851,6 +851,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "spindle-docs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde_json",
+ "spindle-cli",
+]
+
+[[package]]
 name = "spindle-firecracker"
 version = "0.1.0"
 dependencies = [

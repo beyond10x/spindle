@@ -1,2 +1,5 @@
 /target/
 /.engineering/drafts/
+/website/node_modules/
+/website/build/
+/website/.docusaurus/
