@@ -253,8 +253,8 @@ dependencies = [
 
 [[package]]
 name = "ess-compiler"
-version = "0.85.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.85.0#2b5fa98db3d0471fd8ae12dcd8a7b1d83783da12"
+version = "0.86.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.86.0#8d26c81f74f4374316d5ee565c2da43dd81a16a8"
 dependencies = [
  "ess-domain",
  "ess-primitives",
@@ -265,8 +265,8 @@ dependencies = [
 
 [[package]]
 name = "ess-domain"
-version = "0.85.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.85.0#2b5fa98db3d0471fd8ae12dcd8a7b1d83783da12"
+version = "0.86.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.86.0#8d26c81f74f4374316d5ee565c2da43dd81a16a8"
 dependencies = [
  "ess-primitives",
  "ess-yaml",
@@ -278,8 +278,8 @@ dependencies = [
 
 [[package]]
 name = "ess-primitives"
-version = "0.85.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.85.0#2b5fa98db3d0471fd8ae12dcd8a7b1d83783da12"
+version = "0.86.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.86.0#8d26c81f74f4374316d5ee565c2da43dd81a16a8"
 dependencies = [
  "ess-yaml",
  "schemars",
@@ -290,8 +290,8 @@ dependencies = [
 
 [[package]]
 name = "ess-yaml"
-version = "0.85.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.85.0#2b5fa98db3d0471fd8ae12dcd8a7b1d83783da12"
+version = "0.86.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.86.0#8d26c81f74f4374316d5ee565c2da43dd81a16a8"
 dependencies = [
  "serde",
  "serde_norway",
