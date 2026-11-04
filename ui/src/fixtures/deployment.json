@@ -1,0 +1,124 @@
+{
+  "system": "rally",
+  "components": [
+    {
+      "name": "rally-table",
+      "domains": [
+        "rally.table"
+      ],
+      "commands": [
+        "rally.table.OpenMatch",
+        "rally.table.Tick",
+        "rally.table.MovePaddle"
+      ],
+      "views": [
+        "rally.table.MatchState"
+      ]
+    },
+    {
+      "name": "rally-player-west",
+      "domains": [
+        "rally.west"
+      ],
+      "commands": [
+        "rally.west.ObserveBall"
+      ],
+      "views": [
+        "rally.west.PlayerState"
+      ]
+    },
+    {
+      "name": "rally-player-east",
+      "domains": [
+        "rally.east"
+      ],
+      "commands": [
+        "rally.east.ObserveBall"
+      ],
+      "views": [
+        "rally.east.PlayerState"
+      ]
+    }
+  ],
+  "bindings": [
+    {
+      "name": "tick",
+      "kind": "periodic",
+      "to": "rally-table",
+      "command": "rally.table.Tick"
+    },
+    {
+      "name": "west-watches",
+      "kind": "event",
+      "from": "rally-table",
+      "to": "rally-player-west",
+      "event": "rally.table.BallMoved",
+      "command": "rally.west.ObserveBall"
+    },
+    {
+      "name": "east-watches",
+      "kind": "event",
+      "from": "rally-table",
+      "to": "rally-player-east",
+      "event": "rally.table.BallMoved",
+      "command": "rally.east.ObserveBall"
+    },
+    {
+      "name": "west-moves",
+      "kind": "event",
+      "from": "rally-player-west",
+      "to": "rally-table",
+      "event": "rally.west.PaddleMoveRequested",
+      "command": "rally.table.MovePaddle"
+    },
+    {
+      "name": "east-moves",
+      "kind": "event",
+      "from": "rally-player-east",
+      "to": "rally-table",
+      "event": "rally.east.PaddleMoveRequested",
+      "command": "rally.table.MovePaddle"
+    }
+  ],
+  "instances": [
+    {
+      "instance_id": "rally-table-0",
+      "component": "rally-table",
+      "target_kind": "QemuMicrovm",
+      "target": "local-microvm",
+      "state": "Running",
+      "requested": {
+        "vcpus": 1,
+        "memory_mib": 128,
+        "disk_mib": 64
+      },
+      "started_at": "2026-11-04T10:00:00.000Z"
+    },
+    {
+      "instance_id": "rally-player-west-0",
+      "component": "rally-player-west",
+      "target_kind": "QemuMicrovm",
+      "target": "local-microvm",
+      "state": "Running",
+      "requested": {
+        "vcpus": 1,
+        "memory_mib": 64,
+        "disk_mib": 32
+      },
+      "started_at": "2026-11-04T10:00:00.000Z"
+    },
+    {
+      "instance_id": "rally-player-east-0",
+      "component": "rally-player-east",
+      "target_kind": "QemuMicrovm",
+      "target": "local-microvm",
+      "state": "Running",
+      "requested": {
+        "vcpus": 1,
+        "memory_mib": 64,
+        "disk_mib": 32
+      },
+      "started_at": "2026-11-04T10:00:00.000Z"
+    }
+  ]
+}
