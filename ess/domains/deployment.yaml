@@ -124,6 +124,12 @@ errors:
       - name: state
         type: spindle.deployment.Deployment.State
 
+  - name: spindle.deployment.AdmissionDecisionInvalid
+    summary: >-
+      The decision binds a capability twice, leaves a required one unbound, binds one that is not
+      required, or refuses naming no capability or one it binds, so nothing moved.
+    fields: []
+
 commands:
   - name: spindle.deployment.DeclareEnvironment
     naming:
@@ -196,7 +202,26 @@ commands:
       - name: missing
         type: List<spindle.deployment.CapabilityName>
     outcomes:
+      - name: bound-twice
+        when:
+          not:
+            distinct: {in: bindings, as: b, by: b.capability}
+        error: spindle.deployment.AdmissionDecisionInvalid
+        summary: The decision binds one capability to two implementations, so nothing moved.
+
       - name: admitted
+        when_subject:
+          predicate:
+            all:
+              - input.missing.count == 0
+              - forall:
+                  in: requires
+                  as: c
+                  that: {exists: {in: input.bindings, as: b, that: b.capability == c}}
+              - forall:
+                  in: input.bindings
+                  as: b
+                  that: {exists: {in: requires, as: c, that: b.capability == c}}
         moves: spindle.deployment.Deployment.admit
         instance: deployment_id
         emits:
@@ -206,10 +231,19 @@ commands:
             deployment_id: input.deployment_id
         sets:
           bindings: input.bindings
-        summary: Every required capability is bound to one implementation the environment provides.
+        summary: >-
+          Every required capability is bound to exactly one implementation, and nothing that is not
+          required is bound.
 
       - name: refused
         external: at least one required capability has no implementation in the environment
+        when:
+          all:
+            - missing.count >= 1
+            - forall:
+                in: missing
+                as: m
+                that: {not: {exists: {in: bindings, as: b, that: b.capability == m}}}
         moves: spindle.deployment.Deployment.refuse
         instance: deployment_id
         emits:
@@ -217,14 +251,27 @@ commands:
         payload:
           spindle.deployment.DeploymentRefused:
             deployment_id: input.deployment_id
+            missing: input.missing
         sets:
           missing: input.missing
-        summary: The deployment is refused, naming every capability the environment lacks.
+        summary: >-
+          The deployment is refused. `missing` is not empty and names no capability the decision
+          binds.
 
       - name: wrong-state
         wrong_state: true
         error: spindle.deployment.DeploymentStateConflict
-        summary: Admission was already decided, so nothing moved.
+        summary: >-
+          The decision is valid for the deployment, but its admission was already decided, so
+          nothing moved. An invalid decision is answered `bound-twice` or `not-decided` whatever
+          the state.
+
+      - name: not-decided
+        error: spindle.deployment.AdmissionDecisionInvalid
+        summary: >-
+          The decision neither binds exactly the required capabilities nor refuses naming at least
+          one capability it does not bind, so nothing moved, whether or not admission was already
+          decided.
 
   - name: spindle.deployment.StartDeployment
     naming:
@@ -270,7 +317,9 @@ commands:
       - name: already-ended
         wrong_state: true
         refuses: false
-        summary: A refused or stopped deployment stays as it is.
+        summary: >-
+          A deployment still offered, refused or stopped stays as it is; a stop does not withdraw
+          an offer whose admission is undecided.
 
 events:
   - name: spindle.deployment.EnvironmentDeclared
@@ -294,6 +343,8 @@ events:
     fields:
       - name: deployment_id
         type: spindle.deployment.DeploymentId
+      - name: missing
+        type: List<spindle.deployment.CapabilityName>
 
   - name: spindle.deployment.DeploymentStarted
     fields:

@@ -31,8 +31,8 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "source_digest": "7b7a73a462a8f72175be1029a8e0d7b3d466b6c4c89cb0c694ac14a157a4d594",
-    "contract_digest": "slice-sha256/2:f70db88fbf5817982fad6b17d259e79cc7f39c966dc4611872253d8460c51e33",
+    "source_digest": "b67f37c39b3b49e2924b9dae9baa9980542ec56cffbaf73501740884cc6b965c",
+    "contract_digest": "slice-sha256/2:f48cb30aea7998ada44ecffe86b00dd65f3415fcef00fa2c105683538bab3a11",
     "regenerate": "ess generate"
   },
   "$defs": {

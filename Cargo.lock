@@ -903,6 +903,7 @@ dependencies = [
  "eventlog-sqlite",
  "serde",
  "serde_json",
+ "spindle-capability",
  "spindle-spec",
  "tempfile",
  "thiserror",

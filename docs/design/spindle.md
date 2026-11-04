@@ -102,7 +102,8 @@ the specification.
 **Environment.** Where Spindle runs (OS, arch, substrate backend, a microVM or a laptop) is an
 environment, and an environment declares which capabilities it provides and which implementation
 backs each one. The same bundle can run on a laptop with `store.durable = sqlite` and
-`channel = in-process`, and in three microVMs with `channel = tcp`.
+`channel = in-process`, and on three microVMs that each provide the environment `microvm`, with
+`channel = tcp`.
 
 **Admission.** Offering a bundle to an environment yields one of:
 
@@ -111,6 +112,44 @@ backs each one. The same bundle can run on a laptop with `store.durable = sqlite
 
 Several implementations for one capability are chosen by a preference order in the environment,
 never by the bundle. This is the domain Spindle specifies about itself: `ess/domains/deployment.yaml`.
+
+What `spindle.deployment` declares, and what stays a runtime rule outside the model:
+
+- **Exactly one binding per requirement is declared.** `DecideAdmission` admits only when every
+  capability in the deployment's `requires` has a binding, no binding names a capability outside
+  `requires`, and `missing` is empty; a capability bound twice is refused before the deployment is
+  read (`bound-twice`), any other mismatch is refused as `not-decided`. Both answer
+  `AdmissionDecisionInvalid` and change nothing. ESS answers input refusals first, then whether
+  the deployment exists, and answers the state conflict only when the branch the decision selects
+  moves the deployment: an invalid decision on a deployment already decided selects `not-decided`,
+  which does not move it, so only a valid one answers `wrong-state`.
+- **A refusal names what is missing.** `refused` is eligible only when `missing` names at least one
+  capability and none of them among the decision's own bindings; `DeploymentRefused` carries that
+  list. Any other refusal is `not-decided`.
+- **That `missing` names only required capabilities is a runtime rule.** `spindle_capability::admit`
+  builds `missing` from the requirements it admits, so the runtime never refuses naming a
+  capability outside `requires`. The model does not guard it: ESS synthesis cannot witness a
+  forced external outcome whose guard relates an input list to a stored list, and the guard cost
+  the `refused` scenario and every scenario through `Refused`
+  (`crates/spindle-kernel/tests/adversary_admission.rs::adversary_admission_names_only_required_capabilities_missing_at_runtime`).
+- **That the environment provides each binding is a runtime rule.** `admitted` does not read the
+  environment's `provides`: the kernel does not yet evaluate a guard over a related row. The
+  check is `spindle_capability::admit`, which binds only an implementation the environment
+  document lists for the capability, and names every required capability it lists none for as
+  missing (`crates/spindle-capability/tests/admission.rs`).
+- **Preference order is a runtime rule.** The model holds the bindings admission chose, not their
+  rank. The rank is the order of each capability's list in the environment document, most
+  preferred first, and `spindle_capability::admit` takes the first
+  (`crates/spindle-kernel/tests/deployment.rs::preference_order_is_declared`).
+- **`requires` is an input, and its value is derived.** ESS cannot compute a list from a bundle
+  digest, so `OfferBundle` takes `requires` from its caller. The caller passes exactly what
+  `spindle_capability::derive` computes from the bundle's compiled specification; nothing else may
+  write it (`requires_is_tied_to_the_bundle`). No runtime path issues `OfferBundle` yet; the rule
+  binds the one that will.
+- **A stop ends an admitted or running deployment.** `StopDeployment` moves `Admitted` and
+  `Running` to `Stopped`: an admitted deployment that never started can be stopped. On an
+  `Offered`, `Refused` or `Stopped` deployment it is accepted and changes nothing; it does not
+  withdraw an offer, which admission can still decide (`stop_from_admitted_and_offered_is_stated`).
 
 **Overlay: open.** Whether a separate overlay document is needed is undecided (operator,
 2026-11-04: "it might have an overlay or not"). The facts in § 3 that are run-level (partition key,
@@ -380,6 +419,12 @@ player's binding turns `BallMoved` into its own `ObserveBall` command, and the p
 `PaddleMoveRequested` event binds to the table's `MovePaddle`. Every value change is a guard plus
 `increment:` on integer fields, so the game needs no arithmetic the language lacks.
 
-Deployed, it is three environments with `channel = tcp`, one per microVM. On a laptop the same
-bundle runs with `channel = in-process`, and admission is the only thing that differs.
+Deployed on microVMs, it is one deployment: the bundle offered once to the environment `microvm`
+(`channel = tcp`), whose `requires` is what the whole bundle requires. Its three components are
+three placement instances of that deployment, each on its own microVM target, and every target
+provides the same environment. A deployment has one environment, so a component's bindings are the
+deployment's bindings for the capabilities that component uses
+(`crates/spindle-kernel/tests/deployment.rs::one_bundle_in_three_environments_is_decided`). On a
+laptop the same bundle runs with `channel = in-process`, and admission is the only thing that
+differs.
 
