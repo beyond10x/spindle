@@ -21,6 +21,7 @@ spindle-capability.workspace = true
 spindle-spec.workspace = true
 spindle-kernel = { path = "../spindle-kernel" }
 spindle-host = { path = "../spindle-host" }
+spindle-telemetry = { path = "../spindle-telemetry" }
 signal-hook = "0.3"
 tempfile = "3"
 

@@ -50,6 +50,20 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Print the counters an instance of one component reports, derived from the specification.
+    ///
+    /// One line per counter or histogram: its name, its kind and the part of the runtime that
+    /// measures it.
+    Metrics {
+        /// The specification directory.
+        spec: PathBuf,
+        /// The component.
+        #[arg(long)]
+        component: String,
+        /// Print JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Admit a specification against an environment: bind every capability or name what is missing.
     ///
     /// Exits 0 when admitted and 3 when refused.
@@ -179,6 +193,25 @@ fn run(cli: Cli) -> Result<ExitCode> {
             }
             Ok(ExitCode::SUCCESS)
         }
+        Command::Metrics {
+            spec,
+            component,
+            json,
+        } => {
+            let loaded = spindle_spec::load(&spec)?;
+            let catalogue =
+                spindle_telemetry::catalogue(&loaded.ir, &component).with_context(|| {
+                    format!("{} declares no component {component:?}", spec.display())
+                })?;
+            if json {
+                println!("{:#}", serde_json::to_value(&catalogue)?);
+            } else {
+                for counter in &catalogue.counters {
+                    println!("{} {} {}", counter.name, counter.kind, counter.source);
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Admit {
             spec,
             environment,
@@ -233,6 +266,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
 const OPEN_MATCH: &str = "rally.table.OpenMatch";
 /// The view a rally frame is drawn from.
 const MATCH_STATE: &str = "rally.table.MatchState";
+/// The component whose counters play prints under the board.
+const TABLE: &str = "rally-table";
 /// Clears the terminal and moves the cursor home.
 const CLEAR: &str = "\x1b[2J\x1b[H";
 
@@ -278,6 +313,9 @@ fn play(spec: &Path, environment: &Path, target_score: i64, match_id: &str) -> R
             .view(MATCH_STATE, &serde_json::json!(match_id))?
             .with_context(|| format!("no match {match_id}"))?;
         write!(out, "{CLEAR}{}", rally::frame(&view)?)?;
+        if let Some(counters) = host.counters(TABLE) {
+            write!(out, "{}", counted(counters))?;
+        }
         out.flush()?;
         if rally::winner(&view).is_some() {
             host.stop();
@@ -308,6 +346,17 @@ fn play(spec: &Path, environment: &Path, target_score: i64, match_id: &str) -> R
             );
         }
     }
+}
+
+/// Every counter of `counters` that is not zero, one per line.
+fn counted(counters: &spindle_telemetry::Counters) -> String {
+    counters
+        .snapshot()
+        .counters
+        .iter()
+        .filter(|counter| counter.value > 0)
+        .map(|counter| format!("{} {}\n", counter.name, counter.value))
+        .collect()
 }
 
 /// The exit status of a run a signal stopped is this plus the signal's number.

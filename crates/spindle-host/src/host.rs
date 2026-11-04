@@ -14,6 +14,7 @@ use spindle_channel::{ChannelError, Receiver, RouteError, Router, Sender, in_pro
 use spindle_kernel::{
     DeclaredError, ExecuteError, Executed, MemoryStore, NoExternals, SqliteStore, Store, StoreError,
 };
+use spindle_telemetry::{Counters, CountingStore, Sink};
 use spindle_timer::{BindingName, Clock, CompleteError, LifetimeError, Timer};
 
 use crate::admission::{Placements, Refusal, admit};
@@ -185,6 +186,8 @@ struct Component {
     store: Box<dyn Store>,
     sender: Sender,
     position: u64,
+    counters: Arc<Counters>,
+    sink: Sink,
 }
 
 struct Periodic {
@@ -285,26 +288,36 @@ impl Host {
                     "{name} has its channel bound to {channel}; this host carries bindings {IN_PROCESS} only"
                 )));
             }
+            let counters = Arc::new(Counters::new(
+                spindle_telemetry::catalogue(&ir, name)
+                    .ok_or_else(|| HostError::Unsupported(format!("no component {name}")))?,
+            ));
+            let sink = Sink::new(counters.clone());
             let store: Box<dyn Store> = match bound(Capability::STORE_DURABLE)
                 .or_else(|| bound("store.ephemeral"))
             {
-                None | Some("memory") => Box::new(MemoryStore::default()),
-                Some("sqlite") => {
-                    Box::new(SqliteStore::open(&state.join(format!("{name}.sqlite")))?)
+                None | Some("memory") => {
+                    Box::new(CountingStore::new(MemoryStore::default(), sink.clone()))
                 }
+                Some("sqlite") => Box::new(CountingStore::new(
+                    SqliteStore::open(&state.join(format!("{name}.sqlite")))?,
+                    sink.clone(),
+                )),
                 Some(other) => {
                     return Err(HostError::Unsupported(format!(
                         "{name} has its state bound to {other}, which this host has no store for"
                     )));
                 }
             };
-            let sender = Sender::new(name, router.clone())?;
+            let sender = Sender::new(name, router.clone())?.with_telemetry(sink.clone());
             components.insert(
                 name.clone(),
                 Component {
                     store,
                     sender,
                     position: 0,
+                    counters,
+                    sink,
                 },
             );
         }
@@ -320,7 +333,11 @@ impl Host {
             if let Some(component) = components.get_mut(&from) {
                 component.sender.connect(&to, near);
             }
-            receivers.push(Receiver::new(&to, far));
+            let sink = components
+                .get(&to)
+                .map(|component| component.sink.clone())
+                .unwrap_or_default();
+            receivers.push(Receiver::new(&to, far).with_telemetry(sink));
         }
 
         let mut periodic = BTreeMap::new();
@@ -370,7 +387,12 @@ impl Host {
             );
         }
 
-        let timer = Timer::new(&ir);
+        let mut timer = Timer::new(&ir);
+        for periodic in periodic.values() {
+            if let Some(component) = components.get(&periodic.component) {
+                timer.bind_telemetry(&periodic.name, component.sink.clone())?;
+            }
+        }
         Ok(Self {
             ir,
             clock,
@@ -385,6 +407,14 @@ impl Host {
     /// What admission bound for each component.
     pub fn placements(&self) -> &Placements {
         &self.placements
+    }
+
+    /// The counters of `component`, laid out by its catalogue; `None` when no such component
+    /// runs here.
+    pub fn counters(&self, component: &str) -> Option<&Counters> {
+        self.components
+            .get(component)
+            .map(|component| component.counters.as_ref())
     }
 
     /// The names of the specification's periodic bindings.
@@ -573,13 +603,16 @@ impl Host {
             .components
             .get_mut(component)
             .ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
-        let executed = match spindle_kernel::execute(
+        let started = Instant::now();
+        let result = spindle_kernel::execute(
             &self.ir,
             held.store.as_mut(),
             &mut NoExternals,
             command,
             input,
-        ) {
+        );
+        held.sink.executed(command, &result, started.elapsed());
+        let executed = match result {
             Ok(executed) => executed,
             Err(error) => return Ok(Err(error)),
         };
@@ -683,7 +716,7 @@ impl Host {
     /// Takes every envelope still in flight off its channel without running it.
     fn discard(&mut self) -> Result<(), HostError> {
         for receiver in &mut self.receivers {
-            while receiver.receive(Duration::ZERO)?.is_some() {}
+            receiver.discard()?;
         }
         Ok(())
     }

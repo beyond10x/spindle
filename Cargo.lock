@@ -826,6 +826,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spindle-spec",
+ "spindle-telemetry",
  "thiserror",
 ]
 
@@ -843,6 +844,7 @@ dependencies = [
  "spindle-host",
  "spindle-kernel",
  "spindle-spec",
+ "spindle-telemetry",
  "tempfile",
 ]
 
@@ -871,6 +873,7 @@ dependencies = [
  "spindle-channel",
  "spindle-kernel",
  "spindle-spec",
+ "spindle-telemetry",
  "spindle-timer",
  "tempfile",
  "thiserror",
@@ -935,12 +938,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "spindle-telemetry"
+version = "0.1.0"
+dependencies = [
+ "ess-compiler",
+ "serde",
+ "serde_json",
+ "spindle-kernel",
+ "spindle-spec",
+]
+
+[[package]]
 name = "spindle-timer"
 version = "0.1.0"
 dependencies = [
  "ess-compiler",
  "ess-domain",
  "spindle-spec",
+ "spindle-telemetry",
  "thiserror",
 ]
 
