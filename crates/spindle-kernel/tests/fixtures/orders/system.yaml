@@ -1,0 +1,24 @@
+format: ess/34
+system: probe
+version: v1
+summary: Orders whose outcomes read the input, the held order and an outside answer.
+domains:
+  - probe.order
+components:
+  - component: probe
+    summary: Holds orders.
+    owns:
+      domains:
+        - probe.order
+    accepts:
+      commands:
+        - probe.order.OpenOrder
+        - probe.order.Charge
+        - probe.order.CloseOrder
+    publishes:
+      events:
+        - probe.order.OrderOpened
+        - probe.order.ChargeHeld
+        - probe.order.Charged
+        - probe.order.OrderClosed
+    reached_by: in_process

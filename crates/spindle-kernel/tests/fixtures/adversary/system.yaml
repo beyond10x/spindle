@@ -1,0 +1,25 @@
+format: ess/34
+system: probe
+version: v1
+summary: Documents whose commands reach the edges of ESS's reference semantics.
+domains:
+  - probe.docs
+components:
+  - component: probe
+    summary: Holds documents.
+    owns:
+      domains:
+        - probe.docs
+    accepts:
+      commands:
+        - probe.docs.CreateDoc
+        - probe.docs.PublishDoc
+        - probe.docs.Annotate
+        - probe.docs.Lower
+    publishes:
+      events:
+        - probe.docs.DocCreated
+        - probe.docs.DocPublished
+        - probe.docs.DocNoted
+        - probe.docs.DocLowered
+    reached_by: in_process

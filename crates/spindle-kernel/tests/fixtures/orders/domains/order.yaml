@@ -1,0 +1,137 @@
+domain: probe.order
+summary: Orders charged within a limit, some held for review and some vetoed from outside.
+types:
+  - name: probe.order.Tier
+    kind: enum
+    variants: [Gold, Basic]
+entities:
+  - name: probe.order.Order
+    identity:
+      name: order_id
+      type: String
+    fields:
+      - name: tier
+        type: probe.order.Tier
+      - name: limit
+        type: Integer
+      - name: last
+        type: Integer
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+errors:
+  - name: probe.order.OverLimit
+    summary: The charge is above the order's limit.
+    fields: []
+  - name: probe.order.ChargeFlagged
+    summary: The card network flagged the charge.
+    fields: []
+  - name: probe.order.CloseVetoed
+    summary: The owner vetoed closing a basic order.
+    fields: []
+  - name: probe.order.OrderNotFound
+    summary: No order carries the id.
+    fields: []
+commands:
+  - name: probe.order.OpenOrder
+    input:
+      - name: order_id
+        type: String
+      - name: tier
+        type: probe.order.Tier
+      - name: limit
+        type: Integer
+    outcomes:
+      - name: opened
+        creates: probe.order.Order
+        instance: order_id
+        sets:
+          tier: input.tier
+          limit: input.limit
+          last: 0
+        emits: [probe.order.OrderOpened]
+        payload:
+          probe.order.OrderOpened: {order_id: input.order_id}
+        summary: The order opens.
+  - name: probe.order.Charge
+    input:
+      - name: order_id
+        type: String
+      - name: amount
+        type: Integer
+    outcomes:
+      - name: no-such-order
+        unknown_instance: true
+        error: probe.order.OrderNotFound
+        summary: No order carries the id.
+      - name: over-limit
+        when_subject: {predicate: input.amount > limit}
+        when: amount > 0
+        error: probe.order.OverLimit
+        summary: A positive charge above the limit is refused.
+      - name: held
+        when_subject: {field: tier, equals: Gold}
+        when: amount > 50
+        updates: probe.order.Order
+        instance: order_id
+        sets:
+          last: input.amount
+        emits: [probe.order.ChargeHeld]
+        payload:
+          probe.order.ChargeHeld: {order_id: input.order_id}
+        summary: A large charge on a gold order is held for review.
+      - name: flagged
+        external: the card network flags the charge
+        when: amount > 10
+        error: probe.order.ChargeFlagged
+        summary: The network may flag a charge above ten.
+      - name: charged
+        updates: probe.order.Order
+        instance: order_id
+        sets:
+          last: input.amount
+        emits: [probe.order.Charged]
+        payload:
+          probe.order.Charged: {order_id: input.order_id}
+        summary: The charge goes through.
+  - name: probe.order.CloseOrder
+    input:
+      - name: order_id
+        type: String
+    outcomes:
+      - name: no-such-order
+        unknown_instance: true
+        error: probe.order.OrderNotFound
+        summary: No order carries the id.
+      - name: vetoed
+        external: the owner vetoes closing it
+        when_subject: {predicate: tier == Basic}
+        error: probe.order.CloseVetoed
+        summary: The owner of a basic order may veto closing it.
+      - name: closed
+        updates: probe.order.Order
+        instance: order_id
+        sets:
+          last: 0
+        emits: [probe.order.OrderClosed]
+        payload:
+          probe.order.OrderClosed: {order_id: input.order_id}
+        summary: The order is closed.
+events:
+  - name: probe.order.OrderOpened
+    fields:
+      - name: order_id
+        type: String
+  - name: probe.order.ChargeHeld
+    fields:
+      - name: order_id
+        type: String
+  - name: probe.order.Charged
+    fields:
+      - name: order_id
+        type: String
+  - name: probe.order.OrderClosed
+    fields:
+      - name: order_id
+        type: String
