@@ -12,6 +12,7 @@ publish.workspace = true
 ess-compiler.workspace = true
 ess-domain.workspace = true
 thiserror.workspace = true
+spindle-telemetry = { path = "../spindle-telemetry", default-features = false }
 
 [dev-dependencies]
 spindle-spec.workspace = true

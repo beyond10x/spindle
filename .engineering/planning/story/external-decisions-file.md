@@ -2,16 +2,17 @@
 format: aep.planning-md/3
 id: story:external-decisions-file
 kind: story
-status: active
+status: implemented
 title: External decisions from a file
 relations:
 - serves: vision:spindle
 - decomposes: epic:m0-run-in-process
 - depends_on: story:execute-commands
-revision: 3
+revision: 4
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-04T10:45:53Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-04T10:45:53Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-04T16:05:55Z", actor: "human:timo", revision: 4, decided_on: {"recorded":{"test_result":1}}}
 ---
 # External decisions from a file
 

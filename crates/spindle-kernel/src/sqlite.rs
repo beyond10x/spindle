@@ -6,6 +6,7 @@
 //! at all. Loading reads the stream's last event. The stream's version is the version a later
 //! commit names, so two writers that read the same row cannot both commit.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use eventlog_core::{
@@ -16,7 +17,7 @@ use eventlog_sqlite::SqliteEventStore;
 use serde_json::Value;
 use time::OffsetDateTime;
 
-use crate::store::{Change, Row, Store, StoreError, Stored};
+use crate::store::{Change, Row, Store, StoreError, Stored, identity_from_key};
 
 /// The table prefix Spindle's events are kept under.
 const PREFIX: &str = "spindle";
@@ -28,6 +29,8 @@ const ROW: &str = "spindle.row";
 const ACTOR: &str = "spindle-kernel";
 /// The schema version of every event Spindle appends.
 const SCHEMA: u32 = 1;
+/// How many feed events one read of a scan asks for.
+const FEED_PAGE: usize = 500;
 
 /// Instances in one SQLite database file.
 pub struct SqliteStore {
@@ -143,6 +146,47 @@ impl Store for SqliteStore {
                 },
                 other => backend(other),
             })
+    }
+
+    /// Reads the tenant's feed in commit order and keeps, for each stream of `entity`, its last
+    /// `spindle.row` event: the row as it rests and the stream version a later commit names.
+    /// Every page moves the position forward, or the read stops as a backend error.
+    fn scan(&mut self, entity: &str) -> Result<Vec<(Value, Stored)>, StoreError> {
+        let mut latest = BTreeMap::<String, Stored>::new();
+        let mut position = 0;
+        loop {
+            let page = self
+                .runtime
+                .block_on(self.log.read_feed(&self.tenant, position, FEED_PAGE))
+                .map_err(backend)?;
+            for event in page.events {
+                if event.stream_type != entity || event.name != ROW {
+                    continue;
+                }
+                let row = serde_json::from_value::<Row>(event.data)
+                    .map_err(|error| StoreError::Backend(format!("a stored row: {error}")))?;
+                latest.insert(
+                    event.stream_id,
+                    Stored {
+                        row,
+                        version: event.version,
+                    },
+                );
+            }
+            if !page.has_more {
+                break;
+            }
+            if page.next_position <= position {
+                return Err(StoreError::Backend(format!(
+                    "the feed did not move past position {position}"
+                )));
+            }
+            position = page.next_position;
+        }
+        latest
+            .into_iter()
+            .map(|(identity, stored)| Ok((identity_from_key(&identity)?, stored)))
+            .collect()
     }
 }
 

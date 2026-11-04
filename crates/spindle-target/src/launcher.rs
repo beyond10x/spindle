@@ -6,6 +6,8 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::ResourceSample;
+
 /// The kind of a target: `spindle.placement.TargetKind`.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
@@ -245,6 +247,12 @@ pub trait Running {
     fn wait(&mut self, timeout: Duration) -> Result<Option<Exit>, LaunchError>;
     /// Stops the instance and reports how it ended. An instance that already ended reports that.
     fn stop(&mut self) -> Result<Exit, LaunchError>;
+
+    /// What the instance costs the host now, against what it asked for; `None` when the
+    /// launcher does not sample.
+    fn resources(&self) -> Option<ResourceSample> {
+        None
+    }
 }
 
 /// The check every launcher makes first: the first resource `request` asks for that `enforces`

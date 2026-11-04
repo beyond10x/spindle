@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/errors/spindle.placement.InstanceStateConflict.schema.json",
+  "title": "InstanceStateConflict payload",
+  "description": "The instance is not in a state this command acts from, so nothing moved.",
+  "x-ess-name": "spindle.placement.InstanceStateConflict",
+  "x-ess-kind": "error-payload",
+  "type": "object",
+  "properties": {
+    "state": {
+      "$ref": "#/$defs/spindle.placement.Instance.State"
+    }
+  },
+  "required": [
+    "state"
+  ],
+  "additionalProperties": false,
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "7b7a73a462a8f72175be1029a8e0d7b3d466b6c4c89cb0c694ac14a157a4d594",
+    "contract_digest": "slice-sha256/2:2db1adebaa57e5edb6b9ac1bea558ea53da92a293d799f158284bc3c13ff7d8d",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.placement.Instance.State": {
+      "title": "State",
+      "x-ess-name": "spindle.placement.Instance.State",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "Exited",
+        "Placed",
+        "Planned",
+        "Refused",
+        "Running"
+      ]
+    }
+  }
+}

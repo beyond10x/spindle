@@ -439,3 +439,54 @@ fn a_vm_test_that_cannot_run_names_everything_it_misses() {
         assert!(reason.contains(needed), "`{needed}` in: {reason}");
     }
 }
+
+#[test]
+#[ignore = "boots Firecracker: needs /dev/kvm, SPINDLE_FIRECRACKER, SPINDLE_FIRECRACKER_KERNEL and the musl guest binaries"]
+fn a_firecracker_instance_reports_its_share_of_the_requested_quota() {
+    let host = host();
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let initramfs = guest_root(&host, directory.path(), "sampled");
+    let mut launcher = Firecracker::new(host.firecracker.clone(), directory.path().join("state"));
+    let plan = plan(
+        &host,
+        &initramfs,
+        "sampled",
+        "172.16.0.2:7000",
+        &[("nobody", "172.16.0.9:7000")],
+        "exchange --timeout 60",
+    );
+    let mut vm = launcher.launch(&plan).expect("the instance launches");
+    assert_eq!(
+        vm.wait(Duration::from_secs(2)).expect("waits"),
+        None,
+        "console:\n{}",
+        console(vm.console())
+    );
+
+    let sample = vm.resources().expect("a running microVM is sampled");
+    let cpu_share = sample.cpu_seconds / (sample.wall_seconds * 2.0);
+    let memory_share = sample.memory_bytes as f64 / (256.0 * 1024.0 * 1024.0);
+    assert!(
+        sample.cpu_seconds > 0.0,
+        "Firecracker has used CPU: {sample:?}"
+    );
+    assert!(
+        sample.memory_bytes >= 8 << 20,
+        "Firecracker holds memory: {sample:?}"
+    );
+    assert!(sample.wall_seconds >= 2.0, "{sample:?}");
+    let close = |share: Option<f64>, expected: f64| {
+        share.is_some_and(|share| (share - expected).abs() <= expected.abs() * 1e-12)
+    };
+    assert!(
+        close(sample.cpu_share, cpu_share),
+        "cpu_share is cpu_seconds / (wall_seconds * 2 vCPUs) = {cpu_share}: {sample:?}"
+    );
+    assert!(
+        close(sample.memory_share, memory_share),
+        "memory_share is memory_bytes / 256 MiB = {memory_share}: {sample:?}"
+    );
+
+    vm.stop().expect("stops");
+    assert_eq!(vm.resources(), None, "a stopped microVM is not sampled");
+}

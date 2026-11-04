@@ -25,6 +25,9 @@ pub(crate) struct Sources<'a> {
     /// where no instance is held (the unknown-instance arm of a `wrong_state:` refusal, ESS
     /// `error_value`, beyond10x/ess#458) rather than a value nothing determines.
     pub(crate) error: bool,
+    /// The identity this outcome minted for the instance it creates, under the identity field's
+    /// name: what `{generated: true}` in a field of that name reads.
+    pub(crate) minted: Option<(&'a str, &'a Value)>,
 }
 
 impl Sources<'_> {
@@ -54,6 +57,13 @@ impl Sources<'_> {
                 Ok(Some(Value::String(self.before(field)?.state.clone())))
             }
             ResolvedPayloadValue::Increment { by } => self.increment(field, by).map(Some),
+            ResolvedPayloadValue::Generated { .. }
+                if self
+                    .minted
+                    .is_some_and(|(identity, _)| identity == field.target) =>
+            {
+                Ok(self.minted.map(|(_, value)| value.clone()))
+            }
             ResolvedPayloadValue::EmptyList => Ok(Some(Value::Array(Vec::new()))),
             ResolvedPayloadValue::Cleared => Ok(None),
             ResolvedPayloadValue::Struct { fields } => {

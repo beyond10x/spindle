@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.placement.TargetId.schema.json",
+  "$ref": "#/$defs/spindle.placement.TargetId",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "7b7a73a462a8f72175be1029a8e0d7b3d466b6c4c89cb0c694ac14a157a4d594",
+    "contract_digest": "slice-sha256/2:5935f5e5f6e0c5cb871efb74f4c7e420e54eac9cabfd02f6fc0358e69cd40993",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.placement.TargetId": {
+      "title": "TargetId",
+      "x-ess-name": "spindle.placement.TargetId",
+      "x-ess-kind": "newtype",
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.placement.TargetKind.schema.json",
+  "$ref": "#/$defs/spindle.placement.TargetKind",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "7b7a73a462a8f72175be1029a8e0d7b3d466b6c4c89cb0c694ac14a157a4d594",
+    "contract_digest": "slice-sha256/2:e5f63be100b64a33446bdab5d27eedccca3fa5363c2a6bc3b2d3483827546a28",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.placement.TargetKind": {
+      "title": "TargetKind",
+      "x-ess-name": "spindle.placement.TargetKind",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "Process",
+        "QemuMicrovm",
+        "Firecracker",
+        "Docker",
+        "Compose",
+        "Kubernetes",
+        "Browser"
+      ]
+    }
+  }
+}

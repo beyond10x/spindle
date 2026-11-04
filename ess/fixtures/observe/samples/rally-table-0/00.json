@@ -1,0 +1,278 @@
+{
+  "instance_id": "rally-table-0",
+  "sequence": 0,
+  "at": "2026-11-04T10:00:01Z",
+  "period_ms": 1000,
+  "counters": [
+    {
+      "name": "command.rally.table.MovePaddle.no-such-match",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.MovePaddle.match-over",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.MovePaddle.at-edge",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.MovePaddle.west-up",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.MovePaddle.west-down",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.MovePaddle.east-up",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.MovePaddle.east-down",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.OpenMatch.target-too-low",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.OpenMatch.opened",
+      "value": 1
+    },
+    {
+      "name": "command.rally.table.Tick.no-such-match",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.Tick.match-over",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.Tick.served",
+      "value": 1
+    },
+    {
+      "name": "command.rally.table.Tick.east-wins",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.Tick.east-scores",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.Tick.west-wins",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.Tick.west-scores",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.Tick.west-returns",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.Tick.east-returns",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.Tick.top-wall",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.Tick.bottom-wall",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.Tick.moved-east-up",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.Tick.moved-east-down",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.Tick.moved-west-up",
+      "value": 0
+    },
+    {
+      "name": "command.rally.table.Tick.moved-west-down",
+      "value": 0
+    },
+    {
+      "name": "event.rally.table.BallMoved.appended",
+      "value": 2
+    },
+    {
+      "name": "event.rally.table.MatchWon.appended",
+      "value": 0
+    },
+    {
+      "name": "event.rally.table.PaddleMoved.appended",
+      "value": 0
+    },
+    {
+      "name": "event.rally.table.PointScored.appended",
+      "value": 0
+    },
+    {
+      "name": "store.rows_written",
+      "value": 2
+    },
+    {
+      "name": "store.bytes_written",
+      "value": 192
+    },
+    {
+      "name": "binding.east-moves.sent",
+      "value": 0
+    },
+    {
+      "name": "binding.east-moves.delivered",
+      "value": 0
+    },
+    {
+      "name": "binding.east-moves.redelivered",
+      "value": 0
+    },
+    {
+      "name": "binding.east-moves.dropped",
+      "value": 0
+    },
+    {
+      "name": "binding.east-watches.sent",
+      "value": 1
+    },
+    {
+      "name": "binding.east-watches.delivered",
+      "value": 1
+    },
+    {
+      "name": "binding.east-watches.redelivered",
+      "value": 0
+    },
+    {
+      "name": "binding.east-watches.dropped",
+      "value": 0
+    },
+    {
+      "name": "binding.west-moves.sent",
+      "value": 0
+    },
+    {
+      "name": "binding.west-moves.delivered",
+      "value": 0
+    },
+    {
+      "name": "binding.west-moves.redelivered",
+      "value": 0
+    },
+    {
+      "name": "binding.west-moves.dropped",
+      "value": 0
+    },
+    {
+      "name": "binding.west-watches.sent",
+      "value": 1
+    },
+    {
+      "name": "binding.west-watches.delivered",
+      "value": 1
+    },
+    {
+      "name": "binding.west-watches.redelivered",
+      "value": 0
+    },
+    {
+      "name": "binding.west-watches.dropped",
+      "value": 0
+    },
+    {
+      "name": "timer.tick.fired",
+      "value": 1
+    },
+    {
+      "name": "timer.tick.late",
+      "value": 0
+    },
+    {
+      "name": "timer.tick.dropped",
+      "value": 0
+    }
+  ],
+  "histograms": [
+    {
+      "name": "command.rally.table.MovePaddle.duration_us",
+      "bounds": [
+        50,
+        100,
+        250,
+        500,
+        1000
+      ],
+      "counts": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "command.rally.table.OpenMatch.duration_us",
+      "bounds": [
+        50,
+        100,
+        250,
+        500,
+        1000
+      ],
+      "counts": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "command.rally.table.Tick.duration_us",
+      "bounds": [
+        50,
+        100,
+        250,
+        500,
+        1000
+      ],
+      "counts": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "recent": [
+    {
+      "at": "2026-11-04T10:00:01.002Z",
+      "command": "rally.table.Tick",
+      "outcome": "served",
+      "events": [
+        "rally.table.BallMoved"
+      ],
+      "payload": "{\"match_id\":\"m-1\",\"ball_x\":0,\"ball_y\":0}"
+    }
+  ],
+  "resources": {
+    "cpu_seconds": 0.004,
+    "memory_bytes": 40265318,
+    "cpu_share": 0.004,
+    "memory_share": 0.3
+  },
+  "dropped_frames": 0
+}

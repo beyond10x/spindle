@@ -49,6 +49,7 @@ use ess_domain::binding::periodic::{
 
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use ess_domain::binding::BindingName;
+use spindle_telemetry::{Sink, Timed};
 
 /// One due occurrence of a periodic binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,6 +120,7 @@ struct Schedule {
     lifetime: u64,
     dropped: u64,
     run: Run,
+    sink: Sink,
 }
 
 #[derive(Debug)]
@@ -150,11 +152,34 @@ impl Timer {
                     lifetime: 0,
                     dropped: 0,
                     run: Run::Inactive,
+                    sink: Sink::default(),
                 };
                 Some((binding.name.clone(), schedule))
             })
             .collect();
         Self { schedules }
+    }
+
+    /// Records every tick fired, late or dropped into `sink`, for every binding.
+    #[must_use]
+    pub fn with_telemetry(mut self, sink: Sink) -> Self {
+        for schedule in self.schedules.values_mut() {
+            schedule.sink = sink.clone();
+        }
+        self
+    }
+
+    /// Records every tick of `binding` fired, late or dropped into `sink`.
+    ///
+    /// A tick is late when it is yielded at or after the deadline that follows its own: it waited
+    /// a whole period.
+    pub fn bind_telemetry(
+        &mut self,
+        binding: &BindingName,
+        sink: Sink,
+    ) -> Result<(), LifetimeError> {
+        self.schedule(binding)?.sink = sink;
+        Ok(())
     }
 
     /// The periodic bindings of `ir`, every one activated at `clock.now()`.
@@ -249,15 +274,22 @@ impl Timer {
             let Run::Active(grid) = &mut schedule.run else {
                 continue;
             };
-            schedule.dropped = schedule
-                .dropped
-                .saturating_add(grid.observe(schedule.period, now));
+            let dropped = grid.observe(schedule.period, now);
+            schedule.dropped = schedule.dropped.saturating_add(dropped);
+            schedule.sink.timed(name.as_str(), Timed::Dropped, dropped);
             if grid.open.is_some() {
                 continue;
             }
             if let Some(deadline) = grid.pending.filter(|deadline| *deadline <= now) {
                 grid.pending = None;
                 grid.open = Some(deadline);
+                schedule.sink.timed(name.as_str(), Timed::Fired, 1);
+                let late = deadline
+                    .checked_add(Duration::from_millis(schedule.period.milliseconds()))
+                    .is_some_and(|next| next <= now);
+                if late {
+                    schedule.sink.timed(name.as_str(), Timed::Late, 1);
+                }
                 ticks.push(Tick {
                     binding: name.clone(),
                     command: schedule.command.clone(),

@@ -1,0 +1,9 @@
+components:
+  - component: board
+    owns:
+      domains: [tasks.board]
+    accepts:
+      commands: [tasks.board.OpenTask, tasks.board.CloseTask]
+    publishes:
+      events: [tasks.board.TaskOpened, tasks.board.TaskClosed]
+    reached_by: in_process

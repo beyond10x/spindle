@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.Counter.schema.json",
+  "$ref": "#/$defs/spindle.observe.Counter",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "7b7a73a462a8f72175be1029a8e0d7b3d466b6c4c89cb0c694ac14a157a4d594",
+    "contract_digest": "slice-sha256/2:3a5270108a047f8c235106af6b1ac366183144b2d4e47f711b5286250a4872a1",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.Counter": {
+      "title": "Counter",
+      "description": "One counter of the catalogue, by its dotted name, such as `command.rally.table.Tick.served`.",
+      "x-ess-name": "spindle.observe.Counter",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/spindle.observe.CounterKind"
+        },
+        "source": {
+          "$ref": "#/$defs/spindle.observe.CounterSource"
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "spindle.observe.CounterKind": {
+      "title": "CounterKind",
+      "x-ess-name": "spindle.observe.CounterKind",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "counter",
+        "histogram"
+      ]
+    },
+    "spindle.observe.CounterSource": {
+      "title": "CounterSource",
+      "x-ess-name": "spindle.observe.CounterSource",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "kernel",
+        "store",
+        "channel",
+        "timer",
+        "ingress",
+        "view",
+        "resource"
+      ]
+    }
+  }
+}

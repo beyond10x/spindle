@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::{
-    PrecedencePlan, ResolvedCommand, ResolvedCondition, ResolvedEffect, ResolvedEntity,
-    ResolvedField, ResolvedInstance, ResolvedOutcome,
+    EventHandle, PrecedencePlan, ResolvedCommand, ResolvedCondition, ResolvedEffect,
+    ResolvedEntity, ResolvedField, ResolvedInstance, ResolvedOutcome,
 };
 use ess_domain::command::precedence::Phase;
 use ess_primitives::predicate::{Predicate, Truth};
@@ -13,6 +13,7 @@ use serde_json::{Map, Value};
 
 use crate::decider::{Decider, External};
 use crate::facts::Facts;
+use crate::mint::{IDENTITY_MINT, Identity, Mint, UuidV4};
 use crate::store::{Change, Row, Store, Stored};
 use crate::values::Sources;
 use crate::{DeclaredError, Event, ExecuteError, Executed};
@@ -25,7 +26,7 @@ const EXTERNAL: &str = "external.";
 ///
 /// Reads the instance the command addresses, selects the outcome, and commits that outcome's
 /// change in one [`Store::commit`]. A refusal, a `preserves:` outcome and a `refuses: false`
-/// outcome commit nothing.
+/// outcome commit nothing. An identity the runtime mints is a random UUIDv4 ([`UuidV4`]).
 ///
 /// # Errors
 /// [`ExecuteError`] where the command does not run; the store is then unchanged.
@@ -36,12 +37,31 @@ pub fn execute(
     command: &str,
     input: &Map<String, Value>,
 ) -> Result<Executed, ExecuteError> {
+    execute_minting(ir, store, decider, &mut UuidV4, command, input)
+}
+
+/// [`execute`], minting every identity the runtime mints through `mint`.
+///
+/// A `creates:` outcome whose identity is neither an input nor a payload source asks `mint` once,
+/// and the value is the new instance's identity and every event payload field of the identity's
+/// name.
+///
+/// # Errors
+/// As [`execute`].
+pub fn execute_minting(
+    ir: &EssIr,
+    store: &mut dyn Store,
+    decider: &mut dyn Decider,
+    mint: &mut dyn Mint,
+    command: &str,
+    input: &Map<String, Value>,
+) -> Result<Executed, ExecuteError> {
     let spec = ir
         .commands()
         .iter()
         .find_map(|(name, spec)| (name.to_string() == command).then_some(spec))
         .ok_or_else(|| ExecuteError::UnknownCommand(command.to_owned()))?;
-    crate::supported::check(spec)?;
+    crate::supported::check(ir, spec)?;
     check_input(ir, spec, input)?;
     let addressed = addressed(ir, spec)?;
     let held = match addressed {
@@ -70,6 +90,8 @@ pub fn execute(
         store,
         decider,
         held,
+        mint,
+        minted: None,
     };
     match run.select()? {
         Selected::Outcome(outcome) => run.take(outcome),
@@ -100,6 +122,9 @@ struct Run<'a, 'ir> {
     store: &'a mut dyn Store,
     decider: &'a mut dyn Decider,
     held: Option<Addressed<'ir>>,
+    mint: &'a mut dyn Mint,
+    /// The identity this run minted, under the identity field's name.
+    minted: Option<(String, Value)>,
 }
 
 impl<'ir> Run<'_, 'ir> {
@@ -337,25 +362,15 @@ impl<'ir> Run<'_, 'ir> {
         let entity = self.ir.entity(&subject.entity);
         let (change, events) = match (&subject.effect, &subject.instance) {
             (ResolvedEffect::Creates, ResolvedInstance::Observed { event, field }) => {
-                let identity = outcome
-                    .payload
-                    .iter()
-                    .filter(|payload| payload.event == *event)
-                    .flat_map(|payload| &payload.fields)
-                    .find(|source| source.target == field.name)
-                    .map(|source| self.sources(None).value(source))
-                    .transpose()?
-                    .flatten()
-                    .ok_or_else(|| ExecuteError::Unsupported {
-                        construct: format!(
-                            "a creation whose identity `{}.{}` the outcome does not determine, \
-                             in `{}/{}`",
-                            event.name(),
-                            field.name,
-                            self.command,
-                            outcome.name.as_str()
-                        ),
-                    })?;
+                if let Some((created, named)) = crate::mint::slot(self.ir, outcome) {
+                    let minted = self.mint_identity(outcome, created, named)?;
+                    self.minted = Some((named.name.clone(), minted));
+                }
+                let identity = if let Some((_, minted)) = &self.minted {
+                    minted.clone()
+                } else {
+                    self.determined_identity(outcome, event, field)?
+                };
                 if self
                     .store
                     .load(&entity.name.to_string(), &identity)?
@@ -444,6 +459,62 @@ impl<'ir> Run<'_, 'ir> {
         })
     }
 
+    /// The identity a creation's payload determines for the new instance, published in `field` of
+    /// `event`.
+    fn determined_identity(
+        &self,
+        outcome: &ResolvedOutcome,
+        event: &EventHandle,
+        field: &ResolvedField,
+    ) -> Result<Value, ExecuteError> {
+        outcome
+            .payload
+            .iter()
+            .filter(|payload| payload.event == *event)
+            .flat_map(|payload| &payload.fields)
+            .find(|source| source.target == field.name)
+            .map(|source| self.sources(None).value(source))
+            .transpose()?
+            .flatten()
+            .ok_or_else(|| ExecuteError::Unsupported {
+                construct: format!(
+                    "a creation whose identity `{}.{}` the outcome does not determine, in `{}/{}`",
+                    event.name(),
+                    field.name,
+                    self.command,
+                    outcome.name.as_str()
+                ),
+            })
+    }
+
+    /// Asks the mint for the identity of the instance `outcome` creates, as the identity's type
+    /// spells it, and refuses one that is not a value of that type.
+    fn mint_identity(
+        &mut self,
+        outcome: &ResolvedOutcome,
+        entity: &ResolvedEntity,
+        field: &ResolvedField,
+    ) -> Result<Value, ExecuteError> {
+        let entity_name = entity.name.to_string();
+        let uuid = self.mint.uuid(&Identity {
+            capability: IDENTITY_MINT,
+            command: self.command,
+            outcome: outcome.name.as_str(),
+            entity: &entity_name,
+            field: &field.name,
+        });
+        let minted = Value::String(uuid.hyphenated().to_string());
+        crate::typed::validate(self.ir, &entity.identity.type_ref, &minted).map_err(|error| {
+            ExecuteError::InvalidValue(format!(
+                "the identity minted for `{entity_name}.{}` in `{}/{}` would hold {error}",
+                field.name,
+                self.command,
+                outcome.name.as_str()
+            ))
+        })?;
+        Ok(minted)
+    }
+
     /// Refuses a change that leaves its instance breaking an invariant its entity declares, as
     /// ESS's `at_rest` does. An invariant the row leaves `Unknown`, reading a field no outcome has
     /// written, concludes nothing.
@@ -466,6 +537,10 @@ impl<'ir> Run<'_, 'ir> {
             input: self.input,
             before,
             error: false,
+            minted: self
+                .minted
+                .as_ref()
+                .map(|(name, value)| (name.as_str(), value)),
         }
     }
 
@@ -485,9 +560,20 @@ impl<'ir> Run<'_, 'ir> {
                     .iter()
                     .find(|payload| payload.event == *event)
                     .map_or(&[][..], |payload| payload.fields.as_slice());
+                let mut payload = sources.object(fields)?;
+                // A minted identity is published in every field of its name the event declares,
+                // where the outcome gives that field no source of its own.
+                if let Some((name, minted)) = &self.minted
+                    && !fields.iter().any(|source| source.target == *name)
+                    && self.ir.events().get(event.name()).is_some_and(|declared| {
+                        declared.fields.iter().any(|field| field.name == *name)
+                    })
+                {
+                    payload.insert(name.clone(), minted.clone());
+                }
                 Ok(Event {
                     name: event.name().to_string(),
-                    payload: sources.object(fields)?,
+                    payload,
                 })
             })
             .collect()

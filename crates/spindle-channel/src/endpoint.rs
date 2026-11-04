@@ -10,6 +10,7 @@ use crate::channel::{Channel, ChannelError};
 use crate::model::{DeliveryId, Envelope, Event, Frame};
 use crate::outbox::Outbox;
 use crate::route::Router;
+use spindle_telemetry::{Carried, Sink};
 
 /// How long an `at_least_once` envelope waits for its acknowledgement unless configured.
 pub const DEFAULT_ACKNOWLEDGEMENT_TIMEOUT: Duration = Duration::from_secs(1);
@@ -37,6 +38,7 @@ pub struct Sender {
     retry: Vec<Envelope>,
     timeout: Duration,
     next: u64,
+    sink: Sink,
 }
 
 impl Sender {
@@ -54,6 +56,7 @@ impl Sender {
             retry: Vec::new(),
             timeout: DEFAULT_ACKNOWLEDGEMENT_TIMEOUT,
             next: 1,
+            sink: Sink::default(),
         })
     }
 
@@ -62,6 +65,13 @@ impl Sender {
     #[must_use]
     pub fn with_acknowledgement_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Records every envelope sent, redelivered or dropped into `sink`, by binding.
+    #[must_use]
+    pub fn with_telemetry(mut self, sink: Sink) -> Self {
+        self.sink = sink;
         self
     }
 
@@ -219,9 +229,11 @@ impl Sender {
             flight.sent_at = now;
             let envelope = flight.envelope.clone();
             let to = envelope.to.clone();
+            let binding = envelope.binding.clone();
             if let Err(error) = send(&mut self.channels, envelope) {
                 failures.push((to, error));
             } else {
+                self.sink.carried(&binding, Carried::Redelivered);
                 resent += 1;
             }
         }
@@ -250,12 +262,29 @@ impl Sender {
             && envelope.on_failure == Failure::Retry)
             .then(|| envelope.clone());
         let to = envelope.to.clone();
+        let binding = envelope.binding.clone();
+        let first = envelope.attempt == 1;
+        let tracked = envelope.delivery == Delivery::AtLeastOnce;
         match send(&mut self.channels, envelope) {
-            Ok(()) => *sent += 1,
+            Ok(()) => {
+                self.sink.carried(
+                    &binding,
+                    if first {
+                        Carried::Sent
+                    } else {
+                        Carried::Redelivered
+                    },
+                );
+                *sent += 1;
+            }
             Err(error) => {
-                if let Some(mut envelope) = again {
-                    envelope.attempt += 1;
-                    self.retry.push(envelope);
+                match again {
+                    Some(mut envelope) => {
+                        envelope.attempt += 1;
+                        self.retry.push(envelope);
+                    }
+                    None if !tracked => self.sink.carried(&binding, Carried::Dropped),
+                    None => {}
                 }
                 failures.push((to, error));
             }
@@ -292,6 +321,7 @@ fn settle(done: usize, failures: Vec<(String, ChannelError)>) -> Result<usize, C
 pub struct Receiver {
     component: String,
     channel: Box<dyn Channel>,
+    sink: Sink,
 }
 
 impl Receiver {
@@ -300,11 +330,38 @@ impl Receiver {
         Self {
             component: component.to_owned(),
             channel: Box::new(channel),
+            sink: Sink::default(),
         }
+    }
+
+    /// Records every envelope delivered or discarded into `sink`, by binding.
+    #[must_use]
+    pub fn with_telemetry(mut self, sink: Sink) -> Self {
+        self.sink = sink;
+        self
     }
 
     /// The next envelope, waiting at most `wait`; `None` when none arrived.
     pub fn receive(&mut self, wait: Duration) -> Result<Option<Envelope>, ChannelError> {
+        let envelope = self.take(wait)?;
+        if let Some(envelope) = &envelope {
+            self.sink.carried(&envelope.binding, Carried::Delivered);
+        }
+        Ok(envelope)
+    }
+
+    /// Takes every envelope already waiting off the channel without handing it on; returns how
+    /// many. Each is recorded as dropped, not delivered.
+    pub fn discard(&mut self) -> Result<usize, ChannelError> {
+        let mut discarded = 0;
+        while let Some(envelope) = self.take(Duration::ZERO)? {
+            self.sink.carried(&envelope.binding, Carried::Dropped);
+            discarded += 1;
+        }
+        Ok(discarded)
+    }
+
+    fn take(&mut self, wait: Duration) -> Result<Option<Envelope>, ChannelError> {
         match self.channel.receive(wait)? {
             None => Ok(None),
             Some(Frame::Deliver(envelope)) if envelope.to == self.component => Ok(Some(envelope)),

@@ -59,8 +59,8 @@ jobs:
 
       - name: Install ess
         env:
-          ESS_VERSION: '0.85.0'
-          ESS_SHA256: 14394f0c0048cdd4b9b238b5d70d15bde68f05306f41512b1bfdbeea9d1c44fa
+          ESS_VERSION: '0.86.0'
+          ESS_SHA256: 9a77aabd82bf447d698313503daf2eff4ad3db6a1341e5423131c3b85b5d0fd5
         run: |
           set -o pipefail
           archive="ess-$ESS_VERSION-x86_64-unknown-linux-gnu"
@@ -70,6 +70,16 @@ jobs:
           tar -xzf "$RUNNER_TEMP/$archive.tar.gz" -C "$RUNNER_TEMP"
           install -D -m 755 "$RUNNER_TEMP/$archive/ess" "$RUNNER_TEMP/bin/ess"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 11.9.0
+          cache: true
+          cache_dependency_path: ui/pnpm-lock.yaml
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 

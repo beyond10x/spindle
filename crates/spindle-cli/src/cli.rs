@@ -38,6 +38,20 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Print the counters an instance of one component reports, derived from the specification.
+    ///
+    /// One line per counter or histogram: its name, its kind and the part of the runtime that
+    /// measures it.
+    Metrics {
+        /// The specification directory.
+        spec: PathBuf,
+        /// The component.
+        #[arg(long)]
+        component: String,
+        /// Print JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Admit a specification against an environment: bind every capability or name what is missing.
     ///
     /// Exits 0 when admitted and 3 when refused.
@@ -60,6 +74,10 @@ pub enum Command {
     /// `"external": {"<outcome>": true | false}` answering the command's external causes. Each
     /// line prints one JSON result: the outcome with its events and declared error, or a failure.
     /// Exits 3, running nothing, when admission is refused.
+    ///
+    /// An external cause the line does not answer is answered by `--decisions`, then by
+    /// `--answer-default`; one nothing answers fails that line, naming the outcome, and the run
+    /// goes on.
     Run {
         /// The specification directory.
         spec: PathBuf,
@@ -69,6 +87,14 @@ pub enum Command {
         /// The state file: required where `store.durable` is bound to `sqlite`, refused otherwise.
         #[arg(long)]
         state: Option<PathBuf>,
+        /// A TOML file of answers, `<outcome> = true | false`, at the top level for every command
+        /// or under a `["<command>"]` table for one; a command's table wins over the top level.
+        #[arg(long)]
+        decisions: Option<PathBuf>,
+        /// Answer every remaining external cause "does not hold" on a command that declares a
+        /// default branch, so the model selects as it would without it.
+        #[arg(long)]
+        answer_default: bool,
     },
     /// Play the rally example in this terminal: every component in one process, one tick per
     /// period of its periodic binding, the grid redrawn after each.

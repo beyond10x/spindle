@@ -48,6 +48,7 @@ model, and the `microvm` environment provides nothing for it. Exit status 3 mean
 | `ingress.command_line` | a component `reached_by: command_line` |
 | `projection` | a view with `consistency: eventual` |
 | `external.<command>.<outcome>` | an outcome whose condition is `external:` |
+| `identity.mint` | a `creates:` outcome whose identity is neither an input nor a payload source (`{generated: true}`); a `Uuid` identity is minted as a UUIDv4 (`uuid-v4`) |
 
 ## Environment
 
@@ -75,6 +76,7 @@ prefix; an exact key wins over it.
 - `crates/spindle-timer`, `crates/spindle-channel` — periodic bindings and event bindings.
 - `crates/spindle-target` — the deployment target contract and the process launcher.
 - `crates/spindle-qemu`, `crates/spindle-firecracker` — microVM launchers.
+- `crates/spindle-telemetry` — counters and histograms per instance, and their catalogue derived from the specification.
 - `crates/spindle-host` — runs every component of a system in one process.
 - `crates/spindle-cli` — the `b10x-spindle` binary.
 - `crates/spindle-docs` — generates the site's CLI reference and status page.

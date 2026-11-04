@@ -6,6 +6,7 @@
 //! is not run at all, because selecting among its outcomes without understanding one of them would
 //! be a guess.
 
+use ess_compiler::EssIr;
 use ess_compiler::ir::{
     ResolvedCommand, ResolvedCondition, ResolvedEffect, ResolvedInstance, ResolvedOutcome,
     ResolvedPayloadField, ResolvedPayloadValue,
@@ -14,7 +15,7 @@ use ess_compiler::ir::{
 use crate::ExecuteError;
 
 /// Refuses `command` when any outcome declares a construct the kernel does not run.
-pub(crate) fn check(command: &ResolvedCommand) -> Result<(), ExecuteError> {
+pub(crate) fn check(ir: &EssIr, command: &ResolvedCommand) -> Result<(), ExecuteError> {
     for outcome in &command.outcomes {
         let refuse = |what: &str| {
             Err(ExecuteError::Unsupported {
@@ -27,12 +28,29 @@ pub(crate) fn check(command: &ResolvedCommand) -> Result<(), ExecuteError> {
         if let Some(what) = shape(outcome) {
             return refuse(what);
         }
+        let minted = crate::mint::slot(ir, outcome);
+        if let Some((entity, field)) = minted
+            && !crate::mint::is_uuid(ir, &entity.identity.type_ref)
+        {
+            return refuse(&format!(
+                "a creation whose identity `{}.{}` of type `{}` neither the input nor the outcome \
+                 determines; the runtime mints only a `Uuid` identity",
+                entity.name, field.name, entity.identity.type_ref
+            ));
+        }
         for field in outcome
             .sets
             .iter()
             .chain(outcome.payload.iter().flat_map(|payload| &payload.fields))
             .chain(&outcome.error_payload)
         {
+            // `{generated: true}` in a payload field of the minted identity's name is the mint.
+            if matches!(field.value, ResolvedPayloadValue::Generated { .. })
+                && minted.is_some_and(|(_, identity)| identity.name == field.target)
+                && field.conversion.is_none()
+            {
+                continue;
+            }
             if let Some(what) = value(field) {
                 return refuse(&what);
             }

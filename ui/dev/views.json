@@ -1,0 +1,36 @@
+{
+  "rally-table": {
+    "rally.table.MatchState": {
+      "match_id": "m-1",
+      "state": "Serving",
+      "ball_x": 8,
+      "ball_y": 4,
+      "heading_x": "West",
+      "heading_y": "Down",
+      "west_paddle_y": 2,
+      "east_paddle_y": 2,
+      "west_score": 0,
+      "east_score": 3,
+      "target_score": 5,
+      "west_needs": 5,
+      "east_needs": 2,
+      "winner": null
+    }
+  },
+  "rally-player-west": {
+    "rally.west.PlayerState": {
+      "match_id": "m-1",
+      "paddle_y": 2,
+      "ball_x": 8,
+      "ball_y": 4
+    }
+  },
+  "rally-player-east": {
+    "rally.east.PlayerState": {
+      "match_id": "m-1",
+      "paddle_y": 2,
+      "ball_x": 8,
+      "ball_y": 4
+    }
+  }
+}
