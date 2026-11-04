@@ -1,0 +1,77 @@
+domain: notice.sink
+types:
+  - name: notice.sink.BoardId
+    kind: newtype
+    of: String
+entities:
+  - name: notice.sink.Board
+    identity:
+      name: board_id
+      type: notice.sink.BoardId
+    fields:
+      - name: last
+        type: Optional<String>
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+errors:
+  - name: notice.sink.NoBoard
+    summary: No board carries the id the command names.
+    fields:
+      - name: board_id
+        type: notice.sink.BoardId
+commands:
+  - name: notice.sink.OpenBoard
+    input:
+      - name: board_id
+        type: notice.sink.BoardId
+    outcomes:
+      - name: opened
+        creates: notice.sink.Board
+        instance: board_id
+        emits: [notice.sink.BoardOpened]
+        payload:
+          notice.sink.BoardOpened:
+            board_id: input.board_id
+  - name: notice.sink.Pin
+    input:
+      - name: board_id
+        type: notice.sink.BoardId
+      - name: beat
+        type: String
+    outcomes:
+      - name: no-board
+        unknown_instance: true
+        error: notice.sink.NoBoard
+        summary: No board yet, so nothing is pinned.
+      - name: pinned
+        updates: notice.sink.Board
+        instance: board_id
+        sets:
+          last: input.beat
+        emits: [notice.sink.Pinned]
+        payload:
+          notice.sink.Pinned:
+            board_id: input.board_id
+            beat: input.beat
+events:
+  - name: notice.sink.BoardOpened
+    fields:
+      - name: board_id
+        type: notice.sink.BoardId
+  - name: notice.sink.Pinned
+    fields:
+      - name: board_id
+        type: notice.sink.BoardId
+      - name: beat
+        type: String
+views:
+  - name: notice.sink.BoardState
+    source: notice.sink.Board
+    consistency: read_your_writes
+    fields:
+      - name: board_id
+        type: notice.sink.BoardId
+      - name: last
+        type: Optional<String>

@@ -1,0 +1,9 @@
+components:
+  - component: memo
+    owns:
+      domains: [memo.notes]
+    accepts:
+      commands: [memo.notes.Write]
+    publishes:
+      events: [memo.notes.Written]
+    reached_by: in_process

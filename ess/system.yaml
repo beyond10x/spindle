@@ -9,3 +9,4 @@ summary: >-
 
 domains:
   - spindle.deployment
+  - spindle.placement

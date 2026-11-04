@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-04T10:52:47Z",
+  "actor": "human:timo",
+  "artifact": "story:firecracker-launcher",
+  "kind": "story",
+  "revision": 5,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "task check on wave/1 9080be7: 146 passed, 0 failed, 18 ignored; VM tests of spindle-qemu and spindle-firecracker passed with --include-ignored"
+  }
+}

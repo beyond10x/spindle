@@ -1,0 +1,17 @@
+domain: relay.source
+events:
+  - name: relay.source.Pulsed
+    fields:
+      - name: beat
+        type: String
+commands:
+  - name: relay.source.Pulse
+    input:
+      - name: beat
+        type: String
+    outcomes:
+      - name: pulsed
+        emits: [relay.source.Pulsed]
+        payload:
+          relay.source.Pulsed:
+            beat: input.beat

@@ -1,0 +1,710 @@
+//! The host: every component of one system in one process.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use ess_compiler::EssIr;
+use ess_compiler::ir::ResolvedMappingValue;
+use ess_domain::binding::Failure;
+use serde_json::{Map, Value};
+use spindle_capability::{Capability, Environment};
+use spindle_channel::{ChannelError, Receiver, RouteError, Router, Sender, in_process};
+use spindle_kernel::{
+    DeclaredError, ExecuteError, Executed, MemoryStore, NoExternals, SqliteStore, Store, StoreError,
+};
+use spindle_timer::{BindingName, Clock, CompleteError, LifetimeError, Timer};
+
+use crate::admission::{Placements, Refusal, admit};
+
+/// The channel implementation this host carries bindings on.
+const IN_PROCESS: &str = "in-process";
+
+/// Why a command ran.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Cause {
+    /// [`Host::submit`] was asked to run it.
+    Submitted,
+    /// A periodic binding fell due.
+    Tick {
+        /// The binding.
+        binding: String,
+    },
+    /// An event binding carried it from another component.
+    Delivered {
+        /// The binding.
+        binding: String,
+    },
+}
+
+/// One command a component ran.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ran {
+    /// The component that ran it.
+    pub component: String,
+    /// The command.
+    pub command: String,
+    /// Why it ran.
+    pub cause: Cause,
+    /// What it did.
+    pub executed: Executed,
+}
+
+/// One command a tick or a binding invoked that did not execute. Nothing was written, and the
+/// host does not run it again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Failed {
+    /// The component that was to run it.
+    pub component: String,
+    /// The command.
+    pub command: String,
+    /// Why it was invoked.
+    pub cause: Cause,
+    /// The kernel's error, as text.
+    pub error: String,
+}
+
+/// One command a tick or a binding invoked that the model refused: its outcome declares an error.
+/// Nothing was written, and the host does not run it again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefusedCommand {
+    /// The component that ran it.
+    pub component: String,
+    /// The command.
+    pub command: String,
+    /// Why it was invoked.
+    pub cause: Cause,
+    /// The refusing outcome.
+    pub outcome: String,
+    /// The error that outcome declares.
+    pub error: DeclaredError,
+}
+
+/// Every command one call ran, in the order run: those that took effect, those the model refused,
+/// and those that did not execute.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Report {
+    /// The commands that executed and were not refused.
+    pub ran: Vec<Ran>,
+    /// The commands that did not execute.
+    pub failed: Vec<Failed>,
+    /// The commands whose outcome declares an error.
+    pub refused: Vec<RefusedCommand>,
+}
+
+/// How many envelopes one [`Host::submit`] or [`Host::advance`] delivers before it stops as a
+/// [`HostError::Runaway`]: bindings that trigger each other have no end of their own.
+pub const DELIVERY_LIMIT: usize = 10_000;
+
+/// The timer implementations this host runs: `spindle-timer`'s schedule, which the shipped
+/// environments name `tokio`.
+const TIMERS: &[&str] = &["tokio"];
+/// The clock implementations this host runs. A test injects its own clock through
+/// [`Host::new`].
+const CLOCKS: &[&str] = &["system"];
+
+/// Why the host did not start or could not go on.
+#[derive(Debug, thiserror::Error)]
+pub enum HostError {
+    /// The environment cannot run every component.
+    #[error("{0}")]
+    Refused(Refusal),
+    /// The specification, or a binding of the environment, uses something this host does not
+    /// run.
+    #[error("unsupported: {0}")]
+    Unsupported(String),
+    /// The event bindings cannot be routed.
+    #[error(transparent)]
+    Route(#[from] RouteError),
+    /// A channel failed.
+    #[error(transparent)]
+    Channel(#[from] ChannelError),
+    /// A store could not be opened or read.
+    #[error(transparent)]
+    Store(#[from] StoreError),
+    /// No component accepts the command.
+    #[error("no component accepts {0}")]
+    NotAccepted(String),
+    /// A command [`Host::submit`] was asked to run did not execute.
+    #[error("{component} did not run {command}: {error}")]
+    Execute {
+        /// The component.
+        component: String,
+        /// The command.
+        command: String,
+        /// The kernel's error.
+        error: Box<ExecuteError>,
+    },
+    /// No periodic binding has this name.
+    #[error("no periodic binding {0}")]
+    NotPeriodic(String),
+    /// The host context lacks a field the periodic binding declares.
+    #[error("binding {binding} needs the host context field {field}")]
+    Context {
+        /// The binding.
+        binding: String,
+        /// The field.
+        field: String,
+    },
+    /// A periodic binding's lifetime could not be started or stopped.
+    #[error(transparent)]
+    Lifetime(#[from] LifetimeError),
+    /// A tick could not be completed.
+    #[error(transparent)]
+    Complete(#[from] CompleteError),
+    /// No view has this name.
+    #[error("no view {0}")]
+    NoView(String),
+    /// The model refused a command [`Host::submit`] was asked to run: its outcome declares an
+    /// error. Nothing was written.
+    #[error("{component} refused {command} with {} {}", error.name, Value::Object(error.fields.clone()))]
+    CommandRefused {
+        /// The component.
+        component: String,
+        /// The command.
+        command: String,
+        /// The declared error.
+        error: DeclaredError,
+    },
+    /// One call delivered [`DELIVERY_LIMIT`] envelopes and more were still in flight; those
+    /// were discarded, and nothing runs after them.
+    #[error(
+        "stopped after {deliveries} deliveries in one call; these bindings kept triggering each other: {}",
+        bindings.iter().cloned().collect::<Vec<_>>().join(", ")
+    )]
+    Runaway {
+        /// How many envelopes were delivered.
+        deliveries: usize,
+        /// The bindings that carried them.
+        bindings: BTreeSet<String>,
+    },
+}
+
+struct Component {
+    store: Box<dyn Store>,
+    sender: Sender,
+    position: u64,
+}
+
+struct Periodic {
+    name: BindingName,
+    command: String,
+    component: String,
+    context_fields: Vec<String>,
+    mapping: Vec<(String, String)>,
+    context: Option<Map<String, Value>>,
+}
+
+/// Every component of one system, run in one process.
+///
+/// Each component has its own kernel store, bound to the implementation admission chose for it.
+/// Periodic bindings are scheduled by one [`Timer`] on the injected [`Clock`]; event bindings are
+/// carried by in-process channels, one per pair of components, and each envelope that arrives is
+/// executed as a command on the component it is addressed to. Everything runs on the calling
+/// thread: a call returns once no envelope is left in flight, or stops after [`DELIVERY_LIMIT`]
+/// deliveries.
+pub struct Host {
+    ir: EssIr,
+    clock: Arc<dyn Clock>,
+    placements: Placements,
+    components: BTreeMap<String, Component>,
+    receivers: Vec<Receiver>,
+    timer: Timer,
+    periodic: BTreeMap<String, Periodic>,
+}
+
+impl std::fmt::Debug for Host {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Host")
+            .field("placements", &self.placements)
+            .field("components", &self.components.keys().collect::<Vec<_>>())
+            .field("timer", &self.timer)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Host {
+    /// Admits every component of `ir` against `environment` and opens its store.
+    ///
+    /// A component whose state is bound to `sqlite` keeps it in `<state>/<component>.sqlite`; one
+    /// bound to `memory` keeps it in memory. No periodic binding is started yet.
+    ///
+    /// # Errors
+    /// [`HostError::Refused`] when a component is not admitted, naming everything every component
+    /// lacks; [`HostError::Unsupported`] when admission bound something this host does not run,
+    /// or the specification uses a binding it does not carry.
+    pub fn new(
+        ir: EssIr,
+        environment: &Environment,
+        clock: Arc<dyn Clock>,
+        state: &Path,
+    ) -> Result<Self, HostError> {
+        let placements = admit(&ir, environment).map_err(HostError::Refused)?;
+        for binding in ir.bindings().values() {
+            if binding.cause.event().is_some() && binding.failure != Failure::Drop {
+                return Err(HostError::Unsupported(format!(
+                    "binding {} says on_failure: {:?}; this host drops an invocation that fails and \
+                     neither retries nor escalates it",
+                    binding.name.as_str(),
+                    binding.failure
+                )));
+            }
+        }
+        let router = Router::from_ir(&ir)?;
+        let mut components = BTreeMap::new();
+        for (name, bindings) in &placements {
+            for binding in bindings {
+                let capability = binding.capability.as_str();
+                let implementation = binding.implementation.as_str();
+                let runs = |known: &[&str]| known.contains(&implementation);
+                let unsupported = if capability.starts_with(Capability::EXTERNAL_PREFIX) {
+                    Some("this host answers no external cause")
+                } else if capability == Capability::TIMER && !runs(TIMERS) {
+                    Some("this host runs no such timer")
+                } else if capability == Capability::CLOCK && !runs(CLOCKS) {
+                    Some("this host runs no such clock")
+                } else {
+                    None
+                };
+                if let Some(why) = unsupported {
+                    return Err(HostError::Unsupported(format!(
+                        "{name} has {capability} bound to {implementation}; {why}"
+                    )));
+                }
+            }
+            let bound = |capability: &str| {
+                bindings
+                    .iter()
+                    .find(|binding| binding.capability.as_str() == capability)
+                    .map(|binding| binding.implementation.as_str())
+            };
+            if let Some(channel) = bound(Capability::CHANNEL).filter(|bound| *bound != IN_PROCESS) {
+                return Err(HostError::Unsupported(format!(
+                    "{name} has its channel bound to {channel}; this host carries bindings {IN_PROCESS} only"
+                )));
+            }
+            let store: Box<dyn Store> = match bound(Capability::STORE_DURABLE)
+                .or_else(|| bound("store.ephemeral"))
+            {
+                None | Some("memory") => Box::new(MemoryStore::default()),
+                Some("sqlite") => {
+                    Box::new(SqliteStore::open(&state.join(format!("{name}.sqlite")))?)
+                }
+                Some(other) => {
+                    return Err(HostError::Unsupported(format!(
+                        "{name} has its state bound to {other}, which this host has no store for"
+                    )));
+                }
+            };
+            let sender = Sender::new(name, router.clone())?;
+            components.insert(
+                name.clone(),
+                Component {
+                    store,
+                    sender,
+                    position: 0,
+                },
+            );
+        }
+
+        let mut receivers = Vec::new();
+        let links = router
+            .routes()
+            .iter()
+            .map(|route| (route.from.clone(), route.to.clone()))
+            .collect::<BTreeSet<_>>();
+        for (from, to) in links {
+            let (near, far) = in_process::pair();
+            if let Some(component) = components.get_mut(&from) {
+                component.sender.connect(&to, near);
+            }
+            receivers.push(Receiver::new(&to, far));
+        }
+
+        let mut periodic = BTreeMap::new();
+        for binding in ir.bindings().values() {
+            let Some(cause) = binding.cause.periodic() else {
+                continue;
+            };
+            let name = binding.name.as_str().to_owned();
+            let command = binding.command.to_string();
+            let component =
+                accepting(&ir, &command).ok_or_else(|| HostError::NotAccepted(command.clone()))?;
+            if !cause.contract.host.read_fields.is_empty() {
+                return Err(HostError::Unsupported(format!(
+                    "binding {name} reads fresh host fields on each occurrence"
+                )));
+            }
+            let mut mapping = Vec::new();
+            for rule in &binding.mapping {
+                match &rule.value {
+                    ResolvedMappingValue::HostContext { field, .. } => {
+                        mapping.push((rule.target.clone(), field.clone()));
+                    }
+                    _ => {
+                        return Err(HostError::Unsupported(format!(
+                            "binding {name} fills {} from something other than its host context",
+                            rule.target
+                        )));
+                    }
+                }
+            }
+            periodic.insert(
+                name,
+                Periodic {
+                    name: binding.name.clone(),
+                    command,
+                    component,
+                    context_fields: cause
+                        .contract
+                        .host
+                        .context_fields
+                        .iter()
+                        .map(|field| field.name.clone())
+                        .collect(),
+                    mapping,
+                    context: None,
+                },
+            );
+        }
+
+        let timer = Timer::new(&ir);
+        Ok(Self {
+            ir,
+            clock,
+            placements,
+            components,
+            receivers,
+            timer,
+            periodic,
+        })
+    }
+
+    /// What admission bound for each component.
+    pub fn placements(&self) -> &Placements {
+        &self.placements
+    }
+
+    /// The names of the specification's periodic bindings.
+    pub fn periodic(&self) -> Vec<String> {
+        self.periodic.keys().cloned().collect()
+    }
+
+    /// Runs `command` on the component that accepts it, then everything its events lead to.
+    ///
+    /// # Errors
+    /// [`HostError::Execute`] when the command itself does not execute,
+    /// [`HostError::CommandRefused`] when the model refuses it, and [`HostError::Runaway`] when
+    /// what it leads to does not settle within [`DELIVERY_LIMIT`] deliveries; a failure or a
+    /// refusal further down is in the report.
+    pub fn submit(
+        &mut self,
+        command: &str,
+        input: Map<String, Value>,
+    ) -> Result<Report, HostError> {
+        let component = accepting(&self.ir, command)
+            .ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
+        let mut report = Report::default();
+        match self.execute(&component, command, &input)? {
+            Ok(Executed {
+                error: Some(error), ..
+            }) => {
+                return Err(HostError::CommandRefused {
+                    component,
+                    command: command.to_owned(),
+                    error,
+                });
+            }
+            Ok(executed) => report.ran.push(Ran {
+                component,
+                command: command.to_owned(),
+                cause: Cause::Submitted,
+                executed,
+            }),
+            Err(error) => {
+                return Err(HostError::Execute {
+                    component,
+                    command: command.to_owned(),
+                    error: Box::new(error),
+                });
+            }
+        }
+        self.settle(&mut report, &mut Deliveries::default())?;
+        Ok(report)
+    }
+
+    /// Starts the lifetime of the periodic binding `binding` at the clock's current instant,
+    /// with `context` as its host context: the lifetime-constant fields its mapping reads.
+    ///
+    /// # Errors
+    /// [`HostError::NotPeriodic`], [`HostError::Context`] when `context` lacks a declared field,
+    /// and [`HostError::Lifetime`] when the binding is already running.
+    pub fn start(&mut self, binding: &str, context: Map<String, Value>) -> Result<(), HostError> {
+        let periodic = self
+            .periodic
+            .get_mut(binding)
+            .ok_or_else(|| HostError::NotPeriodic(binding.to_owned()))?;
+        if let Some(field) = periodic
+            .context_fields
+            .iter()
+            .find(|field| context.get(*field).is_none_or(Value::is_null))
+        {
+            return Err(HostError::Context {
+                binding: binding.to_owned(),
+                field: field.clone(),
+            });
+        }
+        self.timer
+            .activate_binding(&periodic.name, self.clock.now())?;
+        periodic.context = Some(context);
+        Ok(())
+    }
+
+    /// Stops every running periodic binding.
+    pub fn stop(&mut self) {
+        self.timer.stop();
+    }
+
+    /// The earliest instant at which [`Self::advance`] can run a tick; `None` when no periodic
+    /// binding is running.
+    pub fn next_deadline(&self) -> Option<Instant> {
+        self.timer.next_deadline()
+    }
+
+    /// Runs every tick due at the clock's current instant, each followed by everything its events
+    /// lead to.
+    ///
+    /// The host context's eligibility (`host_boolean`) holds for every running binding: a binding
+    /// whose lifetime was started is eligible until it is stopped.
+    ///
+    /// # Errors
+    /// [`HostError`] when a channel or the timer fails, and [`HostError::Runaway`] when the ticks'
+    /// consequences do not settle within [`DELIVERY_LIMIT`] deliveries; the open tick is
+    /// completed all the same. A command that does not execute or is refused is in the report.
+    pub fn advance(&mut self) -> Result<Report, HostError> {
+        let mut report = Report::default();
+        let mut deliveries = Deliveries::default();
+        for tick in self.timer.due(self.clock.now()) {
+            let binding = tick.binding.as_str().to_owned();
+            let periodic = self
+                .periodic
+                .get(&binding)
+                .ok_or_else(|| HostError::NotPeriodic(binding.clone()))?;
+            let context = periodic.context.clone().unwrap_or_default();
+            let input = periodic
+                .mapping
+                .iter()
+                .filter_map(|(target, field)| {
+                    context
+                        .get(field)
+                        .map(|value| (target.clone(), value.clone()))
+                })
+                .collect::<Map<_, _>>();
+            let component = periodic.component.clone();
+            let command = periodic.command.clone();
+            let settled = self
+                .run(
+                    &component,
+                    &command,
+                    &input,
+                    Cause::Tick { binding },
+                    &mut report,
+                )
+                .and_then(|()| self.settle(&mut report, &mut deliveries));
+            self.timer.complete(&tick)?;
+            settled?;
+        }
+        Ok(report)
+    }
+
+    /// The row `view` answers for the instance `identity` names; `None` when no instance has it.
+    ///
+    /// The row is read from the store of the component that owns the view's source.
+    ///
+    /// # Errors
+    /// [`HostError::NoView`], [`HostError::Unsupported`] for a view that is more than a one-row
+    /// projection of its source, and [`HostError::Store`] when the store cannot be read.
+    pub fn view(
+        &mut self,
+        view: &str,
+        identity: &Value,
+    ) -> Result<Option<Map<String, Value>>, HostError> {
+        let declared = self
+            .ir
+            .views()
+            .iter()
+            .find_map(|(name, declared)| (name.to_string() == view).then_some(declared))
+            .ok_or_else(|| HostError::NoView(view.to_owned()))?;
+        if let Some(construct) = crate::view::unsupported(declared) {
+            return Err(HostError::Unsupported(format!(
+                "view {view} declares {construct}"
+            )));
+        }
+        let entity = self.ir.entity(&declared.source);
+        let owner = self
+            .ir
+            .components()
+            .values()
+            .find(|component| component.owns.contains(&entity.domain))
+            .map(|component| component.name.as_str().to_owned())
+            .ok_or_else(|| {
+                HostError::Unsupported(format!("no component owns {}", entity.domain))
+            })?;
+        let component = self
+            .components
+            .get_mut(&owner)
+            .ok_or_else(|| HostError::Unsupported(format!("{owner} is not running")))?;
+        let stored = component.store.load(&entity.name.to_string(), identity)?;
+        Ok(stored.map(|stored| crate::view::project(&self.ir, declared, identity, &stored.row)))
+    }
+
+    /// Executes one command on `component` and sends the events it emitted.
+    ///
+    /// The outer error is the host's own; the inner one is the command's.
+    fn execute(
+        &mut self,
+        component: &str,
+        command: &str,
+        input: &Map<String, Value>,
+    ) -> Result<Result<Executed, ExecuteError>, HostError> {
+        let held = self
+            .components
+            .get_mut(component)
+            .ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
+        let executed = match spindle_kernel::execute(
+            &self.ir,
+            held.store.as_mut(),
+            &mut NoExternals,
+            command,
+            input,
+        ) {
+            Ok(executed) => executed,
+            Err(error) => return Ok(Err(error)),
+        };
+        if !executed.events.is_empty() {
+            held.position += 1;
+            for event in &executed.events {
+                held.sender.publish(
+                    held.position,
+                    spindle_channel::Event {
+                        name: event.name.clone(),
+                        fields: event.payload.clone(),
+                    },
+                )?;
+            }
+            held.sender.mark_durable(held.position);
+            held.sender.flush()?;
+        }
+        Ok(Ok(executed))
+    }
+
+    fn run(
+        &mut self,
+        component: &str,
+        command: &str,
+        input: &Map<String, Value>,
+        cause: Cause,
+        report: &mut Report,
+    ) -> Result<(), HostError> {
+        match self.execute(component, command, input)? {
+            Ok(Executed {
+                outcome,
+                error: Some(error),
+                ..
+            }) => report.refused.push(RefusedCommand {
+                component: component.to_owned(),
+                command: command.to_owned(),
+                cause,
+                outcome,
+                error,
+            }),
+            Ok(executed) => report.ran.push(Ran {
+                component: component.to_owned(),
+                command: command.to_owned(),
+                cause,
+                executed,
+            }),
+            Err(error) => report.failed.push(Failed {
+                component: component.to_owned(),
+                command: command.to_owned(),
+                cause,
+                error: error.to_string(),
+            }),
+        }
+        Ok(())
+    }
+
+    /// Delivers every envelope in flight, and every one those commands send, until none is left
+    /// or the call has delivered [`DELIVERY_LIMIT`]; then discards what is still in flight and
+    /// stops as a [`HostError::Runaway`].
+    fn settle(
+        &mut self,
+        report: &mut Report,
+        deliveries: &mut Deliveries,
+    ) -> Result<(), HostError> {
+        loop {
+            let mut delivered = false;
+            for index in 0..self.receivers.len() {
+                while let Some(envelope) = self.receivers[index].receive(Duration::ZERO)? {
+                    if deliveries.count >= DELIVERY_LIMIT {
+                        self.discard()?;
+                        return Err(HostError::Runaway {
+                            deliveries: deliveries.count,
+                            bindings: std::mem::take(&mut deliveries.bindings),
+                        });
+                    }
+                    deliveries.count += 1;
+                    deliveries.bindings.insert(envelope.binding.clone());
+                    delivered = true;
+                    self.run(
+                        &envelope.to,
+                        &envelope.command.name,
+                        &envelope.command.fields,
+                        Cause::Delivered {
+                            binding: envelope.binding.clone(),
+                        },
+                        report,
+                    )?;
+                    self.receivers[index].acknowledge(&envelope)?;
+                }
+            }
+            if !delivered {
+                break;
+            }
+        }
+        for component in self.components.values_mut() {
+            component.sender.collect_acknowledgements(Duration::ZERO)?;
+        }
+        Ok(())
+    }
+
+    /// Takes every envelope still in flight off its channel without running it.
+    fn discard(&mut self) -> Result<(), HostError> {
+        for receiver in &mut self.receivers {
+            while receiver.receive(Duration::ZERO)?.is_some() {}
+        }
+        Ok(())
+    }
+}
+
+/// What one call has delivered so far.
+#[derive(Debug, Default)]
+struct Deliveries {
+    count: usize,
+    bindings: BTreeSet<String>,
+}
+
+/// The component that accepts `command`.
+fn accepting(ir: &EssIr, command: &str) -> Option<String> {
+    ir.components()
+        .values()
+        .find(|component| {
+            component
+                .accepts
+                .iter()
+                .any(|accepted| accepted.to_string() == command)
+        })
+        .map(|component| component.name.as_str().to_owned())
+}

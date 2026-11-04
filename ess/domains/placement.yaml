@@ -1,0 +1,390 @@
+domain: spindle.placement
+
+summary: >-
+  Where a deployment runs. A target is a place an instance can be launched: a host process, a
+  microVM, a container, a cluster, a browser. Each target names the environment it provides and the
+  most resources one instance may take there. An instance is one component of a deployment with its
+  settings; it is placed on a target within that ceiling, launched, and reported when it exits. The
+  specification never names a target; the operator places instances.
+
+naming:
+  wire: placements
+  display: Placements
+
+types:
+  - name: spindle.placement.TargetId
+    kind: newtype
+    of: String
+
+  - name: spindle.placement.InstanceId
+    kind: newtype
+    of: String
+
+  - name: spindle.placement.TargetKind
+    kind: enum
+    variants: [Process, QemuMicrovm, Firecracker, Docker, Compose, Kubernetes, Browser]
+
+  - name: spindle.placement.Resources
+    kind: struct
+    fields:
+      - name: vcpus
+        type: Integer
+      - name: memory_mib
+        type: Integer
+      - name: disk_mib
+        type: Integer
+
+  - name: spindle.placement.Setting
+    kind: struct
+    fields:
+      - name: name
+        type: String
+      - name: value
+        type: String
+
+entities:
+  - name: spindle.placement.Target
+
+    identity:
+      name: target_id
+      type: spindle.placement.TargetId
+
+    fields:
+      - name: kind
+        type: spindle.placement.TargetKind
+      - name: environment_id
+        type: spindle.deployment.EnvironmentId
+      - name: ceiling
+        type: spindle.placement.Resources
+
+    relations:
+      - name: environment
+        kind: references
+        target: spindle.deployment.Environment
+        cardinality: one
+        via: environment_id
+
+    lifecycle:
+      initial: Available
+      states: [Available, Retired]
+      terminal: [Retired]
+      transitions:
+        - name: retire
+          from: [Available]
+          to: Retired
+
+  - name: spindle.placement.Instance
+
+    identity:
+      name: instance_id
+      type: spindle.placement.InstanceId
+
+    fields:
+      - name: deployment_id
+        type: spindle.deployment.DeploymentId
+      - name: component
+        type: String
+      - name: settings
+        type: List<spindle.placement.Setting>
+      - name: target_id
+        type: spindle.placement.TargetId
+      - name: request
+        type: spindle.placement.Resources
+
+    relations:
+      - name: deployment
+        kind: references
+        target: spindle.deployment.Deployment
+        cardinality: one
+        via: deployment_id
+      - name: target
+        kind: references
+        target: spindle.placement.Target
+        cardinality: one
+        via: target_id
+
+    lifecycle:
+      initial: Planned
+      states: [Planned, Placed, Refused, Running, Exited]
+      terminal: [Refused, Exited]
+      transitions:
+        - name: place
+          from: [Planned]
+          to: Placed
+        - name: refuse
+          from: [Planned]
+          to: Refused
+        - name: launch
+          from: [Placed]
+          to: Running
+        - name: exit
+          from: [Placed, Running]
+          to: Exited
+
+actors:
+  - name: spindle.placement.Placer
+    may:
+      - spindle.placement.DeclareTarget
+      - spindle.placement.RetireTarget
+      - spindle.placement.PlanInstance
+      - spindle.placement.PlaceInstance
+    naming:
+      display: Placer
+
+  - name: spindle.placement.Launcher
+    may:
+      - spindle.placement.LaunchInstance
+      - spindle.placement.ReportExit
+    naming:
+      display: Launcher
+
+errors:
+  - name: spindle.placement.InstanceStateConflict
+    summary: The instance is not in a state this command acts from, so nothing moved.
+    fields:
+      - name: state
+        type: spindle.placement.Instance.State
+
+  - name: spindle.placement.TargetAlreadyRetired
+    summary: The target is retired, so it takes no instance and cannot be retired again.
+    fields:
+      - name: target_id
+        type: spindle.placement.TargetId
+
+commands:
+  - name: spindle.placement.DeclareTarget
+    naming:
+      wire: declare-target
+      display: Declare target
+    input:
+      - name: target_id
+        type: spindle.placement.TargetId
+      - name: kind
+        type: spindle.placement.TargetKind
+      - name: environment_id
+        type: spindle.deployment.EnvironmentId
+      - name: ceiling
+        type: spindle.placement.Resources
+    outcomes:
+      - name: declared
+        creates: spindle.placement.Target
+        instance: target_id
+        emits:
+          - spindle.placement.TargetDeclared
+        payload:
+          spindle.placement.TargetDeclared:
+            target_id: input.target_id
+            kind: input.kind
+        sets:
+          kind: input.kind
+          environment_id: input.environment_id
+          ceiling: input.ceiling
+        summary: The target, the environment it provides and its per-instance ceiling are recorded.
+
+  - name: spindle.placement.RetireTarget
+    naming:
+      wire: retire-target
+      display: Retire target
+    input:
+      - name: target_id
+        type: spindle.placement.TargetId
+    outcomes:
+      - name: retired
+        moves: spindle.placement.Target.retire
+        instance: target_id
+        emits:
+          - spindle.placement.TargetRetired
+        payload:
+          spindle.placement.TargetRetired:
+            target_id: input.target_id
+        summary: The target takes no further instance.
+
+      - name: already-retired
+        wrong_state: true
+        error: spindle.placement.TargetAlreadyRetired
+        summary: The target was already retired, so nothing moved.
+
+  - name: spindle.placement.PlanInstance
+    naming:
+      wire: plan-instance
+      display: Plan instance
+    input:
+      - name: instance_id
+        type: spindle.placement.InstanceId
+      - name: deployment_id
+        type: spindle.deployment.DeploymentId
+      - name: component
+        type: String
+      - name: settings
+        type: List<spindle.placement.Setting>
+      - name: target_id
+        type: spindle.placement.TargetId
+      - name: request
+        type: spindle.placement.Resources
+    outcomes:
+      - name: planned
+        creates: spindle.placement.Instance
+        instance: instance_id
+        emits:
+          - spindle.placement.InstancePlanned
+        payload:
+          spindle.placement.InstancePlanned:
+            instance_id: input.instance_id
+            target_id: input.target_id
+        sets:
+          deployment_id: input.deployment_id
+          component: input.component
+          settings: input.settings
+          target_id: input.target_id
+          request: input.request
+        summary: >-
+          One component of the deployment, with its settings, is planned onto a target with the
+          resources it asks for. Two instances of one component differ only in their settings.
+
+  - name: spindle.placement.PlaceInstance
+    naming:
+      wire: place-instance
+      display: Place instance
+    input:
+      - name: instance_id
+        type: spindle.placement.InstanceId
+    outcomes:
+      - name: placed
+        moves: spindle.placement.Instance.place
+        instance: instance_id
+        emits:
+          - spindle.placement.InstancePlaced
+        payload:
+          spindle.placement.InstancePlaced:
+            instance_id: input.instance_id
+        summary: >-
+          The target is available, its environment admits the component, and the request is within
+          the target's ceiling.
+
+      - name: refused
+        external: the target is retired, its environment refuses the component, or the request exceeds its ceiling
+        moves: spindle.placement.Instance.refuse
+        instance: instance_id
+        emits:
+          - spindle.placement.InstanceRefused
+        payload:
+          spindle.placement.InstanceRefused:
+            instance_id: input.instance_id
+        summary: The instance is refused and never launched.
+
+      - name: wrong-state
+        wrong_state: true
+        error: spindle.placement.InstanceStateConflict
+        summary: Placement was already decided, so nothing moved.
+
+  - name: spindle.placement.LaunchInstance
+    naming:
+      wire: launch-instance
+      display: Launch instance
+    input:
+      - name: instance_id
+        type: spindle.placement.InstanceId
+    outcomes:
+      - name: launched
+        moves: spindle.placement.Instance.launch
+        instance: instance_id
+        emits:
+          - spindle.placement.InstanceLaunched
+        payload:
+          spindle.placement.InstanceLaunched:
+            instance_id: input.instance_id
+        summary: The target's launcher started the instance within its requested resources.
+
+      - name: wrong-state
+        wrong_state: true
+        error: spindle.placement.InstanceStateConflict
+        summary: Only a placed instance launches.
+
+  - name: spindle.placement.ReportExit
+    naming:
+      wire: report-exit
+      display: Report exit
+    input:
+      - name: instance_id
+        type: spindle.placement.InstanceId
+      - name: code
+        type: Optional<Integer>
+      - name: signal
+        type: Optional<Integer>
+    outcomes:
+      - name: exited
+        moves: spindle.placement.Instance.exit
+        instance: instance_id
+        emits:
+          - spindle.placement.InstanceExited
+        payload:
+          spindle.placement.InstanceExited:
+            instance_id: input.instance_id
+            code: input.code
+            signal: input.signal
+        summary: >-
+          The instance ended, and how is recorded: its exit code when it exited, the signal that
+          ended it when one did.
+
+      - name: already-ended
+        wrong_state: true
+        refuses: false
+        summary: A refused or exited instance stays as it is.
+
+events:
+  - name: spindle.placement.TargetDeclared
+    fields:
+      - name: target_id
+        type: spindle.placement.TargetId
+      - name: kind
+        type: spindle.placement.TargetKind
+
+  - name: spindle.placement.TargetRetired
+    fields:
+      - name: target_id
+        type: spindle.placement.TargetId
+
+  - name: spindle.placement.InstancePlanned
+    fields:
+      - name: instance_id
+        type: spindle.placement.InstanceId
+      - name: target_id
+        type: spindle.placement.TargetId
+
+  - name: spindle.placement.InstancePlaced
+    fields:
+      - name: instance_id
+        type: spindle.placement.InstanceId
+
+  - name: spindle.placement.InstanceRefused
+    fields:
+      - name: instance_id
+        type: spindle.placement.InstanceId
+
+  - name: spindle.placement.InstanceLaunched
+    fields:
+      - name: instance_id
+        type: spindle.placement.InstanceId
+
+  - name: spindle.placement.InstanceExited
+    fields:
+      - name: instance_id
+        type: spindle.placement.InstanceId
+      - name: code
+        type: Optional<Integer>
+      - name: signal
+        type: Optional<Integer>
+
+views:
+  - name: spindle.placement.InstanceState
+    source: spindle.placement.Instance
+    consistency: read_your_writes
+    fields:
+      - name: instance_id
+        type: spindle.placement.InstanceId
+      - name: state
+        type: spindle.placement.Instance.State
+      - name: component
+        type: String
+      - name: target_id
+        type: spindle.placement.TargetId

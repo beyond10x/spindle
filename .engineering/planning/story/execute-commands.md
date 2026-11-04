@@ -2,11 +2,21 @@
 format: aep.planning-md/3
 id: story:execute-commands
 kind: story
-status: draft
+status: implemented
 title: Execute commands against the compiled model
 relations:
 - decomposes: epic:m0-run-in-process
-revision: 1
+- serves: vision:spindle
+scope:
+- confidence: cited
+  path: crates/spindle-cli/src/main.rs
+- confidence: cited
+  path: crates/spindle-kernel
+revision: 6
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-04T07:28:12Z", actor: "human:timo", revision: 4}
+- {from: "proposed", to: "active", at: "2026-11-04T07:28:12Z", actor: "human:timo", revision: 5}
+- {from: "active", to: "implemented", at: "2026-11-04T10:52:45Z", actor: "human:timo", revision: 6, decided_on: {"recorded":{"test_result":1}}}
 ---
 # Execute commands against the compiled model
 

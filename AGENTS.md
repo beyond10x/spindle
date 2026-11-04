@@ -2,7 +2,7 @@
 
 Spindle runs ESS specifications on the capabilities an environment provides: it loads and compiles
 a specification with `ess-compiler`, derives the capabilities it needs, admits it against an
-environment, and (planned) executes it. Humans start at [`README.md`](README.md); the design is
+environment, and executes it. Humans start at [`README.md`](README.md); the design is
 [`docs/design/spindle.md`](docs/design/spindle.md).
 
 ## Serves
@@ -22,7 +22,14 @@ environment, and (planned) executes it. Humans start at [`README.md`](README.md)
 | `ess/` | Spindle's own specification, `spindle.deployment` (`format: ess/34`) |
 | `crates/spindle-spec/` | `load`/`compile`: source files → `EssIr`, through `ess-domain` and `ess-compiler` only |
 | `crates/spindle-capability/` | `derive` (IR → requirements with reasons), `Environment` (`spindle-environment/1`, TOML), `admit` |
-| `crates/spindle-cli/` | `b10x-spindle`: `check`, `capabilities`, `admit` (exit 3 = refused) |
+| `crates/spindle-kernel/` | executes commands against the compiled IR: guards, outcomes, entity and newtype invariants, events; SQLite or memory store |
+| `crates/spindle-timer/` | fires periodic bindings on an injected clock |
+| `crates/spindle-channel/` | carries event bindings between components (in-process, TCP) |
+| `crates/spindle-target/` | the deployment target contract: `Launcher`, `LaunchPlan`, `Running`, `Exit`, `place`/`start`; the process launcher |
+| `crates/spindle-qemu/` | `QemuLauncher`: QEMU `microvm` with the host kernel, a Rust `/init` in a cpio initramfs, a private user and network namespace |
+| `crates/spindle-firecracker/` | Firecracker launcher: API socket, taps on a bridge inside a private user and network namespace |
+| `crates/spindle-host/` | every component of a system in one process: per-component admission and store, the timer on an injected clock, in-process channels, one-row view reads; `rally::frame` |
+| `crates/spindle-cli/` | `b10x-spindle`: `check`, `capabilities`, `admit`, `run`, `play` (exit 3 = refused) |
 | `examples/environments/` | `laptop.toml`, `microvm.toml` |
 | `examples/rally/` | the example system: one table, two players, three components |
 | `docs/design/spindle.md` | design, decisions (§11), milestones (§12), the rally showcase (§13) |
@@ -59,11 +66,18 @@ environment, and (planned) executes it. Humans start at [`README.md`](README.md)
 task check
 ```
 
-Steps (`Taskfile.yml`): `aep plan artifact validate`, `ess specify validate --path ess`,
-`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`,
-`cargo test --workspace --locked`. The ESS pin is the `tag` of `ess-compiler`, `ess-domain` and
-`ess-primitives` in `Cargo.toml`; CI installs the `ess` CLI of the same version
+Steps (`Taskfile.yml`): `aep plan artifact validate`, `ess specify validate` on `ess` and
+`examples/rally/ess`, `cargo fmt --all -- --check`,
+`cargo clippy --workspace --all-targets --locked -- -D warnings`,
+`cargo test --workspace --locked --no-fail-fast`. The ESS pin is the `tag` of `ess-compiler`,
+`ess-domain` and `ess-primitives` in `Cargo.toml`; CI installs the `ess` CLI of the same version
 (`.github/workflows/ci.yml`). Move them together.
+
+VM tests, and tests that start a user namespace, are `#[ignore]`d: CI runners refuse
+unprivileged user namespaces. `task check:vm` runs them on a host with `/dev/kvm`,
+`qemu-system-x86_64`, `unshare`, `nsenter` and `ip`; the Firecracker cases also need
+`SPINDLE_FIRECRACKER` (the binary) and `SPINDLE_FIRECRACKER_KERNEL` (an uncompressed guest
+`vmlinux`).
 
 ## Publishing
 

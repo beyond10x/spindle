@@ -9,7 +9,12 @@ tasks:
       - ess specify validate --path examples/rally/ess
       - cargo fmt --all -- --check
       - cargo clippy --workspace --all-targets --locked -- -D warnings
-      - cargo test --workspace --locked
+      - cargo test --workspace --locked --no-fail-fast
+
+  check:vm:
+    desc: The VM tests, on a host with KVM
+    cmds:
+      - cargo test --locked -p spindle-qemu -p spindle-firecracker -- --include-ignored
 
   build:
     desc: Release build of b10x-spindle

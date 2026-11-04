@@ -14,7 +14,12 @@ fn spindles_own_specification_compiles() {
     assert_eq!(loaded.ir.system().to_string(), "spindle");
     assert_eq!(
         loaded.files,
-        vec!["components.yaml", "domains/deployment.yaml", "system.yaml"]
+        vec![
+            "components.yaml",
+            "domains/deployment.yaml",
+            "domains/placement.yaml",
+            "system.yaml"
+        ]
     );
     assert!(
         loaded

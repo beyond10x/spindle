@@ -1,0 +1,66 @@
+components:
+  - component: relay-source
+    owns:
+      domains: [relay.source]
+    accepts:
+      commands: [relay.source.Pulse]
+    publishes:
+      events: [relay.source.Pulsed]
+  - component: relay-sink
+    owns:
+      domains: [relay.sink]
+    accepts:
+      commands: [relay.sink.Hear]
+    publishes:
+      events: [relay.sink.Heard]
+bindings:
+  - id: fast
+    when:
+      periodic:
+        every: PT2S
+        anchor: host_activation
+        first: after_period
+        cadence: fixed_rate
+        overlap: serial_per_instance
+        missed: one_pending_drop_excess
+        lifetime: host_instance
+        cancellation: stop_acknowledged
+        host:
+          owner: relay-source
+          authority: source-clock
+          eligibility: host_boolean
+          context_fields: []
+          read_fields:
+            - name: beat
+              type: String
+    invoke:
+      command: relay.source.Pulse
+    mapping:
+      beat: host_read.beat
+    delivery: at_most_once
+    on_failure: drop
+  - id: slow
+    when:
+      periodic:
+        every: PT3S
+        anchor: host_activation
+        first: after_period
+        cadence: fixed_rate
+        overlap: serial_per_instance
+        missed: one_pending_drop_excess
+        lifetime: host_instance
+        cancellation: stop_acknowledged
+        host:
+          owner: relay-sink
+          authority: sink-clock
+          eligibility: host_boolean
+          context_fields: []
+          read_fields:
+            - name: beat
+              type: String
+    invoke:
+      command: relay.sink.Hear
+    mapping:
+      beat: host_read.beat
+    delivery: at_most_once
+    on_failure: drop

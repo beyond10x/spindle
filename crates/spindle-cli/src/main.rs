@@ -1,11 +1,19 @@
-//! `b10x-spindle`: load an ESS specification, derive what it needs, and admit it.
+//! `b10x-spindle`: load an ESS specification, derive what it needs, admit it, and run or play it.
 
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::io::{BufRead, Write};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use signal_hook::consts::{SIGINT, SIGTERM};
 use spindle_capability::{Admission, Environment, Requirements};
+use spindle_host::{Host, HostError, SystemClock, rally};
+use spindle_kernel::{External, MemoryStore, SqliteStore, Store};
 
 /// Exit status of an `admit` the environment refused.
 const REFUSED: u8 = 3;
@@ -58,6 +66,55 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Admit a specification, then execute commands read as JSON lines on stdin.
+    ///
+    /// Each line is `{"command": "<qualified name>", "input": {...}}`, with an optional
+    /// `"external": {"<outcome>": true | false}` answering the command's external causes. Each
+    /// line prints one JSON result: the outcome with its events and declared error, or a failure.
+    /// Exits 3, running nothing, when admission is refused.
+    Run {
+        /// The specification directory.
+        spec: PathBuf,
+        /// The `spindle-environment/1` document.
+        #[arg(long)]
+        environment: PathBuf,
+        /// The state file: required where `store.durable` is bound to `sqlite`, refused otherwise.
+        #[arg(long)]
+        state: Option<PathBuf>,
+    },
+    /// Play the rally example in this terminal: every component in one process, one tick per
+    /// period of its periodic binding, the grid redrawn after each.
+    ///
+    /// Each component is admitted on its own; exits 3, playing nothing, when one is refused.
+    /// Opens the match, redraws the grid from the table's `MatchState` view after every tick, and
+    /// exits 0 once a side has won, printing the winner. State bound to `sqlite` is kept in a
+    /// temporary directory removed when play ends. A match the model refuses to open, such as
+    /// one to no points, is an error. SIGINT or SIGTERM stops play, removes the state and exits
+    /// 130 or 143. Refused and failed commands during play are reported on stderr.
+    Play {
+        /// The rally specification directory.
+        spec: PathBuf,
+        /// The `spindle-environment/1` document.
+        #[arg(long)]
+        environment: PathBuf,
+        /// The points a side needs to win.
+        #[arg(long, default_value_t = 3)]
+        target_score: i64,
+        /// The identity of the match.
+        #[arg(long, default_value = "rally")]
+        match_id: String,
+    },
+}
+
+/// One command line read by `run`.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Request {
+    command: String,
+    #[serde(default)]
+    input: serde_json::Map<String, serde_json::Value>,
+    #[serde(default)]
+    external: BTreeMap<String, bool>,
 }
 
 fn main() -> ExitCode {
@@ -158,6 +215,208 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 ExitCode::from(REFUSED)
             })
         }
+        Command::Run {
+            spec,
+            environment,
+            state,
+        } => execute(&spec, &environment, state.as_deref()),
+        Command::Play {
+            spec,
+            environment,
+            target_score,
+            match_id,
+        } => play(&spec, &environment, target_score, &match_id),
+    }
+}
+
+/// The command that opens a rally match.
+const OPEN_MATCH: &str = "rally.table.OpenMatch";
+/// The view a rally frame is drawn from.
+const MATCH_STATE: &str = "rally.table.MatchState";
+/// Clears the terminal and moves the cursor home.
+const CLEAR: &str = "\x1b[2J\x1b[H";
+
+fn play(spec: &Path, environment: &Path, target_score: i64, match_id: &str) -> Result<ExitCode> {
+    let signalled = Arc::new(AtomicUsize::new(0));
+    for signal in [SIGINT, SIGTERM] {
+        let number = usize::try_from(signal).context("a signal number")?;
+        signal_hook::flag::register_usize(signal, Arc::clone(&signalled), number)
+            .context("handling SIGINT and SIGTERM")?;
+    }
+    let loaded = spindle_spec::load(spec)?;
+    let text = std::fs::read_to_string(environment)
+        .with_context(|| format!("reading {}", environment.display()))?;
+    let parsed =
+        Environment::parse(&text).with_context(|| format!("in {}", environment.display()))?;
+    let state = tempfile::tempdir().context("creating the state directory")?;
+    let clock = std::sync::Arc::new(SystemClock);
+    let mut host = match Host::new(loaded.ir, &parsed, clock, state.path()) {
+        Ok(host) => host,
+        Err(HostError::Refused(refusal)) => {
+            println!("{refusal}");
+            return Ok(ExitCode::from(REFUSED));
+        }
+        Err(error) => return Err(error.into()),
+    };
+    host.submit(
+        OPEN_MATCH,
+        serde_json::Map::from_iter([
+            ("match_id".to_owned(), serde_json::json!(match_id)),
+            ("target_score".to_owned(), serde_json::json!(target_score)),
+        ]),
+    )?;
+    let context =
+        serde_json::Map::from_iter([("match_id".to_owned(), serde_json::json!(match_id))]);
+    for binding in host.periodic() {
+        host.start(&binding, context.clone())?;
+    }
+
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    loop {
+        let view = host
+            .view(MATCH_STATE, &serde_json::json!(match_id))?
+            .with_context(|| format!("no match {match_id}"))?;
+        write!(out, "{CLEAR}{}", rally::frame(&view)?)?;
+        out.flush()?;
+        if rally::winner(&view).is_some() {
+            host.stop();
+            return Ok(ExitCode::SUCCESS);
+        }
+        let deadline = host
+            .next_deadline()
+            .context("no periodic binding is running, so the match cannot go on")?;
+        if let Some(signal) = wait_until(deadline, &signalled) {
+            host.stop();
+            return Ok(ExitCode::from(SIGNALLED.saturating_add(signal)));
+        }
+        let report = host.advance()?;
+        for failed in &report.failed {
+            eprintln!(
+                "b10x-spindle: {} did not run {}: {}",
+                failed.component, failed.command, failed.error
+            );
+        }
+        for refused in &report.refused {
+            eprintln!(
+                "b10x-spindle: {} refused {} ({}) with {} {}",
+                refused.component,
+                refused.command,
+                refused.outcome,
+                refused.error.name,
+                serde_json::Value::Object(refused.error.fields.clone())
+            );
+        }
+    }
+}
+
+/// The exit status of a run a signal stopped is this plus the signal's number.
+const SIGNALLED: u8 = 128;
+/// How often a wait looks for a signal.
+const SIGNAL_POLL: Duration = Duration::from_millis(50);
+
+/// Sleeps until `deadline`, or until a signal is recorded in `signalled`; returns its number.
+fn wait_until(deadline: Instant, signalled: &AtomicUsize) -> Option<u8> {
+    loop {
+        let signal = signalled.load(Ordering::SeqCst);
+        if signal != 0 {
+            return Some(u8::try_from(signal).unwrap_or(u8::MAX - SIGNALLED));
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return None;
+        }
+        std::thread::sleep(left.min(SIGNAL_POLL));
+    }
+}
+
+fn execute(spec: &Path, environment: &Path, state: Option<&Path>) -> Result<ExitCode> {
+    let loaded = spindle_spec::load(spec)?;
+    let requirements = spindle_capability::derive(&loaded.ir, None)
+        .with_context(|| format!("deriving the capabilities of {}", spec.display()))?;
+    let text = std::fs::read_to_string(environment)
+        .with_context(|| format!("reading {}", environment.display()))?;
+    let parsed =
+        Environment::parse(&text).with_context(|| format!("in {}", environment.display()))?;
+    let admission = spindle_capability::admit(&requirements, &parsed);
+    let Admission::Admitted { bindings } = &admission else {
+        println!("{}", serde_json::to_value(&admission)?);
+        return Ok(ExitCode::from(REFUSED));
+    };
+    let durable = bindings
+        .iter()
+        .find(|binding| binding.capability.as_str() == "store.durable")
+        .map(|binding| binding.implementation.as_str());
+    let mut store: Box<dyn Store> = match (durable, state) {
+        (None | Some("memory"), None) => Box::new(MemoryStore::default()),
+        (None, Some(path)) => bail!(
+            "{} requires no store.durable, so nothing would read or write --state {}",
+            spec.display(),
+            path.display()
+        ),
+        (Some("memory"), Some(path)) => bail!(
+            "store.durable is bound to memory on {}, which keeps no state file: --state {} would \
+             be ignored",
+            parsed.name,
+            path.display()
+        ),
+        (Some("sqlite"), Some(path)) => Box::new(SqliteStore::open(path)?),
+        (Some("sqlite"), None) => {
+            bail!(
+                "store.durable is bound to sqlite on {}: name the state file with --state",
+                parsed.name
+            )
+        }
+        (Some(other), _) => bail!("this build has no `{other}` store for store.durable"),
+    };
+
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    for line in std::io::stdin().lock().lines() {
+        let line = line.context("reading stdin")?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let result = match serde_json::from_str::<Request>(&line) {
+            Err(error) => serde_json::json!({
+                "failure": {"kind": "invalid_request", "message": error.to_string()},
+            }),
+            Ok(request) => answer(&loaded.ir, store.as_mut(), &request),
+        };
+        writeln!(out, "{result}")?;
+        out.flush()?;
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The result line for one request.
+fn answer(ir: &spindle_spec::EssIr, store: &mut dyn Store, request: &Request) -> serde_json::Value {
+    let mut decider = |question: &External<'_>| {
+        request
+            .external
+            .get(question.outcome)
+            .copied()
+            .ok_or_else(|| {
+                format!(
+                    "the request answers no `external.{}` for `{}`: {}",
+                    question.outcome, question.capability, question.cause
+                )
+            })
+    };
+    match spindle_kernel::execute(ir, store, &mut decider, &request.command, &request.input) {
+        Ok(executed) => {
+            let mut result = serde_json::json!({"command": request.command});
+            if let (Some(object), Ok(serde_json::Value::Object(fields))) =
+                (result.as_object_mut(), serde_json::to_value(&executed))
+            {
+                object.extend(fields);
+            }
+            result
+        }
+        Err(error) => serde_json::json!({
+            "command": request.command,
+            "failure": {"kind": error.kind(), "message": error.to_string()},
+        }),
     }
 }
 
