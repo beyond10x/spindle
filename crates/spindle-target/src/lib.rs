@@ -20,6 +20,7 @@
 mod launcher;
 mod placement;
 mod process;
+mod sample;
 
 pub use launcher::{
     Artifact, Exit, LaunchError, LaunchPlan, Launcher, Peer, ResourceKind, Resources, Running,
@@ -32,3 +33,4 @@ pub use process::{
     ENV_COMPONENT, ENV_INSTANCE_ID, ENV_LISTEN, ENV_PEER_PREFIX, ENV_SETTING_PREFIX,
     ProcessLauncher, env_name,
 };
+pub use sample::{HostUsage, ResourceSample, process_group_usage, process_usage};

@@ -11,8 +11,8 @@ use rustix::io::Errno;
 use rustix::process::{Pid, Signal, WaitId, WaitIdOptions, kill_process_group, waitid};
 
 use crate::{
-    Artifact, Exit, LaunchError, LaunchPlan, Launcher, ResourceKind, Running, TargetKind,
-    refuse_unenforced,
+    Artifact, Exit, LaunchError, LaunchPlan, Launcher, ResourceKind, ResourceSample, Resources,
+    Running, TargetKind, process_group_usage, refuse_unenforced,
 };
 
 /// The instance's id.
@@ -136,6 +136,7 @@ impl Launcher for ProcessLauncher {
             }
         }
         command.envs(variables);
+        let started = Instant::now();
         let child = match command.spawn() {
             Ok(child) => child,
             Err(source) => {
@@ -155,6 +156,8 @@ impl Launcher for ProcessLauncher {
             exit: None,
             reaped: false,
             grace: self.grace,
+            started,
+            request: plan.request,
         };
         if let Err(source) = fs::rename(&partial, &instance.console) {
             let _ = instance.terminate(Duration::ZERO);
@@ -253,6 +256,8 @@ struct ProcessInstance {
     exit: Option<Exit>,
     reaped: bool,
     grace: Duration,
+    started: Instant,
+    request: Resources,
 }
 
 impl ProcessInstance {
@@ -336,6 +341,20 @@ impl Running for ProcessInstance {
 
     fn stop(&mut self) -> Result<Exit, LaunchError> {
         self.terminate(self.grace)
+    }
+
+    /// The sum over the instance's process group, so a child it started counts; `None` once
+    /// the instance has ended. Shares are `None` too: this launcher holds it to no limit.
+    fn resources(&self) -> Option<ResourceSample> {
+        if self.exit.is_some() || self.reaped {
+            return None;
+        }
+        let usage = process_group_usage(self.pid.as_raw_nonzero().get().unsigned_abs()).ok()?;
+        Some(ResourceSample::of(
+            usage,
+            self.started.elapsed(),
+            &self.request,
+        ))
     }
 }
 

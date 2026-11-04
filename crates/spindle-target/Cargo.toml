@@ -17,7 +17,7 @@ bench = false
 
 [dependencies]
 spindle-capability = { path = "../spindle-capability" }
-rustix = { version = "1", features = ["process"] }
+rustix = { version = "1", features = ["param", "process"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 
