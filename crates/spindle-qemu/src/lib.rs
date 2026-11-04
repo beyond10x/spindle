@@ -10,7 +10,9 @@
 //! `qemu-system-x86_64 -M microvm` per instance with KVM, no root, the requested vCPUs and memory
 //! and the console in a file. Every QEMU of one launcher runs in one user and network namespace
 //! the launcher owns, and they join one `-netdev socket` multicast network on that namespace's
-//! loopback, so no other process on the host can reach the VM network. Disk is not enforced. A
+//! loopback, so no other process on the host can reach the VM network. With
+//! [`QemuLauncher::with_telemetry`] each guest also gets a `vhost-vsock-device` and reports
+//! `spindle-telemetry/1` frames to a vsock port of the host. Disk is not enforced. A
 //! zero vCPU or memory request is refused: placement resolves it to the target's ceiling, and a
 //! QEMU target must have one.
 
@@ -27,6 +29,7 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ExitStatus};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 pub use cpio::Initramfs;
@@ -90,6 +93,8 @@ pub struct QemuLauncher {
     work_dir: PathBuf,
     network: Network,
     shared: Arc<Shared>,
+    telemetry: Option<u32>,
+    cids: Arc<AtomicU32>,
 }
 
 struct Checked<'a> {
@@ -108,6 +113,8 @@ impl QemuLauncher {
             work_dir,
             network,
             shared: Arc::new(Shared::new()),
+            telemetry: None,
+            cids: Arc::new(AtomicU32::new(first_cid())),
         }
     }
 
@@ -115,6 +122,19 @@ impl QemuLauncher {
     pub fn with_qemu(mut self, qemu: PathBuf) -> Self {
         self.qemu = qemu;
         self
+    }
+
+    /// The same launcher giving every guest a `vhost-vsock-device` with a context id of its own,
+    /// and `vsock:2:<port>` as its telemetry endpoint: the guest init passes it to the guest
+    /// command as `SPINDLE_TELEMETRY`. The caller listens on vsock port `port` of the host.
+    pub fn with_telemetry(mut self, port: u32) -> Self {
+        self.telemetry = Some(port);
+        self
+    }
+
+    /// The telemetry port guests report to, if any.
+    pub fn telemetry(&self) -> Option<u32> {
+        self.telemetry
     }
 
     /// The network instances join.
@@ -204,7 +224,13 @@ impl QemuLauncher {
 
     /// The QEMU argv (program first) [`launch`](Self::launch) runs for `plan`, inside the
     /// launcher's namespace.
+    ///
+    /// With telemetry, the vsock device carries the context id the next launch takes.
     pub fn command(&self, plan: &LaunchPlan) -> Result<Vec<String>, LaunchError> {
+        self.argv(plan, self.cids.load(Ordering::Relaxed))
+    }
+
+    fn argv(&self, plan: &LaunchPlan, cid: u32) -> Result<Vec<String>, LaunchError> {
         let checked = self.check(plan)?;
         let dir = self.instance_dir(plan);
         let octets = checked.address.octets();
@@ -216,7 +242,7 @@ impl QemuLauncher {
             "console=ttyS0 reboot=t panic=-1 spindle.addr={}/{} {}",
             checked.address, self.network.prefix_len, checked.cmdline
         );
-        Ok(vec![
+        let mut argv = vec![
             self.qemu.to_string_lossy().into_owned(),
             "-M".to_owned(),
             "microvm".to_owned(),
@@ -243,14 +269,20 @@ impl QemuLauncher {
             dir.join("initramfs.cpio").to_string_lossy().into_owned(),
             "-append".to_owned(),
             append,
-        ])
+        ];
+        if self.telemetry.is_some() {
+            argv.push("-device".to_owned());
+            argv.push(format!("vhost-vsock-device,guest-cid={cid}"));
+        }
+        Ok(argv)
     }
 
     /// Start the instance: refuse what is not enforced or not valid, refuse an id that still
     /// runs, write its initramfs (the artifact's, followed by an archive holding
     /// [`LAUNCH_PLAN`]), and start QEMU in the launcher's namespace.
     pub fn launch(&mut self, plan: &LaunchPlan) -> Result<QemuInstance, LaunchError> {
-        let argv = self.command(plan)?;
+        let cid = self.cids.fetch_add(1, Ordering::Relaxed);
+        let argv = self.argv(plan, cid)?;
         let checked = self.check(plan)?;
         let mut live = self.shared.live()?;
         if let Some(pid) = live.get(&plan.instance_id)
@@ -268,7 +300,11 @@ impl QemuLauncher {
             .map_err(io_error(format!("reading {}", checked.initramfs.display())))?;
         bytes.resize(bytes.len().next_multiple_of(4), 0);
         let mut launch = Initramfs::new();
-        launch.file(LAUNCH_PLAN, 0o644, launch_document(plan).into_bytes());
+        launch.file(
+            LAUNCH_PLAN,
+            0o644,
+            launch_document(plan, self.telemetry).into_bytes(),
+        );
         let combined = dir.join("initramfs.cpio");
         launch
             .write_to(&mut bytes)
@@ -320,7 +356,13 @@ impl Launcher for QemuLauncher {
     }
 }
 
-fn launch_document(plan: &LaunchPlan) -> String {
+/// The first guest context id of a launcher: 3 and up are guests, and the process id spreads the
+/// launchers of different processes 256 ids apart, since a context id is unique on the host.
+fn first_cid() -> u32 {
+    3 + ((std::process::id() & 0xffff) << 8)
+}
+
+fn launch_document(plan: &LaunchPlan, telemetry: Option<u32>) -> String {
     let settings: serde_json::Map<String, serde_json::Value> = plan
         .settings
         .iter()
@@ -336,14 +378,18 @@ fn launch_document(plan: &LaunchPlan) -> String {
             })
         })
         .collect();
-    let mut text = serde_json::json!({
+    let mut document = serde_json::json!({
         "instance_id": plan.instance_id,
         "component": plan.component,
         "settings": settings,
         "listen": plan.listen.to_string(),
         "peers": peers,
-    })
-    .to_string();
+    });
+    if let Some(port) = telemetry {
+        document["telemetry"] =
+            serde_json::Value::String(spindle_telemetry::Endpoint::host_vsock(port).to_string());
+    }
+    let mut text = document.to_string();
     text.push('\n');
     text
 }

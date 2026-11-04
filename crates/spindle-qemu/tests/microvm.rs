@@ -665,3 +665,77 @@ fn a_qemu_instance_reports_its_share_of_the_requested_quota() {
     vm.stop().expect("stops");
     assert_eq!(vm.resources(), None, "a stopped microVM is not sampled");
 }
+
+#[test]
+#[ignore = "boots QEMU microVMs: needs /dev/kvm, /dev/vhost-vsock, qemu-system-x86_64, the host kernel and its virtio modules, unshare, nsenter, ip and the x86_64-unknown-linux-musl target"]
+fn a_qemu_instance_reports_over_vsock() {
+    let host = host();
+    if let Err(error) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/vhost-vsock")
+    {
+        panic!("this host cannot give a microVM a vsock device: /dev/vhost-vsock: {error}");
+    }
+    let listener = spindle_telemetry::vsock::VsockListener::bind_any_port()
+        .expect("the collector listens on the host vsock endpoint");
+    let port = listener.port();
+    let dir = tempfile::tempdir_in(&host.work).expect("a work directory");
+    let initramfs = image_with_probe(host, dir.path());
+    let mut launcher = launcher(host, dir.path()).with_telemetry(port);
+    let mut vm = launcher
+        .launch(&plan(
+            "reporting",
+            guest(
+                host,
+                initramfs,
+                "/bin/spindle-qemu-probe telemetry --frames 3",
+            ),
+            small(),
+            guest_address(5, 7000),
+        ))
+        .expect("the microVM starts");
+    assert!(
+        vm.argv()
+            .iter()
+            .any(|arg| arg.starts_with("vhost-vsock-device,guest-cid=")),
+        "the argv gives the guest a vsock device: {:?}",
+        vm.argv()
+    );
+
+    let stream = match listener.accept_within(BOOT) {
+        Ok(stream) => stream,
+        Err(error) => {
+            let text = console(vm.console());
+            let _ = vm.stop();
+            panic!("the guest never connected: {error}; console:\n{text}");
+        }
+    };
+    stream.set_read_timeout(Some(BOOT)).expect("a read timeout");
+    let mut collector = spindle_telemetry::FrameReader::new(std::io::BufReader::new(stream));
+    let mut sequences = Vec::new();
+    for _ in 0..3 {
+        let frame = match collector.next_frame() {
+            Ok(Some(frame)) => frame,
+            other => {
+                let text = console(vm.console());
+                let _ = vm.stop();
+                panic!("no frame from the guest ({other:?}); console:\n{text}");
+            }
+        };
+        assert_eq!(frame.instance_id, "reporting");
+        assert!(
+            frame.resources.cpu_seconds > 0.0 && frame.resources.memory_bytes > 0,
+            "the guest's own readings arrive: {:?}",
+            frame.resources
+        );
+        sequences.push(frame.sequence);
+    }
+    let exit = finished(&mut vm);
+    let text = console(vm.console());
+    assert_eq!(exit, OK, "console:\n{text}");
+    assert!(
+        sequences.windows(2).all(|pair| pair[0] < pair[1]),
+        "sequence numbers increase: {sequences:?}"
+    );
+}

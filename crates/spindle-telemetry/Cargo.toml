@@ -10,14 +10,16 @@ publish.workspace = true
 
 [features]
 default = ["kernel"]
-kernel = ["dep:spindle-kernel", "dep:serde_json"]
+kernel = ["dep:spindle-kernel"]
 
 [dependencies]
 ess-compiler.workspace = true
+libc = "0.2.191"
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", optional = true }
+serde_json = "1"
 spindle-kernel = { path = "../spindle-kernel", optional = true }
 
 [dev-dependencies]
-serde_json = "1"
+schema-contract = { git = "https://github.com/beyond10x/ess", tag = "0.86.0" }
 spindle-spec = { path = "../spindle-spec" }
+tempfile = "3"

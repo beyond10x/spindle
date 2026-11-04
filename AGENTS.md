@@ -25,10 +25,10 @@ environment, and executes it. Humans start at [`README.md`](README.md); the desi
 | `crates/spindle-kernel/` | executes commands against the compiled IR: guards, outcomes, entity and newtype invariants, events; SQLite or memory store |
 | `crates/spindle-timer/` | fires periodic bindings on an injected clock |
 | `crates/spindle-channel/` | carries event bindings between components (in-process, TCP) |
-| `crates/spindle-target/` | the deployment target contract: `Launcher`, `LaunchPlan`, `Running`, `Exit`, `place`/`start`; the process launcher |
-| `crates/spindle-qemu/` | `QemuLauncher`: QEMU `microvm` with the host kernel, a Rust `/init` in a cpio initramfs, a private user and network namespace |
-| `crates/spindle-firecracker/` | Firecracker launcher: API socket, taps on a bridge inside a private user and network namespace |
-| `crates/spindle-telemetry/` | the `Telemetry` port: atomic counters and fixed-bucket histograms per instance, `CountingStore`, the counter catalogue derived from the IR |
+| `crates/spindle-target/` | the deployment target contract: `Launcher`, `LaunchPlan`, `Running`, `Exit`, `place`/`start`; the process launcher (`with_telemetry`: `SPINDLE_TELEMETRY=unix:<socket>`) |
+| `crates/spindle-qemu/` | `QemuLauncher`: QEMU `microvm` with the host kernel, a Rust `/init` in a cpio initramfs, a private user and network namespace; `with_telemetry`: a `vhost-vsock-device` per guest |
+| `crates/spindle-firecracker/` | Firecracker launcher: API socket, taps on a bridge inside a private user and network namespace; `with_telemetry`: a vsock device, `vsock.sock_<port>` |
+| `crates/spindle-telemetry/` | the `Telemetry` port: atomic counters and fixed-bucket histograms per instance, `CountingStore`, the counter catalogue derived from the IR; the transport: `Sender` (one `spindle-telemetry/1` frame per period to `SPINDLE_TELEMETRY`, `unix:` or `vsock:`), `Frame`, `FrameReader`, `vsock` |
 | `crates/spindle-host/` | every component of a system in one process: per-component admission and store, the timer on an injected clock, in-process channels, one-row and list view reads; `rally::frame` |
 | `crates/spindle-cli/` | `b10x-spindle`: `check`, `capabilities`, `admit`, `run`, `metrics`, `play` (exit 3 = refused); the clap definitions are `spindle_cli::cli` |
 | `crates/spindle-observe-api/` | generated Rust types of the observe API; outside the workspace, drift-checked by `task check` |
@@ -82,7 +82,8 @@ Steps (`Taskfile.yml`): `aep plan artifact validate`, `ess specify validate` on 
 
 VM tests, and tests that start a user namespace, are `#[ignore]`d: CI runners refuse
 unprivileged user namespaces. `task check:vm` runs them on a host with `/dev/kvm`,
-`qemu-system-x86_64`, `unshare`, `nsenter` and `ip`; the Firecracker cases also need
+`qemu-system-x86_64`, `unshare`, `nsenter`, `ip` and, for the QEMU telemetry case,
+`/dev/vhost-vsock`; the Firecracker cases also need
 `SPINDLE_FIRECRACKER` (the binary) and `SPINDLE_FIRECRACKER_KERNEL` (an uncompressed guest
 `vmlinux`).
 

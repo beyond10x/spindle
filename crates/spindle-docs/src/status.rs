@@ -197,6 +197,13 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Observe",
+        "Telemetry transport",
+        "An instance that starts the spindle-telemetry sender sends its cumulative counters and its own resource readings as spindle-telemetry/1 frames every second, over a Unix socket for a process and vsock for QEMU and Firecracker, and drops and counts frames no collector takes.",
+        "/docs/concepts/observe",
+        "crates/spindle-telemetry/tests/transport.rs::a_lost_frame_loses_no_count",
+    ),
+    shipped(
+        "Observe",
         "The observe API contract",
         "The spindle.observe domain specifies the API answers; their JSON Schema, Rust and TypeScript types are generated and drift-checked.",
         "/docs/concepts/observe",
@@ -232,12 +239,6 @@ pub const CAPABILITIES: &[Capability] = &[
         "Scenario replay and self-conformance",
         "run --scenario replays an ess-scenario/1 timeline; the suite ESS synthesises from Spindle's own specification runs in task check.",
         "/docs/concepts/specification",
-    ),
-    planned(
-        "Observe",
-        "Telemetry transport",
-        "Each instance sends its counters and resource readings as spindle-telemetry/1 frames over a Unix socket or vsock.",
-        "/docs/concepts/observe",
     ),
     planned(
         "Observe",
