@@ -94,6 +94,10 @@ fn the_first_divergent_step_is_named() {
         !printed.contains("timeline[2]"),
         "no step after the divergent one runs: {printed}"
     );
+    assert!(
+        printed.contains("this replay ran 2 command(s), none after timeline[1]"),
+        "the reported replay sent the open and the first close, and never the second close: {printed}"
+    );
 }
 
 #[test]
@@ -129,5 +133,45 @@ fn a_scenario_ess_refuses_is_refused() {
     assert!(
         diagnostic.contains("ess-scenario/999"),
         "the format named: {diagnostic}"
+    );
+}
+
+#[test]
+fn a_scenario_of_more_than_a_thousand_steps_is_refused_before_any_replay() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+    let mut text = String::from(
+        "type: ess-scenario/1\ndomain: desk.ticket\nscenario: too-many-openings\n\
+         summary: More tickets open than a replay takes.\ntimeline:\n",
+    );
+    for act in 0..1001_usize {
+        text.push_str(&format!(
+            "  - at: 2026-01-05T{:02}:{:02}:{:02}Z\n    command: desk.ticket.OpenTicket\n    \
+             input:\n      title: t{act}\n    outcome: opened\n",
+            act / 3600,
+            (act / 60) % 60,
+            act % 60
+        ));
+    }
+    let scenario = directory.path().join("too-long.yaml");
+    std::fs::write(&scenario, text).expect("written");
+    let output = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+        .current_dir(root())
+        .args([
+            "run",
+            SPEC,
+            "--environment",
+            LAPTOP,
+            "--scenario",
+            scenario.to_str().expect("a UTF-8 path"),
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .expect("b10x-spindle runs");
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(stdout(&output).is_empty(), "no step ran: {output:?}");
+    let diagnostic = stderr(&output);
+    assert!(
+        diagnostic.contains("has 1001 steps; a replay takes at most 1000"),
+        "{diagnostic}"
     );
 }

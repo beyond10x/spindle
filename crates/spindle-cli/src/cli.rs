@@ -80,11 +80,12 @@ pub enum Command {
     /// goes on.
     ///
     /// With `--scenario`, replays an `ess-scenario` document instead of reading stdin: every
-    /// component in one process on empty stores, the document read and checked by ESS, its steps
-    /// run and compared by ESS's conformance runner. Prints each timeline act and assertion that
-    /// holds; exits 0 when all hold. At the first that does not, prints it with what was expected
-    /// and what was observed, runs nothing after it and exits 1. A document ESS refuses exits 1
-    /// with ESS's diagnostic before any step runs.
+    /// component in one process on empty in-memory stores, the document read and checked by ESS,
+    /// its steps run and compared by ESS's conformance runner. Prints what it arranges, each
+    /// timeline act and each assertion that holds; exits 0 when all hold. At the first that does
+    /// not, prints it with what was expected and what was observed and exits 1; that replay runs
+    /// nothing after it. A document ESS refuses, or one of more than 1000 steps, exits 1 before any
+    /// step runs.
     Run {
         /// The specification directory.
         spec: PathBuf,
