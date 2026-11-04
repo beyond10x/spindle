@@ -165,6 +165,8 @@ pub enum HostError {
         component: String,
         /// The command.
         command: String,
+        /// The refusing outcome.
+        outcome: String,
         /// The declared error.
         error: DeclaredError,
     },
@@ -443,11 +445,14 @@ impl Host {
         let mut report = Report::default();
         match self.execute(&component, command, &input)? {
             Ok(Executed {
-                error: Some(error), ..
+                outcome,
+                error: Some(error),
+                ..
             }) => {
                 return Err(HostError::CommandRefused {
                     component,
                     command: command.to_owned(),
+                    outcome,
                     error,
                 });
             }

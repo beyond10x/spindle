@@ -1,6 +1,7 @@
 //! `b10x-spindle`: load an ESS specification, derive what it needs, admit it, and run or play it.
 
 mod decisions;
+mod replay;
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
@@ -153,9 +154,16 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Command::Run {
             spec,
             environment,
+            scenario: Some(scenario),
+            ..
+        } => replay::replay(&spec, &environment, &scenario),
+        Command::Run {
+            spec,
+            environment,
             state,
             decisions,
             answer_default,
+            scenario: None,
         } => execute(
             &spec,
             &environment,

@@ -1,0 +1,26 @@
+type: ess-scenario/1
+domain: desk.ticket
+scenario: an-open-ticket-is-wrongly-expected-closed
+summary: Expects the first close of an open ticket to find it already closed, which it does not.
+arrange:
+  - instance: printer
+    entity: desk.ticket.Ticket
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: desk.ticket.OpenTicket
+    input:
+      title: printer
+    outcome: opened
+    capture: {instance: printer, event: desk.ticket.TicketOpened, field: ticket_id}
+  - at: 2026-01-05T09:01:00Z
+    command: desk.ticket.CloseTicket
+    input:
+      ticket_id: {$instance: printer}
+    outcome: already-closed
+    error: {name: desk.ticket.AlreadyClosed}
+  - at: 2026-01-05T09:02:00Z
+    command: desk.ticket.CloseTicket
+    input:
+      ticket_id: {$instance: printer}
+    outcome: already-closed
+    error: {name: desk.ticket.AlreadyClosed}

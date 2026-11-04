@@ -227,10 +227,17 @@ pub const CAPABILITIES: &[Capability] = &[
         "run serves the accepted commands and views over HTTP on 127.0.0.1 where ingress.network is bound.",
         "/docs/concepts/capabilities",
     ),
+    shipped(
+        "Conformance",
+        "Scenario replay",
+        "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: captures feed later steps, view asserts are checked, and the first divergent step is named and ends the run.",
+        "/docs/concepts/specification",
+        "crates/spindle-cli/tests/replay.rs::the_first_divergent_step_is_named",
+    ),
     planned(
         "Conformance",
-        "Scenario replay and self-conformance",
-        "run --scenario replays an ess-scenario/1 timeline; the suite ESS synthesises from Spindle's own specification runs in task check.",
+        "Self-conformance",
+        "The suite ESS synthesises from Spindle's own specification runs in task check.",
         "/docs/concepts/specification",
     ),
     planned(

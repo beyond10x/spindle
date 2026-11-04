@@ -165,9 +165,16 @@
     },
     {
       "area": "Conformance",
-      "detail": "run --scenario replays an ess-scenario/1 timeline; the suite ESS synthesises from Spindle's own specification runs in task check.",
+      "detail": "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: captures feed later steps, view asserts are checked, and the first divergent step is named and ends the run.",
       "href": "/docs/concepts/specification",
-      "label": "Scenario replay and self-conformance",
+      "label": "Scenario replay",
+      "status": "shipped"
+    },
+    {
+      "area": "Conformance",
+      "detail": "The suite ESS synthesises from Spindle's own specification runs in task check.",
+      "href": "/docs/concepts/specification",
+      "label": "Self-conformance",
       "status": "planned"
     },
     {
