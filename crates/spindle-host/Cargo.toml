@@ -17,6 +17,7 @@ thiserror.workspace = true
 spindle-capability = { path = "../spindle-capability" }
 spindle-channel = { path = "../spindle-channel" }
 spindle-kernel = { path = "../spindle-kernel" }
+spindle-telemetry = { path = "../spindle-telemetry" }
 spindle-timer = { path = "../spindle-timer" }
 
 [dev-dependencies]
