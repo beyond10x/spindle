@@ -6,7 +6,7 @@ import { short } from './lib/topology';
 import TopologyScreen from './screens/TopologyScreen.vue';
 import InstanceScreen from './screens/InstanceScreen.vue';
 import ViewScreen from './screens/ViewScreen.vue';
-import type { Catalogue, Deployment, Sample, StateChange, ViewAnswer } from './api/types';
+import type { Catalogue, Deployment, Sample, State, StateChange, ViewAnswer } from './api/types';
 
 const KEEP = 900;
 const client = new Client({ base: '', token: tokenFrom(location.href) });
@@ -14,7 +14,7 @@ const client = new Client({ base: '', token: tokenFrom(location.href) });
 const deployment = shallowRef<Deployment | null>(null);
 const catalogues = shallowRef<Record<string, Catalogue>>({});
 const samples = shallowRef<Record<string, Sample[]>>({});
-const states = shallowRef<Record<string, string>>({});
+const states = shallowRef<Record<string, State>>({});
 const live = ref(false);
 const error = ref<string | null>(null);
 const hash = ref(location.hash);

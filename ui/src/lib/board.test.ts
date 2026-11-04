@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { HEIGHT, WIDTH, board, isMatchState } from './board';
-import views from '../fixtures/views.json';
+import { views } from '../../dev/observe-fixtures';
 
 const view = {
   match_id: 'm-1',
@@ -48,6 +48,6 @@ describe('the rally board', () => {
   });
 
   test('draws the fixture MatchState', () => {
-    expect(board(views['rally-table']['rally.table.MatchState'])).toMatchObject({ ok: true });
+    expect(board(views()['rally-table']!['rally.table.MatchState']!)).toMatchObject({ ok: true });
   });
 });

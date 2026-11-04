@@ -1,12 +1,26 @@
 // The field-by-field shape of each API answer. `Shape<T>` makes `vue-tsc` refuse any entry that
-// is missing from, or absent in, the type in `./types.ts`; a change there must change this too.
+// is missing from, or absent in, the generated type re-exported by `./types.ts`; the allowed
+// values of each enum are read from the generated enum objects, never listed here.
 
 import type { Shape } from '../lib/conform';
-import type { Catalogue, Deployment, Sample, StateChange } from './types';
+import {
+  BindingKind,
+  CounterKind,
+  CounterSource,
+  State,
+  TargetKind,
+  type Catalogue,
+  type Deployment,
+  type Sample,
+  type StateChange,
+} from './types';
 
 const text = { type: 'string' } as const;
 const number = { type: 'number' } as const;
 const texts = { type: 'array', of: text } as const;
+const oneOf = <T extends string>(values: Record<string, T>) =>
+  ({ type: 'string', values: Object.values(values) }) as const;
+const state = oneOf(State);
 
 export const deploymentShape: Shape<Deployment> = {
   system: text,
@@ -23,7 +37,7 @@ export const deploymentShape: Shape<Deployment> = {
       type: 'object',
       fields: {
         name: text,
-        kind: { type: 'string', values: ['periodic', 'event'] },
+        kind: oneOf(BindingKind),
         from: { ...text, optional: true },
         to: text,
         event: { ...text, optional: true },
@@ -38,9 +52,9 @@ export const deploymentShape: Shape<Deployment> = {
       fields: {
         instance_id: text,
         component: text,
-        target_kind: text,
+        target_kind: oneOf(TargetKind),
         target: text,
-        state: text,
+        state,
         requested: {
           type: 'object',
           fields: { vcpus: number, memory_mib: number, disk_mib: number },
@@ -57,14 +71,7 @@ export const catalogueShape: Shape<Catalogue> = {
     type: 'array',
     of: {
       type: 'object',
-      fields: {
-        name: text,
-        kind: { type: 'string', values: ['counter', 'histogram'] },
-        source: {
-          type: 'string',
-          values: ['kernel', 'store', 'channel', 'timer', 'ingress', 'view', 'resource'],
-        },
-      },
+      fields: { name: text, kind: oneOf(CounterKind), source: oneOf(CounterSource) },
     },
   },
 };
@@ -112,7 +119,7 @@ export const sampleShape: Shape<Sample> = {
 
 export const stateChangeShape: Shape<StateChange> = {
   instance_id: text,
-  from: text,
-  to: text,
+  from: state,
+  to: state,
   at: text,
 };

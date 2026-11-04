@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { counter, cpuShares, memoryShares, rate, sumRate } from './rates';
 import type { Sample } from '../api/types';
-import tableSamples from '../fixtures/samples.rally-table-0.json';
+import { samples as recorded } from '../../dev/observe-fixtures';
 
 const sample = (sequence: number, at: string, value: number, cpu: number, share?: number): Sample => ({
   instance_id: 'i-1',
@@ -48,6 +48,6 @@ describe('rates from cumulative counters', () => {
   });
 
   test('the fixture ticks once a second', () => {
-    expect(rate(tableSamples as Sample[], 'timer.tick.fired')).toBe(1);
+    expect(rate(recorded('rally-table-0'), 'timer.tick.fired')).toBe(1);
   });
 });

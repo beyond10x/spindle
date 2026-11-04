@@ -1,82 +1,80 @@
 // @vitest-environment node
-import { readdirSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { catalogueShape, deploymentShape, sampleShape, stateChangeShape } from './shapes';
 import { conform } from '../lib/conform';
+import { files, raw, root } from '../../dev/observe-fixtures';
 import type { Catalogue, Deployment, Sample } from './types';
 
-const fixtures = fileURLToPath(new URL('../fixtures/', import.meta.url));
-const read = (name: string): unknown => JSON.parse(readFileSync(join(fixtures, name), 'utf8'));
-const named = (prefix: string) =>
-  readdirSync(fixtures)
-    .filter((name) => name.startsWith(prefix) && name.endsWith('.json'))
-    .sort();
+const instanceDirs = () => {
+  const deployment = raw('deployment.json') as Deployment;
+  return deployment.instances.map((i) => i.instance_id);
+};
 
 describe('the_ui_types_match_the_api', () => {
+  test('the contract fixtures are where the UI reads them', () => {
+    expect(root.replaceAll('\\', '/')).toMatch(/\/ess\/fixtures\/observe$/);
+  });
+
   test('the deployment fixture has exactly the fields of Deployment', () => {
-    expect(conform(read('deployment.json'), deploymentShape)).toEqual([]);
+    expect(conform(raw('deployment.json'), deploymentShape)).toEqual([]);
   });
 
   test('every catalogue fixture has exactly the fields of Catalogue', () => {
-    const files = named('catalogue.');
-    expect(files).toHaveLength(3);
-    for (const file of files) expect(conform(read(file), catalogueShape), file).toEqual([]);
+    const catalogues = files('catalogue');
+    expect(catalogues).toHaveLength(3);
+    for (const file of catalogues) expect(conform(raw(file), catalogueShape), file).toEqual([]);
   });
 
   test('every sample fixture has exactly the fields of Sample', () => {
-    const files = named('samples.');
-    expect(files).toHaveLength(3);
-    for (const file of files) {
-      const samples = read(file) as unknown[];
-      expect(samples, file).toHaveLength(30);
-      samples.forEach((sample, index) =>
-        expect(conform(sample, sampleShape), `${file}[${index}]`).toEqual([]),
-      );
+    for (const instance of instanceDirs()) {
+      const samples = files(`samples/${instance}`);
+      expect(samples, instance).toHaveLength(30);
+      for (const file of samples) expect(conform(raw(file), sampleShape), file).toEqual([]);
     }
   });
 
   test('every state change fixture has exactly the fields of StateChange', () => {
-    const changes = read('states.json') as unknown[];
+    const changes = files('state');
     expect(changes.length).toBeGreaterThan(0);
-    changes.forEach((change, index) =>
-      expect(conform(change, stateChangeShape), `states.json[${index}]`).toEqual([]),
-    );
+    for (const file of changes) expect(conform(raw(file), stateChangeShape), file).toEqual([]);
   });
 
-  test('a field the type does not declare is refused, and so is a missing one', () => {
-    const deployment = read('deployment.json') as Record<string, unknown>;
+  test('a field the type does not declare is refused, and so is a missing or out-of-range one', () => {
+    const deployment = raw('deployment.json') as Record<string, unknown>;
     expect(conform({ ...deployment, extra: 1 }, deploymentShape)).toEqual([
       '$.extra: not declared',
     ]);
     const { system: _system, ...withoutSystem } = deployment;
     expect(conform(withoutSystem, deploymentShape)).toEqual(['$.system: missing']);
-    const badKind = structuredClone(deployment) as unknown as Deployment;
-    (badKind.bindings[0] as { kind: string }).kind = 'cron';
-    expect(conform(badKind, deploymentShape)).toEqual([
-      '$.bindings[0].kind: "cron" is not one of periodic, event',
+    const changed = structuredClone(deployment) as unknown as Deployment;
+    (changed.bindings[0] as { kind: string }).kind = 'cron';
+    (changed.instances[0] as { target_kind: string }).target_kind = 'Mainframe';
+    (changed.instances[0] as { state: string }).state = 'Sleeping';
+    expect(conform(changed, deploymentShape)).toEqual([
+      '$.bindings[0].kind: "cron" is not one of event, periodic',
+      '$.instances[0].target_kind: "Mainframe" is not one of Browser, Compose, Docker, Firecracker, Kubernetes, Process, QemuMicrovm',
+      '$.instances[0].state: "Sleeping" is not one of Exited, Placed, Planned, Refused, Running',
     ]);
   });
 
   test('the fixtures describe one rally deployment whose samples count upward', () => {
-    const deployment = read('deployment.json') as Deployment;
+    const deployment = raw('deployment.json') as Deployment;
     expect(deployment.system).toBe('rally');
-    expect(deployment.components.map((c) => c.name)).toEqual([
-      'rally-table',
-      'rally-player-west',
+    expect(deployment.components.map((c) => c.name).sort()).toEqual([
       'rally-player-east',
+      'rally-player-west',
+      'rally-table',
     ]);
     for (const instance of deployment.instances) {
-      const catalogue = read(`catalogue.${instance.component}.json`) as Catalogue;
-      const declared = new Set(catalogue.counters.map((c) => c.name));
-      const samples = read(`samples.${instance.instance_id}.json`) as Sample[];
+      const catalogue = raw('catalogue', `${instance.component}.json`) as Catalogue;
+      const declared = new Map(catalogue.counters.map((c) => [c.name, c.kind]));
+      const samples = files(`samples/${instance.instance_id}`).map((file) => raw(file) as Sample);
       samples.forEach((sample, index) => {
         expect(sample.instance_id).toBe(instance.instance_id);
-        expect(sample.sequence).toBe(index + 1);
-        for (const counter of sample.counters) expect(declared.has(counter.name), counter.name).toBe(true);
+        if (index > 0) expect(sample.sequence).toBe(samples[index - 1]!.sequence + 1);
+        for (const counter of sample.counters) expect(declared.get(counter.name), counter.name).toBe('counter');
         for (const histogram of sample.histograms) {
-          expect(declared.has(histogram.name), histogram.name).toBe(true);
+          expect(declared.get(histogram.name), histogram.name).toBe('histogram');
           expect(histogram.counts).toHaveLength(histogram.bounds.length + 1);
         }
         for (const answer of sample.recent) {

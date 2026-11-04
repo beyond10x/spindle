@@ -1,17 +1,13 @@
-// `pnpm dev` only: serves the observe API from the fixtures, so the UI runs without the control
-// process. The token is `dev`; open the URL it prints.
+// `pnpm dev` only: serves the observe API from the contract's fixtures (`ess/fixtures/observe/`),
+// so the UI runs without the control process. The token is `dev`; open the URL it prints.
 
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
-import type { Deployment, Sample, StateChange } from '../src/api/types.ts';
+import type { Sample } from '../src/api/types.ts';
+import * as fixtures from './observe-fixtures.ts';
 
 const TOKEN = 'dev';
 const HISTORY = 15;
-const fixtures = fileURLToPath(new URL('../src/fixtures/', import.meta.url));
-const read = <T>(name: string): T => JSON.parse(readFileSync(join(fixtures, name), 'utf8')) as T;
 
 export function fixturesApi(): Plugin {
   return {
@@ -33,21 +29,17 @@ function answer(req: IncomingMessage, res: ServerResponse) {
   if (req.method !== 'GET') return send(res, 405, { error: 'read only' });
   const url = new URL(req.url ?? '/', 'http://127.0.0.1');
   const path = url.pathname;
-  if (path === '/deployment') return send(res, 200, read<Deployment>('deployment.json'));
+  if (path === '/deployment') return send(res, 200, fixtures.deployment());
   if (path === '/catalogue') {
     const component = url.searchParams.get('component') ?? '';
-    const file = `catalogue.${component}.json`;
-    if (!/^[a-z0-9-]+$/.test(component) || !existsSync(join(fixtures, file))) {
-      return send(res, 404, { error: `no component ${component}` });
-    }
-    return send(res, 200, read(file));
+    const found = fixtures.catalogue(component);
+    return found ? send(res, 200, found) : send(res, 404, { error: `no component ${component}` });
   }
   const view = /^\/views\/([^/]+)\/([^/]+)$/.exec(path);
   if (view) {
-    const views = read<Record<string, Record<string, unknown>>>('views.json');
     const component = decodeURIComponent(view[1] ?? '');
     const name = decodeURIComponent(view[2] ?? '');
-    const found = views[component]?.[name];
+    const found = fixtures.views()[component]?.[name];
     return found === undefined ? send(res, 404, { error: `no view ${name}` }) : send(res, 200, found);
   }
   if (path === '/stream') return stream(req, res);
@@ -62,15 +54,15 @@ function send(res: ServerResponse, status: number, body: unknown) {
 
 function stream(req: IncomingMessage, res: ServerResponse) {
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' });
-  const deployment = read<Deployment>('deployment.json');
-  const recorded = new Map(
-    deployment.instances.map((i) => [i.instance_id, read<Sample[]>(`samples.${i.instance_id}.json`)]),
-  );
+  const recorded = fixtures
+    .deployment()
+    .instances.map((i) => fixtures.samples(i.instance_id))
+    .filter((samples) => samples.length > 0);
   const emit = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  for (const change of read<StateChange[]>('states.json')) emit('state', change);
+  for (const change of fixtures.states()) emit('state', change);
   let next = 0;
   const step = () => {
-    for (const samples of recorded.values()) emit('sample', replay(samples, next));
+    for (const samples of recorded) emit('sample', replay(samples, next));
     next += 1;
   };
   while (next < HISTORY) step();
@@ -78,6 +70,7 @@ function stream(req: IncomingMessage, res: ServerResponse) {
   req.on('close', () => clearInterval(timer));
 }
 
+/** The recorded sample at `index`; past the recording, the last one grown at its last rate. */
 function replay(samples: Sample[], index: number): Sample {
   const last = samples[samples.length - 1]!;
   if (index < samples.length) return samples[index]!;
@@ -86,7 +79,7 @@ function replay(samples: Sample[], index: number): Sample {
   const grow = (value: number, previous: number) => value + ahead * (value - previous);
   return {
     ...last,
-    sequence: index + 1,
+    sequence: last.sequence + ahead,
     at: new Date(Date.parse(last.at) + ahead * last.period_ms).toISOString(),
     counters: last.counters.map((c) => ({
       ...c,

@@ -1,18 +1,12 @@
 import { mount } from '@vue/test-utils';
 import { describe, expect, test } from 'vitest';
 import TopologyScreen from './TopologyScreen.vue';
-import deploymentJson from '../fixtures/deployment.json';
-import tableSamples from '../fixtures/samples.rally-table-0.json';
-import westSamples from '../fixtures/samples.rally-player-west-0.json';
-import eastSamples from '../fixtures/samples.rally-player-east-0.json';
-import type { Deployment, Sample } from '../api/types';
+import * as fixtures from '../../dev/observe-fixtures';
 
-const deployment = deploymentJson as Deployment;
-const samples: Record<string, Sample[]> = {
-  'rally-table-0': tableSamples as Sample[],
-  'rally-player-west-0': westSamples as Sample[],
-  'rally-player-east-0': eastSamples as Sample[],
-};
+const deployment = fixtures.deployment();
+const samples = Object.fromEntries(
+  deployment.instances.map((i) => [i.instance_id, fixtures.samples(i.instance_id)]),
+);
 
 describe('topology', () => {
   test('the_topology_shows_one_card_per_component_and_one_edge_per_binding', () => {
