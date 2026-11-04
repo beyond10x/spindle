@@ -308,7 +308,9 @@ commands:
       - name: instance_id
         type: spindle.placement.InstanceId
       - name: code
-        type: Integer
+        type: Optional<Integer>
+      - name: signal
+        type: Optional<Integer>
     outcomes:
       - name: exited
         moves: spindle.placement.Instance.exit
@@ -319,7 +321,10 @@ commands:
           spindle.placement.InstanceExited:
             instance_id: input.instance_id
             code: input.code
-        summary: The instance ended, and its exit code is recorded.
+            signal: input.signal
+        summary: >-
+          The instance ended, and how is recorded: its exit code when it exited, the signal that
+          ended it when one did.
 
       - name: already-ended
         wrong_state: true
@@ -366,7 +371,9 @@ events:
       - name: instance_id
         type: spindle.placement.InstanceId
       - name: code
-        type: Integer
+        type: Optional<Integer>
+      - name: signal
+        type: Optional<Integer>
 
 views:
   - name: spindle.placement.InstanceState
