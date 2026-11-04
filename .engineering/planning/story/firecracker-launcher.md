@@ -11,7 +11,7 @@ relations:
 scope:
 - confidence: cited
   path: crates/spindle-firecracker
-revision: 6
+revision: 7
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-04T09:17:19Z", actor: "human:timo", revision: 4}
 - {from: "proposed", to: "active", at: "2026-11-04T09:17:19Z", actor: "human:timo", revision: 5}
@@ -29,14 +29,21 @@ reported as for QEMU.
 ## Acceptance
 
 - `a_firecracker_instance_boots_and_runs_b10x_spindle` — skipped with its reason where
-  `/dev/kvm` or the binary is absent.
-- `two_firecracker_instances_reach_each_other_over_tcp`.
+  `/dev/kvm` or the binary is absent (`crates/spindle-firecracker/tests/firecracker.rs`).
+- `two_firecracker_instances_reach_each_other_over_tcp` (same file).
 - `the_same_rally_placement_runs_on_qemu_and_on_firecracker` — only the target kind differs.
+  **Not delivered**: no test of that name exists on `main` at `b9b0cd9`, although this story is
+  implemented. It cannot exist before rally runs one component per instance, so it moved to
+  `story:rally-runs-in-three-microvms`, which records it as a gap. Recorded by a plan review on
+  2026-11-04.
 
 ## Scope
 
-`crates/spindle-firecracker/` (new).
+- `crates/spindle-firecracker/` — cited.
 
 ## Open
 
-Whether Firecracker opens taps inside a user namespace (untested on this host).
+Answered by the implementation: the launcher creates the taps and the bridge inside an
+`unshare --user` namespace (`crates/spindle-firecracker/src/namespace.rs`), and
+`two_firecracker_instances_reach_each_other_over_tcp` (an `#[ignore]`d VM test, `task check:vm`)
+exercises it.
