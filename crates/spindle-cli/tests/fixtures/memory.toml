@@ -1,0 +1,8 @@
+format = "spindle-environment/1"
+name = "scratchpad"
+os = "linux"
+arch = "x86_64"
+
+[provides]
+"store.durable" = ["memory"]
+"external.*" = ["operator-prompt"]

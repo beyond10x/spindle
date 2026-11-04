@@ -1,0 +1,140 @@
+domain: probe.docs
+summary: Documents with a capacity that stays positive, a level that never drops below zero, and notes.
+types:
+  - name: probe.docs.DocId
+    kind: newtype
+    of: Uuid
+  - name: probe.docs.Level
+    kind: newtype
+    of: Integer
+    invariants:
+      - 'value >= 0'
+entities:
+  - name: probe.docs.Doc
+    identity:
+      name: doc_id
+      type: probe.docs.DocId
+    fields:
+      - name: capacity
+        type: Integer
+      - name: level
+        type: probe.docs.Level
+      - name: note
+        type: Optional<String>
+    invariants:
+      - capacity > 0
+    lifecycle:
+      initial: Draft
+      states: [Draft, Published]
+      terminal: [Published]
+      transitions:
+        - name: publish
+          from: [Draft]
+          to: Published
+errors:
+  - name: probe.docs.StateConflict
+    summary: The document rests in a state the move does not start from.
+    fields:
+      - name: doc_id
+        type: probe.docs.DocId
+      - name: current
+        type: probe.docs.Doc.State
+commands:
+  - name: probe.docs.CreateDoc
+    input:
+      - name: doc_id
+        type: probe.docs.DocId
+      - name: capacity
+        type: Integer
+    outcomes:
+      - name: created
+        creates: probe.docs.Doc
+        instance: doc_id
+        sets:
+          capacity: input.capacity
+          level: 1
+        emits: [probe.docs.DocCreated]
+        payload:
+          probe.docs.DocCreated: {doc_id: input.doc_id}
+        summary: The document is created.
+  - name: probe.docs.PublishDoc
+    input:
+      - name: doc_id
+        type: probe.docs.DocId
+    outcomes:
+      - name: published
+        moves: probe.docs.Doc.publish
+        instance: doc_id
+        emits: [probe.docs.DocPublished]
+        payload:
+          probe.docs.DocPublished: {doc_id: input.doc_id}
+        summary: A draft is published.
+      - name: conflict
+        wrong_state: true
+        error: probe.docs.StateConflict
+        payload:
+          probe.docs.StateConflict: {doc_id: input.doc_id, current: {subject: state}}
+        summary: Only a draft is published.
+  - name: probe.docs.Annotate
+    input:
+      - name: doc_id
+        type: probe.docs.DocId
+      - name: flag
+        type: Boolean
+      - name: note
+        type: String
+    outcomes:
+      - name: noted
+        when: flag == true
+        updates: probe.docs.Doc
+        instance: doc_id
+        sets:
+          note: input.note
+        emits: [probe.docs.DocNoted]
+        payload:
+          probe.docs.DocNoted: {doc_id: input.doc_id}
+        summary: A flagged note is written onto the document, whatever its state.
+      - name: published
+        moves: probe.docs.Doc.publish
+        instance: doc_id
+        emits: [probe.docs.DocPublished]
+        payload:
+          probe.docs.DocPublished: {doc_id: input.doc_id}
+        summary: Without the flag the draft is published.
+      - name: conflict
+        wrong_state: true
+        error: probe.docs.StateConflict
+        payload:
+          probe.docs.StateConflict: {doc_id: input.doc_id, current: {subject: state}}
+        summary: Only a draft is published.
+  - name: probe.docs.Lower
+    input:
+      - name: doc_id
+        type: probe.docs.DocId
+    outcomes:
+      - name: lowered
+        updates: probe.docs.Doc
+        instance: doc_id
+        sets:
+          level: {increment: -1}
+        emits: [probe.docs.DocLowered]
+        payload:
+          probe.docs.DocLowered: {doc_id: input.doc_id}
+        summary: The level drops by one.
+events:
+  - name: probe.docs.DocCreated
+    fields:
+      - name: doc_id
+        type: probe.docs.DocId
+  - name: probe.docs.DocPublished
+    fields:
+      - name: doc_id
+        type: probe.docs.DocId
+  - name: probe.docs.DocNoted
+    fields:
+      - name: doc_id
+        type: probe.docs.DocId
+  - name: probe.docs.DocLowered
+    fields:
+      - name: doc_id
+        type: probe.docs.DocId
