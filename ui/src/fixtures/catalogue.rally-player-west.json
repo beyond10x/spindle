@@ -1,0 +1,80 @@
+{
+  "component": "rally-player-west",
+  "counters": [
+    {
+      "name": "command.rally.west.ObserveBall.first-sight",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.west.ObserveBall.up",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.west.ObserveBall.down",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.west.ObserveBall.hold",
+      "kind": "counter",
+      "source": "kernel"
+    },
+    {
+      "name": "command.rally.west.ObserveBall.latency_us",
+      "kind": "histogram",
+      "source": "kernel"
+    },
+    {
+      "name": "event.rally.west.PaddleMoveRequested.appended",
+      "kind": "counter",
+      "source": "store"
+    },
+    {
+      "name": "event.rally.west.BallSeen.appended",
+      "kind": "counter",
+      "source": "store"
+    },
+    {
+      "name": "store.rows_written",
+      "kind": "counter",
+      "source": "store"
+    },
+    {
+      "name": "store.bytes_written",
+      "kind": "counter",
+      "source": "store"
+    },
+    {
+      "name": "binding.west-moves.sent",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.west-moves.redelivered",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.west-moves.dropped",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "binding.west-watches.delivered",
+      "kind": "counter",
+      "source": "channel"
+    },
+    {
+      "name": "resource.cpu_seconds",
+      "kind": "counter",
+      "source": "resource"
+    },
+    {
+      "name": "resource.memory_bytes",
+      "kind": "counter",
+      "source": "resource"
+    }
+  ]
+}
