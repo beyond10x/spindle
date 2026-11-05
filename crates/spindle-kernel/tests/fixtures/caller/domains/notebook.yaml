@@ -1,0 +1,154 @@
+domain: quill.notebook
+summary: A notebook owned by the writer who created it; only its owner edits or shares it.
+types:
+  - name: quill.notebook.NotebookId
+    kind: newtype
+    of: Uuid
+  - name: quill.notebook.OwnerId
+    kind: newtype
+    of: Uuid
+actors:
+  - name: quill.notebook.Writer
+    attributes:
+      - name: owner_id
+        type: quill.notebook.OwnerId
+    may:
+      - quill.notebook.CreateNotebook
+      - quill.notebook.EditNotebook
+      - quill.notebook.ShareNotebook
+entities:
+  - name: quill.notebook.Notebook
+    identity:
+      name: notebook_id
+      type: quill.notebook.NotebookId
+    fields:
+      - name: owner_id
+        type: quill.notebook.OwnerId
+      - name: title
+        type: String
+      - name: shared_with
+        type: Optional<quill.notebook.OwnerId>
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+errors:
+  - name: quill.notebook.NoSuchNotebook
+    summary: No notebook carries the id.
+    fields: []
+  - name: quill.notebook.NotYours
+    summary: The notebook is owned by another writer.
+    fields: []
+  - name: quill.notebook.SharedWithSelf
+    summary: A writer shares a notebook with themselves.
+    fields: []
+commands:
+  - name: quill.notebook.CreateNotebook
+    input:
+      - name: notebook_id
+        type: quill.notebook.NotebookId
+      - name: title
+        type: String
+    outcomes:
+      - name: created
+        creates: quill.notebook.Notebook
+        instance: notebook_id
+        sets:
+          owner_id: {caller: owner_id}
+          title: input.title
+        emits: [quill.notebook.NotebookCreated]
+        payload:
+          quill.notebook.NotebookCreated:
+            notebook_id: input.notebook_id
+            owner_id: {caller: owner_id}
+        summary: The notebook is created, owned by the writer who sent the command.
+  - name: quill.notebook.EditNotebook
+    input:
+      - name: notebook_id
+        type: quill.notebook.NotebookId
+      - name: title
+        type: String
+    outcomes:
+      - name: no-such-notebook
+        unknown_instance: true
+        error: quill.notebook.NoSuchNotebook
+        summary: No notebook carries the id.
+      - name: not-yours
+        when_subject:
+          predicate: owner_id != caller.owner_id
+        error: quill.notebook.NotYours
+        summary: Another writer owns the notebook.
+      - name: edited
+        updates: quill.notebook.Notebook
+        instance: notebook_id
+        sets:
+          title: input.title
+        emits: [quill.notebook.NotebookEdited]
+        payload:
+          quill.notebook.NotebookEdited:
+            notebook_id: input.notebook_id
+            title: input.title
+        summary: The owner retitles the notebook.
+  - name: quill.notebook.ShareNotebook
+    input:
+      - name: notebook_id
+        type: quill.notebook.NotebookId
+      - name: with
+        type: quill.notebook.OwnerId
+    outcomes:
+      - name: with-self
+        when: with == caller.owner_id
+        error: quill.notebook.SharedWithSelf
+        summary: The writer names themselves.
+      - name: no-such-notebook
+        unknown_instance: true
+        error: quill.notebook.NoSuchNotebook
+        summary: No notebook carries the id.
+      - name: not-yours
+        when_subject:
+          predicate: owner_id != caller.owner_id
+        error: quill.notebook.NotYours
+        summary: Another writer owns the notebook.
+      - name: shared
+        updates: quill.notebook.Notebook
+        instance: notebook_id
+        sets:
+          shared_with: input.with
+        emits: [quill.notebook.NotebookShared]
+        payload:
+          quill.notebook.NotebookShared:
+            notebook_id: input.notebook_id
+            shared_with: input.with
+        summary: The owner shares the notebook with another writer.
+events:
+  - name: quill.notebook.NotebookCreated
+    fields:
+      - name: notebook_id
+        type: quill.notebook.NotebookId
+      - name: owner_id
+        type: quill.notebook.OwnerId
+  - name: quill.notebook.NotebookEdited
+    fields:
+      - name: notebook_id
+        type: quill.notebook.NotebookId
+      - name: title
+        type: String
+  - name: quill.notebook.NotebookShared
+    fields:
+      - name: notebook_id
+        type: quill.notebook.NotebookId
+      - name: shared_with
+        type: quill.notebook.OwnerId
+views:
+  - name: quill.notebook.NotebookCard
+    source: quill.notebook.Notebook
+    consistency: read_your_writes
+    fields:
+      - name: notebook_id
+        type: quill.notebook.NotebookId
+      - name: owner_id
+        type: quill.notebook.OwnerId
+      - name: title
+        type: String
+      - name: shared_with
+        type: Optional<quill.notebook.OwnerId>

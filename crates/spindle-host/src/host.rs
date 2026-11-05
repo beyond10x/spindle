@@ -661,10 +661,24 @@ impl Host {
         command: &str,
         input: Map<String, Value>,
     ) -> Result<Report, HostError> {
+        self.submit_as(command, input, None)
+    }
+
+    /// [`Host::submit`], sent as the caller whose attributes `caller` holds
+    /// ([`spindle_kernel::Invocation`]). What its events lead to is sent as no caller.
+    ///
+    /// # Errors
+    /// As [`Host::submit`].
+    pub fn submit_as(
+        &mut self,
+        command: &str,
+        input: Map<String, Value>,
+        caller: Option<&Map<String, Value>>,
+    ) -> Result<Report, HostError> {
         let component = accepting(&self.ir, command)
             .ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
         let mut report = Report::default();
-        match self.execute(&component, command, &input)? {
+        match self.execute(&component, command, &input, caller)? {
             Ok(Executed {
                 outcome,
                 error: Some(error),
@@ -839,6 +853,7 @@ impl Host {
         component: &str,
         command: &str,
         input: &Map<String, Value>,
+        caller: Option<&Map<String, Value>>,
     ) -> Result<Result<Executed, ExecuteError>, HostError> {
         let held = self
             .components
@@ -846,14 +861,17 @@ impl Host {
             .ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
         let started = Instant::now();
         let clock = &self.clock;
-        let result = spindle_kernel::execute_at(
+        let result = spindle_kernel::execute_as(
             &self.ir,
             held.store.as_mut(),
             self.decider.as_mut(),
             &mut UuidV4,
             &|| clock.wall(),
-            command,
-            input,
+            &spindle_kernel::Invocation {
+                command,
+                input,
+                caller,
+            },
         );
         held.sink.executed(command, &result, started.elapsed());
         let executed = match result {
@@ -891,7 +909,7 @@ impl Host {
         cause: Cause,
         report: &mut Report,
     ) -> Result<(), HostError> {
-        match self.execute(component, command, input)? {
+        match self.execute(component, command, input, None)? {
             Ok(Executed {
                 outcome,
                 error: Some(error),

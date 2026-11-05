@@ -471,7 +471,8 @@ fn route(
 /// does not serve: a `form` or `query` request, an outcome answered other than with the envelope
 /// (a body, headers, a redirect or text), a view answered other than as `rows`, a standard
 /// refusal the binding answers its own way, a command whose outcome answers with its response,
-/// or a path variable that is not a scalar.
+/// a path variable that is not a scalar, or a command that reads its caller: how an HTTP caller
+/// proves its attributes is an authentication technical not yet decided (design §11).
 fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Result<(), String> {
     for (variable, field) in ess_gen::http::path_fields(ir, bound) {
         let position = route
@@ -494,6 +495,16 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
     }
     match bound.serves {
         ess_gen::http::Served::Command(handle) => {
+            let read = ess_gen::http::caller_attributes(ir, ir.command(handle));
+            if !read.is_empty() {
+                return Err(format!(
+                    "the caller attributes it reads ({}), which no HTTP caller proves here",
+                    read.iter()
+                        .map(|attribute| format!("`{attribute}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
             route.input = ir
                 .command(handle)
                 .input

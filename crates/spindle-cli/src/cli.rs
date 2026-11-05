@@ -71,8 +71,10 @@ pub enum Command {
     /// Admit a specification, then execute commands read as JSON lines on stdin.
     ///
     /// Each line is `{"command": "<qualified name>", "input": {...}}`, with an optional
-    /// `"external": {"<outcome>": true | false}` answering the command's external causes. Each
-    /// line prints one JSON result: the outcome with its events and declared error, or a failure.
+    /// `"external": {"<outcome>": true | false}` answering the command's external causes and an
+    /// optional `"caller": {"<attribute>": ...}`, the attributes of the caller the command is sent
+    /// as, which it reads as `{caller: <attribute>}` and `caller.<attribute>`. Each line prints
+    /// one JSON result: the outcome with its events and declared error, or a failure.
     /// Exits 3, running nothing, when admission is refused.
     ///
     /// An external cause the line does not answer is answered by `--decisions`, then by

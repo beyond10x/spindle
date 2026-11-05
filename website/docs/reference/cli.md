@@ -87,7 +87,7 @@ b10x-spindle admit [OPTIONS] --environment <ENVIRONMENT> <SPEC>
 
 Admit a specification, then execute commands read as JSON lines on stdin.
 
-Each line is `{"command": "<qualified name>", "input": {...}}`, with an optional `"external": {"<outcome>": true | false}` answering the command's external causes. Each line prints one JSON result: the outcome with its events and declared error, or a failure. Exits 3, running nothing, when admission is refused.
+Each line is `{"command": "<qualified name>", "input": {...}}`, with an optional `"external": {"<outcome>": true | false}` answering the command's external causes and an optional `"caller": {"<attribute>": ...}`, the attributes of the caller the command is sent as, which it reads as `{caller: <attribute>}` and `caller.<attribute>`. Each line prints one JSON result: the outcome with its events and declared error, or a failure. Exits 3, running nothing, when admission is refused.
 
 An external cause the line does not answer is answered by `--decisions`, then by `--answer-default`; one nothing answers fails that line, naming the outcome, and the run goes on.
 
