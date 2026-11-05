@@ -53,8 +53,8 @@
         {"title": "Components joined by bindings", "description": "Periodic bindings on a timer, event bindings over in-process or TCP channels.", "status": "shipped", "href": "/docs/concepts/components-and-bindings"},
         {"title": "Process, QEMU and Firecracker targets", "description": "One launcher contract; microVM launchers without root, tested on a host with KVM.", "status": "shipped", "href": "/docs/concepts/deployment-targets"},
         {"title": "Counters derived like capabilities", "description": "Every command outcome, event, binding and timer tick of a component is counted, with no metric in the specification.", "status": "shipped", "href": "/docs/concepts/observe"},
-        {"title": "A live observe API and UI", "description": "A control process that launches instances and serves their counters to the browser UI.", "status": "planned", "href": "/docs/concepts/observe"},
-        {"title": "Rally in three microVMs", "description": "Each component of the example in its own VM, joined over the VM network.", "status": "planned", "href": "/docs/examples/rally"}
+        {"title": "A live observe API and UI", "description": "A control process that launches instances and serves their counters to the browser UI.", "status": "shipped", "href": "/docs/concepts/observe"},
+        {"title": "Rally in three microVMs", "description": "Each component of the example in its own VM, joined over the VM network.", "status": "shipped", "href": "/docs/examples/rally"}
       ]
     },
     {
