@@ -14,7 +14,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Map, Value, json};
 use spindle_capability::Environment;
 use spindle_host::{Cause, Clock, Host, HostError, Report, rally};
-use spindle_target::{ENV_LISTEN, ENV_PEER_PREFIX, env_name};
+use spindle_target::{ENV_LISTEN, ENV_PEER_PREFIX, ENV_SETTING_PREFIX, env_name};
 
 use crate::scaled::Scaled;
 use crate::{MATCH_STATE, OPEN_MATCH, REFUSED, SIGNALLED, signals};
@@ -125,6 +125,7 @@ fn linked(
         None => None,
     };
     let listener = TcpListener::bind(listen).with_context(|| format!("listening on {listen}"))?;
+    let ingress = ingress(host, component)?;
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     writeln!(
@@ -170,6 +171,7 @@ fn linked(
             );
         }
         host.accept(&listener)?;
+        serve(ingress.as_ref(), host);
         refused(host);
         std::thread::sleep(POLL);
     }
@@ -194,6 +196,7 @@ fn linked(
             return Ok(ExitCode::from(status));
         }
         host.accept(&listener)?;
+        serve(ingress.as_ref(), host);
         refused(host);
         let report = host.deliver()?;
         print(&mut out, &report)?;
@@ -224,6 +227,45 @@ fn linked(
             }
         }
         std::thread::sleep(POLL);
+    }
+}
+
+/// The component's ingress, when the control process gave it an address as the setting
+/// `ingress` (`SPINDLE_SETTING_INGRESS`): its routes served there as `run` serves them.
+fn ingress(host: &Host, component: &str) -> Result<Option<spindle_ingress::Listener>> {
+    let variable = format!(
+        "{ENV_SETTING_PREFIX}{}",
+        env_name(spindle_control::INGRESS_SETTING)
+    );
+    let Ok(address) = std::env::var(&variable) else {
+        return Ok(None);
+    };
+    let address: SocketAddr = address
+        .parse()
+        .with_context(|| format!("{variable}={address} is not an address"))?;
+    if !address.ip().is_loopback() {
+        bail!("{variable}={address}: the ingress listens on 127.0.0.1 only");
+    }
+    let surface = spindle_ingress::Surface::new(host.ir(), &[component.to_owned()], None)
+        .map_err(|error| anyhow!("the ingress of {component}: {error}"))?;
+    let listener = spindle_ingress::Listener::bind(address.port(), surface)
+        .with_context(|| format!("serving the ingress of {component} on {address}"))?;
+    Ok(Some(listener))
+}
+
+/// Answers every request waiting at `ingress` on `host`; a command a binding invoked on the way
+/// that did not run is reported on stderr.
+fn serve(ingress: Option<&spindle_ingress::Listener>, host: &mut Host) {
+    let Some(ingress) = ingress else {
+        return;
+    };
+    while let Some(exchange) = ingress.next(Duration::ZERO) {
+        for failed in exchange.serve(host) {
+            eprintln!(
+                "b10x-spindle: {} did not run {}: {}",
+                failed.component, failed.command, failed.error
+            );
+        }
     }
 }
 

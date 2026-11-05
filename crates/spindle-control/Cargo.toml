@@ -1,0 +1,31 @@
+[package]
+name = "spindle-control"
+description = "The control process: places and launches the instances of a deployment, collects their samples and serves the read-only observe API and UI on 127.0.0.1."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[dependencies]
+ess-compiler.workspace = true
+http-body-util = "0.1"
+hyper = { version = "1", features = ["client", "http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+serde.workspace = true
+serde_json.workspace = true
+spindle-capability.workspace = true
+spindle-host = { path = "../spindle-host" }
+spindle-ingress = { path = "../spindle-ingress" }
+spindle-spec.workspace = true
+spindle-target = { path = "../spindle-target" }
+spindle-telemetry = { path = "../spindle-telemetry" }
+tempfile.workspace = true
+thiserror.workspace = true
+tokio = { version = "1", default-features = false, features = ["macros", "net", "rt", "sync", "time"] }
+toml.workspace = true
+
+[dev-dependencies]
+schema-contract = { git = "https://github.com/beyond10x/ess", tag = "0.86.0" }

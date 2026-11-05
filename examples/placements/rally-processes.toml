@@ -1,0 +1,21 @@
+format = "spindle-placement/1"
+
+[[targets]]
+id = "laptop"
+kind = "Process"
+environment = "laptop"
+
+[[instances]]
+id = "rally-table-0"
+component = "rally-table"
+target = "laptop"
+
+[[instances]]
+id = "rally-player-west-0"
+component = "rally-player-west"
+target = "laptop"
+
+[[instances]]
+id = "rally-player-east-0"
+component = "rally-player-east"
+target = "laptop"

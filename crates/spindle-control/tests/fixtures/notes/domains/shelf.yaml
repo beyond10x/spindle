@@ -1,0 +1,30 @@
+domain: notes.shelf
+summary: Each written note, shelved once by a component no request reaches.
+entities:
+  - name: notes.shelf.Shelved
+    identity:
+      name: note_id
+      type: notes.pad.NoteId
+    fields: []
+    lifecycle:
+      initial: OnShelf
+      states: [OnShelf]
+      terminal: [OnShelf]
+commands:
+  - name: notes.shelf.ShelveNote
+    input:
+      - name: note_id
+        type: notes.pad.NoteId
+    outcomes:
+      - name: shelved
+        creates: notes.shelf.Shelved
+        instance: note_id
+        emits: [notes.shelf.NoteShelved]
+        payload:
+          notes.shelf.NoteShelved: {note_id: input.note_id}
+        summary: The note is shelved.
+events:
+  - name: notes.shelf.NoteShelved
+    fields:
+      - name: note_id
+        type: notes.pad.NoteId
