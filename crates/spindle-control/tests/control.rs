@@ -519,7 +519,8 @@ fn a_view_is_answered_through_the_instance_ingress() {
             let _ = stream.set_read_timeout(Some(ANSWER));
             let _ = write!(
                 stream,
-                "GET {own_path} HTTP/1.1\r\nHost: {ingress}\r\nConnection: close\r\n\r\n"
+                "GET {own_path} HTTP/1.1\r\nHost: {ingress}\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n",
+                control.ingress_token()
             );
             let mut raw = String::new();
             let _ = stream.read_to_string(&mut raw);
@@ -537,6 +538,19 @@ fn a_view_is_answered_through_the_instance_ingress() {
     };
     let own: Value = serde_json::from_str(&own).expect("the instance answers JSON");
     assert_eq!(own["rows"][0]["note_id"], "n-1", "{own:#}");
+    let mut bare = TcpStream::connect(ingress).expect("the ingress listens");
+    bare.set_read_timeout(Some(ANSWER)).expect("a timeout");
+    write!(
+        bare,
+        "GET {own_path} HTTP/1.1\r\nHost: {ingress}\r\nConnection: close\r\n\r\n"
+    )
+    .expect("sent");
+    let mut raw = String::new();
+    let _ = bare.read_to_string(&mut raw);
+    assert!(
+        raw.starts_with("HTTP/1.1 401"),
+        "the ingress answers without its token: {raw}"
+    );
 
     let path = with_token(control, "/api/views/pad/notes.pad.AllNotes");
     let answered = get(control, &path);

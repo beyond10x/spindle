@@ -86,14 +86,20 @@ impl Hub {
     }
 
     /// A new stream: every held sample first, instance by instance and oldest first, then every
-    /// sample and state change as it happens.
+    /// sample and state change as it happens. The channel holds every held sample and
+    /// [`STREAM_BACKLOG`] more, so the replay loses none.
     pub(crate) fn subscribe(&self) -> mpsc::Receiver<Bytes> {
-        let (sender, receiver) = mpsc::channel(STREAM_BACKLOG);
         let mut inner = self.lock();
-        for instance in inner.history.instances() {
-            for sample in inner.history.samples(&instance) {
-                let _ = sender.try_send(message("sample", &sample));
-            }
+        let held = inner
+            .history
+            .instances()
+            .into_iter()
+            .map(|instance| inner.history.samples(&instance))
+            .collect::<Vec<_>>();
+        let count = held.iter().map(Vec::len).sum::<usize>();
+        let (sender, receiver) = mpsc::channel(count + STREAM_BACKLOG);
+        for sample in held.iter().flatten() {
+            let _ = sender.try_send(message("sample", sample));
         }
         inner.streams.push(sender);
         receiver
@@ -151,4 +157,47 @@ fn broadcast(inner: &mut Inner, bytes: &Bytes) {
             Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => true,
             Err(mpsc::error::TrySendError::Closed(_)) => false,
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::history::{SystemClock, WINDOW};
+
+    #[test]
+    fn a_late_stream_is_replayed_every_held_sample() {
+        let hub = Hub::new(
+            Deployment {
+                system: "s".to_owned(),
+                components: Vec::new(),
+                bindings: Vec::new(),
+                instances: Vec::new(),
+            },
+            BTreeMap::new(),
+            WINDOW,
+            Arc::new(SystemClock),
+        );
+        let held = STREAM_BACKLOG + 1_000;
+        for sequence in 0..held {
+            let instance = if sequence % 2 == 0 { "a-0" } else { "b-0" };
+            hub.sample(
+                instance,
+                serde_json::json!({ "instance_id": instance, "sequence": sequence }),
+            );
+        }
+        let mut stream = hub.subscribe();
+        let mut replayed = 0;
+        while stream.try_recv().is_ok() {
+            replayed += 1;
+        }
+        assert_eq!(
+            replayed, held,
+            "a stream opened late is told every held sample"
+        );
+        hub.sample(
+            "a-0",
+            serde_json::json!({ "instance_id": "a-0", "sequence": held }),
+        );
+        assert!(stream.try_recv().is_ok(), "and then the live ones");
+    }
 }

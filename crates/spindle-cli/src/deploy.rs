@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde_json::json;
+use signal_hook::consts::SIGHUP;
 use spindle_capability::Environment;
 use spindle_control::{Control, Options, PlacementDocument};
 use spindle_target::Artifact;
@@ -24,9 +25,12 @@ pub(crate) struct Deploying<'a> {
     pub port: u16,
 }
 
-/// Runs the control process until SIGINT or SIGTERM; see the `deploy` command's help.
+/// Runs the control process until SIGINT, SIGTERM or SIGHUP; see the `deploy` command's help.
 pub(crate) fn deploy(deploying: &Deploying<'_>) -> Result<ExitCode> {
     let signalled = signals()?;
+    let hangup = usize::try_from(SIGHUP).context("a signal number")?;
+    signal_hook::flag::register_usize(SIGHUP, std::sync::Arc::clone(&signalled), hangup)
+        .context("handling SIGHUP")?;
     let spec = std::path::absolute(deploying.spec)
         .with_context(|| format!("resolving {}", deploying.spec.display()))?;
     let environment_file = std::path::absolute(deploying.environment)

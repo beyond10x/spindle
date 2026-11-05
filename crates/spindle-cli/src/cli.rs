@@ -183,7 +183,9 @@ pub enum Command {
     /// SIGINT or SIGTERM exits 130 or 143, at any point. With `SPINDLE_TELEMETRY` set, it sends its counters there as
     /// `spindle-telemetry/1` frames. With the setting `ingress` (`SPINDLE_SETTING_INGRESS`), the
     /// loopback address `deploy` gives a component reached over the network, it serves the
-    /// component's routes there as `run` serves them.
+    /// component's routes there as `run` serves them, refusing a request that does not carry the
+    /// token in the setting `ingress_token` (as `?t=` or `Authorization: Bearer`) or whose `Host` is
+    /// not `127.0.0.1:<port>` or `localhost:<port>`; `ingress` without `ingress_token` exits 1.
     Play {
         /// The rally specification directory.
         spec: PathBuf,
@@ -206,8 +208,9 @@ pub enum Command {
         #[arg(long, env = "SPINDLE_LISTEN", requires = "component")]
         listen: Option<std::net::SocketAddr>,
     },
-    /// Deploy a specification: place and launch every instance of a placement, collect what they
-    /// send, and serve the read-only observe API and UI on 127.0.0.1 until SIGINT or SIGTERM.
+    /// Deploy a specification: place and launch every instance of a placement, collect what
+    /// they send, and serve the read-only observe API and UI on 127.0.0.1 until SIGINT, SIGTERM
+    /// or SIGHUP.
     ///
     /// The placement is a `spindle-placement/1` document (TOML): its `targets` (`id`, `kind`,
     /// `environment`, `ceiling`) and `instances` (`id`, `component`, `target`, `request`,
@@ -227,8 +230,9 @@ pub enum Command {
     /// /api/catalogue?component=` a component's counters; `GET /api/stream` Server-Sent Events,
     /// one `sample` per instance per period and one `state` per state change, after the samples
     /// of the last 15 minutes; `GET /api/views/<component>/<view>` the view's answer from the
-    /// ingress of a running instance; `GET /` the observe UI, built into this binary. SIGINT or
-    /// SIGTERM stops every instance and exits 130 or 143.
+    /// ingress of a running instance; `GET /` the observe UI, built into this binary. SIGINT,
+    /// SIGTERM or SIGHUP stops every instance and exits 130, 143 or 129. Each instance is also
+    /// sent SIGTERM by the system should `deploy` end without stopping it.
     Deploy {
         /// The specification directory.
         spec: PathBuf,

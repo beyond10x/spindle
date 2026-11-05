@@ -231,7 +231,8 @@ fn linked(
 }
 
 /// The component's ingress, when the control process gave it an address as the setting
-/// `ingress` (`SPINDLE_SETTING_INGRESS`): its routes served there as `run` serves them.
+/// `ingress` (`SPINDLE_SETTING_INGRESS`): its routes served there as `run` serves them, every request
+/// refused unless it carries the token in `ingress_token` and names that address as its `Host`.
 fn ingress(host: &Host, component: &str) -> Result<Option<spindle_ingress::Listener>> {
     let variable = format!(
         "{ENV_SETTING_PREFIX}{}",
@@ -246,9 +247,17 @@ fn ingress(host: &Host, component: &str) -> Result<Option<spindle_ingress::Liste
     if !address.ip().is_loopback() {
         bail!("{variable}={address}: the ingress listens on 127.0.0.1 only");
     }
+    let token_variable = format!(
+        "{ENV_SETTING_PREFIX}{}",
+        env_name(spindle_control::INGRESS_TOKEN_SETTING)
+    );
+    let token = std::env::var(&token_variable)
+        .ok()
+        .filter(|token| !token.is_empty())
+        .with_context(|| format!("{variable} is set but {token_variable} is not"))?;
     let surface = spindle_ingress::Surface::new(host.ir(), &[component.to_owned()], None)
         .map_err(|error| anyhow!("the ingress of {component}: {error}"))?;
-    let listener = spindle_ingress::Listener::bind(address.port(), surface)
+    let listener = spindle_ingress::Listener::bind_guarded(address.port(), surface, &token)
         .with_context(|| format!("serving the ingress of {component} on {address}"))?;
     Ok(Some(listener))
 }

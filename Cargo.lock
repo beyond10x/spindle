@@ -1490,6 +1490,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "rustix",
  "schema-contract",
  "serde",
  "serde_json",

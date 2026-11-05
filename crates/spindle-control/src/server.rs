@@ -41,6 +41,8 @@ pub(crate) type ViewPaths = BTreeMap<String, BTreeMap<String, String>>;
 pub(crate) struct Served {
     pub(crate) hub: Arc<Hub>,
     pub(crate) token: String,
+    /// The token every request to an instance's ingress carries.
+    pub(crate) ingress_token: String,
     pub(crate) port: u16,
     /// Instance → its ingress, for each instance of a component reached over the network.
     pub(crate) ingress: BTreeMap<String, SocketAddr>,
@@ -347,7 +349,7 @@ async fn view(served: &Served, rest: &str) -> Answer {
             &format!("no instance of {component} is running"),
         );
     };
-    match tokio::time::timeout(VIEW_ANSWER, ask(*address, path)).await {
+    match tokio::time::timeout(VIEW_ANSWER, ask(*address, path, &served.ingress_token)).await {
         Ok(Ok((status, body))) => json_answer(status, body),
         Ok(Err(error)) => refused(
             StatusCode::BAD_GATEWAY,
@@ -362,7 +364,7 @@ async fn view(served: &Served, rest: &str) -> Answer {
     }
 }
 
-async fn ask(address: SocketAddr, path: &str) -> Result<(StatusCode, Bytes), String> {
+async fn ask(address: SocketAddr, path: &str, token: &str) -> Result<(StatusCode, Bytes), String> {
     let stream = tokio::net::TcpStream::connect(address)
         .await
         .map_err(|error| error.to_string())?;
@@ -372,6 +374,7 @@ async fn ask(address: SocketAddr, path: &str) -> Result<(StatusCode, Bytes), Str
     tokio::spawn(connection);
     let request = Request::get(path)
         .header(HOST, address.to_string())
+        .header(AUTHORIZATION, format!("Bearer {token}"))
         .body(Empty::<Bytes>::new())
         .map_err(|error| error.to_string())?;
     let answer = sender

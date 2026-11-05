@@ -6,7 +6,8 @@
 //! links to its peers as `play --component` does: it listens at `SPINDLE_LISTEN` and connects to
 //! `SPINDLE_PEER_<PEER>`, and a link that closes later does not end it. With
 //! the setting `seed_note` it writes that note first (`notes.pad.WriteNote`). With the setting
-//! `ingress` it serves the component's routes there, as `run` serves them. With `exit_after_ms` it
+//! `ingress` it serves the component's routes there, as `run` serves them, guarded by the token in
+//! `ingress_token` and a loopback `Host`, as `play --component` serves them. With `exit_after_ms` it
 //! exits 0 that long after it started; otherwise it runs until it is signalled, and at most ten
 //! minutes.
 
@@ -97,7 +98,9 @@ fn main() {
         let address: std::net::SocketAddr = address.parse().expect("an ingress address");
         let surface = spindle_ingress::Surface::new(&ir, std::slice::from_ref(&component), None)
             .expect("the component's surface");
-        spindle_ingress::Listener::bind(address.port(), surface).expect("the ingress listens")
+        let token = setting("ingress_token").expect("ingress_token beside ingress");
+        spindle_ingress::Listener::bind_guarded(address.port(), surface, &token)
+            .expect("the ingress listens")
     });
     eprintln!("ready");
 

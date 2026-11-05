@@ -53,7 +53,10 @@ pub fn env_name(name: &str) -> String {
 /// standard error go to `<console_dir>/<instance_id>.log`; a launch that starts nothing leaves the
 /// previous console as it was. Stopping sends `SIGTERM` to the instance's process group, then
 /// `SIGKILL` to the group once the instance has exited or the grace period is over, so nothing
-/// the instance started outlives it.
+/// the instance started outlives it. The instance is also sent `SIGTERM` by the system when the thread
+/// that launched it ends (`PR_SET_PDEATHSIG`), so an instance never outlives its launcher's
+/// process, even one killed without a chance to stop it; one whose launcher is already gone
+/// when it starts is not started.
 #[derive(Debug, Clone)]
 pub struct ProcessLauncher {
     console_dir: PathBuf,
@@ -145,6 +148,18 @@ impl Launcher for ProcessLauncher {
             .stdout(stdout)
             .stderr(stderr)
             .process_group(0);
+        let parent = rustix::process::getpid();
+        // SAFETY: the closure runs in the child between fork and exec and calls only `prctl` and
+        // `getppid`, both async-signal-safe system calls; it allocates nothing.
+        unsafe {
+            command.pre_exec(move || {
+                rustix::process::set_parent_process_death_signal(Some(Signal::TERM))?;
+                if rustix::process::getppid() != Some(parent) {
+                    return Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe));
+                }
+                Ok(())
+            });
+        }
         for (name, _) in std::env::vars_os() {
             if name.to_string_lossy().starts_with("SPINDLE_") {
                 command.env_remove(name);
@@ -336,6 +351,10 @@ impl ProcessInstance {
 }
 
 impl Running for ProcessInstance {
+    fn process_group(&self) -> Option<u32> {
+        Some(self.pid.as_raw_nonzero().get().unsigned_abs())
+    }
+
     fn instance_id(&self) -> &str {
         &self.instance_id
     }

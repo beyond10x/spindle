@@ -6,7 +6,7 @@ use std::net::{SocketAddr, TcpListener};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, mpsc};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -27,6 +27,11 @@ use crate::server::{Served, Server, ViewPaths};
 /// The setting the control process gives an instance of a component reached over the network:
 /// the address its ingress listens on (`SPINDLE_SETTING_INGRESS` for a process).
 pub const INGRESS_SETTING: &str = "ingress";
+
+/// The setting beside [`INGRESS_SETTING`]: the token every request to that ingress carries, one per
+/// deployment (`SPINDLE_SETTING_INGRESS_TOKEN` for a process). The ingress also refuses a `Host`
+/// other than `127.0.0.1:<port>` or `localhost:<port>`, as the control process does.
+pub const INGRESS_TOKEN_SETTING: &str = "ingress_token";
 
 /// How often the supervisor looks for frames, exits and the stop flag.
 const POLL: Duration = Duration::from_millis(10);
@@ -79,8 +84,13 @@ pub enum ControlError {
         component: String,
     },
     /// The placement sets the setting the control process gives itself.
-    #[error("instance {0} sets {INGRESS_SETTING:?}, which the control process sets")]
-    ReservedSetting(String),
+    #[error("instance {instance} sets {setting:?}, which the control process sets")]
+    ReservedSetting {
+        /// The instance.
+        instance: String,
+        /// The setting.
+        setting: &'static str,
+    },
     /// The operating system refused.
     #[error("{what}: {source}")]
     Io {
@@ -113,6 +123,7 @@ pub struct NotRun {
 pub struct Control {
     server: Option<Server>,
     token: String,
+    ingress_token: String,
     ingress: BTreeMap<String, SocketAddr>,
     not_run: Vec<NotRun>,
     stop: Arc<AtomicBool>,
@@ -198,6 +209,7 @@ impl Control {
         artifacts: Artifacts,
         options: Options,
     ) -> Result<Self, ControlError> {
+        let ingress_token = token()?;
         let token = token()?;
         let (system, components, bindings) = answer::system(&ir);
         let mut catalogues = BTreeMap::new();
@@ -220,8 +232,13 @@ impl Control {
                     component: entry.component.clone(),
                 });
             }
-            if entry.settings.contains_key(INGRESS_SETTING) {
-                return Err(ControlError::ReservedSetting(entry.id.clone()));
+            for setting in [INGRESS_SETTING, INGRESS_TOKEN_SETTING] {
+                if entry.settings.contains_key(setting) {
+                    return Err(ControlError::ReservedSetting {
+                        instance: entry.id.clone(),
+                        setting,
+                    });
+                }
             }
             let declared = placement
                 .target(&entry.target)
@@ -302,6 +319,7 @@ impl Control {
             Served {
                 hub: Arc::clone(&hub),
                 token: token.clone(),
+                ingress_token: ingress_token.clone(),
                 port: address.port(),
                 ingress: ingress.clone(),
                 views,
@@ -316,12 +334,14 @@ impl Control {
             let hub = Arc::clone(&hub);
             let socket = socket.clone();
             let clock = Arc::clone(&options.clock);
+            let ingress_token = ingress_token.clone();
             std::thread::Builder::new()
                 .name("spindle-control-supervise".to_owned())
                 .spawn(move || {
                     let mut supervised = Supervisor {
                         hub,
                         clock,
+                        ingress_token,
                         running: Vec::new(),
                     };
                     let not_run = supervised.launch(&planned, &artifacts, &consoles, &socket);
@@ -335,6 +355,7 @@ impl Control {
         Ok(Self {
             server: Some(server),
             token,
+            ingress_token,
             ingress,
             not_run,
             stop,
@@ -356,6 +377,11 @@ impl Control {
     /// The token every request carries.
     pub fn token(&self) -> &str {
         &self.token
+    }
+
+    /// The token every request to an instance's ingress carries ([`INGRESS_TOKEN_SETTING`]).
+    pub fn ingress_token(&self) -> &str {
+        &self.ingress_token
     }
 
     /// The UI's address with the token: `http://127.0.0.1:<port>/?t=<token>`.
@@ -398,36 +424,72 @@ impl Drop for Control {
     }
 }
 
-/// The telemetry socket: in `work` when its path fits `sun_path`, otherwise in a new temporary
-/// directory kept as long as the control process runs.
+/// The name of the socket file, and of the directory made for it where `work` is too deep.
+const SOCKET: &str = "telemetry.sock";
+const SOCKET_DIR_PREFIX: &str = "spindle-control-";
+/// The length of the directory name `tempfile` makes: the prefix and six random characters.
+const SOCKET_DIR_NAME: usize = SOCKET_DIR_PREFIX.len() + 6;
+
+/// The telemetry socket: in `work` when its path fits `sun_path`; otherwise in a new directory,
+/// kept as long as the control process runs, under the first of `$XDG_RUNTIME_DIR`,
+/// `/run/user/<uid>` and the temporary directory that exists and is short enough.
 fn socket_path(work: &Path) -> Result<(PathBuf, Option<tempfile::TempDir>), ControlError> {
-    let inside = work.join("telemetry.sock");
-    if inside.as_os_str().len() <= spindle_telemetry::MAX_UNIX_PATH {
+    let fits = |path: &Path| path.as_os_str().len() <= spindle_telemetry::MAX_UNIX_PATH;
+    let inside = work.join(SOCKET);
+    if fits(&inside) {
         return Ok((inside, None));
     }
+    let mut bases = Vec::new();
+    if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR").filter(|dir| !dir.is_empty()) {
+        bases.push(PathBuf::from(runtime));
+    }
+    if let Ok(own) = std::fs::metadata("/proc/self") {
+        use std::os::unix::fs::MetadataExt as _;
+        bases.push(PathBuf::from(format!("/run/user/{}", own.uid())));
+    }
+    bases.push(std::env::temp_dir());
+    let room = SOCKET_DIR_NAME + 1 + SOCKET.len();
+    let base = bases
+        .iter()
+        .find(|base| {
+            base.is_dir() && base.as_os_str().len() + 1 + room <= spindle_telemetry::MAX_UNIX_PATH
+        })
+        .ok_or_else(|| {
+            ControlError::Launcher(format!(
+                "no directory for the telemetry socket: {} and each of {} leave a path longer \
+                 than {} bytes",
+                work.display(),
+                bases
+                    .iter()
+                    .map(|base| base.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                spindle_telemetry::MAX_UNIX_PATH
+            ))
+        })?;
     let dir = tempfile::Builder::new()
-        .prefix("spindle-control-")
-        .tempdir()
-        .map_err(io("creating a directory for the telemetry socket"))?;
-    Ok((dir.path().join("telemetry.sock"), Some(dir)))
+        .prefix(SOCKET_DIR_PREFIX)
+        .tempdir_in(base)
+        .map_err(io(format!(
+            "creating a directory for the telemetry socket in {}",
+            base.display()
+        )))?;
+    Ok((dir.path().join(SOCKET), Some(dir)))
 }
 
 /// Accepts instances' telemetry connections until `stop`, reading each on a thread of its own.
-fn collect(listener: &UnixListener, frames: &mpsc::Sender<Frame>, stop: &AtomicBool) {
-    let readers: Mutex<Vec<JoinHandle<()>>> = Mutex::new(Vec::new());
+fn collect(
+    listener: &UnixListener,
+    frames: &mpsc::Sender<(Option<u32>, Frame)>,
+    stop: &AtomicBool,
+) {
     while !stop.load(Ordering::SeqCst) {
         match listener.accept() {
             Ok((stream, _)) => {
                 let frames = frames.clone();
-                let reader = std::thread::Builder::new()
+                let _ = std::thread::Builder::new()
                     .name("spindle-control-frames".to_owned())
                     .spawn(move || read(stream, &frames));
-                if let Ok(reader) = reader {
-                    readers
-                        .lock()
-                        .unwrap_or_else(|poison| poison.into_inner())
-                        .push(reader);
-                }
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(POLL);
@@ -437,14 +499,24 @@ fn collect(listener: &UnixListener, frames: &mpsc::Sender<Frame>, stop: &AtomicB
     }
 }
 
-/// Reads frames from one connection until it closes or sends something that is not a frame.
-fn read(stream: UnixStream, frames: &mpsc::Sender<Frame>) {
+/// Reads frames from one connection until it closes or sends something that is not a frame, each
+/// with the process id of the connection's peer.
+///
+/// The connection is bound to the instance id of its first frame: a later frame naming another id
+/// is dropped. Which connection may speak for an instance is the supervisor's check
+/// ([`Supervisor::frame`]): the peer must be in the instance's process group.
+fn read(stream: UnixStream, frames: &mpsc::Sender<(Option<u32>, Frame)>) {
     if stream.set_nonblocking(false).is_err() {
         return;
     }
+    let peer = rustix::net::sockopt::socket_peercred(&stream)
+        .ok()
+        .map(|credentials| credentials.pid.as_raw_nonzero().get().unsigned_abs());
     let mut reader = FrameReader::new(BufReader::new(stream));
+    let mut bound: Option<String> = None;
     while let Ok(Some(frame)) = reader.next_frame() {
-        if frames.send(frame).is_err() {
+        let id = bound.get_or_insert_with(|| frame.instance_id.clone());
+        if frame.instance_id == *id && frames.send((peer, frame)).is_err() {
             return;
         }
     }
@@ -454,6 +526,7 @@ fn read(stream: UnixStream, frames: &mpsc::Sender<Frame>) {
 struct Supervisor {
     hub: Arc<Hub>,
     clock: Arc<dyn Clock>,
+    ingress_token: String,
     running: Vec<(String, Box<dyn Running>)>,
 }
 
@@ -510,6 +583,7 @@ impl Supervisor {
                 .collect::<Vec<_>>();
             if let Some(ingress) = plan.ingress {
                 settings.push((INGRESS_SETTING.to_owned(), ingress.to_string()));
+                settings.push((INGRESS_TOKEN_SETTING.to_owned(), self.ingress_token.clone()));
             }
             let launch_plan = LaunchPlan {
                 instance_id: id.to_owned(),
@@ -550,10 +624,10 @@ impl Supervisor {
     }
 
     /// Takes frames and exits until `stop`, then stops every instance still running.
-    fn supervise(&mut self, frames: &mpsc::Receiver<Frame>, stop: &AtomicBool) {
+    fn supervise(&mut self, frames: &mpsc::Receiver<(Option<u32>, Frame)>, stop: &AtomicBool) {
         while !stop.load(Ordering::SeqCst) {
             match frames.recv_timeout(POLL) {
-                Ok(frame) => self.frame(frame),
+                Ok((peer, frame)) => self.frame(peer, frame),
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => std::thread::sleep(POLL),
             }
@@ -566,12 +640,23 @@ impl Supervisor {
     }
 
     /// Publishes `frame` as a sample of its instance, with what the instance costs the host where
-    /// its launcher samples it. A frame for an instance that is not running is dropped.
-    fn frame(&self, frame: Frame) {
+    /// its launcher samples it. A frame for an instance that is not running is dropped, and so is
+    /// one for an instance in a process group of its own sent over a connection whose peer,
+    /// `peer`, is not in that group.
+    fn frame(&self, peer: Option<u32>, frame: Frame) {
         let Some((_, running)) = self.running.iter().find(|(id, _)| *id == frame.instance_id)
         else {
             return;
         };
+        if let Some(group) = running.process_group() {
+            let from = peer
+                .and_then(|pid| rustix::process::Pid::from_raw(i32::try_from(pid).ok()?))
+                .and_then(|pid| rustix::process::getpgid(Some(pid)).ok())
+                .map(|from| from.as_raw_nonzero().get().unsigned_abs());
+            if from != Some(group) {
+                return;
+            }
+        }
         let instance = frame.instance_id.clone();
         let mut sample = frame;
         if let Some(host) = running.resources() {

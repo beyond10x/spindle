@@ -11,6 +11,7 @@ build = "build.rs"
 
 [dependencies]
 ess-compiler.workspace = true
+rustix = { version = "1", features = ["net", "process"] }
 http-body-util = "0.1"
 hyper = { version = "1", features = ["client", "http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
