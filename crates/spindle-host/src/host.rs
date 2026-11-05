@@ -12,8 +12,8 @@ use serde_json::{Map, Value};
 use spindle_capability::{Capability, Environment};
 use spindle_channel::{ChannelError, Receiver, RouteError, Router, Sender, in_process};
 use spindle_kernel::{
-    DeclaredError, Event, ExecuteError, Executed, MemoryStore, NoExternals, SqliteStore, Store,
-    StoreError, UuidV4,
+    Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, NoExternals, SqliteStore,
+    Store, StoreError, UuidV4,
 };
 use spindle_telemetry::{Counters, CountingStore, Sink};
 use spindle_timer::{BindingName, Clock, CompleteError, LifetimeError, Timer};
@@ -249,6 +249,8 @@ pub struct Host {
     timer: Timer,
     periodic: BTreeMap<String, Periodic>,
     published: Vec<Published>,
+    /// Answers the `external:` causes of every command any component runs.
+    decider: Box<dyn Decider + Send>,
 }
 
 impl std::fmt::Debug for Host {
@@ -278,6 +280,32 @@ impl Host {
         clock: Arc<dyn Clock>,
         state: &Path,
     ) -> Result<Self, HostError> {
+        Self::open(ir, environment, clock, state, None)
+    }
+
+    /// [`Host::new`], with every `external:` cause of every component answered by `decider`, whatever
+    /// implementation admission bound for it.
+    ///
+    /// # Errors
+    /// As [`Host::new`], except that no external cause is refused.
+    pub fn deciding(
+        ir: EssIr,
+        environment: &Environment,
+        clock: Arc<dyn Clock>,
+        state: &Path,
+        decider: Box<dyn Decider + Send>,
+    ) -> Result<Self, HostError> {
+        Self::open(ir, environment, clock, state, Some(decider))
+    }
+
+    fn open(
+        ir: EssIr,
+        environment: &Environment,
+        clock: Arc<dyn Clock>,
+        state: &Path,
+        decider: Option<Box<dyn Decider + Send>>,
+    ) -> Result<Self, HostError> {
+        let answers = decider.is_some();
         let placements = admit(&ir, environment).map_err(HostError::Refused)?;
         for binding in ir.bindings().values() {
             if binding.cause.event().is_some() && binding.failure != Failure::Drop {
@@ -296,7 +324,8 @@ impl Host {
                 let capability = binding.capability.as_str();
                 let implementation = binding.implementation.as_str();
                 let runs = |known: &[&str]| known.contains(&implementation);
-                let unsupported = if capability.starts_with(Capability::EXTERNAL_PREFIX) {
+                let unsupported = if capability.starts_with(Capability::EXTERNAL_PREFIX) && !answers
+                {
                     Some("this host answers no external cause")
                 } else if capability == Capability::TIMER && !runs(TIMERS) {
                     Some("this host runs no such timer")
@@ -435,6 +464,7 @@ impl Host {
             timer,
             periodic,
             published: Vec::new(),
+            decider: decider.unwrap_or_else(|| Box::new(NoExternals)),
         })
     }
 
@@ -725,7 +755,7 @@ impl Host {
         let result = spindle_kernel::execute_at(
             &self.ir,
             held.store.as_mut(),
-            &mut NoExternals,
+            self.decider.as_mut(),
             &mut UuidV4,
             &|| clock.wall(),
             command,

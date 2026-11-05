@@ -186,10 +186,10 @@
     },
     {
       "area": "Conformance",
-      "detail": "The suite ESS synthesises from Spindle's own specification runs in task check.",
+      "detail": "conform runs the suite ESS synthesises from a specification, or one written for it, against every component in one process; task check runs it on Spindle's own specification, lists every synthesis refusal with its code and holds the executed and skipped counts.",
       "href": "/docs/concepts/specification",
       "label": "Self-conformance",
-      "status": "planned"
+      "status": "shipped"
     },
     {
       "area": "Observe",

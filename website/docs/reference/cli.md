@@ -21,6 +21,7 @@ Exit statuses: `0` success, `1` an error (printed on stderr as `b10x-spindle: â€
 | [`admit`](#admit) | Admit a specification against an environment: bind every capability or name what is missing |
 | [`run`](#run) | Admit a specification, then execute commands read as JSON lines on stdin |
 | [`play`](#play) | Play the rally example in this terminal: every component in one process, one tick per period of its periodic binding, the grid redrawn after each |
+| [`conform`](#conform) | Run a specification's conformance suite against every component in one process |
 
 ## `check`
 
@@ -125,3 +126,26 @@ b10x-spindle play [OPTIONS] --environment <ENVIRONMENT> <SPEC>
 | `--environment <ENVIRONMENT>` | yes |  | The `spindle-environment/1` document |
 | `--target-score <TARGET_SCORE>` | no | `3` | The points a side needs to win |
 | `--match-id <MATCH_ID>` | no | `rally` | The identity of the match |
+
+## `conform`
+
+Run a specification's conformance suite against every component in one process.
+
+The suite is the one ESS synthesises from the specification (`ess conform synthesize`), or the `--suite` file, which must be a suite of this specification. Its scenarios are run by ESS's conformance runner on empty in-memory stores; an `external:` cause holds only where a scenario forces it. Prints every construct the synthesis refused (`refused: refusal[<code>]: ...`) and how many, then `failed <id>` or `error <id>` with what was expected and observed for each executed scenario that did not pass, `skipped <id>: <reason>` for each the target cannot carry out (`unsupported`), and the counts.
+
+Exits 0 when at least one scenario was executed, none ended `error`, every executed scenario passed or failed as `--known-failing` declares, and the `--counts` are held; 1 otherwise, or when the `--suite` is not of this specification; 2 when ESS refuses the declaration; and 3, running nothing, when admission is refused.
+
+```console
+b10x-spindle conform [OPTIONS] --environment <ENVIRONMENT> <SPEC>
+```
+
+| Argument | Required | Default | Meaning |
+|---|---|---|---|
+| `<SPEC>` | yes |  | The specification directory |
+| `--environment <ENVIRONMENT>` | yes |  | The `spindle-environment/1` document |
+| `--suite <SUITE>` | no |  | A suite `ess conform synthesize` wrote, instead of synthesising one |
+| `--report <REPORT>` | no |  | Where to write the `ess-conformance-report/2`: the counts and every scenario's status |
+| `--results <RESULTS>` | no |  | Where to write the `ess-conformance-run/2`: every check of every scenario, with the reason of each that was not carried out |
+| `--counts <COUNTS>` | no |  | A `spindle-conformance-counts/1` document: the `executed_scenarios` that execute, and the `skipped` and `known_failed` counts. A held scenario that no longer executes, one that executes and is not held, more skipped or more known failures fails the run, naming each; where the counts moved, the document that holds the run is printed |
+| `--known-failing <KNOWN_FAILING>` | no |  | An `ess-known-failures/1` declaration: scenarios this build is known to fail, bound to the exact suite bytes, specification, implementation and build (`sha256:` of `b10x-spindle <version>`), each with its reason and tracking record. Read and accounted by ESS: a declared scenario that failed does not fail the run and is counted `known_failed`; a failure it does not declare still fails it. A declaration that does not bind this run, or names a scenario that passed or ended other than `failed`, exits 2. Requires `--report` and `--accounting-out` |
+| `--accounting-out <ACCOUNTING_OUT>` | no |  | Where to write the `ess-known-failure-accounting/1` document |

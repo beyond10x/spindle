@@ -39,6 +39,11 @@ target/release/b10x-spindle admit ess --environment examples/environments/microv
 The last command is refused: Spindle's own specification has an outcome decided outside the
 model, and the `microvm` environment provides nothing for it. Exit status 3 means refused.
 
+`b10x-spindle conform ess --environment examples/environments/laptop.toml` runs the suite ESS
+synthesises from Spindle's own specification against Spindle itself; `task check:conformance`
+holds its counts against `conformance.toml`, with the scenarios known to fail declared in
+`conformance-known-failures.json` (`ess-known-failures/1`).
+
 ## Capabilities
 
 | capability | derived from |
@@ -81,6 +86,7 @@ prefix; an exact key wins over it.
 - `crates/spindle-qemu`, `crates/spindle-firecracker` — microVM launchers.
 - `crates/spindle-telemetry` — counters and histograms per instance, their catalogue derived from the specification, and the sender that reports them as `spindle-telemetry/1` frames over a Unix socket or vsock.
 - `crates/spindle-host` — runs every component of a system in one process.
+- `crates/spindle-conformance` — runs an ESS conformance suite against every component in one process.
 - `crates/spindle-cli` — the `b10x-spindle` binary.
 - `crates/spindle-docs` — generates the site's CLI reference and status page.
 - `examples/` — environments and the `rally` example system.

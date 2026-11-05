@@ -26,6 +26,7 @@ serde_json.workspace = true
 spindle-capability.workspace = true
 spindle-spec.workspace = true
 spindle-kernel = { path = "../spindle-kernel" }
+spindle-conformance = { path = "../spindle-conformance" }
 spindle-host = { path = "../spindle-host" }
 spindle-ingress = { path = "../spindle-ingress" }
 spindle-telemetry = { path = "../spindle-telemetry" }
