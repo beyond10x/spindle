@@ -70,10 +70,29 @@ does not validate.
 those fixture answers: `pnpm dev` in `ui/` serves it with the fixtures on `127.0.0.1:5173` and
 prints the URL to open, with the development token `dev`.
 
+## The control process
+
+`b10x-spindle deploy` places and launches the instances of a `spindle-placement/1` document, each
+on its target as `spindle.placement.PlaceInstance` decides, collects the frames they send over a
+Unix socket, keeps the last 15 minutes of samples per instance in memory, and serves the observe
+API and the UI on `127.0.0.1`. The UI is built into the binary at compile time from `ui/dist`, so
+`deploy` needs nothing installed; `task build` builds `ui/` before cargo.
+
+```console
+task build
+target/release/b10x-spindle deploy examples/rally/ess --environment examples/environments/laptop-processes.toml --placement examples/placements/rally-processes.toml
+```
+
+It prints where it listens and the URL to open, with a random token. Every request needs that
+token, as `?t=` or as a bearer credential, and a `Host` header of `127.0.0.1:<port>` or
+`localhost:<port>`; only `GET` is answered. `GET /api/deployment` answers the components, bindings
+and instances with their state, `GET /api/stream` one `sample` per instance per period and one
+`state` per state change, and `GET /api/views/<component>/<view>` the view's answer from the
+ingress of a running instance of a component reached over the network. SIGINT or SIGTERM stops
+every instance.
+
 :::caution[Planned]
-Nothing serves the observe API yet, and `b10x-spindle` does not start the sender yet: a component
-process that reports its telemetry, and `b10x-spindle deploy`, a control process that launches the
-instances, collects their samples, serves the API on `127.0.0.1` and embeds the UI, are planned.
-Until then the UI shows fixtures, not a running system. See [status](/docs/status) and
+This build launches instances on `Process` targets only; QEMU and Firecracker targets are refused
+by name. See [status](/docs/status) and
 [`docs/design/observe.md`](https://github.com/beyond10x/spindle/blob/main/docs/design/observe.md).
 :::

@@ -20,15 +20,16 @@ in-process channel and in a microVM with a TCP one; admission is the only step t
 Status: early. Loading, capability derivation, admission, command execution (with list views,
 minted identities and external decisions from a file), per-component counters and the rally example
 in one process and as three processes joined by TCP channels work, and `run` serves a network-reached component over HTTP on 127.0.0.1; the process, QEMU and Firecracker launchers exist as libraries and sample each
-instance's CPU and memory; the observe UI runs on fixture data. Running each component in its own
-microVM, deployment and a live observe API are planned. The
+instance's CPU and memory; `deploy` launches the instances of a placement as processes and serves
+the live observe API and the UI built into the binary. Running each component in its own microVM is
+planned. The
 [status page](https://beyond10x.github.io/spindle/docs/status) lists each item with the test that
 holds it; the design is [`docs/design/spindle.md`](docs/design/spindle.md).
 
 ## Try it
 
 ```console
-cargo build --release -p spindle-cli
+task build
 target/release/b10x-spindle check ess
 target/release/b10x-spindle capabilities ess
 target/release/b10x-spindle admit ess --environment examples/environments/laptop.toml
@@ -38,6 +39,12 @@ target/release/b10x-spindle admit ess --environment examples/environments/microv
 
 The last command is refused: Spindle's own specification has an outcome decided outside the
 model, and the `microvm` environment provides nothing for it. Exit status 3 means refused.
+
+`task build` builds the observe UI (`ui/`, pnpm) and then `b10x-spindle`, which embeds it; a
+binary built without `ui/dist` answers `GET /` with 503. `b10x-spindle deploy examples/rally/ess
+--environment examples/environments/laptop-processes.toml --placement
+examples/placements/rally-processes.toml` launches the three rally components as processes and
+prints the URL of the observe UI, `http://127.0.0.1:7341/?t=<token>`.
 
 `b10x-spindle conform ess --environment examples/environments/laptop.toml` runs the suite ESS
 synthesises from Spindle's own specification against Spindle itself; `task check:conformance`
@@ -87,6 +94,7 @@ prefix; an exact key wins over it.
 - `crates/spindle-telemetry` — counters and histograms per instance, their catalogue derived from the specification, and the sender that reports them as `spindle-telemetry/1` frames over a Unix socket or vsock.
 - `crates/spindle-host` — runs every component of a system in one process.
 - `crates/spindle-conformance` — runs an ESS conformance suite against every component in one process.
+- `crates/spindle-control` — the control process `deploy` runs: launch, collect, and the observe API and UI on 127.0.0.1.
 - `crates/spindle-cli` — the `b10x-spindle` binary.
 - `crates/spindle-docs` — generates the site's CLI reference and status page.
 - `examples/` — environments and the `rally` example system.

@@ -6,8 +6,15 @@ import type { ViewAnswer, ViewRow } from '../api/types';
 
 const props = defineProps<{ component: string; view: string; answer: ViewAnswer; error?: string | null }>();
 
-const rowsOf = (answer: ViewAnswer): ViewRow[] =>
-  answer === null ? [] : Array.isArray(answer) ? answer : [answer];
+// An instance's ingress answers a list view as `{"rows": [...]}`; a fixture may hold one row or a
+// list of rows.
+const rowsOf = (answer: ViewAnswer): ViewRow[] => {
+  if (answer === null) return [];
+  if (Array.isArray(answer)) return answer;
+  const keys = Object.keys(answer);
+  if (keys.length === 1 && keys[0] === 'rows' && Array.isArray(answer.rows)) return answer.rows as ViewRow[];
+  return [answer];
+};
 const rows = computed(() => rowsOf(props.answer));
 const columns = computed(() => [...new Set(rows.value.flatMap((row) => Object.keys(row)))]);
 const cell = (value: unknown) =>

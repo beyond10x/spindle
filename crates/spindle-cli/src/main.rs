@@ -3,6 +3,7 @@
 mod component;
 mod conform;
 mod decisions;
+mod deploy;
 mod replay;
 mod scaled;
 mod serve;
@@ -211,6 +212,17 @@ fn run(cli: Cli) -> Result<ExitCode> {
             component: None,
             ..
         } => play(&spec, &environment, target_score, &match_id, speed),
+        Command::Deploy {
+            spec,
+            environment,
+            placement,
+            port,
+        } => deploy::deploy(&deploy::Deploying {
+            spec: &spec,
+            environment: &environment,
+            placement: &placement,
+            port,
+        }),
         Command::Conform {
             spec,
             environment,

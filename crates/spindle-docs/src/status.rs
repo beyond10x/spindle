@@ -272,11 +272,12 @@ pub const CAPABILITIES: &[Capability] = &[
         "/docs/concepts/specification",
         "crates/spindle-cli/tests/conform.rs::every_executed_scenario_passes",
     ),
-    planned(
+    shipped(
         "Observe",
         "The control process",
-        "b10x-spindle deploy places and launches instances, collects their samples and serves the read-only observe API on 127.0.0.1; the UI then shows live data and is embedded in the binary.",
+        "b10x-spindle deploy places and launches the instances of a spindle-placement/1 document on process targets, collects their samples, keeps the last 15 minutes and serves the read-only observe API and the UI embedded in the binary on 127.0.0.1, with a token and a Host check.",
         "/docs/concepts/observe",
+        "crates/spindle-control/tests/control.rs::the_stream_carries_one_sample_per_instance_per_period",
     ),
     planned(
         "Deploy",
