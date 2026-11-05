@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:telemetry-transport
 kind: story
-status: active
+status: implemented
 title: Telemetry transport
 relations:
 - serves: vision:spindle
@@ -20,10 +20,11 @@ scope:
   path: crates/spindle-target
 - confidence: cited
   path: crates/spindle-telemetry
-revision: 9
+revision: 10
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-04T10:45:52Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-04T10:45:52Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-05T07:49:23Z", actor: "human:timo", revision: 10, decided_on: {"recorded":{"test_result":2,"review_outcome":3}}}
 ---
 # Telemetry transport
 

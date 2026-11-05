@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-05T00:30:00Z",
+  "actor": "human:timo",
+  "artifact": "story:view-filters-any-of-states",
+  "kind": "story",
+  "revision": 5,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "task check (CI Gate, PR 8 head 7373751)",
+    "reference": "https://github.com/beyond10x/spindle/actions/runs/41989247158/job/127117264337"
+  }
+}
