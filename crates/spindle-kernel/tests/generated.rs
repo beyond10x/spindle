@@ -17,7 +17,7 @@
 //! `tags` (`List<String>`), and whose `ReprintLabel` mints the barcode again. Its cases, too, run
 //! on ESS's own interpreter and compare.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use ess_compiler::refs::{CommandRef, ViewRef};
@@ -30,7 +30,7 @@ use ess_primitives::node::Node;
 use ess_primitives::time::Timestamp;
 use serde_json::{Map, Value, json};
 use spindle_kernel::{
-    ExecuteError, Identity, MemoryStore, NoExternals, Store, Uuid, execute, execute_minting,
+    ExecuteError, Identity, MemoryStore, NoExternals, Store, Uuid, UuidV4, execute, execute_minting,
 };
 
 const BATCH: &str = "forge.batch.Batch";
@@ -841,6 +841,27 @@ fn two_mints_differ() {
         label_row(&mut fifth)["tags"],
         label_row(&mut sixth)["tags"],
         "and the same `[]`, as ESS mints on every tick"
+    );
+
+    // The production mint, `uuid-v4`: one byte has 256 values, so any two random mints collide
+    // one time in 256. Over 32 prints, all equal happens with probability 256^-31.
+    let mut barcodes = BTreeSet::new();
+    let mut lists = BTreeSet::new();
+    for _ in 0..32 {
+        let mut store = MemoryStore::default();
+        print(&mut store, &mut UuidV4);
+        let row = label_row(&mut store);
+        barcodes.insert(row["barcode"].to_string());
+        lists.insert(row["tags"].to_string());
+    }
+    assert!(
+        barcodes.len() > 1,
+        "random mints draw different barcodes: {barcodes:?}"
+    );
+    assert_eq!(
+        lists,
+        BTreeSet::from(["[]".to_owned()]),
+        "and `[]` every time"
     );
 }
 

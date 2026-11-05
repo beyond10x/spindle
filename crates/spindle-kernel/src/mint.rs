@@ -17,7 +17,7 @@
 //! is clear: ESS's interpreter mints `true` on an even tick of the counter it mints identities
 //! from, and its UUID for tick `n` ends in `n`'s decimal digits (`interpret::values::mint`). A
 //! `Bytes` is the one byte ESS mints on that tick, the tick's low byte, read from the same digits
-//! ([`tick`]); a `List` is `[]`, as ESS mints every list, and still takes its draw, as ESS takes
+//! where the UUID has ESS's tick form, and the UUID's own low byte otherwise ([`byte`]); a `List` is `[]`, as ESS mints every list, and still takes its draw, as ESS takes
 //! a tick for it. So a [`Mint`] that answers those
 //! UUIDs mints the values the interpreter does: the kernel draws in the interpreter's order
 //! (`interpret::execute::take`), each published value a `{payload: <Event>.<field>}` reads
@@ -243,10 +243,7 @@ pub(crate) fn value(
                 .map_err(|_| format!("{low} is past the integers a JSON reader holds"))
         }
         Minted::Boolean => Ok(Value::Bool(uuid().as_u128() & 1 == 0)),
-        Minted::Bytes => {
-            let ordinal = u32::try_from(tick(uuid())).unwrap_or(u32::MAX);
-            Ok(Value::String(base64_byte(ordinal.to_le_bytes()[0])))
-        }
+        Minted::Bytes => Ok(Value::String(base64_byte(byte(uuid())))),
         Minted::List => {
             uuid();
             Ok(Value::Array(Vec::new()))
@@ -272,17 +269,33 @@ pub(crate) fn value(
     }
 }
 
-/// The tick ESS's interpreter writes into the UUID it mints on that tick
-/// (`00000000-0000-4000-8000-<tick, 12 decimal digits>`, `interpret::values::mint`): the last
-/// group's twelve hexadecimal digits read as decimal ones. Any other UUID reads as a number too,
-/// each digit past 9 counted at its own value, so a random one gives a spread of bytes.
-fn tick(uuid: Uuid) -> u64 {
-    let group = uuid.as_u128() & ((1 << 48) - 1);
-    (0..12).rev().fold(0, |tick, digit| {
-        let digit = u64::try_from((group >> (4 * digit)) & 0xf).unwrap_or_default();
-        tick * 10 + digit
-    })
+/// The one byte a generated `Bytes` holds, drawn from `uuid`.
+///
+/// A UUID in the form ESS's interpreter mints on a tick (`00000000-0000-4000-8000-<tick, 12
+/// decimal digits>`, `interpret::values::mint`) gives the byte ESS mints on that tick: the
+/// tick's low byte, a tick past `u32::MAX` as `u32::MAX` (`witness::primitive_value`). Any other
+/// UUID, a random version 4 one among them, gives its own low byte, so random UUIDs give a
+/// spread of bytes.
+fn byte(uuid: Uuid) -> u8 {
+    let bits = uuid.as_u128();
+    let low = bits.to_le_bytes()[0];
+    if bits >> 48 != TICK_FORM {
+        return low;
+    }
+    let mut tick: u64 = 0;
+    for digit in (0..12).rev() {
+        let digit = (bits >> (4 * digit)) & 0xf;
+        if digit > 9 {
+            return low;
+        }
+        tick = tick * 10 + u64::try_from(digit).unwrap_or_default();
+    }
+    u32::try_from(tick).unwrap_or(u32::MAX).to_le_bytes()[0]
 }
+
+/// The leading 80 bits of every UUID ESS's interpreter mints on a tick:
+/// `00000000-0000-4000-8000`.
+const TICK_FORM: u128 = 0x0000_0000_0000_4000_8000;
 
 /// `value` as padded base64, the spelling a `Bytes` value takes: ESS's one-byte witness
 /// (`witness::base64_byte`).
