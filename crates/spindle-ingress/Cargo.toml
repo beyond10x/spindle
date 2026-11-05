@@ -1,0 +1,21 @@
+[package]
+name = "spindle-ingress"
+description = "The HTTP adapter behind ingress.network: the components that require it, served on 127.0.0.1 at the routes ESS publishes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ess-compiler.workspace = true
+ess-gen.workspace = true
+ess-http.workspace = true
+http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+serde_json.workspace = true
+spindle-host = { path = "../spindle-host" }
+spindle-kernel = { path = "../spindle-kernel" }
+tokio = { version = "1", default-features = false, features = ["macros", "net", "rt", "sync", "time"] }

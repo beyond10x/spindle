@@ -382,6 +382,7 @@ Decided by the operator, 2026-11-04:
 | an overlay may or may not exist | defaults first (§ 3a) |
 | Spindle itself is specified in ESS and planned in AEP | `ess/`, `.engineering/planning/` |
 | showcase: a two-player paddle-and-ball game, three components, each in its own microVM, talking over channels | `examples/rally` (§ 13) |
+| HTTP ingress (2026-11-05): ESS's published contract, everywhere: routes where `ess generate --kind openapi` publishes them, ESS's derived routes or, with an `ess-http/1` binding compiled by ESS, its method, path, path variables and status per outcome, derived routes for what it does not name; no route of Spindle's own | `crates/spindle-ingress`; a command answers ESS's envelope `{outcome, published, error?, payload?}`, a view the `{rows}` ESS projects; request refusals as ESS's server makes them (400, 404, 405, 411, 413); `http-loopback` only |
 
 Open:
 
@@ -410,14 +411,54 @@ our own design (rules, names, look); it borrows only the genre.
 
 | component | owns | does |
 |---|---|---|
-| `rally-table` | the match: ball position and direction on a grid, both paddles, score, serve, winner | on each `Tick` (periodic binding) moves the ball by one cell; bounces off walls and paddles; a ball past a paddle is a point; first to a target score wins |
-| `rally-player-west` | one player: its paddle, its view of the ball | on `BallMoved` decides by rule whether to move its paddle up, down or hold, and asks the table to move it |
+| `rally-table` | the match: ball position and direction on a grid, both paddles, score, serve, winner | on each `Tick` (periodic binding) moves the ball one cell diagonally, serves it or turns it; bounces off walls and paddles; a ball past a paddle is a point; first to a target score wins |
+| `rally-player-west` | one player: a copy of its paddle row and of the ball | on `BallMoved` decides by rule whether to move its paddle up, down or hold, and asks the table to move it |
 | `rally-player-east` | the same rules for the other side | the same |
 
-Communication is bindings only: the table publishes `BallMoved`, `PointScored`, `MatchWon`; each
-player's binding turns `BallMoved` into its own `ObserveBall` command, and the player's
-`PaddleMoveRequested` event binds to the table's `MovePaddle`. Every value change is a guard plus
-`increment:` on integer fields, so the game needs no arithmetic the language lacks.
+Communication is bindings only: the table publishes `BallMoved`, `PointScored`, `MatchWon` and
+`PaddleMoved`; each player's binding turns `BallMoved` into its own `ObserveBall` command, and the
+player's `PaddleMoveRequested` event binds to the table's `MovePaddle`. `PaddleMoved` is published
+for observers, as `PointScored` and `MatchWon` are: no binding consumes them.
+
+The rules, each declared in `examples/rally/ess/` and checked by
+`crates/spindle-kernel/tests/rally.rs`:
+
+- **A tick moves the ball, serves it, turns it, scores or ends the match.** `Tick` answers with
+  the first declared branch whose guard holds. A plain move shifts the ball one cell across and
+  one cell up or down. A serve changes only the state, from `Serving` to `InPlay`; a paddle return
+  or a wall bounce changes only the heading; both leave the ball where it is, so the next tick
+  moves it. A point puts the ball back in the middle and the match back to `Serving`, and a
+  winning tick ends the match in `Won`.
+- **The grid is an invariant.** The ball stays in columns 1 to 14 and rows 0 to 8, each paddle in
+  rows 0 to 8; `rally.table.Match`, `rally.west.Player` and `rally.east.Player` declare these
+  bounds as invariants, which the terminal frame relies on (`crates/spindle-host/src/rally.rs`).
+  The kernel refuses a step that would break one, and the kernel tests
+  (`crates/spindle-kernel/tests/rally.rs`) put a row one cell past each bound. ESS's synthesized
+  suite checks the invariants only after the branches it reaches (3 of the 13 state-changing
+  `Tick` branches), and no synthesized scenario offers a value outside the grid and expects it
+  refused.
+- **A winner means a won match.** An invariant ties a non-empty `winner` to state `Won` and `Won` to
+  a winner, whose side needs no more points; a caller that ends play on a winner reads a match that
+  is over.
+- **A match to fewer than one point is refused.** `OpenMatch` with `target_score` below 1 answers
+  `target-too-low` with `TargetScoreTooLow` and opens nothing, because such a match could never be
+  won; `target_score >= 1` is also an invariant.
+- **Values change by increments, with two exceptions.** Every move of the ball and of a paddle is
+  a guard plus `increment:` on an integer field, so the game needs no arithmetic the language
+  lacks. A point puts the ball back in the middle with literals (`ball_x: 8`, `ball_y: 4`), and a
+  player copies the values its `ObserveBall` input carries into its own fields.
+- **The table owns both paddles.** Only `MovePaddle` moves one. Each player holds a copy of its
+  paddle row and of the ball, refreshed from every `BallMoved`; asking to move changes neither the
+  paddle nor the copy, which waits for the next ball.
+- **First sight seats the player.** A player's first `ObserveBall` of a match answers
+  `first-sight`: it records the ball and its paddle and emits `BallSeen`, asking for nothing
+  wherever the ball is. From the next ball on it asks up or down, or holds.
+- **Bindings deliver at most once and drop.** Every rally binding declares
+  `delivery: at_most_once` with `on_failure: drop`, because a step of the game is worth nothing
+  late: a lost tick is replaced by the next tick and a lost `BallMoved` or `PaddleMoveRequested` by
+  the next ball, so nothing is retried or reported. ESS therefore synthesizes no redelivery
+  scenario for the four event bindings and refuses each one as `ESS-SYNTH-010`
+  (`<binding>/binding/delivery`).
 
 Deployed on microVMs, it is one deployment: the bundle offered once to the environment `microvm`
 (`channel = tcp`), whose `requires` is what the whole bundle requires. Its three components are

@@ -1,0 +1,182 @@
+domain: probe.shelf
+summary: A shelf opened under the caller's id, whose lists are appended one element at a time.
+types:
+  - name: probe.shelf.ShelfId
+    kind: newtype
+    of: Uuid
+  - name: probe.shelf.Wrap
+    kind: struct
+    fields:
+      - {name: text, type: String}
+  - name: probe.shelf.Entry
+    kind: struct
+    fields:
+      - {name: text, type: String}
+      - {name: note, type: Optional<String>}
+entities:
+  - name: probe.shelf.Shelf
+    identity:
+      name: shelf_id
+      type: probe.shelf.ShelfId
+    fields:
+      - {name: label, type: String}
+      - {name: tags, type: Optional<List<String>>}
+      - {name: slots, type: List<Optional<String>>}
+      - {name: entries, type: Optional<List<probe.shelf.Entry>>}
+      - {name: marks, type: Optional<List<Optional<String>>>}
+    invariants:
+      - tags.count <= 3
+    lifecycle:
+      initial: Open
+      states: [Open, Sealed]
+      terminal: [Sealed]
+      transitions:
+        - {name: seal, from: [Open], to: Sealed}
+commands:
+  - name: probe.shelf.OpenShelf
+    input:
+      - {name: shelf_id, type: probe.shelf.ShelfId}
+      - {name: label, type: String}
+    outcomes:
+      - name: opened
+        creates: probe.shelf.Shelf
+        instance: shelf_id
+        sets:
+          label: input.label
+          slots: []
+        emits: [probe.shelf.ShelfOpened]
+        payload:
+          probe.shelf.ShelfOpened:
+            shelf_id: input.shelf_id
+        summary: The shelf opens with no tags and no slots.
+  - name: probe.shelf.AddTag
+    input:
+      - {name: shelf_id, type: probe.shelf.ShelfId}
+      - {name: tag, type: String}
+    outcomes:
+      - name: added
+        updates: probe.shelf.Shelf
+        instance: shelf_id
+        sets:
+          tags: {append: input.tag}
+        emits: [probe.shelf.Changed]
+        payload:
+          probe.shelf.Changed:
+            shelf_id: input.shelf_id
+        summary: The tag is appended.
+  - name: probe.shelf.AddWrapped
+    input:
+      - {name: shelf_id, type: probe.shelf.ShelfId}
+      - {name: wrap, type: probe.shelf.Wrap}
+    outcomes:
+      - name: added
+        updates: probe.shelf.Shelf
+        instance: shelf_id
+        sets:
+          tags: {append: input.wrap.text}
+        emits: [probe.shelf.Changed]
+        payload:
+          probe.shelf.Changed:
+            shelf_id: input.shelf_id
+        summary: The wrapped text is appended as a tag.
+  - name: probe.shelf.AddSlotFrom
+    input:
+      - {name: shelf_id, type: probe.shelf.ShelfId}
+      - {name: wrap, type: Optional<probe.shelf.Wrap>}
+    outcomes:
+      - name: added
+        updates: probe.shelf.Shelf
+        instance: shelf_id
+        sets:
+          slots: {append: input.wrap.text}
+        emits: [probe.shelf.Changed]
+        payload:
+          probe.shelf.Changed:
+            shelf_id: input.shelf_id
+        summary: The wrapped text is appended as a slot, or an empty slot.
+  - name: probe.shelf.AddEntry
+    input:
+      - {name: shelf_id, type: probe.shelf.ShelfId}
+      - {name: entry, type: probe.shelf.Entry}
+    outcomes:
+      - name: added
+        updates: probe.shelf.Shelf
+        instance: shelf_id
+        sets:
+          entries: {append: input.entry}
+        emits: [probe.shelf.Changed]
+        payload:
+          probe.shelf.Changed:
+            shelf_id: input.shelf_id
+        summary: The entry is appended.
+  - name: probe.shelf.AddMark
+    input:
+      - {name: shelf_id, type: probe.shelf.ShelfId}
+      - {name: mark, type: Optional<String>}
+    outcomes:
+      - name: added
+        updates: probe.shelf.Shelf
+        instance: shelf_id
+        sets:
+          marks: {append: input.mark}
+        emits: [probe.shelf.Changed]
+        payload:
+          probe.shelf.Changed:
+            shelf_id: input.shelf_id
+        summary: The mark is appended, or an empty mark.
+  - name: probe.shelf.SealWithTag
+    input:
+      - {name: shelf_id, type: probe.shelf.ShelfId}
+      - {name: tag, type: String}
+    outcomes:
+      - name: sealed
+        moves: probe.shelf.Shelf.seal
+        instance: shelf_id
+        sets:
+          tags: {append: input.tag}
+        emits: [probe.shelf.Changed]
+        payload:
+          probe.shelf.Changed:
+            shelf_id: input.shelf_id
+        summary: The shelf seals with a last tag.
+      - name: already-sealed
+        wrong_state: true
+        error: probe.shelf.NotOpen
+        summary: A sealed shelf takes no tag.
+  - name: probe.shelf.TagAndRename
+    input:
+      - {name: shelf_id, type: probe.shelf.ShelfId}
+      - {name: tag, type: String}
+    outcomes:
+      - name: added
+        updates: probe.shelf.Shelf
+        instance: shelf_id
+        sets:
+          tags: {append: input.tag}
+          label: input.tag
+        emits: [probe.shelf.Changed]
+        payload:
+          probe.shelf.Changed:
+            shelf_id: input.shelf_id
+        summary: The tag is appended twice and becomes the label.
+errors:
+  - name: probe.shelf.NotOpen
+    fields: []
+events:
+  - name: probe.shelf.ShelfOpened
+    fields:
+      - {name: shelf_id, type: probe.shelf.ShelfId}
+  - name: probe.shelf.Changed
+    fields:
+      - {name: shelf_id, type: probe.shelf.ShelfId}
+views:
+  - name: probe.shelf.ShelfCard
+    source: probe.shelf.Shelf
+    consistency: read_your_writes
+    fields:
+      - {name: shelf_id, type: probe.shelf.ShelfId}
+      - {name: label, type: String}
+      - {name: tags, type: Optional<List<String>>}
+      - {name: slots, type: List<Optional<String>>}
+      - {name: entries, type: Optional<List<probe.shelf.Entry>>}
+      - {name: marks, type: Optional<List<Optional<String>>>}

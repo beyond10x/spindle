@@ -2,7 +2,10 @@ domain: rally.west
 
 summary: >-
   The west player. It watches every ball movement and asks the table to move its paddle one row
-  toward the ball: up when the ball is above the paddle, down when below, nothing when level.
+  toward the ball: up when the ball is above the paddle, down when below, nothing when level. The
+  table owns the paddle; `paddle_y` is the player's copy of its row, taken from each ball movement,
+  as `ball_x` and `ball_y` are of the ball. The first ball movement of a match seats the player and
+  asks for nothing.
 
 entities:
   - name: rally.west.Player
@@ -16,6 +19,13 @@ entities:
         type: Integer
       - name: ball_y
         type: Integer
+    invariants:
+      - paddle_y >= 0
+      - paddle_y <= 8
+      - ball_x >= 1
+      - ball_x <= 14
+      - ball_y >= 0
+      - ball_y <= 8
     lifecycle:
       initial: Watching
       states: [Watching]

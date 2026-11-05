@@ -172,6 +172,7 @@ fn value(ir: &EssIr, field: &ResolvedPayloadField) -> Option<String> {
         | ResolvedPayloadValue::SubjectField { .. }
         | ResolvedPayloadValue::SubjectState { .. }
         | ResolvedPayloadValue::Increment { .. }
+        | ResolvedPayloadValue::Append { .. }
         | ResolvedPayloadValue::EmptyList
         | ResolvedPayloadValue::PayloadRead { .. }
         | ResolvedPayloadValue::Cleared => None,

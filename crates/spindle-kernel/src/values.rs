@@ -1,13 +1,15 @@
 //! The value one determined field takes: an event's payload field, an error's field, or a field
 //! `sets:` writes.
 //!
-//! Only the sources Spindle's own specification and the `rally` example use are read here; the
-//! rest are refused by [`crate::supported`] before a command runs. Numbers are ESS's own
-//! [`Number`], so `{increment: N}` adds exactly as ESS adds, and a literal is typed by
+//! Only the sources Spindle's own specification and the `rally` example use, and
+//! `{append: input.<path>}`, are read here; the rest are refused by [`crate::supported`] before a
+//! command runs. Numbers are ESS's own [`Number`], so `{increment: N}` adds exactly as ESS adds, and a literal is typed by
 //! [`EssIr::literal_primitive`], the one question every ESS consumer asks of a literal.
 
 use ess_compiler::EssIr;
-use ess_compiler::ir::{EventHandle, ResolvedOutcome, ResolvedPayloadField, ResolvedPayloadValue};
+use ess_compiler::ir::{
+    EventHandle, ResolvedOutcome, ResolvedPayloadField, ResolvedPayloadValue, ResolvedTypeRef,
+};
 use ess_domain::QualifiedName;
 use ess_domain::types::Primitive;
 use ess_primitives::facts::Number;
@@ -72,6 +74,7 @@ impl<'a> Sources<'a, '_> {
                 Ok(Some(Value::String(self.before(field)?.state.clone())))
             }
             ResolvedPayloadValue::Increment { by } => self.increment(field, by).map(Some),
+            ResolvedPayloadValue::Append { field: read, .. } => self.append(field, read).map(Some),
             ResolvedPayloadValue::Generated { .. }
                 if self
                     .minted
@@ -191,6 +194,35 @@ impl<'a> Sources<'a, '_> {
             Some(Primitive::Integer) => sum.as_i64().map(Value::from).ok_or_else(no_value),
             _ => serde_json::to_value(sum).map_err(|_| no_value()),
         }
+    }
+
+    /// `{append: input.<read>}` (ess/31), as ESS determines it (`interpret::execute::determined::
+    /// append`): the list the instance held in the target before the outcome, with the input
+    /// element last. A held `null` reads as empty; a list the instance does not hold reads as
+    /// empty where the target is `Optional<List<…>>` and determines nothing where it is required. Over a `List<Optional<T>>` an element
+    /// the caller did not send appends `null`; over a list of required elements it determines
+    /// nothing. The list is checked against the target's type where `sets:` is written.
+    fn append(&self, field: &ResolvedPayloadField, read: &str) -> Result<Value, ExecuteError> {
+        let no_value = || ExecuteError::NoValue {
+            what: format!("the previous `{}` with input.{read} appended", field.target),
+        };
+        let optional_element = matches!(
+            field.target_type.required(),
+            ResolvedTypeRef::List { of } if of.is_optional()
+        );
+        let element = match read_input(self.input, read) {
+            Some(element) => element,
+            None if optional_element => Value::Null,
+            None => return Err(no_value()),
+        };
+        let mut items = match self.before.and_then(|row| row.fields.get(&field.target)) {
+            Some(Value::Array(items)) => items.clone(),
+            Some(Value::Null) => Vec::new(),
+            None if field.target_type.is_optional() => Vec::new(),
+            _ => return Err(no_value()),
+        };
+        items.push(element);
+        Ok(Value::Array(items))
     }
 }
 

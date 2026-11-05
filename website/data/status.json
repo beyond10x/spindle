@@ -165,10 +165,10 @@
     },
     {
       "area": "Execution",
-      "detail": "run serves the accepted commands and views over HTTP on 127.0.0.1 where ingress.network is bound.",
+      "detail": "run serves the accepted commands and views over HTTP on 127.0.0.1 where ingress.network is bound to http-loopback: at the routes ess generate --kind openapi publishes, with or without an ess-http/1 binding, answering the envelope ESS publishes.",
       "href": "/docs/concepts/capabilities",
       "label": "HTTP ingress",
-      "status": "planned"
+      "status": "shipped"
     },
     {
       "area": "Conformance",
