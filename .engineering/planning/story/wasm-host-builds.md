@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:wasm-host-builds
 kind: story
-status: draft
+status: active
 title: The host builds for wasm32
 relations:
 - serves: vision:spindle
@@ -16,7 +16,10 @@ scope:
   path: crates/spindle-kernel/Cargo.toml
 - confidence: inferred
   path: crates/spindle-kernel/src/sqlite.rs
-revision: 2
+revision: 4
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-05T09:39:08Z", actor: "human:timo", revision: 3}
+- {from: "proposed", to: "active", at: "2026-11-05T09:39:08Z", actor: "human:timo", revision: 4}
 ---
 # The host builds for wasm32
 

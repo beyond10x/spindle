@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:service-worker-serves-a-specification
 kind: story
-status: draft
+status: active
 title: A Service Worker serves a specification
 relations:
 - serves: vision:spindle
@@ -15,7 +15,10 @@ scope:
   path: crates/spindle-wasm
 - confidence: inferred
   path: web
-revision: 2
+revision: 4
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-05T09:39:08Z", actor: "human:timo", revision: 3}
+- {from: "proposed", to: "active", at: "2026-11-05T09:39:08Z", actor: "human:timo", revision: 4}
 ---
 # A Service Worker serves a specification
 

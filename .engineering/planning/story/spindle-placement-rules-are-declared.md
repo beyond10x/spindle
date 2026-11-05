@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:spindle-placement-rules-are-declared
 kind: story
-status: active
+status: implemented
 title: spindle.placement declares the placement rules
 relations:
 - serves: vision:spindle
@@ -13,10 +13,11 @@ scope:
   path: docs/design/observe.md
 - confidence: cited
   path: ess/domains/placement.yaml
-revision: 7
+revision: 8
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-04T21:33:53Z", actor: "human:timo", revision: 6, decided_on: {"recorded":{"review_outcome":3}}}
 - {from: "proposed", to: "active", at: "2026-11-04T21:33:53Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"review_outcome":3}}}
+- {from: "active", to: "implemented", at: "2026-11-05T09:39:01Z", actor: "human:timo", revision: 8, decided_on: {"recorded":{"test_result":2,"review_outcome":3}}}
 ---
 ## Story
 
