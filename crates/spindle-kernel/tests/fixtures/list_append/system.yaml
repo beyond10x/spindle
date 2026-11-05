@@ -1,0 +1,23 @@
+format: ess/34
+system: scribe
+version: v1
+summary: Notebooks whose pages and margin notes grow one element at a time.
+domains:
+  - scribe.notebook
+components:
+  - component: desk
+    summary: Opens notebooks and appends pages and margin notes to them.
+    owns:
+      domains:
+        - scribe.notebook
+    accepts:
+      commands:
+        - scribe.notebook.OpenNotebook
+        - scribe.notebook.AddPage
+        - scribe.notebook.AddMargin
+    publishes:
+      events:
+        - scribe.notebook.NotebookOpened
+        - scribe.notebook.PageAdded
+        - scribe.notebook.MarginAdded
+    reached_by: in_process
