@@ -3,7 +3,9 @@
 //! A `creates:` outcome whose new instance's identity is neither an input nor a payload source
 //! (`{generated: true}`, or no source at all) leaves the identity to the runtime. Admission binds
 //! that as the capability `identity.mint`; the kernel asks a [`Mint`] for the value, so a test can
-//! make it deterministic. Only a `Uuid` identity, or a newtype of one, is minted.
+//! make it deterministic. A `Uuid` identity, or a newtype of one, is minted as a UUID; a `String`
+//! newtype whose prefix and alphabet a minted text satisfies, and that declares no invariant, as
+//! that prefix and a UUID's text ([`identity`]).
 //!
 //! Any other field an outcome marks `{generated: true}` (in `sets:`, a payload or an error, and
 //! the `else:` of `{input: f, else: {generated: true}}`) is minted from its declared type
@@ -59,8 +61,21 @@ pub(crate) fn slot<'ir>(
     }
 }
 
+/// How a minted creation identity of type `kind` is spelled: a `Uuid` or a newtype that wraps
+/// one, or a `String` newtype whose prefix and alphabet a minted text satisfies ([`minted`], the
+/// rule for generated fields). `None` for every other type, among them a bare `String`.
+pub(crate) fn identity(ir: &EssIr, kind: &ResolvedTypeRef) -> Option<Minted> {
+    if is_uuid(ir, kind) {
+        return Some(Minted::Uuid);
+    }
+    if !matches!(kind, ResolvedTypeRef::Declared { .. }) {
+        return None;
+    }
+    minted(ir, kind, false).filter(|shape| matches!(shape, Minted::Text { .. }))
+}
+
 /// Whether a value of `kind` is a `Uuid`: the primitive, or a newtype that wraps one.
-pub(crate) fn is_uuid(ir: &EssIr, kind: &ResolvedTypeRef) -> bool {
+fn is_uuid(ir: &EssIr, kind: &ResolvedTypeRef) -> bool {
     let mut kind = kind;
     for _ in 0..=MAX_TYPE_DEPTH {
         match kind {
@@ -107,6 +122,14 @@ impl<'m> Generator<'m> {
     /// A fresh UUID for `identity`.
     pub(crate) fn uuid(&self, identity: &Identity<'_>) -> Uuid {
         self.mint.borrow_mut().uuid(identity)
+    }
+
+    /// A fresh value of `shape` for `identity`.
+    ///
+    /// # Errors
+    /// The reason, from [`value`], where the value cannot be spelled.
+    pub(crate) fn mint(&self, shape: &Minted, identity: &Identity<'_>) -> Result<Value, String> {
+        value(shape, || self.uuid(identity), self.now)
     }
 
     /// The value the generated `field`, of `owner` in `outcome`, holds in this run: minted on the

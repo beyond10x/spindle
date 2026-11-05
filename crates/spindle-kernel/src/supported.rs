@@ -30,11 +30,12 @@ pub(crate) fn check(ir: &EssIr, command: &ResolvedCommand) -> Result<(), Execute
         }
         let minted = crate::mint::slot(ir, outcome);
         if let Some((entity, field)) = minted
-            && !crate::mint::is_uuid(ir, &entity.identity.type_ref)
+            && crate::mint::identity(ir, &entity.identity.type_ref).is_none()
         {
             return refuse(&format!(
                 "a creation whose identity `{}.{}` of type `{}` neither the input nor the outcome \
-                 determines; the runtime mints only a `Uuid` identity",
+                 determines; the runtime mints a `Uuid` identity, or a `String` newtype without \
+                 invariants whose prefix and alphabet admit a UUID's text",
                 entity.name, field.name, entity.identity.type_ref
             ));
         }

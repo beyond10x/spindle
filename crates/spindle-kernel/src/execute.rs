@@ -566,22 +566,40 @@ impl<'a, 'ir> Run<'a, 'ir> {
         field: &ResolvedField,
     ) -> Result<Value, ExecuteError> {
         let entity_name = entity.name.to_string();
-        let uuid = self.generator.uuid(&Identity {
-            capability: IDENTITY_MINT,
-            command: self.command,
-            outcome: outcome.name.as_str(),
-            entity: &entity_name,
-            field: &field.name,
-        });
-        let minted = Value::String(uuid.hyphenated().to_string());
-        crate::typed::validate(self.ir, &entity.identity.type_ref, &minted).map_err(|error| {
+        let refused = |error: String| {
             ExecuteError::InvalidValue(format!(
                 "the identity minted for `{entity_name}.{}` in `{}/{}` would hold {error}",
                 field.name,
                 self.command,
                 outcome.name.as_str()
             ))
+        };
+        let shape = crate::mint::identity(self.ir, &entity.identity.type_ref).ok_or_else(|| {
+            ExecuteError::Unsupported {
+                construct: format!(
+                    "a creation whose identity `{entity_name}.{}` of type `{}` the runtime does \
+                     not mint, in `{}/{}`",
+                    field.name,
+                    entity.identity.type_ref,
+                    self.command,
+                    outcome.name.as_str()
+                ),
+            }
         })?;
+        let minted = self
+            .generator
+            .mint(
+                &shape,
+                &Identity {
+                    capability: IDENTITY_MINT,
+                    command: self.command,
+                    outcome: outcome.name.as_str(),
+                    entity: &entity_name,
+                    field: &field.name,
+                },
+            )
+            .map_err(&refused)?;
+        crate::typed::validate(self.ir, &entity.identity.type_ref, &minted).map_err(&refused)?;
         Ok(minted)
     }
 

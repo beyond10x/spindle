@@ -50,7 +50,7 @@ model, and the `microvm` environment provides nothing for it. Exit status 3 mean
 | `ingress.command_line` | a component `reached_by: command_line` |
 | `projection` | a view with `consistency: eventual` |
 | `external.<command>.<outcome>` | an outcome whose condition is `external:` |
-| `identity.mint` | a `creates:` outcome whose identity is neither an input nor a payload source (`{generated: true}`); a `Uuid` identity is minted as a UUIDv4 (`uuid-v4`) |
+| `identity.mint` | a `creates:` outcome whose identity is neither an input nor a payload source (`{generated: true}`); a `Uuid` identity is minted as a UUIDv4 (`uuid-v4`), a `String` newtype identity as its prefix and a UUIDv4's text |
 | `identity.mint`, `clock` | an outcome field marked `{generated: true}` (or `{input: f, else: {generated: true}}`) other than a minted creation identity: a `Uuid`, `String` or `Integer` is minted through `identity.mint`, a `Timestamp` read from `clock` |
 
 ## Environment

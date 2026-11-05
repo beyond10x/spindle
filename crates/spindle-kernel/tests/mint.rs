@@ -205,3 +205,120 @@ fn a_minted_identity_that_is_not_a_uuid_is_unsupported_naming_the_command_and_th
         other => panic!("expected Unsupported, got {other:?}"),
     }
 }
+
+/// The fixture `tests/fixtures/mint_text`: a badge whose identity is a `String` newtype with a
+/// prefix and an alphabet, a seal whose `String` newtype declares a length invariant, and a stamp
+/// whose alphabet holds digits only.
+fn text_ir() -> spindle_spec::EssIr {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mint_text");
+    spindle_spec::load(&root)
+        .expect("the mint_text fixture compiles")
+        .ir
+}
+
+const BADGE_PREFIX: &str = "bdg_";
+const BADGE_ALPHABET: &str = "_0123456789abcdefg-";
+
+fn issue(ir: &spindle_spec::EssIr, store: &mut MemoryStore, holder: &str) -> String {
+    let issued = execute(
+        ir,
+        store,
+        &mut NoExternals,
+        "minttext.badge.IssueBadge",
+        &input(json!({"holder": holder})),
+    )
+    .expect("a creation with a minted text identity runs");
+    assert_eq!(issued.outcome, "issued");
+    issued.events[0].payload["badge_id"]
+        .as_str()
+        .expect("the identity is text")
+        .to_owned()
+}
+
+#[test]
+fn a_string_newtype_identity_is_minted() {
+    let ir = text_ir();
+    let mut store = MemoryStore::default();
+    let identity = issue(&ir, &mut store, "ada");
+
+    let rest = identity
+        .strip_prefix(BADGE_PREFIX)
+        .unwrap_or_else(|| panic!("{identity} starts with the newtype's prefix {BADGE_PREFIX}"));
+    assert!(!rest.is_empty(), "{identity} holds more than its prefix");
+    assert!(
+        identity.chars().all(|c| BADGE_ALPHABET.contains(c)),
+        "{identity} keeps to the newtype's alphabet {BADGE_ALPHABET}"
+    );
+
+    let stored = store
+        .load("minttext.badge.Badge", &json!(identity))
+        .expect("the store reads")
+        .expect("the new instance is stored under the minted identity");
+    assert_eq!(stored.row.state, "Active");
+    assert_eq!(stored.row.fields.get("holder"), Some(&json!("ada")));
+
+    let revoked = execute(
+        &ir,
+        &mut store,
+        &mut NoExternals,
+        "minttext.badge.RevokeBadge",
+        &input(json!({"badge_id": identity})),
+    )
+    .expect("the minted identity is a value of its type, and addresses the instance");
+    assert_eq!(revoked.outcome, "revoked");
+}
+
+#[test]
+fn two_creations_mint_two_identities() {
+    let ir = text_ir();
+    let mut store = MemoryStore::default();
+    let first = issue(&ir, &mut store, "ada");
+    let second = issue(&ir, &mut store, "grace");
+    assert_ne!(first, second, "each creation mints its own identity");
+    for (identity, holder) in [(&first, "ada"), (&second, "grace")] {
+        let stored = store
+            .load("minttext.badge.Badge", &json!(identity))
+            .expect("the store reads")
+            .expect("each creation stores its own instance");
+        assert_eq!(stored.row.fields.get("holder"), Some(&json!(holder)));
+    }
+}
+
+#[test]
+fn a_newtype_the_runtime_cannot_satisfy_is_refused_by_name() {
+    let ir = text_ir();
+    for (command, field, kind) in [
+        (
+            "minttext.badge.OpenSeal",
+            "seal_id",
+            "minttext.badge.SealId",
+        ),
+        (
+            "minttext.badge.OpenStamp",
+            "stamp_id",
+            "minttext.badge.StampId",
+        ),
+    ] {
+        let mut store = MemoryStore::default();
+        let mut mint = |identity: &Identity<'_>| -> Uuid {
+            panic!("nothing is minted for {}", identity.field)
+        };
+        let error = execute_minting(
+            &ir,
+            &mut store,
+            &mut NoExternals,
+            &mut mint,
+            command,
+            &input(json!({"note": "kept"})),
+        )
+        .expect_err("an identity no minted text satisfies is not minted");
+        match &error {
+            ExecuteError::Unsupported { construct } => {
+                assert!(construct.contains(command), "{construct}");
+                assert!(construct.contains(field), "{construct}");
+                assert!(construct.contains(kind), "{construct}");
+            }
+            other => panic!("{command}: expected Unsupported, got {other:?}"),
+        }
+    }
+}

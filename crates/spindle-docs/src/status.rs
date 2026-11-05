@@ -170,7 +170,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "Minted creation identities",
-        "A creation whose identity no input or payload supplies needs identity.mint; a Uuid identity is minted as a UUIDv4 and emitted.",
+        "A creation whose identity no input or payload supplies needs identity.mint; a Uuid identity is minted as a UUIDv4, a String newtype identity as its prefix and a UUIDv4's text, and emitted.",
         "/docs/concepts/capabilities",
         "crates/spindle-kernel/tests/mint.rs::a_creation_without_an_id_input_mints_one_and_emits_it",
     ),
