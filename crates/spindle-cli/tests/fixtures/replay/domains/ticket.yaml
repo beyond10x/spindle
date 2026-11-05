@@ -1,0 +1,97 @@
+domain: desk.ticket
+summary: A ticket opened under an identity the runtime mints, closed once, and read as lists.
+types:
+  - name: desk.ticket.TicketId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: desk.ticket.Ticket
+    identity:
+      name: ticket_id
+      type: desk.ticket.TicketId
+    fields:
+      - name: title
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open, Closed]
+      terminal: [Closed]
+      transitions:
+        - name: close
+          from: [Open]
+          to: Closed
+errors:
+  - name: desk.ticket.TicketNotFound
+    summary: No ticket carries the id.
+    fields: []
+  - name: desk.ticket.AlreadyClosed
+    summary: The ticket is already closed.
+    fields: []
+commands:
+  - name: desk.ticket.OpenTicket
+    input:
+      - name: title
+        type: String
+    outcomes:
+      - name: opened
+        creates: desk.ticket.Ticket
+        instance: ticket_id
+        sets:
+          title: input.title
+        emits: [desk.ticket.TicketOpened]
+        payload:
+          desk.ticket.TicketOpened:
+            ticket_id: {generated: true}
+            title: input.title
+        summary: The ticket opens under an identity the runtime mints.
+  - name: desk.ticket.CloseTicket
+    input:
+      - name: ticket_id
+        type: desk.ticket.TicketId
+    outcomes:
+      - name: no-such-ticket
+        unknown_instance: true
+        error: desk.ticket.TicketNotFound
+        summary: No ticket carries the id.
+      - name: already-closed
+        when_subject: {predicate: state == Closed}
+        error: desk.ticket.AlreadyClosed
+        summary: A closed ticket stays closed.
+      - name: closed
+        moves: desk.ticket.Ticket.close
+        instance: ticket_id
+        emits: [desk.ticket.TicketClosed]
+        payload:
+          desk.ticket.TicketClosed: {ticket_id: input.ticket_id}
+        summary: The ticket closes.
+events:
+  - name: desk.ticket.TicketOpened
+    fields:
+      - name: ticket_id
+        type: desk.ticket.TicketId
+      - name: title
+        type: String
+  - name: desk.ticket.TicketClosed
+    fields:
+      - name: ticket_id
+        type: desk.ticket.TicketId
+views:
+  - name: desk.ticket.AllTickets
+    source: desk.ticket.Ticket
+    consistency: read_your_writes
+    fields:
+      - name: ticket_id
+        type: desk.ticket.TicketId
+      - name: state
+        type: desk.ticket.Ticket.State
+      - name: title
+        type: String
+  - name: desk.ticket.OpenTickets
+    source: desk.ticket.Ticket
+    consistency: read_your_writes
+    filter: state == Open
+    fields:
+      - name: ticket_id
+        type: desk.ticket.TicketId
+      - name: title
+        type: String

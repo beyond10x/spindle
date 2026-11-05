@@ -7,16 +7,20 @@
 //! `SPINDLE_GUEST_BIN_DIR`; debug builds do not fit a 256 MiB guest). Run with `--ignored`, each
 //! fails naming what is missing.
 
+use std::io::BufReader;
 use std::net::SocketAddr;
+use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use spindle_capability::{Environment, derive};
 use spindle_firecracker::{
-    Artifact, Firecracker, FirecrackerVm, Initramfs, LaunchError, LaunchPlan, MAX_COMMAND_LINE,
-    Peer, ResourceKind, Resources, TargetKind, kernel_command_line,
+    Artifact, FIRECRACKER_INSERTS, Firecracker, FirecrackerVm, Initramfs, LaunchError, LaunchPlan,
+    MAX_COMMAND_LINE, Peer, ResourceKind, Resources, TELEMETRY_INSERTS, TargetKind,
+    kernel_command_line, telemetry_command_line,
 };
 use spindle_target::{EnvironmentAdmission, Target, TargetState};
+use spindle_telemetry::FrameReader;
 
 const BOOT_TIMEOUT: Duration = Duration::from_secs(90);
 
@@ -489,4 +493,151 @@ fn a_firecracker_instance_reports_its_share_of_the_requested_quota() {
 
     vm.stop().expect("stops");
     assert_eq!(vm.resources(), None, "a stopped microVM is not sampled");
+}
+
+#[test]
+#[ignore = "boots Firecracker: needs /dev/kvm, SPINDLE_FIRECRACKER, SPINDLE_FIRECRACKER_KERNEL and the musl guest binaries"]
+fn a_firecracker_instance_reports_over_vsock() {
+    let host = host();
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let initramfs = guest_root(&host, directory.path(), "reporting");
+    let port = 7341;
+    let mut launcher = Firecracker::new(host.firecracker.clone(), directory.path().join("state"))
+        .with_telemetry(port);
+    let plan = plan(
+        &host,
+        &initramfs,
+        "reporting",
+        "172.16.0.2:7000",
+        &[],
+        "telemetry --frames 3",
+    );
+    let mut vm = launcher.launch(&plan).expect("the instance launches");
+    let socket = vm
+        .telemetry_socket()
+        .expect("a launcher with telemetry gives the VM a vsock device");
+    assert_eq!(
+        socket,
+        directory
+            .path()
+            .join(format!("state/reporting/vsock.sock_{port}"))
+    );
+    // A socket path must fit the 108 bytes of `sun_path`: bind through a descriptor of its
+    // directory, as the launcher reaches the API socket.
+    let parent = std::fs::File::open(socket.parent().expect("a directory"))
+        .expect("the instance directory opens");
+    let short = PathBuf::from(format!(
+        "/proc/self/fd/{}/{}",
+        std::os::fd::AsRawFd::as_raw_fd(&parent),
+        socket.file_name().expect("a name").to_string_lossy()
+    ));
+    let listener = UnixListener::bind(&short).expect("the collector listens on the vsock UDS");
+    listener
+        .set_nonblocking(true)
+        .expect("a non-blocking listener");
+    let started = std::time::Instant::now();
+    let stream = loop {
+        match listener.accept() {
+            Ok((stream, _)) => break stream,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if started.elapsed() > BOOT_TIMEOUT {
+                    let text = console(vm.console());
+                    let _ = vm.stop();
+                    panic!("the guest never connected; console:\n{text}");
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => panic!("accept: {error}"),
+        }
+    };
+    stream.set_nonblocking(false).expect("a blocking stream");
+    stream
+        .set_read_timeout(Some(BOOT_TIMEOUT))
+        .expect("a read timeout");
+    let mut collector = FrameReader::new(BufReader::new(stream));
+    let mut sequences = Vec::new();
+    for _ in 0..3 {
+        let frame = match collector.next_frame() {
+            Ok(Some(frame)) => frame,
+            other => {
+                let text = console(vm.console());
+                let _ = vm.stop();
+                panic!("no frame from the guest ({other:?}); console:\n{text}");
+            }
+        };
+        assert_eq!(frame.instance_id, "reporting");
+        assert!(
+            frame.resources.cpu_seconds > 0.0 && frame.resources.memory_bytes > 0,
+            "the guest's own readings arrive: {:?}",
+            frame.resources
+        );
+        sequences.push(frame.sequence);
+    }
+    let (exit, text) = ended(&mut vm);
+    assert_eq!(
+        exit,
+        spindle_firecracker::Exit {
+            code: Some(0),
+            signal: None
+        },
+        "console:\n{text}"
+    );
+    assert!(
+        sequences.windows(2).all(|pair| pair[0] < pair[1]),
+        "sequence numbers increase: {sequences:?}"
+    );
+    assert!(
+        text.contains(&format!("spindle-init: SPINDLE_TELEMETRY=vsock:2:{port}")),
+        "the endpoint reaches the guest:\n{text}"
+    );
+    let inserted = format!("{FIRECRACKER_INSERTS}{TELEMETRY_INSERTS} ");
+    assert!(
+        text.lines()
+            .any(|line| line.contains("Command line:") && line.contains(&inserted)),
+        "Firecracker inserts `{inserted}` with a vsock device:\n{text}"
+    );
+}
+
+#[test]
+fn a_telemetry_endpoint_fits_within_the_command_line_limit() {
+    let mut host_plan = LaunchPlan {
+        instance_id: "left".to_string(),
+        component: "rally-table".to_string(),
+        settings: Vec::new(),
+        artifact: Artifact::Guest {
+            kernel: PathBuf::from("vmlinux"),
+            initramfs: PathBuf::from("initramfs.cpio"),
+            cmdline: "-- exchange".to_string(),
+        },
+        request: Resources {
+            vcpus: 1,
+            memory_mib: 128,
+            disk_mib: 0,
+        },
+        listen: "172.16.0.2:7000".parse().expect("an address"),
+        peers: Vec::new(),
+    };
+    let plain = kernel_command_line(&host_plan).expect("valid");
+    assert_eq!(
+        telemetry_command_line(&host_plan, None).expect("valid"),
+        plain
+    );
+    let reporting = telemetry_command_line(&host_plan, Some(7341)).expect("valid with an endpoint");
+    assert!(
+        reporting.contains(" SPINDLE_TELEMETRY=vsock:2:7341"),
+        "{reporting}"
+    );
+
+    let limit = MAX_COMMAND_LINE - TELEMETRY_INSERTS.len();
+    let overhead = " SPINDLE_SETTING_PAD=".len();
+    let fits = limit - reporting.len() - overhead;
+    let mut padded = |length: usize| {
+        host_plan.settings = vec![("pad".to_string(), "a".repeat(length))];
+        telemetry_command_line(&host_plan, Some(7341))
+    };
+    assert_eq!(padded(fits).expect("at the limit").len(), limit);
+    assert!(
+        matches!(padded(fits + 1), Err(LaunchError::InvalidPlan(_))),
+        "one byte more than Firecracker leaves with a vsock device is refused"
+    );
 }

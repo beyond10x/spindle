@@ -82,7 +82,16 @@ as written (they implement `Display`), so a name in the UI is the name in the sp
   vsock connects guest to host only, which is the direction telemetry needs; it does not touch
   the VMs' shared network, so telemetry never competes with rally's bindings.
 - **Back-pressure.** If the control process is gone or slow, the instance drops frames and counts
-  the drops; it never blocks a command on telemetry.
+  the drops; it never blocks a command on telemetry. The sender waits at most one period to
+  connect and one period to write a frame; a frame it could not write whole in that time is
+  dropped. A frame counted as sent was written to the socket, which is not proof that the
+  control process read it: a Unix socket takes writes into a connection the listener has not yet
+  accepted, until its buffer is full. The sequence number and the cumulative counters let the
+  control process see what it missed.
+- **Endpoints are checked where they are given.** A Unix socket path must be UTF-8 and fit
+  `sun_path` (107 bytes); the launcher and the sender refuse any other by name instead of
+  dropping every frame. QEMU guest context ids come from one count per process,
+  `3 + ((pid - 1) << 10 | n)` for `n` below 1024, so no two guests on the host share one.
 
 ## 4. Resources against the quota
 

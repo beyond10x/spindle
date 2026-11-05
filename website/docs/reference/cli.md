@@ -90,6 +90,8 @@ Each line is `{"command": "<qualified name>", "input": {...}}`, with an optional
 
 An external cause the line does not answer is answered by `--decisions`, then by `--answer-default`; one nothing answers fails that line, naming the outcome, and the run goes on.
 
+With `--scenario`, replays an `ess-scenario` document instead of reading stdin: every component in one process on empty in-memory stores, the document read and checked by ESS, its steps run and compared by ESS's conformance runner. Prints what it arranges, each timeline act and each assertion that holds; exits 0 when all hold. At the first that does not, prints it with what was expected and what was observed and exits 1; that replay runs nothing after it. A document ESS refuses, or one of more than 1000 steps, exits 1 before any step runs.
+
 ```console
 b10x-spindle run [OPTIONS] --environment <ENVIRONMENT> <SPEC>
 ```
@@ -101,6 +103,7 @@ b10x-spindle run [OPTIONS] --environment <ENVIRONMENT> <SPEC>
 | `--state <STATE>` | no |  | The state file: required where `store.durable` is bound to `sqlite`, refused otherwise |
 | `--decisions <DECISIONS>` | no |  | A TOML file of answers, `<outcome> = true \| false`, at the top level for every command or under a `["<command>"]` table for one; a command's table wins over the top level |
 | `--answer-default` | no |  | Answer every remaining external cause "does not hold" on a command that declares a default branch, so the model selects as it would without it |
+| `--scenario <SCENARIO>` | no |  | The `ess-scenario` document to replay |
 
 ## `play`
 

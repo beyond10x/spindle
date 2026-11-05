@@ -6,10 +6,10 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-/// Modules a microVM guest needs for its network: the virtio-mmio transport and the virtio-net
-/// driver. Their dependencies are resolved through `modules.dep`; a module the kernel has built in
-/// is skipped.
-pub const GUEST_MODULES: [&str; 2] = ["virtio_mmio", "virtio_net"];
+/// Modules a microVM guest needs for its network and its telemetry: the virtio-mmio transport, the
+/// virtio-net driver and the virtio vsock transport. Their dependencies are resolved through
+/// `modules.dep`; a module the kernel has built in is skipped.
+pub const GUEST_MODULES: [&str; 3] = ["virtio_mmio", "virtio_net", "vmw_vsock_virtio_transport"];
 
 /// Why no usable guest kernel was found on this host.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

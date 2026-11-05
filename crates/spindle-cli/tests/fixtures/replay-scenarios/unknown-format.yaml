@@ -1,0 +1,10 @@
+type: ess-scenario/999
+domain: desk.ticket
+scenario: a-format-no-reader-admits
+summary: Claims a scenario format ESS does not read.
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: desk.ticket.OpenTicket
+    input:
+      title: printer
+    outcome: opened

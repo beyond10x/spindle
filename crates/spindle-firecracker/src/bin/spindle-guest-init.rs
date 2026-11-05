@@ -39,6 +39,16 @@ enum Mode {
         #[arg(long, default_value_t = 60)]
         timeout: u64,
     },
+    /// Count one command, start the telemetry sender `SPINDLE_TELEMETRY` names, and succeed once
+    /// it has sent this many frames.
+    Telemetry {
+        /// The frames to send.
+        #[arg(long, default_value_t = 3)]
+        frames: u64,
+        /// Seconds before giving up.
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+    },
 }
 
 fn main() {
@@ -57,6 +67,15 @@ fn main() {
     let status = match Cli::try_parse() {
         Ok(cli) => match cli.command {
             Mode::Run { args } => run(&args),
+            Mode::Telemetry { frames, timeout } => {
+                match telemetry(frames, Duration::from_secs(timeout)) {
+                    Ok(()) => 0,
+                    Err(message) => {
+                        say(&format!("telemetry failed: {message}"));
+                        1
+                    }
+                }
+            }
             Mode::Exchange { timeout } => {
                 match Instant::now().checked_add(Duration::from_secs(timeout)) {
                     None => {
@@ -277,4 +296,45 @@ fn greet(address: SocketAddr, me: &str, deadline: Instant) -> Result<String, Str
         std::thread::sleep(Duration::from_millis(200));
     }
     Err(format!("no answer before the deadline; last: {last}"))
+}
+
+fn telemetry(frames: u64, within: Duration) -> Result<(), String> {
+    use spindle_telemetry::{Catalogue, Counter, Counters, Key, Kind, Outcome, Record, Source};
+
+    let command = "guest.Ping";
+    let counters = std::sync::Arc::new(Counters::new(Catalogue {
+        component: "guest".to_string(),
+        counters: vec![Counter {
+            name: format!("command.{command}.ok"),
+            kind: Kind::Counter,
+            source: Source::Kernel,
+            key: Key::Outcome {
+                command: command.to_string(),
+                outcome: "ok".to_string(),
+            },
+        }],
+    }));
+    spindle_telemetry::Telemetry::record(
+        counters.as_ref(),
+        Record::Command {
+            command,
+            outcome: Outcome::Declared("ok"),
+            elapsed: Duration::from_micros(5),
+        },
+    );
+    let sender =
+        spindle_telemetry::Sender::from_env(counters)?.ok_or("no SPINDLE_TELEMETRY is set")?;
+    let sent = sender.wait_until_sent(frames, within);
+    say(&format!(
+        "telemetry sent={} dropped={}",
+        sender.sent(),
+        sender.dropped()
+    ));
+    if !sent {
+        return Err(format!("{frames} frames were not sent within {within:?}"));
+    }
+    // The guest reboots when init returns; give the last frame time to leave it.
+    std::thread::sleep(Duration::from_secs(1));
+    sender.stop();
+    Ok(())
 }

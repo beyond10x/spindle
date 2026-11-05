@@ -54,7 +54,24 @@ list over every instance of the entity, with `filter: state == <State>` and
 reference, a default row for an absent identity, paging and any other filter are refused as
 unsupported.
 
+## Scenarios
+
+`b10x-spindle run <spec> --environment <env> --scenario <file>` replays an authored
+`ess-scenario` document. ESS's own reader reads the document and checks it against the model, and
+ESS's conformance runner runs its steps against every component of the system in one process, on
+empty in-memory stores whatever `store.durable` is bound to, and compares what happened with what
+each step expects: the outcome, the error, the events, an identity captured as `$instance` for a
+later step, and each view assertion. Spindle prints what the document arranges, each timeline act
+and each assertion that holds. At the first that does not, it prints what was expected and what
+was observed and exits 1. That step is found by replaying ever shorter prefixes of the document
+from an empty system, halving each time, and the replay it prints ran no step after it. A
+document ESS refuses, such as one with an unknown `type:`, or one of more than 1000 steps, exits 1
+before any step runs.
+
+A replay forces no external cause, sends no command as an actor and reads no view with
+parameters; a step that needs one is reported as unsupported, which also exits 1.
+
 :::caution[Planned]
-Replaying ESS scenarios against the kernel, and running the conformance suite ESS synthesises
-from Spindle's own specification, are planned; see [status](/docs/status).
+Running the conformance suite ESS synthesises from Spindle's own specification is planned; see
+[status](/docs/status).
 :::

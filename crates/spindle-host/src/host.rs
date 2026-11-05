@@ -12,7 +12,8 @@ use serde_json::{Map, Value};
 use spindle_capability::{Capability, Environment};
 use spindle_channel::{ChannelError, Receiver, RouteError, Router, Sender, in_process};
 use spindle_kernel::{
-    DeclaredError, ExecuteError, Executed, MemoryStore, NoExternals, SqliteStore, Store, StoreError,
+    DeclaredError, ExecuteError, Executed, MemoryStore, NoExternals, SqliteStore, Store,
+    StoreError, UuidV4,
 };
 use spindle_telemetry::{Counters, CountingStore, Sink};
 use spindle_timer::{BindingName, Clock, CompleteError, LifetimeError, Timer};
@@ -165,6 +166,8 @@ pub enum HostError {
         component: String,
         /// The command.
         command: String,
+        /// The refusing outcome.
+        outcome: String,
         /// The declared error.
         error: DeclaredError,
     },
@@ -443,11 +446,14 @@ impl Host {
         let mut report = Report::default();
         match self.execute(&component, command, &input)? {
             Ok(Executed {
-                error: Some(error), ..
+                outcome,
+                error: Some(error),
+                ..
             }) => {
                 return Err(HostError::CommandRefused {
                     component,
                     command: command.to_owned(),
+                    outcome,
                     error,
                 });
             }
@@ -579,7 +585,9 @@ impl Host {
     /// Every row `view` holds: each instance of its source its filter keeps, projected, in the
     /// order its `order_by` ranks them, ties and a view without `order_by` by identity.
     ///
-    /// The filter read is `state == <State>` alone, as the compiler parsed it. Read from the
+    /// The filter read is one over the lifecycle state alone, as the compiler parsed it:
+    /// `state == <State>` and `!=`, `in` and `none_of` over states, combined by `any`, `all` and
+    /// `not`, and evaluated by ESS. Read from the
     /// same store as [`Host::view`], for either consistency.
     ///
     /// # Errors
@@ -617,10 +625,13 @@ impl Host {
             .get_mut(component)
             .ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
         let started = Instant::now();
-        let result = spindle_kernel::execute(
+        let clock = &self.clock;
+        let result = spindle_kernel::execute_at(
             &self.ir,
             held.store.as_mut(),
             &mut NoExternals,
+            &mut UuidV4,
+            &|| clock.wall(),
             command,
             input,
         );

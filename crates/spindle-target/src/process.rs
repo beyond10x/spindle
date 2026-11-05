@@ -58,6 +58,7 @@ pub fn env_name(name: &str) -> String {
 pub struct ProcessLauncher {
     console_dir: PathBuf,
     grace: Duration,
+    telemetry: Option<spindle_telemetry::Endpoint>,
 }
 
 impl ProcessLauncher {
@@ -66,6 +67,7 @@ impl ProcessLauncher {
         Self {
             console_dir: console_dir.into(),
             grace: Duration::from_secs(5),
+            telemetry: None,
         }
     }
 
@@ -74,6 +76,19 @@ impl ProcessLauncher {
     pub fn with_grace(mut self, grace: Duration) -> Self {
         self.grace = grace;
         self
+    }
+
+    /// The same launcher giving every instance the Unix socket `socket` as its telemetry endpoint
+    /// (`SPINDLE_TELEMETRY=unix:<socket>`). The caller listens on it; an instance identifies
+    /// itself in every frame.
+    ///
+    /// Refused with [`LaunchError::InvalidPlan`] when the path is not UTF-8 or longer than
+    /// [`spindle_telemetry::MAX_UNIX_PATH`] bytes: the instance could never connect to it.
+    pub fn with_telemetry(mut self, socket: impl Into<PathBuf>) -> Result<Self, LaunchError> {
+        let endpoint = spindle_telemetry::Endpoint::unix(socket)
+            .map_err(|error| LaunchError::InvalidPlan(format!("telemetry endpoint: {error}")))?;
+        self.telemetry = Some(endpoint);
+        Ok(self)
     }
 }
 
@@ -100,7 +115,7 @@ impl Launcher for ProcessLauncher {
                 plan.instance_id
             )));
         }
-        let variables = variables(plan)?;
+        let variables = variables(plan, self.telemetry.as_ref())?;
 
         fs::create_dir_all(&self.console_dir).map_err(|source| LaunchError::Io {
             what: format!("creating {}", self.console_dir.display()),
@@ -179,7 +194,10 @@ fn is_file_name(id: &str) -> bool {
             .all(|character| character.is_ascii_alphanumeric() || "._-".contains(character))
 }
 
-fn variables(plan: &LaunchPlan) -> Result<BTreeMap<String, String>, LaunchError> {
+fn variables(
+    plan: &LaunchPlan,
+    telemetry: Option<&spindle_telemetry::Endpoint>,
+) -> Result<BTreeMap<String, String>, LaunchError> {
     let mut variables = BTreeMap::new();
     let mut set = |name: String, value: String, from: &str| {
         if variables.insert(name.clone(), value).is_some() {
@@ -204,6 +222,13 @@ fn variables(plan: &LaunchPlan) -> Result<BTreeMap<String, String>, LaunchError>
         plan.listen.to_string(),
         "the listen address",
     )?;
+    if let Some(endpoint) = telemetry {
+        set(
+            spindle_telemetry::ENV_TELEMETRY.to_owned(),
+            endpoint.to_string(),
+            "the telemetry endpoint",
+        )?;
+    }
     for (name, value) in &plan.settings {
         if name.is_empty() {
             return Err(LaunchError::InvalidPlan("a setting has no name".to_owned()));

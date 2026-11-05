@@ -17,6 +17,7 @@ bench = false
 
 [dependencies]
 spindle-capability = { path = "../spindle-capability" }
+spindle-telemetry = { path = "../spindle-telemetry", default-features = false }
 rustix = { version = "1", features = ["param", "process"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"

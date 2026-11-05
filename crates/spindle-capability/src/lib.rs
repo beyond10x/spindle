@@ -14,6 +14,7 @@
 mod admission;
 mod derive;
 mod environment;
+pub mod mint;
 
 pub use admission::{Admission, Binding, admit};
 pub use derive::{Capability, Reason, Requirements, derive};

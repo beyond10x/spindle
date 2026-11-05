@@ -1,0 +1,15 @@
+type: ess-scenario/1
+domain: desk.ticket
+scenario: a-ticket-never-opened-is-wrongly-expected-listed
+summary: Expects the open tickets to list one that was never opened.
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: desk.ticket.OpenTicket
+    input:
+      title: printer
+    outcome: opened
+assert:
+  - view: desk.ticket.OpenTickets
+    contains: {title: printer}
+  - view: desk.ticket.OpenTickets
+    contains: {title: kettle}
