@@ -11,11 +11,29 @@ use ess_domain::binding::{Delivery, Failure};
 use crate::channel::{Channel, ChannelError};
 use crate::model::{DeliveryId, Envelope, Event, Frame};
 use crate::outbox::Outbox;
-use crate::route::Router;
+use crate::route::{MappingError, Router};
 use spindle_telemetry::{Carried, Sink};
 
 /// How long an `at_least_once` envelope waits for its acknowledgement unless configured.
 pub const DEFAULT_ACKNOWLEDGEMENT_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// A binding an event triggered whose command input could not be filled from it: no envelope was
+/// staged for it and its command is not invoked: zero attempts, no retry. The event's other
+/// bindings still run. ESS 0.86.0's interpreter calls this an unmet input obligation only for a
+/// binding with `on_refusal` and answers every other one unsupported (`interpret/bindings.rs`);
+/// what Spindle does instead is a runtime decision, `docs/design/spindle.md` § 11 (unmet binding
+/// input).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unmet {
+    /// The binding.
+    pub binding: String,
+    /// The component that accepts its command.
+    pub to: String,
+    /// The command it would have invoked.
+    pub command: String,
+    /// Why the input could not be filled.
+    pub error: MappingError,
+}
 
 struct InFlight {
     envelope: Envelope,
@@ -41,6 +59,7 @@ pub struct Sender {
     timeout: Duration,
     next: u64,
     sink: Sink,
+    unmet: Vec<Unmet>,
 }
 
 impl Sender {
@@ -59,6 +78,7 @@ impl Sender {
             timeout: DEFAULT_ACKNOWLEDGEMENT_TIMEOUT,
             next: 1,
             sink: Sink::default(),
+            unmet: Vec::new(),
         })
     }
 
@@ -86,8 +106,10 @@ impl Sender {
     /// Maps `event`, produced by the state at log `position`, and stages one envelope per binding
     /// it triggers; returns how many.
     ///
-    /// Refused, with nothing staged, when the component does not publish the event, when the event
-    /// does not map, or when a binding leads to a component no channel is connected to.
+    /// Refused, with nothing staged, when the component does not publish the event, or when a
+    /// binding leads to a component no channel is connected to. A binding whose input the event
+    /// does not fill stages nothing and is held as [`Unmet`] until [`Self::take_unmet`]; the
+    /// event's other bindings are staged.
     pub fn publish(&mut self, position: u64, event: Event) -> Result<usize, ChannelError> {
         let publishes = self
             .router
@@ -99,8 +121,14 @@ impl Sender {
                 event: event.name,
             });
         }
-        let mapped = self.router.map(&event)?;
-        if let Some((route, _)) = mapped
+        let triggered = self
+            .router
+            .routes()
+            .iter()
+            .filter(|route| route.event == event.name)
+            .map(|route| (route, route.map(&event)))
+            .collect::<Vec<_>>();
+        if let Some((route, _)) = triggered
             .iter()
             .find(|(route, _)| !self.channels.contains_key(&route.to))
         {
@@ -109,8 +137,20 @@ impl Sender {
                 component: route.to.clone(),
             });
         }
-        let mut envelopes = Vec::with_capacity(mapped.len());
-        for (route, command) in mapped {
+        let mut envelopes = Vec::with_capacity(triggered.len());
+        for (route, mapped) in triggered {
+            let command = match mapped {
+                Ok(command) => command,
+                Err(error) => {
+                    self.unmet.push(Unmet {
+                        binding: route.binding.clone(),
+                        to: route.to.clone(),
+                        command: route.command.clone(),
+                        error,
+                    });
+                    continue;
+                }
+            };
             envelopes.push(Envelope {
                 id: DeliveryId(self.next),
                 binding: route.binding.clone(),
@@ -128,6 +168,12 @@ impl Sender {
             self.outbox.stage(position, envelope);
         }
         Ok(staged)
+    }
+
+    /// Every binding whose input was unmet since the last call, in the order published; each is
+    /// returned once.
+    pub fn take_unmet(&mut self) -> Vec<Unmet> {
+        std::mem::take(&mut self.unmet)
     }
 
     /// The state through log position `through` is durable.

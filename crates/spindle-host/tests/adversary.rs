@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 use spindle_capability::Environment;
-use spindle_host::{Host, HostError, ManualClock};
+use spindle_host::{Host, HostError, ManualClock, RETRY_ATTEMPTS};
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -56,12 +56,14 @@ fn host(spec: &Path, environment: &Environment, state: &Path) -> Result<Host, Ho
     Host::new(loaded.ir, environment, Arc::new(ManualClock::new()), state)
 }
 
-/// `pin-post` says `on_failure: retry`. Its first attempt is refused because the board does not
-/// exist yet; once the board is opened, a retried attempt pins the post. The host must either
-/// refuse the binding as unsupported or retry it; recording the refusal and dropping the envelope
-/// is what `on_failure: drop` says, not `retry`.
+/// `pin-post` says `on_failure: retry`. Each attempt is refused while the board does not exist.
+/// ESS retries at once and never defers: ESS 0.86.0's interpreter, given this fixture, `Post`
+/// and then `OpenBoard`, retries `Pin` inline until its attempt budget is spent ("unbounded retry
+/// exceeded the finite execution budget") and never pins after `OpenBoard`. So the host must
+/// either refuse the binding as unsupported, or retry it at once until its limit and give it up.
+/// Running it once and dropping it is what `on_failure: drop` says, not `retry`.
 #[test]
-fn a_binding_that_says_retry_is_refused_as_unsupported_or_retried() {
+fn a_binding_that_says_retry_is_retried_until_exhausted() {
     let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
     let mut host = match host(&fixture("notice"), &laptop(), state.path()) {
         Err(HostError::Unsupported(_) | HostError::Route(_)) => return,
@@ -74,30 +76,32 @@ fn a_binding_that_says_retry_is_refused_as_unsupported_or_retried() {
             object(json!({"board_id": "b1", "beat": "first"})),
         )
         .expect("the post runs");
-    let opened = host
-        .submit("notice.sink.OpenBoard", object(json!({"board_id": "b1"})))
+    let pinned = posted
+        .refused
+        .iter()
+        .find(|refused| refused.command == "notice.sink.Pin")
+        .unwrap_or_else(|| panic!("the refused Pin is reported: {posted:?}"));
+    const { assert!(RETRY_ATTEMPTS > 1) };
+    assert_eq!(
+        pinned.attempts, RETRY_ATTEMPTS,
+        "pin-post says on_failure: retry, so its refused Pin is attempted to the limit: {posted:?}"
+    );
+    assert_eq!(
+        host.counters("notice-sink")
+            .expect("the sink runs")
+            .value("binding.pin-post.exhausted"),
+        Some(1)
+    );
+    host.submit("notice.sink.OpenBoard", object(json!({"board_id": "b1"})))
         .expect("the board opens");
     let board = host
         .view("notice.sink.BoardState", &json!("b1"))
         .expect("the view answers")
         .expect("the board exists");
-    assert_eq!(
+    assert_ne!(
         board.get("last"),
         Some(&json!("first")),
-        "pin-post says on_failure: retry, yet its refused Pin was never attempted again;\n\
-         after Post: ran {:?} failed {:?}\nafter OpenBoard: ran {:?} failed {:?}",
-        posted
-            .ran
-            .iter()
-            .map(|step| (step.command.as_str(), step.executed.outcome.as_str()))
-            .collect::<Vec<_>>(),
-        posted.failed,
-        opened
-            .ran
-            .iter()
-            .map(|step| step.command.as_str())
-            .collect::<Vec<_>>(),
-        opened.failed
+        "the given-up envelope is not redelivered once the board exists"
     );
 }
 

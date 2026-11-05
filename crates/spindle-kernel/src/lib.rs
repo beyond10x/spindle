@@ -39,10 +39,13 @@
 //! The conditions, effects and value sources that Spindle's own specification and the `rally`
 //! example use, and the guarded forms beside them (an input guard beside `when_subject:`,
 //! `when_subject: {field, equals}`, `when_subject_state:`, `external:` with `when:` or
-//! `when_subject:`). Any other construct is [`ExecuteError::Unsupported`], named, before the
+//! `when_subject:`), and the caller a command is sent as ([`execute_as`]): `{caller: <attribute>}`
+//! as a value source, `caller.<attribute>` in a guard, and a branch the caller decides. Any other
+//! construct is [`ExecuteError::Unsupported`], named, before the
 //! command reads or writes anything. [`runs`] makes the same check without running anything, so
 //! a host can name what it will not run before it serves.
 
+mod caller;
 mod decider;
 mod execute;
 mod facts;
@@ -56,12 +59,27 @@ mod values;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
+pub use caller::reads as caller_reads;
 pub use decider::{Decider, External, NoExternals};
-pub use execute::{at_rest, execute, execute_at, execute_minting};
+pub use execute::{Invocation, at_rest, execute, execute_as, execute_at, execute_minting};
 pub use mint::{Identity, Mint, Uuid, UuidV4};
 pub use sqlite::SqliteStore;
 pub use store::{Change, MemoryStore, Row, Store, StoreError, Stored};
 pub use supported::check as runs;
+
+/// Refuses `value` unless it is a value of `kind`, naming what it is not: the check every command
+/// input goes through before the command runs, as ESS's interpreter makes it
+/// (`input::validate_typed_value`). A newtype's prefix, alphabet and invariants included.
+///
+/// # Errors
+/// The first thing `value` is not.
+pub fn admits(
+    ir: &ess_compiler::EssIr,
+    kind: &ess_compiler::ir::ResolvedTypeRef,
+    value: &Value,
+) -> Result<(), String> {
+    typed::validate(ir, kind, value)
+}
 
 /// One event a command emitted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

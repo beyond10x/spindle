@@ -4,7 +4,8 @@
 //! [`Predicate::evaluate`](ess_primitives::predicate::Predicate::evaluate); this module only says
 //! which value stands at which path and what type declares it. A stored field is read at its own
 //! name (`ball_x`), the state at `state`, and an input field under `input.` (`input.side`), as
-//! `when_subject:` reads them; an input guard reads the input fields at their own names.
+//! `when_subject:` reads them; an input guard reads the input fields at their own names. Either
+//! reads the attributes of the caller the command is sent as under `caller.` (`caller.owner_id`).
 //!
 //! A JSON value binds its leaves the way every ESS fact source does: a scalar at its own path, an
 //! object member at `<path>.<member>`, and a list as `<path>.count` with its elements at
@@ -28,6 +29,9 @@ use crate::store::Row;
 /// The namespace a stored-field guard reads the command's input under.
 pub(crate) const INPUT: &str = ess_domain::command::subject_fact::INPUT_NAMESPACE;
 
+/// The namespace a guard reads the caller's attributes under.
+pub(crate) const CALLER: &str = ess_domain::command::caller_value::CALLER_NAMESPACE;
+
 /// Bound facts and the fields that declare them.
 pub(crate) struct Facts<'a> {
     ir: &'a EssIr,
@@ -37,6 +41,8 @@ pub(crate) struct Facts<'a> {
     fields: Vec<ResolvedField>,
     /// The command input read under `input.`, where it is.
     input: Option<&'a [ResolvedField]>,
+    /// The caller's attributes read under `caller.`, where they are.
+    caller: Option<&'a [ResolvedField]>,
 }
 
 impl<'a> Facts<'a> {
@@ -47,7 +53,30 @@ impl<'a> Facts<'a> {
             present: BTreeSet::new(),
             fields,
             input: None,
+            caller: None,
         }
+    }
+
+    /// These facts with the attributes of the caller the command is sent as, each at
+    /// `caller.<attribute>` and declared by `attributes`, as ESS reads a guard's `caller.` operand
+    /// (`interpret::execute::caller::Facts`). Where the facts' own fields declare one named
+    /// `caller`, `caller.<member>` keeps reading that field, and nothing of the caller is bound.
+    /// A command sent as no caller binds nothing, so a guard over the caller is `Unknown`.
+    pub(crate) fn with_caller(
+        mut self,
+        attributes: &'a [ResolvedField],
+        caller: Option<&Map<String, Value>>,
+    ) -> Self {
+        if self.fields.iter().any(|field| field.name == CALLER) {
+            return self;
+        }
+        self.caller = Some(attributes);
+        for (name, value) in caller.into_iter().flatten() {
+            if let Ok(path) = FactPath::new(format!("{CALLER}.{name}")) {
+                self.bind(&path, value);
+            }
+        }
+        self
     }
 
     /// The facts of `row`, an instance of `entity` with `identity`: its fields at their own
@@ -130,9 +159,16 @@ impl<'a> Facts<'a> {
     /// field declares, such as `state`.
     fn declared(&self, path: &FactPath) -> Option<Primitive> {
         let segments = path.segments();
-        let (fields, path) = match (self.input, segments.split_first()) {
-            (Some(input), Some((first, rest))) if first.as_str() == INPUT && !rest.is_empty() => {
+        let (fields, path) = match (self.input, self.caller, segments.split_first()) {
+            (Some(input), _, Some((first, rest)))
+                if first.as_str() == INPUT && !rest.is_empty() =>
+            {
                 (input, FactPath::from_segments(rest))
+            }
+            (_, Some(caller), Some((first, rest)))
+                if first.as_str() == CALLER && !rest.is_empty() =>
+            {
+                (caller, FactPath::from_segments(rest))
             }
             _ => (self.fields.as_slice(), path.clone()),
         };

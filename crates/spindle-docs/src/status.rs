@@ -133,6 +133,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "crates/spindle-channel/tests/channel.rs::an_event_reaches_the_bound_component_over_tcp",
     ),
     shipped(
+        "Bindings",
+        "Retry on failure",
+        "An on_failure: retry binding runs its command again at once after each refused or failed attempt, up to 5 attempts, before the next envelope runs; each attempt and each given-up invocation is counted. --drop-retries runs such a binding as a drop binding.",
+        "/docs/concepts/components-and-bindings",
+        "crates/spindle-host/tests/retry.rs::a_failing_invocation_is_retried_until_it_succeeds",
+    ),
+    shipped(
         "Rally",
         "Every component in one process",
         "b10x-spindle play runs the three rally components in one process with in-process channels until a side wins.",
@@ -223,11 +230,12 @@ pub const CAPABILITIES: &[Capability] = &[
         "/docs/examples/rally",
         "crates/spindle-cli/tests/processes.rs::a_match_between_three_processes_ends_with_a_winner",
     ),
-    planned(
+    shipped(
         "Rally",
         "Three microVMs",
-        "Each rally component in its own microVM, joined by TCP channels across the VM network.",
+        "Each rally component in its own microVM, one b10x-spindle play per VM in its per-component mode, joined by TCP channels across the VM network, plays a match to a winner; one placement (examples/rally/placement.toml) runs on QEMU and on Firecracker. Its tests run on a host with /dev/kvm (task check:vm), not in CI.",
         "/docs/examples/rally",
+        "crates/spindle-qemu/tests/rally.rs::a_match_between_three_qemu_microvms_ends_with_a_winner",
     ),
     shipped(
         "Execution",
@@ -246,7 +254,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "Serve what runs",
-        "An HTTP run serves every command and view that runs and answers each other one 501 naming the construct, ESS's envelope for a command; the list is printed at startup, in name order. A view the ingress cannot route still refuses startup by name, since ESS publishes no 501 for a view. on_failure: retry bindings start only with --drop-retries, and sqlite state without --state is kept in a temporary directory removed when the run ends.",
+        "An HTTP run serves every command and view that runs and answers each other one 501 naming the construct, ESS's envelope for a command; the list is printed at startup, in name order. A view the ingress cannot route still refuses startup by name, since ESS publishes no 501 for a view. SQLite state without --state is kept in a temporary directory removed when the run ends.",
         "/docs/concepts/capabilities",
         "crates/spindle-cli/tests/unserved.rs::an_unrunnable_command_answers_501_and_the_rest_serve",
     ),
@@ -264,11 +272,12 @@ pub const CAPABILITIES: &[Capability] = &[
         "/docs/concepts/specification",
         "crates/spindle-cli/tests/conform.rs::every_executed_scenario_passes",
     ),
-    planned(
+    shipped(
         "Observe",
         "The control process",
-        "b10x-spindle deploy places and launches instances, collects their samples and serves the read-only observe API on 127.0.0.1; the UI then shows live data and is embedded in the binary.",
+        "b10x-spindle deploy places and launches the instances of a spindle-placement/1 document on process targets, collects their samples, keeps the last 15 minutes and serves the read-only observe API and the UI embedded in the binary on 127.0.0.1, with a token and a Host check.",
         "/docs/concepts/observe",
+        "crates/spindle-control/tests/control.rs::the_stream_carries_one_sample_per_instance_per_period",
     ),
     planned(
         "Deploy",

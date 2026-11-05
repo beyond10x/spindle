@@ -1,0 +1,44 @@
+domain: library.notices
+summary: Thanks sent to readers, each under a bounded reader reference.
+types:
+  - name: library.notices.ReaderRef
+    kind: newtype
+    of: String
+    invariants:
+      - 'value.count <= 8'
+entities:
+  - name: library.notices.Thanks
+    identity:
+      name: reader_id
+      type: library.notices.ReaderRef
+    fields: []
+    lifecycle:
+      initial: Sent
+      states: [Sent]
+      terminal: [Sent]
+errors: []
+commands:
+  - name: library.notices.SendThanks
+    input:
+      - name: reader_id
+        type: library.notices.ReaderRef
+    outcomes:
+      - name: sent
+        creates: library.notices.Thanks
+        instance: reader_id
+        emits: [library.notices.ThanksSent]
+        payload:
+          library.notices.ThanksSent: {reader_id: input.reader_id}
+        summary: The reader is thanked.
+events:
+  - name: library.notices.ThanksSent
+    fields:
+      - name: reader_id
+        type: library.notices.ReaderRef
+views:
+  - name: library.notices.AllThanks
+    source: library.notices.Thanks
+    consistency: read_your_writes
+    fields:
+      - name: reader_id
+        type: library.notices.ReaderRef

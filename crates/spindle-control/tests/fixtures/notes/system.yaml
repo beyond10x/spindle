@@ -1,0 +1,42 @@
+format: ess/34
+system: notes
+version: v1
+summary: Notes written over the network, read as a list, and each one shelved by a second component.
+domains:
+  - notes.pad
+  - notes.shelf
+components:
+  - component: pad
+    summary: Takes notes from callers outside the process and lists them.
+    owns:
+      domains:
+        - notes.pad
+    accepts:
+      commands:
+        - notes.pad.WriteNote
+    publishes:
+      events:
+        - notes.pad.NoteWritten
+    reached_by: network
+  - component: shelf
+    summary: Shelves each note written; only a binding reaches it.
+    owns:
+      domains:
+        - notes.shelf
+    accepts:
+      commands:
+        - notes.shelf.ShelveNote
+    publishes:
+      events:
+        - notes.shelf.NoteShelved
+    reached_by: in_process
+bindings:
+  - id: shelve-note
+    when:
+      event: notes.pad.NoteWritten
+    invoke:
+      command: notes.shelf.ShelveNote
+    mapping:
+      note_id: event.note_id
+    delivery: at_most_once
+    on_failure: drop

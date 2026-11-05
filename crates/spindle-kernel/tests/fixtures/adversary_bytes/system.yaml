@@ -1,0 +1,21 @@
+format: ess/34
+system: hold
+version: v1
+summary: Bins whose Bytes and List fields the runtime mints.
+domains:
+  - hold.bin
+components:
+  - component: keeper
+    summary: Fills and refills bins.
+    owns:
+      domains:
+        - hold.bin
+    accepts:
+      commands:
+        - hold.bin.FillBin
+        - hold.bin.RefillBin
+    publishes:
+      events:
+        - hold.bin.BinFilled
+        - hold.bin.BinRefilled
+    reached_by: in_process

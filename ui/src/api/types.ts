@@ -29,6 +29,7 @@ export type {
 export type Instance = DeployedInstance;
 
 // Not part of the contract: `GET /api/views/<component>/<view>` answers the view as the instance's
-// ingress does, one row (an object), a list of rows, or null when nothing matches.
+// ingress does: `{"rows": [...]}` for a list view; the dev fixtures hold one row (an object), a list of
+// rows, or null when nothing matches.
 export type ViewRow = Record<string, unknown>;
 export type ViewAnswer = ViewRow | ViewRow[] | null;

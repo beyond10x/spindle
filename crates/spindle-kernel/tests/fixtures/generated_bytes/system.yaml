@@ -1,0 +1,21 @@
+format: ess/34
+system: depot
+version: v1
+summary: A warehouse whose labels carry a barcode and tags the runtime mints.
+domains:
+  - depot.warehouse
+components:
+  - component: printer
+    summary: Prints and reprints labels.
+    owns:
+      domains:
+        - depot.warehouse
+    accepts:
+      commands:
+        - depot.warehouse.PrintLabel
+        - depot.warehouse.ReprintLabel
+    publishes:
+      events:
+        - depot.warehouse.LabelPrinted
+        - depot.warehouse.LabelReprinted
+    reached_by: in_process

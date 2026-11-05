@@ -43,9 +43,17 @@ tasks:
       - pnpm build
 
   build:
-    desc: Release build of b10x-spindle
+    desc: Release build of b10x-spindle, the observe UI built first and embedded
     cmds:
+      - task: ui
       - cargo build --locked --release -p spindle-cli
+
+  ui:
+    desc: Build the observe UI into ui/dist, which b10x-spindle embeds
+    dir: ui
+    cmds:
+      - pnpm install --frozen-lockfile
+      - pnpm build
 
   docs-generate:
     desc: Rewrite the generated pages under website/

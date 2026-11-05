@@ -253,6 +253,13 @@ pub trait Running {
     fn resources(&self) -> Option<ResourceSample> {
         None
     }
+
+    /// The id of the process group every process of the instance is in, for a launcher that
+    /// starts the instance in a group of its own on this host; `None` otherwise. A collector
+    /// uses it to tell the instance's own connections from others.
+    fn process_group(&self) -> Option<u32> {
+        None
+    }
 }
 
 /// The check every launcher makes first: the first resource `request` asks for that `enforces`

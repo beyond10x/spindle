@@ -44,6 +44,14 @@ pub enum Record<'a> {
         /// What happened to the envelope.
         carried: Carried,
     },
+    /// The receiving component invoked the command of an `on_failure: retry` binding, or gave
+    /// up on it.
+    Retried {
+        /// The binding.
+        binding: &'a str,
+        /// What happened to the invocation.
+        retried: Retried,
+    },
     /// The timer did something for a periodic binding.
     Timed {
         /// The binding.
@@ -162,6 +170,32 @@ impl Carried {
     }
 }
 
+/// What came of one invocation of an `on_failure: retry` binding's command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Retried {
+    /// One attempt was made: the first and every retry.
+    Attempted,
+    /// Every attempt the retry limit allows failed; the invocation is given up.
+    Exhausted,
+}
+
+impl Retried {
+    /// Every kind, in declaration order.
+    pub const ALL: [Self; 2] = [Self::Attempted, Self::Exhausted];
+
+    /// Its name in a counter.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Attempted => "attempted",
+            Self::Exhausted => "exhausted",
+        }
+    }
+
+    pub(crate) fn index(self) -> usize {
+        self as usize
+    }
+}
+
 /// What the timer did for one periodic binding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Timed {
@@ -212,6 +246,11 @@ impl Sink {
     /// Records what a channel endpoint did with one envelope of `binding`.
     pub fn carried(&self, binding: &str, carried: Carried) {
         self.record(Record::Carried { binding, carried });
+    }
+
+    /// Records what came of one invocation of the retry binding `binding`.
+    pub fn retried(&self, binding: &str, retried: Retried) {
+        self.record(Record::Retried { binding, retried });
     }
 
     /// Records what the timer did, `count` times, for `binding`.

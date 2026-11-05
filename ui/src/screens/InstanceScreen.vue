@@ -50,7 +50,7 @@ const count = (value: number | undefined) => (value === undefined ? 'never repor
         <table data-test="commands">
           <thead><tr><th>command</th><th>outcome</th><th>count</th><th>rate</th></tr></thead>
           <tbody>
-            <tr v-for="row in commands" :key="row.name" :class="{ muted: row.count === undefined }">
+            <tr v-for="row in commands" :key="row.name" :data-counter="row.name" :class="{ muted: row.count === undefined }">
               <td>{{ row.command }}</td><td>{{ row.outcome }}</td><td>{{ count(row.count) }}</td><td>{{ perSecond(row.rate) }}</td>
             </tr>
           </tbody>

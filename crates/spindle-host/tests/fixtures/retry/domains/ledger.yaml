@@ -1,0 +1,72 @@
+domain: filing.ledger
+summary: Entries the ledger may hold back, and notes it always keeps.
+entities:
+  - name: filing.ledger.Entry
+    identity:
+      name: filing_id
+      type: String
+    fields: []
+    lifecycle:
+      initial: Recorded
+      states: [Recorded]
+      terminal: [Recorded]
+  - name: filing.ledger.Note
+    identity:
+      name: filing_id
+      type: String
+    fields: []
+    lifecycle:
+      initial: Logged
+      states: [Logged]
+      terminal: [Logged]
+errors:
+  - name: filing.ledger.Held
+    summary: The ledger is not taking entries.
+    fields: []
+commands:
+  - name: filing.ledger.Record
+    input:
+      - name: filing_id
+        type: String
+    outcomes:
+      - name: held
+        external: the ledger is not taking entries
+        error: filing.ledger.Held
+        summary: The ledger may hold back any entry.
+      - name: recorded
+        creates: filing.ledger.Entry
+        instance: filing_id
+        emits: [filing.ledger.Recorded]
+        payload:
+          filing.ledger.Recorded: {filing_id: input.filing_id}
+        summary: The entry is recorded.
+  - name: filing.ledger.Log
+    input:
+      - name: filing_id
+        type: String
+    outcomes:
+      - name: logged
+        creates: filing.ledger.Note
+        instance: filing_id
+        emits: [filing.ledger.Logged]
+        payload:
+          filing.ledger.Logged: {filing_id: input.filing_id}
+        summary: The note is kept.
+events:
+  - name: filing.ledger.Recorded
+    fields:
+      - name: filing_id
+        type: String
+  - name: filing.ledger.Logged
+    fields:
+      - name: filing_id
+        type: String
+views:
+  - name: filing.ledger.Entries
+    source: filing.ledger.Entry
+    consistency: read_your_writes
+    fields:
+      - name: filing_id
+        type: String
+      - name: state
+        type: filing.ledger.Entry.State

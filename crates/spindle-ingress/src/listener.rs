@@ -9,7 +9,9 @@ use std::time::Duration;
 
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::{Bytes, Incoming};
-use hyper::header::{ALLOW, CONTENT_LENGTH, CONTENT_TYPE, HeaderValue, TRANSFER_ENCODING};
+use hyper::header::{
+    ALLOW, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, HOST, HeaderValue, TRANSFER_ENCODING,
+};
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use serde_json::{Map, Value};
@@ -127,6 +129,60 @@ impl Exchange {
 struct Served {
     surface: Surface,
     exchanges: mpsc::Sender<Exchange>,
+    guard: Option<Guard>,
+}
+
+/// What every request to a guarded listener must carry: a `Host` header naming the listener on
+/// the loopback address, and the token.
+struct Guard {
+    port: u16,
+    token: String,
+}
+
+impl Guard {
+    /// The refusal of `request`, if it is refused: `403` for a `Host` that is neither
+    /// `127.0.0.1:<port>` nor `localhost:<port>`, `401` without the token as
+    /// `Authorization: Bearer <token>` or `?t=<token>`.
+    fn refuses(&self, request: &Request<Incoming>) -> Option<Answer> {
+        let host = request
+            .headers()
+            .get(HOST)
+            .and_then(|host| host.to_str().ok())
+            .map(str::to_ascii_lowercase);
+        let own = [
+            format!("127.0.0.1:{}", self.port),
+            format!("localhost:{}", self.port),
+        ];
+        if !host.is_some_and(|host| own.contains(&host)) {
+            return Some(Answer::refusal(
+                403,
+                "the Host header names neither 127.0.0.1 nor localhost on this port",
+            ));
+        }
+        let in_header = request
+            .headers()
+            .get(AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .is_some_and(|given| same(given.trim(), &self.token));
+        let in_query = request.uri().query().is_some_and(|query| {
+            query
+                .split('&')
+                .filter_map(|pair| pair.strip_prefix("t="))
+                .any(|given| same(given, &self.token))
+        });
+        (!in_header && !in_query).then(|| Answer::refusal(401, "the token is missing or wrong"))
+    }
+}
+
+/// Compares two strings in time that depends only on their lengths.
+fn same(left: &str, right: &str) -> bool {
+    left.len() == right.len()
+        && left
+            .bytes()
+            .zip(right.bytes())
+            .fold(0u8, |differ, (a, b)| differ | (a ^ b))
+            == 0
 }
 
 /// An HTTP/1.1 listener on 127.0.0.1 serving one [`Surface`].
@@ -155,9 +211,28 @@ impl Listener {
     /// # Errors
     /// When the socket cannot be bound or the server thread cannot start.
     pub fn bind(port: u16, surface: Surface) -> io::Result<Self> {
+        Self::serve(port, surface, None)
+    }
+
+    /// As [`Listener::bind`], every request first checked: one whose `Host` header is neither
+    /// `127.0.0.1:<port>` nor `localhost:<port>` is refused `403`, and one that does not carry
+    /// `token` as `Authorization: Bearer <token>` or `?t=<token>` `401`, before its route is
+    /// read. What a launcher starts on a host other users share serves this way.
+    ///
+    /// # Errors
+    /// As [`Listener::bind`].
+    pub fn bind_guarded(port: u16, surface: Surface, token: &str) -> io::Result<Self> {
+        Self::serve(port, surface, Some(token.to_owned()))
+    }
+
+    fn serve(port: u16, surface: Surface, token: Option<String>) -> io::Result<Self> {
         let socket = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port))?;
         socket.set_nonblocking(true)?;
         let address = socket.local_addr()?;
+        let guard = token.map(|token| Guard {
+            port: address.port(),
+            token,
+        });
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()
             .enable_time()
@@ -167,6 +242,7 @@ impl Listener {
         let served = Arc::new(Served {
             surface,
             exchanges: sender,
+            guard,
         });
         std::thread::Builder::new()
             .name("spindle-ingress".to_owned())
@@ -227,6 +303,13 @@ async fn handle(
     served: Arc<Served>,
     request: Request<Incoming>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
+    if let Some(refusal) = served
+        .guard
+        .as_ref()
+        .and_then(|guard| guard.refuses(&request))
+    {
+        return Ok(written(refusal));
+    }
     let (asked, carried) = match served
         .surface
         .resolve(request.method().as_str(), request.uri().path())

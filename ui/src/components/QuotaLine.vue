@@ -20,6 +20,10 @@ const cpuPercent = computed(() => {
   const now = shares?.[shares.length - 1];
   return now === undefined ? '–' : `${(now * 100).toFixed(0)} %`;
 });
+const memoryPercent = computed(() => {
+  const share = latest.value?.resources.memory_share;
+  return share === undefined ? '–' : `${(share * 100).toFixed(0)} %`;
+});
 </script>
 
 <template>
@@ -27,13 +31,13 @@ const cpuPercent = computed(() => {
     <div>
       <span class="key">cpu</span>
       <Sparkline :values="cpu ?? cpuSeconds" :max="cpu ? 1 : undefined" />
-      <span v-if="cpu">{{ cpuPercent }} of {{ instance.requested.vcpus }}</span>
+      <span v-if="cpu" data-test="cpu-share">{{ cpuPercent }} of {{ instance.requested.vcpus }}</span>
       <span v-else class="muted">no limit</span>
     </div>
     <div>
       <span class="key">mem</span>
       <Sparkline :values="memory ?? memoryBytes" :max="memory ? 1 : undefined" />
-      <span v-if="memory">{{ used }} / {{ instance.requested.memory_mib }} MiB</span>
+      <span v-if="memory" data-test="memory-share">{{ used }} / {{ instance.requested.memory_mib }} MiB · {{ memoryPercent }}</span>
       <span v-else>{{ used }} MiB <span class="muted">no limit</span></span>
     </div>
   </div>

@@ -4,9 +4,10 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use ess_compiler::EssIr;
+use ess_compiler::ir::ResolvedFailure;
 use serde::Serialize;
 
-use crate::port::{Carried, Failure, Timed};
+use crate::port::{Carried, Failure, Retried, Timed};
 
 /// Every counter and histogram an instance of one component reports.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -89,6 +90,14 @@ pub enum Key {
         /// What happened to the envelope.
         carried: Carried,
     },
+    /// `binding.<binding>.<attempted|exhausted>`, for an `on_failure: retry` binding at the
+    /// component that invokes its command.
+    Retried {
+        /// The binding.
+        binding: String,
+        /// What came of the invocation.
+        retried: Retried,
+    },
     /// `timer.<binding>.<fired|late|dropped>`.
     Timed {
         /// The binding.
@@ -127,7 +136,8 @@ impl fmt::Display for Source {
 /// Derived as capabilities are: one counter per outcome of each command the component accepts
 /// and per way the kernel can fail to execute it, a duration histogram per command, one counter
 /// per event it publishes or its commands emit, the channel counters of each event binding that
-/// starts or ends at it, the timer counters of each periodic binding whose command it accepts,
+/// starts or ends at it, the retry counters of each `on_failure: retry` binding whose command it
+/// accepts, the timer counters of each periodic binding whose command it accepts,
 /// and the store counters where it owns an entity.
 pub fn catalogue(ir: &EssIr, component: &str) -> Option<Catalogue> {
     let declared = ir
@@ -205,6 +215,14 @@ pub fn catalogue(ir: &EssIr, component: &str) -> Option<Catalogue> {
                 });
             }
         }
+        if receives && matches!(binding.on_failure(), ResolvedFailure::Retry) {
+            for retried in Retried::ALL {
+                add(Key::Retried {
+                    binding: name.to_owned(),
+                    retried,
+                });
+            }
+        }
     }
     for binding in ir.bindings().values() {
         if binding.cause.periodic().is_some() && accepts(&binding.command.to_string()) {
@@ -255,6 +273,11 @@ fn describe(key: &Key) -> (String, Kind, Source) {
         ),
         Key::Carried { binding, carried } => (
             format!("binding.{binding}.{}", carried.as_str()),
+            Kind::Counter,
+            Source::Channel,
+        ),
+        Key::Retried { binding, retried } => (
+            format!("binding.{binding}.{}", retried.as_str()),
             Kind::Counter,
             Source::Channel,
         ),

@@ -3,6 +3,7 @@
 mod component;
 mod conform;
 mod decisions;
+mod deploy;
 mod replay;
 mod scaled;
 mod serve;
@@ -36,6 +37,10 @@ struct Request {
     input: serde_json::Map<String, serde_json::Value>,
     #[serde(default)]
     external: BTreeMap<String, bool>,
+    #[serde(default)]
+    actor: Option<String>,
+    #[serde(default)]
+    caller: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 fn main() -> ExitCode {
@@ -207,6 +212,17 @@ fn run(cli: Cli) -> Result<ExitCode> {
             component: None,
             ..
         } => play(&spec, &environment, target_score, &match_id, speed),
+        Command::Deploy {
+            spec,
+            environment,
+            placement,
+            port,
+        } => deploy::deploy(&deploy::Deploying {
+            spec: &spec,
+            environment: &environment,
+            placement: &placement,
+            port,
+        }),
         Command::Conform {
             spec,
             environment,
@@ -543,7 +559,20 @@ fn answer(
     request: &Request,
 ) -> serde_json::Value {
     let mut decider = |question: &External<'_>| answers.decide(&request.external, question);
-    match spindle_kernel::execute(ir, store, &mut decider, &request.command, &request.input) {
+    let invocation = spindle_kernel::Invocation {
+        command: &request.command,
+        input: &request.input,
+        actor: request.actor.as_deref(),
+        caller: request.caller.as_ref(),
+    };
+    match spindle_kernel::execute_as(
+        ir,
+        store,
+        &mut decider,
+        &mut spindle_kernel::UuidV4,
+        &std::time::SystemTime::now,
+        &invocation,
+    ) {
         Ok(executed) => {
             let mut result = serde_json::json!({"command": request.command});
             if let (Some(object), Ok(serde_json::Value::Object(fields))) =

@@ -25,6 +25,8 @@ use crate::store::Row;
 pub(crate) struct Sources<'a, 'm> {
     pub(crate) ir: &'a EssIr,
     pub(crate) input: &'a Map<String, Value>,
+    /// The attributes of the caller the command is sent as; `None` for no caller.
+    pub(crate) caller: Option<&'a Map<String, Value>>,
     pub(crate) before: Option<&'a Row>,
     /// Whether the fields are a declared error's: there, a field read from the instance is absent
     /// where no instance is held (the unknown-instance arm of a `wrong_state:` refusal, ESS
@@ -119,6 +121,10 @@ impl<'a> Sources<'a, '_> {
                 }
                 .value(source)
             }
+            ResolvedPayloadValue::CallerAttribute {
+                attribute,
+                type_ref,
+            } => self.caller_value(attribute, type_ref),
             ResolvedPayloadValue::EmptyList => Ok(Some(Value::Array(Vec::new()))),
             ResolvedPayloadValue::Cleared => Ok(None),
             ResolvedPayloadValue::Struct { fields } => {
@@ -169,6 +175,34 @@ impl<'a> Sources<'a, '_> {
             field,
             present,
         )
+    }
+
+    /// `{caller: <attribute>}` (ess/16), as ESS reads it (`interpret::execute::caller::Caller::
+    /// value`): the caller's value, absent where the caller carries none and the attribute is
+    /// `Optional`. A required attribute the command is sent without is a request that cannot be
+    /// answered, refused before anything is written.
+    fn caller_value(
+        &self,
+        attribute: &str,
+        type_ref: &ResolvedTypeRef,
+    ) -> Result<Option<Value>, ExecuteError> {
+        match self
+            .caller
+            .and_then(|caller| caller.get(attribute))
+            .filter(|value| !value.is_null())
+        {
+            Some(value) => {
+                crate::typed::validate(self.ir, type_ref, value).map_err(|error| {
+                    ExecuteError::InvalidInput(format!("the caller's `{attribute}`: {error}"))
+                })?;
+                Ok(Some(value.clone()))
+            }
+            None if type_ref.is_optional() => Ok(None),
+            None => Err(ExecuteError::InvalidInput(format!(
+                "the command reads the caller attribute `{attribute}`, and it is sent as no \
+                 caller that carries it"
+            ))),
+        }
     }
 
     fn before(&self, field: &ResolvedPayloadField) -> Result<&'a Row, ExecuteError> {

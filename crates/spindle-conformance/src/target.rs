@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use ess_compiler::EssIr;
-use ess_compiler::ir::ResolvedTypeRef;
+use ess_compiler::ir::{ResolvedFailure, ResolvedTypeRef};
 use ess_compiler::refs::{ErrorRef, EventRef, OutcomeRef};
 use ess_conformance::{
     ConformanceTarget, DeclaredErrorValue, EventObservationRequest, ExternalOutcomeControl,
@@ -20,7 +20,7 @@ use ess_primitives::consistency::ConsistencyToken;
 use ess_primitives::node::Node;
 use serde_json::{Map, Value};
 use spindle_capability::Environment;
-use spindle_host::{Host, HostError, SystemClock};
+use spindle_host::{Cause, Host, HostError, RETRY_ATTEMPTS, SystemClock};
 use spindle_kernel::{Decider, ExecuteError, External};
 
 /// The outcome a scenario forced for the next invocation of its command: `(command, outcome)`.
@@ -38,8 +38,11 @@ type Forcing = Arc<Mutex<Option<(String, String)>>>;
 /// it. Nothing forced in one scenario reaches the next.
 ///
 /// A command sent as an actor is sent as it is: the host checks no grant, which is the caller's
-/// where no component serves the actor. One sent as a caller with attributes, an entity the
-/// scenario establishes, fixture values and redelivery are unsupported, each with its reason.
+/// where no component serves the actor; a step's actor and `caller` are the caller the command
+/// runs as ([`Host::submit_as`]). An entity the scenario establishes, fixture values and
+/// redelivery are unsupported, each with its reason, and so is a send whose `on_failure: retry`
+/// binding gave up after [`RETRY_ATTEMPTS`](spindle_host::RETRY_ATTEMPTS), as ESS's interpreter
+/// answers a retry that exceeds its execution budget.
 pub struct HostTarget {
     ir: EssIr,
     environment: Environment,
@@ -201,23 +204,24 @@ impl ConformanceTarget for HostTarget {
         request: SemanticCommandRequest,
     ) -> Result<SemanticCommandResult, TargetError> {
         let command = request.command.to_string();
-        if request.caller.is_some() {
-            return Err(TargetError::unsupported(
-                format!("`{command}` sent as a caller with attributes"),
-                "the in-process host authenticates no caller",
-            ));
-        }
-        let input = request
-            .input
-            .iter()
-            .map(|(field, value)| {
-                serde_json::to_value(value)
-                    .map(|value| (field.clone(), value))
-                    .map_err(|error| {
-                        TargetError::unavailable(format!("sending `{field}`"), error.to_string())
-                    })
-            })
-            .collect::<Result<Map<String, Value>, _>>()?;
+        let json = |fields: &BTreeMap<String, Node>| {
+            fields
+                .iter()
+                .map(|(field, value)| {
+                    serde_json::to_value(value)
+                        .map(|value| (field.clone(), value))
+                        .map_err(|error| {
+                            TargetError::unavailable(
+                                format!("sending `{field}`"),
+                                error.to_string(),
+                            )
+                        })
+                })
+                .collect::<Result<Map<String, Value>, _>>()
+        };
+        let input = json(&request.input)?;
+        let caller = request.caller.as_ref().map(json).transpose()?;
+        let actor = request.actor.as_ref().map(ToString::to_string);
         let mut running = self.running.borrow_mut();
         let running = running
             .as_mut()
@@ -225,11 +229,23 @@ impl ConformanceTarget for HostTarget {
         self.commands.set(self.commands.get() + 1);
         running.writes += 1;
         let written = written(running.writes)?;
-        let submitted = running.host.submit(&command, input);
+        let submitted = running
+            .host
+            .submit_as(&command, input, actor.as_deref(), caller.as_ref());
         self.lapse(&command);
         if let Ok(report) = &submitted {
             for invoked in invoked(report) {
                 self.lapse(invoked);
+            }
+            if let Some(binding) = exhausted(&self.ir, report) {
+                return Err(TargetError::unsupported(
+                    format!("binding `{binding}`"),
+                    format!(
+                        "its retry gave up after {RETRY_ATTEMPTS} attempts; ESS's interpreter \
+                         answers an unbounded retry that never takes effect as unsupported: it \
+                         exceeds the finite execution budget"
+                    ),
+                ));
             }
         }
         match submitted {
@@ -401,6 +417,33 @@ fn invoked(report: &spindle_host::Report) -> impl Iterator<Item = &str> {
                 .map(|refused| refused.command.as_str()),
         )
         .chain(report.failed.iter().map(|failed| failed.command.as_str()))
+}
+
+/// The first `on_failure: retry` binding (no `retry:` bound) whose invocation in `report` the host
+/// gave up: refused or not executed by the kernel on its last attempt. A binding whose input was
+/// unmet (0 attempts) never reached the kernel and is not one.
+fn exhausted<'a>(ir: &EssIr, report: &'a spindle_host::Report) -> Option<&'a str> {
+    let retries = |binding: &str| {
+        ir.bindings().values().any(|declared| {
+            declared.name.as_str() == binding
+                && matches!(declared.on_failure(), ResolvedFailure::Retry)
+        })
+    };
+    report
+        .refused
+        .iter()
+        .map(|refused| &refused.cause)
+        .chain(
+            report
+                .failed
+                .iter()
+                .filter(|failed| failed.attempts > 0)
+                .map(|failed| &failed.cause),
+        )
+        .find_map(|cause| match cause {
+            Cause::Delivered { binding } if retries(binding) => Some(binding.as_str()),
+            _ => None,
+        })
 }
 
 /// The token of the `count`th command run.

@@ -136,9 +136,6 @@ fn shape(outcome: &ResolvedOutcome) -> Option<&'static str> {
     if !outcome.affects.is_empty() {
         return Some("secondary effects (`affects:`)");
     }
-    if outcome.decided_by_caller {
-        return Some("a branch the caller decides");
-    }
     match &outcome.subject {
         None if !outcome.sets.is_empty() => Some("`sets:` without a subject"),
         None => None,
@@ -189,6 +186,7 @@ fn value(ir: &EssIr, field: &ResolvedPayloadField) -> Option<String> {
         | ResolvedPayloadValue::Append { .. }
         | ResolvedPayloadValue::EmptyList
         | ResolvedPayloadValue::PayloadRead { .. }
+        | ResolvedPayloadValue::CallerAttribute { .. }
         | ResolvedPayloadValue::Cleared => None,
         ResolvedPayloadValue::Generated { present } => mintable(*present),
         ResolvedPayloadValue::InputOrGenerated {

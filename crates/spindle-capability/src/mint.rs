@@ -30,6 +30,12 @@ pub enum Minted {
     /// A `Boolean`: drawn from a fresh UUID, as ESS's interpreter draws one from the counter it
     /// mints identities from (`interpret::values::mint`).
     Boolean,
+    /// A `Bytes`: one byte drawn from a fresh UUID, as ESS's interpreter draws one from the
+    /// counter it mints identities from (`interpret::values::mint`).
+    Bytes,
+    /// A `List` of anything: the empty list, as ESS's interpreter mints every list, from a draw
+    /// of its own on that counter (`interpret::values::mint`).
+    List,
     /// A `Timestamp`: the clock's civil time.
     Timestamp,
 }
@@ -40,9 +46,12 @@ impl Minted {
     pub fn capability(&self) -> &'static str {
         match self {
             Self::Timestamp => Capability::CLOCK,
-            Self::Uuid | Self::Text { .. } | Self::Integer | Self::Boolean => {
-                Capability::IDENTITY_MINT
-            }
+            Self::Uuid
+            | Self::Text { .. }
+            | Self::Integer
+            | Self::Boolean
+            | Self::Bytes
+            | Self::List => Capability::IDENTITY_MINT,
         }
     }
 }
@@ -52,8 +61,8 @@ pub const MINTED_TEXT: &str = "0123456789abcdef-";
 
 /// How a field of `kind` is minted, where the runtime mints it; `None` where it does not.
 ///
-/// The runtime mints a `Uuid`, a `String`, an `Integer`, a `Boolean` and a `Timestamp`, and a
-/// newtype of one that declares no invariant. A `String` newtype's alphabet must admit the minted
+/// The runtime mints a `Uuid`, a `String`, an `Integer`, a `Boolean`, a `Bytes`, a `List` of
+/// any element type and a `Timestamp`, and a newtype of one that declares no invariant. A `String` newtype's alphabet must admit the minted
 /// text and its prefix, where nested prefixes extend one another the longest; its invariants may read only
 /// `value.count` ([`length_only`]), and ESS must find each true of [`candidate`]. A newtype of
 /// anything but a `String` may declare none of these. `present` is the mint
@@ -74,6 +83,7 @@ pub fn minted(ir: &EssIr, kind: &ResolvedTypeRef, present: bool) -> Option<Minte
                     },
                     Primitive::Integer => Minted::Integer,
                     Primitive::Boolean => Minted::Boolean,
+                    Primitive::Bytes => Minted::Bytes,
                     Primitive::Timestamp => Minted::Timestamp,
                     _ => return None,
                 };
@@ -119,6 +129,10 @@ pub fn minted(ir: &EssIr, kind: &ResolvedTypeRef, present: bool) -> Option<Minte
                 }
                 _ => return None,
             },
+            ResolvedTypeRef::List { .. } => {
+                return (prefix.is_none() && alphabets.is_empty() && bounds.is_empty())
+                    .then_some(Minted::List);
+            }
             _ => return None,
         }
     }

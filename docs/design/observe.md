@@ -56,7 +56,8 @@ counter that the IR does not name is a bug, and a counter the IR names but the r
 reports is visible as "never reported" instead of zero.
 
 **Names** are stable and dotted: `command.<CommandName>.<outcome>`, `event.<EventName>.appended`,
-`binding.<binding>.<sent|delivered|redelivered|dropped>`, `timer.<binding>.<fired|late|dropped>`,
+`binding.<binding>.<sent|delivered|redelivered|dropped>`, `binding.<binding>.<attempted|exhausted>`
+(an `on_failure: retry` binding, on the component that invokes it), `timer.<binding>.<fired|late|dropped>`,
 `store.bytes_written`, `resource.cpu_seconds`, `resource.memory_bytes`. The ESS handles are used
 as written (they implement `Display`), so a name in the UI is the name in the specification.
 

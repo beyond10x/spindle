@@ -68,6 +68,6 @@ pub use frame::{
 };
 #[cfg(feature = "kernel")]
 pub use kernel::CountingStore;
-pub use port::{Carried, Failure, Outcome, Record, Sink, Telemetry, Timed};
+pub use port::{Carried, Failure, Outcome, Record, Retried, Sink, Telemetry, Timed};
 pub use resources::{Readings, read_resources};
 pub use sender::{Delivery, Sender, SenderOptions, Transmitter};

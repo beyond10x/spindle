@@ -21,6 +21,7 @@ Exit statuses: `0` success, `1` an error (printed on stderr as `b10x-spindle: â€
 | [`admit`](#admit) | Admit a specification against an environment: bind every capability or name what is missing |
 | [`run`](#run) | Admit a specification, then execute commands read as JSON lines on stdin |
 | [`play`](#play) | Play the rally example in this terminal: every component in one process, one tick per period of its periodic binding, the grid redrawn after each |
+| [`deploy`](#deploy) | Deploy a specification: place and launch every instance of a placement, collect what they send, and serve the read-only observe API and UI on 127.0.0.1 until SIGINT, SIGTERM or SIGHUP |
 | [`conform`](#conform) | Run a specification's conformance suite against every component in one process |
 
 ## `check`
@@ -87,7 +88,7 @@ b10x-spindle admit [OPTIONS] --environment <ENVIRONMENT> <SPEC>
 
 Admit a specification, then execute commands read as JSON lines on stdin.
 
-Each line is `{"command": "<qualified name>", "input": {...}}`, with an optional `"external": {"<outcome>": true | false}` answering the command's external causes. Each line prints one JSON result: the outcome with its events and declared error, or a failure. Exits 3, running nothing, when admission is refused.
+Each line is `{"command": "<qualified name>", "input": {...}}`, with an optional `"external": {"<outcome>": true | false}` answering the command's external causes, and an optional `"actor": "<qualified name>"` with `"caller": {"<attribute>": ...}`: the actor the command is sent as and its caller's attributes, every required one of that actor's, which the command reads as `{caller: <attribute>}` and `caller.<attribute>`. Each line prints one JSON result: the outcome with its events and declared error, or a failure. Exits 3, running nothing, when admission is refused.
 
 An external cause the line does not answer is answered by `--decisions`, then by `--answer-default`; one nothing answers fails that line, naming the outcome, and the run goes on.
 
@@ -97,7 +98,7 @@ Where a component requires `ingress.network` (`reached_by: network`), runs every
 
 A command this ingress cannot route or the kernel does not run, and a view the host does not read, keeps its route and answers `501` naming the operation and the construct (a command with ESS's envelope, `{"refused", "committed": false}`); nothing is read or written for it. Before listening, `run` prints one line on stderr per such operation, in name order: component by component, commands then views, each by qualified name. A view this ingress cannot route (such as one a binding answers other than as `rows`) still exits 1 before listening, naming it: ESS publishes no `501` for a view. A run that would serve no operation, one of them a command this ingress cannot route, exits 1 before listening; one whose operations only the kernel or the host does not run is served as before, each answering `501`.
 
-An event binding with `on_failure: retry` exits 1 before listening unless `--drop-retries` is given; `on_failure: escalate` always does.
+An event binding with `on_failure: retry` runs its command again at once after each attempt that fails, up to 5 attempts, unless `--drop-retries` is given; one with `on_failure: escalate` exits 1 before listening.
 
 ```console
 b10x-spindle run [OPTIONS] --environment <ENVIRONMENT> <SPEC>
@@ -121,7 +122,7 @@ Play the rally example in this terminal: every component in one process, one tic
 
 Each component is admitted on its own; exits 3, playing nothing, when one is refused. Opens the match, redraws the grid from the table's `MatchState` view after every tick, and exits 0 once a side has won, printing the winner. State bound to `sqlite` is kept in a temporary directory removed when play ends. A match the model refuses to open, such as one to no points, is an error. SIGINT or SIGTERM stops play, removes the state and exits 130 or 143. Refused and failed commands during play are reported on stderr.
 
-With `--component`, or `SPINDLE_COMPONENT` as the process launcher sets it, plays one component in this process instead, admitted on its own, its bindings carried over TCP: the environment binds `channel` to `tcp`. It listens on `--listen` (`SPINDLE_LISTEN`) for the links its peers open and connects to each component its events lead to at the address in `SPINDLE_PEER_<COMPONENT>`, waiting up to 30 s for it to listen; a peer without one exits 1 naming every such peer and variable, before anything runs. It prints `{"component", "listening", "peers"}` once listening and waits up to 30 s more for a link from each component whose events lead to it; a connection counts as one only once its first message names both ends. Then it prints one JSON line per command it runs, `{"ran", "cause", "outcome"}`. Each command's consequences on every process run before the next tick, so the match is the one a single process plays. The component that accepts `OpenMatch` opens the match, runs the tick, prints `{"view": <MatchState>}` after each and, once a side has won, tells every peer the match is over and exits 0; a peer exits 0 when told by it. A link that closes before that, or a peer that breaks the link protocol (such as one that is not that component saying the match is over), exits 1 naming the peer, and SIGINT or SIGTERM exits 130 or 143, at any point. With `SPINDLE_TELEMETRY` set, it sends its counters there as `spindle-telemetry/1` frames.
+With `--component`, or `SPINDLE_COMPONENT` as the process launcher sets it, plays one component in this process instead, admitted on its own, its bindings carried over TCP: the environment binds `channel` to `tcp`. It listens on `--listen` (`SPINDLE_LISTEN`) for the links its peers open and connects to each component its events lead to at the address in `SPINDLE_PEER_<COMPONENT>`, waiting up to 30 s for it to listen; a peer without one exits 1 naming every such peer and variable, before anything runs. It prints `{"component", "listening", "peers"}` once listening and waits up to 30 s more for a link from each component whose events lead to it; a connection counts as one only once its first message names both ends. Then it prints one JSON line per command it runs, `{"ran", "cause", "outcome"}`. Each command's consequences on every process run before the next tick, so the match is the one a single process plays. The component that accepts `OpenMatch` opens the match, runs the tick, prints `{"view": <MatchState>}` after each and, once a side has won, tells every peer the match is over and exits 0; a peer exits 0 when told by it. A link that closes before that, or a peer that breaks the link protocol (such as one that is not that component saying the match is over), exits 1 naming the peer, and SIGINT or SIGTERM exits 130 or 143, at any point. With `SPINDLE_TELEMETRY` set, it sends its counters there as `spindle-telemetry/1` frames. With the setting `ingress` (`SPINDLE_SETTING_INGRESS`), the loopback address `deploy` gives a component reached over the network, it serves the component's routes there as `run` serves them, refusing a request that does not carry the token in the setting `ingress_token` (as `?t=` or `Authorization: Bearer`) or whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>`; `ingress` without `ingress_token` exits 1.
 
 ```console
 b10x-spindle play [OPTIONS] --environment <ENVIRONMENT> <SPEC>
@@ -136,6 +137,25 @@ b10x-spindle play [OPTIONS] --environment <ENVIRONMENT> <SPEC>
 | `--speed <SPEED>` | no | `1` | How many times faster than real time the match clock runs |
 | `--component <COMPONENT>` | no |  | Play only this component, its bindings carried over TCP |
 | `--listen <LISTEN>` | no |  | The address the component listens on for its peers' links; only with `--component` |
+
+## `deploy`
+
+Deploy a specification: place and launch every instance of a placement, collect what they send, and serve the read-only observe API and UI on 127.0.0.1 until SIGINT, SIGTERM or SIGHUP.
+
+The placement is a `spindle-placement/1` document (TOML): its `targets` (`id`, `kind`, `environment`, `ceiling`) and `instances` (`id`, `component`, `target`, `request`, `settings`). Each instance is placed on its target as `spindle.placement.PlaceInstance` decides, its component admitted against `--environment`, whose `name` is the environment a target provides; each one placed is launched by its target's launcher as `b10x-spindle play <spec> --environment <file> --component <component>`, every other component's instance its peer. This build launches `Process` targets; an instance on another kind, or one placement or its launcher refuses, is named on stderr and not run. An instance of a component reached over the network serves its ingress on a loopback address the control process chooses.
+
+Prints `{"listening": "<address>", "url": "http://<address>/?t=<token>"}` once serving. Every request needs the token, as `?t=` or `Authorization: Bearer`, and a `Host` header of `127.0.0.1:<port>` or `localhost:<port>`; only `GET` is answered. `GET /api/deployment` answers the components, bindings and instances with their state; `GET /api/catalogue?component=` a component's counters; `GET /api/stream` Server-Sent Events, one `sample` per instance per period and one `state` per state change, after the samples of the last 15 minutes; `GET /api/views/<component>/<view>` the view's answer from the ingress of a running instance; `GET /` the observe UI, built into this binary. SIGINT, SIGTERM or SIGHUP stops every instance and exits 130, 143 or 129. Each instance is also sent SIGTERM by the system should `deploy` end without stopping it.
+
+```console
+b10x-spindle deploy [OPTIONS] --environment <ENVIRONMENT> --placement <PLACEMENT> <SPEC>
+```
+
+| Argument | Required | Default | Meaning |
+|---|---|---|---|
+| `<SPEC>` | yes |  | The specification directory |
+| `--environment <ENVIRONMENT>` | yes |  | The `spindle-environment/1` document the targets provide |
+| `--placement <PLACEMENT>` | yes |  | The `spindle-placement/1` document |
+| `--port <PORT>` | no | `7341` | The port to serve on, on 127.0.0.1; `0` lets the system choose |
 
 ## `conform`
 

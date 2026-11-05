@@ -383,6 +383,13 @@ Decided by the operator, 2026-11-04:
 | Spindle itself is specified in ESS and planned in AEP | `ess/`, `.engineering/planning/` |
 | showcase: a two-player paddle-and-ball game, three components, each in its own microVM, talking over channels | `examples/rally` (§ 13) |
 | HTTP ingress (2026-11-05): ESS's published contract, everywhere: routes where `ess generate --kind openapi` publishes them, ESS's derived routes or, with an `ess-http/1` binding compiled by ESS, its method, path, path variables and status per outcome, derived routes for what it does not name; no route of Spindle's own | `crates/spindle-ingress`; a command answers ESS's envelope `{outcome, published, error?, payload?}`, a view the `{rows}` ESS projects; request refusals as ESS's server makes them (400, 404, 405, 411, 413); `http-loopback` only |
+| unmet binding input (2026-11-05): an event binding whose input the event does not fill (a required field absent, or a value carried across a declared conversion that is no value of the input's type) invokes nothing; the event's other bindings still run, and the binding is reported as a command that did not execute | ESS 0.86.0's interpreter calls this an unmet input obligation only for an `on_refusal` binding and answers every other one unsupported (`interpret/bindings.rs`), so ESS defines no result; Spindle has already committed the command that published the event, so it neither undoes that nor stops its siblings. `spindle_channel::Unmet`, `Report::failed` with `Cause::Delivered` |
+
+Runtime defaults, 2026-11-05:
+
+| default | consequence |
+|---|---|
+| `on_failure: retry` (no `retry:` bound) makes at most 5 attempts per envelope: the first and four retries, each run at once on the host's thread, with no backoff (`spindle_host::RETRY_ATTEMPTS`) | ESS bounds no unbounded retry; a refused attempt and one the kernel does not execute are both retried. The next envelope runs only once the retry has settled, so a retry never reorders later events. The last failure is reported once, with its attempt count, and never run again. `binding.<binding>.attempted` counts every attempt and `binding.<binding>.exhausted` every invocation given up, on the component that invokes. `--drop-retries` stays as an explicit opt-out that runs such a binding as `drop`; a bounded `retry:` and a per-refusal `on_refusal` policy stay refused by name. A peer's frame does not set the policy: the receiving host retries what its own routes say. The runtime keeps giving up after 5; only the conformance target (`HostTarget`, `run --scenario`, `conform`) answers a step whose retry gave up as unsupported, as ESS's interpreter does ("unbounded retry exceeded the finite execution budget") |
 
 Open:
 

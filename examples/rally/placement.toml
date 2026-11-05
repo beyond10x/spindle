@@ -1,0 +1,19 @@
+environment = "microvm"
+
+[[instance]]
+component = "rally-table"
+listen = "172.16.0.2:7000"
+vcpus = 1
+memory_mib = 512
+
+[[instance]]
+component = "rally-player-west"
+listen = "172.16.0.3:7000"
+vcpus = 1
+memory_mib = 512
+
+[[instance]]
+component = "rally-player-east"
+listen = "172.16.0.4:7000"
+vcpus = 1
+memory_mib = 512

@@ -71,8 +71,11 @@ pub enum Command {
     /// Admit a specification, then execute commands read as JSON lines on stdin.
     ///
     /// Each line is `{"command": "<qualified name>", "input": {...}}`, with an optional
-    /// `"external": {"<outcome>": true | false}` answering the command's external causes. Each
-    /// line prints one JSON result: the outcome with its events and declared error, or a failure.
+    /// `"external": {"<outcome>": true | false}` answering the command's external causes, and an
+    /// optional `"actor": "<qualified name>"` with `"caller": {"<attribute>": ...}`: the actor the
+    /// command is sent as and its caller's attributes, every required one of that actor's, which
+    /// the command reads as `{caller: <attribute>}` and `caller.<attribute>`. Each line prints
+    /// one JSON result: the outcome with its events and declared error, or a failure.
     /// Exits 3, running nothing, when admission is refused.
     ///
     /// An external cause the line does not answer is answered by `--decisions`, then by
@@ -113,8 +116,9 @@ pub enum Command {
     /// whose operations only the kernel or the host does not run is served as before, each
     /// answering `501`.
     ///
-    /// An event binding with `on_failure: retry` exits 1 before listening unless
-    /// `--drop-retries` is given; `on_failure: escalate` always does.
+    /// An event binding with `on_failure: retry` runs its command again at once after each
+    /// attempt that fails, up to 5 attempts, unless `--drop-retries` is given; one with
+    /// `on_failure: escalate` exits 1 before listening.
     Run {
         /// The specification directory.
         spec: PathBuf,
@@ -178,7 +182,11 @@ pub enum Command {
     /// told by it. A link that closes before that, or a peer that breaks the link protocol (such
     /// as one that is not that component saying the match is over), exits 1 naming the peer, and
     /// SIGINT or SIGTERM exits 130 or 143, at any point. With `SPINDLE_TELEMETRY` set, it sends its counters there as
-    /// `spindle-telemetry/1` frames.
+    /// `spindle-telemetry/1` frames. With the setting `ingress` (`SPINDLE_SETTING_INGRESS`), the
+    /// loopback address `deploy` gives a component reached over the network, it serves the
+    /// component's routes there as `run` serves them, refusing a request that does not carry the
+    /// token in the setting `ingress_token` (as `?t=` or `Authorization: Bearer`) or whose `Host` is
+    /// not `127.0.0.1:<port>` or `localhost:<port>`; `ingress` without `ingress_token` exits 1.
     Play {
         /// The rally specification directory.
         spec: PathBuf,
@@ -200,6 +208,44 @@ pub enum Command {
         /// The address the component listens on for its peers' links; only with `--component`.
         #[arg(long, env = "SPINDLE_LISTEN", requires = "component")]
         listen: Option<std::net::SocketAddr>,
+    },
+    /// Deploy a specification: place and launch every instance of a placement, collect what
+    /// they send, and serve the read-only observe API and UI on 127.0.0.1 until SIGINT, SIGTERM
+    /// or SIGHUP.
+    ///
+    /// The placement is a `spindle-placement/1` document (TOML): its `targets` (`id`, `kind`,
+    /// `environment`, `ceiling`) and `instances` (`id`, `component`, `target`, `request`,
+    /// `settings`). Each instance is placed on its target as `spindle.placement.PlaceInstance`
+    /// decides, its component admitted against `--environment`, whose `name` is the environment
+    /// a target provides; each one placed is launched by its target's launcher as `b10x-spindle
+    /// play <spec> --environment <file> --component <component>`, every other component's
+    /// instance its peer. This build launches `Process` targets; an instance on another kind, or
+    /// one placement or its launcher refuses, is named on stderr and not run. An instance of a
+    /// component reached over the network serves its ingress on a loopback address the control
+    /// process chooses.
+    ///
+    /// Prints `{"listening": "<address>", "url": "http://<address>/?t=<token>"}` once serving.
+    /// Every request needs the token, as `?t=` or `Authorization: Bearer`, and a `Host` header of
+    /// `127.0.0.1:<port>` or `localhost:<port>`; only `GET` is answered. `GET /api/deployment`
+    /// answers the components, bindings and instances with their state; `GET
+    /// /api/catalogue?component=` a component's counters; `GET /api/stream` Server-Sent Events,
+    /// one `sample` per instance per period and one `state` per state change, after the samples
+    /// of the last 15 minutes; `GET /api/views/<component>/<view>` the view's answer from the
+    /// ingress of a running instance; `GET /` the observe UI, built into this binary. SIGINT,
+    /// SIGTERM or SIGHUP stops every instance and exits 130, 143 or 129. Each instance is also
+    /// sent SIGTERM by the system should `deploy` end without stopping it.
+    Deploy {
+        /// The specification directory.
+        spec: PathBuf,
+        /// The `spindle-environment/1` document the targets provide.
+        #[arg(long)]
+        environment: PathBuf,
+        /// The `spindle-placement/1` document.
+        #[arg(long)]
+        placement: PathBuf,
+        /// The port to serve on, on 127.0.0.1; `0` lets the system choose.
+        #[arg(long, default_value_t = 7341)]
+        port: u16,
     },
     /// Run a specification's conformance suite against every component in one process.
     ///
