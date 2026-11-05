@@ -141,21 +141,19 @@ fn assert_synthesised(scenarios: &BTreeSet<String>, id: &str) {
     );
 }
 
-/// `docs/design/observe.md` cites `case` beside the statement it closes.
-fn assert_stated(case: &str, words: &[&str]) {
-    let design = std::fs::read_to_string(workspace().join("docs/design/observe.md"))
-        .expect("the observe design reads");
-    let cited = format!("`{case}`");
-    let paragraph = design
-        .split("\n\n")
-        .find(|paragraph| paragraph.contains(&cited))
-        .unwrap_or_else(|| panic!("docs/design/observe.md cites {cited}"));
-    for word in words {
-        assert!(
-            paragraph.contains(word),
-            "the statement citing {cited} names {word}: {paragraph}"
-        );
-    }
+/// `docs/design/observe.md` holds exactly `statement`, cited by `case`, as its text reads with
+/// every run of whitespace collapsed to one space: a statement that says anything else fails.
+fn assert_stated(case: &str, statement: &str) {
+    let collapse = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let design = collapse(
+        &std::fs::read_to_string(workspace().join("docs/design/observe.md"))
+            .expect("the observe design reads"),
+    );
+    let cited = format!("{} (`{case}`).", collapse(statement));
+    assert!(
+        design.contains(&cited),
+        "docs/design/observe.md states, cited by `{case}`: {cited}"
+    );
 }
 
 #[test]
@@ -378,7 +376,14 @@ fn retire_target_is_stated() {
         ),
         "{again:?}"
     );
-    assert_stated("retire_target_is_stated", &["RetireTarget", "`Retired`"]);
+    assert_stated(
+        "retire_target_is_stated",
+        "`RetireTarget` moves a target from `Available` to `Retired`, which is terminal; \
+         retiring it again answers `TargetAlreadyRetired` and changes nothing. An instance \
+         planned onto a retired target is refused `target-retired` when it is placed. Instances \
+         already placed or running there are not moved; the operator retires a target to stop \
+         placing on it, not to stop what runs",
+    );
 }
 
 #[test]
@@ -401,7 +406,13 @@ fn target_ceiling_is_stated() {
     assert_eq!(refused.outcome, "above-ceiling", "{refused:?}");
     assert_stated(
         "target_ceiling_is_stated",
-        &["ceiling", "above-ceiling", "AboveCeiling"],
+        "`Target.ceiling` is the most one instance may take on the target, in vCPUs, memory MiB \
+         and disk MiB, declared with the target. An instance whose request exceeds the ceiling \
+         in any resource is refused `above-ceiling` with cause `AboveCeiling`. The model records \
+         the request as the instance asked for it, a zero left as zero, and \
+         `InstanceState.request` publishes it as requested; `spindle_target::place` raises each \
+         zero to the ceiling and the launcher applies those limits, so a placed instance never \
+         runs unbounded on a target that bounds it",
     );
 }
 
@@ -415,7 +426,12 @@ fn browser_target_kind_is_stated() {
         row(&mut store, TARGET, "tab").1.get("kind"),
         Some(&json!("Browser"))
     );
-    assert_stated("browser_target_kind_is_stated", &["Browser"]);
+    assert_stated(
+        "browser_target_kind_is_stated",
+        "Beside the kinds in § 3's transport table, `TargetKind` declares `Browser`, a browser \
+         tab, as `spindle_target::TargetKind` does. A target of that kind can be declared and \
+         planned onto; no launcher starts one yet, and § 3 gives it no telemetry endpoint",
+    );
 }
 
 #[test]
@@ -438,6 +454,8 @@ fn report_exit_of_a_planned_instance_is_stated() {
     assert_eq!(store.load(INSTANCE, &json!("i1")).unwrap().unwrap(), before);
     assert_stated(
         "report_exit_of_a_planned_instance_is_stated",
-        &["ReportExit", "`Planned`"],
+        "`ReportExit` moves only a `Placed` or `Running` instance to `Exited`. For a `Planned` \
+         instance, as for a `Refused` or `Exited` one, it is accepted as `already-ended` and \
+         changes nothing: no launcher ran it, so the report carries nothing to record",
     );
 }

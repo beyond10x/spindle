@@ -537,7 +537,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-ess-provenance": {
     "contract_digest": "slice-sha256/2:382566bbefad45f2e426ebbd36cecab4bca84822d89e11d34598401d20af38fd",
-    "source_digest": "b0323bd1b17b440667a0e30d35c641bb4c677631463b1780fc33bb351942384a",
+    "source_digest": "cfadb3d69f9b9b4950a5e996865279f5f6065135864228d63eddabe28d94652d",
     "specification_version": "v1",
     "system": "spindle"
   }

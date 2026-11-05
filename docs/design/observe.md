@@ -147,7 +147,9 @@ stays a runtime rule outside it (each item names the case in
   with `DeploymentNotAdmitted` and creates no instance; `PlaceInstance` answers `not-admitted` and
   refuses the instance; `LaunchInstance` answers `not-admitted` with `DeploymentNotAdmitted` and
   the instance stays `Placed`, which covers a deployment stopped after its instance was placed.
-  The deployment's state is read by the runtime, not by a guard: each of the three is an
+  Both errors name the deployment. `LaunchInstance` asks only for a `Placed` instance, so a
+  planned, refused, running or exited one answers `wrong-state` first, as `PlaceInstance` answers
+  a decided one. The deployment's state is read by the runtime, not by a guard: each of the three is an
   `external:` outcome, and the control process answers `external.spindle.placement.<Command>.not-admitted`
   from the stored `spindle.deployment.Deployment`, true unless it is `Admitted` or `Running`
   (for `PlaceInstance`, also true when the deployment was admitted for another environment than
@@ -159,9 +161,13 @@ stays a runtime rule outside it (each item names the case in
   order `spindle_target::place` lists its reasons: `target-retired`, `not-admitted`,
   `above-ceiling`. The first that holds is taken; `InstanceRefused.cause` and the instance's
   `refusal` record it as `TargetRetired`, `NotAdmitted` or `AboveCeiling`. An environment
-  mismatch is `NotAdmitted`. The model records one cause; `spindle_target::place` names every
-  reason that applies and every capability the environment lacks, and `spindle_target::start`
-  refuses with that whole list (`StartError::Refused`) (`a_placement_refusal_names_its_cause`).
+  mismatch is `NotAdmitted`. The model records one cause. `spindle_target::place` lists more: a
+  retired target, then an environment mismatch or, when the environments match, an admission
+  that refused with every capability it lacks, then each resource over the ceiling, and
+  `spindle_target::start` refuses with that list (`StartError::Refused`). It does not read the
+  deployment's state, so it gives no reason for an offered or stopped deployment, and on an
+  environment mismatch it names no missing capability; both reach the model only through the
+  `not-admitted` answer (`a_placement_refusal_names_its_cause`).
 
 - **Targets and requests are published by views.** `InstanceState` publishes each instance's
   state, deployment, component, settings, target, request and refusal; `TargetState` publishes
@@ -178,9 +184,11 @@ stays a runtime rule outside it (each item names the case in
 
 - **The ceiling bounds one instance.** `Target.ceiling` is the most one instance may take on the
   target, in vCPUs, memory MiB and disk MiB, declared with the target. An instance whose request
-  exceeds the ceiling in any resource is refused `above-ceiling` with cause `AboveCeiling`; a
-  resource left at zero in the request is raised to the ceiling when the instance is placed, so a
-  placed instance never runs unbounded on a target that bounds it (`target_ceiling_is_stated`).
+  exceeds the ceiling in any resource is refused `above-ceiling` with cause `AboveCeiling`. The
+  model records the request as the instance asked for it, a zero left as zero, and
+  `InstanceState.request` publishes it as requested; `spindle_target::place` raises each zero to
+  the ceiling and the launcher applies those limits, so a placed instance never runs unbounded
+  on a target that bounds it (`target_ceiling_is_stated`).
 
 - **`Browser` is a target kind without a launcher.** Beside the kinds in § 3's transport table,
   `TargetKind` declares `Browser`, a browser tab, as `spindle_target::TargetKind` does. A
