@@ -182,6 +182,23 @@ pub enum HostError {
         /// The declared error.
         error: DeclaredError,
     },
+    /// [`Host::reset`] could not empty a component's store.
+    #[error(
+        "resetting {component}: {error}; {}",
+        if *restored {
+            "its store is as it was before the reset"
+        } else {
+            "its store could not be reopened, and every read and write of it now fails"
+        }
+    )]
+    Reset {
+        /// The component.
+        component: String,
+        /// Why its store could not be emptied.
+        error: String,
+        /// Whether its store was reopened as it was before the reset.
+        restored: bool,
+    },
     /// One call delivered [`DELIVERY_LIMIT`] envelopes and more were still in flight; those
     /// were discarded, and nothing runs after them.
     #[error(
@@ -437,37 +454,56 @@ impl Host {
     /// Empties every component's store and forgets every published event; returns the
     /// components whose stores were emptied, by name.
     ///
-    /// A store in memory is replaced by an empty one. A store in SQLite is closed, its file
-    /// removed with the SQLite side files beside it, and an empty one opened at the same path.
-    /// Periodic bindings keep running, and the counters keep their counts.
+    /// A store in memory is replaced by an empty one. A store in SQLite is closed, its file and
+    /// the SQLite side files beside it moved aside, and an empty one opened at the same path; the
+    /// moved files are removed only once the empty store is open. Periodic bindings keep running,
+    /// and the counters keep their counts.
     ///
     /// # Errors
-    /// [`HostError::Store`] when a file cannot be removed or reopened; the stores emptied before
-    /// it stay empty.
+    /// [`HostError::Reset`] when a component's files cannot be moved aside or the empty store
+    /// cannot be opened. Its files are moved back and its store reopened as it was
+    /// (`restored: true`); where even that fails, every read and write of that component fails
+    /// from then on, naming why (`restored: false`). The components emptied before it stay
+    /// empty, and the published events are forgotten only when every store was emptied.
     pub fn reset(&mut self) -> Result<Vec<String>, HostError> {
-        self.published.clear();
         let mut emptied = Vec::new();
         for (name, component) in &mut self.components {
-            component.store = Box::new(MemoryStore::default());
-            if let Some(file) = &component.file {
-                for suffix in ["", "-wal", "-shm", "-journal"] {
-                    let mut path = file.clone().into_os_string();
-                    path.push(suffix);
-                    match std::fs::remove_file(&path) {
-                        Ok(()) => {}
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(error) => {
-                            return Err(HostError::Store(StoreError::Backend(format!(
-                                "removing {}: {error}",
-                                PathBuf::from(path).display()
-                            ))));
-                        }
+            if let Some(file) = component.file.clone() {
+                let closed = std::mem::replace(
+                    &mut component.store,
+                    Box::new(Lost(format!("{name}'s store is being reset"))),
+                );
+                drop(closed);
+                match emptied_file(&file, &component.sink) {
+                    Ok(store) => component.store = store,
+                    Err(error) => {
+                        let restored = match opened(Some(&file), &component.sink) {
+                            Ok(store) => {
+                                component.store = store;
+                                true
+                            }
+                            Err(again) => {
+                                component.store = Box::new(Lost(format!(
+                                    "{name}'s store was lost in a reset: {error}; reopening {} \
+                                     failed: {again}",
+                                    file.display()
+                                )));
+                                false
+                            }
+                        };
+                        return Err(HostError::Reset {
+                            component: name.clone(),
+                            error,
+                            restored,
+                        });
                     }
                 }
+            } else {
+                component.store = opened(None, &component.sink)?;
             }
-            component.store = opened(component.file.as_deref(), &component.sink)?;
             emptied.push(name.clone());
         }
+        self.published.clear();
         Ok(emptied)
     }
 
@@ -825,6 +861,93 @@ fn opened(file: Option<&Path>, sink: &Sink) -> Result<Box<dyn Store>, HostError>
         None => Box::new(CountingStore::new(MemoryStore::default(), sink.clone())),
         Some(file) => Box::new(CountingStore::new(SqliteStore::open(file)?, sink.clone())),
     })
+}
+
+/// The store of a component whose store is closed: every read and write fails, naming why, so
+/// the component never answers from a store its binding does not name.
+struct Lost(String);
+
+impl Store for Lost {
+    fn load(&mut self, _: &str, _: &Value) -> Result<Option<spindle_kernel::Stored>, StoreError> {
+        Err(StoreError::Backend(self.0.clone()))
+    }
+
+    fn commit(&mut self, _: &spindle_kernel::Change) -> Result<(), StoreError> {
+        Err(StoreError::Backend(self.0.clone()))
+    }
+
+    fn scan(&mut self, _: &str) -> Result<Vec<(Value, spindle_kernel::Stored)>, StoreError> {
+        Err(StoreError::Backend(self.0.clone()))
+    }
+}
+
+/// The SQLite files a store at `file` keeps: the database and its side files.
+fn sqlite_files(file: &Path) -> Vec<PathBuf> {
+    ["", "-wal", "-shm", "-journal"]
+        .into_iter()
+        .map(|suffix| {
+            let mut path = file.as_os_str().to_owned();
+            path.push(suffix);
+            PathBuf::from(path)
+        })
+        .collect()
+}
+
+/// Where a reset moves `path` while the empty store is opened.
+fn aside(path: &Path) -> PathBuf {
+    let mut moved = path.as_os_str().to_owned();
+    moved.push(".reset");
+    PathBuf::from(moved)
+}
+
+/// An empty SQLite store at `file`, whose store is closed: its files are moved aside, an empty
+/// one is opened, and only then are the moved files removed. On failure every file is where it
+/// was and the error names what failed; a file that could not be moved back is named with where
+/// it is.
+fn emptied_file(file: &Path, sink: &Sink) -> Result<Box<dyn Store>, String> {
+    let mut moved = Vec::new();
+    let restore = |moved: &[PathBuf], why: String| {
+        let mut why = why;
+        for path in moved {
+            if let Err(error) = std::fs::rename(aside(path), path) {
+                why.push_str(&format!(
+                    "; {} could not be moved back from {}: {error}",
+                    path.display(),
+                    aside(path).display()
+                ));
+            }
+        }
+        why
+    };
+    for path in sqlite_files(file) {
+        match std::fs::rename(&path, aside(&path)) {
+            Ok(()) => moved.push(path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(restore(
+                    &moved,
+                    format!("moving {} aside: {error}", path.display()),
+                ));
+            }
+        }
+    }
+    match opened(Some(file), sink) {
+        Ok(store) => {
+            for path in &moved {
+                let _ = std::fs::remove_file(aside(path));
+            }
+            Ok(store)
+        }
+        Err(error) => {
+            for path in sqlite_files(file) {
+                let _ = std::fs::remove_file(path);
+            }
+            Err(restore(
+                &moved,
+                format!("opening an empty store at {}: {error}", file.display()),
+            ))
+        }
+    }
 }
 
 /// The component that accepts `command`.
