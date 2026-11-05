@@ -32,8 +32,10 @@ type Forcing = Arc<Mutex<Option<(String, String)>>>;
 /// [`in_memory`](crate::in_memory) first so a run writes nothing to disk. An `external:` cause is
 /// answered as the scenario forced it ([`ConformanceTarget::configure_external_outcome`]): the
 /// forced outcome's cause holds and every other cause of that command does not, for the next
-/// invocation of the command only. A cause nothing forced does not hold, so the model selects as
-/// it would without it.
+/// invocation of the command only, the scenario's own send or one a binding makes: the forcing
+/// is consumed where its cause is answered, and lapses after any invocation of its command that
+/// did not ask it. A cause nothing forced does not hold, so the model selects as it would without
+/// it. Nothing forced in one scenario reaches the next.
 ///
 /// A command sent as an actor is sent as it is: the host checks no grant, which is the caller's
 /// where no component serves the actor. One sent as a caller with attributes, an entity the
@@ -62,11 +64,16 @@ struct Forced(Forcing);
 
 impl Decider for Forced {
     fn decide(&mut self, question: &External<'_>) -> Result<bool, String> {
-        let forced = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        Ok(match forced.as_ref() {
-            Some((command, outcome)) if command == question.command => outcome == question.outcome,
-            _ => false,
-        })
+        let mut forced = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let holds = forced.as_ref().is_some_and(|(command, outcome)| {
+            command == question.command && outcome == question.outcome
+        });
+        if holds {
+            // Consumed where it is answered, whichever invocation asks: the scenario's own send
+            // or a binding's, as ESS's interpreter consumes it.
+            *forced = None;
+        }
+        Ok(holds)
     }
 }
 
@@ -220,6 +227,11 @@ impl ConformanceTarget for HostTarget {
         let written = written(running.writes)?;
         let submitted = running.host.submit(&command, input);
         self.lapse(&command);
+        if let Ok(report) = &submitted {
+            for invoked in invoked(report) {
+                self.lapse(invoked);
+            }
+        }
         match submitted {
             Ok(report) => {
                 let submitted = report
@@ -368,12 +380,27 @@ impl ConformanceTarget for HostTarget {
     }
 
     fn end_scenario(&self, _scenario: &ScenarioContext) -> Result<(), TargetError> {
-        self.force(None);
         if let Some(mut running) = self.running.borrow_mut().take() {
             running.host.stop();
         }
         Ok(())
     }
+}
+
+/// Every command one submission invoked: the one sent and each a binding invoked, run, refused or
+/// failed. Each is an invocation a forced outcome of its command lapses at, asked or not.
+fn invoked(report: &spindle_host::Report) -> impl Iterator<Item = &str> {
+    report
+        .ran
+        .iter()
+        .map(|ran| ran.command.as_str())
+        .chain(
+            report
+                .refused
+                .iter()
+                .map(|refused| refused.command.as_str()),
+        )
+        .chain(report.failed.iter().map(|failed| failed.command.as_str()))
 }
 
 /// The token of the `count`th command run.

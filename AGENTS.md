@@ -39,7 +39,7 @@ environment, and executes it. Humans start at [`README.md`](README.md); the desi
 | `website/` | the documentation site, Docusaurus pinned to `@beyond10x/docs-system`; logo in `website/static/img/` |
 | `examples/environments/` | `laptop.toml`, `microvm.toml` |
 | `examples/rally/` | the example system: one table, two players, three components |
-| `conformance.toml` | the committed executed, skipped and known-failed counts `task check:conformance` holds |
+| `conformance.toml` | what `task check:conformance` holds: the exact set of scenarios that execute, the skipped and the known-failed counts |
 | `conformance-known-failures.json` | the `ess-known-failures/1` declaration `task check:conformance` reads: each scenario known to fail, why, and its tracking record |
 | `docs/design/spindle.md` | design, decisions (§11), milestones (§12), the rally showcase (§13) |
 

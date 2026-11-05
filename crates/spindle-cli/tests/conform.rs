@@ -280,11 +280,49 @@ fn gate(dir: &Path, counts: &str, known: &str) -> Output {
     ])
 }
 
-/// A counts document.
-fn counts(executed: i64, skipped: i64, known_failed: i64) -> String {
-    format!(
-        "format = \"spindle-conformance-counts/1\"\nexecuted = {executed}\nskipped = {skipped}\nknown_failed = {known_failed}\n"
+/// A counts document holding the scenarios in `executed`.
+fn counts(executed: &[String], skipped: i64, known_failed: i64) -> String {
+    let mut table = toml::Table::new();
+    table.insert(
+        "format".to_owned(),
+        toml::Value::from("spindle-conformance-counts/1"),
+    );
+    table.insert(
+        "executed_scenarios".to_owned(),
+        toml::Value::Array(
+            executed
+                .iter()
+                .map(|id| toml::Value::from(id.as_str()))
+                .collect(),
+        ),
+    );
+    table.insert("skipped".to_owned(), toml::Value::from(skipped));
+    table.insert("known_failed".to_owned(), toml::Value::from(known_failed));
+    toml::to_string(&table).expect("the counts render")
+}
+
+/// The committed counts: the executed scenarios, the skipped and the known-failed counts.
+fn committed() -> (Vec<String>, i64, i64) {
+    let committed = std::fs::read_to_string(root().join(COUNTS)).expect("the committed counts");
+    let table: toml::Table = committed.parse().expect("the counts are TOML");
+    let executed = table["executed_scenarios"]
+        .as_array()
+        .expect("executed_scenarios")
+        .iter()
+        .map(|id| id.as_str().expect("an id").to_owned())
+        .collect();
+    (
+        executed,
+        table["skipped"].as_integer().expect("skipped"),
+        table["known_failed"].as_integer().expect("known_failed"),
     )
+}
+
+/// Runs the gate against `text` as the counts document.
+fn gate_with(dir: &Path, name: &str, text: &str) -> Output {
+    let path = dir.join(name);
+    std::fs::write(&path, text).expect("writing counts");
+    gate(dir, path.to_str().expect("utf-8"), KNOWN)
 }
 
 #[test]
@@ -297,30 +335,15 @@ fn the_suite_counts_are_held() {
         "{held:?}"
     );
 
-    let committed = std::fs::read_to_string(root().join(COUNTS)).expect("the committed counts");
-    let table: toml::Table = committed.parse().expect("the counts are TOML");
-    let executed = table["executed"].as_integer().expect("executed");
-    let skipped = table["skipped"].as_integer().expect("skipped");
-    let known_failed = table["known_failed"].as_integer().expect("known_failed");
-    assert_eq!(known_failed, declared().len() as i64, "{committed}");
-
-    let higher = dir.path().join("higher.toml");
-    std::fs::write(&higher, counts(executed + 1, skipped, known_failed)).expect("writing counts");
-    let dropped = gate(dir.path(), higher.to_str().expect("utf-8"), KNOWN);
-    assert_eq!(dropped.status.code(), Some(1), "{dropped:?}");
-    assert!(
-        stdout(&dropped).contains(&format!(
-            "executed dropped from {} to {executed}",
-            executed + 1
-        )),
-        "{dropped:?}"
-    );
+    let (executed, skipped, known_failed) = committed();
+    assert_eq!(known_failed, declared().len() as i64);
 
     if skipped > 0 {
-        let fewer = dir.path().join("fewer.toml");
-        std::fs::write(&fewer, counts(executed, skipped - 1, known_failed))
-            .expect("writing counts");
-        let grown = gate(dir.path(), fewer.to_str().expect("utf-8"), KNOWN);
+        let grown = gate_with(
+            dir.path(),
+            "fewer.toml",
+            &counts(&executed, skipped - 1, known_failed),
+        );
         assert_eq!(grown.status.code(), Some(1), "{grown:?}");
         assert!(
             stdout(&grown).contains(&format!("skipped grew from {} to {skipped}", skipped - 1)),
@@ -329,10 +352,11 @@ fn the_suite_counts_are_held() {
     }
 
     if known_failed > 0 {
-        let fewer = dir.path().join("fewer-known.toml");
-        std::fs::write(&fewer, counts(executed, skipped, known_failed - 1))
-            .expect("writing counts");
-        let grown = gate(dir.path(), fewer.to_str().expect("utf-8"), KNOWN);
+        let grown = gate_with(
+            dir.path(),
+            "fewer-known.toml",
+            &counts(&executed, skipped, known_failed - 1),
+        );
         assert_eq!(grown.status.code(), Some(1), "{grown:?}");
         assert!(
             stdout(&grown).contains(&format!(
@@ -399,4 +423,70 @@ fn an_undeclared_failure_fails_the_gate() {
             "{output:?}"
         );
     }
+}
+
+/// The executed scenarios are held as a set, not a total: a scenario that stops executing while
+/// another starts, which leaves every total unchanged, fails the gate naming both.
+#[test]
+fn the_executed_set_is_held() {
+    let dir = scratch();
+    let (executed, skipped, known_failed) = committed();
+    let (_, report, _, _) = run_ess(dir.path());
+    let unsupported = report["outcomes"]["unsupported"]
+        .as_array()
+        .expect("the unsupported outcomes")
+        .iter()
+        .map(|id| id.as_str().expect("an id").to_owned())
+        .collect::<Vec<_>>();
+    let (Some(now_skipped), Some(dropped)) = (unsupported.first(), executed.first()) else {
+        panic!("the run skips a scenario and executes one: {report}");
+    };
+
+    let mut listed = executed.clone();
+    listed.push(now_skipped.clone());
+    listed.sort();
+    let lost = gate_with(
+        dir.path(),
+        "lost.toml",
+        &counts(&listed, skipped, known_failed),
+    );
+    assert_eq!(lost.status.code(), Some(1), "{lost:?}");
+    assert!(
+        stdout(&lost).contains(&format!(
+            "`{now_skipped}` is held as executed and no longer executes"
+        )),
+        "{lost:?}"
+    );
+
+    let unlisted = executed[1..].to_vec();
+    let grown = gate_with(
+        dir.path(),
+        "grown.toml",
+        &counts(&unlisted, skipped, known_failed),
+    );
+    assert_eq!(grown.status.code(), Some(1), "{grown:?}");
+    assert!(
+        stdout(&grown).contains(&format!(
+            "`{dropped}` executes and is not held; add it to executed_scenarios"
+        )),
+        "{grown:?}"
+    );
+
+    let mut swapped = executed[1..].to_vec();
+    swapped.push(now_skipped.clone());
+    swapped.sort();
+    assert_eq!(swapped.len(), executed.len());
+    let swap = gate_with(
+        dir.path(),
+        "swap.toml",
+        &counts(&swapped, skipped, known_failed),
+    );
+    assert_eq!(swap.status.code(), Some(1), "{swap:?}");
+    let printed = stdout(&swap);
+    assert!(
+        printed.contains(&format!(
+            "`{now_skipped}` is held as executed and no longer executes"
+        )) && printed.contains(&format!("`{dropped}` executes and is not held")),
+        "{printed}"
+    );
 }

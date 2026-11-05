@@ -1,0 +1,31 @@
+domain: relay.request
+summary: Requests, each relayed to a review.
+entities:
+  - name: relay.request.Ticket
+    identity:
+      name: request_id
+      type: String
+    fields: []
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+errors: []
+commands:
+  - name: relay.request.Request
+    input:
+      - name: request_id
+        type: String
+    outcomes:
+      - name: requested
+        creates: relay.request.Ticket
+        instance: request_id
+        emits: [relay.request.Requested]
+        payload:
+          relay.request.Requested: {request_id: input.request_id}
+        summary: The request is recorded and relayed.
+events:
+  - name: relay.request.Requested
+    fields:
+      - name: request_id
+        type: String

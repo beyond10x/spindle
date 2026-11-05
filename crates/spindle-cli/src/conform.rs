@@ -157,21 +157,22 @@ pub(crate) fn conform(arguments: &Conform<'_>) -> Result<ExitCode> {
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let committed =
             Counts::committed(&text).with_context(|| format!("in {}", path.display()))?;
-        let drops = counts.drops(committed);
+        let mut drops = run.set_drops(&committed);
+        drops.extend(counts.drops(committed.clone()));
         for drop in &drops {
             writeln!(out, "{}: {drop}", path.display())?;
         }
         held = drops.is_empty();
         if held {
             writeln!(out, "counts held against {}", path.display())?;
-            if !counts.equal(committed) {
-                write!(
-                    out,
-                    "the counts moved; commit them to {}:\n{}",
-                    path.display(),
-                    counts.document()
-                )?;
-            }
+        }
+        if !run.holds_exactly(&counts, &committed) {
+            write!(
+                out,
+                "the counts moved; where the move is intended, commit this as {}:\n{}",
+                path.display(),
+                run.document(&counts)
+            )?;
         }
     }
     out.flush()?;

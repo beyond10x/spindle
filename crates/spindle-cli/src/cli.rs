@@ -179,8 +179,10 @@ pub enum Command {
         /// reason of each that was not carried out.
         #[arg(long)]
         results: Option<PathBuf>,
-        /// A `spindle-conformance-counts/1` document of committed `executed` and `skipped`
-        /// counts; fewer executed or more skipped fails the run.
+        /// A `spindle-conformance-counts/1` document: the `executed_scenarios` that execute, and
+        /// the `skipped` and `known_failed` counts. A held scenario that no longer executes, one
+        /// that executes and is not held, more skipped or more known failures fails the run,
+        /// naming each; where the counts moved, the document that holds the run is printed.
         #[arg(long)]
         counts: Option<PathBuf>,
         /// An `ess-known-failures/1` declaration: scenarios this build is known to fail, bound to

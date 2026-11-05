@@ -16,6 +16,7 @@
 
 mod target;
 
+use std::collections::BTreeSet;
 use std::io::{self, Write};
 
 use ess_compiler::EssIr;
@@ -262,10 +263,10 @@ impl Run {
 // ---- held counts ------------------------------------------------------------------------------
 
 /// The counts a run is held to, as committed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Committed {
-    /// The fewest scenarios executed.
-    pub executed: usize,
+    /// Every scenario that executes: passed, failed or error.
+    pub executed_scenarios: BTreeSet<String>,
     /// The most skipped.
     pub skipped: usize,
     /// The most failures a known-failures declaration names.
@@ -276,7 +277,7 @@ pub struct Committed {
 #[serde(deny_unknown_fields)]
 struct Held {
     format: String,
-    executed: usize,
+    executed_scenarios: Vec<String>,
     skipped: usize,
     known_failed: usize,
 }
@@ -290,33 +291,45 @@ pub enum CountsError {
     /// Another format.
     #[error("format `{0}`, expected `{COUNTS_FORMAT}`")]
     Format(String),
+    /// A scenario held twice.
+    #[error("`{0}` is held twice in executed_scenarios")]
+    Twice(String),
 }
 
 impl Counts {
     /// The counts of a committed counts document.
     ///
     /// # Errors
-    /// [`CountsError`] for a document of another shape or format.
+    /// [`CountsError`] for a document of another shape or format, or one holding a scenario
+    /// twice.
     pub fn committed(text: &str) -> Result<Committed, CountsError> {
         let held: Held = toml::from_str(text)?;
         if held.format != COUNTS_FORMAT {
             return Err(CountsError::Format(held.format));
         }
+        let mut executed_scenarios = BTreeSet::new();
+        for id in held.executed_scenarios {
+            if !executed_scenarios.insert(id.clone()) {
+                return Err(CountsError::Twice(id));
+            }
+        }
         Ok(Committed {
-            executed: held.executed,
+            executed_scenarios,
             skipped: held.skipped,
             known_failed: held.known_failed,
         })
     }
 
-    /// Every way these counts fall short of `committed`: fewer scenarios executed, more skipped,
-    /// or more declared known failures. Empty when they are held.
+    /// Every way these totals fall short of `committed`: fewer scenarios executed than it holds,
+    /// more skipped, or more declared known failures. Empty when they are held. Which scenarios
+    /// execute is [`Run::set_drops`].
     pub fn drops(&self, committed: Committed) -> Vec<String> {
         let mut drops = Vec::new();
-        if self.executed < committed.executed {
+        let executed = committed.executed_scenarios.len();
+        if self.executed < executed {
             drops.push(format!(
-                "executed dropped from {} to {}",
-                committed.executed, self.executed
+                "executed dropped from {executed} to {}",
+                self.executed
             ));
         }
         if self.skipped > committed.skipped {
@@ -333,22 +346,53 @@ impl Counts {
         }
         drops
     }
+}
 
-    /// Whether these counts are exactly `committed`.
-    pub fn equal(&self, committed: Committed) -> bool {
-        (self.executed, self.skipped, self.known_failed)
-            == (
-                committed.executed,
-                committed.skipped,
-                committed.known_failed,
-            )
+impl Run {
+    /// Every scenario this run executed: passed, failed or error.
+    pub fn executed_scenarios(&self) -> BTreeSet<String> {
+        self.executed
+            .scenarios
+            .iter()
+            .filter(|result| result.status != Status::Unsupported)
+            .map(|result| result.scenario.to_string())
+            .collect()
     }
 
-    /// These counts as a committed counts document.
-    pub fn document(&self) -> String {
-        format!(
-            "format = \"{COUNTS_FORMAT}\"\nexecuted = {}\nskipped = {}\nknown_failed = {}\n",
-            self.executed, self.skipped, self.known_failed
-        )
+    /// Every difference between the scenarios this run executed and those `committed` holds:
+    /// each held one that no longer executes, and each executed one it does not hold. The set
+    /// is held exactly, so a scenario that stops executing while another starts is named even
+    /// where every total is unchanged.
+    pub fn set_drops(&self, committed: &Committed) -> Vec<String> {
+        let executed = self.executed_scenarios();
+        let lost = committed
+            .executed_scenarios
+            .difference(&executed)
+            .map(|id| format!("`{id}` is held as executed and no longer executes"));
+        let grown = executed
+            .difference(&committed.executed_scenarios)
+            .map(|id| format!("`{id}` executes and is not held; add it to executed_scenarios"));
+        lost.chain(grown).collect()
+    }
+
+    /// The counts document that holds this run: its executed scenarios and `counts`' skipped and
+    /// known-failed totals.
+    pub fn document(&self, counts: &Counts) -> String {
+        let mut document = format!("format = \"{COUNTS_FORMAT}\"\nexecuted_scenarios = [\n");
+        for id in self.executed_scenarios() {
+            document.push_str(&format!("    \"{id}\",\n"));
+        }
+        document.push_str(&format!(
+            "]\nskipped = {}\nknown_failed = {}\n",
+            counts.skipped, counts.known_failed
+        ));
+        document
+    }
+
+    /// Whether this run, with `counts`, is exactly what `committed` holds.
+    pub fn holds_exactly(&self, counts: &Counts, committed: &Committed) -> bool {
+        self.executed_scenarios() == committed.executed_scenarios
+            && counts.skipped == committed.skipped
+            && counts.known_failed == committed.known_failed
     }
 }

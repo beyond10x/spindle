@@ -1,0 +1,101 @@
+domain: forcing.desk
+summary: Reviews a desk may flag, and cases that close unless vetoed.
+entities:
+  - name: forcing.desk.Verdict
+    identity:
+      name: review_id
+      type: String
+    fields: []
+    lifecycle:
+      initial: Passed
+      states: [Passed]
+      terminal: [Passed]
+  - name: forcing.desk.Case
+    identity:
+      name: case_id
+      type: String
+    fields: []
+    lifecycle:
+      initial: Open
+      states: [Open, Closed]
+      terminal: [Closed]
+      transitions:
+        - name: close
+          from: [Open]
+          to: Closed
+errors:
+  - name: forcing.desk.Flagged
+    summary: The desk flagged the review.
+    fields: []
+  - name: forcing.desk.Vetoed
+    summary: The case stays open.
+    fields: []
+  - name: forcing.desk.CaseStateConflict
+    summary: The case is not open.
+    fields:
+      - name: state
+        type: forcing.desk.Case.State
+commands:
+  - name: forcing.desk.Review
+    input:
+      - name: review_id
+        type: String
+    outcomes:
+      - name: flagged
+        external: the desk flags the review
+        error: forcing.desk.Flagged
+        summary: The desk may flag any review.
+      - name: passed
+        creates: forcing.desk.Verdict
+        instance: review_id
+        emits: [forcing.desk.Reviewed]
+        payload:
+          forcing.desk.Reviewed: {review_id: input.review_id}
+        summary: The review passes.
+  - name: forcing.desk.OpenCase
+    input:
+      - name: case_id
+        type: String
+    outcomes:
+      - name: opened
+        creates: forcing.desk.Case
+        instance: case_id
+        emits: [forcing.desk.CaseOpened]
+        payload:
+          forcing.desk.CaseOpened: {case_id: input.case_id}
+        summary: The case is opened.
+  - name: forcing.desk.CloseCase
+    input:
+      - name: case_id
+        type: String
+    outcomes:
+      - name: vetoed
+        external: something outside the model keeps the case open
+        when_subject:
+          predicate: state == Open
+        error: forcing.desk.Vetoed
+        summary: Only an open case is asked.
+      - name: closed
+        moves: forcing.desk.Case.close
+        instance: case_id
+        emits: [forcing.desk.CaseClosed]
+        payload:
+          forcing.desk.CaseClosed: {case_id: input.case_id}
+        summary: The case is closed.
+      - name: wrong-state
+        wrong_state: true
+        error: forcing.desk.CaseStateConflict
+        summary: Only an open case closes.
+events:
+  - name: forcing.desk.Reviewed
+    fields:
+      - name: review_id
+        type: String
+  - name: forcing.desk.CaseOpened
+    fields:
+      - name: case_id
+        type: String
+  - name: forcing.desk.CaseClosed
+    fields:
+      - name: case_id
+        type: String
