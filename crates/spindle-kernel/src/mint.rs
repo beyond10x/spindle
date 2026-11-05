@@ -7,10 +7,13 @@
 //!
 //! Any other field an outcome marks `{generated: true}` (in `sets:`, a payload or an error, and
 //! the `else:` of `{input: f, else: {generated: true}}`) is minted from its declared type
-//! (`spindle_capability::mint::minted`, the rule derivation reads too): a `Uuid`, a `String` and
-//! an `Integer` from a UUID the same [`Mint`] answers, a `Timestamp` from the clock the run is
-//! given. Each such field is minted once per command run ([`Generator`]), so
-//! `{payload: <Event>.<field>}` in `sets:` stores what the event published.
+//! (`spindle_capability::mint::minted`, the rule derivation reads too): a `Uuid`, a `String`, an
+//! `Integer` and a `Boolean` from a UUID the same [`Mint`] answers, a `Timestamp` from the clock
+//! the run is given. A `Boolean` is `true` where that UUID's last bit is clear: ESS's interpreter
+//! mints `true` on an even tick of the counter it mints identities from, and its UUID for tick
+//! `n` ends in `n`'s decimal digits (`interpret::values::mint`), so a [`Mint`] that answers those
+//! UUIDs mints the Booleans the interpreter does. Each such field is minted once per command run
+//! ([`Generator`]), so `{payload: <Event>.<field>}` in `sets:` stores what the event published.
 
 use std::cell::RefCell;
 use std::time::SystemTime;
@@ -178,7 +181,8 @@ impl<'m> Generator<'m> {
 pub(crate) fn unmintable(field: &str, kind: &ResolvedTypeRef) -> String {
     format!(
         "`{{generated: true}}` on `{field}` of type `{kind}`; the runtime mints a `Uuid`, a \
-         `String`, an `Integer` or a `Timestamp`, or a newtype of one without invariants"
+         `String`, an `Integer`, a `Boolean` or a `Timestamp`, or a newtype of one without \
+         invariants"
     )
 }
 
@@ -203,6 +207,7 @@ pub(crate) fn value(
                 .map(Value::from)
                 .map_err(|_| format!("{low} is past the integers a JSON reader holds"))
         }
+        Minted::Boolean => Ok(Value::Bool(uuid().as_u128() & 1 == 0)),
         Minted::Timestamp => {
             let at = now();
             let unrepresentable = || format!("{at:?}, a time no RFC 3339 instant names");
