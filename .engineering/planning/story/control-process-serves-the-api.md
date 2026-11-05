@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:control-process-serves-the-api
 kind: story
-status: active
+status: implemented
 title: The control process serves the API
 relations:
 - serves: vision:spindle
@@ -24,10 +24,11 @@ scope:
   path: crates/spindle-control
 - confidence: cited
   path: ui
-revision: 8
+revision: 9
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-04T10:45:52Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-04T10:45:52Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-05T22:03:27Z", actor: "human:timo", revision: 9, decided_on: {"recorded":{"test_result":2,"review_outcome":3}}}
 ---
 # The control process serves the API
 

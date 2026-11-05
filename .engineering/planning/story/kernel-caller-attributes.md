@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:kernel-caller-attributes
 kind: story
-status: active
+status: implemented
 title: Caller attributes
 relations:
 - serves: vision:spindle
@@ -20,10 +20,11 @@ scope:
   path: crates/spindle-kernel/src/supported.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/caller.rs
-revision: 9
+revision: 10
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-05T12:00:33Z", actor: "human:timo", revision: 8}
 - {from: "proposed", to: "active", at: "2026-11-05T12:00:34Z", actor: "human:timo", revision: 9}
+- {from: "active", to: "implemented", at: "2026-11-05T22:03:26Z", actor: "human:timo", revision: 10, decided_on: {"recorded":{"test_result":2}}}
 ---
 # Caller attributes
 

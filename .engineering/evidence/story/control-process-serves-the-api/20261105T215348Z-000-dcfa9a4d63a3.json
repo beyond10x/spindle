@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-05T21:53:48Z",
+  "actor": "human:timo",
+  "artifact": "story:control-process-serves-the-api",
+  "kind": "story",
+  "revision": 8,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "task check (CI Gate, PR 14 head f20f3f1)",
+    "reference": "https://github.com/beyond10x/spindle/actions/runs/42114626326/job/127550859522"
+  }
+}

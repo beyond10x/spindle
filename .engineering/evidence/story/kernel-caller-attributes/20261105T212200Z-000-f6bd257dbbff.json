@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-05T21:22:00Z",
+  "actor": "human:timo",
+  "artifact": "story:kernel-caller-attributes",
+  "kind": "story",
+  "revision": 9,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "task check:vm on a KVM host (66 passed, 0 failed)"
+  }
+}

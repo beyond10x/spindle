@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:binding-mappings-across-conversions
 kind: story
-status: active
+status: implemented
 title: Binding mappings across a declared conversion
 relations:
 - serves: vision:spindle
@@ -12,10 +12,11 @@ scope:
   path: crates/spindle-channel/src/route.rs
 - confidence: cited
   path: crates/spindle-channel/tests/channel.rs
-revision: 5
+revision: 6
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-05T12:00:35Z", actor: "human:timo", revision: 4}
 - {from: "proposed", to: "active", at: "2026-11-05T12:00:35Z", actor: "human:timo", revision: 5}
+- {from: "active", to: "implemented", at: "2026-11-05T22:03:27Z", actor: "human:timo", revision: 6, decided_on: {"recorded":{"test_result":2}}}
 ---
 # Binding mappings across a declared conversion
 
