@@ -13,7 +13,6 @@ use serde_json::Value;
 
 const INGRESS: &str = "crates/spindle-cli/tests/fixtures/ingress";
 const INGRESS_HTTP: &str = "crates/spindle-cli/tests/fixtures/ingress-http.yaml";
-const RETRIED: &str = "crates/spindle-cli/tests/fixtures/retried";
 const LAPTOP: &str = "examples/environments/laptop.toml";
 const MEMORY: &str = "crates/spindle-cli/tests/fixtures/memory.toml";
 
@@ -224,7 +223,9 @@ fn adversary_a_bound_surface_answers_as_the_base_did() {
 #[test]
 #[ignore = "needs SPINDLE_BASE_BIN, a b10x-spindle built from the unit's base commit"]
 fn adversary_refusals_without_a_flag_exit_as_the_base_did() {
-    compare(&["run", RETRIED, "--environment", LAPTOP], &[]);
+    // The `retried` fixture is not compared: a base build refuses its `on_failure: retry`
+    // binding before listening, and this build retries it by design
+    // (story:event-bindings-retry-on-failure); `unserved.rs` holds the new behaviour.
     compare(&["run", INGRESS, "--environment", MEMORY], &[]);
 }
 

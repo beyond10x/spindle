@@ -1,5 +1,5 @@
-//! An event binding with `on_failure: retry` on a host that retries nothing: refused unless the
-//! host is told to drop its failed invocations, and then each failed invocation runs once.
+//! An event binding with `on_failure: retry`: retried by default, or, when the host is told to drop
+//! its failed invocations, run as a `drop` binding, each failed invocation run once.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -54,19 +54,27 @@ fn the_retry_bindings_are_named() {
 }
 
 #[test]
-fn a_retry_binding_is_refused_by_default() {
-    let (refused, _state) = host(Retries::Refused);
-    match refused {
-        Err(HostError::Unsupported(why)) => assert!(why.contains("index-note"), "{why}"),
-        other => panic!("the host refuses the retry binding: {other:?}"),
-    }
+fn a_retry_binding_is_retried_by_default() {
+    let (host, _state) = host(Retries::default());
+    let mut host = host.expect("the host starts with a retry binding");
     let loaded = spindle_spec::load(&fixture()).expect("the fixture compiles");
     assert_eq!(
-        spindle_host::uncarried(&loaded.ir, Retries::Refused),
-        Some(("index-note".to_owned(), ess_domain::binding::Failure::Retry)),
-        "the binding refused is the one the host names"
+        spindle_host::uncarried(&loaded.ir),
+        None,
+        "only escalate is not carried"
     );
-    assert_eq!(spindle_host::uncarried(&loaded.ir, Retries::Dropped), None);
+    let report = host
+        .submit(
+            "notes.pad.WriteNote",
+            object(json!({"note_id": "n1", "text": "kept"})),
+        )
+        .expect("the command runs");
+    assert_eq!(report.failed.len(), 1, "{report:?}");
+    assert_eq!(
+        report.failed[0].attempts,
+        spindle_host::RETRY_ATTEMPTS,
+        "the invocation the kernel does not run is retried to the limit, then given up"
+    );
 }
 
 #[test]

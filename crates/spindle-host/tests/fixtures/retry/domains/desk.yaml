@@ -1,0 +1,36 @@
+domain: filing.desk
+summary: Filings, each announced for the ledger and for its note.
+entities:
+  - name: filing.desk.Filing
+    identity:
+      name: filing_id
+      type: String
+    fields: []
+    lifecycle:
+      initial: Filed
+      states: [Filed]
+      terminal: [Filed]
+errors: []
+commands:
+  - name: filing.desk.File
+    input:
+      - name: filing_id
+        type: String
+    outcomes:
+      - name: filed
+        creates: filing.desk.Filing
+        instance: filing_id
+        emits: [filing.desk.Filed, filing.desk.Noted]
+        payload:
+          filing.desk.Filed: {filing_id: input.filing_id}
+          filing.desk.Noted: {filing_id: input.filing_id}
+        summary: The filing is taken, announced for the ledger and then for its note.
+events:
+  - name: filing.desk.Filed
+    fields:
+      - name: filing_id
+        type: String
+  - name: filing.desk.Noted
+    fields:
+      - name: filing_id
+        type: String

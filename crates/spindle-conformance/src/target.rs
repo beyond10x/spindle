@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use ess_compiler::EssIr;
-use ess_compiler::ir::ResolvedTypeRef;
+use ess_compiler::ir::{ResolvedFailure, ResolvedTypeRef};
 use ess_compiler::refs::{ErrorRef, EventRef, OutcomeRef};
 use ess_conformance::{
     ConformanceTarget, DeclaredErrorValue, EventObservationRequest, ExternalOutcomeControl,
@@ -20,7 +20,7 @@ use ess_primitives::consistency::ConsistencyToken;
 use ess_primitives::node::Node;
 use serde_json::{Map, Value};
 use spindle_capability::Environment;
-use spindle_host::{Host, HostError, SystemClock};
+use spindle_host::{Cause, Host, HostError, RETRY_ATTEMPTS, SystemClock};
 use spindle_kernel::{Decider, ExecuteError, External};
 
 /// The outcome a scenario forced for the next invocation of its command: `(command, outcome)`.
@@ -40,7 +40,9 @@ type Forcing = Arc<Mutex<Option<(String, String)>>>;
 /// A command sent as an actor is sent as it is: the host checks no grant, which is the caller's
 /// where no component serves the actor; a step's actor and `caller` are the caller the command
 /// runs as ([`Host::submit_as`]). An entity the scenario establishes, fixture values and
-/// redelivery are unsupported, each with its reason.
+/// redelivery are unsupported, each with its reason, and so is a send whose `on_failure: retry`
+/// binding gave up after [`RETRY_ATTEMPTS`](spindle_host::RETRY_ATTEMPTS), as ESS's interpreter
+/// answers a retry that exceeds its execution budget.
 pub struct HostTarget {
     ir: EssIr,
     environment: Environment,
@@ -235,6 +237,16 @@ impl ConformanceTarget for HostTarget {
             for invoked in invoked(report) {
                 self.lapse(invoked);
             }
+            if let Some(binding) = exhausted(&self.ir, report) {
+                return Err(TargetError::unsupported(
+                    format!("binding `{binding}`"),
+                    format!(
+                        "its retry gave up after {RETRY_ATTEMPTS} attempts; ESS's interpreter \
+                         answers an unbounded retry that never takes effect as unsupported: it \
+                         exceeds the finite execution budget"
+                    ),
+                ));
+            }
         }
         match submitted {
             Ok(report) => {
@@ -405,6 +417,33 @@ fn invoked(report: &spindle_host::Report) -> impl Iterator<Item = &str> {
                 .map(|refused| refused.command.as_str()),
         )
         .chain(report.failed.iter().map(|failed| failed.command.as_str()))
+}
+
+/// The first `on_failure: retry` binding (no `retry:` bound) whose invocation in `report` the host
+/// gave up: refused or not executed by the kernel on its last attempt. A binding whose input was
+/// unmet (0 attempts) never reached the kernel and is not one.
+fn exhausted<'a>(ir: &EssIr, report: &'a spindle_host::Report) -> Option<&'a str> {
+    let retries = |binding: &str| {
+        ir.bindings().values().any(|declared| {
+            declared.name.as_str() == binding
+                && matches!(declared.on_failure(), ResolvedFailure::Retry)
+        })
+    };
+    report
+        .refused
+        .iter()
+        .map(|refused| &refused.cause)
+        .chain(
+            report
+                .failed
+                .iter()
+                .filter(|failed| failed.attempts > 0)
+                .map(|failed| &failed.cause),
+        )
+        .find_map(|cause| match cause {
+            Cause::Delivered { binding } if retries(binding) => Some(binding.as_str()),
+            _ => None,
+        })
 }
 
 /// The token of the `count`th command run.

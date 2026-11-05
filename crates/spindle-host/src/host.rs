@@ -10,12 +10,12 @@ use ess_compiler::ir::{ResolvedMappingValue, ResolvedView};
 use ess_domain::binding::Failure;
 use serde_json::{Map, Value};
 use spindle_capability::{Capability, Environment};
-use spindle_channel::{ChannelError, Receiver, RouteError, Router, Sender, in_process};
+use spindle_channel::{ChannelError, Envelope, Receiver, RouteError, Router, Sender, in_process};
 use spindle_kernel::{
     Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, NoExternals, SqliteStore,
     Store, StoreError, UuidV4,
 };
-use spindle_telemetry::{Counters, CountingStore, Sink};
+use spindle_telemetry::{Counters, CountingStore, Retried, Sink};
 use spindle_timer::{BindingName, Clock, CompleteError, LifetimeError, Timer};
 
 use crate::admission::{Placements, Refusal, admit};
@@ -53,10 +53,14 @@ pub struct Ran {
     pub cause: Cause,
     /// What it did.
     pub executed: Executed,
+    /// How many times it was run, this one included: more than 1 only for an `on_failure:
+    /// retry` binding whose earlier attempts failed.
+    pub attempts: u32,
 }
 
 /// One command a tick or a binding invoked that did not execute. Nothing was written, and the
-/// host does not run it again.
+/// host does not run it again: a binding's command is given up after its last attempt
+/// ([`RETRY_ATTEMPTS`] for an `on_failure: retry` binding, else 1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Failed {
     /// The component that was to run it.
@@ -65,12 +69,15 @@ pub struct Failed {
     pub command: String,
     /// Why it was invoked.
     pub cause: Cause,
-    /// The kernel's error, as text.
+    /// The kernel's error on the last attempt, as text.
     pub error: String,
+    /// How many times it was run: 0 for a binding whose input was unmet, so its command was
+    /// never sent.
+    pub attempts: u32,
 }
 
 /// One command a tick or a binding invoked that the model refused: its outcome declares an error.
-/// Nothing was written, and the host does not run it again.
+/// Nothing was written, and the host does not run it again, as for [`Failed`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefusedCommand {
     /// The component that ran it.
@@ -79,10 +86,12 @@ pub struct RefusedCommand {
     pub command: String,
     /// Why it was invoked.
     pub cause: Cause,
-    /// The refusing outcome.
+    /// The refusing outcome of the last attempt.
     pub outcome: String,
     /// The error that outcome declares.
     pub error: DeclaredError,
+    /// How many times it was run.
+    pub attempts: u32,
 }
 
 /// One event a command published: committed with the command's effect, in the order published.
@@ -111,6 +120,12 @@ pub struct Report {
 /// How many envelopes one [`Host::submit`] or [`Host::advance`] delivers before it stops as a
 /// [`HostError::Runaway`]: bindings that trigger each other have no end of their own.
 pub const DELIVERY_LIMIT: usize = 10_000;
+
+/// How many times the host runs the command of an `on_failure: retry` binding for one envelope
+/// before it gives the invocation up: the first attempt and four retries. A runtime default
+/// (design § 11): ESS bounds no unbounded retry, and this host retries at once, on the calling
+/// thread, with no backoff, so the next envelope is not invoked before the retry settles.
+pub const RETRY_ATTEMPTS: u32 = 5;
 
 /// The timer implementations this host runs: `spindle-timer`'s schedule, which the shipped
 /// environments name `tokio`.
@@ -227,30 +242,26 @@ pub enum HostError {
     Stopped,
 }
 
-/// What a host does with an event binding whose `on_failure` is `retry`: this host retries no
-/// invocation.
+/// What a host does with an event binding whose `on_failure` is `retry`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Retries {
-    /// Refuse to start, as for any binding the host does not carry.
+    /// Retry a failed invocation, refused or not executed, at once until it takes effect or
+    /// [`RETRY_ATTEMPTS`] attempts were made; then report it once, as given up.
     #[default]
-    Refused,
+    Retried,
     /// Run the binding as a `drop` binding runs: a failed invocation is reported once and never
     /// run again, and an envelope whose send fails is dropped.
     Dropped,
 }
 
-/// The first event binding of `ir`, by name, whose `on_failure` a host started with `retries`
-/// does not carry, and what it says: the binding [`Host::with_retries`] refuses before it opens
-/// anything. `escalate` is never carried, and `retry` only under [`Retries::Dropped`].
-pub fn uncarried(ir: &EssIr, retries: Retries) -> Option<(String, Failure)> {
+/// The first event binding of `ir`, by name, whose `on_failure` a host does not carry, and what
+/// it says: the binding [`Host::new`] refuses before it opens anything. Only `escalate` is not
+/// carried.
+pub fn uncarried(ir: &EssIr) -> Option<(String, Failure)> {
     ir.bindings()
         .values()
         .filter(|binding| binding.cause.event().is_some())
-        .find(|binding| match binding.failure {
-            Failure::Drop => false,
-            Failure::Retry => retries == Retries::Refused,
-            Failure::Escalate => true,
-        })
+        .find(|binding| binding.failure == Failure::Escalate)
         .map(|binding| (binding.name.as_str().to_owned(), binding.failure))
 }
 
@@ -302,6 +313,9 @@ pub struct Host {
     published: Vec<Published>,
     /// Answers the `external:` causes of every command any component runs.
     decider: Box<dyn Decider + Send>,
+    /// The event bindings this host retries, by name: read from its own routes, never from an
+    /// envelope, so a peer's frame does not decide the policy.
+    retrying: BTreeSet<String>,
 }
 
 impl std::fmt::Debug for Host {
@@ -325,20 +339,20 @@ impl Host {
     /// [`HostError::Refused`] when a component is not admitted, naming everything every component
     /// lacks; [`HostError::Unsupported`] when admission bound something this host does not run,
     /// or the specification uses a binding it does not carry, such as an event binding whose
-    /// `on_failure` is not `drop` ([`uncarried`]).
+    /// `on_failure` is `escalate` ([`uncarried`]). An `on_failure: retry` binding is retried
+    /// ([`Retries::Retried`]).
     pub fn new(
         ir: EssIr,
         environment: &Environment,
         clock: Arc<dyn Clock>,
         state: &Path,
     ) -> Result<Self, HostError> {
-        Self::open(ir, environment, clock, state, None, Retries::Refused)
+        Self::open(ir, environment, clock, state, None, Retries::Retried)
     }
 
     /// [`Host::new`], with `retries` saying what becomes of an event binding whose `on_failure`
-    /// is `retry` ([`retried`]): refused, as [`Host::new`] refuses it, or run as a `drop` binding
-    /// runs, each failed invocation reported once and never run again. `on_failure: escalate`
-    /// is refused either way.
+    /// is `retry` ([`retried`]): retried, as [`Host::new`] retries it, or run as a `drop` binding
+    /// runs, each failed invocation reported once and never run again.
     ///
     /// # Errors
     /// As [`Host::new`].
@@ -370,8 +384,23 @@ impl Host {
             clock,
             state,
             Some(decider),
-            Retries::Refused,
+            Retries::Retried,
         )
+    }
+
+    /// [`Host::deciding`], with `retries` as [`Host::with_retries`] takes it.
+    ///
+    /// # Errors
+    /// As [`Host::deciding`].
+    pub fn deciding_with_retries(
+        ir: EssIr,
+        environment: &Environment,
+        clock: Arc<dyn Clock>,
+        state: &Path,
+        decider: Box<dyn Decider + Send>,
+        retries: Retries,
+    ) -> Result<Self, HostError> {
+        Self::open(ir, environment, clock, state, Some(decider), retries)
     }
 
     fn open(
@@ -398,17 +427,23 @@ impl Host {
         retries: Retries,
     ) -> Result<Self, HostError> {
         let answers = decider.is_some();
-        if let Some((binding, failure)) = uncarried(&ir, retries) {
+        if let Some((binding, failure)) = uncarried(&ir) {
             return Err(HostError::Unsupported(format!(
-                "binding {binding} says on_failure: {failure:?}; this host drops an invocation \
-                 that fails and neither retries nor escalates it"
+                "binding {binding} says on_failure: {failure:?}; this host drops or retries an \
+                 invocation that fails and does not escalate it"
             )));
         }
         let ir = Arc::new(ir);
         let router = match retries {
-            Retries::Refused => Router::from_shared(&ir)?,
+            Retries::Retried => Router::from_shared(&ir)?,
             Retries::Dropped => Router::from_shared(&ir)?.dropping_retries(),
         };
+        let retrying = router
+            .routes()
+            .iter()
+            .filter(|route| route.on_failure == Failure::Retry)
+            .map(|route| route.binding.clone())
+            .collect();
         let mut components = BTreeMap::new();
         for (name, bindings) in &placements {
             for binding in bindings {
@@ -560,6 +595,7 @@ impl Host {
             remote: None,
             published: Vec::new(),
             decider: decider.unwrap_or_else(|| Box::new(NoExternals)),
+            retrying,
         })
     }
 
@@ -698,6 +734,7 @@ impl Host {
                 command: command.to_owned(),
                 cause: Cause::Submitted,
                 executed,
+                attempts: 1,
             }),
             Err(error) => {
                 return Err(HostError::Execute {
@@ -906,6 +943,7 @@ impl Host {
         Ok(Ok(executed))
     }
 
+    /// Runs one command a tick invoked, once.
     fn run(
         &mut self,
         component: &str,
@@ -914,33 +952,92 @@ impl Host {
         cause: Cause,
         report: &mut Report,
     ) -> Result<(), HostError> {
-        match self.execute(component, command, input, None, None)? {
-            Ok(Executed {
-                outcome,
-                error: Some(error),
-                ..
-            }) => report.refused.push(RefusedCommand {
-                component: component.to_owned(),
-                command: command.to_owned(),
-                cause,
-                outcome,
-                error,
-            }),
-            Ok(executed) => report.ran.push(Ran {
-                component: component.to_owned(),
-                command: command.to_owned(),
-                cause,
-                executed,
-            }),
-            Err(error) => report.failed.push(Failed {
-                component: component.to_owned(),
-                command: command.to_owned(),
-                cause,
-                error: error.to_string(),
-            }),
+        self.attempt(component, command, input, cause, None, report)
+    }
+
+    /// Runs the command `envelope` carries; where this host's own route of `envelope.binding`
+    /// says `on_failure: retry` (the envelope's `on_failure` is the sender's word), again at once after each
+    /// attempt that is refused or does not execute, until one takes effect or [`RETRY_ATTEMPTS`]
+    /// were made, each attempt counted on the receiving component.
+    fn invoke(&mut self, envelope: &Envelope, report: &mut Report) -> Result<(), HostError> {
+        let retried = self
+            .retrying
+            .contains(&envelope.binding)
+            .then_some(envelope.binding.as_str());
+        self.attempt(
+            &envelope.to,
+            &envelope.command.name,
+            &envelope.command.fields,
+            Cause::Delivered {
+                binding: envelope.binding.clone(),
+            },
+            retried,
+            report,
+        )
+    }
+
+    /// Runs `command` once, or, when `retried` names the binding, up to [`RETRY_ATTEMPTS`]
+    /// times; reports the attempt that took effect, or the last one.
+    fn attempt(
+        &mut self,
+        component: &str,
+        command: &str,
+        input: &Map<String, Value>,
+        cause: Cause,
+        retried: Option<&str>,
+        report: &mut Report,
+    ) -> Result<(), HostError> {
+        let limit = if retried.is_some() { RETRY_ATTEMPTS } else { 1 };
+        let sink = self
+            .components
+            .get(component)
+            .map(|held| held.sink.clone())
+            .unwrap_or_default();
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
+            if let Some(binding) = retried {
+                sink.retried(binding, Retried::Attempted);
+            }
+            let result = self.execute(component, command, input, None, None)?;
+            let failed = !matches!(result, Ok(Executed { error: None, .. }));
+            if failed && attempts < limit {
+                continue;
+            }
+            if failed && let Some(binding) = retried {
+                sink.retried(binding, Retried::Exhausted);
+            }
+            match result {
+                Ok(Executed {
+                    outcome,
+                    error: Some(error),
+                    ..
+                }) => report.refused.push(RefusedCommand {
+                    component: component.to_owned(),
+                    command: command.to_owned(),
+                    cause,
+                    outcome,
+                    error,
+                    attempts,
+                }),
+                Ok(executed) => report.ran.push(Ran {
+                    component: component.to_owned(),
+                    command: command.to_owned(),
+                    cause,
+                    executed,
+                    attempts,
+                }),
+                Err(error) => report.failed.push(Failed {
+                    component: component.to_owned(),
+                    command: command.to_owned(),
+                    cause,
+                    error: error.to_string(),
+                    attempts,
+                }),
+            }
+            self.unmet(component, report);
+            return Ok(());
         }
-        self.unmet(component, report);
-        Ok(())
     }
 
     /// Reports every binding the events `component` just published triggered whose input was unmet
@@ -958,6 +1055,7 @@ impl Host {
                     binding: unmet.binding,
                 },
                 error: unmet.error.to_string(),
+                attempts: 0,
             }));
     }
 
@@ -986,15 +1084,7 @@ impl Host {
                     deliveries.count += 1;
                     deliveries.bindings.insert(envelope.binding.clone());
                     delivered = true;
-                    self.run(
-                        &envelope.to,
-                        &envelope.command.name,
-                        &envelope.command.fields,
-                        Cause::Delivered {
-                            binding: envelope.binding.clone(),
-                        },
-                        report,
-                    )?;
+                    self.invoke(&envelope, report)?;
                     self.receivers[index].acknowledge(&envelope)?;
                 }
             }

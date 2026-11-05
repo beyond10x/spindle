@@ -47,7 +47,7 @@ use spindle_channel::{Channel, ChannelError, Frame, Receiver, Router};
 use spindle_telemetry::Counters;
 use spindle_timer::Clock;
 
-use super::{Cause, DELIVERY_LIMIT, Deliveries, Host, HostError, Report, Retries};
+use super::{DELIVERY_LIMIT, Deliveries, Host, HostError, Report, Retries};
 use crate::admission::{Placements, Refusal};
 
 /// The channel implementation a one-component host carries bindings on.
@@ -458,7 +458,7 @@ impl Host {
                 }));
             }
         };
-        let mut host = Self::assemble(ir, clock, state, placements, TCP, None, Retries::Refused)?;
+        let mut host = Self::assemble(ir, clock, state, placements, TCP, None, Retries::Retried)?;
         let expected = Router::from_shared(&host.ir)?
             .routes()
             .iter()
@@ -773,15 +773,7 @@ impl Host {
                     deliveries.bindings.insert(envelope.binding.clone());
                     delivered = true;
                     let before = remote.sent();
-                    self.run(
-                        &envelope.to,
-                        &envelope.command.name,
-                        &envelope.command.fields,
-                        Cause::Delivered {
-                            binding: envelope.binding.clone(),
-                        },
-                        report,
-                    )?;
+                    self.invoke(&envelope, report)?;
                     let remote = self.remote.as_mut().ok_or_else(Remote::missing)?;
                     if let Some((_, receiver)) = remote.incoming.get_mut(&peer) {
                         receiver.acknowledge(&envelope)?;
