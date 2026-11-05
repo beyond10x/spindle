@@ -51,6 +51,7 @@ fn text(output: &Output) -> String {
 /// `task check:vm` runs it, on a host without `qemu-system-x86_64` on `PATH`, the output must
 /// name QEMU; the harness swallows what a passing case printed, so it reads `ok` and nothing else.
 #[test]
+#[ignore = "needs /dev/kvm so the missing QEMU is the first prerequisite to fail: run by task check:vm"]
 fn a_skipped_qemu_rally_case_names_its_reason_in_the_gate_output() {
     let binary = rally_binary(QEMU_MATCH);
     let no_qemu = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("an empty PATH");

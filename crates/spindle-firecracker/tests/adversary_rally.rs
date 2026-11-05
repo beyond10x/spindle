@@ -74,6 +74,7 @@ fn a_skipped_firecracker_rally_case_names_its_reason_in_the_gate_output() {
 /// binary or its kernel. The guest binaries are not one of them: `task check:vm` does not build
 /// them, so on a checkout with every prerequisite the case must not pass without booting a VM.
 #[test]
+#[ignore = "needs /dev/kvm: run by task check:vm"]
 fn missing_guest_binaries_do_not_pass_the_firecracker_rally_case() {
     if std::fs::OpenOptions::new()
         .read(true)
