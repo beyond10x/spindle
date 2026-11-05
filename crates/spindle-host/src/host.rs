@@ -312,6 +312,9 @@ pub struct Host {
     published: Vec<Published>,
     /// Answers the `external:` causes of every command any component runs.
     decider: Box<dyn Decider + Send>,
+    /// The event bindings this host retries, by name: read from its own routes, never from an
+    /// envelope, so a peer's frame does not decide the policy.
+    retrying: BTreeSet<String>,
 }
 
 impl std::fmt::Debug for Host {
@@ -433,6 +436,12 @@ impl Host {
             Retries::Retried => Router::from_ir(&ir)?,
             Retries::Dropped => Router::from_ir(&ir)?.dropping_retries(),
         };
+        let retrying = router
+            .routes()
+            .iter()
+            .filter(|route| route.on_failure == Failure::Retry)
+            .map(|route| route.binding.clone())
+            .collect();
         let mut components = BTreeMap::new();
         for (name, bindings) in &placements {
             for binding in bindings {
@@ -584,6 +593,7 @@ impl Host {
             remote: None,
             published: Vec::new(),
             decider: decider.unwrap_or_else(|| Box::new(NoExternals)),
+            retrying,
         })
     }
 
@@ -921,11 +931,15 @@ impl Host {
         self.attempt(component, command, input, cause, None, report)
     }
 
-    /// Runs the command `envelope` carries; under `on_failure: retry`, again at once after each
+    /// Runs the command `envelope` carries; where this host's own route of `envelope.binding`
+    /// says `on_failure: retry` (the envelope's `on_failure` is the sender's word), again at once after each
     /// attempt that is refused or does not execute, until one takes effect or [`RETRY_ATTEMPTS`]
     /// were made, each attempt counted on the receiving component.
     fn invoke(&mut self, envelope: &Envelope, report: &mut Report) -> Result<(), HostError> {
-        let retried = (envelope.on_failure == Failure::Retry).then_some(envelope.binding.as_str());
+        let retried = self
+            .retrying
+            .contains(&envelope.binding)
+            .then_some(envelope.binding.as_str());
         self.attempt(
             &envelope.to,
             &envelope.command.name,
