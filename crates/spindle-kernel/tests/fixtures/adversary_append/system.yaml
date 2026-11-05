@@ -1,0 +1,27 @@
+format: ess/34
+system: probe
+version: v1
+summary: Shelves whose lists grow one element at a time.
+domains:
+  - probe.shelf
+components:
+  - component: rack
+    summary: Opens shelves and appends to their lists.
+    owns:
+      domains:
+        - probe.shelf
+    accepts:
+      commands:
+        - probe.shelf.OpenShelf
+        - probe.shelf.AddTag
+        - probe.shelf.AddWrapped
+        - probe.shelf.AddSlotFrom
+        - probe.shelf.AddEntry
+        - probe.shelf.AddMark
+        - probe.shelf.SealWithTag
+        - probe.shelf.TagAndRename
+    publishes:
+      events:
+        - probe.shelf.ShelfOpened
+        - probe.shelf.Changed
+    reached_by: in_process
