@@ -1,0 +1,101 @@
+domain: scribe.notebook
+summary: A notebook opened under the caller's id, whose pages and margin notes are appended one at a time.
+types:
+  - name: scribe.notebook.NotebookId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: scribe.notebook.Notebook
+    identity:
+      name: notebook_id
+      type: scribe.notebook.NotebookId
+    fields:
+      - name: title
+        type: String
+      - name: pages
+        type: Optional<List<String>>
+      - name: margins
+        type: List<Optional<String>>
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+commands:
+  - name: scribe.notebook.OpenNotebook
+    input:
+      - name: notebook_id
+        type: scribe.notebook.NotebookId
+      - name: title
+        type: String
+    outcomes:
+      - name: opened
+        creates: scribe.notebook.Notebook
+        instance: notebook_id
+        sets:
+          title: input.title
+          margins: []
+        emits: [scribe.notebook.NotebookOpened]
+        payload:
+          scribe.notebook.NotebookOpened:
+            notebook_id: input.notebook_id
+        summary: The notebook opens with no pages and an empty list of margin notes.
+  - name: scribe.notebook.AddPage
+    input:
+      - name: notebook_id
+        type: scribe.notebook.NotebookId
+      - name: page
+        type: String
+    outcomes:
+      - name: added
+        updates: scribe.notebook.Notebook
+        instance: notebook_id
+        sets:
+          pages: {append: input.page}
+        emits: [scribe.notebook.PageAdded]
+        payload:
+          scribe.notebook.PageAdded:
+            notebook_id: input.notebook_id
+        summary: The page is appended after every page the notebook held.
+  - name: scribe.notebook.AddMargin
+    input:
+      - name: notebook_id
+        type: scribe.notebook.NotebookId
+      - name: note
+        type: Optional<String>
+    outcomes:
+      - name: added
+        updates: scribe.notebook.Notebook
+        instance: notebook_id
+        sets:
+          margins: {append: input.note}
+        emits: [scribe.notebook.MarginAdded]
+        payload:
+          scribe.notebook.MarginAdded:
+            notebook_id: input.notebook_id
+        summary: The margin note is appended, or an empty margin where none is sent.
+events:
+  - name: scribe.notebook.NotebookOpened
+    fields:
+      - name: notebook_id
+        type: scribe.notebook.NotebookId
+  - name: scribe.notebook.PageAdded
+    fields:
+      - name: notebook_id
+        type: scribe.notebook.NotebookId
+  - name: scribe.notebook.MarginAdded
+    fields:
+      - name: notebook_id
+        type: scribe.notebook.NotebookId
+views:
+  - name: scribe.notebook.NotebookCard
+    source: scribe.notebook.Notebook
+    consistency: read_your_writes
+    fields:
+      - name: notebook_id
+        type: scribe.notebook.NotebookId
+      - name: title
+        type: String
+      - name: pages
+        type: Optional<List<String>>
+      - name: margins
+        type: List<Optional<String>>
