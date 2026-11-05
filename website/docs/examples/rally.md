@@ -3,7 +3,7 @@ title: Rally
 sidebar_position: 1
 description: The rally example, a two-player paddle-and-ball game written as an ESS system of three components that talk only through bindings.
 lede: Three components, one periodic binding and four event bindings play a match to a winner, with no game code outside the specification.
-source: examples/rally/ess, crates/spindle-host/tests/rally.rs, crates/spindle-host/src/rally.rs, crates/spindle-cli/tests/play.rs, crates/spindle-cli/tests/processes.rs, docs/design/spindle.md §13
+source: examples/rally/ess, crates/spindle-host/tests/rally.rs, crates/spindle-host/src/rally.rs, crates/spindle-cli/tests/play.rs, crates/spindle-cli/tests/processes.rs, crates/spindle-cli/tests/adversary_processes.rs, crates/spindle-host/src/host/component.rs, docs/design/spindle.md §13
 ---
 
 Rally is an original two-player paddle-and-ball game, written as an ESS system in
@@ -89,12 +89,15 @@ $ SPINDLE_COMPONENT=rally-player-west SPINDLE_LISTEN=127.0.0.1:7101 SPINDLE_PEER
     b10x-spindle play examples/rally/ess --environment examples/environments/laptop-processes.toml
 ```
 
-Each process listens for the links its peers open and connects to every component its events lead
-to, waiting up to 30 s for it to listen. A component whose events lead to a peer with no
-`SPINDLE_PEER_<COMPONENT>` exits 1 before it runs anything, naming each such peer and variable.
-Each prints one JSON line per command it runs. The table opens the match, runs the tick, prints
-`{"view": …}`, the `MatchState` row, after each and exits 0 once a side has won; a player exits 0
-once every link to it has closed. With `SPINDLE_TELEMETRY` set, each sends its own counters as
+Each process listens, connects to every component its events lead to and waits for a link from
+every component whose events lead to it, up to 30 s in all. A link counts only once its first
+message names both ends, so a stray connection changes nothing. A component whose events lead to a
+peer with no `SPINDLE_PEER_<COMPONENT>` exits 1 before it runs anything, naming each such peer and
+variable. Each prints one JSON line per command it runs. Everything a tick leads to runs on every
+process before the next tick, so three processes play the match one process plays. The table opens
+the match, runs the tick, prints `{"view": …}`, the `MatchState` row, after each and, once a side
+has won, tells both players the match is over; all three exit 0. A link that closes before that
+exits 1 naming the peer, and SIGINT or SIGTERM exits 130 or 143. With `SPINDLE_TELEMETRY` set, each sends its own counters as
 `spindle-telemetry/1` frames. `--speed` runs the match clock that many times faster than real time.
 
 :::caution[Planned]

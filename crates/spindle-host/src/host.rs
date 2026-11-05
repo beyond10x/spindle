@@ -185,6 +185,18 @@ pub enum HostError {
         /// The bindings that carried them.
         bindings: BTreeSet<String>,
     },
+    /// The link to a peer component closed or failed before the run ended, or what was sent
+    /// there did not settle in time.
+    #[error("the link to {peer} {reason}")]
+    Peer {
+        /// The peer component, or several, comma-separated.
+        peer: String,
+        /// What happened to it.
+        reason: String,
+    },
+    /// The caller asked the host to stop while it waited for its peers.
+    #[error("stopped while waiting for peers")]
+    Stopped,
 }
 
 struct Component {
@@ -220,6 +232,7 @@ pub struct Host {
     receivers: Vec<Receiver>,
     timer: Timer,
     periodic: BTreeMap<String, Periodic>,
+    remote: Option<component::Remote>,
 }
 
 impl std::fmt::Debug for Host {
@@ -425,6 +438,7 @@ impl Host {
             receivers,
             timer,
             periodic,
+            remote: None,
         })
     }
 
@@ -718,20 +732,13 @@ impl Host {
         report: &mut Report,
         deliveries: &mut Deliveries,
     ) -> Result<(), HostError> {
+        if self.remote.is_some() {
+            return self.settle_remote(report, deliveries, true);
+        }
         loop {
             let mut delivered = false;
-            let mut closed = Vec::new();
             for index in 0..self.receivers.len() {
-                loop {
-                    let envelope = match self.receivers[index].receive(Duration::ZERO) {
-                        Ok(Some(envelope)) => envelope,
-                        Ok(None) => break,
-                        Err(ChannelError::Closed) => {
-                            closed.push(index);
-                            break;
-                        }
-                        Err(error) => return Err(error.into()),
-                    };
+                while let Some(envelope) = self.receivers[index].receive(Duration::ZERO)? {
                     if deliveries.count >= DELIVERY_LIMIT {
                         self.discard()?;
                         return Err(HostError::Runaway {
@@ -754,17 +761,12 @@ impl Host {
                     self.receivers[index].acknowledge(&envelope)?;
                 }
             }
-            for index in closed.into_iter().rev() {
-                self.receivers.remove(index);
-            }
             if !delivered {
                 break;
             }
         }
         for component in self.components.values_mut() {
-            if component.sender.unacknowledged() > 0 {
-                component.sender.collect_acknowledgements(Duration::ZERO)?;
-            }
+            component.sender.collect_acknowledgements(Duration::ZERO)?;
         }
         Ok(())
     }

@@ -143,11 +143,16 @@ pub enum Command {
     /// links its peers open and connects to each component its events lead to at the address in
     /// `SPINDLE_PEER_<COMPONENT>`, waiting up to 30 s for it to listen; a peer without one exits
     /// 1 naming every such peer and variable, before anything runs. It prints
-    /// `{"component", "listening", "peers"}` once linked, then one JSON line per command it runs,
-    /// `{"ran", "cause", "outcome"}`. The component that accepts `OpenMatch` opens the match,
-    /// runs the tick, prints `{"view": <MatchState>}` after each and exits 0 once a side has won;
-    /// any other exits 0 once every link it accepted has closed. With `SPINDLE_TELEMETRY` set, it
-    /// sends its counters there as `spindle-telemetry/1` frames.
+    /// `{"component", "listening", "peers"}` once listening and waits up to 30 s more for a link
+    /// from each component whose events lead to it; a connection counts as one only once its
+    /// first message names both ends. Then it prints one JSON line per command it runs,
+    /// `{"ran", "cause", "outcome"}`. Each command's consequences on every process run before
+    /// the next tick, so the match is the one a single process plays. The component that accepts
+    /// `OpenMatch` opens the match, runs the tick, prints `{"view": <MatchState>}` after each and,
+    /// once a side has won, tells every peer the match is over and exits 0; a peer exits 0 when
+    /// told. A link that closes before that exits 1 naming the peer, and SIGINT or SIGTERM exits
+    /// 130 or 143, at any point. With `SPINDLE_TELEMETRY` set, it sends its counters there as
+    /// `spindle-telemetry/1` frames.
     Play {
         /// The rally specification directory.
         spec: PathBuf,

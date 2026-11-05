@@ -5,7 +5,8 @@
 //! failing assertion or a panic never leaves a child running; every wait has a hard bound.
 
 use std::io::BufReader;
-use std::net::{SocketAddr, TcpListener};
+use std::io::Write;
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -13,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 use spindle_capability::Environment;
-use spindle_channel::{Channel, Command as Invoked, DeliveryId, Envelope, Frame, tcp::TcpChannel};
+use spindle_channel::{Command as Invoked, DeliveryId, Envelope, Frame};
 use spindle_target::{Artifact, Exit, LaunchPlan, Launcher, Peer, ProcessLauncher, Resources};
 use spindle_telemetry::FrameReader;
 
@@ -279,6 +280,14 @@ fn a_component_process_without_its_peers_is_refused() {
     );
 }
 
+/// Writes one link message: a 4-byte big-endian length and that many bytes of JSON.
+fn say(stream: &mut TcpStream, message: &Value) {
+    let body = serde_json::to_vec(message).expect("encodes");
+    let size = u32::try_from(body.len()).expect("small");
+    stream.write_all(&size.to_be_bytes()).expect("writes");
+    stream.write_all(&body).expect("writes");
+}
+
 fn object(value: Value) -> Map<String, Value> {
     match value {
         Value::Object(fields) => fields,
@@ -312,8 +321,8 @@ fn a_component_process_reports_telemetry_when_given_an_endpoint() {
 
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut ball = loop {
-        match TcpChannel::connect(listen) {
-            Ok(channel) => break channel,
+        match TcpStream::connect(listen) {
+            Ok(stream) => break stream,
             Err(_) => {
                 assert!(
                     Instant::now() < deadline,
@@ -330,7 +339,11 @@ fn a_component_process_reports_telemetry_when_given_an_endpoint() {
             }
         }
     };
-    ball.send(Frame::Deliver(Envelope {
+    say(
+        &mut ball,
+        &json!({"hello": {"from": "rally-table", "to": "rally-player-west"}}),
+    );
+    let envelope = Frame::Deliver(Envelope {
         id: DeliveryId(1),
         binding: "west-watches".to_owned(),
         from: "rally-table".to_owned(),
@@ -342,8 +355,8 @@ fn a_component_process_reports_telemetry_when_given_an_endpoint() {
             name: "rally.west.ObserveBall".to_owned(),
             fields: object(json!({"match_id": "m1", "ball_x": 8, "ball_y": 4, "paddle_y": 4})),
         },
-    }))
-    .expect("the ball is sent");
+    });
+    say(&mut ball, &json!({ "frame": envelope }));
 
     let stream = loop {
         match collector.accept() {

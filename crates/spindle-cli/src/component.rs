@@ -7,8 +7,8 @@ use std::net::{SocketAddr, TcpListener};
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Map, Value, json};
@@ -19,10 +19,14 @@ use spindle_target::{ENV_LISTEN, ENV_PEER_PREFIX, env_name};
 use crate::scaled::Scaled;
 use crate::{MATCH_STATE, OPEN_MATCH, REFUSED, SIGNALLED, signals};
 
-/// How long a component waits for a peer to listen.
-const CONNECT_WITHIN: Duration = Duration::from_secs(30);
+/// How long a component waits for its peers to listen and to link to it.
+const LINK_WITHIN: Duration = Duration::from_secs(30);
+/// How long between two attempts to reach a peer that does not listen yet.
+const RETRY: Duration = Duration::from_millis(10);
+/// How long the table, having won, waits for its peers to close their links.
+const END_WITHIN: Duration = Duration::from_secs(5);
 /// How often the loop looks for arrivals, ticks and signals.
-const POLL: Duration = Duration::from_millis(2);
+const POLL: Duration = Duration::from_millis(1);
 
 /// The arguments of `play --component`.
 pub(crate) struct Playing<'a> {
@@ -35,7 +39,20 @@ pub(crate) struct Playing<'a> {
     pub listen: Option<SocketAddr>,
 }
 
+/// The exit status of a signal recorded in `signalled`, if one was.
+fn signalled_status(signalled: &AtomicUsize) -> Option<u8> {
+    match signalled.load(Ordering::SeqCst) {
+        0 => None,
+        signal => {
+            Some(SIGNALLED.saturating_add(u8::try_from(signal).unwrap_or(u8::MAX - SIGNALLED)))
+        }
+    }
+}
+
 /// Plays `playing.component` alone; see the `play` command's help.
+///
+/// Whatever ends the run once SIGINT or SIGTERM arrived, the exit status is the signal's: a
+/// peer that went down with the same signal is not this component's failure.
 pub(crate) fn play(playing: &Playing<'_>) -> Result<ExitCode> {
     let signalled = signals()?;
     let component = playing.component;
@@ -65,8 +82,34 @@ pub(crate) fn play(playing: &Playing<'_>) -> Result<ExitCode> {
             }
             Err(error) => return Err(error.into()),
         };
+    let watched = Arc::clone(&signalled);
+    host.stop_when(move || watched.load(Ordering::SeqCst) != 0);
 
     let addresses = peer_addresses(&host, component)?;
+    let result = linked(
+        &mut host, playing, listen, opens, &clock, &addresses, &signalled,
+    );
+    host.stop();
+    let status = match (result, signalled_status(&signalled)) {
+        (Ok(status), _) => Ok(status),
+        (Err(_), Some(status)) => Ok(ExitCode::from(status)),
+        (Err(error), None) => Err(error),
+    };
+    drop(state);
+    status
+}
+
+/// Links `host` to its peers and plays until the match ends, a link fails or a signal arrives.
+fn linked(
+    host: &mut Host,
+    playing: &Playing<'_>,
+    listen: SocketAddr,
+    opens: bool,
+    clock: &Scaled,
+    addresses: &BTreeMap<String, SocketAddr>,
+    signalled: &AtomicUsize,
+) -> Result<ExitCode> {
+    let component = playing.component;
     let _telemetry = match host.shared_counters(component) {
         Some(counters) => {
             spindle_telemetry::Sender::from_env(counters).map_err(|error| anyhow!(error))?
@@ -74,10 +117,6 @@ pub(crate) fn play(playing: &Playing<'_>) -> Result<ExitCode> {
         None => None,
     };
     let listener = TcpListener::bind(listen).with_context(|| format!("listening on {listen}"))?;
-    for (peer, address) in &addresses {
-        host.connect(peer, *address, CONNECT_WITHIN)
-            .with_context(|| format!("connecting to {peer} at {address}"))?;
-    }
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     writeln!(
@@ -90,6 +129,42 @@ pub(crate) fn play(playing: &Playing<'_>) -> Result<ExitCode> {
         })
     )?;
     out.flush()?;
+
+    let deadline = Instant::now() + LINK_WITHIN;
+    for (peer, address) in addresses {
+        loop {
+            if let Some(status) = signalled_status(signalled) {
+                return Ok(ExitCode::from(status));
+            }
+            match host.connect(peer, *address) {
+                Ok(()) => break,
+                Err(error) if Instant::now() >= deadline => {
+                    return Err(error).with_context(|| {
+                        format!("{peer} did not listen at {address} within {LINK_WITHIN:?}")
+                    });
+                }
+                Err(_) => std::thread::sleep(RETRY),
+            }
+        }
+    }
+    loop {
+        let unlinked = host.unlinked();
+        if unlinked.is_empty() {
+            break;
+        }
+        if let Some(status) = signalled_status(signalled) {
+            return Ok(ExitCode::from(status));
+        }
+        if Instant::now() >= deadline {
+            bail!(
+                "{component} has no link from {} within {LINK_WITHIN:?}",
+                unlinked.join(", ")
+            );
+        }
+        host.accept(&listener)?;
+        refused(host);
+        std::thread::sleep(POLL);
+    }
 
     if opens {
         let report = host.submit(
@@ -106,17 +181,19 @@ pub(crate) fn play(playing: &Playing<'_>) -> Result<ExitCode> {
         }
     }
 
-    let mut accepted = 0;
     loop {
-        let signal = signalled.load(Ordering::SeqCst);
-        if signal != 0 {
-            host.stop();
-            let signal = u8::try_from(signal).unwrap_or(u8::MAX - SIGNALLED);
-            return Ok(ExitCode::from(SIGNALLED.saturating_add(signal)));
+        if let Some(status) = signalled_status(signalled) {
+            return Ok(ExitCode::from(status));
         }
-        accepted += host.accept(&listener)?;
+        host.accept(&listener)?;
+        refused(host);
         let report = host.deliver()?;
         print(&mut out, &report)?;
+        if host.ended() {
+            writeln!(out, "{}", json!({ "ended": "a peer ended the match" }))?;
+            out.flush()?;
+            return Ok(ExitCode::SUCCESS);
+        }
         if host
             .next_deadline()
             .is_some_and(|deadline| deadline <= clock.now())
@@ -131,21 +208,21 @@ pub(crate) fn play(playing: &Playing<'_>) -> Result<ExitCode> {
                 writeln!(out, "{}", json!({ "view": Value::Object(view) }))?;
                 out.flush()?;
                 if won {
-                    host.stop();
+                    host.end(END_WITHIN);
+                    writeln!(out, "{}", json!({ "ended": "the match has a winner" }))?;
+                    out.flush()?;
                     return Ok(ExitCode::SUCCESS);
                 }
             }
         }
-        if accepted > 0 && host.incoming() == 0 {
-            writeln!(
-                out,
-                "{}",
-                json!({ "closed": "every link to this component" })
-            )?;
-            out.flush()?;
-            return Ok(ExitCode::SUCCESS);
-        }
         std::thread::sleep(POLL);
+    }
+}
+
+/// Reports every connection the host refused on stderr.
+fn refused(host: &mut Host) {
+    for refusal in host.refused() {
+        eprintln!("b10x-spindle: refused {refusal}");
     }
 }
 
