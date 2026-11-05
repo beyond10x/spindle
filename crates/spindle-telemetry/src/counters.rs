@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::catalogue::{Catalogue, Key, Kind};
-use crate::port::{Carried, Failure, Outcome, Record, Telemetry, Timed};
+use crate::port::{Carried, Failure, Outcome, Record, Retried, Telemetry, Timed};
 
 /// The upper bounds, in microseconds, of a duration histogram's buckets. A histogram has one
 /// count per bound, each counting the values above the previous bound and at most this one, and
@@ -40,6 +40,7 @@ struct Index {
     commands: HashMap<String, CommandIndex>,
     appended: HashMap<String, usize>,
     carried: HashMap<String, [Option<usize>; Carried::ALL.len()]>,
+    retried: HashMap<String, [Option<usize>; Retried::ALL.len()]>,
     timed: HashMap<String, [Option<usize>; Timed::ALL.len()]>,
     rows_written: Option<usize>,
     bytes_written: Option<usize>,
@@ -205,6 +206,9 @@ impl Index {
             Key::Carried { binding, carried } => {
                 self.carried.entry(binding.clone()).or_default()[carried.index()] = Some(position);
             }
+            Key::Retried { binding, retried } => {
+                self.retried.entry(binding.clone()).or_default()[retried.index()] = Some(position);
+            }
             Key::Timed { binding, timed } => {
                 self.timed.entry(binding.clone()).or_default()[timed.index()] = Some(position);
             }
@@ -271,6 +275,13 @@ impl Telemetry for Counters {
                     .carried
                     .get(binding)
                     .and_then(|positions| positions[carried.index()]),
+                1,
+            ),
+            Record::Retried { binding, retried } => self.add(
+                self.index
+                    .retried
+                    .get(binding)
+                    .and_then(|positions| positions[retried.index()]),
                 1,
             ),
             Record::Timed {

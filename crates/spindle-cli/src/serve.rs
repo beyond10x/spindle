@@ -8,7 +8,6 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use anyhow::{Context, Result, bail};
-use ess_domain::binding::Failure;
 use ess_gen::http::Binding;
 use spindle_capability::{Capability, Environment};
 use spindle_host::{Cause, Host, HostError, Retries, SystemClock};
@@ -97,7 +96,8 @@ pub(crate) struct Serving<'a> {
 /// Before listening it prints on stderr one line per operation it does not serve
 /// ([`Surface::unserved`]) and, with `drop_retries`, one per binding whose retries it drops. A
 /// run that would serve no operation, one of them one the ingress cannot route, is refused. Each
-/// command a binding invoked that did not execute is printed on stderr as it is dropped.
+/// command a binding invoked that did not execute is printed on stderr as it is dropped, after
+/// its last attempt where the binding retries it ([`spindle_host::RETRY_ATTEMPTS`]).
 pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     let signalled = signals()?;
     let environment = serving.environment;
@@ -158,26 +158,14 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     let retries = if serving.drop_retries {
         Retries::Dropped
     } else {
-        Retries::Refused
+        Retries::Retried
     };
-    let refused_retry = spindle_host::uncarried(&ir, retries);
     let mut host =
         match Host::with_retries(ir, environment, Arc::new(SystemClock), directory, retries) {
             Ok(host) => host,
             Err(HostError::Refused(refusal)) => {
                 println!("{refusal}");
                 return Ok(ExitCode::from(REFUSED));
-            }
-            Err(error @ HostError::Unsupported(_))
-                if refused_retry
-                    .as_ref()
-                    .is_some_and(|(_, failure)| *failure == Failure::Retry) =>
-            {
-                return Err(anyhow::Error::from(error).context(format!(
-                    "on_failure: retry on {}: this host retries no invocation; --drop-retries runs \
-                     each such binding as a drop binding, dropping a failed invocation",
-                    retried.join(", ")
-                )));
             }
             Err(error) => return Err(error.into()),
         };
@@ -213,8 +201,13 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
                     Cause::Delivered { binding } | Cause::Tick { binding } => binding.as_str(),
                     Cause::Submitted => "the request",
                 };
+                let attempts = if failed.attempts > 1 {
+                    format!(" after {} attempts", failed.attempts)
+                } else {
+                    String::new()
+                };
                 eprintln!(
-                    "b10x-spindle: {} did not run {} ({binding}), dropped: {}",
+                    "b10x-spindle: {} did not run {} ({binding}), dropped{attempts}: {}",
                     failed.component, failed.command, failed.error
                 );
             }

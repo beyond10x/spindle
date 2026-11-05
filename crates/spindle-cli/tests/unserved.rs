@@ -401,13 +401,33 @@ fn a_run_with_nothing_to_serve_is_refused() {
 }
 
 #[test]
-fn retry_bindings_are_refused_without_drop_retries() {
-    let (status, stdout, stderr) = refused(RETRIED, &[]);
-    assert!(!status.success(), "{status:?} {stdout} {stderr}");
-    assert!(!stdout.contains("listening"), "nothing listened: {stdout}");
+fn retry_bindings_start_and_retry_without_drop_retries() {
+    let contract = Contract::load(RETRIED);
+    let served = serve(RETRIED, &[]);
+    let (status, answer) = call(
+        &served,
+        &contract,
+        WRITE_NOTE,
+        Some(&json!({"note_id": "n1", "text": "kept"})),
+    );
+    assert_eq!(status, 202, "{answer}");
+    let given_up = served.stderr.until("did not run notes.index.IndexNote");
+    let line = given_up
+        .iter()
+        .find(|line| line.contains("did not run notes.index.IndexNote"))
+        .expect("the given-up invocation is reported");
     assert!(
-        stderr.contains("index-note") && stderr.contains("--drop-retries"),
-        "the refusal names the binding and the flag: {stderr}"
+        line.contains("(index-note)") && line.contains("after 5 attempts"),
+        "reported once, after its last attempt: {line}"
+    );
+    assert!(
+        !served
+            .stderr
+            .lines()
+            .iter()
+            .any(|line| line.contains("--drop-retries")),
+        "no retry is dropped without the flag: {:#?}",
+        served.stderr.lines()
     );
 }
 

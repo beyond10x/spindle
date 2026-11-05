@@ -384,6 +384,12 @@ Decided by the operator, 2026-11-04:
 | showcase: a two-player paddle-and-ball game, three components, each in its own microVM, talking over channels | `examples/rally` (§ 13) |
 | HTTP ingress (2026-11-05): ESS's published contract, everywhere: routes where `ess generate --kind openapi` publishes them, ESS's derived routes or, with an `ess-http/1` binding compiled by ESS, its method, path, path variables and status per outcome, derived routes for what it does not name; no route of Spindle's own | `crates/spindle-ingress`; a command answers ESS's envelope `{outcome, published, error?, payload?}`, a view the `{rows}` ESS projects; request refusals as ESS's server makes them (400, 404, 405, 411, 413); `http-loopback` only |
 
+Runtime defaults, 2026-11-05:
+
+| default | consequence |
+|---|---|
+| `on_failure: retry` (no `retry:` bound) makes at most 5 attempts per envelope: the first and four retries, each run at once on the host's thread, with no backoff (`spindle_host::RETRY_ATTEMPTS`) | ESS bounds no unbounded retry; a refused attempt and one the kernel does not execute are both retried. The next envelope runs only once the retry has settled, so a retry never reorders later events. The last failure is reported once, with its attempt count, and never run again. `binding.<binding>.attempted` counts every attempt and `binding.<binding>.exhausted` every invocation given up, on the component that invokes. `--drop-retries` stays as an explicit opt-out that runs such a binding as `drop`; a bounded `retry:` and a per-refusal `on_refusal` policy stay refused by name |
+
 Open:
 
 | question | default |

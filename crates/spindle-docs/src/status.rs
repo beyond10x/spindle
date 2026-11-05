@@ -133,6 +133,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "crates/spindle-channel/tests/channel.rs::an_event_reaches_the_bound_component_over_tcp",
     ),
     shipped(
+        "Bindings",
+        "Retry on failure",
+        "An on_failure: retry binding runs its command again at once after each refused or failed attempt, up to 5 attempts, before the next envelope runs; each attempt and each given-up invocation is counted. --drop-retries runs such a binding as a drop binding.",
+        "/docs/concepts/components-and-bindings",
+        "crates/spindle-host/tests/retry.rs::a_failing_invocation_is_retried_until_it_succeeds",
+    ),
+    shipped(
         "Rally",
         "Every component in one process",
         "b10x-spindle play runs the three rally components in one process with in-process channels until a side wins.",
@@ -246,7 +253,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "Serve what runs",
-        "An HTTP run serves every command and view that runs and answers each other one 501 naming the construct, ESS's envelope for a command; the list is printed at startup, in name order. A view the ingress cannot route still refuses startup by name, since ESS publishes no 501 for a view. on_failure: retry bindings start only with --drop-retries, and sqlite state without --state is kept in a temporary directory removed when the run ends.",
+        "An HTTP run serves every command and view that runs and answers each other one 501 naming the construct, ESS's envelope for a command; the list is printed at startup, in name order. A view the ingress cannot route still refuses startup by name, since ESS publishes no 501 for a view. SQLite state without --state is kept in a temporary directory removed when the run ends.",
         "/docs/concepts/capabilities",
         "crates/spindle-cli/tests/unserved.rs::an_unrunnable_command_answers_501_and_the_rest_serve",
     ),

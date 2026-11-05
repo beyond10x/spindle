@@ -1,0 +1,54 @@
+format: ess/34
+system: filing
+version: v1
+summary: Filings recorded in a ledger by a binding that retries a refused entry, and noted by one that drops a failed note.
+domains:
+  - filing.desk
+  - filing.ledger
+components:
+  - component: desk
+    summary: Takes filings.
+    owns:
+      domains:
+        - filing.desk
+    accepts:
+      commands:
+        - filing.desk.File
+    publishes:
+      events:
+        - filing.desk.Filed
+        - filing.desk.Noted
+    reached_by: in_process
+  - component: ledger
+    summary: Records each filing and keeps a note of it.
+    owns:
+      domains:
+        - filing.ledger
+    accepts:
+      commands:
+        - filing.ledger.Record
+        - filing.ledger.Log
+    publishes:
+      events:
+        - filing.ledger.Recorded
+        - filing.ledger.Logged
+    reached_by: in_process
+bindings:
+  - id: record-filing
+    when:
+      event: filing.desk.Filed
+    invoke:
+      command: filing.ledger.Record
+    mapping:
+      filing_id: event.filing_id
+    delivery: at_most_once
+    on_failure: retry
+  - id: log-note
+    when:
+      event: filing.desk.Noted
+    invoke:
+      command: filing.ledger.Log
+    mapping:
+      filing_id: event.filing_id
+    delivery: at_most_once
+    on_failure: drop

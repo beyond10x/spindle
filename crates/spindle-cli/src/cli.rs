@@ -113,8 +113,9 @@ pub enum Command {
     /// whose operations only the kernel or the host does not run is served as before, each
     /// answering `501`.
     ///
-    /// An event binding with `on_failure: retry` exits 1 before listening unless
-    /// `--drop-retries` is given; `on_failure: escalate` always does.
+    /// An event binding with `on_failure: retry` runs its command again at once after each
+    /// attempt that fails, up to 5 attempts, unless `--drop-retries` is given; one with
+    /// `on_failure: escalate` exits 1 before listening.
     Run {
         /// The specification directory.
         spec: PathBuf,
