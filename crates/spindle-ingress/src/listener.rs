@@ -15,7 +15,7 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use serde_json::{Map, Value};
 use tokio::sync::oneshot;
 
-use spindle_host::Host;
+use spindle_host::{Failed, Host};
 
 use crate::answer::Answer;
 use crate::console::Console;
@@ -39,7 +39,7 @@ const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
 #[derive(Debug)]
 enum Asked {
     /// A command or view the surface serves.
-    Route(Route),
+    Route(Box<Route>),
     /// A console route.
     Console(Console),
 }
@@ -73,7 +73,7 @@ impl Exchange {
     /// The route the request is for; `None` for a console route.
     pub fn route(&self) -> Option<&Route> {
         match &self.asked {
-            Asked::Route(route) => Some(route),
+            Asked::Route(route) => Some(route.as_ref()),
             Asked::Console(_) => None,
         }
     }
@@ -102,10 +102,16 @@ impl Exchange {
     }
 
     /// Answers the request on `host` and sends the answer: a command or view as
-    /// [`answer`](crate::answer) answers it, a console route as [`crate::console`] does.
-    pub fn serve(self, host: &mut Host) {
+    /// [`answer`](crate::answer) answers it, a console route as [`crate::console`] does. Returns
+    /// every command a binding invoked on the way that did not execute ([`crate::answered`]).
+    pub fn serve(self, host: &mut Host) -> Vec<Failed> {
+        let mut failed = Vec::new();
         let reply = match &self.asked {
-            Asked::Route(route) => crate::answer(host, route, &self.carried, &self.body).into(),
+            Asked::Route(route) => {
+                let (answer, dropped) = crate::answered(host, route, &self.carried, &self.body);
+                failed = dropped;
+                answer.into()
+            }
             Asked::Console(Console::Model) => Reply {
                 status: 200,
                 text: crate::console::model(host.ir()),
@@ -114,6 +120,7 @@ impl Exchange {
             Asked::Console(Console::Reset) => crate::console::reset(host).into(),
         };
         let _ = self.reply.send(reply);
+        failed
     }
 }
 
@@ -224,7 +231,7 @@ async fn handle(
         .surface
         .resolve(request.method().as_str(), request.uri().path())
     {
-        Resolved::Found(route, carried) => (Asked::Route(route.clone()), carried),
+        Resolved::Found(route, carried) => (Asked::Route(Box::new(route.clone())), carried),
         Resolved::Console(console) => (Asked::Console(console), Map::new()),
         Resolved::Malformed(why) => return Ok(written(Answer::refusal(400, why))),
         Resolved::WrongMethod(allowed) => {

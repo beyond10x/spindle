@@ -1,0 +1,60 @@
+domain: notes.pad
+summary: Notes copied with the copy's identity answered, or discarded; no view reads them.
+types:
+  - name: notes.pad.NoteId
+    kind: newtype
+    of: String
+entities:
+  - name: notes.pad.Note
+    identity:
+      name: note_id
+      type: notes.pad.NoteId
+    fields: []
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+errors:
+  - name: notes.pad.NoteNotFound
+    summary: No note carries the id.
+    fields: []
+commands:
+  - name: notes.pad.CopyNote
+    input:
+      - name: text
+        type: String
+    response:
+      - name: copy_id
+        type: String
+    outcomes:
+      - name: copied
+        returns: true
+        emits: [notes.pad.NoteCopied]
+        payload:
+          notes.pad.NoteCopied: {text: input.text}
+        summary: The copy's identity is answered to the caller.
+  - name: notes.pad.DiscardNote
+    input:
+      - name: note_id
+        type: notes.pad.NoteId
+    outcomes:
+      - name: no-such-note
+        unknown_instance: true
+        error: notes.pad.NoteNotFound
+        summary: No note carries the id.
+      - name: discarded
+        deletes: notes.pad.Note
+        instance: note_id
+        emits: [notes.pad.NoteDiscarded]
+        payload:
+          notes.pad.NoteDiscarded: {note_id: input.note_id}
+        summary: The note is gone.
+events:
+  - name: notes.pad.NoteCopied
+    fields:
+      - name: text
+        type: String
+  - name: notes.pad.NoteDiscarded
+    fields:
+      - name: note_id
+        type: notes.pad.NoteId

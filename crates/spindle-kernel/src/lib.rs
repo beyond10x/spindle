@@ -40,7 +40,8 @@
 //! example use, and the guarded forms beside them (an input guard beside `when_subject:`,
 //! `when_subject: {field, equals}`, `when_subject_state:`, `external:` with `when:` or
 //! `when_subject:`). Any other construct is [`ExecuteError::Unsupported`], named, before the
-//! command reads or writes anything.
+//! command reads or writes anything. [`runs`] makes the same check without running anything, so
+//! a host can name what it will not run before it serves.
 
 mod decider;
 mod execute;
@@ -60,6 +61,7 @@ pub use execute::{at_rest, execute, execute_at, execute_minting};
 pub use mint::{Identity, Mint, Uuid, UuidV4};
 pub use sqlite::SqliteStore;
 pub use store::{Change, MemoryStore, Row, Store, StoreError, Stored};
+pub use supported::check as runs;
 
 /// One event a command emitted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

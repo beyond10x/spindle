@@ -227,6 +227,42 @@ pub enum HostError {
     Stopped,
 }
 
+/// What a host does with an event binding whose `on_failure` is `retry`: this host retries no
+/// invocation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Retries {
+    /// Refuse to start, as for any binding the host does not carry.
+    #[default]
+    Refused,
+    /// Run the binding as a `drop` binding runs: a failed invocation is reported once and never
+    /// run again, and an envelope whose send fails is dropped.
+    Dropped,
+}
+
+/// The first event binding of `ir`, by name, whose `on_failure` a host started with `retries`
+/// does not carry, and what it says: the binding [`Host::with_retries`] refuses before it opens
+/// anything. `escalate` is never carried, and `retry` only under [`Retries::Dropped`].
+pub fn uncarried(ir: &EssIr, retries: Retries) -> Option<(String, Failure)> {
+    ir.bindings()
+        .values()
+        .filter(|binding| binding.cause.event().is_some())
+        .find(|binding| match binding.failure {
+            Failure::Drop => false,
+            Failure::Retry => retries == Retries::Refused,
+            Failure::Escalate => true,
+        })
+        .map(|binding| (binding.name.as_str().to_owned(), binding.failure))
+}
+
+/// The event bindings of `ir` whose `on_failure` is `retry`, by name.
+pub fn retried(ir: &EssIr) -> Vec<String> {
+    ir.bindings()
+        .values()
+        .filter(|binding| binding.cause.event().is_some() && binding.failure == Failure::Retry)
+        .map(|binding| binding.name.as_str().to_owned())
+        .collect()
+}
+
 struct Component {
     store: Box<dyn Store>,
     /// The SQLite file the store keeps its state in; `None` for a store in memory.
@@ -288,14 +324,32 @@ impl Host {
     /// # Errors
     /// [`HostError::Refused`] when a component is not admitted, naming everything every component
     /// lacks; [`HostError::Unsupported`] when admission bound something this host does not run,
-    /// or the specification uses a binding it does not carry.
+    /// or the specification uses a binding it does not carry, such as an event binding whose
+    /// `on_failure` is not `drop` ([`uncarried`]).
     pub fn new(
         ir: EssIr,
         environment: &Environment,
         clock: Arc<dyn Clock>,
         state: &Path,
     ) -> Result<Self, HostError> {
-        Self::open(ir, environment, clock, state, None)
+        Self::open(ir, environment, clock, state, None, Retries::Refused)
+    }
+
+    /// [`Host::new`], with `retries` saying what becomes of an event binding whose `on_failure`
+    /// is `retry` ([`retried`]): refused, as [`Host::new`] refuses it, or run as a `drop` binding
+    /// runs, each failed invocation reported once and never run again. `on_failure: escalate`
+    /// is refused either way.
+    ///
+    /// # Errors
+    /// As [`Host::new`].
+    pub fn with_retries(
+        ir: EssIr,
+        environment: &Environment,
+        clock: Arc<dyn Clock>,
+        state: &Path,
+        retries: Retries,
+    ) -> Result<Self, HostError> {
+        Self::open(ir, environment, clock, state, None, retries)
     }
 
     /// [`Host::new`], with every `external:` cause of every component answered by `decider`, whatever
@@ -310,7 +364,14 @@ impl Host {
         state: &Path,
         decider: Box<dyn Decider + Send>,
     ) -> Result<Self, HostError> {
-        Self::open(ir, environment, clock, state, Some(decider))
+        Self::open(
+            ir,
+            environment,
+            clock,
+            state,
+            Some(decider),
+            Retries::Refused,
+        )
     }
 
     fn open(
@@ -319,9 +380,10 @@ impl Host {
         clock: Arc<dyn Clock>,
         state: &Path,
         decider: Option<Box<dyn Decider + Send>>,
+        retries: Retries,
     ) -> Result<Self, HostError> {
         let placements = admit(&ir, environment).map_err(HostError::Refused)?;
-        Self::assemble(ir, clock, state, placements, IN_PROCESS, decider)
+        Self::assemble(ir, clock, state, placements, IN_PROCESS, decider, retries)
     }
 
     /// The host of the components in `placements`, their bindings carried on `carried`: every
@@ -333,19 +395,19 @@ impl Host {
         placements: Placements,
         carried: &str,
         decider: Option<Box<dyn Decider + Send>>,
+        retries: Retries,
     ) -> Result<Self, HostError> {
         let answers = decider.is_some();
-        for binding in ir.bindings().values() {
-            if binding.cause.event().is_some() && binding.failure != Failure::Drop {
-                return Err(HostError::Unsupported(format!(
-                    "binding {} says on_failure: {:?}; this host drops an invocation that fails and \
-                     neither retries nor escalates it",
-                    binding.name.as_str(),
-                    binding.failure
-                )));
-            }
+        if let Some((binding, failure)) = uncarried(&ir, retries) {
+            return Err(HostError::Unsupported(format!(
+                "binding {binding} says on_failure: {failure:?}; this host drops an invocation \
+                 that fails and neither retries nor escalates it"
+            )));
         }
-        let router = Router::from_ir(&ir)?;
+        let router = match retries {
+            Retries::Refused => Router::from_ir(&ir)?,
+            Retries::Dropped => Router::from_ir(&ir)?.dropping_retries(),
+        };
         let mut components = BTreeMap::new();
         for (name, bindings) in &placements {
             for binding in bindings {
@@ -1029,6 +1091,16 @@ fn accepting(ir: &EssIr, command: &str) -> Option<String> {
 }
 
 /// The view named `view`, where this host can answer it, and the component that owns its source.
+/// Whether a host running `ir` answers the view `view`, asked before anything is read: the
+/// check [`Host::view`] and [`Host::list`] make first.
+///
+/// # Errors
+/// As [`Host::list`] refuses the view: [`HostError::NoView`], or [`HostError::Unsupported`]
+/// naming the construct it does not read.
+pub fn reads(ir: &EssIr, view: &str) -> Result<(), HostError> {
+    readable(ir, view).map(|_| ())
+}
+
 fn readable<'ir>(ir: &'ir EssIr, view: &str) -> Result<(&'ir ResolvedView, String), HostError> {
     let declared = ir
         .views()

@@ -2,10 +2,10 @@
 
 use ess_http::Operation;
 use serde_json::{Map, Value, json};
-use spindle_host::{Host, HostError};
+use spindle_host::{Failed, Host, HostError};
 use spindle_kernel::{DeclaredError, Event, ExecuteError};
 
-use crate::surface::Route;
+use crate::surface::{Route, Unserved};
 
 /// A status and the JSON body written under it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,15 +54,38 @@ impl Answer {
 /// kernel does not run answers `501` with `committed: false`; one whose effect was written and
 /// whose consequences could not be carried answers `501` with `committed: true`. A view the host
 /// cannot answer is refused `501`, naming what it does not read.
+///
+/// An operation the route marks [`Unserved::Ingress`] answers `501` with `committed: false`,
+/// naming the operation and what it uses, before the body is read or the host asked.
 pub fn answer(host: &mut Host, route: &Route, carried: &Map<String, Value>, body: &[u8]) -> Answer {
+    answered(host, route, carried, body).0
+}
+
+/// [`answer`], and every command a binding invoked on the way that did not execute: each was
+/// dropped, and none runs again.
+pub fn answered(
+    host: &mut Host,
+    route: &Route,
+    carried: &Map<String, Value>,
+    body: &[u8],
+) -> (Answer, Vec<Failed>) {
+    if let Some(unserved @ Unserved::Ingress(_)) = route.unserved() {
+        return (
+            Answer::unfinished(format!("{}: {unserved}", route.operation), false),
+            Vec::new(),
+        );
+    }
     match &route.operation {
         Operation::Command(command) => run(host, route, command, carried, body),
         Operation::View(view) => match host.list(view) {
-            Ok(rows) => Answer {
-                status: 200,
-                body: json!({"rows": rows}),
-            },
-            Err(error) => Answer::refusal(501, error.to_string()),
+            Ok(rows) => (
+                Answer {
+                    status: 200,
+                    body: json!({"rows": rows}),
+                },
+                Vec::new(),
+            ),
+            Err(error) => (Answer::refusal(501, error.to_string()), Vec::new()),
         },
     }
 }
@@ -73,37 +96,46 @@ fn run(
     command: &str,
     carried: &Map<String, Value>,
     body: &[u8],
-) -> Answer {
+) -> (Answer, Vec<Failed>) {
     let mut input = match input(body) {
         Ok(input) => input,
-        Err(refusal) => return refusal,
+        Err(refusal) => return (refusal, Vec::new()),
     };
     if let Some(field) = input
         .keys()
         .find(|field| !route.input().iter().any(|declared| declared == *field))
     {
-        return Answer::refusal(400, format!("{command} declares no input field {field}"));
+        return (
+            Answer::refusal(400, format!("{command} declares no input field {field}")),
+            Vec::new(),
+        );
     }
     for (field, value) in carried {
         if input.contains_key(field) {
-            return Answer::refusal(
-                400,
-                format!("{field} is carried in the path, and the body carries it too"),
+            return (
+                Answer::refusal(
+                    400,
+                    format!("{field} is carried in the path, and the body carries it too"),
+                ),
+                Vec::new(),
             );
         }
         input.insert(field.clone(), value.clone());
     }
-    match host.submit(command, input) {
-        Ok(report) => match report.ran.first() {
-            Some(ran) => envelope(
-                route,
-                command,
-                &ran.executed.outcome,
-                &ran.executed.events,
-                None,
-            ),
-            None => Answer::unfinished(format!("{command} ran and reported nothing"), true),
-        },
+    let answer = match host.submit(command, input) {
+        Ok(report) => {
+            let answer = match report.ran.first() {
+                Some(ran) => envelope(
+                    route,
+                    command,
+                    &ran.executed.outcome,
+                    &ran.executed.events,
+                    None,
+                ),
+                None => Answer::unfinished(format!("{command} ran and reported nothing"), true),
+            };
+            return (answer, report.failed);
+        }
         Err(HostError::CommandRefused { outcome, error, .. }) => {
             envelope(route, command, &outcome, &[], Some(&error))
         }
@@ -115,7 +147,8 @@ fn run(
         },
         Err(error @ HostError::NotAccepted(_)) => Answer::unfinished(error.to_string(), false),
         Err(error) => Answer::unfinished(error.to_string(), true),
-    }
+    };
+    (answer, Vec::new())
 }
 
 /// The command's input: the body as a JSON object, the empty object for an empty body.

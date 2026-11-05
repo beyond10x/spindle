@@ -47,7 +47,7 @@ use spindle_channel::{Channel, ChannelError, Frame, Receiver, Router};
 use spindle_telemetry::Counters;
 use spindle_timer::Clock;
 
-use super::{Cause, DELIVERY_LIMIT, Deliveries, Host, HostError, Report};
+use super::{Cause, DELIVERY_LIMIT, Deliveries, Host, HostError, Report, Retries};
 use crate::admission::{Placements, Refusal};
 
 /// The channel implementation a one-component host carries bindings on.
@@ -464,7 +464,7 @@ impl Host {
             .filter(|route| route.to == component && route.from != component)
             .map(|route| route.from.clone())
             .collect();
-        let mut host = Self::assemble(ir, clock, state, placements, TCP, None)?;
+        let mut host = Self::assemble(ir, clock, state, placements, TCP, None, Retries::Refused)?;
         host.remote = Some(Remote {
             me: component.to_owned(),
             expected,

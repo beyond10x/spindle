@@ -178,6 +178,13 @@
       "status": "shipped"
     },
     {
+      "area": "Execution",
+      "detail": "An HTTP run serves every command and view that runs and answers each other one 501 naming the construct, ESS's envelope for a command; the list is printed at startup, in name order. A view the ingress cannot route still refuses startup by name, since ESS publishes no 501 for a view. on_failure: retry bindings start only with --drop-retries, and sqlite state without --state is kept in a temporary directory removed when the run ends.",
+      "href": "/docs/concepts/capabilities",
+      "label": "Serve what runs",
+      "status": "shipped"
+    },
+    {
       "area": "Conformance",
       "detail": "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: captures feed later steps, view asserts are checked, and the first divergent step is named and ends the run.",
       "href": "/docs/concepts/specification",

@@ -1,0 +1,10 @@
+type: ess-http/1
+specification:
+  system: notes
+  version: v1
+  source_digest: sha256:0a7f82fc633fa09b2873f7b6a4b8986559c2d4e6150c5a14c8f0ebed9e63809b
+routes:
+  - view: notes.pad.AllNotes
+    method: get
+    path: /notes
+    body: array

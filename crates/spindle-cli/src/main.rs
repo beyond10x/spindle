@@ -169,6 +169,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             answer_default,
             http,
             port,
+            drop_retries,
             scenario: None,
         } => execute(&Execute {
             spec: &spec,
@@ -178,6 +179,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             answer_default,
             http: http.as_deref(),
             port,
+            drop_retries,
         }),
         Command::Play {
             spec,
@@ -366,6 +368,7 @@ struct Execute<'a> {
     answer_default: bool,
     http: Option<&'a Path>,
     port: Option<u16>,
+    drop_retries: bool,
 }
 
 fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
@@ -377,6 +380,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         answer_default,
         http,
         port,
+        drop_retries,
     } = *arguments;
     let loaded = spindle_spec::load(spec)?;
     let answers = Answers::load(&loaded.ir, decisions, answer_default)?;
@@ -442,6 +446,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 binding,
                 port: port.unwrap_or(0),
                 ingress: ingress.implementation.as_str(),
+                drop_retries,
             },
         );
     }
@@ -458,6 +463,14 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
             spec.display()
         );
     }
+    if drop_retries {
+        bail!(
+            "nothing in {} requires ingress.network, and run reading stdin carries no binding, so \
+             --drop-retries would be ignored",
+            spec.display()
+        );
+    }
+    let scratch;
     let mut store: Box<dyn Store> = match (durable, state) {
         (None | Some("memory"), None) => Box::new(MemoryStore::default()),
         (None, Some(path)) => bail!(
@@ -473,10 +486,13 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         ),
         (Some("sqlite"), Some(path)) => Box::new(SqliteStore::open(path)?),
         (Some("sqlite"), None) => {
-            bail!(
-                "store.durable is bound to sqlite on {}: name the state file with --state",
-                parsed.name
-            )
+            scratch = tempfile::tempdir().context("creating a temporary state directory")?;
+            removed_on_signal(scratch.path())?;
+            eprintln!(
+                "b10x-spindle: state is kept in {}, removed when the run ends",
+                scratch.path().display()
+            );
+            Box::new(SqliteStore::open(&scratch.path().join("state.sqlite"))?)
         }
         (Some(other), _) => bail!("this build has no `{other}` store for store.durable"),
     };
@@ -498,6 +514,25 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         out.flush()?;
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Removes `directory` and exits 130 or 143 on SIGINT or SIGTERM: `run` reading stdin blocks in a
+/// read a signal does not interrupt, so a thread of its own waits for the signal instead.
+fn removed_on_signal(directory: &Path) -> Result<()> {
+    let mut signals = signal_hook::iterator::Signals::new([SIGINT, SIGTERM])
+        .context("handling SIGINT and SIGTERM")?;
+    let directory = directory.to_owned();
+    std::thread::Builder::new()
+        .name("spindle-signals".to_owned())
+        .spawn(move || {
+            if let Some(signal) = signals.forever().next() {
+                let _ = std::fs::remove_dir_all(&directory);
+                let signal = u8::try_from(signal).unwrap_or(u8::MAX - SIGNALLED);
+                std::process::exit(i32::from(SIGNALLED.saturating_add(signal)));
+            }
+        })
+        .context("starting the signal thread")?;
+    Ok(())
 }
 
 /// The result line for one request.

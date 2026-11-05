@@ -26,5 +26,6 @@ mod view;
 pub use admission::{Placements, Refusal, admit};
 pub use host::{
     Cause, DELIVERY_LIMIT, Failed, Host, HostError, Published, Ran, RefusedCommand, Report,
+    Retries, reads, retried, uncarried,
 };
 pub use spindle_timer::{Clock, ManualClock, SystemClock};
