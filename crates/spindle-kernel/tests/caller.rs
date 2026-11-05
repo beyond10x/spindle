@@ -69,6 +69,7 @@ fn send(
         &Invocation {
             command,
             input: &object(input),
+            actor: caller.is_some().then_some(WRITER),
             caller,
         },
     )
@@ -217,6 +218,23 @@ fn a_command_sent_without_its_caller_is_refused_before_anything_is_written() {
     assert!(
         matches!(sent, Err(ExecuteError::InvalidInput(_))),
         "a caller value its attribute's type does not admit is refused: {sent:?}"
+    );
+    let sent = execute_as(
+        &ir,
+        &mut store,
+        &mut NoExternals,
+        &mut UuidV4,
+        &SystemTime::now,
+        &Invocation {
+            command: EDIT,
+            input: &object(json!({"notebook_id": NOTEBOOK_ID, "title": "fair copy"})),
+            actor: None,
+            caller: Some(&writer(OWNER)),
+        },
+    );
+    assert!(
+        matches!(sent, Err(ExecuteError::InvalidInput(_))),
+        "caller attributes sent as no actor are refused, as ESS refuses them: {sent:?}"
     );
     assert_eq!(row(&mut store), before, "a refused caller writes nothing");
 }

@@ -37,6 +37,8 @@ struct Request {
     #[serde(default)]
     external: BTreeMap<String, bool>,
     #[serde(default)]
+    actor: Option<String>,
+    #[serde(default)]
     caller: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
@@ -548,6 +550,7 @@ fn answer(
     let invocation = spindle_kernel::Invocation {
         command: &request.command,
         input: &request.input,
+        actor: request.actor.as_deref(),
         caller: request.caller.as_ref(),
     };
     match spindle_kernel::execute_as(

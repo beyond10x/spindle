@@ -1,0 +1,225 @@
+domain: quill.desk
+summary: Desks claimed by the author who sends the claim, handed to a delegate, pinged by anyone.
+types:
+  - name: quill.desk.DeskId
+    kind: newtype
+    of: Uuid
+  - name: quill.desk.OwnerId
+    kind: newtype
+    of: Uuid
+actors:
+  - name: quill.desk.Author
+    attributes:
+      - name: owner_id
+        type: quill.desk.OwnerId
+      - name: code
+        type: quill.desk.OwnerId
+      - name: delegate
+        type: Optional<quill.desk.OwnerId>
+    may:
+      - quill.desk.Claim
+      - quill.desk.Ping
+      - quill.desk.Hand
+      - quill.desk.Keep
+      - quill.desk.Veto
+      - quill.desk.Lock
+  - name: quill.desk.Visitor
+    attributes:
+      - name: owner_id
+        type: quill.desk.OwnerId
+      - name: code
+        type: String
+      - name: badge
+        type: String
+    may:
+      - quill.desk.Ping
+entities:
+  - name: quill.desk.Desk
+    identity:
+      name: desk_id
+      type: quill.desk.DeskId
+    fields:
+      - name: owner_id
+        type: Optional<quill.desk.OwnerId>
+      - name: keeper
+        type: Optional<quill.desk.OwnerId>
+      - name: label
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+errors:
+  - name: quill.desk.NoSuchDesk
+    summary: No desk carries the id.
+    fields: []
+  - name: quill.desk.SameKeeper
+    summary: The desk is handed to the caller's own delegate.
+    fields: []
+  - name: quill.desk.NotKeeper
+    summary: The caller's delegate does not keep the desk.
+    fields: []
+  - name: quill.desk.Vetoed
+    summary: Someone outside the model vetoes the author's relabel.
+    fields: []
+  - name: quill.desk.Locked
+    summary: The desk is locked against the caller.
+    fields:
+      - name: by
+        type: quill.desk.OwnerId
+commands:
+  - name: quill.desk.Ping
+    input:
+      - name: desk_id
+        type: quill.desk.DeskId
+      - name: label
+        type: String
+    outcomes:
+      - name: pinged
+        creates: quill.desk.Desk
+        instance: desk_id
+        sets:
+          label: input.label
+        emits: [quill.desk.DeskPinged]
+        payload:
+          quill.desk.DeskPinged:
+            desk_id: input.desk_id
+        summary: A desk is opened by anyone, reading nothing of the caller.
+  - name: quill.desk.Claim
+    input:
+      - name: desk_id
+        type: quill.desk.DeskId
+      - name: label
+        type: String
+    outcomes:
+      - name: claimed
+        creates: quill.desk.Desk
+        instance: desk_id
+        sets:
+          owner_id: {caller: owner_id}
+          keeper: {caller: delegate}
+          label: input.label
+        emits: [quill.desk.DeskClaimed]
+        payload:
+          quill.desk.DeskClaimed:
+            desk_id: input.desk_id
+        summary: The desk is owned by the author and kept by the author's delegate.
+  - name: quill.desk.Hand
+    input:
+      - name: desk_id
+        type: quill.desk.DeskId
+      - name: to
+        type: quill.desk.OwnerId
+    outcomes:
+      - name: to-delegate
+        when: to == caller.delegate
+        error: quill.desk.SameKeeper
+        summary: The desk is handed to the caller's delegate.
+      - name: no-such-desk
+        unknown_instance: true
+        error: quill.desk.NoSuchDesk
+        summary: No desk carries the id.
+      - name: handed
+        updates: quill.desk.Desk
+        instance: desk_id
+        sets:
+          keeper: input.to
+        emits: [quill.desk.DeskHanded]
+        payload:
+          quill.desk.DeskHanded:
+            desk_id: input.desk_id
+        summary: The desk is handed to another keeper.
+  - name: quill.desk.Keep
+    input:
+      - name: desk_id
+        type: quill.desk.DeskId
+      - name: label
+        type: String
+    outcomes:
+      - name: no-such-desk
+        unknown_instance: true
+        error: quill.desk.NoSuchDesk
+        summary: No desk carries the id.
+      - name: not-keeper
+        when_subject:
+          predicate: keeper != caller.delegate
+        error: quill.desk.NotKeeper
+        summary: The caller's delegate does not keep the desk.
+      - name: kept
+        updates: quill.desk.Desk
+        instance: desk_id
+        sets:
+          label: input.label
+        emits: [quill.desk.DeskKept]
+        payload:
+          quill.desk.DeskKept:
+            desk_id: input.desk_id
+        summary: The desk is relabelled for its keeper.
+  - name: quill.desk.Veto
+    input:
+      - name: desk_id
+        type: quill.desk.DeskId
+      - name: label
+        type: String
+    outcomes:
+      - name: no-such-desk
+        unknown_instance: true
+        error: quill.desk.NoSuchDesk
+        summary: No desk carries the id.
+      - name: vetoed
+        external: someone outside the model vetoes a relabel by the owner
+        when_subject:
+          predicate: owner_id == caller.owner_id
+        error: quill.desk.Vetoed
+        summary: Only the owner's relabel is put to the outside veto.
+      - name: relabelled
+        updates: quill.desk.Desk
+        instance: desk_id
+        sets:
+          label: input.label
+        emits: [quill.desk.DeskKept]
+        payload:
+          quill.desk.DeskKept:
+            desk_id: input.desk_id
+        summary: The desk is relabelled.
+  - name: quill.desk.Lock
+    input:
+      - name: desk_id
+        type: quill.desk.DeskId
+    outcomes:
+      - name: locked
+        error: quill.desk.Locked
+        payload:
+          quill.desk.Locked:
+            by: {caller: owner_id}
+        summary: The desk is locked, naming the caller who tried.
+events:
+  - name: quill.desk.DeskPinged
+    fields:
+      - name: desk_id
+        type: quill.desk.DeskId
+  - name: quill.desk.DeskClaimed
+    fields:
+      - name: desk_id
+        type: quill.desk.DeskId
+  - name: quill.desk.DeskHanded
+    fields:
+      - name: desk_id
+        type: quill.desk.DeskId
+  - name: quill.desk.DeskKept
+    fields:
+      - name: desk_id
+        type: quill.desk.DeskId
+views:
+  - name: quill.desk.DeskCard
+    source: quill.desk.Desk
+    consistency: read_your_writes
+    fields:
+      - name: desk_id
+        type: quill.desk.DeskId
+      - name: owner_id
+        type: Optional<quill.desk.OwnerId>
+      - name: keeper
+        type: Optional<quill.desk.OwnerId>
+      - name: label
+        type: String

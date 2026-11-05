@@ -661,10 +661,10 @@ impl Host {
         command: &str,
         input: Map<String, Value>,
     ) -> Result<Report, HostError> {
-        self.submit_as(command, input, None)
+        self.submit_as(command, input, None, None)
     }
 
-    /// [`Host::submit`], sent as the caller whose attributes `caller` holds
+    /// [`Host::submit`], sent as `actor` and as the caller whose attributes `caller` holds
     /// ([`spindle_kernel::Invocation`]). What its events lead to is sent as no caller.
     ///
     /// # Errors
@@ -673,12 +673,13 @@ impl Host {
         &mut self,
         command: &str,
         input: Map<String, Value>,
+        actor: Option<&str>,
         caller: Option<&Map<String, Value>>,
     ) -> Result<Report, HostError> {
         let component = accepting(&self.ir, command)
             .ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
         let mut report = Report::default();
-        match self.execute(&component, command, &input, caller)? {
+        match self.execute(&component, command, &input, actor, caller)? {
             Ok(Executed {
                 outcome,
                 error: Some(error),
@@ -853,6 +854,7 @@ impl Host {
         component: &str,
         command: &str,
         input: &Map<String, Value>,
+        actor: Option<&str>,
         caller: Option<&Map<String, Value>>,
     ) -> Result<Result<Executed, ExecuteError>, HostError> {
         let held = self
@@ -870,6 +872,7 @@ impl Host {
             &spindle_kernel::Invocation {
                 command,
                 input,
+                actor,
                 caller,
             },
         );
@@ -909,7 +912,7 @@ impl Host {
         cause: Cause,
         report: &mut Report,
     ) -> Result<(), HostError> {
-        match self.execute(component, command, input, None)? {
+        match self.execute(component, command, input, None, None)? {
             Ok(Executed {
                 outcome,
                 error: Some(error),

@@ -65,13 +65,13 @@ fn replay_passes_a_step_s_caller() {
 #[test]
 fn run_reads_a_line_s_caller_beside_its_input() {
     let lines = concat!(
-        r#"{"command": "quill.notebook.CreateNotebook", "input": {"notebook_id": "5b2d8f14-3c6a-4e7b-9d1f-2a3b4c5d6e7f", "title": "field notes"}, "caller": {"owner_id": "0f1e2d3c-4b5a-4968-8776-a5b4c3d2e1f0"}}"#,
+        r#"{"command": "quill.notebook.CreateNotebook", "input": {"notebook_id": "5b2d8f14-3c6a-4e7b-9d1f-2a3b4c5d6e7f", "title": "field notes"}, "actor": "quill.notebook.Writer", "caller": {"owner_id": "0f1e2d3c-4b5a-4968-8776-a5b4c3d2e1f0"}}"#,
         "\n",
-        r#"{"command": "quill.notebook.EditNotebook", "input": {"notebook_id": "5b2d8f14-3c6a-4e7b-9d1f-2a3b4c5d6e7f", "title": "stolen"}, "caller": {"owner_id": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d"}}"#,
+        r#"{"command": "quill.notebook.EditNotebook", "input": {"notebook_id": "5b2d8f14-3c6a-4e7b-9d1f-2a3b4c5d6e7f", "title": "stolen"}, "actor": "quill.notebook.Writer", "caller": {"owner_id": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d"}}"#,
         "\n",
         r#"{"command": "quill.notebook.EditNotebook", "input": {"notebook_id": "5b2d8f14-3c6a-4e7b-9d1f-2a3b4c5d6e7f", "title": "fair copy"}}"#,
         "\n",
-        r#"{"command": "quill.notebook.EditNotebook", "input": {"notebook_id": "5b2d8f14-3c6a-4e7b-9d1f-2a3b4c5d6e7f", "title": "fair copy"}, "caller": {"owner_id": "0f1e2d3c-4b5a-4968-8776-a5b4c3d2e1f0"}}"#,
+        r#"{"command": "quill.notebook.EditNotebook", "input": {"notebook_id": "5b2d8f14-3c6a-4e7b-9d1f-2a3b4c5d6e7f", "title": "fair copy"}, "actor": "quill.notebook.Writer", "caller": {"owner_id": "0f1e2d3c-4b5a-4968-8776-a5b4c3d2e1f0"}}"#,
         "\n",
     );
     let output = spindle(&["run", SPEC, "--environment", LAPTOP], lines);

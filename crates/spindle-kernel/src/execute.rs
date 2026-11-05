@@ -128,6 +128,7 @@ pub fn execute_at(
         &Invocation {
             command,
             input,
+            actor: None,
             caller: None,
         },
     )
@@ -144,17 +145,20 @@ pub struct Invocation<'a> {
     pub command: &'a str,
     /// Its input, by declared field name.
     pub input: &'a Map<String, Value>,
+    /// The qualified name of the actor it is sent as, where it is sent as one.
+    pub actor: Option<&'a str>,
     /// The caller's attributes, by declared attribute name.
     pub caller: Option<&'a Map<String, Value>>,
 }
 
 /// [`execute_at`] for an [`Invocation`], sent as its caller.
 ///
-/// The caller's attributes are checked against those the actors that may invoke the command
-/// declare, before anything is read: an attribute none declares, or a value its declared type
-/// does not admit, is [`ExecuteError::InvalidInput`]. A required attribute the outcome reads and
-/// the caller does not carry is [`ExecuteError::InvalidInput`] too, and a guard over one is
-/// `Unknown` ([`ExecuteError::Undecidable`]); either way nothing is written.
+/// The caller is bound against the attributes of the actor it is sent as, as ESS binds it, before
+/// anything is read: attributes sent as no declared actor, an attribute the actor does not
+/// declare, a value its type does not admit and a required attribute left out are each
+/// [`ExecuteError::InvalidInput`]. A command sent as no caller that reads a required attribute is
+/// [`ExecuteError::InvalidInput`] where it reads it as a value, and a guard over one is `Unknown`
+/// ([`ExecuteError::Undecidable`]); either way nothing is written.
 ///
 /// # Errors
 /// As [`execute`].
@@ -169,6 +173,7 @@ pub fn execute_as(
     let Invocation {
         command,
         input,
+        actor,
         caller,
     } = *invocation;
     let spec = ir
@@ -177,9 +182,8 @@ pub fn execute_as(
         .find_map(|(name, spec)| (name.to_string() == command).then_some(spec))
         .ok_or_else(|| ExecuteError::UnknownCommand(command.to_owned()))?;
     crate::supported::check(ir, spec)?;
+    let attributes = crate::caller::bind(ir, actor, caller)?;
     check_input(ir, spec, input)?;
-    let attributes = caller_attributes(ir, spec);
-    check_caller(ir, spec, &attributes, caller)?;
     let addressed = addressed(ir, spec)?;
     let held = match addressed {
         Some((entity, field)) => {
@@ -240,8 +244,8 @@ struct Run<'a, 'ir> {
     input: &'a Map<String, Value>,
     /// The attributes of the caller the command is sent as; `None` for no caller.
     caller: Option<&'a Map<String, Value>>,
-    /// The caller attributes the actors that may invoke the command declare.
-    attributes: Vec<ResolvedField>,
+    /// The attributes the actor the command is sent as declares.
+    attributes: &'ir [ResolvedField],
     store: &'a mut dyn Store,
     decider: &'a mut dyn Decider,
     held: Option<Addressed<'ir>>,
@@ -377,7 +381,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
         predicate.map_or(Truth::True, |predicate| {
             predicate.evaluate(
                 &Facts::values(self.ir, &self.spec.input, self.input)
-                    .with_caller(&self.attributes, self.caller),
+                    .with_caller(self.attributes, self.caller),
             )
         })
     }
@@ -397,7 +401,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
             .any(|field| field.name == crate::facts::INPUT);
         let input = (!shadowed).then_some((self.spec.input.as_slice(), self.input));
         Ok(Facts::row(self.ir, held.entity, &held.identity, row, input)
-            .with_caller(&self.attributes, self.caller))
+            .with_caller(self.attributes, self.caller))
     }
 
     /// The held instance a guard over the subject reads.
@@ -908,51 +912,6 @@ fn addressed<'ir>(
         }
     }
     Ok(found)
-}
-
-/// The caller attributes the actors whose `may:` names `spec` declare, each once: what a caller
-/// sending the command may carry. ESS admits a read only of an attribute every such actor declares
-/// at one type, so the first declaration is the one every actor makes.
-fn caller_attributes(ir: &EssIr, spec: &ResolvedCommand) -> Vec<ResolvedField> {
-    let mut attributes: Vec<ResolvedField> = Vec::new();
-    for actor in ir
-        .actors()
-        .values()
-        .filter(|actor| actor.may.iter().any(|command| *command.name() == spec.name))
-    {
-        for attribute in &actor.attributes {
-            if !attributes.iter().any(|held| held.name == attribute.name) {
-                attributes.push(attribute.clone());
-            }
-        }
-    }
-    attributes
-}
-
-/// Refuses a caller carrying an attribute no actor that may invoke `spec` declares, or a value
-/// its declared type does not admit, as ESS binds a caller before the command runs
-/// (`interpret::execute::caller::Caller::bind`).
-fn check_caller(
-    ir: &EssIr,
-    spec: &ResolvedCommand,
-    attributes: &[ResolvedField],
-    caller: Option<&Map<String, Value>>,
-) -> Result<(), ExecuteError> {
-    for (name, value) in caller.into_iter().flatten() {
-        let declared = attributes
-            .iter()
-            .find(|attribute| attribute.name == *name)
-            .ok_or_else(|| {
-                ExecuteError::InvalidInput(format!(
-                    "no actor that may invoke `{}` declares the caller attribute `{name}`",
-                    spec.name
-                ))
-            })?;
-        crate::typed::validate(ir, &declared.type_ref, value).map_err(|error| {
-            ExecuteError::InvalidInput(format!("the caller's `{name}`: {error}"))
-        })?;
-    }
-    Ok(())
 }
 
 /// Refuses an input that is not a value of the command's declared input.

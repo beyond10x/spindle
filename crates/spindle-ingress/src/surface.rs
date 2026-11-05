@@ -495,7 +495,7 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
     }
     match bound.serves {
         ess_gen::http::Served::Command(handle) => {
-            let read = ess_gen::http::caller_attributes(ir, ir.command(handle));
+            let read = spindle_kernel::caller_reads(ir, ir.command(handle));
             if !read.is_empty() {
                 return Err(format!(
                     "the caller attributes it reads ({}), which no HTTP caller proves here",
