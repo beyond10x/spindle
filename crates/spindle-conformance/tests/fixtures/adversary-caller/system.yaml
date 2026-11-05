@@ -1,0 +1,27 @@
+format: ess/34
+system: quill
+version: v1
+summary: Desks an author claims and hands on, and that anyone pings.
+domains:
+  - quill.desk
+components:
+  - component: desks
+    summary: Opens, claims, hands and relabels desks for the caller sending each command.
+    owns:
+      domains:
+        - quill.desk
+    accepts:
+      commands:
+        - quill.desk.Ping
+        - quill.desk.Claim
+        - quill.desk.Hand
+        - quill.desk.Keep
+        - quill.desk.Veto
+        - quill.desk.Lock
+    publishes:
+      events:
+        - quill.desk.DeskPinged
+        - quill.desk.DeskClaimed
+        - quill.desk.DeskHanded
+        - quill.desk.DeskKept
+    reached_by: in_process
