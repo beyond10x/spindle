@@ -12,13 +12,15 @@ use serde_json::{Map, Value};
 use spindle_capability::{Capability, Environment};
 use spindle_channel::{ChannelError, Receiver, RouteError, Router, Sender, in_process};
 use spindle_kernel::{
-    DeclaredError, Event, ExecuteError, Executed, MemoryStore, NoExternals, SqliteStore, Store,
-    StoreError, UuidV4,
+    Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, NoExternals, SqliteStore,
+    Store, StoreError, UuidV4,
 };
 use spindle_telemetry::{Counters, CountingStore, Sink};
 use spindle_timer::{BindingName, Clock, CompleteError, LifetimeError, Timer};
 
 use crate::admission::{Placements, Refusal, admit};
+
+mod component;
 
 /// The channel implementation this host carries bindings on.
 const IN_PROCESS: &str = "in-process";
@@ -211,6 +213,18 @@ pub enum HostError {
         /// The bindings that carried them.
         bindings: BTreeSet<String>,
     },
+    /// The link to a peer component closed or failed before the run ended, or what was sent
+    /// there did not settle in time.
+    #[error("the link to {peer} {reason}")]
+    Peer {
+        /// The peer component, or several, comma-separated.
+        peer: String,
+        /// What happened to it.
+        reason: String,
+    },
+    /// The caller asked the host to stop while it waited for its peers.
+    #[error("stopped while waiting for peers")]
+    Stopped,
 }
 
 /// What a host does with an event binding whose `on_failure` is `retry`: this host retries no
@@ -223,6 +237,21 @@ pub enum Retries {
     /// Run the binding as a `drop` binding runs: a failed invocation is reported once and never
     /// run again, and an envelope whose send fails is dropped.
     Dropped,
+}
+
+/// The first event binding of `ir`, by name, whose `on_failure` a host started with `retries`
+/// does not carry, and what it says: the binding [`Host::with_retries`] refuses before it opens
+/// anything. `escalate` is never carried, and `retry` only under [`Retries::Dropped`].
+pub fn uncarried(ir: &EssIr, retries: Retries) -> Option<(String, Failure)> {
+    ir.bindings()
+        .values()
+        .filter(|binding| binding.cause.event().is_some())
+        .find(|binding| match binding.failure {
+            Failure::Drop => false,
+            Failure::Retry => retries == Retries::Refused,
+            Failure::Escalate => true,
+        })
+        .map(|binding| (binding.name.as_str().to_owned(), binding.failure))
 }
 
 /// The event bindings of `ir` whose `on_failure` is `retry`, by name.
@@ -269,7 +298,10 @@ pub struct Host {
     receivers: Vec<Receiver>,
     timer: Timer,
     periodic: BTreeMap<String, Periodic>,
+    remote: Option<component::Remote>,
     published: Vec<Published>,
+    /// Answers the `external:` causes of every command any component runs.
+    decider: Box<dyn Decider + Send>,
 }
 
 impl std::fmt::Debug for Host {
@@ -293,14 +325,14 @@ impl Host {
     /// [`HostError::Refused`] when a component is not admitted, naming everything every component
     /// lacks; [`HostError::Unsupported`] when admission bound something this host does not run,
     /// or the specification uses a binding it does not carry, such as an event binding whose
-    /// `on_failure` is not `drop`.
+    /// `on_failure` is not `drop` ([`uncarried`]).
     pub fn new(
         ir: EssIr,
         environment: &Environment,
         clock: Arc<dyn Clock>,
         state: &Path,
     ) -> Result<Self, HostError> {
-        Self::with_retries(ir, environment, clock, state, Retries::Refused)
+        Self::open(ir, environment, clock, state, None, Retries::Refused)
     }
 
     /// [`Host::new`], with `retries` saying what becomes of an event binding whose `on_failure`
@@ -317,21 +349,60 @@ impl Host {
         state: &Path,
         retries: Retries,
     ) -> Result<Self, HostError> {
+        Self::open(ir, environment, clock, state, None, retries)
+    }
+
+    /// [`Host::new`], with every `external:` cause of every component answered by `decider`, whatever
+    /// implementation admission bound for it.
+    ///
+    /// # Errors
+    /// As [`Host::new`], except that no external cause is refused.
+    pub fn deciding(
+        ir: EssIr,
+        environment: &Environment,
+        clock: Arc<dyn Clock>,
+        state: &Path,
+        decider: Box<dyn Decider + Send>,
+    ) -> Result<Self, HostError> {
+        Self::open(
+            ir,
+            environment,
+            clock,
+            state,
+            Some(decider),
+            Retries::Refused,
+        )
+    }
+
+    fn open(
+        ir: EssIr,
+        environment: &Environment,
+        clock: Arc<dyn Clock>,
+        state: &Path,
+        decider: Option<Box<dyn Decider + Send>>,
+        retries: Retries,
+    ) -> Result<Self, HostError> {
         let placements = admit(&ir, environment).map_err(HostError::Refused)?;
-        for binding in ir.bindings().values() {
-            let carried = match binding.failure {
-                Failure::Drop => true,
-                Failure::Retry => retries == Retries::Dropped,
-                Failure::Escalate => false,
-            };
-            if binding.cause.event().is_some() && !carried {
-                return Err(HostError::Unsupported(format!(
-                    "binding {} says on_failure: {:?}; this host drops an invocation that fails and \
-                     neither retries nor escalates it",
-                    binding.name.as_str(),
-                    binding.failure
-                )));
-            }
+        Self::assemble(ir, clock, state, placements, IN_PROCESS, decider, retries)
+    }
+
+    /// The host of the components in `placements`, their bindings carried on `carried`: every
+    /// pair joined in this process when it is [`IN_PROCESS`], none otherwise.
+    fn assemble(
+        ir: EssIr,
+        clock: Arc<dyn Clock>,
+        state: &Path,
+        placements: Placements,
+        carried: &str,
+        decider: Option<Box<dyn Decider + Send>>,
+        retries: Retries,
+    ) -> Result<Self, HostError> {
+        let answers = decider.is_some();
+        if let Some((binding, failure)) = uncarried(&ir, retries) {
+            return Err(HostError::Unsupported(format!(
+                "binding {binding} says on_failure: {failure:?}; this host drops an invocation \
+                 that fails and neither retries nor escalates it"
+            )));
         }
         let router = match retries {
             Retries::Refused => Router::from_ir(&ir)?,
@@ -343,7 +414,8 @@ impl Host {
                 let capability = binding.capability.as_str();
                 let implementation = binding.implementation.as_str();
                 let runs = |known: &[&str]| known.contains(&implementation);
-                let unsupported = if capability.starts_with(Capability::EXTERNAL_PREFIX) {
+                let unsupported = if capability.starts_with(Capability::EXTERNAL_PREFIX) && !answers
+                {
                     Some("this host answers no external cause")
                 } else if capability == Capability::TIMER && !runs(TIMERS) {
                     Some("this host runs no such timer")
@@ -368,9 +440,9 @@ impl Host {
                     .find(|binding| binding.capability.as_str() == capability)
                     .map(|binding| binding.implementation.as_str())
             };
-            if let Some(channel) = bound(Capability::CHANNEL).filter(|bound| *bound != IN_PROCESS) {
+            if let Some(channel) = bound(Capability::CHANNEL).filter(|bound| *bound != carried) {
                 return Err(HostError::Unsupported(format!(
-                    "{name} has its channel bound to {channel}; this host carries bindings {IN_PROCESS} only"
+                    "{name} has its channel bound to {channel}; this host carries bindings {carried} only"
                 )));
             }
             let counters = Arc::new(Counters::new(
@@ -408,7 +480,7 @@ impl Host {
             .iter()
             .map(|route| (route.from.clone(), route.to.clone()))
             .collect::<BTreeSet<_>>();
-        for (from, to) in links {
+        for (from, to) in links.into_iter().filter(|_| carried == IN_PROCESS) {
             let (near, far) = in_process::pair();
             if let Some(component) = components.get_mut(&from) {
                 component.sender.connect(&to, near);
@@ -429,6 +501,9 @@ impl Host {
             let command = binding.command.to_string();
             let component =
                 accepting(&ir, &command).ok_or_else(|| HostError::NotAccepted(command.clone()))?;
+            if !components.contains_key(&component) {
+                continue;
+            }
             if !cause.contract.host.read_fields.is_empty() {
                 return Err(HostError::Unsupported(format!(
                     "binding {name} reads fresh host fields on each occurrence"
@@ -481,7 +556,9 @@ impl Host {
             receivers,
             timer,
             periodic,
+            remote: None,
             published: Vec::new(),
+            decider: decider.unwrap_or_else(|| Box::new(NoExternals)),
         })
     }
 
@@ -772,7 +849,7 @@ impl Host {
         let result = spindle_kernel::execute_at(
             &self.ir,
             held.store.as_mut(),
-            &mut NoExternals,
+            self.decider.as_mut(),
             &mut UuidV4,
             &|| clock.wall(),
             command,
@@ -850,6 +927,9 @@ impl Host {
         report: &mut Report,
         deliveries: &mut Deliveries,
     ) -> Result<(), HostError> {
+        if self.remote.is_some() {
+            return self.settle_remote(report, deliveries, true);
+        }
         loop {
             let mut delivered = false;
             for index in 0..self.receivers.len() {
@@ -1011,6 +1091,16 @@ fn accepting(ir: &EssIr, command: &str) -> Option<String> {
 }
 
 /// The view named `view`, where this host can answer it, and the component that owns its source.
+/// Whether a host running `ir` answers the view `view`, asked before anything is read: the
+/// check [`Host::view`] and [`Host::list`] make first.
+///
+/// # Errors
+/// As [`Host::list`] refuses the view: [`HostError::NoView`], or [`HostError::Unsupported`]
+/// naming the construct it does not read.
+pub fn reads(ir: &EssIr, view: &str) -> Result<(), HostError> {
+    readable(ir, view).map(|_| ())
+}
+
 fn readable<'ir>(ir: &'ir EssIr, view: &str) -> Result<(&'ir ResolvedView, String), HostError> {
     let declared = ir
         .views()

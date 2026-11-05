@@ -1,7 +1,10 @@
 //! `b10x-spindle`: load an ESS specification, derive what it needs, admit it, and run or play it.
 
+mod component;
+mod conform;
 mod decisions;
 mod replay;
+mod scaled;
 mod serve;
 
 use std::collections::BTreeMap;
@@ -18,7 +21,7 @@ use decisions::Answers;
 use signal_hook::consts::{SIGINT, SIGTERM};
 use spindle_capability::{Admission, Capability, Environment, Requirements};
 use spindle_cli::cli::{Cli, Command};
-use spindle_host::{Host, HostError, SystemClock, rally};
+use spindle_host::{Host, HostError, rally};
 use spindle_kernel::{External, MemoryStore, SqliteStore, Store};
 
 /// Exit status of an `admit` the environment refused.
@@ -183,7 +186,46 @@ fn run(cli: Cli) -> Result<ExitCode> {
             environment,
             target_score,
             match_id,
-        } => play(&spec, &environment, target_score, &match_id),
+            speed,
+            component: Some(component),
+            listen,
+        } => component::play(&component::Playing {
+            spec: &spec,
+            environment: &environment,
+            target_score,
+            match_id: &match_id,
+            speed,
+            component: &component,
+            listen,
+        }),
+        Command::Play {
+            spec,
+            environment,
+            target_score,
+            match_id,
+            speed,
+            component: None,
+            ..
+        } => play(&spec, &environment, target_score, &match_id, speed),
+        Command::Conform {
+            spec,
+            environment,
+            suite,
+            report,
+            results,
+            counts,
+            known_failing,
+            accounting_out,
+        } => conform::conform(&conform::Conform {
+            spec: &spec,
+            environment: &environment,
+            suite: suite.as_deref(),
+            report: report.as_deref(),
+            results: results.as_deref(),
+            counts: counts.as_deref(),
+            known_failing: known_failing.as_deref(),
+            accounting_out: accounting_out.as_deref(),
+        }),
     }
 }
 
@@ -207,7 +249,13 @@ fn signals() -> Result<Arc<AtomicUsize>> {
     Ok(signalled)
 }
 
-fn play(spec: &Path, environment: &Path, target_score: i64, match_id: &str) -> Result<ExitCode> {
+fn play(
+    spec: &Path,
+    environment: &Path,
+    target_score: i64,
+    match_id: &str,
+    speed: u32,
+) -> Result<ExitCode> {
     let signalled = signals()?;
     let loaded = spindle_spec::load(spec)?;
     let text = std::fs::read_to_string(environment)
@@ -215,8 +263,8 @@ fn play(spec: &Path, environment: &Path, target_score: i64, match_id: &str) -> R
     let parsed =
         Environment::parse(&text).with_context(|| format!("in {}", environment.display()))?;
     let state = tempfile::tempdir().context("creating the state directory")?;
-    let clock = std::sync::Arc::new(SystemClock);
-    let mut host = match Host::new(loaded.ir, &parsed, clock, state.path()) {
+    let clock = scaled::Scaled::new(speed);
+    let mut host = match Host::new(loaded.ir, &parsed, Arc::new(clock), state.path()) {
         Ok(host) => host,
         Err(HostError::Refused(refusal)) => {
             println!("{refusal}");
@@ -255,7 +303,7 @@ fn play(spec: &Path, environment: &Path, target_score: i64, match_id: &str) -> R
         let deadline = host
             .next_deadline()
             .context("no periodic binding is running, so the match cannot go on")?;
-        if let Some(signal) = wait_until(deadline, &signalled) {
+        if let Some(signal) = wait_until(deadline, &clock, &signalled) {
             host.stop();
             return Ok(ExitCode::from(SIGNALLED.saturating_add(signal)));
         }
@@ -295,14 +343,15 @@ const SIGNALLED: u8 = 128;
 /// How often a wait looks for a signal.
 const SIGNAL_POLL: Duration = Duration::from_millis(50);
 
-/// Sleeps until `deadline`, or until a signal is recorded in `signalled`; returns its number.
-fn wait_until(deadline: Instant, signalled: &AtomicUsize) -> Option<u8> {
+/// Sleeps until `clock` reads `deadline`, or until a signal is recorded in `signalled`; returns
+/// its number.
+fn wait_until(deadline: Instant, clock: &scaled::Scaled, signalled: &AtomicUsize) -> Option<u8> {
     loop {
         let signal = signalled.load(Ordering::SeqCst);
         if signal != 0 {
             return Some(u8::try_from(signal).unwrap_or(u8::MAX - SIGNALLED));
         }
-        let left = deadline.saturating_duration_since(Instant::now());
+        let left = clock.until(deadline);
         if left.is_zero() {
             return None;
         }
@@ -438,8 +487,9 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         (Some("sqlite"), Some(path)) => Box::new(SqliteStore::open(path)?),
         (Some("sqlite"), None) => {
             scratch = tempfile::tempdir().context("creating a temporary state directory")?;
+            removed_on_signal(scratch.path())?;
             eprintln!(
-                "b10x-spindle: state is kept in {}, removed when stdin ends",
+                "b10x-spindle: state is kept in {}, removed when the run ends",
                 scratch.path().display()
             );
             Box::new(SqliteStore::open(&scratch.path().join("state.sqlite"))?)
@@ -464,6 +514,25 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         out.flush()?;
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Removes `directory` and exits 130 or 143 on SIGINT or SIGTERM: `run` reading stdin blocks in a
+/// read a signal does not interrupt, so a thread of its own waits for the signal instead.
+fn removed_on_signal(directory: &Path) -> Result<()> {
+    let mut signals = signal_hook::iterator::Signals::new([SIGINT, SIGTERM])
+        .context("handling SIGINT and SIGTERM")?;
+    let directory = directory.to_owned();
+    std::thread::Builder::new()
+        .name("spindle-signals".to_owned())
+        .spawn(move || {
+            if let Some(signal) = signals.forever().next() {
+                let _ = std::fs::remove_dir_all(&directory);
+                let signal = u8::try_from(signal).unwrap_or(u8::MAX - SIGNALLED);
+                std::process::exit(i32::from(SIGNALLED.saturating_add(signal)));
+            }
+        })
+        .context("starting the signal thread")?;
+    Ok(())
 }
 
 /// The result line for one request.

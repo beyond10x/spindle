@@ -44,20 +44,25 @@ pub struct Route {
 /// Why a route is kept but its operation not served.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unserved {
-    /// The route uses what this ingress does not serve, named. A request for it is answered
-    /// `501` before anything is read or written.
+    /// The command's route uses what this ingress does not serve, named. A request for it is
+    /// answered `501` before anything is read or written. A view this ingress cannot route is
+    /// not kept: its contract declares no `501`, so [`Surface::new`] refuses it.
     Ingress(String),
     /// The kernel's [`runs`](spindle_kernel::runs) refuses the command, as its text. A request
     /// for it is answered as before this was known: the host refuses it before anything is read
     /// or written, `501` naming the construct.
     Kernel(String),
+    /// The host's [`reads`](spindle_host::reads) refuses the view, as its text. A request for it
+    /// is answered as before this was known: the host refuses it before reading anything, `501`
+    /// naming the construct.
+    Host(String),
 }
 
 impl fmt::Display for Unserved {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Ingress(what) => write!(formatter, "this ingress does not serve {what}"),
-            Self::Kernel(refused) => formatter.write_str(refused),
+            Self::Kernel(refused) | Self::Host(refused) => formatter.write_str(refused),
         }
     }
 }
@@ -258,18 +263,22 @@ impl Surface {
     /// status; for one it names, the binding's method and path, its path variables read into the
     /// input, and the status it lists for an outcome ([`ess_gen::http::listed`]).
     ///
-    /// An operation this ingress cannot route keeps its route and is marked
-    /// [`Unserved::Ingress`]: a `form` or `query` request, an outcome answered other than with
-    /// the envelope (a body, headers, a redirect or text), a view answered other than as `rows`,
-    /// a standard refusal the binding answers its own way, a command whose outcome answers with
-    /// its response, or a path variable that is not a scalar. A command the kernel's
-    /// [`runs`](spindle_kernel::runs) refuses is marked [`Unserved::Kernel`].
+    /// A command this ingress cannot route keeps its route and is marked [`Unserved::Ingress`]:
+    /// a `form` or `query` request, an outcome answered other than with the envelope (a body,
+    /// headers, a redirect or text), a standard refusal the binding answers its own way, an
+    /// outcome that answers with the command's response, or a path variable that is not a
+    /// scalar. A command the kernel's [`runs`](spindle_kernel::runs) refuses is marked
+    /// [`Unserved::Kernel`], and a view the host's [`reads`](spindle_host::reads) refuses
+    /// [`Unserved::Host`].
     ///
     /// # Errors
     /// [`SurfaceError::NoComponent`] for a name `ir` does not declare,
     /// [`SurfaceError::Collision`] when two components claim one route, and
     /// [`SurfaceError::Unsupported`] for a binding that answers a standard refusal its own way
-    /// for every operation, or a path that is not a template.
+    /// for every operation, a path that is not a template, or a view this ingress cannot route
+    /// (one answered other than as `rows`, a standard refusal the binding answers its own way, a
+    /// path variable that is not a scalar): ESS publishes no `501` for a view, so it is refused
+    /// rather than answered with a status its contract does not declare.
     pub fn new(
         ir: &EssIr,
         components: &[String],
@@ -346,8 +355,8 @@ impl Surface {
     }
 
     /// Every route whose operation is not served, component by component and, within one, in
-    /// the order the compiled model holds the operations: commands, then views, each by qualified
-    /// name.
+    /// name order: commands, then views, each by qualified name, as the compiled model's maps
+    /// hold them.
     pub fn unserved(&self) -> Vec<&Route> {
         let mut unserved: Vec<&Route> = self
             .routes
@@ -403,11 +412,11 @@ impl Surface {
 }
 
 /// One route of `component`, owned: served, or kept and marked [`Unserved`] with what it uses
-/// that this ingress or the kernel does not run.
+/// that this ingress, the kernel or the host does not run.
 ///
 /// # Errors
 /// [`SurfaceError::Unsupported`] when the route's path is not a template ESS reads, so that no
-/// request can be matched to it.
+/// request can be matched to it, or for a view this ingress cannot route.
 fn route(
     ir: &EssIr,
     component: &str,
@@ -430,14 +439,30 @@ fn route(
         input: Vec::new(),
         unserved: None,
     };
-    if let Err(what) = served(ir, bound, &mut route) {
-        route.variables.clear();
-        route.statuses.clear();
-        route.unserved = Some(Unserved::Ingress(what));
-    } else if let ess_gen::http::Served::Command(handle) = bound.serves
-        && let Err(refused) = spindle_kernel::runs(ir, ir.command(handle))
-    {
-        route.unserved = Some(Unserved::Kernel(refused.to_string()));
+    match (served(ir, bound, &mut route), &route.operation) {
+        (Err(what), Operation::View(_)) => {
+            return Err(SurfaceError::Unsupported {
+                operation: route.operation.to_string(),
+                what,
+            });
+        }
+        (Err(what), Operation::Command(_)) => {
+            route.variables.clear();
+            route.statuses.clear();
+            route.unserved = Some(Unserved::Ingress(what));
+        }
+        (Ok(()), Operation::Command(_)) => {
+            if let ess_gen::http::Served::Command(handle) = bound.serves
+                && let Err(refused) = spindle_kernel::runs(ir, ir.command(handle))
+            {
+                route.unserved = Some(Unserved::Kernel(refused.to_string()));
+            }
+        }
+        (Ok(()), Operation::View(view)) => {
+            if let Err(refused) = spindle_host::reads(ir, view) {
+                route.unserved = Some(Unserved::Host(refused.to_string()));
+            }
+        }
     }
     Ok(route)
 }

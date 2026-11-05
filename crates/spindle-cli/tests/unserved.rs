@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 const PARTIAL: &str = "crates/spindle-cli/tests/fixtures/partial";
 const UNSERVABLE: &str = "crates/spindle-cli/tests/fixtures/unservable";
 const RETRIED: &str = "crates/spindle-cli/tests/fixtures/retried";
+const ESCALATE: &str = "crates/spindle-cli/tests/fixtures/adversary_escalate";
 const INGRESS: &str = "crates/spindle-cli/tests/fixtures/ingress";
 const LAPTOP: &str = "examples/environments/laptop.toml";
 const COMPONENT: &str = "pad";
@@ -407,6 +408,26 @@ fn retry_bindings_are_refused_without_drop_retries() {
     assert!(
         stderr.contains("index-note") && stderr.contains("--drop-retries"),
         "the refusal names the binding and the flag: {stderr}"
+    );
+}
+
+#[test]
+fn the_drop_retries_hint_is_given_only_for_a_retry_refusal() {
+    let (status, stdout, stderr) = refused(ESCALATE, &[]);
+    assert!(!status.success(), "{status:?} {stdout} {stderr}");
+    assert!(
+        stderr.contains("audit-note") && stderr.contains("Escalate"),
+        "the escalate binding is refused first, by name: {stderr}"
+    );
+    assert!(
+        !stderr.contains("--drop-retries"),
+        "the flag does not lift an escalate refusal, so it is not offered: {stderr}"
+    );
+    let (status, stdout, stderr) = refused(ESCALATE, &["--drop-retries"]);
+    assert!(!status.success(), "{status:?} {stdout} {stderr}");
+    assert!(
+        stderr.contains("audit-note") && !stderr.contains("--drop-retries runs"),
+        "{stderr}"
     );
 }
 

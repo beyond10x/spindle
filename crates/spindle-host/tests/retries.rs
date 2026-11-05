@@ -60,6 +60,13 @@ fn a_retry_binding_is_refused_by_default() {
         Err(HostError::Unsupported(why)) => assert!(why.contains("index-note"), "{why}"),
         other => panic!("the host refuses the retry binding: {other:?}"),
     }
+    let loaded = spindle_spec::load(&fixture()).expect("the fixture compiles");
+    assert_eq!(
+        spindle_host::uncarried(&loaded.ir, Retries::Refused),
+        Some(("index-note".to_owned(), ess_domain::binding::Failure::Retry)),
+        "the binding refused is the one the host names"
+    );
+    assert_eq!(spindle_host::uncarried(&loaded.ir, Retries::Dropped), None);
 }
 
 #[test]

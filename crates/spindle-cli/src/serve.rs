@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use anyhow::{Context, Result, bail};
+use ess_domain::binding::Failure;
 use ess_gen::http::Binding;
 use spindle_capability::{Capability, Environment};
 use spindle_host::{Cause, Host, HostError, Retries, SystemClock};
@@ -159,6 +160,7 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     } else {
         Retries::Refused
     };
+    let refused_retry = spindle_host::uncarried(&ir, retries);
     let mut host =
         match Host::with_retries(ir, environment, Arc::new(SystemClock), directory, retries) {
             Ok(host) => host,
@@ -167,11 +169,13 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
                 return Ok(ExitCode::from(REFUSED));
             }
             Err(error @ HostError::Unsupported(_))
-                if !serving.drop_retries && !retried.is_empty() =>
+                if refused_retry
+                    .as_ref()
+                    .is_some_and(|(_, failure)| *failure == Failure::Retry) =>
             {
                 return Err(anyhow::Error::from(error).context(format!(
                     "on_failure: retry on {}: this host retries no invocation; --drop-retries runs \
-                 each such binding as a drop binding, dropping a failed invocation",
+                     each such binding as a drop binding, dropping a failed invocation",
                     retried.join(", ")
                 )));
             }

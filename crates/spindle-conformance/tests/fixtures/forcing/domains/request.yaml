@@ -1,0 +1,41 @@
+domain: forcing.request
+summary: Requests, each relayed to two reviews.
+entities:
+  - name: forcing.request.Ticket
+    identity:
+      name: first_id
+      type: String
+    fields:
+      - name: second_id
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+errors: []
+commands:
+  - name: forcing.request.Request
+    input:
+      - name: first_id
+        type: String
+      - name: second_id
+        type: String
+    outcomes:
+      - name: requested
+        creates: forcing.request.Ticket
+        instance: first_id
+        emits: [forcing.request.Requested]
+        payload:
+          forcing.request.Requested:
+            first_id: input.first_id
+            second_id: input.second_id
+        sets:
+          second_id: input.second_id
+        summary: The request is recorded and relayed to two reviews.
+events:
+  - name: forcing.request.Requested
+    fields:
+      - name: first_id
+        type: String
+      - name: second_id
+        type: String

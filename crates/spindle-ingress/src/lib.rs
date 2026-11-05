@@ -14,10 +14,12 @@
 //! outcome, `{outcome, published, error?, payload?}` ([`answer`]). A view answers the body ESS
 //! publishes, `{"rows": [...]}`.
 //!
-//! An operation this ingress cannot route, or a command the kernel does not run, keeps its route
-//! and is [`Unserved`]: it answers `501` with the envelope ESS publishes for an unfinished
-//! realization, `{refused, committed: false}`, naming the operation and the construct, and
-//! [`Surface::unserved`] lists them so a run can name them before it listens.
+//! A command this ingress cannot route or the kernel does not run, and a view the host does not
+//! read, keeps its route and is [`Unserved`]: it answers `501` naming the operation and the
+//! construct (a command with the envelope ESS publishes for an unfinished realization,
+//! `{refused, committed: false}`), and [`Surface::unserved`] lists them so a run can name them
+//! before it listens. A view this ingress cannot route is refused at startup, since ESS publishes
+//! no `501` for a view.
 //!
 //! [`Listener::bind`] owns the socket and a hyper HTTP/1.1 server on a thread of its own; every
 //! request for a route of the [`Surface`] arrives as an [`Exchange`] on [`Listener::next`], so

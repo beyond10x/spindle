@@ -1,0 +1,38 @@
+domain: relay.desk
+summary: Reviews a desk may flag.
+entities:
+  - name: relay.desk.Verdict
+    identity:
+      name: review_id
+      type: String
+    fields: []
+    lifecycle:
+      initial: Passed
+      states: [Passed]
+      terminal: [Passed]
+errors:
+  - name: relay.desk.Flagged
+    summary: The desk flagged the review.
+    fields: []
+commands:
+  - name: relay.desk.Review
+    input:
+      - name: review_id
+        type: String
+    outcomes:
+      - name: flagged
+        external: the desk flags the review
+        error: relay.desk.Flagged
+        summary: The desk may flag any review.
+      - name: passed
+        creates: relay.desk.Verdict
+        instance: review_id
+        emits: [relay.desk.Reviewed]
+        payload:
+          relay.desk.Reviewed: {review_id: input.review_id}
+        summary: The review passes.
+events:
+  - name: relay.desk.Reviewed
+    fields:
+      - name: review_id
+        type: String

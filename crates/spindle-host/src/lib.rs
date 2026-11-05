@@ -10,6 +10,10 @@
 //! view from the store of the component that owns its source. [`Host::published`] lists every event
 //! published so far, and [`Host::reset`] empties every store.
 //!
+//! [`Host::component`] runs one component on its own instead, its bindings carried over TCP links:
+//! [`Host::connect`] links each peer its events lead to, [`Host::accept`] takes the links its
+//! peers open, and [`Host::deliver`] runs what arrives.
+//!
 //! The clock is a port: the host never reads the time on its own, so a [`ManualClock`] runs a
 //! system with no sleeping. [`rally`] draws the `rally` example's terminal frame from a view
 //! answer.
@@ -22,6 +26,6 @@ mod view;
 pub use admission::{Placements, Refusal, admit};
 pub use host::{
     Cause, DELIVERY_LIMIT, Failed, Host, HostError, Published, Ran, RefusedCommand, Report,
-    Retries, retried,
+    Retries, reads, retried, uncarried,
 };
 pub use spindle_timer::{Clock, ManualClock, SystemClock};
