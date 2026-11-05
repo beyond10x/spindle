@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use ess_compiler::EssIr;
-use ess_compiler::ir::{ResolvedFailure, ResolvedTypeRef};
+use ess_compiler::ir::{ResolvedFailure, ResolvedRefusalAction, ResolvedTypeRef};
 use ess_compiler::refs::{ErrorRef, EventRef, OutcomeRef};
 use ess_conformance::{
     ConformanceTarget, DeclaredErrorValue, EventObservationRequest, ExternalOutcomeControl,
@@ -419,29 +419,41 @@ fn invoked(report: &spindle_host::Report) -> impl Iterator<Item = &str> {
         .chain(report.failed.iter().map(|failed| failed.command.as_str()))
 }
 
-/// The first `on_failure: retry` binding (no `retry:` bound) whose invocation in `report` the host
-/// gave up: refused or not executed by the kernel on its last attempt. A binding whose input was
-/// unmet (0 attempts) never reached the kernel and is not one.
+/// The first binding whose invocation in `report` the host gave up while its policy still said
+/// retry: refused or not executed by the kernel on its last attempt, under `on_failure: retry` (no
+/// `retry:` bound) or under an `on_refusal` policy whose choice for that last attempt (its refusal,
+/// or the fallback for a failure with no declared outcome) is an unbounded retry. A binding whose
+/// input was unmet (0 attempts) never reached the kernel and is not one.
 fn exhausted<'a>(ir: &EssIr, report: &'a spindle_host::Report) -> Option<&'a str> {
-    let retries = |binding: &str| {
+    let retries = |binding: &str, refusal: Option<&str>| {
         ir.bindings().values().any(|declared| {
             declared.name.as_str() == binding
-                && matches!(declared.on_failure(), ResolvedFailure::Retry)
+                && match declared.on_failure() {
+                    ResolvedFailure::Retry => true,
+                    ResolvedFailure::ByRefusal { policy } => {
+                        let outcome = refusal.and_then(|refusal| OutcomeName::new(refusal).ok());
+                        matches!(
+                            policy.select(outcome.as_ref()),
+                            ResolvedRefusalAction::Retry { bound: None }
+                        )
+                    }
+                    _ => false,
+                }
         })
     };
     report
         .refused
         .iter()
-        .map(|refused| &refused.cause)
+        .map(|refused| (&refused.cause, Some(refused.outcome.as_str())))
         .chain(
             report
                 .failed
                 .iter()
                 .filter(|failed| failed.attempts > 0)
-                .map(|failed| &failed.cause),
+                .map(|failed| (&failed.cause, None)),
         )
-        .find_map(|cause| match cause {
-            Cause::Delivered { binding } if retries(binding) => Some(binding.as_str()),
+        .find_map(|(cause, refusal)| match cause {
+            Cause::Delivered { binding } if retries(binding, refusal) => Some(binding.as_str()),
             _ => None,
         })
 }

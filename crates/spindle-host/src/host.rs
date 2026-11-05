@@ -6,11 +6,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ess_compiler::EssIr;
-use ess_compiler::ir::{ResolvedMappingValue, ResolvedView};
+use ess_compiler::ir::{
+    ResolvedBinding, ResolvedMappingValue, ResolvedRefusalAction, ResolvedView,
+};
 use ess_domain::binding::Failure;
 use serde_json::{Map, Value};
 use spindle_capability::{Capability, Environment};
-use spindle_channel::{ChannelError, Envelope, Receiver, RouteError, Router, Sender, in_process};
+use spindle_channel::{
+    ChannelError, Envelope, Receiver, Route, RouteError, Router, Sender, in_process,
+};
 use spindle_kernel::{
     Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, NoExternals, SqliteStore,
     Store, StoreError, UuidV4,
@@ -53,14 +57,14 @@ pub struct Ran {
     pub cause: Cause,
     /// What it did.
     pub executed: Executed,
-    /// How many times it was run, this one included: more than 1 only for an `on_failure:
-    /// retry` binding whose earlier attempts failed.
+    /// How many times it was run, this one included: more than 1 only for a binding that retried
+    /// its earlier attempts (`on_failure: retry`, or `on_refusal` choosing `retry`).
     pub attempts: u32,
 }
 
 /// One command a tick or a binding invoked that did not execute. Nothing was written, and the
 /// host does not run it again: a binding's command is given up after its last attempt
-/// ([`RETRY_ATTEMPTS`] for an `on_failure: retry` binding, else 1).
+/// (at most [`RETRY_ATTEMPTS`] for a binding that retries, else 1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Failed {
     /// The component that was to run it.
@@ -256,20 +260,37 @@ pub enum Retries {
 
 /// The first event binding of `ir`, by name, whose `on_failure` a host does not carry, and what
 /// it says: the binding [`Host::new`] refuses before it opens anything. Only `escalate` is not
-/// carried.
+/// carried, universal or chosen for some refusal (`on_refusal`).
 pub fn uncarried(ir: &EssIr) -> Option<(String, Failure)> {
     ir.bindings()
         .values()
         .filter(|binding| binding.cause.event().is_some())
-        .find(|binding| binding.failure == Failure::Escalate)
-        .map(|binding| (binding.name.as_str().to_owned(), binding.failure))
+        .find(|binding| escalates(binding))
+        .map(|binding| (binding.name.as_str().to_owned(), Failure::Escalate))
 }
 
-/// The event bindings of `ir` whose `on_failure` is `retry`, by name.
+/// Whether `binding` escalates some failure.
+fn escalates(binding: &ResolvedBinding) -> bool {
+    match &binding.refusal_policy {
+        Some(policy) => policy
+            .actions()
+            .any(|action| matches!(action, ResolvedRefusalAction::Escalate { .. })),
+        None => binding.failure == Failure::Escalate,
+    }
+}
+
+/// The event bindings of `ir` that retry a failure, by name: `on_failure: retry`, or a policy
+/// chosen per refusal that retries some refusal or its fallback.
 pub fn retried(ir: &EssIr) -> Vec<String> {
     ir.bindings()
         .values()
-        .filter(|binding| binding.cause.event().is_some() && binding.failure == Failure::Retry)
+        .filter(|binding| binding.cause.event().is_some())
+        .filter(|binding| match &binding.refusal_policy {
+            Some(policy) => policy
+                .actions()
+                .any(|action| matches!(action, ResolvedRefusalAction::Retry { .. })),
+            None => binding.failure == Failure::Retry,
+        })
         .map(|binding| binding.name.as_str().to_owned())
         .collect()
 }
@@ -313,9 +334,9 @@ pub struct Host {
     published: Vec<Published>,
     /// Answers the `external:` causes of every command any component runs.
     decider: Box<dyn Decider + Send>,
-    /// The event bindings this host retries, by name: read from its own routes, never from an
-    /// envelope, so a peer's frame does not decide the policy.
-    retrying: BTreeSet<String>,
+    /// The routes of the event bindings this host may retry, by binding name: read from its own
+    /// routes, never from an envelope, so a peer's frame does not decide the policy.
+    retrying: BTreeMap<String, Arc<Route>>,
 }
 
 impl std::fmt::Debug for Host {
@@ -441,8 +462,8 @@ impl Host {
         let retrying = router
             .routes()
             .iter()
-            .filter(|route| route.on_failure == Failure::Retry)
-            .map(|route| route.binding.clone())
+            .filter(|route| route.retries())
+            .map(|route| (route.binding.clone(), Arc::new(route.clone())))
             .collect();
         let mut components = BTreeMap::new();
         for (name, bindings) in &placements {
@@ -956,14 +977,13 @@ impl Host {
     }
 
     /// Runs the command `envelope` carries; where this host's own route of `envelope.binding`
-    /// says `on_failure: retry` (the envelope's `on_failure` is the sender's word), again at once after each
-    /// attempt that is refused or does not execute, until one takes effect or [`RETRY_ATTEMPTS`]
-    /// were made, each attempt counted on the receiving component.
+    /// retries (the envelope's `on_failure` is the sender's word), again at once after each
+    /// attempt that is refused or does not execute and that the route answers with
+    /// [`Failure::Retry`] ([`Route::answer`]: `on_failure: retry`, or the refusal's policy under
+    /// `on_refusal`), until one takes effect, the route drops one, or [`RETRY_ATTEMPTS`] were
+    /// made, each attempt counted on the receiving component.
     fn invoke(&mut self, envelope: &Envelope, report: &mut Report) -> Result<(), HostError> {
-        let retried = self
-            .retrying
-            .contains(&envelope.binding)
-            .then_some(envelope.binding.as_str());
+        let retried = self.retrying.get(&envelope.binding).cloned();
         self.attempt(
             &envelope.to,
             &envelope.command.name,
@@ -971,23 +991,23 @@ impl Host {
             Cause::Delivered {
                 binding: envelope.binding.clone(),
             },
-            retried,
+            retried.as_deref(),
             report,
         )
     }
 
-    /// Runs `command` once, or, when `retried` names the binding, up to [`RETRY_ATTEMPTS`]
-    /// times; reports the attempt that took effect, or the last one.
+    /// Runs `command` once, or, when `retried` is the binding's route, again after each attempt
+    /// the route answers with [`Failure::Retry`], up to [`RETRY_ATTEMPTS`] in all; reports the
+    /// attempt that took effect, or the last one.
     fn attempt(
         &mut self,
         component: &str,
         command: &str,
         input: &Map<String, Value>,
         cause: Cause,
-        retried: Option<&str>,
+        retried: Option<&Route>,
         report: &mut Report,
     ) -> Result<(), HostError> {
-        let limit = if retried.is_some() { RETRY_ATTEMPTS } else { 1 };
         let sink = self
             .components
             .get(component)
@@ -996,16 +1016,23 @@ impl Host {
         let mut attempts = 0;
         loop {
             attempts += 1;
-            if let Some(binding) = retried {
-                sink.retried(binding, Retried::Attempted);
+            if let Some(route) = retried {
+                sink.retried(&route.binding, Retried::Attempted);
             }
             let result = self.execute(component, command, input, None, None)?;
-            let failed = !matches!(result, Ok(Executed { error: None, .. }));
-            if failed && attempts < limit {
+            let refusal = match &result {
+                Ok(Executed { error: None, .. }) => None,
+                Ok(Executed { outcome, .. }) => Some(Some(outcome.as_str())),
+                Err(_) => Some(None),
+            };
+            let again = retried.filter(|route| {
+                refusal.is_some_and(|refusal| route.answer(refusal) == Failure::Retry)
+            });
+            if again.is_some() && attempts < RETRY_ATTEMPTS {
                 continue;
             }
-            if failed && let Some(binding) = retried {
-                sink.retried(binding, Retried::Exhausted);
+            if let Some(route) = again {
+                sink.retried(&route.binding, Retried::Exhausted);
             }
             match result {
                 Ok(Executed {

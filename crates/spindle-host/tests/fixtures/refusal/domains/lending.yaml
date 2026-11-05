@@ -1,0 +1,48 @@
+domain: library.lending
+summary: Loans, each closed for the member who borrowed.
+entities:
+  - name: library.lending.Loan
+    identity:
+      name: loan_id
+      type: String
+    fields:
+      - name: member_id
+        type: String
+    lifecycle:
+      initial: Closed
+      states: [Closed]
+      terminal: [Closed]
+errors: []
+commands:
+  - name: library.lending.CloseLoan
+    input:
+      - name: loan_id
+        type: String
+      - name: member_id
+        type: String
+    outcomes:
+      - name: closed
+        creates: library.lending.Loan
+        instance: loan_id
+        sets:
+          member_id: input.member_id
+        emits: [library.lending.LoanClosed]
+        payload:
+          library.lending.LoanClosed: {loan_id: input.loan_id, member_id: input.member_id}
+        summary: The loan closes for its member.
+events:
+  - name: library.lending.LoanClosed
+    fields:
+      - name: loan_id
+        type: String
+      - name: member_id
+        type: String
+views:
+  - name: library.lending.Loans
+    source: library.lending.Loan
+    consistency: read_your_writes
+    fields:
+      - name: loan_id
+        type: String
+      - name: member_id
+        type: String

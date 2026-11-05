@@ -57,7 +57,7 @@ reports is visible as "never reported" instead of zero.
 
 **Names** are stable and dotted: `command.<CommandName>.<outcome>`, `event.<EventName>.appended`,
 `binding.<binding>.<sent|delivered|redelivered|dropped>`, `binding.<binding>.<attempted|exhausted>`
-(an `on_failure: retry` binding, on the component that invokes it), `timer.<binding>.<fired|late|dropped>`,
+(an `on_failure: retry` binding, or an `on_refusal` one that retries some refusal, on the component that invokes it), `timer.<binding>.<fired|late|dropped>`,
 `store.bytes_written`, `resource.cpu_seconds`, `resource.memory_bytes`. The ESS handles are used
 as written (they implement `Display`), so a name in the UI is the name in the specification.
 
