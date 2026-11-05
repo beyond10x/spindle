@@ -1,11 +1,10 @@
 //! `run` serving a component `reached_by: network` over HTTP on 127.0.0.1.
 //!
 //! The fixture `tests/fixtures/ingress` declares one component, `board`, reached over the network.
-//! A command is `POST /api/commands/<qualified name>` and a view `GET /api/views/<qualified name>`;
-//! which operations exist, their methods and statuses are read from the `OpenAPI` document ESS
-//! projects for that component (`ess_gen::openapi::json`). A view answers the body ESS projects for
-//! it, validated as is; a command answers `{outcome, error?, events, invocations}`, whose outcome,
-//! events and error are validated against the outcome envelope the same document declares.
+//! Every path and method these tests use is read from the `OpenAPI` document ESS projects for that
+//! component (`ess_gen::openapi::json`, or `bound_json` with the fixture's `ess-http/1` binding),
+//! and every answer is validated, exactly as served, against the schema that document declares for
+//! it under its status.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -89,13 +88,7 @@ impl Contract {
 
     /// Fails unless `body` validates against the schema the contract declares for operation `id`
     /// answering `status`.
-    fn validate(&self, id: &str, status: u16, answer: &Value) {
-        let body = if answer.get("outcome").is_some() {
-            projected(answer)
-        } else {
-            answer.clone()
-        };
-        let body = &body;
+    fn validate(&self, id: &str, status: u16, body: &Value) {
         let validator = self.validator(id, status);
         assert!(
             !validator.is_valid(&json!({"outcome": "undeclared", "published": []})),
@@ -231,51 +224,9 @@ fn exchange(address: SocketAddr, method: &str, path: &str, body: Option<&Value>)
     (status, body)
 }
 
-/// A command answer as the outcome envelope ESS projects: `outcome`, its events as `published`,
-/// and a refusal's error name and payload as `error` and `payload`. Fails unless the answer holds
-/// exactly `outcome`, `events`, `invocations` and, where refused, `error`.
-fn projected(answer: &Value) -> Value {
-    let mut keys = answer
-        .as_object()
-        .unwrap_or_else(|| panic!("a command answers an object: {answer}"))
-        .keys()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    keys.sort_unstable();
-    let expected: &[&str] = if answer.get("error").is_some() {
-        &["error", "events", "invocations", "outcome"]
-    } else {
-        &["events", "invocations", "outcome"]
-    };
-    assert_eq!(keys, expected, "{answer}");
-    assert!(answer["invocations"].is_array(), "{answer}");
-    let mut envelope = json!({"outcome": answer["outcome"], "published": answer["events"]});
-    if let Some(error) = answer.get("error") {
-        let mut error_keys = error
-            .as_object()
-            .unwrap_or_else(|| panic!("an error is an object: {answer}"))
-            .keys()
-            .map(String::as_str)
-            .collect::<Vec<_>>();
-        error_keys.retain(|key| *key != "payload");
-        assert_eq!(error_keys, ["error"], "{answer}");
-        envelope["error"] = error["error"].clone();
-        if let Some(payload) = error.get("payload") {
-            envelope["payload"] = payload.clone();
-        }
-    }
-    envelope
-}
-
-/// Calls the operation `id` under the method the contract declares for it, at
-/// `/api/commands/<id>` for a command and `/api/views/<id>` for a view.
+/// Calls the operation `id` at the method and path the contract publishes for it.
 fn call(served: &Served, contract: &Contract, id: &str, body: Option<&Value>) -> (u16, Value) {
-    let (method, _) = contract.route(id);
-    let path = match method.as_str() {
-        "POST" => format!("/api/commands/{id}"),
-        "GET" => format!("/api/views/{id}"),
-        other => panic!("the contract serves {id} under {other}"),
-    };
+    let (method, path) = contract.route(id);
     exchange(served.address, &method, &path, body)
 }
 
@@ -305,11 +256,10 @@ fn a_command_posted_over_http_executes_and_answers() {
         answer,
         json!({
             "outcome": "opened",
-            "events": [{
+            "published": [{
                 "event": "tasks.board.TaskOpened",
                 "payload": {"task_id": "t1", "title": "Water the plants"},
             }],
-            "invocations": [],
         })
     );
     assert_eq!(
@@ -325,19 +275,9 @@ fn a_command_posted_over_http_executes_and_answers() {
     );
     assert_eq!(status, 202, "{answer}");
     assert_eq!(answer["outcome"], "closed");
-    assert_eq!(answer["events"][0]["event"], "tasks.board.TaskClosed");
     assert_eq!(
-        answer["invocations"],
-        json!([{
-            "binding": "record-closure",
-            "component": "ledger",
-            "command": "tasks.ledger.RecordClosure",
-            "outcome": "recorded",
-            "events": [{
-                "event": "tasks.ledger.ClosureRecorded",
-                "payload": {"task_id": "t1"},
-            }],
-        }])
+        answer["published"],
+        json!([{"event": "tasks.board.TaskClosed", "payload": {"task_id": "t1"}}])
     );
     assert_eq!(
         rows(&served, &contract, ALL_TASKS),
@@ -359,11 +299,8 @@ fn a_refused_command_answers_with_its_declared_error() {
     );
     assert_eq!(status, 404, "{answer}");
     assert_eq!(answer["outcome"], "no-such-task");
-    assert_eq!(
-        answer["error"],
-        json!({"error": "tasks.board.TaskNotFound"})
-    );
-    assert_eq!(answer["events"], json!([]));
+    assert_eq!(answer["error"], "tasks.board.TaskNotFound");
+    assert_eq!(answer["published"], json!([]));
     assert!(rows(&served, &contract, ALL_TASKS).is_empty());
 
     call(
@@ -387,8 +324,8 @@ fn a_refused_command_answers_with_its_declared_error() {
     );
     assert_eq!(status, 409, "{answer}");
     assert_eq!(answer["outcome"], "already-done");
-    assert_eq!(answer["error"], json!({"error": "tasks.board.AlreadyDone"}));
-    assert_eq!(answer["events"], json!([]));
+    assert_eq!(answer["error"], "tasks.board.AlreadyDone");
+    assert_eq!(answer["published"], json!([]));
     assert_eq!(rows(&served, &contract, ALL_TASKS), before);
 }
 
@@ -544,7 +481,7 @@ fn a_bound_route_answers_with_the_bindings_status_per_outcome() {
     assert_eq!(status, 201, "the binding answers opened 201: {answer}");
     assert_eq!(answer["outcome"], "opened");
     assert_eq!(
-        answer["events"],
+        answer["published"],
         json!([{"event": "tasks.board.TaskOpened", "payload": {"task_id": "t1", "title": "Bound"}}])
     );
     contract.validate(OPEN_TASK, status, &answer);
@@ -559,7 +496,7 @@ fn a_bound_route_answers_with_the_bindings_status_per_outcome() {
         status, 410,
         "the binding answers already-done 410: {answer}"
     );
-    assert_eq!(answer["error"], json!({"error": "tasks.board.AlreadyDone"}));
+    assert_eq!(answer["error"], "tasks.board.AlreadyDone");
     contract.validate(CLOSE_TASK, status, &answer);
 
     let (status, answer) = exchange(address, "POST", "/tasks/nobody/close", None);
@@ -585,9 +522,9 @@ fn a_bound_route_answers_with_the_bindings_status_per_outcome() {
     );
     contract.validate(OPEN_TASKS, status, &answer);
 
-    let (status, answer) = exchange(address, "POST", "/api/commands/tasks.board.OpenTask", None);
+    let (status, answer) = exchange(address, "POST", &Contract::load().route(OPEN_TASK).1, None);
     assert_eq!(
         status, 404,
-        "with a binding the fallback is not served: {answer}"
+        "with a binding, an operation it names is not served at its derived route: {answer}"
     );
 }

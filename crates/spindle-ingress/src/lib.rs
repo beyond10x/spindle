@@ -1,32 +1,30 @@
 //! The HTTP adapter behind the `ingress.network` capability, bound to `http-loopback`.
 //!
-//! A component that requires `ingress.network` is served on 127.0.0.1. What it serves is what
-//! ESS derives for it: each command it accepts and, where it is `reached_by: network`, each view
-//! of a domain it owns. Where the routes are comes from ESS too:
+//! A component that requires `ingress.network` is served on 127.0.0.1, exactly as ESS publishes
+//! it. What it serves is what ESS derives for it: each command it accepts and, where it is
+//! `reached_by: network`, each view of a domain it owns. Where each is served is where
+//! [`ess_gen::http::bound_routes`] puts it, which is where `ess generate --kind openapi`
+//! publishes it: without a binding ESS's derived routes (`/<domain>/commands/<command>`,
+//! `/<domain>/views/<view>`); with an `ess-http/1` binding, compiled by ESS
+//! ([`ess_http::compile`], [`ess_gen::http::Binding`]), the binding's method, path, path
+//! variables and status per outcome for the operations it names, and ESS's derived routes for
+//! the rest.
 //!
-//! - with an `ess-http/1` binding, compiled by ESS ([`ess_http::compile`],
-//!   [`ess_gen::http::Binding`]), each operation is at the method and path
-//!   [`ess_gen::http::bound_routes`] gives it, path variables read into the input as
-//!   [`ess_gen::http::scalar`] says, and each outcome answers the status the binding lists or ESS
-//!   derives;
-//! - without one, the fallback: `POST /api/commands/<qualified name>` and
-//!   `GET /api/views/<qualified name>`, each outcome at ESS's derived status
-//!   ([`ess_http::status::outcome_status`]).
+//! A command's body is the input ESS publishes; it answers the envelope ESS publishes for the
+//! outcome, `{outcome, published, error?, payload?}` ([`answer`]). A view answers the body ESS
+//! publishes, `{"rows": [...]}`.
 //!
-//! A command's body is the input ESS projects; it answers `{outcome, error?, events,
-//! invocations}` ([`answer`]). A view answers the body ESS projects, `{"rows": [...]}`.
-//!
-//! [`Listener::bind`] owns the socket and the HTTP server on a thread of its own; every request
-//! for a route of the [`Surface`] arrives as an [`Exchange`] on [`Listener::next`], so the
-//! [`spindle_host::Host`] that answers it stays on the caller's thread.
+//! [`Listener::bind`] owns the socket and a hyper HTTP/1.1 server on a thread of its own; every
+//! request for a route of the [`Surface`] arrives as an [`Exchange`] on [`Listener::next`], so
+//! the [`spindle_host::Host`] that answers it stays on the caller's thread.
 
 mod answer;
 mod listener;
 mod surface;
 
 pub use answer::{Answer, answer};
-pub use listener::{BODY_LIMIT, Exchange, Listener};
-pub use surface::{Resolved, Route, Surface, SurfaceError, Variable, fallback};
+pub use listener::{BODY_LIMIT, BODY_READ, Exchange, HEADER_READ, Listener};
+pub use surface::{Resolved, Route, Surface, SurfaceError, Variable};
 
 /// The `ingress.network` implementation this crate serves: HTTP on the loopback address.
 pub const HTTP_LOOPBACK: &str = "http-loopback";

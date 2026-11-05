@@ -1,5 +1,5 @@
-//! The routes one listener serves, read from ESS: the `ess-http/1` binding where one is given,
-//! a fallback under `/api/` where none is.
+//! The routes one listener serves, read from ESS: the routes `ess generate --kind openapi`
+//! publishes, with an `ess-http/1` binding's in place of those it names.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -27,15 +27,15 @@ pub struct Route {
     pub component: String,
     /// The method.
     pub method: Method,
-    /// The path template: the binding's, ESS's derived one for an operation a binding does not
-    /// name, or the fallback `/api/commands/<qualified name>` or `/api/views/<qualified name>`
-    /// without a binding.
+    /// The path template: the binding's, or the one ESS derives for an operation no binding
+    /// names.
     pub path: String,
     /// The command or view it serves.
     pub operation: Operation,
     segments: Vec<Segment>,
     variables: Vec<Variable>,
     statuses: BTreeMap<String, u16>,
+    input: Vec<String>,
 }
 
 impl Route {
@@ -48,6 +48,12 @@ impl Route {
     /// The path's variables.
     pub fn variables(&self) -> &[Variable] {
         &self.variables
+    }
+
+    /// The input fields a command declares, by name: its published `Input` is closed, so a
+    /// request carrying any other is refused. Empty for a view.
+    pub fn input(&self) -> &[String] {
+        &self.input
     }
 
     /// The input `path` carries in its variables, read as [`ess_gen::http::Flat`] says; `None`
@@ -74,16 +80,17 @@ impl Route {
     }
 }
 
-/// A path segment with every `%XX` decoded; `None` when the result is not UTF-8 or an escape is
-/// broken.
+/// A path segment with every `%XX` decoded, as ESS's served application decodes it; `None` where
+/// an escape is not two hexadecimal digits or the bytes are not UTF-8. A `+` stays a `+`.
 fn decoded(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut index = 0;
     while index < bytes.len() {
         if bytes[index] == b'%' {
-            let hex = text.get(index + 1..index + 3)?;
-            out.push(u8::from_str_radix(hex, 16).ok()?);
+            let high = char::from(*bytes.get(index + 1)?).to_digit(16)?;
+            let low = char::from(*bytes.get(index + 2)?).to_digit(16)?;
+            out.push(u8::try_from(high * 16 + low).ok()?);
             index += 3;
         } else {
             out.push(bytes[index]);
@@ -101,7 +108,11 @@ fn read(flat: Flat, text: String) -> Option<Value> {
     match flat {
         Flat::String => Some(Value::String(text)),
         _ if text.is_empty() => None,
-        Flat::Integer => Some(text.parse::<i64>().map_or(Value::String(text), Value::from)),
+        Flat::Integer if whole(&text) => Some(
+            serde_json::from_str::<serde_json::Number>(&text)
+                .map_or(Value::String(text), Value::Number),
+        ),
+        Flat::Integer => Some(Value::String(text)),
         Flat::Boolean => Some(match text.as_str() {
             "true" => Value::Bool(true),
             "false" => Value::Bool(false),
@@ -109,6 +120,12 @@ fn read(flat: Flat, text: String) -> Option<Value> {
         }),
         Flat::Text => Some(Value::String(text)),
     }
+}
+
+/// Exact decimal text: an optional `-` and one or more ASCII digits.
+fn whole(text: &str) -> bool {
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 /// What a request's method and path resolve to.
@@ -179,11 +196,11 @@ impl Surface {
     /// The surface of `components`: for each, the operations ESS derives for it, its accepted
     /// commands and, where it is `reached_by: network`, the views of the domains it owns.
     ///
-    /// With `binding`, each operation is served where [`ess_gen::http::bound_routes`] puts it:
-    /// at the method and path the binding declares, its path variables read into the input, and
-    /// each outcome answered with the status the binding lists ([`ess_gen::http::listed`]) or ESS
-    /// derives. Without one, a command is a `POST` at `/api/commands/<qualified name>` and a view a
-    /// `GET` at `/api/views/<qualified name>`, each outcome at ESS's derived status.
+    /// Each operation is served where [`ess_gen::http::bound_routes`] puts it, which is where
+    /// `ess generate --kind openapi` (with `--http`, where a binding is given) publishes it:
+    /// without a binding, or for an operation the binding does not name, ESS's derived route and
+    /// status; for one it names, the binding's method and path, its path variables read into the
+    /// input, and the status it lists for an outcome ([`ess_gen::http::listed`]).
     ///
     /// # Errors
     /// [`SurfaceError::NoComponent`] for a name `ir` does not declare,
@@ -213,7 +230,7 @@ impl Surface {
                 .find(|component| component.name.as_str() == name)
                 .ok_or_else(|| SurfaceError::NoComponent(name.clone()))?;
             for bound in ess_gen::http::bound_routes(ir, component, binding) {
-                let route = route(ir, name, &bound, binding.is_some())?;
+                let route = route(ir, name, &bound)?;
                 if let Some(taken) = routes
                     .iter()
                     .find(|taken| taken.method == route.method && taken.path == route.path)
@@ -235,7 +252,8 @@ impl Surface {
         &self.routes
     }
 
-    /// The route a request with `method` (any case) and `path` is for. Compiling the binding
+    /// The route a request with `method` (compared exactly, RFC 9110 §9.1) and `path` is for.
+    /// Compiling the binding
     /// refused two templates a request path can both match (`ESS-HTTP-010`, `ESS-HTTP-011`), so
     /// at most one route of a method matches.
     pub fn resolve(&self, method: &str, path: &str) -> Resolved<'_> {
@@ -244,7 +262,7 @@ impl Surface {
             let Some(carried) = route.carried(path) else {
                 continue;
             };
-            if !route.method.as_str().eq_ignore_ascii_case(method) {
+            if route.method.as_str().to_uppercase() != method {
                 served.push(route.method);
                 continue;
             }
@@ -261,15 +279,6 @@ impl Surface {
     }
 }
 
-/// Where `operation` is served without a binding: `/api/commands/<qualified name>` or
-/// `/api/views/<qualified name>`.
-pub fn fallback(operation: &Operation) -> String {
-    match operation {
-        Operation::Command(name) => format!("/api/commands/{name}"),
-        Operation::View(name) => format!("/api/views/{name}"),
-    }
-}
-
 fn unsupported(operation: &Operation, what: impl Into<String>) -> SurfaceError {
     SurfaceError::Unsupported {
         operation: operation.to_string(),
@@ -282,14 +291,9 @@ fn route(
     ir: &EssIr,
     component: &str,
     bound: &ess_gen::http::Route<'_>,
-    with_binding: bool,
 ) -> Result<Route, SurfaceError> {
     let operation = bound.serves.operation();
-    let path = if with_binding {
-        bound.path.clone()
-    } else {
-        fallback(&operation)
-    };
+    let path = bound.path.clone();
     let segments = ess_http::template(&path)
         .map_err(|reasons| unsupported(&operation, format!("the path {path}: {reasons:?}")))?;
     let mut variables = Vec::new();
@@ -319,8 +323,15 @@ fn route(
         ));
     }
     let mut statuses = BTreeMap::new();
+    let mut input = Vec::new();
     match bound.serves {
         ess_gen::http::Served::Command(handle) => {
+            input = ir
+                .command(handle)
+                .input
+                .iter()
+                .map(|field| field.name.clone())
+                .collect();
             if ess_gen::http::request(bound).encoding != Encoding::Json {
                 return Err(unsupported(&operation, "a request that is not a JSON body"));
             }
@@ -378,5 +389,6 @@ fn route(
         segments,
         variables,
         statuses,
+        input,
     })
 }

@@ -1,24 +1,36 @@
-//! The HTTP server: one socket on 127.0.0.1, axum on a thread of its own, and every request for
+//! The HTTP server: one socket on 127.0.0.1, hyper on a thread of its own, and every request for
 //! a route handed to the caller's thread as an [`Exchange`].
 
+use std::convert::Infallible;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
-use axum::body::Body;
-use axum::extract::{Request, State};
-use axum::http::header::{ALLOW, CONTENT_TYPE};
-use axum::http::{HeaderValue, StatusCode};
-use axum::response::{IntoResponse, Response};
+use http_body_util::{BodyExt, Full, Limited};
+use hyper::body::{Bytes, Incoming};
+use hyper::header::{ALLOW, CONTENT_LENGTH, CONTENT_TYPE, HeaderValue, TRANSFER_ENCODING};
+use hyper::{Request, Response, StatusCode};
+use hyper_util::rt::{TokioIo, TokioTimer};
 use serde_json::{Map, Value};
 use tokio::sync::oneshot;
 
 use crate::answer::Answer;
 use crate::surface::{Resolved, Route, Surface};
 
-/// The largest request body read, in bytes; a larger one is refused `413`.
+/// The largest request body read, in bytes; one announced larger is refused `413` before it is
+/// read.
 pub const BODY_LIMIT: usize = 1 << 20;
+
+/// How long a connection may take to send a request's head; a slower one is closed.
+pub const HEADER_READ: Duration = Duration::from_secs(10);
+
+/// How long a request's body may take to arrive once its head has; a slower one is refused `408`.
+pub const BODY_READ: Duration = Duration::from_secs(10);
+
+/// How long the listener waits after accepting a connection failed, such as when the process is
+/// out of descriptors, before it accepts again.
+const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
 
 /// One request for a route, waiting for its answer.
 #[derive(Debug)]
@@ -56,9 +68,9 @@ struct Served {
     exchanges: mpsc::Sender<Exchange>,
 }
 
-/// An HTTP listener on 127.0.0.1 serving one [`Surface`].
+/// An HTTP/1.1 listener on 127.0.0.1 serving one [`Surface`].
 ///
-/// Dropping it stops the server: requests not yet answered are answered `503`.
+/// Dropping it stops accepting: requests not yet answered are answered `503`.
 #[derive(Debug)]
 pub struct Listener {
     address: SocketAddr,
@@ -70,8 +82,14 @@ impl Listener {
     /// Binds `127.0.0.1:<port>`, `0` for a port the system chooses, and starts serving
     /// `surface`.
     ///
-    /// A request whose path no route has is refused `404`, and one for a served path under
-    /// another method `405` with `Allow`; both with `{"refused": <why>}`.
+    /// Each refusal is `{"refused": <why>}`, as ESS's served application writes it: a path no
+    /// route has `404`; a served path under another method `405` with `Allow`, the method
+    /// compared exactly; a path variable that does not decode `400`; a body sent with
+    /// `Transfer-Encoding` `411`, since only one announced by `Content-Length` is read; a body
+    /// announced over [`BODY_LIMIT`] `413` before it is read; one that does not arrive within
+    /// [`BODY_READ`] `408`, and one that breaks off `400`. A head not sent within
+    /// [`HEADER_READ`] closes the connection. A failed accept is retried, and the listener goes
+    /// on.
     ///
     /// # Errors
     /// When the socket cannot be bound or the server thread cannot start.
@@ -81,9 +99,10 @@ impl Listener {
         let address = socket.local_addr()?;
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()
+            .enable_time()
             .build()?;
         let (sender, exchanges) = mpsc::channel();
-        let (shutdown, stopped) = oneshot::channel::<()>();
+        let (shutdown, mut stopped) = oneshot::channel::<()>();
         let served = Arc::new(Served {
             surface,
             exchanges: sender,
@@ -93,12 +112,17 @@ impl Listener {
             .spawn(move || {
                 runtime.block_on(async move {
                     let listener = tokio::net::TcpListener::from_std(socket)?;
-                    let app = axum::Router::new().fallback(handle).with_state(served);
-                    axum::serve(listener, app)
-                        .with_graceful_shutdown(async {
-                            let _ = stopped.await;
-                        })
-                        .await
+                    loop {
+                        tokio::select! {
+                            _ = &mut stopped => return Ok::<(), io::Error>(()),
+                            accepted = listener.accept() => match accepted {
+                                Ok((stream, _)) => {
+                                    tokio::spawn(connection(Arc::clone(&served), stream));
+                                }
+                                Err(_) => tokio::time::sleep(ACCEPT_BACKOFF).await,
+                            },
+                        }
+                    }
                 })
             })?;
         Ok(Self {
@@ -128,13 +152,26 @@ impl Drop for Listener {
     }
 }
 
-async fn handle(State(served): State<Arc<Served>>, request: Request) -> Response {
+/// Serves one connection, HTTP/1.1, its heads bounded by [`HEADER_READ`].
+async fn connection(served: Arc<Served>, stream: tokio::net::TcpStream) {
+    let service = hyper::service::service_fn(move |request| handle(Arc::clone(&served), request));
+    let _ = hyper::server::conn::http1::Builder::new()
+        .timer(TokioTimer::new())
+        .header_read_timeout(HEADER_READ)
+        .serve_connection(TokioIo::new(stream), service)
+        .await;
+}
+
+async fn handle(
+    served: Arc<Served>,
+    request: Request<Incoming>,
+) -> Result<Response<Full<Bytes>>, Infallible> {
     let (route, carried) = match served
         .surface
         .resolve(request.method().as_str(), request.uri().path())
     {
         Resolved::Found(route, carried) => (route.clone(), carried),
-        Resolved::Malformed(why) => return written(Answer::refusal(400, why)),
+        Resolved::Malformed(why) => return Ok(written(Answer::refusal(400, why))),
         Resolved::WrongMethod(allowed) => {
             let allowed = allowed
                 .iter()
@@ -146,22 +183,50 @@ async fn handle(State(served): State<Arc<Served>>, request: Request) -> Response
             if let Ok(value) = HeaderValue::from_str(&allowed) {
                 response.headers_mut().insert(ALLOW, value);
             }
-            return response;
+            return Ok(response);
         }
         Resolved::NotFound => {
-            return written(Answer::refusal(
+            return Ok(written(Answer::refusal(
                 404,
                 format!("no route serves {}", request.uri().path()),
-            ));
+            )));
         }
     };
-    let body = match axum::body::to_bytes(request.into_body(), BODY_LIMIT).await {
-        Ok(body) => body.to_vec(),
-        Err(error) => {
-            return written(Answer::refusal(
-                413,
-                format!("the body could not be read within {BODY_LIMIT} bytes: {error}"),
-            ));
+    if request.headers().contains_key(TRANSFER_ENCODING) {
+        return Ok(written(Answer::refusal(
+            411,
+            "this surface reads a body announced by `Content-Length`; chunked transfer is not read",
+        )));
+    }
+    let announced = request
+        .headers()
+        .get(CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok());
+    if announced.is_some_and(|length| length > BODY_LIMIT as u64) {
+        return Ok(written(Answer::refusal(
+            413,
+            format!("the body is announced over {BODY_LIMIT} bytes"),
+        )));
+    }
+    let read = tokio::time::timeout(
+        BODY_READ,
+        Limited::new(request.into_body(), BODY_LIMIT).collect(),
+    )
+    .await;
+    let body = match read {
+        Ok(Ok(collected)) => collected.to_bytes().to_vec(),
+        Ok(Err(error)) => {
+            return Ok(written(Answer::refusal(
+                400,
+                format!("the body could not be read: {error}"),
+            )));
+        }
+        Err(_) => {
+            return Ok(written(Answer::refusal(
+                408,
+                format!("the body did not arrive within {BODY_READ:?}"),
+            )));
         }
     };
     let (reply, answered) = oneshot::channel();
@@ -172,20 +237,21 @@ async fn handle(State(served): State<Arc<Served>>, request: Request) -> Response
         reply,
     };
     if served.exchanges.send(exchange).is_err() {
-        return written(Answer::refusal(503, "the listener is stopping"));
+        return Ok(written(Answer::refusal(503, "the listener is stopping")));
     }
-    match answered.await {
+    Ok(match answered.await {
         Ok(answer) => written(answer),
         Err(_) => written(Answer::refusal(
             503,
             "the listener stopped before answering",
         )),
-    }
+    })
 }
 
-fn written(answer: Answer) -> Response {
-    let status = StatusCode::from_u16(answer.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    let mut response = (status, Body::from(answer.body.to_string())).into_response();
+fn written(answer: Answer) -> Response<Full<Bytes>> {
+    let mut response = Response::new(Full::new(Bytes::from(answer.body.to_string())));
+    *response.status_mut() =
+        StatusCode::from_u16(answer.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     response
         .headers_mut()
         .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));

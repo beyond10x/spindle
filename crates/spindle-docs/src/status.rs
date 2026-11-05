@@ -231,7 +231,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "HTTP ingress",
-        "run serves the accepted commands and views over HTTP on 127.0.0.1 where ingress.network is bound to http-loopback: at the routes of an ess-http/1 binding, or the /api/ fallback.",
+        "run serves the accepted commands and views over HTTP on 127.0.0.1 where ingress.network is bound to http-loopback: at the routes ess generate --kind openapi publishes, with or without an ess-http/1 binding, answering the envelope ESS publishes.",
         "/docs/concepts/capabilities",
         "crates/spindle-cli/tests/ingress.rs::a_bound_route_answers_with_the_bindings_status_per_outcome",
     ),
