@@ -43,9 +43,6 @@ pub use spindle_target::{
 pub use static_build::{BuildError, GUEST_TARGET, StaticBinaries};
 
 use namespace::{Shared, failure, io_error};
-use spindle_target::{
-    ENV_COMPONENT, ENV_INSTANCE_ID, ENV_LISTEN, ENV_PEER_PREFIX, ENV_SETTING_PREFIX, env_name,
-};
 
 /// The console text the guest init reports the command's exit with: `code=<n>` or `signal=<n>`
 /// follows it.
@@ -381,83 +378,15 @@ pub fn next_cid() -> Result<u32, LaunchError> {
     Ok(3 + ((pid << 10) | n))
 }
 
-/// The variables the guest init gives the guest command, as the process launcher sets them for
-/// a child: [`ENV_INSTANCE_ID`], [`ENV_COMPONENT`], [`ENV_LISTEN`], the telemetry endpoint when
-/// there is one, one `SPINDLE_SETTING_<NAME>` per setting and one `SPINDLE_PEER_<COMPONENT>` per
-/// peer component, its addresses comma-separated in plan order. A plan whose names collide is
-/// refused.
+/// The variables the guest init gives the guest command: [`spindle_target::launch_variables`],
+/// as the process launcher sets them for a child, with `vsock:2:<port>` as the telemetry
+/// endpoint when the launcher has one. Refused as the process launcher refuses them.
 pub fn guest_variables(
     plan: &LaunchPlan,
     telemetry: Option<u32>,
 ) -> Result<BTreeMap<String, String>, LaunchError> {
-    let mut variables = BTreeMap::new();
-    let mut set = |name: String, value: String, from: &str| {
-        if variables.insert(name.clone(), value).is_some() {
-            return Err(LaunchError::InvalidPlan(format!(
-                "{from} maps to {name}, which is already set"
-            )));
-        }
-        Ok(())
-    };
-    set(
-        ENV_INSTANCE_ID.to_owned(),
-        plan.instance_id.clone(),
-        "the instance id",
-    )?;
-    set(
-        ENV_COMPONENT.to_owned(),
-        plan.component.clone(),
-        "the component",
-    )?;
-    set(
-        ENV_LISTEN.to_owned(),
-        plan.listen.to_string(),
-        "the listen address",
-    )?;
-    if let Some(port) = telemetry {
-        set(
-            spindle_telemetry::ENV_TELEMETRY.to_owned(),
-            spindle_telemetry::Endpoint::host_vsock(port).to_string(),
-            "the telemetry endpoint",
-        )?;
-    }
-    for (name, value) in &plan.settings {
-        if name.is_empty() {
-            return Err(LaunchError::InvalidPlan("a setting has no name".to_owned()));
-        }
-        set(
-            format!("{ENV_SETTING_PREFIX}{}", env_name(name)),
-            value.clone(),
-            &format!("setting {name:?}"),
-        )?;
-    }
-    let mut peers: BTreeMap<String, (&str, Vec<String>)> = BTreeMap::new();
-    for peer in &plan.peers {
-        if peer.component.is_empty() {
-            return Err(LaunchError::InvalidPlan(
-                "a peer has no component".to_owned(),
-            ));
-        }
-        let name = format!("{ENV_PEER_PREFIX}{}", env_name(&peer.component));
-        let (component, addresses) = peers
-            .entry(name.clone())
-            .or_insert_with(|| (peer.component.as_str(), Vec::new()));
-        if *component != peer.component {
-            return Err(LaunchError::InvalidPlan(format!(
-                "peer components {component:?} and {:?} both map to {name}",
-                peer.component
-            )));
-        }
-        addresses.push(peer.address.to_string());
-    }
-    for (name, (component, addresses)) in peers {
-        set(
-            name,
-            addresses.join(","),
-            &format!("peer component {component:?}"),
-        )?;
-    }
-    Ok(variables)
+    let endpoint = telemetry.map(spindle_telemetry::Endpoint::host_vsock);
+    spindle_target::launch_variables(plan, endpoint.as_ref())
 }
 
 fn launch_document(plan: &LaunchPlan, telemetry: Option<u32>) -> Result<String, LaunchError> {

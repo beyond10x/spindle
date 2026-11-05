@@ -7,6 +7,7 @@
 
 #![allow(dead_code)]
 
+use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -39,11 +40,6 @@ pub fn spec() -> PathBuf {
 
 pub fn environments() -> PathBuf {
     root().join("examples/environments")
-}
-
-/// Prints why a VM test did not run; the test then returns without a verdict on the rally.
-pub fn skip(test: &str, reason: &str) {
-    eprintln!("{test}: skipped: {reason}");
 }
 
 /// One instance of the placement: a component, the address it listens on, and its request.
@@ -171,11 +167,14 @@ fn ran_delivered(console: &str, command: &str) -> bool {
     })
 }
 
-/// What a match on three VMs showed: the table's last `MatchState` view and every console.
+/// What a match on three VMs showed: the table's last `MatchState` view, every console, and the
+/// line each guest's `b10x-spindle` printed once listening (`component`, `listening`, `peers`),
+/// by instance id.
 #[derive(Debug)]
 pub struct Played {
     pub view: Map<String, Value>,
     pub consoles: Vec<(String, String)>,
+    pub links: BTreeMap<String, Value>,
 }
 
 impl Played {
@@ -273,13 +272,28 @@ pub fn play(launcher: &mut dyn Launcher, plans: &[LaunchPlan]) -> Played {
             all(&consoles)
         );
     }
+    let links = consoles
+        .iter()
+        .map(|(id, text)| {
+            let link = lines(text)
+                .into_iter()
+                .find(|line| line.get("listening").is_some())
+                .unwrap_or_else(|| panic!("{id} never printed its listening line:\n{text}"));
+            (id.clone(), link)
+        })
+        .collect();
     eprintln!(
-        "{:?}: {} instances exited 0; the table's last view: {}",
+        "{:?}: {} instances exited 0; links: {}; the table's last view: {}",
         launcher.kind(),
         consoles.len(),
+        json!(links),
         Value::Object(view.clone())
     );
-    Played { view, consoles }
+    Played {
+        view,
+        consoles,
+        links,
+    }
 }
 
 /// What a host needs to boot the rally on QEMU microVMs: QEMU, the host kernel and the static
@@ -290,22 +304,25 @@ pub struct Qemu {
     binaries: StaticBinaries,
 }
 
-/// The QEMU host, or why this host cannot boot a QEMU microVM: `/dev/kvm`,
-/// `qemu-system-x86_64`, the host kernel and its modules, or the musl target. A static build
-/// that fails for another reason is a failure, not a skip.
-pub fn qemu() -> Result<Qemu, String> {
-    let (qemu, kernel) = spindle_qemu::vm_prerequisites()?;
+/// The QEMU host, or a panic naming what this host lacks to boot a QEMU microVM (`/dev/kvm`,
+/// `qemu-system-x86_64`, the host kernel and its modules, the musl target) or why the static
+/// guest build failed, as `tests/microvm.rs` does: these cases run only when asked for.
+pub fn qemu() -> Qemu {
+    let (qemu, kernel) = spindle_qemu::vm_prerequisites()
+        .unwrap_or_else(|reason| panic!("this host cannot boot a QEMU microVM: {reason}"));
     let work = std::env::var_os("SPINDLE_QEMU_WORK_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| Path::new(env!("CARGO_TARGET_TMPDIR")).join("spindle-qemu"));
-    std::fs::create_dir_all(&work).map_err(|error| format!("{}: {error}", work.display()))?;
+    std::fs::create_dir_all(&work).unwrap_or_else(|error| panic!("{}: {error}", work.display()));
     match StaticBinaries::build(&root(), &work.join("musl-target")) {
-        Ok(binaries) => Ok(Qemu {
+        Ok(binaries) => Qemu {
             qemu,
             kernel,
             binaries,
-        }),
-        Err(BuildError::TargetMissing(reason)) => Err(reason),
+        },
+        Err(BuildError::TargetMissing(reason)) => {
+            panic!("this host cannot boot a QEMU microVM: {reason}")
+        }
         Err(error) => panic!("the static guest build failed: {error}"),
     }
 }
