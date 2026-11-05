@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:console-api
 kind: story
-status: active
+status: implemented
 title: A generic console API over the ingress
 relations:
 - serves: vision:spindle
@@ -13,10 +13,11 @@ scope:
   path: crates/spindle-host/src/host.rs
 - confidence: inferred
   path: crates/spindle-ingress
-revision: 4
+revision: 5
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-05T09:39:07Z", actor: "human:timo", revision: 3}
 - {from: "proposed", to: "active", at: "2026-11-05T09:39:07Z", actor: "human:timo", revision: 4}
+- {from: "active", to: "implemented", at: "2026-11-05T15:47:50Z", actor: "human:timo", revision: 5, decided_on: {"recorded":{"test_result":2}}}
 ---
 # A generic console API over the ingress
 

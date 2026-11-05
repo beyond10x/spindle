@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-05T15:46:56Z",
+  "actor": "human:timo",
+  "artifact": "story:rally-runs-as-three-processes",
+  "kind": "story",
+  "revision": 7,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "task check (CI Gate, PR 12 head 0a0658f)",
+    "reference": "https://github.com/beyond10x/spindle/actions/runs/42057027502/job/127349944211"
+  }
+}
