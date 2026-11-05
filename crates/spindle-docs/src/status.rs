@@ -236,6 +236,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "crates/spindle-cli/tests/ingress.rs::a_bound_route_answers_with_the_bindings_status_per_outcome",
     ),
     shipped(
+        "Execution",
+        "Console routes",
+        "A loopback run also serves GET /api/model (the IR as ess specify compile prints it, and each outcome's subject), GET /api/events (every event published, in order) and POST /api/reset (empties every store); a route the binding or ESS publishes at one of those paths is refused at startup.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-cli/tests/console.rs::reset_empties_every_store_of_the_run",
+    ),
+    shipped(
         "Conformance",
         "Scenario replay",
         "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: captures feed later steps, view asserts are checked, and the first divergent step is named and ends the run.",

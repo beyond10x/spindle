@@ -1,7 +1,7 @@
 //! The host: every component of one system in one process.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -12,7 +12,7 @@ use serde_json::{Map, Value};
 use spindle_capability::{Capability, Environment};
 use spindle_channel::{ChannelError, Receiver, RouteError, Router, Sender, in_process};
 use spindle_kernel::{
-    DeclaredError, ExecuteError, Executed, MemoryStore, NoExternals, SqliteStore, Store,
+    DeclaredError, Event, ExecuteError, Executed, MemoryStore, NoExternals, SqliteStore, Store,
     StoreError, UuidV4,
 };
 use spindle_telemetry::{Counters, CountingStore, Sink};
@@ -81,6 +81,17 @@ pub struct RefusedCommand {
     pub outcome: String,
     /// The error that outcome declares.
     pub error: DeclaredError,
+}
+
+/// One event a command published: committed with the command's effect, in the order published.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Published {
+    /// The component that ran the command.
+    pub component: String,
+    /// The command.
+    pub command: String,
+    /// The event and its payload.
+    pub event: Event,
 }
 
 /// Every command one call ran, in the order run: those that took effect, those the model refused,
@@ -187,6 +198,8 @@ pub enum HostError {
 
 struct Component {
     store: Box<dyn Store>,
+    /// The SQLite file the store keeps its state in; `None` for a store in memory.
+    file: Option<PathBuf>,
     sender: Sender,
     position: u64,
     counters: Arc<Counters>,
@@ -218,6 +231,7 @@ pub struct Host {
     receivers: Vec<Receiver>,
     timer: Timer,
     periodic: BTreeMap<String, Periodic>,
+    published: Vec<Published>,
 }
 
 impl std::fmt::Debug for Host {
@@ -300,27 +314,22 @@ impl Host {
                     .ok_or_else(|| HostError::Unsupported(format!("no component {name}")))?,
             ));
             let sink = Sink::new(counters.clone());
-            let store: Box<dyn Store> = match bound(Capability::STORE_DURABLE)
-                .or_else(|| bound("store.ephemeral"))
-            {
-                None | Some("memory") => {
-                    Box::new(CountingStore::new(MemoryStore::default(), sink.clone()))
-                }
-                Some("sqlite") => Box::new(CountingStore::new(
-                    SqliteStore::open(&state.join(format!("{name}.sqlite")))?,
-                    sink.clone(),
-                )),
+            let file = match bound(Capability::STORE_DURABLE).or_else(|| bound("store.ephemeral")) {
+                None | Some("memory") => None,
+                Some("sqlite") => Some(state.join(format!("{name}.sqlite"))),
                 Some(other) => {
                     return Err(HostError::Unsupported(format!(
                         "{name} has its state bound to {other}, which this host has no store for"
                     )));
                 }
             };
+            let store = opened(file.as_deref(), &sink)?;
             let sender = Sender::new(name, router.clone())?.with_telemetry(sink.clone());
             components.insert(
                 name.clone(),
                 Component {
                     store,
+                    file,
                     sender,
                     position: 0,
                     counters,
@@ -408,7 +417,58 @@ impl Host {
             receivers,
             timer,
             periodic,
+            published: Vec::new(),
         })
+    }
+
+    /// The compiled specification the host runs.
+    pub fn ir(&self) -> &EssIr {
+        &self.ir
+    }
+
+    /// Every event a command published since the host started or was last [reset](Self::reset),
+    /// in the order published: a command's own events in emit order, then those of the commands
+    /// they led to. A refused command publishes none. Held in memory: the events of an earlier
+    /// process that kept its state in SQLite are not among them.
+    pub fn published(&self) -> &[Published] {
+        &self.published
+    }
+
+    /// Empties every component's store and forgets every published event; returns the
+    /// components whose stores were emptied, by name.
+    ///
+    /// A store in memory is replaced by an empty one. A store in SQLite is closed, its file
+    /// removed with the SQLite side files beside it, and an empty one opened at the same path.
+    /// Periodic bindings keep running, and the counters keep their counts.
+    ///
+    /// # Errors
+    /// [`HostError::Store`] when a file cannot be removed or reopened; the stores emptied before
+    /// it stay empty.
+    pub fn reset(&mut self) -> Result<Vec<String>, HostError> {
+        self.published.clear();
+        let mut emptied = Vec::new();
+        for (name, component) in &mut self.components {
+            component.store = Box::new(MemoryStore::default());
+            if let Some(file) = &component.file {
+                for suffix in ["", "-wal", "-shm", "-journal"] {
+                    let mut path = file.clone().into_os_string();
+                    path.push(suffix);
+                    match std::fs::remove_file(&path) {
+                        Ok(()) => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => {
+                            return Err(HostError::Store(StoreError::Backend(format!(
+                                "removing {}: {error}",
+                                PathBuf::from(path).display()
+                            ))));
+                        }
+                    }
+                }
+            }
+            component.store = opened(component.file.as_deref(), &component.sink)?;
+            emptied.push(name.clone());
+        }
+        Ok(emptied)
     }
 
     /// What admission bound for each component.
@@ -640,6 +700,12 @@ impl Host {
             Ok(executed) => executed,
             Err(error) => return Ok(Err(error)),
         };
+        self.published
+            .extend(executed.events.iter().map(|event| Published {
+                component: component.to_owned(),
+                command: command.to_owned(),
+                event: event.clone(),
+            }));
         if !executed.events.is_empty() {
             held.position += 1;
             for event in &executed.events {
@@ -751,6 +817,14 @@ impl Host {
 struct Deliveries {
     count: usize,
     bindings: BTreeSet<String>,
+}
+
+/// A component's store, counted into `sink`: in SQLite at `file`, in memory without one.
+fn opened(file: Option<&Path>, sink: &Sink) -> Result<Box<dyn Store>, HostError> {
+    Ok(match file {
+        None => Box::new(CountingStore::new(MemoryStore::default(), sink.clone())),
+        Some(file) => Box::new(CountingStore::new(SqliteStore::open(file)?, sink.clone())),
+    })
 }
 
 /// The component that accepts `command`.

@@ -392,6 +392,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 components,
                 binding,
                 port: port.unwrap_or(0),
+                ingress: ingress.implementation.as_str(),
             },
         );
     }

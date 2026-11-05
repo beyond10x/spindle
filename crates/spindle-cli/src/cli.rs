@@ -96,7 +96,11 @@ pub enum Command {
     /// (methods, paths, path variables and per-outcome statuses), an operation it does not name
     /// keeping its derived route. A command's body is its input; it answers its outcome's status
     /// with the envelope ESS publishes, `{"outcome", "published", "error"?, "payload"?}`. A view
-    /// answers `{"rows": [...]}`.
+    /// answers `{"rows": [...]}`. Beside those it serves a model console's routes: `GET
+    /// /api/model` (`{"ir", "subjects"}`, the IR as `ess specify compile --format json` prints it
+    /// and each outcome's subject), `GET /api/events` (`{"events": [...]}`, every event published
+    /// so far, in order) and `POST /api/reset` (empties every store, `{"emptied": [...]}`); a
+    /// route the binding or ESS publishes at one of those paths exits 1 before listening.
     Run {
         /// The specification directory.
         spec: PathBuf,

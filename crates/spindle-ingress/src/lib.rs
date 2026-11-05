@@ -16,13 +16,22 @@
 //!
 //! [`Listener::bind`] owns the socket and a hyper HTTP/1.1 server on a thread of its own; every
 //! request for a route of the [`Surface`] arrives as an [`Exchange`] on [`Listener::next`], so
-//! the [`spindle_host::Host`] that answers it stays on the caller's thread.
+//! the [`spindle_host::Host`] that answers it stays on the caller's thread
+//! ([`Exchange::serve`]).
+//!
+//! Beside those, a surface bound to `http-loopback` serves the routes a generic model console
+//! reads ([`Surface::with_console`], [`Console`]): `GET /api/model`, the IR as
+//! `ess specify compile --format json` prints it and each outcome's subject; `GET /api/events`,
+//! every event published so far, in order; and `POST /api/reset`, which empties every store of the
+//! run. A route the binding or ESS publishes at one of those paths is refused at startup.
 
 mod answer;
+pub mod console;
 mod listener;
 mod surface;
 
 pub use answer::{Answer, answer};
+pub use console::Console;
 pub use listener::{BODY_LIMIT, BODY_READ, Exchange, HEADER_READ, Listener};
 pub use surface::{Resolved, Route, Surface, SurfaceError, Variable};
 
