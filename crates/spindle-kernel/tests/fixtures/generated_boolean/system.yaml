@@ -1,0 +1,23 @@
+format: ess/34
+system: beacon
+version: v1
+summary: Lamps whose lit and armed flags the runtime mints.
+domains:
+  - beacon.lamp
+components:
+  - component: tower
+    summary: Installs, arms and signals lamps.
+    owns:
+      domains:
+        - beacon.lamp
+    accepts:
+      commands:
+        - beacon.lamp.InstallLamp
+        - beacon.lamp.ArmLamp
+        - beacon.lamp.SignalLamp
+    publishes:
+      events:
+        - beacon.lamp.LampInstalled
+        - beacon.lamp.LampArmed
+        - beacon.lamp.LampSignalled
+    reached_by: in_process

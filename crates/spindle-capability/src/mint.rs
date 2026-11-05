@@ -24,6 +24,9 @@ pub enum Minted {
     },
     /// An `Integer`: drawn from a fresh UUID.
     Integer,
+    /// A `Boolean`: drawn from a fresh UUID, as ESS's interpreter draws one from the counter it
+    /// mints identities from (`interpret::values::mint`).
+    Boolean,
     /// A `Timestamp`: the clock's civil time.
     Timestamp,
 }
@@ -34,7 +37,9 @@ impl Minted {
     pub fn capability(&self) -> &'static str {
         match self {
             Self::Timestamp => Capability::CLOCK,
-            Self::Uuid | Self::Text { .. } | Self::Integer => Capability::IDENTITY_MINT,
+            Self::Uuid | Self::Text { .. } | Self::Integer | Self::Boolean => {
+                Capability::IDENTITY_MINT
+            }
         }
     }
 }
@@ -44,11 +49,12 @@ pub const MINTED_TEXT: &str = "0123456789abcdef-";
 
 /// How a field of `kind` is minted, where the runtime mints it; `None` where it does not.
 ///
-/// The runtime mints a `Uuid`, a `String`, an `Integer` and a `Timestamp`, and a newtype of one
-/// that declares no invariant. A `String` newtype's alphabet must admit the minted text and its
-/// prefix, and a newtype of anything but a `String` may declare neither. `present` is the mint
-/// of `{generated: true, present: true}`: an `Optional` field is minted as its required type.
-/// Without it an `Optional` field stays absent ([`absent`]), so it is minted as nothing.
+/// The runtime mints a `Uuid`, a `String`, an `Integer`, a `Boolean` and a `Timestamp`, and a
+/// newtype of one that declares no invariant. A `String` newtype's alphabet must admit the
+/// minted text and its prefix, and a newtype of anything but a `String` may declare neither.
+/// `present` is the mint of `{generated: true, present: true}`: an `Optional` field is minted as
+/// its required type. Without it an `Optional` field stays absent ([`absent`]), so it is minted
+/// as nothing.
 pub fn minted(ir: &EssIr, kind: &ResolvedTypeRef, present: bool) -> Option<Minted> {
     let mut kind = if present { kind.required() } else { kind };
     let mut prefix: Option<&str> = None;
@@ -62,6 +68,7 @@ pub fn minted(ir: &EssIr, kind: &ResolvedTypeRef, present: bool) -> Option<Minte
                         prefix: prefix.map(str::to_owned),
                     },
                     Primitive::Integer => Minted::Integer,
+                    Primitive::Boolean => Minted::Boolean,
                     Primitive::Timestamp => Minted::Timestamp,
                     _ => return None,
                 };
