@@ -3,9 +3,11 @@
 //! A `creates:` outcome whose new instance's identity is neither an input nor a payload source
 //! (`{generated: true}`, or no source at all) leaves the identity to the runtime. Admission binds
 //! that as the capability `identity.mint`; the kernel asks a [`Mint`] for the value, so a test can
-//! make it deterministic. A `Uuid` identity, or a newtype of one, is minted as a UUID; a `String`
-//! newtype whose prefix and alphabet a minted text satisfies, and that declares no invariant, as
-//! that prefix and a UUID's text ([`identity`]).
+//! make it deterministic. A `Uuid` identity, or a newtype of one without invariants, is minted as
+//! a UUID; a `String` newtype whose prefix and alphabet admit a UUID's text, and whose invariants
+//! read only `value.count` and hold for that text's length, as its prefix and a UUID's text
+//! ([`identity`]). An entity invariant over the identity's length that no minted identity meets
+//! refuses the command before it runs ([`identity_bound`]).
 //!
 //! Any other field an outcome marks `{generated: true}` (in `sets:`, a payload or an error, and
 //! the `else:` of `{input: f, else: {generated: true}}`) is minted from its declared type
@@ -19,13 +21,14 @@ use std::time::SystemTime;
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::{
-    ResolvedBody, ResolvedEffect, ResolvedEntity, ResolvedField, ResolvedInstance, ResolvedOutcome,
+    ResolvedEffect, ResolvedEntity, ResolvedField, ResolvedInstance, ResolvedOutcome,
     ResolvedPayloadField, ResolvedPayloadValue, ResolvedTypeRef,
 };
+use ess_domain::Invariant;
 use ess_domain::QualifiedName;
-use ess_domain::types::{MAX_TYPE_DEPTH, Primitive};
 use serde_json::Value;
 pub(crate) use spindle_capability::mint::{Minted, absent, minted};
+use spindle_capability::mint::{candidate, holds_for, length_only};
 pub use uuid::Uuid;
 
 use crate::ExecuteError;
@@ -61,33 +64,36 @@ pub(crate) fn slot<'ir>(
     }
 }
 
-/// How a minted creation identity of type `kind` is spelled: a `Uuid` or a newtype that wraps
-/// one, or a `String` newtype whose prefix and alphabet a minted text satisfies ([`minted`], the
-/// rule for generated fields). `None` for every other type, among them a bare `String`.
+/// How a minted creation identity of type `kind` is spelled, by [`minted`], the rule for
+/// generated fields: a `Uuid` or a newtype of one without invariants, or a `String` newtype whose
+/// prefix, alphabet and length invariants a minted text satisfies. `None` for every other type,
+/// among them a bare `String` and a `Uuid` newtype that declares an invariant.
 pub(crate) fn identity(ir: &EssIr, kind: &ResolvedTypeRef) -> Option<Minted> {
-    if is_uuid(ir, kind) {
-        return Some(Minted::Uuid);
+    match minted(ir, kind, false)? {
+        Minted::Uuid => Some(Minted::Uuid),
+        text @ Minted::Text { .. } if matches!(kind, ResolvedTypeRef::Declared { .. }) => {
+            Some(text)
+        }
+        _ => None,
     }
-    if !matches!(kind, ResolvedTypeRef::Declared { .. }) {
-        return None;
-    }
-    minted(ir, kind, false).filter(|shape| matches!(shape, Minted::Text { .. }))
 }
 
-/// Whether a value of `kind` is a `Uuid`: the primitive, or a newtype that wraps one.
-fn is_uuid(ir: &EssIr, kind: &ResolvedTypeRef) -> bool {
-    let mut kind = kind;
-    for _ in 0..=MAX_TYPE_DEPTH {
-        match kind {
-            ResolvedTypeRef::Primitive { name } => return *name == Primitive::Uuid,
-            ResolvedTypeRef::Declared { name } => match &ir.named_type(name).body {
-                ResolvedBody::Newtype { of, .. } => kind = of,
-                _ => return false,
-            },
-            _ => return false,
-        }
-    }
-    false
+/// The first invariant of `entity` that reads only its identity's length and that no identity
+/// minted as `shape` meets: every minted identity under one shape has one length, so ESS's
+/// verdict on [`candidate`] is its verdict on each.
+pub(crate) fn identity_bound<'ir>(
+    entity: &'ir ResolvedEntity,
+    shape: &Minted,
+) -> Option<&'ir Invariant> {
+    let text = match shape {
+        Minted::Text { prefix } => candidate(prefix.as_deref()),
+        _ => candidate(None),
+    };
+    let subject = entity.identity.name.as_str();
+    entity
+        .invariants
+        .iter()
+        .find(|invariant| length_only(invariant, subject) && !holds_for(invariant, subject, &text))
 }
 
 /// The low 53 bits: the integers every JSON reader holds exactly.

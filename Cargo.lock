@@ -1412,6 +1412,7 @@ version = "0.1.0"
 dependencies = [
  "ess-compiler",
  "ess-domain",
+ "ess-primitives",
  "serde",
  "spindle-spec",
  "thiserror",

@@ -1,0 +1,25 @@
+format: ess/34
+system: advmint
+version: v1
+summary: Text identities the runtime could mint, and one Uuid identity it cannot.
+domains:
+  - advmint.tag
+components:
+  - component: desk
+    summary: Opens tags.
+    owns:
+      domains:
+        - advmint.tag
+    accepts:
+      commands:
+        - advmint.tag.OpenLong
+        - advmint.tag.OpenNested
+        - advmint.tag.OpenPinned
+        - advmint.tag.OpenShort
+    publishes:
+      events:
+        - advmint.tag.LongOpened
+        - advmint.tag.NestedOpened
+        - advmint.tag.PinnedOpened
+        - advmint.tag.ShortOpened
+    reached_by: in_process

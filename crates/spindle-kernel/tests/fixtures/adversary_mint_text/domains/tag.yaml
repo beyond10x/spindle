@@ -1,0 +1,151 @@
+domain: advmint.tag
+summary: Tags opened without an id.
+types:
+  - name: advmint.tag.LongId
+    kind: newtype
+    of: String
+    prefix: "lng_"
+    invariants:
+      - 'value.count <= 64'
+  - name: advmint.tag.NestBase
+    kind: newtype
+    of: String
+    prefix: "nb_"
+  - name: advmint.tag.NestedId
+    kind: newtype
+    of: advmint.tag.NestBase
+    prefix: "n"
+  - name: advmint.tag.PinnedId
+    kind: newtype
+    of: Uuid
+    invariants:
+      - 'value == "00000000-0000-4000-8000-000000000001"'
+  - name: advmint.tag.ShortId
+    kind: newtype
+    of: String
+    prefix: "s_"
+entities:
+  - name: advmint.tag.Short
+    identity:
+      name: short_id
+      type: advmint.tag.ShortId
+    fields:
+      - name: note
+        type: String
+    invariants:
+      - 'short_id.count <= 10'
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+  - name: advmint.tag.Long
+    identity:
+      name: long_id
+      type: advmint.tag.LongId
+    fields:
+      - name: note
+        type: String
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+  - name: advmint.tag.Nested
+    identity:
+      name: nested_id
+      type: advmint.tag.NestedId
+    fields:
+      - name: note
+        type: String
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+  - name: advmint.tag.Pinned
+    identity:
+      name: pinned_id
+      type: advmint.tag.PinnedId
+    fields:
+      - name: note
+        type: String
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+commands:
+  - name: advmint.tag.OpenLong
+    input:
+      - name: note
+        type: String
+    outcomes:
+      - name: opened
+        creates: advmint.tag.Long
+        instance: long_id
+        sets:
+          note: input.note
+        emits: [advmint.tag.LongOpened]
+        payload:
+          advmint.tag.LongOpened:
+            long_id: {generated: true}
+        summary: Opens under a text identity whose only invariant a minted text meets.
+  - name: advmint.tag.OpenNested
+    input:
+      - name: note
+        type: String
+    outcomes:
+      - name: opened
+        creates: advmint.tag.Nested
+        instance: nested_id
+        sets:
+          note: input.note
+        emits: [advmint.tag.NestedOpened]
+        payload:
+          advmint.tag.NestedOpened:
+            nested_id: {generated: true}
+        summary: Opens under a text identity whose inner prefix extends the outer one.
+  - name: advmint.tag.OpenPinned
+    input:
+      - name: note
+        type: String
+    outcomes:
+      - name: opened
+        creates: advmint.tag.Pinned
+        instance: pinned_id
+        sets:
+          note: input.note
+        emits: [advmint.tag.PinnedOpened]
+        payload:
+          advmint.tag.PinnedOpened:
+            pinned_id: {generated: true}
+        summary: Opens under a Uuid identity whose invariant a fresh UUID does not meet.
+  - name: advmint.tag.OpenShort
+    input:
+      - name: note
+        type: String
+    outcomes:
+      - name: opened
+        creates: advmint.tag.Short
+        instance: short_id
+        sets:
+          note: input.note
+        emits: [advmint.tag.ShortOpened]
+        payload:
+          advmint.tag.ShortOpened:
+            short_id: {generated: true}
+        summary: Opens under a text identity the entity bounds to ten characters.
+events:
+  - name: advmint.tag.ShortOpened
+    fields:
+      - name: short_id
+        type: advmint.tag.ShortId
+  - name: advmint.tag.LongOpened
+    fields:
+      - name: long_id
+        type: advmint.tag.LongId
+  - name: advmint.tag.NestedOpened
+    fields:
+      - name: nested_id
+        type: advmint.tag.NestedId
+  - name: advmint.tag.PinnedOpened
+    fields:
+      - name: pinned_id
+        type: advmint.tag.PinnedId
