@@ -12,11 +12,14 @@
 //! Any other field an outcome marks `{generated: true}` (in `sets:`, a payload or an error, and
 //! the `else:` of `{input: f, else: {generated: true}}`) is minted from its declared type
 //! (`spindle_capability::mint::minted`, the rule derivation reads too): a `Uuid`, a `String`, an
-//! `Integer` and a `Boolean` from a UUID the same [`Mint`] answers, a `Timestamp` from the clock
-//! the run is given. A `Boolean` is `true` where that UUID's last bit is clear: ESS's interpreter
-//! mints `true` on an even tick of the counter it mints identities from, and its UUID for tick
-//! `n` ends in `n`'s decimal digits (`interpret::values::mint`), so a [`Mint`] that answers those
-//! UUIDs mints the Booleans the interpreter does: the kernel draws in the interpreter's order
+//! `Integer`, a `Boolean`, a `Bytes` and a `List` from a UUID the same [`Mint`] answers, a
+//! `Timestamp` from the clock the run is given. A `Boolean` is `true` where that UUID's last bit
+//! is clear: ESS's interpreter mints `true` on an even tick of the counter it mints identities
+//! from, and its UUID for tick `n` ends in `n`'s decimal digits (`interpret::values::mint`). A
+//! `Bytes` is the one byte ESS mints on that tick, the tick's low byte, read from the same digits
+//! where the UUID has ESS's tick form, and the UUID's own low byte otherwise ([`byte`]); a `List` is `[]`, as ESS mints every list, and still takes its draw, as ESS takes
+//! a tick for it. So a [`Mint`] that answers those
+//! UUIDs mints the values the interpreter does: the kernel draws in the interpreter's order
 //! (`interpret::execute::take`), each published value a `{payload: <Event>.<field>}` reads
 //! first, then a minted creation identity, then the other `sets:`, then the payloads.
 //! Each such field is minted once per command run ([`Generator`]), so
@@ -213,8 +216,8 @@ impl<'m> Generator<'m> {
 pub(crate) fn unmintable(field: &str, kind: &ResolvedTypeRef) -> String {
     format!(
         "`{{generated: true}}` on `{field}` of type `{kind}`; the runtime mints a `Uuid`, a \
-         `String`, an `Integer`, a `Boolean` or a `Timestamp`, or a newtype of one without \
-         invariants"
+         `String`, an `Integer`, a `Boolean`, a `Bytes`, a `List` or a `Timestamp`, or a newtype \
+         of one without invariants"
     )
 }
 
@@ -240,6 +243,11 @@ pub(crate) fn value(
                 .map_err(|_| format!("{low} is past the integers a JSON reader holds"))
         }
         Minted::Boolean => Ok(Value::Bool(uuid().as_u128() & 1 == 0)),
+        Minted::Bytes => Ok(Value::String(base64_byte(byte(uuid())))),
+        Minted::List => {
+            uuid();
+            Ok(Value::Array(Vec::new()))
+        }
         Minted::Timestamp => {
             let at = now();
             let unrepresentable = || format!("{at:?}, a time no RFC 3339 instant names");
@@ -259,6 +267,43 @@ pub(crate) fn value(
                 .map_err(|_| unrepresentable())
         }
     }
+}
+
+/// The one byte a generated `Bytes` holds, drawn from `uuid`.
+///
+/// A UUID in the form ESS's interpreter mints on a tick (`00000000-0000-4000-8000-<tick, 12
+/// decimal digits>`, `interpret::values::mint`) gives the byte ESS mints on that tick: the
+/// tick's low byte, a tick past `u32::MAX` as `u32::MAX` (`witness::primitive_value`). Any other
+/// UUID, a random version 4 one among them, gives its own low byte, so random UUIDs give a
+/// spread of bytes.
+fn byte(uuid: Uuid) -> u8 {
+    let bits = uuid.as_u128();
+    let low = bits.to_le_bytes()[0];
+    if bits >> 48 != TICK_FORM {
+        return low;
+    }
+    let mut tick: u64 = 0;
+    for digit in (0..12).rev() {
+        let digit = (bits >> (4 * digit)) & 0xf;
+        if digit > 9 {
+            return low;
+        }
+        tick = tick * 10 + u64::try_from(digit).unwrap_or_default();
+    }
+    u32::try_from(tick).unwrap_or(u32::MAX).to_le_bytes()[0]
+}
+
+/// The leading 80 bits of every UUID ESS's interpreter mints on a tick:
+/// `00000000-0000-4000-8000`.
+const TICK_FORM: u128 = 0x0000_0000_0000_4000_8000;
+
+/// `value` as padded base64, the spelling a `Bytes` value takes: ESS's one-byte witness
+/// (`witness::base64_byte`).
+fn base64_byte(value: u8) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let high = char::from(ALPHABET[usize::from(value >> 2)]);
+    let low = char::from(ALPHABET[usize::from((value & 0b11) << 4)]);
+    format!("{high}{low}==")
 }
 
 /// One value the runtime mints: a creation's identity, or a field an outcome marks

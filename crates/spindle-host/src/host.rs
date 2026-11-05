@@ -71,7 +71,8 @@ pub struct Failed {
     pub cause: Cause,
     /// The kernel's error on the last attempt, as text.
     pub error: String,
-    /// How many times it was run.
+    /// How many times it was run: 0 for a binding whose input was unmet, so its command was
+    /// never sent.
     pub attempts: u32,
 }
 
@@ -301,7 +302,7 @@ struct Periodic {
 /// thread: a call returns once no envelope is left in flight, or stops after [`DELIVERY_LIMIT`]
 /// deliveries.
 pub struct Host {
-    ir: EssIr,
+    ir: Arc<EssIr>,
     clock: Arc<dyn Clock>,
     placements: Placements,
     components: BTreeMap<String, Component>,
@@ -432,9 +433,10 @@ impl Host {
                  invocation that fails and does not escalate it"
             )));
         }
+        let ir = Arc::new(ir);
         let router = match retries {
-            Retries::Retried => Router::from_ir(&ir)?,
-            Retries::Dropped => Router::from_ir(&ir)?.dropping_retries(),
+            Retries::Retried => Router::from_shared(&ir)?,
+            Retries::Dropped => Router::from_shared(&ir)?.dropping_retries(),
         };
         let retrying = router
             .routes()
@@ -696,10 +698,25 @@ impl Host {
         command: &str,
         input: Map<String, Value>,
     ) -> Result<Report, HostError> {
+        self.submit_as(command, input, None, None)
+    }
+
+    /// [`Host::submit`], sent as `actor` and as the caller whose attributes `caller` holds
+    /// ([`spindle_kernel::Invocation`]). What its events lead to is sent as no caller.
+    ///
+    /// # Errors
+    /// As [`Host::submit`].
+    pub fn submit_as(
+        &mut self,
+        command: &str,
+        input: Map<String, Value>,
+        actor: Option<&str>,
+        caller: Option<&Map<String, Value>>,
+    ) -> Result<Report, HostError> {
         let component = accepting(&self.ir, command)
             .ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
         let mut report = Report::default();
-        match self.execute(&component, command, &input)? {
+        match self.execute(&component, command, &input, actor, caller)? {
             Ok(Executed {
                 outcome,
                 error: Some(error),
@@ -713,7 +730,7 @@ impl Host {
                 });
             }
             Ok(executed) => report.ran.push(Ran {
-                component,
+                component: component.clone(),
                 command: command.to_owned(),
                 cause: Cause::Submitted,
                 executed,
@@ -727,6 +744,7 @@ impl Host {
                 });
             }
         }
+        self.unmet(&component, &mut report);
         self.settle(&mut report, &mut Deliveries::default())?;
         Ok(report)
     }
@@ -875,6 +893,8 @@ impl Host {
         component: &str,
         command: &str,
         input: &Map<String, Value>,
+        actor: Option<&str>,
+        caller: Option<&Map<String, Value>>,
     ) -> Result<Result<Executed, ExecuteError>, HostError> {
         let held = self
             .components
@@ -882,14 +902,18 @@ impl Host {
             .ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
         let started = Instant::now();
         let clock = &self.clock;
-        let result = spindle_kernel::execute_at(
+        let result = spindle_kernel::execute_as(
             &self.ir,
             held.store.as_mut(),
             self.decider.as_mut(),
             &mut UuidV4,
             &|| clock.wall(),
-            command,
-            input,
+            &spindle_kernel::Invocation {
+                command,
+                input,
+                actor,
+                caller,
+            },
         );
         held.sink.executed(command, &result, started.elapsed());
         let executed = match result {
@@ -975,7 +999,7 @@ impl Host {
             if let Some(binding) = retried {
                 sink.retried(binding, Retried::Attempted);
             }
-            let result = self.execute(component, command, input)?;
+            let result = self.execute(component, command, input, None, None)?;
             let failed = !matches!(result, Ok(Executed { error: None, .. }));
             if failed && attempts < limit {
                 continue;
@@ -1011,8 +1035,28 @@ impl Host {
                     attempts,
                 }),
             }
+            self.unmet(component, report);
             return Ok(());
         }
+    }
+
+    /// Reports every binding the events `component` just published triggered whose input was unmet
+    /// as a command that did not execute: its command was never sent ([`spindle_channel::Unmet`]).
+    fn unmet(&mut self, component: &str, report: &mut Report) {
+        let Some(held) = self.components.get_mut(component) else {
+            return;
+        };
+        report
+            .failed
+            .extend(held.sender.take_unmet().into_iter().map(|unmet| Failed {
+                component: unmet.to,
+                command: unmet.command,
+                cause: Cause::Delivered {
+                    binding: unmet.binding,
+                },
+                error: unmet.error.to_string(),
+                attempts: 0,
+            }));
     }
 
     /// Delivers every envelope in flight, and every one those commands send, until none is left

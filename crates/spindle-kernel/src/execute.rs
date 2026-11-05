@@ -119,12 +119,70 @@ pub fn execute_at(
     command: &str,
     input: &Map<String, Value>,
 ) -> Result<Executed, ExecuteError> {
+    execute_as(
+        ir,
+        store,
+        decider,
+        mint,
+        now,
+        &Invocation {
+            command,
+            input,
+            actor: None,
+            caller: None,
+        },
+    )
+}
+
+/// One command as it is sent: its input, and the attributes of the caller it is sent as.
+///
+/// The caller is separate from the input (ESS `interpret::execute::caller`): a command reads it
+/// as `{caller: <attribute>}` and as `caller.<attribute>` in a guard, never as an input field.
+/// `None` is a command sent as no caller, as every command a binding or a tick invokes is.
+#[derive(Debug, Clone, Copy)]
+pub struct Invocation<'a> {
+    /// The command's qualified name.
+    pub command: &'a str,
+    /// Its input, by declared field name.
+    pub input: &'a Map<String, Value>,
+    /// The qualified name of the actor it is sent as, where it is sent as one.
+    pub actor: Option<&'a str>,
+    /// The caller's attributes, by declared attribute name.
+    pub caller: Option<&'a Map<String, Value>>,
+}
+
+/// [`execute_at`] for an [`Invocation`], sent as its caller.
+///
+/// The caller is bound against the attributes of the actor it is sent as, as ESS binds it, before
+/// anything is read: attributes sent as no declared actor, an attribute the actor does not
+/// declare, a value its type does not admit and a required attribute left out are each
+/// [`ExecuteError::InvalidInput`]. A command sent as no caller that reads a required attribute is
+/// [`ExecuteError::InvalidInput`] where it reads it as a value, and a guard over one is `Unknown`
+/// ([`ExecuteError::Undecidable`]); either way nothing is written.
+///
+/// # Errors
+/// As [`execute`].
+pub fn execute_as(
+    ir: &EssIr,
+    store: &mut dyn Store,
+    decider: &mut dyn Decider,
+    mint: &mut dyn Mint,
+    now: &dyn Fn() -> SystemTime,
+    invocation: &Invocation<'_>,
+) -> Result<Executed, ExecuteError> {
+    let Invocation {
+        command,
+        input,
+        actor,
+        caller,
+    } = *invocation;
     let spec = ir
         .commands()
         .iter()
         .find_map(|(name, spec)| (name.to_string() == command).then_some(spec))
         .ok_or_else(|| ExecuteError::UnknownCommand(command.to_owned()))?;
     crate::supported::check(ir, spec)?;
+    let attributes = crate::caller::bind(ir, actor, caller)?;
     check_input(ir, spec, input)?;
     let addressed = addressed(ir, spec)?;
     let held = match addressed {
@@ -150,6 +208,8 @@ pub fn execute_at(
         spec,
         command,
         input,
+        caller,
+        attributes,
         store,
         decider,
         held,
@@ -182,6 +242,10 @@ struct Run<'a, 'ir> {
     spec: &'ir ResolvedCommand,
     command: &'a str,
     input: &'a Map<String, Value>,
+    /// The attributes of the caller the command is sent as; `None` for no caller.
+    caller: Option<&'a Map<String, Value>>,
+    /// The attributes the actor the command is sent as declares.
+    attributes: &'ir [ResolvedField],
     store: &'a mut dyn Store,
     decider: &'a mut dyn Decider,
     held: Option<Addressed<'ir>>,
@@ -312,16 +376,20 @@ impl<'a, 'ir> Run<'a, 'ir> {
     }
 
     /// An input guard over the command's input, read at the input fields' own names as `when:`
-    /// reads them; no guard holds.
+    /// reads them, and the caller under `caller.`; no guard holds.
     fn guard(&self, predicate: Option<&Predicate>) -> Truth {
         predicate.map_or(Truth::True, |predicate| {
-            predicate.evaluate(&Facts::values(self.ir, &self.spec.input, self.input))
+            predicate.evaluate(
+                &Facts::values(self.ir, &self.spec.input, self.input)
+                    .with_caller(self.attributes, self.caller),
+            )
         })
     }
 
-    /// The facts a guard over the subject reads: the held instance, and the input under `input.`
-    /// unless the entity declares a field of that name, which keeps being read as itself.
-    fn subject_facts(&self, outcome: &ResolvedOutcome) -> Result<Facts<'ir>, ExecuteError> {
+    /// The facts a guard over the subject reads: the held instance, the input under `input.` and
+    /// the caller under `caller.`, each unless the entity declares a field of that name, which
+    /// keeps being read as itself.
+    fn subject_facts(&self, outcome: &ResolvedOutcome) -> Result<Facts<'_>, ExecuteError> {
         let row = self.held_row(outcome)?;
         let Some(held) = &self.held else {
             return Err(self.no_subject(outcome));
@@ -332,7 +400,8 @@ impl<'a, 'ir> Run<'a, 'ir> {
             .iter()
             .any(|field| field.name == crate::facts::INPUT);
         let input = (!shadowed).then_some((self.spec.input.as_slice(), self.input));
-        Ok(Facts::row(self.ir, held.entity, &held.identity, row, input))
+        Ok(Facts::row(self.ir, held.entity, &held.identity, row, input)
+            .with_caller(self.attributes, self.caller))
     }
 
     /// The held instance a guard over the subject reads.
@@ -672,6 +741,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
         Sources {
             ir: self.ir,
             input: self.input,
+            caller: self.caller,
             before,
             error: false,
             minted: self

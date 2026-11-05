@@ -1,0 +1,110 @@
+domain: hold.bin
+summary: Bins under the caller's id whose Bytes and List fields the runtime mints, several in one outcome.
+types:
+  - name: hold.bin.BinId
+    kind: newtype
+    of: Uuid
+  - name: hold.bin.Blob
+    kind: newtype
+    of: Bytes
+  - name: hold.bin.Shelf
+    kind: newtype
+    of: List<String>
+  - name: hold.bin.Part
+    kind: struct
+    fields:
+      - {name: label, type: String}
+      - {name: body, type: Bytes}
+  - name: hold.bin.Pair
+    kind: struct
+    fields:
+      - {name: left, type: Bytes}
+      - {name: right, type: Bytes}
+entities:
+  - name: hold.bin.Bin
+    identity:
+      name: bin_id
+      type: hold.bin.BinId
+    fields:
+      - {name: code, type: Bytes}
+      - {name: raw, type: Bytes}
+      - {name: spare, type: Optional<Bytes>}
+      - {name: skipped, type: Optional<Bytes>}
+      - {name: blob, type: hold.bin.Blob}
+      - {name: parts, type: List<hold.bin.Part>}
+      - {name: shelf, type: hold.bin.Shelf}
+      - {name: chunks, type: Optional<List<Bytes>>}
+      - {name: tail, type: Bytes}
+    lifecycle:
+      initial: Full
+      states: [Full]
+      terminal: [Full]
+commands:
+  - name: hold.bin.FillBin
+    input:
+      - {name: bin_id, type: hold.bin.BinId}
+    outcomes:
+      - name: filled
+        creates: hold.bin.Bin
+        instance: bin_id
+        sets:
+          raw: {generated: true}
+          spare: {generated: true, present: true}
+          skipped: {generated: true}
+          blob: {generated: true}
+          parts: {generated: true}
+          shelf: {generated: true}
+          chunks: {generated: true, present: true}
+          tail: {generated: true}
+          code: {payload: hold.bin.BinFilled.code}
+        emits: [hold.bin.BinFilled]
+        payload:
+          hold.bin.BinFilled:
+            bin_id: input.bin_id
+            code: {generated: true}
+            pair:
+              left: {generated: true}
+              right: {generated: true}
+            extra: {generated: true}
+        summary: The bin is filled; the runtime mints every Bytes and List it holds and publishes.
+  - name: hold.bin.RefillBin
+    input:
+      - {name: bin_id, type: hold.bin.BinId}
+      - {name: raw, type: Optional<Bytes>}
+    outcomes:
+      - name: refilled
+        updates: hold.bin.Bin
+        instance: bin_id
+        sets:
+          raw: {input: raw, else: {generated: true}}
+          tail: {generated: true}
+        emits: [hold.bin.BinRefilled]
+        payload:
+          hold.bin.BinRefilled:
+            bin_id: input.bin_id
+        summary: The bin is refilled with the raw bytes sent, or minted ones, and a minted tail.
+events:
+  - name: hold.bin.BinFilled
+    fields:
+      - {name: bin_id, type: hold.bin.BinId}
+      - {name: extra, type: Bytes}
+      - {name: code, type: Bytes}
+      - {name: pair, type: hold.bin.Pair}
+  - name: hold.bin.BinRefilled
+    fields:
+      - {name: bin_id, type: hold.bin.BinId}
+views:
+  - name: hold.bin.BinCard
+    source: hold.bin.Bin
+    consistency: read_your_writes
+    fields:
+      - {name: bin_id, type: hold.bin.BinId}
+      - {name: code, type: Bytes}
+      - {name: raw, type: Bytes}
+      - {name: spare, type: Optional<Bytes>}
+      - {name: skipped, type: Optional<Bytes>}
+      - {name: blob, type: hold.bin.Blob}
+      - {name: parts, type: List<hold.bin.Part>}
+      - {name: shelf, type: hold.bin.Shelf}
+      - {name: chunks, type: Optional<List<Bytes>>}
+      - {name: tail, type: Bytes}

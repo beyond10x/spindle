@@ -1,0 +1,23 @@
+format: ess/34
+system: quill
+version: v1
+summary: Notebooks owned by the writer who creates them, edited and shared only by that writer.
+domains:
+  - quill.notebook
+components:
+  - component: shelf
+    summary: Creates, edits and shares notebooks on behalf of the writer sending each command.
+    owns:
+      domains:
+        - quill.notebook
+    accepts:
+      commands:
+        - quill.notebook.CreateNotebook
+        - quill.notebook.EditNotebook
+        - quill.notebook.ShareNotebook
+    publishes:
+      events:
+        - quill.notebook.NotebookCreated
+        - quill.notebook.NotebookEdited
+        - quill.notebook.NotebookShared
+    reached_by: in_process

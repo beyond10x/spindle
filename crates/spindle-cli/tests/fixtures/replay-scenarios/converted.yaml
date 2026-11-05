@@ -1,0 +1,19 @@
+type: ess-scenario/1
+domain: library.lending
+scenario: a-closed-loan-thanks-its-member-as-a-reader
+summary: Closing a loan thanks its member, the member's identity carried across the declared conversion.
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: library.lending.CloseLoan
+    input:
+      loan_id: loan-1
+      member_id: m-7
+    outcome: closed
+    events:
+      - event: library.lending.LoanClosed
+        payload: {loan_id: loan-1, member_id: m-7}
+assert:
+  - view: library.lending.Loans
+    contains: {loan_id: loan-1, member_id: m-7}
+  - view: library.notices.AllThanks
+    contains: {reader_id: m-7}

@@ -26,7 +26,7 @@ mod route;
 pub mod tcp;
 
 pub use channel::{Channel, ChannelError};
-pub use endpoint::{DEFAULT_ACKNOWLEDGEMENT_TIMEOUT, Receiver, Sender};
+pub use endpoint::{DEFAULT_ACKNOWLEDGEMENT_TIMEOUT, Receiver, Sender, Unmet};
 pub use model::{Command, DeliveryId, Envelope, Event, Frame};
 pub use outbox::Outbox;
 pub use route::{MappingError, Route, RouteError, Router};

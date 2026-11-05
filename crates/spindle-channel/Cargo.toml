@@ -14,6 +14,7 @@ ess-domain.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+spindle-kernel = { path = "../spindle-kernel" }
 spindle-telemetry = { path = "../spindle-telemetry", default-features = false }
 
 [dev-dependencies]

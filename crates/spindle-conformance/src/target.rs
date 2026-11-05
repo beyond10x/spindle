@@ -38,11 +38,11 @@ type Forcing = Arc<Mutex<Option<(String, String)>>>;
 /// it. Nothing forced in one scenario reaches the next.
 ///
 /// A command sent as an actor is sent as it is: the host checks no grant, which is the caller's
-/// where no component serves the actor. One sent as a caller with attributes, an entity the
-/// scenario establishes, fixture values and redelivery are unsupported, each with its reason, and
-/// so is a send whose `on_failure: retry` binding gave up after
-/// [`RETRY_ATTEMPTS`](spindle_host::RETRY_ATTEMPTS), as ESS's interpreter answers a retry that
-/// exceeds its execution budget.
+/// where no component serves the actor; a step's actor and `caller` are the caller the command
+/// runs as ([`Host::submit_as`]). An entity the scenario establishes, fixture values and
+/// redelivery are unsupported, each with its reason, and so is a send whose `on_failure: retry`
+/// binding gave up after [`RETRY_ATTEMPTS`](spindle_host::RETRY_ATTEMPTS), as ESS's interpreter
+/// answers a retry that exceeds its execution budget.
 pub struct HostTarget {
     ir: EssIr,
     environment: Environment,
@@ -204,23 +204,24 @@ impl ConformanceTarget for HostTarget {
         request: SemanticCommandRequest,
     ) -> Result<SemanticCommandResult, TargetError> {
         let command = request.command.to_string();
-        if request.caller.is_some() {
-            return Err(TargetError::unsupported(
-                format!("`{command}` sent as a caller with attributes"),
-                "the in-process host authenticates no caller",
-            ));
-        }
-        let input = request
-            .input
-            .iter()
-            .map(|(field, value)| {
-                serde_json::to_value(value)
-                    .map(|value| (field.clone(), value))
-                    .map_err(|error| {
-                        TargetError::unavailable(format!("sending `{field}`"), error.to_string())
-                    })
-            })
-            .collect::<Result<Map<String, Value>, _>>()?;
+        let json = |fields: &BTreeMap<String, Node>| {
+            fields
+                .iter()
+                .map(|(field, value)| {
+                    serde_json::to_value(value)
+                        .map(|value| (field.clone(), value))
+                        .map_err(|error| {
+                            TargetError::unavailable(
+                                format!("sending `{field}`"),
+                                error.to_string(),
+                            )
+                        })
+                })
+                .collect::<Result<Map<String, Value>, _>>()
+        };
+        let input = json(&request.input)?;
+        let caller = request.caller.as_ref().map(json).transpose()?;
+        let actor = request.actor.as_ref().map(ToString::to_string);
         let mut running = self.running.borrow_mut();
         let running = running
             .as_mut()
@@ -228,7 +229,9 @@ impl ConformanceTarget for HostTarget {
         self.commands.set(self.commands.get() + 1);
         running.writes += 1;
         let written = written(running.writes)?;
-        let submitted = running.host.submit(&command, input);
+        let submitted = running
+            .host
+            .submit_as(&command, input, actor.as_deref(), caller.as_ref());
         self.lapse(&command);
         if let Ok(report) = &submitted {
             for invoked in invoked(report) {
@@ -417,7 +420,8 @@ fn invoked(report: &spindle_host::Report) -> impl Iterator<Item = &str> {
 }
 
 /// The first `on_failure: retry` binding (no `retry:` bound) whose invocation in `report` the host
-/// gave up: refused or not executed on its last attempt.
+/// gave up: refused or not executed by the kernel on its last attempt. A binding whose input was
+/// unmet (0 attempts) never reached the kernel and is not one.
 fn exhausted<'a>(ir: &EssIr, report: &'a spindle_host::Report) -> Option<&'a str> {
     let retries = |binding: &str| {
         ir.bindings().values().any(|declared| {
@@ -429,7 +433,13 @@ fn exhausted<'a>(ir: &EssIr, report: &'a spindle_host::Report) -> Option<&'a str
         .refused
         .iter()
         .map(|refused| &refused.cause)
-        .chain(report.failed.iter().map(|failed| &failed.cause))
+        .chain(
+            report
+                .failed
+                .iter()
+                .filter(|failed| failed.attempts > 0)
+                .map(|failed| &failed.cause),
+        )
         .find_map(|cause| match cause {
             Cause::Delivered { binding } if retries(binding) => Some(binding.as_str()),
             _ => None,
