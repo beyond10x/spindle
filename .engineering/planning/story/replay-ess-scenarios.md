@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:replay-ess-scenarios
 kind: story
-status: active
+status: implemented
 title: Replay ESS scenarios
 relations:
 - serves: vision:spindle
@@ -16,10 +16,11 @@ scope:
   path: crates/spindle-cli
 - confidence: inferred
   path: crates/spindle-host
-revision: 7
+revision: 8
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-04T10:45:53Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-04T10:45:53Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-05T07:49:23Z", actor: "human:timo", revision: 8, decided_on: {"recorded":{"test_result":2,"review_outcome":1}}}
 ---
 # Replay ESS scenarios
 
