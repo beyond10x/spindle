@@ -382,6 +382,7 @@ Decided by the operator, 2026-11-04:
 | an overlay may or may not exist | defaults first (§ 3a) |
 | Spindle itself is specified in ESS and planned in AEP | `ess/`, `.engineering/planning/` |
 | showcase: a two-player paddle-and-ball game, three components, each in its own microVM, talking over channels | `examples/rally` (§ 13) |
+| HTTP ingress (2026-11-05): routes come from the specification's `ess-http/1` binding, compiled by ESS (method, path, path variables, status per outcome); without one, the fallback `POST /api/commands/<qualified command>` and `GET /api/views/<qualified view>` | `crates/spindle-ingress`; a command answers `{outcome, error?, events, invocations}`, a view the `{rows}` ESS projects; `http-loopback` only |
 
 Open:
 

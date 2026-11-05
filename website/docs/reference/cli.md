@@ -92,6 +92,8 @@ An external cause the line does not answer is answered by `--decisions`, then by
 
 With `--scenario`, replays an `ess-scenario` document instead of reading stdin: every component in one process on empty in-memory stores, the document read and checked by ESS, its steps run and compared by ESS's conformance runner. Prints what it arranges, each timeline act and each assertion that holds; exits 0 when all hold. At the first that does not, prints it with what was expected and what was observed and exits 1; that replay runs nothing after it. A document ESS refuses, or one of more than 1000 steps, exits 1 before any step runs.
 
+Where a component requires `ingress.network` (`reached_by: network`), runs every component in one process and serves those over HTTP on 127.0.0.1 instead of reading stdin; only `http-loopback` is served, and any other binding exits 1 before listening. Prints `{"listening": "<address>", "components": [...]}` once listening and serves until SIGINT or SIGTERM (exit 130 or 143). With `--http`, routes are the `ess-http/1` binding's, read and checked by ESS: its methods, paths, path variables and per-outcome statuses, an operation it does not name keeping ESS's derived route. Without one, a command is `POST /api/commands/<qualified name>` and a view `GET /api/views/<qualified name>`. A command's body is its input; it answers its outcome's status with `{"outcome", "error"?, "events", "invocations"}`, `error` being `{"error", "payload"?}` and `invocations` the commands its event bindings then ran. A view answers `{"rows": [...]}`.
+
 ```console
 b10x-spindle run [OPTIONS] --environment <ENVIRONMENT> <SPEC>
 ```
@@ -100,7 +102,9 @@ b10x-spindle run [OPTIONS] --environment <ENVIRONMENT> <SPEC>
 |---|---|---|---|
 | `<SPEC>` | yes |  | The specification directory |
 | `--environment <ENVIRONMENT>` | yes |  | The `spindle-environment/1` document |
-| `--state <STATE>` | no |  | The state file: required where `store.durable` is bound to `sqlite`, refused otherwise |
+| `--state <STATE>` | no |  | The state file: required where `store.durable` is bound to `sqlite`, refused otherwise. Where `run` serves HTTP, the directory of one state file per component |
+| `--http <HTTP>` | no |  | An `ess-http/1` binding of the specification's commands and views to methods and paths, JSON or YAML; only where `run` serves HTTP |
+| `--port <PORT>` | no |  | The port to serve HTTP on, on 127.0.0.1; `0`, the default, lets the system choose. Only where `run` serves HTTP |
 | `--decisions <DECISIONS>` | no |  | A TOML file of answers, `<outcome> = true \| false`, at the top level for every command or under a `["<command>"]` table for one; a command's table wins over the top level |
 | `--answer-default` | no |  | Answer every remaining external cause "does not hold" on a command that declares a default branch, so the model selects as it would without it |
 | `--scenario <SCENARIO>` | no |  | The `ess-scenario` document to replay |

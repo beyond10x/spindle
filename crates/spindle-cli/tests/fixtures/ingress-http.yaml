@@ -1,0 +1,22 @@
+type: ess-http/1
+specification:
+  system: tasks
+  version: v1
+  source_digest: sha256:edd295ac34b78c2bf69deb88a3f1b5e5548286263be6210c43961addc27e99de
+routes:
+  - command: tasks.board.OpenTask
+    method: put
+    path: /tasks/{task_id}
+    parameters: {task_id: input.task_id}
+    outcomes:
+      opened: {status: 201}
+  - command: tasks.board.CloseTask
+    method: post
+    path: /tasks/{task_id}/close
+    parameters: {task_id: input.task_id}
+    outcomes:
+      closed: {status: 200}
+      already-done: {status: 410}
+  - view: tasks.board.AllTasks
+    method: get
+    path: /tasks

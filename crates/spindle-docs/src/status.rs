@@ -228,11 +228,12 @@ pub const CAPABILITIES: &[Capability] = &[
         "Each rally component in its own microVM, joined by TCP channels across the VM network.",
         "/docs/examples/rally",
     ),
-    planned(
+    shipped(
         "Execution",
         "HTTP ingress",
-        "run serves the accepted commands and views over HTTP on 127.0.0.1 where ingress.network is bound.",
+        "run serves the accepted commands and views over HTTP on 127.0.0.1 where ingress.network is bound to http-loopback: at the routes of an ess-http/1 binding, or the /api/ fallback.",
         "/docs/concepts/capabilities",
+        "crates/spindle-cli/tests/ingress.rs::a_bound_route_answers_with_the_bindings_status_per_outcome",
     ),
     shipped(
         "Conformance",

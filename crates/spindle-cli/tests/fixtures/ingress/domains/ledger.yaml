@@ -1,0 +1,30 @@
+domain: tasks.ledger
+summary: Each closed task, recorded once by a component no request reaches.
+entities:
+  - name: tasks.ledger.Closure
+    identity:
+      name: task_id
+      type: tasks.board.TaskId
+    fields: []
+    lifecycle:
+      initial: Recorded
+      states: [Recorded]
+      terminal: [Recorded]
+commands:
+  - name: tasks.ledger.RecordClosure
+    input:
+      - name: task_id
+        type: tasks.board.TaskId
+    outcomes:
+      - name: recorded
+        creates: tasks.ledger.Closure
+        instance: task_id
+        emits: [tasks.ledger.ClosureRecorded]
+        payload:
+          tasks.ledger.ClosureRecorded: {task_id: input.task_id}
+        summary: The closure is recorded.
+events:
+  - name: tasks.ledger.ClosureRecorded
+    fields:
+      - name: task_id
+        type: tasks.board.TaskId

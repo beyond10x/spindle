@@ -65,6 +65,41 @@ answers it per command: from the line's `"external"` object, then from a `--deci
 for one), then, with `--answer-default`, "does not hold" on a command that declares a default
 branch. A line nothing answers fails, naming the outcome, and the run goes on.
 
-:::caution[Planned]
-Serving `ingress.network` over HTTP is planned; see [status](/docs/status).
-:::
+## Serving `ingress.network` over HTTP
+
+Where a component requires `ingress.network` and the environment binds it to `http-loopback`,
+`b10x-spindle run` runs every component in one process and serves those components over HTTP on
+`127.0.0.1` instead of reading stdin. Any other binding, such as `http` in `microvm.toml`, is
+refused before anything listens. Once listening it prints
+`{"listening": "127.0.0.1:<port>", "components": [...]}`; `--port` picks the port, `0` by default
+for one the system chooses. It serves until SIGINT or SIGTERM.
+
+What is served is what ESS derives: each command the component accepts and, for a
+`reached_by: network` component, each view of a domain it owns. Where it is served:
+
+- **With an `ess-http/1` binding** (`--http <file>`, the document `ess specify http validate`
+  checks), every route is the binding's, read and compiled by ESS: its method, path and path
+  variables, and the status it lists per outcome. An operation the binding does not name keeps
+  the route ESS derives for it, as `ess generate --kind openapi --http <file>` publishes it.
+- **Without one, the fallback:** a command is `POST /api/commands/<qualified command name>` and a
+  view `GET /api/views/<qualified view name>`, each outcome at the status ESS derives.
+
+A command's request body is its input as ESS projects it, less any field the path carries. It
+answers its outcome's status with
+
+```json
+{
+  "outcome": "<declared outcome>",
+  "error": {"error": "<qualified error name>", "payload": {}},
+  "events": [{"event": "<qualified event name>", "payload": {}}],
+  "invocations": [{"binding": "<id>", "component": "<name>", "command": "<qualified name>",
+                   "outcome": "<declared outcome>", "events": []}]
+}
+```
+
+`error` only on a refusing outcome, its `payload` only where the error declares fields;
+`invocations` lists the commands the component's event bindings then ran (with `error` where the
+model refused one, or `failure` where it did not run), empty when none fired. A view answers
+`200` with the body ESS projects for it, `{"rows": [...]}`. A request the surface cannot read is
+refused `400`, an unknown path `404` and a wrong method `405`, each `{"refused": "<why>"}`; a
+command the runtime cannot complete answers `501` with `{"refused", "committed"}`.
