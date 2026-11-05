@@ -21,6 +21,7 @@ Exit statuses: `0` success, `1` an error (printed on stderr as `b10x-spindle: â€
 | [`admit`](#admit) | Admit a specification against an environment: bind every capability or name what is missing |
 | [`run`](#run) | Admit a specification, then execute commands read as JSON lines on stdin |
 | [`play`](#play) | Play the rally example in this terminal: every component in one process, one tick per period of its periodic binding, the grid redrawn after each |
+| [`conform`](#conform) | Run a specification's conformance suite against every component in one process |
 
 ## `check`
 
@@ -92,7 +93,7 @@ An external cause the line does not answer is answered by `--decisions`, then by
 
 With `--scenario`, replays an `ess-scenario` document instead of reading stdin: every component in one process on empty in-memory stores, the document read and checked by ESS, its steps run and compared by ESS's conformance runner. Prints what it arranges, each timeline act and each assertion that holds; exits 0 when all hold. At the first that does not, prints it with what was expected and what was observed and exits 1; that replay runs nothing after it. A document ESS refuses, or one of more than 1000 steps, exits 1 before any step runs.
 
-Where a component requires `ingress.network` (`reached_by: network`), runs every component in one process and serves those over HTTP on 127.0.0.1 instead of reading stdin; only `http-loopback` is served, and any other binding exits 1 before listening. Prints `{"listening": "<address>", "components": [...]}` once listening and serves until SIGINT or SIGTERM (exit 130 or 143). Routes are where `ess generate --kind openapi` publishes them: ESS's derived routes, or with `--http` the `ess-http/1` binding's, read and checked by ESS (methods, paths, path variables and per-outcome statuses), an operation it does not name keeping its derived route. A command's body is its input; it answers its outcome's status with the envelope ESS publishes, `{"outcome", "published", "error"?, "payload"?}`. A view answers `{"rows": [...]}`.
+Where a component requires `ingress.network` (`reached_by: network`), runs every component in one process and serves those over HTTP on 127.0.0.1 instead of reading stdin; only `http-loopback` is served, and any other binding exits 1 before listening. Prints `{"listening": "<address>", "components": [...]}` once listening and serves until SIGINT or SIGTERM (exit 130 or 143). Routes are where `ess generate --kind openapi` publishes them: ESS's derived routes, or with `--http` the `ess-http/1` binding's, read and checked by ESS (methods, paths, path variables and per-outcome statuses), an operation it does not name keeping its derived route. A command's body is its input; it answers its outcome's status with the envelope ESS publishes, `{"outcome", "published", "error"?, "payload"?}`. A view answers `{"rows": [...]}`. Beside those it serves a model console's routes: `GET /api/model` (`{"ir", "subjects"}`, the IR as `ess specify compile --format json` prints it and each outcome's subject), `GET /api/events` (`{"events": [...]}`, every event published so far, in order) and `POST /api/reset` (empties every store, `{"emptied": [...]}`); a route the binding or ESS publishes at one of those paths exits 1 before listening.
 
 ```console
 b10x-spindle run [OPTIONS] --environment <ENVIRONMENT> <SPEC>
@@ -130,3 +131,26 @@ b10x-spindle play [OPTIONS] --environment <ENVIRONMENT> <SPEC>
 | `--speed <SPEED>` | no | `1` | How many times faster than real time the match clock runs |
 | `--component <COMPONENT>` | no |  | Play only this component, its bindings carried over TCP |
 | `--listen <LISTEN>` | no |  | The address the component listens on for its peers' links; only with `--component` |
+
+## `conform`
+
+Run a specification's conformance suite against every component in one process.
+
+The suite is the one ESS synthesises from the specification (`ess conform synthesize`), or the `--suite` file, which must be a suite of this specification. Its scenarios are run by ESS's conformance runner on empty in-memory stores; an `external:` cause holds only where a scenario forces it. Prints every construct the synthesis refused (`refused: refusal[<code>]: ...`) and how many, then `failed <id>` or `error <id>` with what was expected and observed for each executed scenario that did not pass, `skipped <id>: <reason>` for each the target cannot carry out (`unsupported`), and the counts.
+
+Exits 0 when at least one scenario was executed, none ended `error`, every executed scenario passed or failed as `--known-failing` declares, and the `--counts` are held; 1 otherwise, or when the `--suite` is not of this specification; 2 when ESS refuses the declaration; and 3, running nothing, when admission is refused.
+
+```console
+b10x-spindle conform [OPTIONS] --environment <ENVIRONMENT> <SPEC>
+```
+
+| Argument | Required | Default | Meaning |
+|---|---|---|---|
+| `<SPEC>` | yes |  | The specification directory |
+| `--environment <ENVIRONMENT>` | yes |  | The `spindle-environment/1` document |
+| `--suite <SUITE>` | no |  | A suite `ess conform synthesize` wrote, instead of synthesising one |
+| `--report <REPORT>` | no |  | Where to write the `ess-conformance-report/2`: the counts and every scenario's status |
+| `--results <RESULTS>` | no |  | Where to write the `ess-conformance-run/2`: every check of every scenario, with the reason of each that was not carried out |
+| `--counts <COUNTS>` | no |  | A `spindle-conformance-counts/1` document: the `executed_scenarios` that execute, and the `skipped` and `known_failed` counts. A held scenario that no longer executes, one that executes and is not held, more skipped or more known failures fails the run, naming each; where the counts moved, the document that holds the run is printed |
+| `--known-failing <KNOWN_FAILING>` | no |  | An `ess-known-failures/1` declaration: scenarios this build is known to fail, bound to the exact suite bytes, specification, implementation and build (`sha256:` of `b10x-spindle <version>`), each with its reason and tracking record. Read and accounted by ESS: a declared scenario that failed does not fail the run and is counted `known_failed`; a failure it does not declare still fails it. A declaration that does not bind this run, or names a scenario that passed or ended other than `failed`, exits 2. Requires `--report` and `--accounting-out` |
+| `--accounting-out <ACCOUNTING_OUT>` | no |  | Where to write the `ess-known-failure-accounting/1` document |

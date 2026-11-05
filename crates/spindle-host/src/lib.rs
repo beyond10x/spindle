@@ -7,7 +7,8 @@
 //! periodic binding with its host context, and [`Host::advance`] runs every tick due on the
 //! injected [`Clock`]. Each event a command emits is carried to the commands it binds to, and each
 //! of those runs on its own component, until nothing is left in flight. [`Host::view`] answers a
-//! view from the store of the component that owns its source.
+//! view from the store of the component that owns its source. [`Host::published`] lists every event
+//! published so far, and [`Host::reset`] empties every store.
 //!
 //! [`Host::component`] runs one component on its own instead, its bindings carried over TCP links:
 //! [`Host::connect`] links each peer its events lead to, [`Host::accept`] takes the links its
@@ -23,5 +24,7 @@ pub mod rally;
 mod view;
 
 pub use admission::{Placements, Refusal, admit};
-pub use host::{Cause, DELIVERY_LIMIT, Failed, Host, HostError, Ran, RefusedCommand, Report};
+pub use host::{
+    Cause, DELIVERY_LIMIT, Failed, Host, HostError, Published, Ran, RefusedCommand, Report,
+};
 pub use spindle_timer::{Clock, ManualClock, SystemClock};

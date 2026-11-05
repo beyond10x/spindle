@@ -464,7 +464,7 @@ impl Host {
             .filter(|route| route.to == component && route.from != component)
             .map(|route| route.from.clone())
             .collect();
-        let mut host = Self::assemble(ir, clock, state, placements, TCP)?;
+        let mut host = Self::assemble(ir, clock, state, placements, TCP, None)?;
         host.remote = Some(Remote {
             me: component.to_owned(),
             expected,

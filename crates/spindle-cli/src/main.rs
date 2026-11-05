@@ -1,6 +1,7 @@
 //! `b10x-spindle`: load an ESS specification, derive what it needs, admit it, and run or play it.
 
 mod component;
+mod conform;
 mod decisions;
 mod replay;
 mod scaled;
@@ -204,6 +205,25 @@ fn run(cli: Cli) -> Result<ExitCode> {
             component: None,
             ..
         } => play(&spec, &environment, target_score, &match_id, speed),
+        Command::Conform {
+            spec,
+            environment,
+            suite,
+            report,
+            results,
+            counts,
+            known_failing,
+            accounting_out,
+        } => conform::conform(&conform::Conform {
+            spec: &spec,
+            environment: &environment,
+            suite: suite.as_deref(),
+            report: report.as_deref(),
+            results: results.as_deref(),
+            counts: counts.as_deref(),
+            known_failing: known_failing.as_deref(),
+            accounting_out: accounting_out.as_deref(),
+        }),
     }
 }
 
@@ -421,6 +441,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 components,
                 binding,
                 port: port.unwrap_or(0),
+                ingress: ingress.implementation.as_str(),
             },
         );
     }

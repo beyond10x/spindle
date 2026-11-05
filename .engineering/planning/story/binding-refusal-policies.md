@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:binding-refusal-policies
 kind: story
-status: draft
+status: active
 title: Binding policies per refusal
 relations:
 - serves: vision:spindle
@@ -15,7 +15,10 @@ scope:
   path: crates/spindle-host/src/host.rs
 - confidence: inferred
   path: crates/spindle-host/tests/retry.rs
-revision: 4
+revision: 6
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-05T12:00:35Z", actor: "human:timo", revision: 5}
+- {from: "proposed", to: "active", at: "2026-11-05T12:00:35Z", actor: "human:timo", revision: 6}
 ---
 # Binding policies per refusal
 

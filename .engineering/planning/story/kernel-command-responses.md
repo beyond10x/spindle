@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:kernel-command-responses
 kind: story
-status: draft
+status: active
 title: Command responses, executed and served
 relations:
 - serves: vision:spindle
@@ -21,7 +21,10 @@ scope:
   path: crates/spindle-kernel/src/supported.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/responses.rs
-revision: 7
+revision: 9
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-05T12:00:32Z", actor: "human:timo", revision: 8}
+- {from: "proposed", to: "active", at: "2026-11-05T12:00:32Z", actor: "human:timo", revision: 9}
 ---
 # Command responses, executed and served
 

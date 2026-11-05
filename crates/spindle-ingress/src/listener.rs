@@ -15,7 +15,10 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use serde_json::{Map, Value};
 use tokio::sync::oneshot;
 
+use spindle_host::Host;
+
 use crate::answer::Answer;
+use crate::console::Console;
 use crate::surface::{Resolved, Route, Surface};
 
 /// The largest request body read, in bytes; one announced larger is refused `413` before it is
@@ -32,19 +35,55 @@ pub const BODY_READ: Duration = Duration::from_secs(10);
 /// out of descriptors, before it accepts again.
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
 
+/// What a request asks for.
+#[derive(Debug)]
+enum Asked {
+    /// A command or view the surface serves.
+    Route(Route),
+    /// A console route.
+    Console(Console),
+}
+
+/// A status and the body written under it, as `application/json`.
+#[derive(Debug)]
+struct Reply {
+    status: u16,
+    text: String,
+}
+
+impl From<Answer> for Reply {
+    fn from(answer: Answer) -> Self {
+        Self {
+            status: answer.status,
+            text: answer.body.to_string(),
+        }
+    }
+}
+
 /// One request for a route, waiting for its answer.
 #[derive(Debug)]
 pub struct Exchange {
-    route: Route,
+    asked: Asked,
     carried: Map<String, Value>,
     body: Vec<u8>,
-    reply: oneshot::Sender<Answer>,
+    reply: oneshot::Sender<Reply>,
 }
 
 impl Exchange {
-    /// The route the request is for.
-    pub fn route(&self) -> &Route {
-        &self.route
+    /// The route the request is for; `None` for a console route.
+    pub fn route(&self) -> Option<&Route> {
+        match &self.asked {
+            Asked::Route(route) => Some(route),
+            Asked::Console(_) => None,
+        }
+    }
+
+    /// The console route the request is for; `None` for a command or view.
+    pub fn console(&self) -> Option<Console> {
+        match self.asked {
+            Asked::Console(console) => Some(console),
+            Asked::Route(_) => None,
+        }
     }
 
     /// The input the request's path carries in the route's variables.
@@ -59,7 +98,22 @@ impl Exchange {
 
     /// Sends `answer` to the caller; a caller that has gone away is not an error.
     pub fn respond(self, answer: Answer) {
-        let _ = self.reply.send(answer);
+        let _ = self.reply.send(answer.into());
+    }
+
+    /// Answers the request on `host` and sends the answer: a command or view as
+    /// [`answer`](crate::answer) answers it, a console route as [`crate::console`] does.
+    pub fn serve(self, host: &mut Host) {
+        let reply = match &self.asked {
+            Asked::Route(route) => crate::answer(host, route, &self.carried, &self.body).into(),
+            Asked::Console(Console::Model) => Reply {
+                status: 200,
+                text: crate::console::model(host.ir()),
+            },
+            Asked::Console(Console::Events) => crate::console::events(host).into(),
+            Asked::Console(Console::Reset) => crate::console::reset(host).into(),
+        };
+        let _ = self.reply.send(reply);
     }
 }
 
@@ -166,11 +220,12 @@ async fn handle(
     served: Arc<Served>,
     request: Request<Incoming>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let (route, carried) = match served
+    let (asked, carried) = match served
         .surface
         .resolve(request.method().as_str(), request.uri().path())
     {
-        Resolved::Found(route, carried) => (route.clone(), carried),
+        Resolved::Found(route, carried) => (Asked::Route(route.clone()), carried),
+        Resolved::Console(console) => (Asked::Console(console), Map::new()),
         Resolved::Malformed(why) => return Ok(written(Answer::refusal(400, why))),
         Resolved::WrongMethod(allowed) => {
             let allowed = allowed
@@ -231,7 +286,7 @@ async fn handle(
     };
     let (reply, answered) = oneshot::channel();
     let exchange = Exchange {
-        route,
+        asked,
         carried,
         body,
         reply,
@@ -240,7 +295,7 @@ async fn handle(
         return Ok(written(Answer::refusal(503, "the listener is stopping")));
     }
     Ok(match answered.await {
-        Ok(answer) => written(answer),
+        Ok(reply) => replied(reply),
         Err(_) => written(Answer::refusal(
             503,
             "the listener stopped before answering",
@@ -249,9 +304,13 @@ async fn handle(
 }
 
 fn written(answer: Answer) -> Response<Full<Bytes>> {
-    let mut response = Response::new(Full::new(Bytes::from(answer.body.to_string())));
+    replied(answer.into())
+}
+
+fn replied(reply: Reply) -> Response<Full<Bytes>> {
+    let mut response = Response::new(Full::new(Bytes::from(reply.text)));
     *response.status_mut() =
-        StatusCode::from_u16(answer.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        StatusCode::from_u16(reply.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     response
         .headers_mut()
         .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));

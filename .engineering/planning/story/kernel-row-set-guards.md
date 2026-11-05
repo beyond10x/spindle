@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:kernel-row-set-guards
 kind: story
-status: draft
+status: active
 title: Guards over a row set
 relations:
 - serves: vision:spindle
@@ -16,7 +16,10 @@ scope:
   path: crates/spindle-kernel/src/supported.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/row_set_guards.rs
-revision: 5
+revision: 7
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-05T12:00:32Z", actor: "human:timo", revision: 6}
+- {from: "proposed", to: "active", at: "2026-11-05T12:00:32Z", actor: "human:timo", revision: 7}
 ---
 # Guards over a row set
 

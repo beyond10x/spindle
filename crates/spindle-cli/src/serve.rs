@@ -77,14 +77,18 @@ pub(crate) struct Serving<'a> {
     pub binding: Option<Binding>,
     /// The port, `0` for one the system chooses.
     pub port: u16,
+    /// What `ingress.network` is bound to; `http-loopback` adds the console routes.
+    pub ingress: &'a str,
 }
 
 /// Runs every component of `ir` in one host and serves `serving.components` on
 /// `127.0.0.1:<port>` until SIGINT or SIGTERM, exiting 130 or 143.
 ///
 /// Prints one JSON line once listening, `{"listening": "<address>", "components": [...]}`, then
-/// answers each request in arrival order. State bound to `sqlite` is kept in the directory
-/// `state`, one file per component; state bound to `memory` takes none.
+/// answers each request in arrival order. Beside the routes ESS publishes it serves the console
+/// routes ([`spindle_ingress::Console`]) where `ingress.network` is bound to `http-loopback`. State
+/// bound to `sqlite` is kept in the directory `state`, one file per component; state bound to
+/// `memory` takes none.
 pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     let signalled = signals()?;
     let environment = serving.environment;
@@ -110,7 +114,8 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         }
         (Some(other), _) => bail!("this build has no `{other}` store for store.durable"),
     };
-    let surface = Surface::new(&ir, &serving.components, serving.binding.as_ref())?;
+    let surface = Surface::new(&ir, &serving.components, serving.binding.as_ref())?
+        .with_console(serving.ingress)?;
     let mut host = match Host::new(ir, environment, Arc::new(SystemClock), directory) {
         Ok(host) => host,
         Err(HostError::Refused(refusal)) => {
@@ -138,13 +143,7 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             return Ok(ExitCode::from(SIGNALLED.saturating_add(signal)));
         }
         if let Some(exchange) = listener.next(SIGNAL_POLL) {
-            let answer = spindle_ingress::answer(
-                &mut host,
-                exchange.route(),
-                exchange.carried(),
-                exchange.body(),
-            );
-            exchange.respond(answer);
+            exchange.serve(&mut host);
         }
     }
 }

@@ -171,6 +171,13 @@
       "status": "shipped"
     },
     {
+      "area": "Execution",
+      "detail": "A loopback run also serves GET /api/model (the IR as ess specify compile prints it, and each outcome's subject), GET /api/events (every event published, in order) and POST /api/reset (empties every store); a route the binding or ESS publishes at one of those paths is refused at startup.",
+      "href": "/docs/concepts/capabilities",
+      "label": "Console routes",
+      "status": "shipped"
+    },
+    {
       "area": "Conformance",
       "detail": "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: captures feed later steps, view asserts are checked, and the first divergent step is named and ends the run.",
       "href": "/docs/concepts/specification",
@@ -179,10 +186,10 @@
     },
     {
       "area": "Conformance",
-      "detail": "The suite ESS synthesises from Spindle's own specification runs in task check.",
+      "detail": "conform runs the suite ESS synthesises from a specification, or one written for it, against every component in one process; task check runs it on Spindle's own specification, lists every synthesis refusal with its code and holds the executed and skipped counts.",
       "href": "/docs/concepts/specification",
       "label": "Self-conformance",
-      "status": "planned"
+      "status": "shipped"
     },
     {
       "area": "Observe",

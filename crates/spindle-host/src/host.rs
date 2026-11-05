@@ -1,7 +1,7 @@
 //! The host: every component of one system in one process.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -12,8 +12,8 @@ use serde_json::{Map, Value};
 use spindle_capability::{Capability, Environment};
 use spindle_channel::{ChannelError, Receiver, RouteError, Router, Sender, in_process};
 use spindle_kernel::{
-    DeclaredError, ExecuteError, Executed, MemoryStore, NoExternals, SqliteStore, Store,
-    StoreError, UuidV4,
+    Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, NoExternals, SqliteStore,
+    Store, StoreError, UuidV4,
 };
 use spindle_telemetry::{Counters, CountingStore, Sink};
 use spindle_timer::{BindingName, Clock, CompleteError, LifetimeError, Timer};
@@ -83,6 +83,17 @@ pub struct RefusedCommand {
     pub outcome: String,
     /// The error that outcome declares.
     pub error: DeclaredError,
+}
+
+/// One event a command published: committed with the command's effect, in the order published.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Published {
+    /// The component that ran the command.
+    pub component: String,
+    /// The command.
+    pub command: String,
+    /// The event and its payload.
+    pub event: Event,
 }
 
 /// Every command one call ran, in the order run: those that took effect, those the model refused,
@@ -173,6 +184,23 @@ pub enum HostError {
         /// The declared error.
         error: DeclaredError,
     },
+    /// [`Host::reset`] could not empty a component's store.
+    #[error(
+        "resetting {component}: {error}; {}",
+        if *restored {
+            "its store is as it was before the reset"
+        } else {
+            "its store could not be reopened, and every read and write of it now fails"
+        }
+    )]
+    Reset {
+        /// The component.
+        component: String,
+        /// Why its store could not be emptied.
+        error: String,
+        /// Whether its store was reopened as it was before the reset.
+        restored: bool,
+    },
     /// One call delivered [`DELIVERY_LIMIT`] envelopes and more were still in flight; those
     /// were discarded, and nothing runs after them.
     #[error(
@@ -201,6 +229,8 @@ pub enum HostError {
 
 struct Component {
     store: Box<dyn Store>,
+    /// The SQLite file the store keeps its state in; `None` for a store in memory.
+    file: Option<PathBuf>,
     sender: Sender,
     position: u64,
     counters: Arc<Counters>,
@@ -233,6 +263,9 @@ pub struct Host {
     timer: Timer,
     periodic: BTreeMap<String, Periodic>,
     remote: Option<component::Remote>,
+    published: Vec<Published>,
+    /// Answers the `external:` causes of every command any component runs.
+    decider: Box<dyn Decider + Send>,
 }
 
 impl std::fmt::Debug for Host {
@@ -262,8 +295,33 @@ impl Host {
         clock: Arc<dyn Clock>,
         state: &Path,
     ) -> Result<Self, HostError> {
+        Self::open(ir, environment, clock, state, None)
+    }
+
+    /// [`Host::new`], with every `external:` cause of every component answered by `decider`, whatever
+    /// implementation admission bound for it.
+    ///
+    /// # Errors
+    /// As [`Host::new`], except that no external cause is refused.
+    pub fn deciding(
+        ir: EssIr,
+        environment: &Environment,
+        clock: Arc<dyn Clock>,
+        state: &Path,
+        decider: Box<dyn Decider + Send>,
+    ) -> Result<Self, HostError> {
+        Self::open(ir, environment, clock, state, Some(decider))
+    }
+
+    fn open(
+        ir: EssIr,
+        environment: &Environment,
+        clock: Arc<dyn Clock>,
+        state: &Path,
+        decider: Option<Box<dyn Decider + Send>>,
+    ) -> Result<Self, HostError> {
         let placements = admit(&ir, environment).map_err(HostError::Refused)?;
-        Self::assemble(ir, clock, state, placements, IN_PROCESS)
+        Self::assemble(ir, clock, state, placements, IN_PROCESS, decider)
     }
 
     /// The host of the components in `placements`, their bindings carried on `carried`: every
@@ -274,7 +332,9 @@ impl Host {
         state: &Path,
         placements: Placements,
         carried: &str,
+        decider: Option<Box<dyn Decider + Send>>,
     ) -> Result<Self, HostError> {
+        let answers = decider.is_some();
         for binding in ir.bindings().values() {
             if binding.cause.event().is_some() && binding.failure != Failure::Drop {
                 return Err(HostError::Unsupported(format!(
@@ -292,7 +352,8 @@ impl Host {
                 let capability = binding.capability.as_str();
                 let implementation = binding.implementation.as_str();
                 let runs = |known: &[&str]| known.contains(&implementation);
-                let unsupported = if capability.starts_with(Capability::EXTERNAL_PREFIX) {
+                let unsupported = if capability.starts_with(Capability::EXTERNAL_PREFIX) && !answers
+                {
                     Some("this host answers no external cause")
                 } else if capability == Capability::TIMER && !runs(TIMERS) {
                     Some("this host runs no such timer")
@@ -327,27 +388,22 @@ impl Host {
                     .ok_or_else(|| HostError::Unsupported(format!("no component {name}")))?,
             ));
             let sink = Sink::new(counters.clone());
-            let store: Box<dyn Store> = match bound(Capability::STORE_DURABLE)
-                .or_else(|| bound("store.ephemeral"))
-            {
-                None | Some("memory") => {
-                    Box::new(CountingStore::new(MemoryStore::default(), sink.clone()))
-                }
-                Some("sqlite") => Box::new(CountingStore::new(
-                    SqliteStore::open(&state.join(format!("{name}.sqlite")))?,
-                    sink.clone(),
-                )),
+            let file = match bound(Capability::STORE_DURABLE).or_else(|| bound("store.ephemeral")) {
+                None | Some("memory") => None,
+                Some("sqlite") => Some(state.join(format!("{name}.sqlite"))),
                 Some(other) => {
                     return Err(HostError::Unsupported(format!(
                         "{name} has its state bound to {other}, which this host has no store for"
                     )));
                 }
             };
+            let store = opened(file.as_deref(), &sink)?;
             let sender = Sender::new(name, router.clone())?.with_telemetry(sink.clone());
             components.insert(
                 name.clone(),
                 Component {
                     store,
+                    file,
                     sender,
                     position: 0,
                     counters,
@@ -439,7 +495,78 @@ impl Host {
             timer,
             periodic,
             remote: None,
+            published: Vec::new(),
+            decider: decider.unwrap_or_else(|| Box::new(NoExternals)),
         })
+    }
+
+    /// The compiled specification the host runs.
+    pub fn ir(&self) -> &EssIr {
+        &self.ir
+    }
+
+    /// Every event a command published since the host started or was last [reset](Self::reset),
+    /// in the order published: a command's own events in emit order, then those of the commands
+    /// they led to. A refused command publishes none. Held in memory: the events of an earlier
+    /// process that kept its state in SQLite are not among them.
+    pub fn published(&self) -> &[Published] {
+        &self.published
+    }
+
+    /// Empties every component's store and forgets every published event; returns the
+    /// components whose stores were emptied, by name.
+    ///
+    /// A store in memory is replaced by an empty one. A store in SQLite is closed, its file and
+    /// the SQLite side files beside it moved aside, and an empty one opened at the same path; the
+    /// moved files are removed only once the empty store is open. Periodic bindings keep running,
+    /// and the counters keep their counts.
+    ///
+    /// # Errors
+    /// [`HostError::Reset`] when a component's files cannot be moved aside or the empty store
+    /// cannot be opened. Its files are moved back and its store reopened as it was
+    /// (`restored: true`); where even that fails, every read and write of that component fails
+    /// from then on, naming why (`restored: false`). The components emptied before it stay
+    /// empty, and the published events are forgotten only when every store was emptied.
+    pub fn reset(&mut self) -> Result<Vec<String>, HostError> {
+        let mut emptied = Vec::new();
+        for (name, component) in &mut self.components {
+            if let Some(file) = component.file.clone() {
+                let closed = std::mem::replace(
+                    &mut component.store,
+                    Box::new(Lost(format!("{name}'s store is being reset"))),
+                );
+                drop(closed);
+                match emptied_file(&file, &component.sink) {
+                    Ok(store) => component.store = store,
+                    Err(error) => {
+                        let restored = match opened(Some(&file), &component.sink) {
+                            Ok(store) => {
+                                component.store = store;
+                                true
+                            }
+                            Err(again) => {
+                                component.store = Box::new(Lost(format!(
+                                    "{name}'s store was lost in a reset: {error}; reopening {} \
+                                     failed: {again}",
+                                    file.display()
+                                )));
+                                false
+                            }
+                        };
+                        return Err(HostError::Reset {
+                            component: name.clone(),
+                            error,
+                            restored,
+                        });
+                    }
+                }
+            } else {
+                component.store = opened(None, &component.sink)?;
+            }
+            emptied.push(name.clone());
+        }
+        self.published.clear();
+        Ok(emptied)
     }
 
     /// What admission bound for each component.
@@ -660,7 +787,7 @@ impl Host {
         let result = spindle_kernel::execute_at(
             &self.ir,
             held.store.as_mut(),
-            &mut NoExternals,
+            self.decider.as_mut(),
             &mut UuidV4,
             &|| clock.wall(),
             command,
@@ -671,6 +798,12 @@ impl Host {
             Ok(executed) => executed,
             Err(error) => return Ok(Err(error)),
         };
+        self.published
+            .extend(executed.events.iter().map(|event| Published {
+                component: component.to_owned(),
+                command: command.to_owned(),
+                event: event.clone(),
+            }));
         if !executed.events.is_empty() {
             held.position += 1;
             for event in &executed.events {
@@ -785,6 +918,101 @@ impl Host {
 struct Deliveries {
     count: usize,
     bindings: BTreeSet<String>,
+}
+
+/// A component's store, counted into `sink`: in SQLite at `file`, in memory without one.
+fn opened(file: Option<&Path>, sink: &Sink) -> Result<Box<dyn Store>, HostError> {
+    Ok(match file {
+        None => Box::new(CountingStore::new(MemoryStore::default(), sink.clone())),
+        Some(file) => Box::new(CountingStore::new(SqliteStore::open(file)?, sink.clone())),
+    })
+}
+
+/// The store of a component whose store is closed: every read and write fails, naming why, so
+/// the component never answers from a store its binding does not name.
+struct Lost(String);
+
+impl Store for Lost {
+    fn load(&mut self, _: &str, _: &Value) -> Result<Option<spindle_kernel::Stored>, StoreError> {
+        Err(StoreError::Backend(self.0.clone()))
+    }
+
+    fn commit(&mut self, _: &spindle_kernel::Change) -> Result<(), StoreError> {
+        Err(StoreError::Backend(self.0.clone()))
+    }
+
+    fn scan(&mut self, _: &str) -> Result<Vec<(Value, spindle_kernel::Stored)>, StoreError> {
+        Err(StoreError::Backend(self.0.clone()))
+    }
+}
+
+/// The SQLite files a store at `file` keeps: the database and its side files.
+fn sqlite_files(file: &Path) -> Vec<PathBuf> {
+    ["", "-wal", "-shm", "-journal"]
+        .into_iter()
+        .map(|suffix| {
+            let mut path = file.as_os_str().to_owned();
+            path.push(suffix);
+            PathBuf::from(path)
+        })
+        .collect()
+}
+
+/// Where a reset moves `path` while the empty store is opened.
+fn aside(path: &Path) -> PathBuf {
+    let mut moved = path.as_os_str().to_owned();
+    moved.push(".reset");
+    PathBuf::from(moved)
+}
+
+/// An empty SQLite store at `file`, whose store is closed: its files are moved aside, an empty
+/// one is opened, and only then are the moved files removed. On failure every file is where it
+/// was and the error names what failed; a file that could not be moved back is named with where
+/// it is.
+fn emptied_file(file: &Path, sink: &Sink) -> Result<Box<dyn Store>, String> {
+    let mut moved = Vec::new();
+    let restore = |moved: &[PathBuf], why: String| {
+        let mut why = why;
+        for path in moved {
+            if let Err(error) = std::fs::rename(aside(path), path) {
+                why.push_str(&format!(
+                    "; {} could not be moved back from {}: {error}",
+                    path.display(),
+                    aside(path).display()
+                ));
+            }
+        }
+        why
+    };
+    for path in sqlite_files(file) {
+        match std::fs::rename(&path, aside(&path)) {
+            Ok(()) => moved.push(path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(restore(
+                    &moved,
+                    format!("moving {} aside: {error}", path.display()),
+                ));
+            }
+        }
+    }
+    match opened(Some(file), sink) {
+        Ok(store) => {
+            for path in &moved {
+                let _ = std::fs::remove_file(aside(path));
+            }
+            Ok(store)
+        }
+        Err(error) => {
+            for path in sqlite_files(file) {
+                let _ = std::fs::remove_file(path);
+            }
+            Err(restore(
+                &moved,
+                format!("opening an empty store at {}: {error}", file.display()),
+            ))
+        }
+    }
 }
 
 /// The component that accepts `command`.

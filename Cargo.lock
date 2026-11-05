@@ -1451,6 +1451,7 @@ dependencies = [
  "signal-hook",
  "spindle-capability",
  "spindle-channel",
+ "spindle-conformance",
  "spindle-host",
  "spindle-ingress",
  "spindle-kernel",
@@ -1458,6 +1459,24 @@ dependencies = [
  "spindle-target",
  "spindle-telemetry",
  "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "spindle-conformance"
+version = "0.1.0"
+dependencies = [
+ "ess-compiler",
+ "ess-conformance",
+ "ess-domain",
+ "ess-primitives",
+ "serde",
+ "serde_json",
+ "spindle-capability",
+ "spindle-host",
+ "spindle-kernel",
+ "spindle-spec",
+ "thiserror",
  "toml",
 ]
 
