@@ -170,7 +170,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "Minted creation identities",
-        "A creation whose identity no input or payload supplies needs identity.mint; a Uuid identity is minted as a UUIDv4 and emitted.",
+        "A creation whose identity no input or payload supplies needs identity.mint; a Uuid identity is minted as a UUIDv4, a String newtype identity as its prefix and a UUIDv4's text, and emitted.",
         "/docs/concepts/capabilities",
         "crates/spindle-kernel/tests/mint.rs::a_creation_without_an_id_input_mints_one_and_emits_it",
     ),
@@ -216,11 +216,12 @@ pub const CAPABILITIES: &[Capability] = &[
         "/docs/concepts/observe",
         "ui/src/screens/TopologyScreen.test.ts::the_topology_shows_one_card_per_component_and_one_edge_per_binding",
     ),
-    planned(
+    shipped(
         "Rally",
         "Three processes",
-        "Three b10x-spindle run processes, one per component, joined by TCP channels.",
+        "Three b10x-spindle play --component processes, one per component, started by the process launcher from its SPINDLE_* variables and joined by TCP channels, play a match to a winner; each sends its telemetry when given an endpoint.",
         "/docs/examples/rally",
+        "crates/spindle-cli/tests/processes.rs::a_match_between_three_processes_ends_with_a_winner",
     ),
     planned(
         "Rally",
@@ -236,17 +237,32 @@ pub const CAPABILITIES: &[Capability] = &[
         "crates/spindle-cli/tests/ingress.rs::a_bound_route_answers_with_the_bindings_status_per_outcome",
     ),
     shipped(
+        "Execution",
+        "Console routes",
+        "A loopback run also serves GET /api/model (the IR as ess specify compile prints it, and each outcome's subject), GET /api/events (every event published, in order) and POST /api/reset (empties every store); a route the binding or ESS publishes at one of those paths is refused at startup.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-cli/tests/console.rs::reset_empties_every_store_of_the_run",
+    ),
+    shipped(
+        "Execution",
+        "Serve what runs",
+        "An HTTP run serves every command and view that runs and answers each other one 501 naming the construct, ESS's envelope for a command; the list is printed at startup, in name order. A view the ingress cannot route still refuses startup by name, since ESS publishes no 501 for a view. on_failure: retry bindings start only with --drop-retries, and sqlite state without --state is kept in a temporary directory removed when the run ends.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-cli/tests/unserved.rs::an_unrunnable_command_answers_501_and_the_rest_serve",
+    ),
+    shipped(
         "Conformance",
         "Scenario replay",
         "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: captures feed later steps, view asserts are checked, and the first divergent step is named and ends the run.",
         "/docs/concepts/specification",
         "crates/spindle-cli/tests/replay.rs::the_first_divergent_step_is_named",
     ),
-    planned(
+    shipped(
         "Conformance",
         "Self-conformance",
-        "The suite ESS synthesises from Spindle's own specification runs in task check.",
+        "conform runs the suite ESS synthesises from a specification, or one written for it, against every component in one process; task check runs it on Spindle's own specification, lists every synthesis refusal with its code and holds the executed and skipped counts.",
         "/docs/concepts/specification",
+        "crates/spindle-cli/tests/conform.rs::every_executed_scenario_passes",
     ),
     planned(
         "Observe",

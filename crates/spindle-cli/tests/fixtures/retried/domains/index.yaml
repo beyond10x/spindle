@@ -1,0 +1,38 @@
+domain: notes.index
+summary: Each written note, indexed by replacing the entry before it, which this runtime does not run.
+entities:
+  - name: notes.index.Entry
+    identity:
+      name: note_id
+      type: notes.pad.NoteId
+    fields: []
+    lifecycle:
+      initial: Indexed
+      states: [Indexed]
+      terminal: [Indexed]
+errors:
+  - name: notes.index.NotIndexed
+    summary: No entry carries the id.
+    fields: []
+commands:
+  - name: notes.index.IndexNote
+    input:
+      - name: note_id
+        type: notes.pad.NoteId
+    outcomes:
+      - name: no-entry
+        unknown_instance: true
+        error: notes.index.NotIndexed
+        summary: No entry carries the id.
+      - name: replaced
+        deletes: notes.index.Entry
+        instance: note_id
+        emits: [notes.index.NoteIndexed]
+        payload:
+          notes.index.NoteIndexed: {note_id: input.note_id}
+        summary: The entry before it is removed.
+events:
+  - name: notes.index.NoteIndexed
+    fields:
+      - name: note_id
+        type: notes.pad.NoteId

@@ -19,9 +19,9 @@ in-process channel and in a microVM with a TCP one; admission is the only step t
 
 Status: early. Loading, capability derivation, admission, command execution (with list views,
 minted identities and external decisions from a file), per-component counters and the rally example
-in one process work, and `run` serves a network-reached component over HTTP on 127.0.0.1; the process, QEMU and Firecracker launchers exist as libraries and sample each
+in one process and as three processes joined by TCP channels work, and `run` serves a network-reached component over HTTP on 127.0.0.1; the process, QEMU and Firecracker launchers exist as libraries and sample each
 instance's CPU and memory; the observe UI runs on fixture data. Running each component in its own
-process or microVM, deployment and a live observe API are planned. The
+microVM, deployment and a live observe API are planned. The
 [status page](https://beyond10x.github.io/spindle/docs/status) lists each item with the test that
 holds it; the design is [`docs/design/spindle.md`](docs/design/spindle.md).
 
@@ -39,6 +39,11 @@ target/release/b10x-spindle admit ess --environment examples/environments/microv
 The last command is refused: Spindle's own specification has an outcome decided outside the
 model, and the `microvm` environment provides nothing for it. Exit status 3 means refused.
 
+`b10x-spindle conform ess --environment examples/environments/laptop.toml` runs the suite ESS
+synthesises from Spindle's own specification against Spindle itself; `task check:conformance`
+holds its counts against `conformance.toml`, with the scenarios known to fail declared in
+`conformance-known-failures.json` (`ess-known-failures/1`).
+
 ## Capabilities
 
 | capability | derived from |
@@ -50,8 +55,8 @@ model, and the `microvm` environment provides nothing for it. Exit status 3 mean
 | `ingress.command_line` | a component `reached_by: command_line` |
 | `projection` | a view with `consistency: eventual` |
 | `external.<command>.<outcome>` | an outcome whose condition is `external:` |
-| `identity.mint` | a `creates:` outcome whose identity is neither an input nor a payload source (`{generated: true}`); a `Uuid` identity is minted as a UUIDv4 (`uuid-v4`) |
-| `identity.mint`, `clock` | an outcome field marked `{generated: true}` (or `{input: f, else: {generated: true}}`) other than a minted creation identity: a `Uuid`, `String` or `Integer` is minted through `identity.mint`, a `Timestamp` read from `clock` |
+| `identity.mint` | a `creates:` outcome whose identity is neither an input nor a payload source (`{generated: true}`); a `Uuid` identity is minted as a UUIDv4 (`uuid-v4`), a `Uuid` newtype without invariants likewise, and a `String` newtype identity whose prefix and alphabet admit a UUID's text and whose invariants bound only its length (`value.count`) as its prefix and a UUIDv4's text; any other identity type, and an entity invariant no minted length meets, is refused by name before the command runs |
+| `identity.mint`, `clock` | an outcome field marked `{generated: true}` (or `{input: f, else: {generated: true}}`) other than a minted creation identity: a `Uuid`, `String`, `Integer` or `Boolean` is minted through `identity.mint`, a `Timestamp` read from `clock` |
 
 ## Environment
 
@@ -81,6 +86,7 @@ prefix; an exact key wins over it.
 - `crates/spindle-qemu`, `crates/spindle-firecracker` — microVM launchers.
 - `crates/spindle-telemetry` — counters and histograms per instance, their catalogue derived from the specification, and the sender that reports them as `spindle-telemetry/1` frames over a Unix socket or vsock.
 - `crates/spindle-host` — runs every component of a system in one process.
+- `crates/spindle-conformance` — runs an ESS conformance suite against every component in one process.
 - `crates/spindle-cli` — the `b10x-spindle` binary.
 - `crates/spindle-docs` — generates the site's CLI reference and status page.
 - `examples/` — environments and the `rally` example system.

@@ -22,8 +22,10 @@
 //! # Effects
 //!
 //! `creates:` stores a new instance in its initial state, under the identity its input or payload
-//! determines or, where neither does, one a [`Mint`] mints (a `Uuid` identity only, as a UUIDv4;
-//! see [`execute_minting`]), `moves:` takes the declared transition,
+//! determines or, where neither does, one a [`Mint`] mints: a `Uuid` identity, or a newtype of one
+//! without invariants, as a UUIDv4, and a `String` newtype whose prefix and alphabet admit a
+//! UUID's text and whose invariants bound only a length that text meets, as its prefix and a
+//! UUIDv4's text (see [`execute_minting`]). `moves:` takes the declared transition,
 //! `updates:` writes fields, `preserves:` and every refusal change nothing. A move that does not
 //! start from the state held answers the command's `wrong_state:` outcome, which reports its error
 //! or, with `refuses: false`, succeeds and changes nothing. Before a change is committed, every
@@ -38,7 +40,8 @@
 //! example use, and the guarded forms beside them (an input guard beside `when_subject:`,
 //! `when_subject: {field, equals}`, `when_subject_state:`, `external:` with `when:` or
 //! `when_subject:`). Any other construct is [`ExecuteError::Unsupported`], named, before the
-//! command reads or writes anything.
+//! command reads or writes anything. [`runs`] makes the same check without running anything, so
+//! a host can name what it will not run before it serves.
 
 mod decider;
 mod execute;
@@ -58,6 +61,7 @@ pub use execute::{at_rest, execute, execute_at, execute_minting};
 pub use mint::{Identity, Mint, Uuid, UuidV4};
 pub use sqlite::SqliteStore;
 pub use store::{Change, MemoryStore, Row, Store, StoreError, Stored};
+pub use supported::check as runs;
 
 /// One event a command emitted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

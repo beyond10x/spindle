@@ -3,7 +3,7 @@
 //!
 //! The document is read and checked against the model by ESS's own reader
 //! ([`ess_conformance::authored::compile`]), and its compiled steps are executed by ESS's own
-//! runner ([`ess_conformance::Runner`]) against [`HostTarget`]: a [`Host`] with fresh in-memory
+//! runner ([`ess_conformance::Runner`]) against [`HostTarget`]: a host with fresh in-memory
 //! stores for every replay, whatever `store.durable` is bound to, so a replay writes nothing to
 //! disk. Spindle compares nothing itself; what holds is the runner's answer.
 //!
@@ -15,41 +15,26 @@
 //! `log2(steps)` replays find the shortest one. The divergence reported is the replay of that
 //! shortest prefix, which runs no step after the divergent one.
 
-use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::Path;
 use std::process::ExitCode;
-use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use ess_compiler::EssIr;
-use ess_compiler::refs::{ErrorRef, EventRef, OutcomeRef};
 use ess_conformance::authored::{self, Source};
 use ess_conformance::{
-    AdmittedSuite, AdvancingClock, ConformanceScenario, ConformanceSuite, ConformanceTarget,
-    DeclaredErrorValue, EventObservationRequest, ExternalOutcomeControl, Ids,
-    ImplementationIdentity, ObservedEvent, RedeliveryRequest, Runner, RunnerConfig,
-    ScenarioContext, ScenarioId, ScenarioResult, ScenarioStep, SemanticCommandRequest,
-    SemanticCommandResult, SemanticViewRequest, SemanticViewResult, Status, SuiteProvenance,
-    TargetError,
+    AdmittedSuite, AdvancingClock, ConformanceScenario, ConformanceSuite, Ids, Runner,
+    RunnerConfig, ScenarioId, ScenarioResult, ScenarioStep, Status, SuiteProvenance,
 };
-use ess_domain::command::OutcomeName;
-use ess_primitives::consistency::ConsistencyToken;
-use ess_primitives::node::Node;
-use serde_json::{Map, Value};
 use spindle_capability::Environment;
-use spindle_host::{Host, HostError, SystemClock};
-use spindle_kernel::ExecuteError;
+use spindle_conformance::{HostTarget, in_memory};
+use spindle_host::HostError;
 
 /// Exit status of a replay the environment refused.
 const REFUSED: u8 = 3;
 
 /// The most document steps a replay takes; a longer document is refused before any replay.
 pub(crate) const MOST_STEPS: usize = 1000;
-
-/// The store implementation every replay keeps its state in.
-const MEMORY: &str = "memory";
 
 /// Replays the scenario in `scenario` against `spec` admitted on `environment`.
 ///
@@ -94,12 +79,7 @@ pub(crate) fn replay(spec: &Path, environment: &Path, scenario: &Path) -> Result
         return Ok(ExitCode::from(REFUSED));
     }
     let memory = in_memory(&parsed);
-    match Host::new(
-        loaded.ir.clone(),
-        &memory,
-        Arc::new(SystemClock),
-        Path::new(""),
-    ) {
+    match HostTarget::new(loaded.ir.clone(), memory.clone()).open() {
         Ok(_) => {}
         Err(HostError::Refused(refusal)) => {
             println!("{refusal}");
@@ -173,17 +153,6 @@ pub(crate) fn replay(spec: &Path, environment: &Path, scenario: &Path) -> Result
     Ok(ExitCode::FAILURE)
 }
 
-/// `environment` with every store capability it provides bound to memory only.
-fn in_memory(environment: &Environment) -> Environment {
-    let mut memory = environment.clone();
-    for (capability, implementations) in &mut memory.provides {
-        if capability.starts_with("store.") {
-            *implementations = vec![MEMORY.to_owned()];
-        }
-    }
-    memory
-}
-
 /// What replaying one prefix needs.
 struct Replays<'a> {
     ir: &'a EssIr,
@@ -230,8 +199,8 @@ impl Replays<'_> {
             .with_context(|| format!("the runner reported nothing for `{}`", self.id))?;
         Ok(Replayed {
             result,
-            commands: target.commands.get(),
-            unarranged: target.unarranged.get(),
+            commands: target.commands(),
+            unarranged: target.unarranged(),
         })
     }
 }
@@ -310,301 +279,6 @@ fn steps(compiled: &[ScenarioStep]) -> Vec<Step> {
         .zip(ends)
         .map(|((_, label), end)| Step { end, label })
         .collect()
-}
-
-/// Every component of the system in one [`Host`], opened afresh for each scenario.
-struct HostTarget {
-    ir: EssIr,
-    environment: Environment,
-    running: RefCell<Option<Running>>,
-    /// How many commands this target has sent to a host.
-    commands: Cell<usize>,
-    /// Whether the runner asked for state the target does not arrange.
-    unarranged: Cell<bool>,
-}
-
-/// The host of the scenario in progress, and every event its commands published.
-struct Running {
-    host: Host,
-    /// How many commands have run: the consistency token of the last.
-    writes: u64,
-    events: Vec<ObservedEvent>,
-}
-
-impl HostTarget {
-    fn new(ir: EssIr, environment: Environment) -> Self {
-        Self {
-            ir,
-            environment,
-            running: RefCell::new(None),
-            commands: Cell::new(0),
-            unarranged: Cell::new(false),
-        }
-    }
-}
-
-impl ConformanceTarget for HostTarget {
-    fn identity(&self) -> Result<ImplementationIdentity, TargetError> {
-        Ok(ImplementationIdentity::new(
-            "b10x-spindle",
-            env!("CARGO_PKG_VERSION"),
-        ))
-    }
-
-    fn fixture_values(
-        &self,
-        _scenario: &ScenarioContext,
-        _contract: &ess_conformance::fixtures::Contract,
-    ) -> Result<BTreeMap<String, Node>, TargetError> {
-        self.unarranged.set(true);
-        Err(TargetError::unsupported(
-            "fixture values",
-            "the in-process host provides no fixture",
-        ))
-    }
-
-    fn establish_entity(
-        &self,
-        request: ess_conformance::target::EntitySetupRequest,
-    ) -> Result<(), TargetError> {
-        self.unarranged.set(true);
-        Err(TargetError::unsupported(
-            format!("establishing `{}`", request.entity),
-            "the in-process host holds only state its commands wrote",
-        ))
-    }
-
-    fn begin_scenario(&self, _scenario: &ScenarioContext) -> Result<(), TargetError> {
-        let host = Host::new(
-            self.ir.clone(),
-            &self.environment,
-            Arc::new(SystemClock),
-            Path::new(""),
-        )
-        .map_err(|error| TargetError::unavailable("starting the host", error.to_string()))?;
-        *self.running.borrow_mut() = Some(Running {
-            host,
-            writes: 0,
-            events: Vec::new(),
-        });
-        Ok(())
-    }
-
-    fn execute_command(
-        &self,
-        request: SemanticCommandRequest,
-    ) -> Result<SemanticCommandResult, TargetError> {
-        let command = request.command.to_string();
-        if request.actor.is_some() || request.caller.is_some() {
-            return Err(TargetError::unsupported(
-                format!("`{command}` sent as an actor or a caller"),
-                "the in-process host checks no grant",
-            ));
-        }
-        let input = request
-            .input
-            .iter()
-            .map(|(field, value)| {
-                serde_json::to_value(value)
-                    .map(|value| (field.clone(), value))
-                    .map_err(|error| {
-                        TargetError::unavailable(format!("sending `{field}`"), error.to_string())
-                    })
-            })
-            .collect::<Result<Map<String, Value>, _>>()?;
-        let mut running = self.running.borrow_mut();
-        let running = running
-            .as_mut()
-            .ok_or_else(|| TargetError::unavailable(&command, "no scenario is open"))?;
-        self.commands.set(self.commands.get() + 1);
-        running.writes += 1;
-        let written = written(running.writes)?;
-        match running.host.submit(&command, input) {
-            Ok(report) => {
-                let submitted = report
-                    .ran
-                    .first()
-                    .ok_or_else(|| TargetError::unavailable(&command, "the host ran nothing"))?;
-                let mut result = SemanticCommandResult::took(outcome(
-                    &request.command,
-                    &submitted.executed.outcome,
-                )?)
-                .with_consistency(written);
-                for event in &submitted.executed.events {
-                    result = result.emitting(observed(event, &request)?);
-                }
-                for ran in &report.ran {
-                    for event in &ran.executed.events {
-                        running.events.push(observed(event, &request)?);
-                    }
-                }
-                Ok(result)
-            }
-            Err(HostError::CommandRefused {
-                outcome: taken,
-                error,
-                ..
-            }) => {
-                let reference = error.name.parse::<ErrorRef>().map_err(|parse| {
-                    TargetError::unavailable(&command, format!("error `{}`: {parse}", error.name))
-                })?;
-                let mut declared = DeclaredErrorValue::new(reference);
-                for (field, value) in &error.fields {
-                    declared = declared.with(field.clone(), node(value)?);
-                }
-                Ok(
-                    SemanticCommandResult::took(outcome(&request.command, &taken)?)
-                        .with_error(declared)
-                        .with_consistency(written),
-                )
-            }
-            Err(HostError::Execute { error, .. }) => match *error {
-                ExecuteError::Undeclared { .. } => Ok(SemanticCommandResult::undeclared()),
-                ExecuteError::Unsupported { construct } => Err(TargetError::unsupported(
-                    format!("running `{command}`"),
-                    construct,
-                )),
-                other => Err(TargetError::unavailable(
-                    format!("running `{command}`"),
-                    other.to_string(),
-                )),
-            },
-            Err(HostError::Unsupported(construct)) => Err(TargetError::unsupported(
-                format!("running `{command}`"),
-                construct,
-            )),
-            Err(other) => Err(TargetError::unavailable(
-                format!("running `{command}`"),
-                other.to_string(),
-            )),
-        }
-    }
-
-    fn query_view(&self, request: SemanticViewRequest) -> Result<SemanticViewResult, TargetError> {
-        let view = request.view.to_string();
-        if !request.params.is_empty() {
-            return Err(TargetError::unsupported(
-                format!("`{view}` read with parameters"),
-                "the in-process host lists views without parameters only",
-            ));
-        }
-        let mut running = self.running.borrow_mut();
-        let running = running
-            .as_mut()
-            .ok_or_else(|| TargetError::unavailable(&view, "no scenario is open"))?;
-        let rows = match running.host.list(&view) {
-            Ok(rows) => rows,
-            Err(HostError::Unsupported(construct)) => {
-                return Err(TargetError::unsupported(
-                    format!("reading `{view}`"),
-                    construct,
-                ));
-            }
-            Err(other) => {
-                return Err(TargetError::unavailable(
-                    format!("reading `{view}`"),
-                    other.to_string(),
-                ));
-            }
-        };
-        rows.iter()
-            .map(|row| {
-                row.iter()
-                    .map(|(field, value)| node(value).map(|value| (field.clone(), value)))
-                    .collect::<Result<BTreeMap<_, _>, _>>()
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map(SemanticViewResult::of)
-    }
-
-    fn observe_events(
-        &self,
-        request: EventObservationRequest,
-    ) -> Result<Vec<ObservedEvent>, TargetError> {
-        Ok(self
-            .running
-            .borrow()
-            .as_ref()
-            .map(|running| {
-                running
-                    .events
-                    .iter()
-                    .filter(|event| {
-                        event.event == request.event
-                            && event.correlation.as_ref() == Some(&request.correlation)
-                    })
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default())
-    }
-
-    fn configure_external_outcome(
-        &self,
-        request: ExternalOutcomeControl,
-    ) -> Result<(), TargetError> {
-        Err(TargetError::unsupported(
-            format!("forcing `{}`", request.force),
-            "the in-process host answers no external cause",
-        ))
-    }
-
-    fn redeliver_event(&self, request: RedeliveryRequest) -> Result<(), TargetError> {
-        Err(TargetError::unsupported(
-            format!("redelivering `{}`", request.event),
-            "the in-process host delivers each event once",
-        ))
-    }
-
-    fn end_scenario(&self, _scenario: &ScenarioContext) -> Result<(), TargetError> {
-        if let Some(mut running) = self.running.borrow_mut().take() {
-            running.host.stop();
-        }
-        Ok(())
-    }
-}
-
-/// The token of the `count`th command run.
-///
-/// Every command's change and everything its events lead to is committed before
-/// [`Host::submit`] returns, and every view is read from those same stores, so any read made after
-/// a command is at least as new as it: the token only names the write.
-fn written(count: u64) -> Result<ConsistencyToken, TargetError> {
-    ConsistencyToken::new(format!("write-{count}"))
-        .map_err(|error| TargetError::unavailable("naming a write", error.to_string()))
-}
-
-/// The outcome `taken` of `command`, as the suite names it.
-fn outcome(
-    command: &ess_compiler::refs::CommandRef,
-    taken: &str,
-) -> Result<OutcomeRef, TargetError> {
-    OutcomeName::new(taken)
-        .map(|name| OutcomeRef::new(command.clone(), name))
-        .map_err(|error| {
-            TargetError::unavailable(format!("`{command}` took `{taken}`"), error.to_string())
-        })
-}
-
-/// One event a command published, in the scenario the request belongs to.
-fn observed(
-    event: &spindle_kernel::Event,
-    request: &SemanticCommandRequest,
-) -> Result<ObservedEvent, TargetError> {
-    let reference = event.name.parse::<EventRef>().map_err(|error| {
-        TargetError::unavailable(format!("publishing `{}`", event.name), error.to_string())
-    })?;
-    let mut observed = ObservedEvent::new(reference).in_activity(request.correlation.clone());
-    for (field, value) in &event.payload {
-        observed = observed.with(field.clone(), node(value)?);
-    }
-    Ok(observed)
-}
-
-/// `value` as ESS's value, read exactly: an integer as the integer.
-fn node(value: &Value) -> Result<Node, TargetError> {
-    serde_json::from_value::<Node>(value.clone())
-        .map_err(|error| TargetError::unsupported(format!("the value {value}"), error.to_string()))
 }
 
 #[cfg(test)]

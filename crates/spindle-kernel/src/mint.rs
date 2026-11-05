@@ -3,13 +3,23 @@
 //! A `creates:` outcome whose new instance's identity is neither an input nor a payload source
 //! (`{generated: true}`, or no source at all) leaves the identity to the runtime. Admission binds
 //! that as the capability `identity.mint`; the kernel asks a [`Mint`] for the value, so a test can
-//! make it deterministic. Only a `Uuid` identity, or a newtype of one, is minted.
+//! make it deterministic. A `Uuid` identity, or a newtype of one without invariants, is minted as
+//! a UUID; a `String` newtype whose prefix and alphabet admit a UUID's text, and whose invariants
+//! read only `value.count` and hold for that text's length, as its prefix and a UUID's text
+//! ([`identity`]). An entity invariant over the identity's length that no minted identity meets
+//! refuses the command before it runs ([`identity_bound`]).
 //!
 //! Any other field an outcome marks `{generated: true}` (in `sets:`, a payload or an error, and
 //! the `else:` of `{input: f, else: {generated: true}}`) is minted from its declared type
-//! (`spindle_capability::mint::minted`, the rule derivation reads too): a `Uuid`, a `String` and
-//! an `Integer` from a UUID the same [`Mint`] answers, a `Timestamp` from the clock the run is
-//! given. Each such field is minted once per command run ([`Generator`]), so
+//! (`spindle_capability::mint::minted`, the rule derivation reads too): a `Uuid`, a `String`, an
+//! `Integer` and a `Boolean` from a UUID the same [`Mint`] answers, a `Timestamp` from the clock
+//! the run is given. A `Boolean` is `true` where that UUID's last bit is clear: ESS's interpreter
+//! mints `true` on an even tick of the counter it mints identities from, and its UUID for tick
+//! `n` ends in `n`'s decimal digits (`interpret::values::mint`), so a [`Mint`] that answers those
+//! UUIDs mints the Booleans the interpreter does: the kernel draws in the interpreter's order
+//! (`interpret::execute::take`), each published value a `{payload: <Event>.<field>}` reads
+//! first, then a minted creation identity, then the other `sets:`, then the payloads.
+//! Each such field is minted once per command run ([`Generator`]), so
 //! `{payload: <Event>.<field>}` in `sets:` stores what the event published.
 
 use std::cell::RefCell;
@@ -17,13 +27,14 @@ use std::time::SystemTime;
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::{
-    ResolvedBody, ResolvedEffect, ResolvedEntity, ResolvedField, ResolvedInstance, ResolvedOutcome,
+    ResolvedEffect, ResolvedEntity, ResolvedField, ResolvedInstance, ResolvedOutcome,
     ResolvedPayloadField, ResolvedPayloadValue, ResolvedTypeRef,
 };
+use ess_domain::Invariant;
 use ess_domain::QualifiedName;
-use ess_domain::types::{MAX_TYPE_DEPTH, Primitive};
 use serde_json::Value;
 pub(crate) use spindle_capability::mint::{Minted, absent, minted};
+use spindle_capability::mint::{candidate, holds_for, length_only};
 pub use uuid::Uuid;
 
 use crate::ExecuteError;
@@ -59,20 +70,36 @@ pub(crate) fn slot<'ir>(
     }
 }
 
-/// Whether a value of `kind` is a `Uuid`: the primitive, or a newtype that wraps one.
-pub(crate) fn is_uuid(ir: &EssIr, kind: &ResolvedTypeRef) -> bool {
-    let mut kind = kind;
-    for _ in 0..=MAX_TYPE_DEPTH {
-        match kind {
-            ResolvedTypeRef::Primitive { name } => return *name == Primitive::Uuid,
-            ResolvedTypeRef::Declared { name } => match &ir.named_type(name).body {
-                ResolvedBody::Newtype { of, .. } => kind = of,
-                _ => return false,
-            },
-            _ => return false,
+/// How a minted creation identity of type `kind` is spelled, by [`minted`], the rule for
+/// generated fields: a `Uuid` or a newtype of one without invariants, or a `String` newtype whose
+/// prefix, alphabet and length invariants a minted text satisfies. `None` for every other type,
+/// among them a bare `String` and a `Uuid` newtype that declares an invariant.
+pub(crate) fn identity(ir: &EssIr, kind: &ResolvedTypeRef) -> Option<Minted> {
+    match minted(ir, kind, false)? {
+        Minted::Uuid => Some(Minted::Uuid),
+        text @ Minted::Text { .. } if matches!(kind, ResolvedTypeRef::Declared { .. }) => {
+            Some(text)
         }
+        _ => None,
     }
-    false
+}
+
+/// The first invariant of `entity` that reads only its identity's length and that no identity
+/// minted as `shape` meets: every minted identity under one shape has one length, so ESS's
+/// verdict on [`candidate`] is its verdict on each.
+pub(crate) fn identity_bound<'ir>(
+    entity: &'ir ResolvedEntity,
+    shape: &Minted,
+) -> Option<&'ir Invariant> {
+    let text = match shape {
+        Minted::Text { prefix } => candidate(prefix.as_deref()),
+        _ => candidate(None),
+    };
+    let subject = entity.identity.name.as_str();
+    entity
+        .invariants
+        .iter()
+        .find(|invariant| length_only(invariant, subject) && !holds_for(invariant, subject, &text))
 }
 
 /// The low 53 bits: the integers every JSON reader holds exactly.
@@ -107,6 +134,14 @@ impl<'m> Generator<'m> {
     /// A fresh UUID for `identity`.
     pub(crate) fn uuid(&self, identity: &Identity<'_>) -> Uuid {
         self.mint.borrow_mut().uuid(identity)
+    }
+
+    /// A fresh value of `shape` for `identity`.
+    ///
+    /// # Errors
+    /// The reason, from [`value`], where the value cannot be spelled.
+    pub(crate) fn mint(&self, shape: &Minted, identity: &Identity<'_>) -> Result<Value, String> {
+        value(shape, || self.uuid(identity), self.now)
     }
 
     /// The value the generated `field`, of `owner` in `outcome`, holds in this run: minted on the
@@ -178,7 +213,8 @@ impl<'m> Generator<'m> {
 pub(crate) fn unmintable(field: &str, kind: &ResolvedTypeRef) -> String {
     format!(
         "`{{generated: true}}` on `{field}` of type `{kind}`; the runtime mints a `Uuid`, a \
-         `String`, an `Integer` or a `Timestamp`, or a newtype of one without invariants"
+         `String`, an `Integer`, a `Boolean` or a `Timestamp`, or a newtype of one without \
+         invariants"
     )
 }
 
@@ -203,6 +239,7 @@ pub(crate) fn value(
                 .map(Value::from)
                 .map_err(|_| format!("{low} is past the integers a JSON reader holds"))
         }
+        Minted::Boolean => Ok(Value::Bool(uuid().as_u128() & 1 == 0)),
         Minted::Timestamp => {
             let at = now();
             let unrepresentable = || format!("{at:?}, a time no RFC 3339 instant names");

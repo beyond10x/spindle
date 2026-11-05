@@ -9,6 +9,8 @@ use ess_gen::http::{Binding, Flat};
 use ess_http::{Body, Encoding, Method, Operation, ResponseEncoding, Segment, ViewBody};
 use serde_json::{Map, Value};
 
+use crate::console::Console;
+
 /// One path variable of a route: the input field it carries and how its text is read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Variable {
@@ -36,9 +38,41 @@ pub struct Route {
     variables: Vec<Variable>,
     statuses: BTreeMap<String, u16>,
     input: Vec<String>,
+    unserved: Option<Unserved>,
+}
+
+/// Why a route is kept but its operation not served.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unserved {
+    /// The command's route uses what this ingress does not serve, named. A request for it is
+    /// answered `501` before anything is read or written. A view this ingress cannot route is
+    /// not kept: its contract declares no `501`, so [`Surface::new`] refuses it.
+    Ingress(String),
+    /// The kernel's [`runs`](spindle_kernel::runs) refuses the command, as its text. A request
+    /// for it is answered as before this was known: the host refuses it before anything is read
+    /// or written, `501` naming the construct.
+    Kernel(String),
+    /// The host's [`reads`](spindle_host::reads) refuses the view, as its text. A request for it
+    /// is answered as before this was known: the host refuses it before reading anything, `501`
+    /// naming the construct.
+    Host(String),
+}
+
+impl fmt::Display for Unserved {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ingress(what) => write!(formatter, "this ingress does not serve {what}"),
+            Self::Kernel(refused) | Self::Host(refused) => formatter.write_str(refused),
+        }
+    }
 }
 
 impl Route {
+    /// Why the operation is not served; `None` for one that is.
+    pub fn unserved(&self) -> Option<&Unserved> {
+        self.unserved.as_ref()
+    }
+
     /// The status the command's outcome `outcome` answers: the binding's where it lists one, ESS's
     /// derived status otherwise.
     pub fn status(&self, outcome: &str) -> Option<u16> {
@@ -61,6 +95,9 @@ impl Route {
     fn carried(&self, path: &str) -> Option<Result<Map<String, Value>, String>> {
         if !ess_gen::http::template_matches(&self.segments, path) {
             return None;
+        }
+        if matches!(self.unserved, Some(Unserved::Ingress(_))) {
+            return Some(Ok(Map::new()));
         }
         let given: Vec<&str> = path.trim_start_matches('/').split('/').collect();
         let mut carried = Map::new();
@@ -135,6 +172,8 @@ pub enum Resolved<'a> {
     Found(&'a Route, Map<String, Value>),
     /// The path matches a route whose variable it holds malformed.
     Malformed(String),
+    /// A console route ([`Surface::with_console`]).
+    Console(Console),
     /// The path is served, under these methods only.
     WrongMethod(Vec<Method>),
     /// No route has the path.
@@ -154,6 +193,17 @@ pub enum SurfaceError {
         path: String,
         /// The components that both claim it.
         components: [String; 2],
+    },
+    /// A route the binding or ESS publishes would be shadowed by a console route.
+    Shadowed {
+        /// The console route.
+        console: Console,
+        /// The command or view whose route it would shadow.
+        operation: String,
+        /// That route's method.
+        method: Method,
+        /// That route's path template.
+        path: String,
     },
     /// The route of an operation uses what this ingress does not serve, named.
     Unsupported {
@@ -177,6 +227,16 @@ impl fmt::Display for SurfaceError {
                 "{first} and {second} both claim {} {path}; one listener cannot serve both",
                 method.as_str().to_uppercase()
             ),
+            Self::Shadowed {
+                console,
+                operation,
+                method,
+                path,
+            } => write!(
+                formatter,
+                "the console route {console} would shadow {operation}, which is served at {} {path}; the console's paths are fixed, so the binding must serve it at another path",
+                method.as_str().to_uppercase()
+            ),
             Self::Unsupported { operation, what } => {
                 write!(formatter, "{operation}: this ingress does not serve {what}")
             }
@@ -190,6 +250,7 @@ impl std::error::Error for SurfaceError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Surface {
     routes: Vec<Route>,
+    console: bool,
 }
 
 impl Surface {
@@ -202,13 +263,22 @@ impl Surface {
     /// status; for one it names, the binding's method and path, its path variables read into the
     /// input, and the status it lists for an outcome ([`ess_gen::http::listed`]).
     ///
+    /// A command this ingress cannot route keeps its route and is marked [`Unserved::Ingress`]:
+    /// a `form` or `query` request, an outcome answered other than with the envelope (a body,
+    /// headers, a redirect or text), a standard refusal the binding answers its own way, an
+    /// outcome that answers with the command's response, or a path variable that is not a
+    /// scalar. A command the kernel's [`runs`](spindle_kernel::runs) refuses is marked
+    /// [`Unserved::Kernel`], and a view the host's [`reads`](spindle_host::reads) refuses
+    /// [`Unserved::Host`].
+    ///
     /// # Errors
     /// [`SurfaceError::NoComponent`] for a name `ir` does not declare,
     /// [`SurfaceError::Collision`] when two components claim one route, and
-    /// [`SurfaceError::Unsupported`] for a route that needs what this ingress does not serve: a
-    /// `form` or `query` request, an outcome answered other than with the envelope (a body,
-    /// headers, a redirect or text), a view answered other than as `rows`, a standard refusal the
-    /// binding answers its own way, or a command whose outcome answers with its response.
+    /// [`SurfaceError::Unsupported`] for a binding that answers a standard refusal its own way
+    /// for every operation, a path that is not a template, or a view this ingress cannot route
+    /// (one answered other than as `rows`, a standard refusal the binding answers its own way, a
+    /// path variable that is not a scalar): ESS publishes no `501` for a view, so it is refused
+    /// rather than answered with a status its contract does not declare.
     pub fn new(
         ir: &EssIr,
         components: &[String],
@@ -244,7 +314,39 @@ impl Surface {
                 routes.push(route);
             }
         }
-        Ok(Self { routes })
+        Ok(Self {
+            routes,
+            console: false,
+        })
+    }
+
+    /// This surface with the [`Console`] routes added where `implementation`, what
+    /// `ingress.network` is bound to, is [`HTTP_LOOPBACK`](crate::HTTP_LOOPBACK); for any other
+    /// implementation the surface is returned as it is, and no console route exists.
+    ///
+    /// # Errors
+    /// [`SurfaceError::Shadowed`] when a route the binding or ESS publishes has a path a console
+    /// route also has, under any method: the console never shadows one.
+    pub fn with_console(mut self, implementation: &str) -> Result<Self, SurfaceError> {
+        if implementation != crate::HTTP_LOOPBACK {
+            return Ok(self);
+        }
+        for console in Console::ALL {
+            if let Some(route) = self
+                .routes
+                .iter()
+                .find(|route| route.carried(console.path()).is_some())
+            {
+                return Err(SurfaceError::Shadowed {
+                    console,
+                    operation: route.operation.to_string(),
+                    method: route.method,
+                    path: route.path.clone(),
+                });
+            }
+        }
+        self.console = true;
+        Ok(self)
     }
 
     /// Every route, component by component.
@@ -252,11 +354,41 @@ impl Surface {
         &self.routes
     }
 
+    /// Every route whose operation is not served, component by component and, within one, in
+    /// name order: commands, then views, each by qualified name, as the compiled model's maps
+    /// hold them.
+    pub fn unserved(&self) -> Vec<&Route> {
+        let mut unserved: Vec<&Route> = self
+            .routes
+            .iter()
+            .filter(|route| route.unserved.is_some())
+            .collect();
+        let component = |route: &Route| {
+            self.routes
+                .iter()
+                .position(|first| first.component == route.component)
+        };
+        unserved.sort_by_cached_key(|route| (component(route), route.operation.to_string()));
+        unserved
+    }
+
     /// The route a request with `method` (compared exactly, RFC 9110 §9.1) and `path` is for.
     /// Compiling the binding
     /// refused two templates a request path can both match (`ESS-HTTP-010`, `ESS-HTTP-011`), so
-    /// at most one route of a method matches.
+    /// at most one route of a method matches. A console route, where the surface has them, is
+    /// matched exactly; no other route shares its path ([`Surface::with_console`]).
     pub fn resolve(&self, method: &str, path: &str) -> Resolved<'_> {
+        if self.console
+            && let Some(console) = Console::ALL
+                .into_iter()
+                .find(|console| console.path() == path)
+        {
+            return if console.method().as_str().to_uppercase() == method {
+                Resolved::Console(console)
+            } else {
+                Resolved::WrongMethod(vec![console.method()])
+            };
+        }
         let mut served = Vec::new();
         for route in &self.routes {
             let Some(carried) = route.carried(path) else {
@@ -279,14 +411,12 @@ impl Surface {
     }
 }
 
-fn unsupported(operation: &Operation, what: impl Into<String>) -> SurfaceError {
-    SurfaceError::Unsupported {
-        operation: operation.to_string(),
-        what: what.into(),
-    }
-}
-
-/// One route of `component`, owned.
+/// One route of `component`, owned: served, or kept and marked [`Unserved`] with what it uses
+/// that this ingress, the kernel or the host does not run.
+///
+/// # Errors
+/// [`SurfaceError::Unsupported`] when the route's path is not a template ESS reads, so that no
+/// request can be matched to it, or for a view this ingress cannot route.
 fn route(
     ir: &EssIr,
     component: &str,
@@ -294,21 +424,64 @@ fn route(
 ) -> Result<Route, SurfaceError> {
     let operation = bound.serves.operation();
     let path = bound.path.clone();
-    let segments = ess_http::template(&path)
-        .map_err(|reasons| unsupported(&operation, format!("the path {path}: {reasons:?}")))?;
-    let mut variables = Vec::new();
+    let segments = ess_http::template(&path).map_err(|reasons| SurfaceError::Unsupported {
+        operation: operation.to_string(),
+        what: format!("the path {path}: {reasons:?}"),
+    })?;
+    let mut route = Route {
+        component: component.to_owned(),
+        method: bound.method.binding(),
+        path,
+        operation,
+        segments,
+        variables: Vec::new(),
+        statuses: BTreeMap::new(),
+        input: Vec::new(),
+        unserved: None,
+    };
+    match (served(ir, bound, &mut route), &route.operation) {
+        (Err(what), Operation::View(_)) => {
+            return Err(SurfaceError::Unsupported {
+                operation: route.operation.to_string(),
+                what,
+            });
+        }
+        (Err(what), Operation::Command(_)) => {
+            route.variables.clear();
+            route.statuses.clear();
+            route.unserved = Some(Unserved::Ingress(what));
+        }
+        (Ok(()), Operation::Command(_)) => {
+            if let ess_gen::http::Served::Command(handle) = bound.serves
+                && let Err(refused) = spindle_kernel::runs(ir, ir.command(handle))
+            {
+                route.unserved = Some(Unserved::Kernel(refused.to_string()));
+            }
+        }
+        (Ok(()), Operation::View(view)) => {
+            if let Err(refused) = spindle_host::reads(ir, view) {
+                route.unserved = Some(Unserved::Host(refused.to_string()));
+            }
+        }
+    }
+    Ok(route)
+}
+
+/// Fills `route`'s variables, input and statuses; `Err` names what it uses that this ingress
+/// does not serve: a `form` or `query` request, an outcome answered other than with the envelope
+/// (a body, headers, a redirect or text), a view answered other than as `rows`, a standard
+/// refusal the binding answers its own way, a command whose outcome answers with its response,
+/// or a path variable that is not a scalar.
+fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Result<(), String> {
     for (variable, field) in ess_gen::http::path_fields(ir, bound) {
-        let position = segments
+        let position = route
+            .segments
             .iter()
             .position(|segment| *segment == Segment::Variable(variable.clone()))
-            .ok_or_else(|| unsupported(&operation, format!("the variable {variable}")))?;
-        let flat = ess_gen::http::scalar(ir, &field.type_ref).ok_or_else(|| {
-            unsupported(
-                &operation,
-                format!("{} in the path, which is not a scalar", field.name),
-            )
-        })?;
-        variables.push(Variable {
+            .ok_or_else(|| format!("the variable {variable}"))?;
+        let flat = ess_gen::http::scalar(ir, &field.type_ref)
+            .ok_or_else(|| format!("{} in the path, which is not a scalar", field.name))?;
+        route.variables.push(Variable {
             position,
             field: field.name.clone(),
             flat,
@@ -317,32 +490,24 @@ fn route(
     if let Some(declared) = bound.declared
         && let Some(key) = declared.refusals.keys().next()
     {
-        return Err(unsupported(
-            &operation,
-            format!("its own answer to the standard refusal {key}"),
-        ));
+        return Err(format!("its own answer to the standard refusal {key}"));
     }
-    let mut statuses = BTreeMap::new();
-    let mut input = Vec::new();
     match bound.serves {
         ess_gen::http::Served::Command(handle) => {
-            input = ir
+            route.input = ir
                 .command(handle)
                 .input
                 .iter()
                 .map(|field| field.name.clone())
                 .collect();
             if ess_gen::http::request(bound).encoding != Encoding::Json {
-                return Err(unsupported(&operation, "a request that is not a JSON body"));
+                return Err("a request that is not a JSON body".to_owned());
             }
             for outcome in &ir.command(handle).outcomes {
                 if outcome.retains_result || ess_http::status::answers_with_response(ir, outcome) {
-                    return Err(unsupported(
-                        &operation,
-                        format!(
-                            "{}, which answers with the command's response",
-                            outcome.name
-                        ),
+                    return Err(format!(
+                        "{}, which answers with the command's response",
+                        outcome.name
                     ));
                 }
                 let status = match ess_gen::http::listed(bound, outcome) {
@@ -352,21 +517,18 @@ fn route(
                             || !listed.headers.is_empty()
                             || listed.redirect.is_some()
                         {
-                            return Err(unsupported(
-                                &operation,
-                                format!(
-                                    "{} answered other than with its status and the envelope",
-                                    outcome.name
-                                ),
+                            return Err(format!(
+                                "{} answered other than with its status and the envelope",
+                                outcome.name
                             ));
                         }
                         listed.status
                     }
                     None => ess_http::status::outcome_status(ir, outcome)
                         .parse()
-                        .map_err(|_| unsupported(&operation, "an outcome without a status"))?,
+                        .map_err(|_| "an outcome without a status".to_owned())?,
                 };
-                statuses.insert(outcome.name.to_string(), status);
+                route.statuses.insert(outcome.name.to_string(), status);
             }
         }
         ess_gen::http::Served::View(_) => {
@@ -374,21 +536,9 @@ fn route(
                 .declared
                 .is_some_and(|declared| declared.body != ViewBody::Rows)
             {
-                return Err(unsupported(
-                    &operation,
-                    "a view answered other than as rows",
-                ));
+                return Err("a view answered other than as rows".to_owned());
             }
         }
     }
-    Ok(Route {
-        component: component.to_owned(),
-        method: bound.method.binding(),
-        path,
-        operation,
-        segments,
-        variables,
-        statuses,
-        input,
-    })
+    Ok(())
 }

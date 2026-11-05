@@ -1,0 +1,42 @@
+format: ess/34
+system: notes
+version: v1
+summary: Notes written over the network and indexed by a binding that asks for a retry when it fails.
+domains:
+  - notes.pad
+  - notes.index
+components:
+  - component: pad
+    summary: Writes notes for callers outside the process.
+    owns:
+      domains:
+        - notes.pad
+    accepts:
+      commands:
+        - notes.pad.WriteNote
+    publishes:
+      events:
+        - notes.pad.NoteWritten
+    reached_by: network
+  - component: index
+    summary: Indexes each written note; only a binding reaches it.
+    owns:
+      domains:
+        - notes.index
+    accepts:
+      commands:
+        - notes.index.IndexNote
+    publishes:
+      events:
+        - notes.index.NoteIndexed
+    reached_by: in_process
+bindings:
+  - id: index-note
+    when:
+      event: notes.pad.NoteWritten
+    invoke:
+      command: notes.index.IndexNote
+    mapping:
+      note_id: event.note_id
+    delivery: at_most_once
+    on_failure: retry

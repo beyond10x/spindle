@@ -1,0 +1,97 @@
+domain: beacon.lamp
+summary: A lamp installed under the caller's id, whose lit and armed flags the runtime mints.
+types:
+  - name: beacon.lamp.LampId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: beacon.lamp.Lamp
+    identity:
+      name: lamp_id
+      type: beacon.lamp.LampId
+    fields:
+      - name: lit
+        type: Boolean
+      - name: armed
+        type: Optional<Boolean>
+    lifecycle:
+      initial: Installed
+      states: [Installed]
+      terminal: [Installed]
+commands:
+  - name: beacon.lamp.InstallLamp
+    input:
+      - name: lamp_id
+        type: beacon.lamp.LampId
+    outcomes:
+      - name: installed
+        creates: beacon.lamp.Lamp
+        instance: lamp_id
+        sets:
+          lit: {payload: beacon.lamp.LampInstalled.lit}
+        emits: [beacon.lamp.LampInstalled]
+        payload:
+          beacon.lamp.LampInstalled:
+            lamp_id: input.lamp_id
+            lit: {generated: true}
+        summary: The lamp is installed; the runtime mints whether it is lit, and the row stores what the event published.
+  - name: beacon.lamp.ArmLamp
+    input:
+      - name: lamp_id
+        type: beacon.lamp.LampId
+    outcomes:
+      - name: armed
+        updates: beacon.lamp.Lamp
+        instance: lamp_id
+        sets:
+          armed: {generated: true, present: true}
+        emits: [beacon.lamp.LampArmed]
+        payload:
+          beacon.lamp.LampArmed:
+            lamp_id: input.lamp_id
+        summary: The lamp is armed with a flag the runtime mints present.
+  - name: beacon.lamp.SignalLamp
+    input:
+      - name: lamp_id
+        type: beacon.lamp.LampId
+    outcomes:
+      - name: signalled
+        updates: beacon.lamp.Lamp
+        instance: lamp_id
+        emits: [beacon.lamp.LampSignalled]
+        payload:
+          beacon.lamp.LampSignalled:
+            second: {generated: true}
+            first: {generated: true}
+            lamp_id: input.lamp_id
+        summary: The lamp signals two flags the runtime mints, written in the reverse of the order the event declares them.
+events:
+  - name: beacon.lamp.LampInstalled
+    fields:
+      - name: lamp_id
+        type: beacon.lamp.LampId
+      - name: lit
+        type: Boolean
+  - name: beacon.lamp.LampArmed
+    fields:
+      - name: lamp_id
+        type: beacon.lamp.LampId
+  - name: beacon.lamp.LampSignalled
+    fields:
+      - name: lamp_id
+        type: beacon.lamp.LampId
+      - name: first
+        type: Boolean
+      - name: second
+        type: Boolean
+views:
+  - name: beacon.lamp.LampCard
+    source: beacon.lamp.Lamp
+    consistency: read_your_writes
+    fields:
+      - name: lamp_id
+        type: beacon.lamp.LampId
+      - name: lit
+        type: Boolean
+      - name: armed
+        type: Optional<Boolean>

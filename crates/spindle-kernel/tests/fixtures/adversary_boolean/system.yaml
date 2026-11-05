@@ -1,0 +1,25 @@
+format: ess/34
+system: semaphore
+version: v1
+summary: Flags whose raised, waved and signalled flags the runtime mints.
+domains:
+  - semaphore.flag
+components:
+  - component: mast
+    summary: Raises, plants, waves and signals flags.
+    owns:
+      domains:
+        - semaphore.flag
+    accepts:
+      commands:
+        - semaphore.flag.RaiseFlag
+        - semaphore.flag.PlantFlag
+        - semaphore.flag.WaveFlag
+        - semaphore.flag.SignalFlag
+    publishes:
+      events:
+        - semaphore.flag.FlagRaised
+        - semaphore.flag.FlagPlanted
+        - semaphore.flag.FlagWaved
+        - semaphore.flag.FlagSignalled
+    reached_by: in_process

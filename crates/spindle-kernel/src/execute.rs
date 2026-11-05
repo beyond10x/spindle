@@ -6,7 +6,8 @@ use std::time::SystemTime;
 use ess_compiler::EssIr;
 use ess_compiler::ir::{
     EventHandle, PrecedencePlan, ResolvedCommand, ResolvedCondition, ResolvedEffect,
-    ResolvedEntity, ResolvedField, ResolvedInstance, ResolvedOutcome,
+    ResolvedEntity, ResolvedField, ResolvedInstance, ResolvedOutcome, ResolvedPayloadField,
+    ResolvedPayloadValue,
 };
 use ess_domain::QualifiedName;
 use ess_domain::command::precedence::Phase;
@@ -415,6 +416,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
     /// Applies `outcome`'s effect and commits it.
     fn take(&mut self, outcome: &'ir ResolvedOutcome) -> Result<Executed, ExecuteError> {
         let Some(subject) = &outcome.subject else {
+            self.publish_reads(outcome, None)?;
             let before = self.before();
             return Ok(Executed {
                 outcome: outcome.name.as_str().to_owned(),
@@ -425,6 +427,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
         let entity = self.ir.entity(&subject.entity);
         let (change, events) = match (&subject.effect, &subject.instance) {
             (ResolvedEffect::Creates, ResolvedInstance::Observed { event, field }) => {
+                self.publish_reads(outcome, None)?;
                 if let Some((created, named)) = crate::mint::slot(self.ir, outcome) {
                     let minted = self.mint_identity(outcome, created, named)?;
                     self.minted = Some((event, named.name.clone(), minted));
@@ -491,6 +494,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     }
                     after.state = transition.to.to_string();
                 }
+                self.publish_reads(outcome, Some(&stored.row))?;
                 let sources = self.sources(outcome, &entity.name, None, Some(&stored.row));
                 write(&sources, outcome, &mut after.fields)?;
                 let events = self.emit(outcome, Some(&stored.row))?;
@@ -524,6 +528,52 @@ impl<'a, 'ir> Run<'a, 'ir> {
             events,
             error,
         })
+    }
+
+    /// Mints, before anything else the outcome draws, each published value a
+    /// `{payload: <Event>.<field>}` reads: those `sets:` stores, then those the payloads read, in
+    /// the order written. ESS's interpreter resolves them first (`interpret::execute::take` calls
+    /// `publish_reads` before `create` mints the identity and before the other `sets:`), so a
+    /// [`Mint`] that answers its tick UUIDs draws each value on the interpreter's tick. Each value
+    /// is held by the [`Generator`], so the later read and the event see it.
+    ///
+    /// A read of the created identity is left to the creation, as before: ESS does not interpret
+    /// a stored copy of it, and the kernel reads it from the identity it mints.
+    fn publish_reads(
+        &self,
+        outcome: &ResolvedOutcome,
+        before: Option<&Row>,
+    ) -> Result<(), ExecuteError> {
+        let identity = outcome.subject.as_ref().and_then(|subject| {
+            match (&subject.effect, &subject.instance) {
+                (ResolvedEffect::Creates, ResolvedInstance::Observed { event, field }) => {
+                    Some((event, field.name.as_str()))
+                }
+                _ => None,
+            }
+        });
+        let mut reads = Vec::new();
+        payload_reads(&outcome.sets, &mut reads);
+        for payload in &outcome.payload {
+            payload_reads(&payload.fields, &mut reads);
+        }
+        for (event, read) in reads {
+            if identity.is_some_and(|(creating, name)| creating == event && name == read) {
+                continue;
+            }
+            let Some(source) = outcome
+                .payload
+                .iter()
+                .filter(|payload| payload.event == *event)
+                .flat_map(|payload| &payload.fields)
+                .find(|source| source.target == read)
+            else {
+                continue;
+            };
+            self.sources(outcome, event.name(), Some(event), before)
+                .value(source)?;
+        }
+        Ok(())
     }
 
     /// The identity a creation's payload determines for the new instance, published in `field` of
@@ -566,22 +616,40 @@ impl<'a, 'ir> Run<'a, 'ir> {
         field: &ResolvedField,
     ) -> Result<Value, ExecuteError> {
         let entity_name = entity.name.to_string();
-        let uuid = self.generator.uuid(&Identity {
-            capability: IDENTITY_MINT,
-            command: self.command,
-            outcome: outcome.name.as_str(),
-            entity: &entity_name,
-            field: &field.name,
-        });
-        let minted = Value::String(uuid.hyphenated().to_string());
-        crate::typed::validate(self.ir, &entity.identity.type_ref, &minted).map_err(|error| {
+        let refused = |error: String| {
             ExecuteError::InvalidValue(format!(
                 "the identity minted for `{entity_name}.{}` in `{}/{}` would hold {error}",
                 field.name,
                 self.command,
                 outcome.name.as_str()
             ))
+        };
+        let shape = crate::mint::identity(self.ir, &entity.identity.type_ref).ok_or_else(|| {
+            ExecuteError::Unsupported {
+                construct: format!(
+                    "a creation whose identity `{entity_name}.{}` of type `{}` the runtime does \
+                     not mint, in `{}/{}`",
+                    field.name,
+                    entity.identity.type_ref,
+                    self.command,
+                    outcome.name.as_str()
+                ),
+            }
         })?;
+        let minted = self
+            .generator
+            .mint(
+                &shape,
+                &Identity {
+                    capability: IDENTITY_MINT,
+                    command: self.command,
+                    outcome: outcome.name.as_str(),
+                    entity: &entity_name,
+                    field: &field.name,
+                },
+            )
+            .map_err(&refused)?;
+        crate::typed::validate(self.ir, &entity.identity.type_ref, &minted).map_err(&refused)?;
         Ok(minted)
     }
 
@@ -693,6 +761,25 @@ fn both(first: Truth, second: impl FnOnce() -> Truth) -> Truth {
             Truth::False => Truth::False,
             _ => Truth::Unknown,
         },
+    }
+}
+
+/// Every `{payload: <Event>.<field>}` in `fields`, struct members included, in the order written
+/// (ESS `interpret::execute::reads_of`).
+fn payload_reads<'f>(
+    fields: &'f [ResolvedPayloadField],
+    out: &mut Vec<(&'f EventHandle, &'f str)>,
+) {
+    for field in fields {
+        match &field.value {
+            ResolvedPayloadValue::PayloadRead {
+                event, field: read, ..
+            } => {
+                out.push((event, read.as_str()));
+            }
+            ResolvedPayloadValue::Struct { fields } => payload_reads(fields, out),
+            _ => {}
+        }
     }
 }
 

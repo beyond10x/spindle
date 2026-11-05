@@ -1,0 +1,64 @@
+format: ess/34
+system: forcing
+version: v1
+summary: A request relayed to two reviews, and cases that close unless a cause outside the model vetoes it.
+domains:
+  - forcing.request
+  - forcing.desk
+components:
+  - component: requests
+    summary: Holds requests.
+    owns:
+      domains:
+        - forcing.request
+    accepts:
+      commands:
+        - forcing.request.Request
+    publishes:
+      events:
+        - forcing.request.Requested
+    reached_by: in_process
+  - component: desk
+    summary: Reviews requests and closes cases.
+    owns:
+      domains:
+        - forcing.desk
+    accepts:
+      commands:
+        - forcing.desk.Review
+        - forcing.desk.OpenCase
+        - forcing.desk.CloseCase
+    publishes:
+      events:
+        - forcing.desk.Reviewed
+        - forcing.desk.CaseOpened
+        - forcing.desk.CaseClosed
+    reached_by: in_process
+bindings:
+  - id: review-first
+    when:
+      event: forcing.request.Requested
+    invoke:
+      command: forcing.desk.Review
+    mapping:
+      review_id: event.first_id
+    delivery: at_most_once
+    on_failure: drop
+  - id: review-second
+    when:
+      event: forcing.request.Requested
+    invoke:
+      command: forcing.desk.Review
+    mapping:
+      review_id: event.second_id
+    delivery: at_most_once
+    on_failure: drop
+  - id: close-first
+    when:
+      event: forcing.request.Requested
+    invoke:
+      command: forcing.desk.CloseCase
+    mapping:
+      case_id: event.first_id
+    delivery: at_most_once
+    on_failure: drop

@@ -1,0 +1,42 @@
+format: ess/34
+system: relay
+version: v1
+summary: A request that a desk relays to a review whose flag is decided outside the model.
+domains:
+  - relay.request
+  - relay.desk
+components:
+  - component: relay
+    summary: Holds requests.
+    owns:
+      domains:
+        - relay.request
+    accepts:
+      commands:
+        - relay.request.Request
+    publishes:
+      events:
+        - relay.request.Requested
+    reached_by: in_process
+  - component: desk
+    summary: Reviews requests.
+    owns:
+      domains:
+        - relay.desk
+    accepts:
+      commands:
+        - relay.desk.Review
+    publishes:
+      events:
+        - relay.desk.Reviewed
+    reached_by: in_process
+bindings:
+  - id: relay-reviews
+    when:
+      event: relay.request.Requested
+    invoke:
+      command: relay.desk.Review
+    mapping:
+      review_id: event.request_id
+    delivery: at_most_once
+    on_failure: drop
