@@ -9,6 +9,8 @@ use ess_gen::http::{Binding, Flat};
 use ess_http::{Body, Encoding, Method, Operation, ResponseEncoding, Segment, ViewBody};
 use serde_json::{Map, Value};
 
+use crate::console::Console;
+
 /// One path variable of a route: the input field it carries and how its text is read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Variable {
@@ -135,6 +137,8 @@ pub enum Resolved<'a> {
     Found(&'a Route, Map<String, Value>),
     /// The path matches a route whose variable it holds malformed.
     Malformed(String),
+    /// A console route ([`Surface::with_console`]).
+    Console(Console),
     /// The path is served, under these methods only.
     WrongMethod(Vec<Method>),
     /// No route has the path.
@@ -154,6 +158,17 @@ pub enum SurfaceError {
         path: String,
         /// The components that both claim it.
         components: [String; 2],
+    },
+    /// A route the binding or ESS publishes would be shadowed by a console route.
+    Shadowed {
+        /// The console route.
+        console: Console,
+        /// The command or view whose route it would shadow.
+        operation: String,
+        /// That route's method.
+        method: Method,
+        /// That route's path template.
+        path: String,
     },
     /// The route of an operation uses what this ingress does not serve, named.
     Unsupported {
@@ -177,6 +192,16 @@ impl fmt::Display for SurfaceError {
                 "{first} and {second} both claim {} {path}; one listener cannot serve both",
                 method.as_str().to_uppercase()
             ),
+            Self::Shadowed {
+                console,
+                operation,
+                method,
+                path,
+            } => write!(
+                formatter,
+                "the console route {console} would shadow {operation}, which is served at {} {path}; the console's paths are fixed, so the binding must serve it at another path",
+                method.as_str().to_uppercase()
+            ),
             Self::Unsupported { operation, what } => {
                 write!(formatter, "{operation}: this ingress does not serve {what}")
             }
@@ -190,6 +215,7 @@ impl std::error::Error for SurfaceError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Surface {
     routes: Vec<Route>,
+    console: bool,
 }
 
 impl Surface {
@@ -244,7 +270,39 @@ impl Surface {
                 routes.push(route);
             }
         }
-        Ok(Self { routes })
+        Ok(Self {
+            routes,
+            console: false,
+        })
+    }
+
+    /// This surface with the [`Console`] routes added where `implementation`, what
+    /// `ingress.network` is bound to, is [`HTTP_LOOPBACK`](crate::HTTP_LOOPBACK); for any other
+    /// implementation the surface is returned as it is, and no console route exists.
+    ///
+    /// # Errors
+    /// [`SurfaceError::Shadowed`] when a route the binding or ESS publishes has a path a console
+    /// route also has, under any method: the console never shadows one.
+    pub fn with_console(mut self, implementation: &str) -> Result<Self, SurfaceError> {
+        if implementation != crate::HTTP_LOOPBACK {
+            return Ok(self);
+        }
+        for console in Console::ALL {
+            if let Some(route) = self
+                .routes
+                .iter()
+                .find(|route| route.carried(console.path()).is_some())
+            {
+                return Err(SurfaceError::Shadowed {
+                    console,
+                    operation: route.operation.to_string(),
+                    method: route.method,
+                    path: route.path.clone(),
+                });
+            }
+        }
+        self.console = true;
+        Ok(self)
     }
 
     /// Every route, component by component.
@@ -255,8 +313,20 @@ impl Surface {
     /// The route a request with `method` (compared exactly, RFC 9110 §9.1) and `path` is for.
     /// Compiling the binding
     /// refused two templates a request path can both match (`ESS-HTTP-010`, `ESS-HTTP-011`), so
-    /// at most one route of a method matches.
+    /// at most one route of a method matches. A console route, where the surface has them, is
+    /// matched exactly; no other route shares its path ([`Surface::with_console`]).
     pub fn resolve(&self, method: &str, path: &str) -> Resolved<'_> {
+        if self.console
+            && let Some(console) = Console::ALL
+                .into_iter()
+                .find(|console| console.path() == path)
+        {
+            return if console.method().as_str().to_uppercase() == method {
+                Resolved::Console(console)
+            } else {
+                Resolved::WrongMethod(vec![console.method()])
+            };
+        }
         let mut served = Vec::new();
         for route in &self.routes {
             let Some(carried) = route.carried(path) else {
