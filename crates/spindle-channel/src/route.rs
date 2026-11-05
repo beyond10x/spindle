@@ -1,6 +1,7 @@
 //! Routes read from the compiled IR.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::{ResolvedBinding, ResolvedMapping, ResolvedMappingValue, ResolvedTypeRef};
@@ -42,6 +43,32 @@ pub struct Route {
 struct Rule {
     target: String,
     source: Source,
+    /// The input's declared type, when the mapping crosses a declared conversion into it.
+    converted: Option<Converted>,
+}
+
+/// The type a value crossing a declared conversion must be, and the specification that declares
+/// it. ESS carries the value unchanged and checks it against the target type before the command
+/// port (`interpret/bindings.rs`, `mapped`); an assignable source needs no check.
+#[derive(Clone)]
+struct Converted {
+    kind: ResolvedTypeRef,
+    ir: Arc<EssIr>,
+}
+
+impl PartialEq for Converted {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind && Arc::ptr_eq(&self.ir, &other.ir)
+    }
+}
+
+impl std::fmt::Debug for Converted {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Converted")
+            .field("kind", &self.kind)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -88,6 +115,17 @@ pub enum MappingError {
         /// The event field.
         field: String,
     },
+    /// A value does not satisfy the declared type of the input it fills across a declared
+    /// conversion: the binding's input is unmet, and its command is not invoked.
+    #[error("binding {binding}: the input {target} is unmet: {reason}")]
+    Unmet {
+        /// The binding.
+        binding: String,
+        /// The command input.
+        target: String,
+        /// What the value is not.
+        reason: String,
+    },
 }
 
 impl Router {
@@ -96,12 +134,19 @@ impl Router {
     /// A periodic binding is the timer's and is skipped. A binding that uses anything the channel
     /// does not carry is refused whole, so a specification never runs with part of a binding:
     /// a delivery context, a `where` condition, a selection, a per-refusal policy, a bounded
-    /// retry, an escalation, a declared conversion, or a mapping source other than `event.<field>`
-    /// or a literal.
+    /// retry, an escalation, or a mapping source other than `event.<field>` or a literal. A mapping
+    /// across a declared conversion is carried, its value checked when it is mapped.
     pub fn from_ir(ir: &EssIr) -> Result<Self, RouteError> {
+        let converts = ir.bindings().values().any(|binding| {
+            binding
+                .mapping
+                .iter()
+                .any(|field| field.conversion.is_some())
+        });
+        let shared = converts.then(|| Arc::new(ir.clone()));
         let mut routes = Vec::new();
         for binding in ir.bindings().values() {
-            if let Some(route) = Route::compile(ir, binding)? {
+            if let Some(route) = Route::compile(ir, binding, shared.as_ref())? {
                 routes.push(route);
             }
         }
@@ -162,16 +207,16 @@ impl Router {
 impl Route {
     /// The command this binding invokes for `event`.
     ///
-    /// An absent `event.<field>` source leaves an Optional input out and refuses a required one.
+    /// An absent `event.<field>` source leaves an Optional input out and refuses a required one. A
+    /// value carried across a declared conversion that is no value of its input's declared type
+    /// is [`MappingError::Unmet`].
     pub fn map(&self, event: &Event) -> Result<Command, MappingError> {
         let mut fields = Map::new();
         for rule in &self.rules {
-            match &rule.source {
+            let value = match &rule.source {
                 Source::EventField { field, optional } => match event.fields.get(field) {
-                    Some(value) => {
-                        fields.insert(rule.target.clone(), value.clone());
-                    }
-                    None if *optional => {}
+                    Some(value) => value,
+                    None if *optional => continue,
                     None => {
                         return Err(MappingError::MissingField {
                             binding: self.binding.clone(),
@@ -179,10 +224,18 @@ impl Route {
                         });
                     }
                 },
-                Source::Literal(value) => {
-                    fields.insert(rule.target.clone(), value.clone());
-                }
+                Source::Literal(value) => value,
+            };
+            if let Some(converted) = &rule.converted {
+                spindle_kernel::admits(&converted.ir, &converted.kind, value).map_err(
+                    |reason| MappingError::Unmet {
+                        binding: self.binding.clone(),
+                        target: rule.target.clone(),
+                        reason,
+                    },
+                )?;
             }
+            fields.insert(rule.target.clone(), value.clone());
         }
         Ok(Command {
             name: self.command.clone(),
@@ -190,7 +243,11 @@ impl Route {
         })
     }
 
-    fn compile(ir: &EssIr, binding: &ResolvedBinding) -> Result<Option<Self>, RouteError> {
+    fn compile(
+        ir: &EssIr,
+        binding: &ResolvedBinding,
+        shared: Option<&Arc<EssIr>>,
+    ) -> Result<Option<Self>, RouteError> {
         let Some(event) = binding.cause.event() else {
             return Ok(None);
         };
@@ -220,7 +277,7 @@ impl Route {
         let rules = binding
             .mapping
             .iter()
-            .map(|mapping| rule(ir, mapping).map_err(&unsupported))
+            .map(|mapping| rule(ir, mapping, shared).map_err(&unsupported))
             .collect::<Result<Vec<_>, _>>()?;
 
         let event_name = event.to_string();
@@ -274,11 +331,20 @@ fn single(
     })
 }
 
-fn rule(ir: &EssIr, mapping: &ResolvedMapping) -> Result<Rule, String> {
+fn rule(
+    ir: &EssIr,
+    mapping: &ResolvedMapping,
+    shared: Option<&Arc<EssIr>>,
+) -> Result<Rule, String> {
     let target = mapping.target.clone();
-    if mapping.conversion.is_some() {
-        return Err(format!("the declared conversion into {target}"));
-    }
+    let converted = match (&mapping.conversion, shared) {
+        (None, _) => None,
+        (Some(_), Some(ir)) => Some(Converted {
+            kind: mapping.target_type.clone(),
+            ir: Arc::clone(ir),
+        }),
+        (Some(_), None) => return Err(format!("the declared conversion into {target}")),
+    };
     let source = match &mapping.value {
         ResolvedMappingValue::EventField { field, .. } => Source::EventField {
             field: field.clone(),
@@ -301,7 +367,11 @@ fn rule(ir: &EssIr, mapping: &ResolvedMapping) -> Result<Rule, String> {
             return Err(format!("{target}: a selection projection"));
         }
     };
-    Ok(Rule { target, source })
+    Ok(Rule {
+        target,
+        source,
+        converted,
+    })
 }
 
 /// A literal as its target's wire form reads it ([`EssIr::literal_primitive`]): a Boolean target

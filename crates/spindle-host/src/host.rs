@@ -678,7 +678,7 @@ impl Host {
                 });
             }
             Ok(executed) => report.ran.push(Ran {
-                component,
+                component: component.clone(),
                 command: command.to_owned(),
                 cause: Cause::Submitted,
                 executed,
@@ -691,6 +691,7 @@ impl Host {
                 });
             }
         }
+        self.unmet(&component, &mut report);
         self.settle(&mut report, &mut Deliveries::default())?;
         Ok(report)
     }
@@ -916,7 +917,26 @@ impl Host {
                 error: error.to_string(),
             }),
         }
+        self.unmet(component, report);
         Ok(())
+    }
+
+    /// Reports every binding the events `component` just published triggered whose input was unmet
+    /// as a command that did not execute: its command was never sent ([`spindle_channel::Unmet`]).
+    fn unmet(&mut self, component: &str, report: &mut Report) {
+        let Some(held) = self.components.get_mut(component) else {
+            return;
+        };
+        report
+            .failed
+            .extend(held.sender.take_unmet().into_iter().map(|unmet| Failed {
+                component: unmet.to,
+                command: unmet.command,
+                cause: Cause::Delivered {
+                    binding: unmet.binding,
+                },
+                error: unmet.error.to_string(),
+            }));
     }
 
     /// Delivers every envelope in flight, and every one those commands send, until none is left

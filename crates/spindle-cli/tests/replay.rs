@@ -12,12 +12,16 @@ fn root() -> PathBuf {
 }
 
 fn replay(scenario: &str) -> Output {
+    replay_of(SPEC, scenario)
+}
+
+fn replay_of(spec: &str, scenario: &str) -> Output {
     let scenario = format!("{SCENARIOS}/{scenario}");
     Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
         .current_dir(root())
         .args([
             "run",
-            SPEC,
+            spec,
             "--environment",
             LAPTOP,
             "--scenario",
@@ -174,4 +178,25 @@ fn a_scenario_of_more_than_a_thousand_steps_is_refused_before_any_replay() {
         diagnostic.contains("has 1001 steps; a replay takes at most 1000"),
         "{diagnostic}"
     );
+}
+
+/// A specification whose binding maps `event.member_id` into a `reader_id` of another type across a
+/// declared conversion replays from its first step: the binding is routed, not refused at startup,
+/// and its command runs.
+#[test]
+fn replay_starts_on_a_specification_with_converted_mappings() {
+    let output = replay_of(
+        "crates/spindle-channel/tests/fixtures/library",
+        "converted.yaml",
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let printed = stdout(&output);
+    for step in [
+        "timeline[0] library.lending.CloseLoan: holds",
+        "assert[0] library.lending.Loans: holds",
+        "assert[1] library.notices.AllThanks: holds",
+    ] {
+        assert!(printed.contains(step), "{step:?} in {printed}");
+    }
+    assert!(!printed.contains("diverges"), "{printed}");
 }
