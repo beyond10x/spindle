@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:list-append-values
 kind: story
-status: active
+status: implemented
 title: List-append values
 relations:
 - serves: vision:spindle
@@ -14,10 +14,11 @@ scope:
   path: crates/spindle-kernel/src/values.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/list_append.rs
-revision: 5
+revision: 6
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-04T21:50:12Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-04T21:50:12Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-05T09:39:00Z", actor: "human:timo", revision: 6, decided_on: {"recorded":{"test_result":2}}}
 ---
 # List-append values
 

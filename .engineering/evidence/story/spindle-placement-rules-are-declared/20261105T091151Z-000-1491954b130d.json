@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-05T09:11:51Z",
+  "actor": "human:timo",
+  "artifact": "story:spindle-placement-rules-are-declared",
+  "kind": "story",
+  "revision": 7,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "task check:vm on a KVM host (59 passed, 0 failed)"
+  }
+}

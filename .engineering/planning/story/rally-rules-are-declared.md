@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:rally-rules-are-declared
 kind: story
-status: active
+status: implemented
 title: The rally specification declares its rules
 relations:
 - serves: vision:spindle
@@ -19,10 +19,11 @@ scope:
   path: examples/rally/ess/domains/table.yaml
 - confidence: cited
   path: examples/rally/ess/domains/west.yaml
-revision: 6
+revision: 7
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-04T21:33:53Z", actor: "human:timo", revision: 5, decided_on: {"recorded":{"review_outcome":1}}}
 - {from: "proposed", to: "active", at: "2026-11-04T21:33:53Z", actor: "human:timo", revision: 6, decided_on: {"recorded":{"review_outcome":1}}}
+- {from: "active", to: "implemented", at: "2026-11-05T09:39:02Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"test_result":2,"review_outcome":1}}}
 ---
 ## Story
 

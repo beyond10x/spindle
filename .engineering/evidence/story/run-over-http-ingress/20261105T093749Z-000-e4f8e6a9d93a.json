@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-05T09:37:49Z",
+  "actor": "human:timo",
+  "artifact": "story:run-over-http-ingress",
+  "kind": "story",
+  "revision": 7,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "task check (CI Gate, PR 10 head 7925097)",
+    "reference": "https://github.com/beyond10x/spindle/actions/runs/42001404746/job/127157258294"
+  }
+}
