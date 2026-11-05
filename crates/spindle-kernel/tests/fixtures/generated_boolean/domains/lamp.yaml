@@ -50,6 +50,21 @@ commands:
           beacon.lamp.LampArmed:
             lamp_id: input.lamp_id
         summary: The lamp is armed with a flag the runtime mints present.
+  - name: beacon.lamp.SignalLamp
+    input:
+      - name: lamp_id
+        type: beacon.lamp.LampId
+    outcomes:
+      - name: signalled
+        updates: beacon.lamp.Lamp
+        instance: lamp_id
+        emits: [beacon.lamp.LampSignalled]
+        payload:
+          beacon.lamp.LampSignalled:
+            second: {generated: true}
+            first: {generated: true}
+            lamp_id: input.lamp_id
+        summary: The lamp signals two flags the runtime mints, written in the reverse of the order the event declares them.
 events:
   - name: beacon.lamp.LampInstalled
     fields:
@@ -61,6 +76,14 @@ events:
     fields:
       - name: lamp_id
         type: beacon.lamp.LampId
+  - name: beacon.lamp.LampSignalled
+    fields:
+      - name: lamp_id
+        type: beacon.lamp.LampId
+      - name: first
+        type: Boolean
+      - name: second
+        type: Boolean
 views:
   - name: beacon.lamp.LampCard
     source: beacon.lamp.Lamp

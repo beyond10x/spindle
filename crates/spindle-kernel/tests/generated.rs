@@ -153,13 +153,14 @@ fn a_generated_stored_field_is_minted_and_kept() {
     assert_eq!(
         mint.asked,
         vec![
-            "identity.mint for forge.batch.StartBatch/started: forge.batch.Batch.serial",
             "identity.mint for forge.batch.StartBatch/started: forge.batch.BatchStarted.sequence",
+            "identity.mint for forge.batch.StartBatch/started: forge.batch.Batch.serial",
             "identity.mint for forge.batch.StartBatch/started: forge.batch.Batch.token",
             "identity.mint for forge.batch.StartBatch/started: forge.batch.Batch.note",
         ],
         "the mint is asked once per minted field, the event's sequence once for the event and \
-         the row together"
+         the row together, and first, as ESS resolves a published value `sets:` stores before \
+         the other `sets:` (`interpret::execute::take`, `publish_reads`)"
     );
 
     let relabelled = execute(
@@ -504,6 +505,14 @@ fn derivation_names_the_capability_a_generated_boolean_needs() {
                 "beacon.lamp.InstallLamp/installed",
                 "mints `beacon.lamp.LampInstalled.lit`"
             ),
+            reason(
+                "beacon.lamp.SignalLamp/signalled",
+                "mints `beacon.lamp.LampSignalled.first`"
+            ),
+            reason(
+                "beacon.lamp.SignalLamp/signalled",
+                "mints `beacon.lamp.LampSignalled.second`"
+            ),
         ]),
         "ESS draws a Boolean from the counter it mints identities from, so the kernel draws it \
          from `identity.mint`; the stored `{{payload: …}}` copy mints nothing of its own"
@@ -512,5 +521,73 @@ fn derivation_names_the_capability_a_generated_boolean_needs() {
         requirements.get(&Capability::new(Capability::CLOCK)),
         None,
         "a Boolean reads no clock"
+    );
+}
+
+/// ESS's `emit` walks an event's declared fields, not the payload as written
+/// (`interpret::execute::emit`, `for field in &declared.fields`): `SignalLamp` writes `second`
+/// before `first`, and ESS draws `first` on tick 2 (`true`) and `second` on tick 3 (`false`).
+/// The kernel walks the compiled payload, which already agrees: a guard against a reordering.
+#[test]
+fn generated_payload_fields_are_drawn_in_the_events_declared_order_as_ess_draws_them() {
+    let ir = lamps();
+    let target = Interpreted::for_model(ir.clone());
+    let context = ScenarioContext::new(
+        "beacon.lamp/authored/declared-order"
+            .parse()
+            .expect("a scenario id"),
+        CorrelationId::new("declared-order").expect("a correlation id"),
+    );
+    target.begin_scenario(&context).expect("the scenario opens");
+    let commands = ["beacon.lamp.InstallLamp", "beacon.lamp.SignalLamp"];
+    let mut ess = Vec::new();
+    for command in commands {
+        let result = target
+            .execute_command(SemanticCommandRequest {
+                command: CommandRef::new(command.parse().expect("a command name")),
+                actor: None,
+                caller: None,
+                input: BTreeMap::from([("lamp_id".to_owned(), Node::Text(LAMP_ID.to_owned()))]),
+                correlation: context.correlation.clone(),
+            })
+            .expect("the interpreter runs the command");
+        assert_eq!(result.direct_events.len(), 1, "{result:?}");
+        ess.push(result.direct_events[0].payload.clone());
+    }
+    assert_eq!(
+        (&ess[1]["first"], &ess[1]["second"]),
+        (&Node::Bool(true), &Node::Bool(false)),
+        "ESS: `first` on tick 2, `second` on tick 3"
+    );
+
+    let mut store = MemoryStore::default();
+    let mut mint = Ticks {
+        ir: ir.clone(),
+        tick: 0,
+        asked: Vec::new(),
+    };
+    let sent = input(json!({"lamp_id": LAMP_ID}));
+    let mut published = Vec::new();
+    for command in commands {
+        let executed =
+            execute_minting(&ir, &mut store, &mut NoExternals, &mut mint, command, &sent)
+                .unwrap_or_else(|error| panic!("{command} runs: {error:?}"));
+        published.push(executed.events[0].payload.clone());
+    }
+    assert_eq!(
+        (
+            published[1]["first"].clone(),
+            published[1]["second"].clone()
+        ),
+        (json_of(&ess[1]["first"]), json_of(&ess[1]["second"])),
+        "the kernel draws `first` and `second` on ESS's ticks"
+    );
+    assert_eq!(
+        mint.asked,
+        vec![
+            "beacon.lamp.LampInstalled.lit",
+            "beacon.lamp.LampSignalled.first",
+            "beacon.lamp.LampSignalled.second",
+        ]
     );
 }

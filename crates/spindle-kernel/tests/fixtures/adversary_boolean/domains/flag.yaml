@@ -1,0 +1,113 @@
+domain: semaphore.flag
+summary: A flag raised under a minted identity or planted under the caller's, whose Boolean fields the runtime mints.
+types:
+  - name: semaphore.flag.FlagId
+    kind: newtype
+    of: Uuid
+  - name: semaphore.flag.Up
+    kind: newtype
+    of: Boolean
+  - name: semaphore.flag.Pair
+    kind: struct
+    fields:
+      - {name: left, type: Boolean}
+      - {name: right, type: Boolean}
+entities:
+  - name: semaphore.flag.Flag
+    identity:
+      name: flag_id
+      type: semaphore.flag.FlagId
+    fields:
+      - {name: up, type: Boolean}
+      - {name: waved, type: Optional<Boolean>}
+      - {name: signal, type: Optional<semaphore.flag.Up>}
+    lifecycle:
+      initial: Flying
+      states: [Flying]
+      terminal: [Flying]
+commands:
+  - name: semaphore.flag.RaiseFlag
+    input:
+      - {name: note, type: String}
+    outcomes:
+      - name: raised
+        creates: semaphore.flag.Flag
+        instance: flag_id
+        sets:
+          up: {payload: semaphore.flag.FlagRaised.up}
+        emits: [semaphore.flag.FlagRaised]
+        payload:
+          semaphore.flag.FlagRaised:
+            flag_id: {generated: true}
+            up: {generated: true}
+        summary: The flag is raised under a minted identity; the runtime mints whether it is up, and the row stores what the event published.
+  - name: semaphore.flag.PlantFlag
+    input:
+      - {name: flag_id, type: semaphore.flag.FlagId}
+    outcomes:
+      - name: planted
+        creates: semaphore.flag.Flag
+        instance: flag_id
+        sets:
+          up: {generated: true}
+        emits: [semaphore.flag.FlagPlanted]
+        payload:
+          semaphore.flag.FlagPlanted:
+            flag_id: input.flag_id
+        summary: The flag is planted under the caller's identity, up or not as the runtime mints.
+  - name: semaphore.flag.WaveFlag
+    input:
+      - {name: flag_id, type: semaphore.flag.FlagId}
+    outcomes:
+      - name: waved
+        updates: semaphore.flag.Flag
+        instance: flag_id
+        sets:
+          waved: {generated: true, present: true}
+          signal: {payload: semaphore.flag.FlagWaved.signal}
+        emits: [semaphore.flag.FlagWaved]
+        payload:
+          semaphore.flag.FlagWaved:
+            flag_id: input.flag_id
+            signal: {generated: true}
+        summary: The flag is waved; the runtime mints the wave, and the signal the event publishes is stored.
+  - name: semaphore.flag.SignalFlag
+    input:
+      - {name: flag_id, type: semaphore.flag.FlagId}
+    outcomes:
+      - name: signalled
+        updates: semaphore.flag.Flag
+        instance: flag_id
+        emits: [semaphore.flag.FlagSignalled]
+        payload:
+          semaphore.flag.FlagSignalled:
+            flag_id: input.flag_id
+            pair:
+              left: {generated: true}
+              right: {generated: true}
+        summary: The flag signals a pair of Booleans the runtime mints.
+events:
+  - name: semaphore.flag.FlagRaised
+    fields:
+      - {name: flag_id, type: semaphore.flag.FlagId}
+      - {name: up, type: Boolean}
+  - name: semaphore.flag.FlagPlanted
+    fields:
+      - {name: flag_id, type: semaphore.flag.FlagId}
+  - name: semaphore.flag.FlagWaved
+    fields:
+      - {name: flag_id, type: semaphore.flag.FlagId}
+      - {name: signal, type: semaphore.flag.Up}
+  - name: semaphore.flag.FlagSignalled
+    fields:
+      - {name: flag_id, type: semaphore.flag.FlagId}
+      - {name: pair, type: semaphore.flag.Pair}
+views:
+  - name: semaphore.flag.FlagCard
+    source: semaphore.flag.Flag
+    consistency: read_your_writes
+    fields:
+      - {name: flag_id, type: semaphore.flag.FlagId}
+      - {name: up, type: Boolean}
+      - {name: waved, type: Optional<Boolean>}
+      - {name: signal, type: Optional<semaphore.flag.Up>}

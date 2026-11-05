@@ -12,8 +12,11 @@
 //! the run is given. A `Boolean` is `true` where that UUID's last bit is clear: ESS's interpreter
 //! mints `true` on an even tick of the counter it mints identities from, and its UUID for tick
 //! `n` ends in `n`'s decimal digits (`interpret::values::mint`), so a [`Mint`] that answers those
-//! UUIDs mints the Booleans the interpreter does. Each such field is minted once per command run
-//! ([`Generator`]), so `{payload: <Event>.<field>}` in `sets:` stores what the event published.
+//! UUIDs mints the Booleans the interpreter does: the kernel draws in the interpreter's order
+//! (`interpret::execute::take`), each published value a `{payload: <Event>.<field>}` reads
+//! first, then a minted creation identity, then the other `sets:`, then the payloads.
+//! Each such field is minted once per command run ([`Generator`]), so
+//! `{payload: <Event>.<field>}` in `sets:` stores what the event published.
 
 use std::cell::RefCell;
 use std::time::SystemTime;

@@ -6,7 +6,7 @@ domains:
   - beacon.lamp
 components:
   - component: tower
-    summary: Installs and arms lamps.
+    summary: Installs, arms and signals lamps.
     owns:
       domains:
         - beacon.lamp
@@ -14,8 +14,10 @@ components:
       commands:
         - beacon.lamp.InstallLamp
         - beacon.lamp.ArmLamp
+        - beacon.lamp.SignalLamp
     publishes:
       events:
         - beacon.lamp.LampInstalled
         - beacon.lamp.LampArmed
+        - beacon.lamp.LampSignalled
     reached_by: in_process
