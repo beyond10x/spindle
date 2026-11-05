@@ -3,8 +3,9 @@
 //! A guest is the host's own kernel image, the virtio modules it needs, and an initramfs whose
 //! `/init` is `spindle-qemu-init`: it mounts the pseudo file systems, loads the modules, gives
 //! `eth0` the instance's address from the kernel command line, runs the guest command after `--`
-//! with each line of its output prefixed by [`GUEST_OUTPUT`], reports the command's exit on the
-//! console and powers off.
+//! with the plan's [`guest_variables`] and each line of its output prefixed by [`GUEST_OUTPUT`],
+//! reports the command's exit on the console and powers off. `b10x-spindle play` started so plays
+//! the plan's component, as it does under the process launcher.
 //!
 //! [`QemuLauncher`] implements [`spindle_target::Launcher`]. It starts one
 //! `qemu-system-x86_64 -M microvm` per instance with KVM, no root, the requested vCPUs and memory
@@ -22,7 +23,7 @@ mod kernel;
 mod namespace;
 mod static_build;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use std::os::unix::process::ExitStatusExt;
@@ -42,6 +43,9 @@ pub use spindle_target::{
 pub use static_build::{BuildError, GUEST_TARGET, StaticBinaries};
 
 use namespace::{Shared, failure, io_error};
+use spindle_target::{
+    ENV_COMPONENT, ENV_INSTANCE_ID, ENV_LISTEN, ENV_PEER_PREFIX, ENV_SETTING_PREFIX, env_name,
+};
 
 /// The console text the guest init reports the command's exit with: `code=<n>` or `signal=<n>`
 /// follows it.
@@ -288,6 +292,7 @@ impl QemuLauncher {
     pub fn launch(&mut self, plan: &LaunchPlan) -> Result<QemuInstance, LaunchError> {
         let argv = self.command(plan)?;
         let checked = self.check(plan)?;
+        let document = launch_document(plan, self.telemetry)?;
         let mut live = self.shared.live()?;
         if let Some(pid) = live.get(&plan.instance_id)
             && namespace::runs(*pid)
@@ -304,11 +309,7 @@ impl QemuLauncher {
             .map_err(io_error(format!("reading {}", checked.initramfs.display())))?;
         bytes.resize(bytes.len().next_multiple_of(4), 0);
         let mut launch = Initramfs::new();
-        launch.file(
-            LAUNCH_PLAN,
-            0o644,
-            launch_document(plan, self.telemetry).into_bytes(),
-        );
+        launch.file(LAUNCH_PLAN, 0o644, document.into_bytes());
         let combined = dir.join("initramfs.cpio");
         launch
             .write_to(&mut bytes)
@@ -380,7 +381,90 @@ pub fn next_cid() -> Result<u32, LaunchError> {
     Ok(3 + ((pid << 10) | n))
 }
 
-fn launch_document(plan: &LaunchPlan, telemetry: Option<u32>) -> String {
+/// The variables the guest init gives the guest command, as the process launcher sets them for
+/// a child: [`ENV_INSTANCE_ID`], [`ENV_COMPONENT`], [`ENV_LISTEN`], the telemetry endpoint when
+/// there is one, one `SPINDLE_SETTING_<NAME>` per setting and one `SPINDLE_PEER_<COMPONENT>` per
+/// peer component, its addresses comma-separated in plan order. A plan whose names collide is
+/// refused.
+pub fn guest_variables(
+    plan: &LaunchPlan,
+    telemetry: Option<u32>,
+) -> Result<BTreeMap<String, String>, LaunchError> {
+    let mut variables = BTreeMap::new();
+    let mut set = |name: String, value: String, from: &str| {
+        if variables.insert(name.clone(), value).is_some() {
+            return Err(LaunchError::InvalidPlan(format!(
+                "{from} maps to {name}, which is already set"
+            )));
+        }
+        Ok(())
+    };
+    set(
+        ENV_INSTANCE_ID.to_owned(),
+        plan.instance_id.clone(),
+        "the instance id",
+    )?;
+    set(
+        ENV_COMPONENT.to_owned(),
+        plan.component.clone(),
+        "the component",
+    )?;
+    set(
+        ENV_LISTEN.to_owned(),
+        plan.listen.to_string(),
+        "the listen address",
+    )?;
+    if let Some(port) = telemetry {
+        set(
+            spindle_telemetry::ENV_TELEMETRY.to_owned(),
+            spindle_telemetry::Endpoint::host_vsock(port).to_string(),
+            "the telemetry endpoint",
+        )?;
+    }
+    for (name, value) in &plan.settings {
+        if name.is_empty() {
+            return Err(LaunchError::InvalidPlan("a setting has no name".to_owned()));
+        }
+        set(
+            format!("{ENV_SETTING_PREFIX}{}", env_name(name)),
+            value.clone(),
+            &format!("setting {name:?}"),
+        )?;
+    }
+    let mut peers: BTreeMap<String, (&str, Vec<String>)> = BTreeMap::new();
+    for peer in &plan.peers {
+        if peer.component.is_empty() {
+            return Err(LaunchError::InvalidPlan(
+                "a peer has no component".to_owned(),
+            ));
+        }
+        let name = format!("{ENV_PEER_PREFIX}{}", env_name(&peer.component));
+        let (component, addresses) = peers
+            .entry(name.clone())
+            .or_insert_with(|| (peer.component.as_str(), Vec::new()));
+        if *component != peer.component {
+            return Err(LaunchError::InvalidPlan(format!(
+                "peer components {component:?} and {:?} both map to {name}",
+                peer.component
+            )));
+        }
+        addresses.push(peer.address.to_string());
+    }
+    for (name, (component, addresses)) in peers {
+        set(
+            name,
+            addresses.join(","),
+            &format!("peer component {component:?}"),
+        )?;
+    }
+    Ok(variables)
+}
+
+fn launch_document(plan: &LaunchPlan, telemetry: Option<u32>) -> Result<String, LaunchError> {
+    let environment: serde_json::Map<String, serde_json::Value> = guest_variables(plan, telemetry)?
+        .into_iter()
+        .map(|(name, value)| (name, serde_json::Value::String(value)))
+        .collect();
     let settings: serde_json::Map<String, serde_json::Value> = plan
         .settings
         .iter()
@@ -402,6 +486,7 @@ fn launch_document(plan: &LaunchPlan, telemetry: Option<u32>) -> String {
         "settings": settings,
         "listen": plan.listen.to_string(),
         "peers": peers,
+        "environment": environment,
     });
     if let Some(port) = telemetry {
         document["telemetry"] =
@@ -409,7 +494,7 @@ fn launch_document(plan: &LaunchPlan, telemetry: Option<u32>) -> String {
     }
     let mut text = document.to_string();
     text.push('\n');
-    text
+    Ok(text)
 }
 
 /// A started microVM. Dropping it kills QEMU if it still runs.

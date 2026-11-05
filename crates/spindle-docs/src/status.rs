@@ -230,11 +230,12 @@ pub const CAPABILITIES: &[Capability] = &[
         "/docs/examples/rally",
         "crates/spindle-cli/tests/processes.rs::a_match_between_three_processes_ends_with_a_winner",
     ),
-    planned(
+    shipped(
         "Rally",
         "Three microVMs",
-        "Each rally component in its own microVM, joined by TCP channels across the VM network.",
+        "Each rally component in its own microVM, one b10x-spindle play per VM in its per-component mode, joined by TCP channels across the VM network, plays a match to a winner; one placement (examples/rally/placement.toml) runs on QEMU and on Firecracker. Its tests run on a host with /dev/kvm (task check:vm), not in CI.",
         "/docs/examples/rally",
+        "crates/spindle-qemu/tests/rally.rs::a_match_between_three_qemu_microvms_ends_with_a_winner",
     ),
     shipped(
         "Execution",

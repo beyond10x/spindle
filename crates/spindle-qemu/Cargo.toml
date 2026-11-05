@@ -29,3 +29,4 @@ thiserror.workspace = true
 spindle-capability = { path = "../spindle-capability" }
 spindle-spec = { path = "../spindle-spec" }
 tempfile = "3"
+toml.workspace = true

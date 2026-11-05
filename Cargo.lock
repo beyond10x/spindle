@@ -1499,11 +1499,13 @@ dependencies = [
  "libc",
  "serde_json",
  "spindle-capability",
+ "spindle-qemu",
  "spindle-spec",
  "spindle-target",
  "spindle-telemetry",
  "tempfile",
  "thiserror",
+ "toml",
 ]
 
 [[package]]
@@ -1575,6 +1577,7 @@ dependencies = [
  "spindle-telemetry",
  "tempfile",
  "thiserror",
+ "toml",
 ]
 
 [[package]]
