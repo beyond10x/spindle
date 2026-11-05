@@ -1427,6 +1427,7 @@ dependencies = [
  "ess-domain",
  "serde",
  "serde_json",
+ "spindle-kernel",
  "spindle-spec",
  "spindle-telemetry",
  "thiserror",

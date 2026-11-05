@@ -67,6 +67,20 @@ pub use sqlite::SqliteStore;
 pub use store::{Change, MemoryStore, Row, Store, StoreError, Stored};
 pub use supported::check as runs;
 
+/// Refuses `value` unless it is a value of `kind`, naming what it is not: the check every command
+/// input goes through before the command runs, as ESS's interpreter makes it
+/// (`input::validate_typed_value`). A newtype's prefix, alphabet and invariants included.
+///
+/// # Errors
+/// The first thing `value` is not.
+pub fn admits(
+    ir: &ess_compiler::EssIr,
+    kind: &ess_compiler::ir::ResolvedTypeRef,
+    value: &Value,
+) -> Result<(), String> {
+    typed::validate(ir, kind, value)
+}
+
 /// One event a command emitted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Event {

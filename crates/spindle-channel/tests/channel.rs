@@ -6,7 +6,7 @@ use ess_domain::binding::{Delivery, Failure};
 use serde_json::{Map, Value, json};
 use spindle_channel::{
     Channel, ChannelError, Command, Envelope, Event, Frame, MappingError, Receiver, RouteError,
-    Router, Sender, in_process, tcp::TcpChannel,
+    Router, Sender, Unmet, in_process, tcp::TcpChannel,
 };
 
 const PATIENCE: Duration = Duration::from_secs(5);
@@ -22,6 +22,17 @@ fn relay() -> PathBuf {
 
 fn rally() -> PathBuf {
     manifest().join("../../examples/rally/ess")
+}
+
+fn library() -> PathBuf {
+    manifest().join("tests/fixtures/library")
+}
+
+fn loan_closed(member: &str) -> Event {
+    event(
+        "library.lending.LoanClosed",
+        json!({ "loan_id": "loan-1", "member_id": member }),
+    )
 }
 
 fn router(path: &Path) -> Router {
@@ -504,4 +515,86 @@ fn dropping_retries_carries_a_retry_binding_as_drop() {
             .collect::<Vec<_>>(),
         "a binding that does not retry keeps its policy"
     );
+}
+
+/// `reader_id: event.member_id` crosses the declared `MemberId -> ReaderRef` conversion: the
+/// value is carried unchanged, as ESS 0.86.0's interpreter carries it (`interpret/bindings.rs`,
+/// `mapped`), and reaches the component that accepts `SendThanks`.
+#[test]
+fn a_mapping_across_a_conversion_carries_the_value() {
+    let library = router(&library());
+    let thanks = library
+        .route("thank-on-close")
+        .expect("a mapping across a declared conversion is routed");
+    assert_eq!(
+        (thanks.from.as_str(), thanks.to.as_str()),
+        ("lending", "notices")
+    );
+    let thanked = Command {
+        name: "library.notices.SendThanks".to_owned(),
+        fields: object(json!({ "reader_id": "m-7" })),
+    };
+    assert_eq!(
+        thanks.map(&loan_closed("m-7")).expect("the event maps"),
+        thanked
+    );
+
+    let (near, far) = in_process::pair();
+    let mut lending = Sender::new("lending", library).expect("lending is a component");
+    lending.connect("notices", near);
+    let mut notices = Receiver::new("notices", far);
+    assert_eq!(lending.publish(1, loan_closed("m-7")).expect("staged"), 1);
+    lending.mark_durable(1);
+    assert_eq!(lending.flush().expect("sent"), 1);
+    let seen = notices
+        .receive(PATIENCE)
+        .expect("the channel is open")
+        .expect("notices receives");
+    assert_eq!(seen.binding, "thank-on-close");
+    assert_eq!(seen.command, thanked);
+    assert!(lending.take_unmet().is_empty());
+}
+
+/// `member-0042` is a `MemberId` and no `ReaderRef` (`value.count <= 8`). ESS checks a mapped
+/// value against the input's declared type before the command port (`validate_typed_value`), so
+/// the binding's input is unmet: no envelope is staged or sent, the sender reports the binding, and
+/// the publish itself still succeeds.
+#[test]
+fn a_value_the_target_type_refuses_is_an_unmet_input() {
+    let library = router(&library());
+    let thanks = library
+        .route("thank-on-close")
+        .expect("a mapping across a declared conversion is routed");
+    let refused = thanks
+        .map(&loan_closed("member-0042"))
+        .expect_err("the value is no ReaderRef");
+    assert!(
+        matches!(&refused, MappingError::Unmet { binding, target, .. }
+            if binding == "thank-on-close" && target == "reader_id"),
+        "{refused:?}"
+    );
+
+    let (near, far) = in_process::pair();
+    let mut lending = Sender::new("lending", library).expect("lending is a component");
+    lending.connect("notices", near);
+    let mut notices = Receiver::new("notices", far);
+    assert_eq!(
+        lending
+            .publish(1, loan_closed("member-0042"))
+            .expect("an unmet binding input does not refuse the publish"),
+        0
+    );
+    lending.mark_durable(1);
+    assert_eq!(lending.flush().expect("nothing to send"), 0);
+    assert!(notices.receive(QUIET).expect("open").is_none());
+    assert_eq!(
+        lending.take_unmet(),
+        [Unmet {
+            binding: "thank-on-close".to_owned(),
+            to: "notices".to_owned(),
+            command: "library.notices.SendThanks".to_owned(),
+            error: refused,
+        }]
+    );
+    assert!(lending.take_unmet().is_empty(), "each is reported once");
 }

@@ -1,0 +1,75 @@
+domain: library.notices
+summary: Thanks sent to readers, each under a bounded reader reference, and every closure noted.
+types:
+  - name: library.notices.ReaderRef
+    kind: newtype
+    of: String
+    invariants:
+      - 'value.count <= 8'
+entities:
+  - name: library.notices.Thanks
+    identity:
+      name: reader_id
+      type: library.notices.ReaderRef
+    fields: []
+    lifecycle:
+      initial: Sent
+      states: [Sent]
+      terminal: [Sent]
+  - name: library.notices.Closure
+    identity:
+      name: loan_id
+      type: String
+    fields: []
+    lifecycle:
+      initial: Noted
+      states: [Noted]
+      terminal: [Noted]
+errors: []
+commands:
+  - name: library.notices.SendThanks
+    input:
+      - name: reader_id
+        type: library.notices.ReaderRef
+    outcomes:
+      - name: sent
+        creates: library.notices.Thanks
+        instance: reader_id
+        emits: [library.notices.ThanksSent]
+        payload:
+          library.notices.ThanksSent: {reader_id: input.reader_id}
+        summary: The reader is thanked.
+  - name: library.notices.NoteClosure
+    input:
+      - name: loan_id
+        type: String
+    outcomes:
+      - name: noted
+        creates: library.notices.Closure
+        instance: loan_id
+        emits: [library.notices.ClosureNoted]
+        payload:
+          library.notices.ClosureNoted: {loan_id: input.loan_id}
+        summary: The closure is noted.
+events:
+  - name: library.notices.ThanksSent
+    fields:
+      - name: reader_id
+        type: library.notices.ReaderRef
+  - name: library.notices.ClosureNoted
+    fields:
+      - name: loan_id
+        type: String
+views:
+  - name: library.notices.AllThanks
+    source: library.notices.Thanks
+    consistency: read_your_writes
+    fields:
+      - name: reader_id
+        type: library.notices.ReaderRef
+  - name: library.notices.AllClosures
+    source: library.notices.Closure
+    consistency: read_your_writes
+    fields:
+      - name: loan_id
+        type: String
