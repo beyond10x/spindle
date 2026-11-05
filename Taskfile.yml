@@ -16,9 +16,17 @@ tasks:
       - task: check:every_fixture_answer_validates_against_its_schema
       - task: check:ui
       - task: docs-check
+      - task: check:conformance
       - cargo fmt --all -- --check
       - cargo clippy --workspace --all-targets --locked -- -D warnings
       - cargo test --workspace --locked --no-fail-fast
+
+  check:conformance:
+    desc: Spindle runs the suite ESS synthesises from ess/, its counts and known failures held
+    cmds:
+      - mkdir -p target/conformance
+      - ess conform synthesize --path ess --out target/conformance/suite.json
+      - cargo run -q --locked -p spindle-cli -- conform ess --environment examples/environments/laptop.toml --suite target/conformance/suite.json --counts conformance.toml --known-failing conformance-known-failures.json --accounting-out target/conformance/accounting.json --report target/conformance/report.json --results target/conformance/results.json
 
   check:vm:
     desc: The VM tests, on a host with KVM

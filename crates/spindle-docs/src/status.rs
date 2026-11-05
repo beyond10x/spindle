@@ -242,11 +242,12 @@ pub const CAPABILITIES: &[Capability] = &[
         "/docs/concepts/specification",
         "crates/spindle-cli/tests/replay.rs::the_first_divergent_step_is_named",
     ),
-    planned(
+    shipped(
         "Conformance",
         "Self-conformance",
-        "The suite ESS synthesises from Spindle's own specification runs in task check.",
+        "conform runs the suite ESS synthesises from a specification, or one written for it, against every component in one process; task check runs it on Spindle's own specification, lists every synthesis refusal with its code and holds the executed and skipped counts.",
         "/docs/concepts/specification",
+        "crates/spindle-cli/tests/conform.rs::every_executed_scenario_passes",
     ),
     planned(
         "Observe",

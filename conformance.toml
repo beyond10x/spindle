@@ -1,0 +1,4 @@
+format = "spindle-conformance-counts/1"
+executed = 41
+skipped = 15
+known_failed = 1

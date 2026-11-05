@@ -1,0 +1,14 @@
+{
+  "failures": [
+    {
+      "reason": "ESS synthesis arranges the instance only as Planned (PlanInstance) before forcing not-admitted, and the outcome is guarded when_subject: state == Placed, so every implementation, ESS's own interpreter included, answers wrong-state",
+      "scenario": "spindle.placement.LaunchInstance/outcome/not-admitted",
+      "tracking": "https://github.com/beyond10x/ess/issues/739"
+    }
+  ],
+  "format": "ess-known-failures/1",
+  "implementation": "b10x-spindle 0.1.0",
+  "implementation_build": "sha256:b8e2579161d8129bf2dfa94b3f78ac7f8b001ce2ec56ca4bc050236adfb4ca7c",
+  "spec_digest": "cfadb3d69f9b9b4950a5e996865279f5f6065135864228d63eddabe28d94652d",
+  "suite_digest": "sha256:5474db4107e8954a8b0a6639dfb526cd52a1671b8a503f437165f380006cae5a"
+}
