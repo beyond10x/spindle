@@ -136,6 +136,18 @@ pub enum Command {
     /// temporary directory removed when play ends. A match the model refuses to open, such as
     /// one to no points, is an error. SIGINT or SIGTERM stops play, removes the state and exits
     /// 130 or 143. Refused and failed commands during play are reported on stderr.
+    ///
+    /// With `--component`, or `SPINDLE_COMPONENT` as the process launcher sets it, plays one
+    /// component in this process instead, admitted on its own, its bindings carried over TCP: the
+    /// environment binds `channel` to `tcp`. It listens on `--listen` (`SPINDLE_LISTEN`) for the
+    /// links its peers open and connects to each component its events lead to at the address in
+    /// `SPINDLE_PEER_<COMPONENT>`, waiting up to 30 s for it to listen; a peer without one exits
+    /// 1 naming every such peer and variable, before anything runs. It prints
+    /// `{"component", "listening", "peers"}` once linked, then one JSON line per command it runs,
+    /// `{"ran", "cause", "outcome"}`. The component that accepts `OpenMatch` opens the match,
+    /// runs the tick, prints `{"view": <MatchState>}` after each and exits 0 once a side has won;
+    /// any other exits 0 once every link it accepted has closed. With `SPINDLE_TELEMETRY` set, it
+    /// sends its counters there as `spindle-telemetry/1` frames.
     Play {
         /// The rally specification directory.
         spec: PathBuf,
@@ -148,5 +160,14 @@ pub enum Command {
         /// The identity of the match.
         #[arg(long, default_value = "rally")]
         match_id: String,
+        /// How many times faster than real time the match clock runs.
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+        speed: u32,
+        /// Play only this component, its bindings carried over TCP.
+        #[arg(long, env = "SPINDLE_COMPONENT")]
+        component: Option<String>,
+        /// The address the component listens on for its peers' links; only with `--component`.
+        #[arg(long, env = "SPINDLE_LISTEN", requires = "component")]
+        listen: Option<std::net::SocketAddr>,
     },
 }

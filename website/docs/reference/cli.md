@@ -115,6 +115,8 @@ Play the rally example in this terminal: every component in one process, one tic
 
 Each component is admitted on its own; exits 3, playing nothing, when one is refused. Opens the match, redraws the grid from the table's `MatchState` view after every tick, and exits 0 once a side has won, printing the winner. State bound to `sqlite` is kept in a temporary directory removed when play ends. A match the model refuses to open, such as one to no points, is an error. SIGINT or SIGTERM stops play, removes the state and exits 130 or 143. Refused and failed commands during play are reported on stderr.
 
+With `--component`, or `SPINDLE_COMPONENT` as the process launcher sets it, plays one component in this process instead, admitted on its own, its bindings carried over TCP: the environment binds `channel` to `tcp`. It listens on `--listen` (`SPINDLE_LISTEN`) for the links its peers open and connects to each component its events lead to at the address in `SPINDLE_PEER_<COMPONENT>`, waiting up to 30 s for it to listen; a peer without one exits 1 naming every such peer and variable, before anything runs. It prints `{"component", "listening", "peers"}` once linked, then one JSON line per command it runs, `{"ran", "cause", "outcome"}`. The component that accepts `OpenMatch` opens the match, runs the tick, prints `{"view": <MatchState>}` after each and exits 0 once a side has won; any other exits 0 once every link it accepted has closed. With `SPINDLE_TELEMETRY` set, it sends its counters there as `spindle-telemetry/1` frames.
+
 ```console
 b10x-spindle play [OPTIONS] --environment <ENVIRONMENT> <SPEC>
 ```
@@ -125,3 +127,6 @@ b10x-spindle play [OPTIONS] --environment <ENVIRONMENT> <SPEC>
 | `--environment <ENVIRONMENT>` | yes |  | The `spindle-environment/1` document |
 | `--target-score <TARGET_SCORE>` | no | `3` | The points a side needs to win |
 | `--match-id <MATCH_ID>` | no | `rally` | The identity of the match |
+| `--speed <SPEED>` | no | `1` | How many times faster than real time the match clock runs |
+| `--component <COMPONENT>` | no |  | Play only this component, its bindings carried over TCP |
+| `--listen <LISTEN>` | no |  | The address the component listens on for its peers' links; only with `--component` |

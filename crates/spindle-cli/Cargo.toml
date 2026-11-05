@@ -14,7 +14,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
-clap.workspace = true
+clap = { workspace = true, features = ["env"] }
 ess-compiler.workspace = true
 ess-conformance.workspace = true
 ess-domain.workspace = true
@@ -28,6 +28,7 @@ spindle-spec.workspace = true
 spindle-kernel = { path = "../spindle-kernel" }
 spindle-host = { path = "../spindle-host" }
 spindle-ingress = { path = "../spindle-ingress" }
+spindle-target = { path = "../spindle-target" }
 spindle-telemetry = { path = "../spindle-telemetry" }
 signal-hook = "0.3"
 tempfile = "3"
@@ -36,3 +37,4 @@ toml.workspace = true
 [dev-dependencies]
 jsonschema = { version = "0.52.1", default-features = false }
 rustix = { version = "1", features = ["process"] }
+spindle-channel = { path = "../spindle-channel" }

@@ -36,7 +36,7 @@ environment, and executes it. Humans start at [`README.md`](README.md); the desi
 | `crates/spindle-docs/` | generates `website/docs/reference/cli.md`, `website/docs/status.md` and `website/data/status.json`; binds a built site to its commit (`provenance`) |
 | `ui/` | the observe UI: Vue 3 + TypeScript, Vite, pnpm; `ui/src/api/generated/` is generated |
 | `website/` | the documentation site, Docusaurus pinned to `@beyond10x/docs-system`; logo in `website/static/img/` |
-| `examples/environments/` | `laptop.toml`, `microvm.toml` |
+| `examples/environments/` | `laptop.toml`, `laptop-processes.toml` (the same with `channel = tcp`), `microvm.toml` |
 | `examples/rally/` | the example system: one table, two players, three components |
 | `docs/design/spindle.md` | design, decisions (§11), milestones (§12), the rally showcase (§13) |
 

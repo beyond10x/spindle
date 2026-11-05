@@ -9,6 +9,10 @@
 //! of those runs on its own component, until nothing is left in flight. [`Host::view`] answers a
 //! view from the store of the component that owns its source.
 //!
+//! [`Host::component`] runs one component on its own instead, its bindings carried over TCP:
+//! [`Host::connect`] links each peer its events lead to, [`Host::accept`] takes the links its
+//! peers open, and [`Host::deliver`] runs what arrives.
+//!
 //! The clock is a port: the host never reads the time on its own, so a [`ManualClock`] runs a
 //! system with no sleeping. [`rally`] draws the `rally` example's terminal frame from a view
 //! answer.

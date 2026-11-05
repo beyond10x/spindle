@@ -20,6 +20,8 @@ use spindle_timer::{BindingName, Clock, CompleteError, LifetimeError, Timer};
 
 use crate::admission::{Placements, Refusal, admit};
 
+mod component;
+
 /// The channel implementation this host carries bindings on.
 const IN_PROCESS: &str = "in-process";
 
@@ -248,6 +250,18 @@ impl Host {
         state: &Path,
     ) -> Result<Self, HostError> {
         let placements = admit(&ir, environment).map_err(HostError::Refused)?;
+        Self::assemble(ir, clock, state, placements, IN_PROCESS)
+    }
+
+    /// The host of the components in `placements`, their bindings carried on `carried`: every
+    /// pair joined in this process when it is [`IN_PROCESS`], none otherwise.
+    fn assemble(
+        ir: EssIr,
+        clock: Arc<dyn Clock>,
+        state: &Path,
+        placements: Placements,
+        carried: &str,
+    ) -> Result<Self, HostError> {
         for binding in ir.bindings().values() {
             if binding.cause.event().is_some() && binding.failure != Failure::Drop {
                 return Err(HostError::Unsupported(format!(
@@ -290,9 +304,9 @@ impl Host {
                     .find(|binding| binding.capability.as_str() == capability)
                     .map(|binding| binding.implementation.as_str())
             };
-            if let Some(channel) = bound(Capability::CHANNEL).filter(|bound| *bound != IN_PROCESS) {
+            if let Some(channel) = bound(Capability::CHANNEL).filter(|bound| *bound != carried) {
                 return Err(HostError::Unsupported(format!(
-                    "{name} has its channel bound to {channel}; this host carries bindings {IN_PROCESS} only"
+                    "{name} has its channel bound to {channel}; this host carries bindings {carried} only"
                 )));
             }
             let counters = Arc::new(Counters::new(
@@ -335,7 +349,7 @@ impl Host {
             .iter()
             .map(|route| (route.from.clone(), route.to.clone()))
             .collect::<BTreeSet<_>>();
-        for (from, to) in links {
+        for (from, to) in links.into_iter().filter(|_| carried == IN_PROCESS) {
             let (near, far) = in_process::pair();
             if let Some(component) = components.get_mut(&from) {
                 component.sender.connect(&to, near);
@@ -356,6 +370,9 @@ impl Host {
             let command = binding.command.to_string();
             let component =
                 accepting(&ir, &command).ok_or_else(|| HostError::NotAccepted(command.clone()))?;
+            if !components.contains_key(&component) {
+                continue;
+            }
             if !cause.contract.host.read_fields.is_empty() {
                 return Err(HostError::Unsupported(format!(
                     "binding {name} reads fresh host fields on each occurrence"
@@ -703,8 +720,18 @@ impl Host {
     ) -> Result<(), HostError> {
         loop {
             let mut delivered = false;
+            let mut closed = Vec::new();
             for index in 0..self.receivers.len() {
-                while let Some(envelope) = self.receivers[index].receive(Duration::ZERO)? {
+                loop {
+                    let envelope = match self.receivers[index].receive(Duration::ZERO) {
+                        Ok(Some(envelope)) => envelope,
+                        Ok(None) => break,
+                        Err(ChannelError::Closed) => {
+                            closed.push(index);
+                            break;
+                        }
+                        Err(error) => return Err(error.into()),
+                    };
                     if deliveries.count >= DELIVERY_LIMIT {
                         self.discard()?;
                         return Err(HostError::Runaway {
@@ -727,12 +754,17 @@ impl Host {
                     self.receivers[index].acknowledge(&envelope)?;
                 }
             }
+            for index in closed.into_iter().rev() {
+                self.receivers.remove(index);
+            }
             if !delivered {
                 break;
             }
         }
         for component in self.components.values_mut() {
-            component.sender.collect_acknowledgements(Duration::ZERO)?;
+            if component.sender.unacknowledged() > 0 {
+                component.sender.collect_acknowledgements(Duration::ZERO)?;
+            }
         }
         Ok(())
     }
