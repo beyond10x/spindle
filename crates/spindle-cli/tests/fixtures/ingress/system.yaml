@@ -1,0 +1,44 @@
+format: ess/34
+system: tasks
+version: v1
+summary: Tasks opened and closed over the network, read as a list, and each closure recorded.
+domains:
+  - tasks.board
+  - tasks.ledger
+components:
+  - component: board
+    summary: Opens, closes and lists tasks for callers outside the process.
+    owns:
+      domains:
+        - tasks.board
+    accepts:
+      commands:
+        - tasks.board.OpenTask
+        - tasks.board.CloseTask
+    publishes:
+      events:
+        - tasks.board.TaskOpened
+        - tasks.board.TaskClosed
+    reached_by: network
+  - component: ledger
+    summary: Records each closed task; only a binding reaches it.
+    owns:
+      domains:
+        - tasks.ledger
+    accepts:
+      commands:
+        - tasks.ledger.RecordClosure
+    publishes:
+      events:
+        - tasks.ledger.ClosureRecorded
+    reached_by: in_process
+bindings:
+  - id: record-closure
+    when:
+      event: tasks.board.TaskClosed
+    invoke:
+      command: tasks.ledger.RecordClosure
+    mapping:
+      task_id: event.task_id
+    delivery: at_most_once
+    on_failure: drop

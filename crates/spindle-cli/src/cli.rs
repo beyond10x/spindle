@@ -86,6 +86,17 @@ pub enum Command {
     /// not, prints it with what was expected and what was observed and exits 1; that replay runs
     /// nothing after it. A document ESS refuses, or one of more than 1000 steps, exits 1 before any
     /// step runs.
+    ///
+    /// Where a component requires `ingress.network` (`reached_by: network`), runs every component
+    /// in one process and serves those over HTTP on 127.0.0.1 instead of reading stdin; only
+    /// `http-loopback` is served, and any other binding exits 1 before listening. Prints
+    /// `{"listening": "<address>", "components": [...]}` once listening and serves until SIGINT
+    /// or SIGTERM (exit 130 or 143). Routes are where `ess generate --kind openapi` publishes them:
+    /// ESS's derived routes, or with `--http` the `ess-http/1` binding's, read and checked by ESS
+    /// (methods, paths, path variables and per-outcome statuses), an operation it does not name
+    /// keeping its derived route. A command's body is its input; it answers its outcome's status
+    /// with the envelope ESS publishes, `{"outcome", "published", "error"?, "payload"?}`. A view
+    /// answers `{"rows": [...]}`.
     Run {
         /// The specification directory.
         spec: PathBuf,
@@ -93,8 +104,17 @@ pub enum Command {
         #[arg(long)]
         environment: PathBuf,
         /// The state file: required where `store.durable` is bound to `sqlite`, refused otherwise.
+        /// Where `run` serves HTTP, the directory of one state file per component.
         #[arg(long)]
         state: Option<PathBuf>,
+        /// An `ess-http/1` binding of the specification's commands and views to methods and paths,
+        /// JSON or YAML; only where `run` serves HTTP.
+        #[arg(long, conflicts_with = "scenario")]
+        http: Option<PathBuf>,
+        /// The port to serve HTTP on, on 127.0.0.1; `0`, the default, lets the system choose. Only
+        /// where `run` serves HTTP.
+        #[arg(long, conflicts_with = "scenario")]
+        port: Option<u16>,
         /// A TOML file of answers, `<outcome> = true | false`, at the top level for every command
         /// or under a `["<command>"]` table for one; a command's table wins over the top level.
         #[arg(long)]

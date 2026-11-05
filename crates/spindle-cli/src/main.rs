@@ -2,6 +2,7 @@
 
 mod decisions;
 mod replay;
+mod serve;
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
@@ -15,7 +16,7 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use decisions::Answers;
 use signal_hook::consts::{SIGINT, SIGTERM};
-use spindle_capability::{Admission, Environment, Requirements};
+use spindle_capability::{Admission, Capability, Environment, Requirements};
 use spindle_cli::cli::{Cli, Command};
 use spindle_host::{Host, HostError, SystemClock, rally};
 use spindle_kernel::{External, MemoryStore, SqliteStore, Store};
@@ -163,14 +164,18 @@ fn run(cli: Cli) -> Result<ExitCode> {
             state,
             decisions,
             answer_default,
+            http,
+            port,
             scenario: None,
-        } => execute(
-            &spec,
-            &environment,
-            state.as_deref(),
-            decisions.as_deref(),
+        } => execute(&Execute {
+            spec: &spec,
+            environment: &environment,
+            state: state.as_deref(),
+            decisions: decisions.as_deref(),
             answer_default,
-        ),
+            http: http.as_deref(),
+            port,
+        }),
         Command::Play {
             spec,
             environment,
@@ -189,13 +194,19 @@ const TABLE: &str = "rally-table";
 /// Clears the terminal and moves the cursor home.
 const CLEAR: &str = "\x1b[2J\x1b[H";
 
-fn play(spec: &Path, environment: &Path, target_score: i64, match_id: &str) -> Result<ExitCode> {
+/// Records SIGINT and SIGTERM, by number, in the flag returned.
+fn signals() -> Result<Arc<AtomicUsize>> {
     let signalled = Arc::new(AtomicUsize::new(0));
     for signal in [SIGINT, SIGTERM] {
         let number = usize::try_from(signal).context("a signal number")?;
         signal_hook::flag::register_usize(signal, Arc::clone(&signalled), number)
             .context("handling SIGINT and SIGTERM")?;
     }
+    Ok(signalled)
+}
+
+fn play(spec: &Path, environment: &Path, target_score: i64, match_id: &str) -> Result<ExitCode> {
+    let signalled = signals()?;
     let loaded = spindle_spec::load(spec)?;
     let text = std::fs::read_to_string(environment)
         .with_context(|| format!("reading {}", environment.display()))?;
@@ -297,13 +308,27 @@ fn wait_until(deadline: Instant, signalled: &AtomicUsize) -> Option<u8> {
     }
 }
 
-fn execute(
-    spec: &Path,
-    environment: &Path,
-    state: Option<&Path>,
-    decisions: Option<&Path>,
+/// The arguments of `run` without `--scenario`.
+struct Execute<'a> {
+    spec: &'a Path,
+    environment: &'a Path,
+    state: Option<&'a Path>,
+    decisions: Option<&'a Path>,
     answer_default: bool,
-) -> Result<ExitCode> {
+    http: Option<&'a Path>,
+    port: Option<u16>,
+}
+
+fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
+    let Execute {
+        spec,
+        environment,
+        state,
+        decisions,
+        answer_default,
+        http,
+        port,
+    } = *arguments;
     let loaded = spindle_spec::load(spec)?;
     let answers = Answers::load(&loaded.ir, decisions, answer_default)?;
     let requirements = spindle_capability::derive(&loaded.ir, None)
@@ -332,6 +357,57 @@ fn execute(
         .iter()
         .find(|binding| binding.capability.as_str() == "store.durable")
         .map(|binding| binding.implementation.as_str());
+    if let Some(ingress) = bindings
+        .iter()
+        .find(|binding| binding.capability.as_str() == Capability::INGRESS_NETWORK)
+    {
+        if ingress.implementation != spindle_ingress::HTTP_LOOPBACK {
+            bail!(
+                "ingress.network is bound to `{}` on {}; this build serves `{}` only",
+                ingress.implementation,
+                parsed.name,
+                spindle_ingress::HTTP_LOOPBACK
+            );
+        }
+        if decisions.is_some() || answer_default {
+            bail!(
+                "--decisions and --answer-default answer external causes of stdin lines, and run \
+                 serving ingress.network reads no stdin"
+            );
+        }
+        let binding = match http {
+            Some(path) => match serve::binding(path, &loaded.ir)? {
+                Some(binding) => Some(binding),
+                None => return Ok(ExitCode::FAILURE),
+            },
+            None => None,
+        };
+        let components = serve::networked(&loaded.ir);
+        return serve::serve(
+            loaded.ir,
+            serve::Serving {
+                environment: &parsed,
+                durable,
+                state,
+                components,
+                binding,
+                port: port.unwrap_or(0),
+            },
+        );
+    }
+    if let Some(path) = http {
+        bail!(
+            "nothing in {} requires ingress.network, so --http {} would be ignored",
+            spec.display(),
+            path.display()
+        );
+    }
+    if let Some(port) = port {
+        bail!(
+            "nothing in {} requires ingress.network, so --port {port} would be ignored",
+            spec.display()
+        );
+    }
     let mut store: Box<dyn Store> = match (durable, state) {
         (None | Some("memory"), None) => Box::new(MemoryStore::default()),
         (None, Some(path)) => bail!(
