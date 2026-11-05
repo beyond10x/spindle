@@ -18,8 +18,11 @@ use spindle_telemetry::{Carried, Sink};
 pub const DEFAULT_ACKNOWLEDGEMENT_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// A binding an event triggered whose command input could not be filled from it: no envelope was
-/// staged for it and its command is not invoked. ESS calls this the binding's unmet input
-/// obligation (`interpret/bindings.rs`): zero attempts, no retry.
+/// staged for it and its command is not invoked: zero attempts, no retry. The event's other
+/// bindings still run. ESS 0.86.0's interpreter calls this an unmet input obligation only for a
+/// binding with `on_refusal` and answers every other one unsupported (`interpret/bindings.rs`);
+/// what Spindle does instead is a runtime decision, `docs/design/spindle.md` § 11 (unmet binding
+/// input).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unmet {
     /// The binding.

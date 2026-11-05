@@ -47,18 +47,20 @@ struct Rule {
     converted: Option<Converted>,
 }
 
-/// The type a value crossing a declared conversion must be, and the specification that declares
-/// it. ESS carries the value unchanged and checks it against the target type before the command
+/// The type a value crossing a declared conversion must be, the conversion's stated reason, and the
+/// specification that declares both, shared by every route of one router. ESS carries the value unchanged and checks it against the target type before the command
 /// port (`interpret/bindings.rs`, `mapped`); an assignable source needs no check.
 #[derive(Clone)]
 struct Converted {
     kind: ResolvedTypeRef,
+    because: String,
     ir: Arc<EssIr>,
 }
 
+/// Two conversions are equal when they cross into the same type for the same stated reason.
 impl PartialEq for Converted {
     fn eq(&self, other: &Self) -> bool {
-        self.kind == other.kind && Arc::ptr_eq(&self.ir, &other.ir)
+        self.kind == other.kind && self.because == other.because
     }
 }
 
@@ -67,6 +69,7 @@ impl std::fmt::Debug for Converted {
         formatter
             .debug_struct("Converted")
             .field("kind", &self.kind)
+            .field("because", &self.because)
             .finish_non_exhaustive()
     }
 }
@@ -135,15 +138,27 @@ impl Router {
     /// does not carry is refused whole, so a specification never runs with part of a binding:
     /// a delivery context, a `where` condition, a selection, a per-refusal policy, a bounded
     /// retry, an escalation, or a mapping source other than `event.<field>` or a literal. A mapping
-    /// across a declared conversion is carried, its value checked when it is mapped.
+    /// across a declared conversion is carried, its value checked when it is mapped, against a copy of
+    /// `ir` this router holds; [`Self::from_shared`] holds no copy.
     pub fn from_ir(ir: &EssIr) -> Result<Self, RouteError> {
+        Self::build(ir, || Arc::new(ir.clone()))
+    }
+
+    /// [`Self::from_ir`], checking converted values against `ir` itself rather than a copy of it.
+    pub fn from_shared(ir: &Arc<EssIr>) -> Result<Self, RouteError> {
+        Self::build(ir, || Arc::clone(ir))
+    }
+
+    /// The routes of `ir`; `shared` is called once, and only when some mapping crosses a
+    /// conversion.
+    fn build(ir: &EssIr, shared: impl FnOnce() -> Arc<EssIr>) -> Result<Self, RouteError> {
         let converts = ir.bindings().values().any(|binding| {
             binding
                 .mapping
                 .iter()
                 .any(|field| field.conversion.is_some())
         });
-        let shared = converts.then(|| Arc::new(ir.clone()));
+        let shared = converts.then(shared);
         let mut routes = Vec::new();
         for binding in ir.bindings().values() {
             if let Some(route) = Route::compile(ir, binding, shared.as_ref())? {
@@ -339,8 +354,9 @@ fn rule(
     let target = mapping.target.clone();
     let converted = match (&mapping.conversion, shared) {
         (None, _) => None,
-        (Some(_), Some(ir)) => Some(Converted {
+        (Some(because), Some(ir)) => Some(Converted {
             kind: mapping.target_type.clone(),
+            because: because.clone(),
             ir: Arc::clone(ir),
         }),
         (Some(_), None) => return Err(format!("the declared conversion into {target}")),

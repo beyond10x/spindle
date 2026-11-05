@@ -291,7 +291,7 @@ struct Periodic {
 /// thread: a call returns once no envelope is left in flight, or stops after [`DELIVERY_LIMIT`]
 /// deliveries.
 pub struct Host {
-    ir: EssIr,
+    ir: Arc<EssIr>,
     clock: Arc<dyn Clock>,
     placements: Placements,
     components: BTreeMap<String, Component>,
@@ -404,9 +404,10 @@ impl Host {
                  that fails and neither retries nor escalates it"
             )));
         }
+        let ir = Arc::new(ir);
         let router = match retries {
-            Retries::Refused => Router::from_ir(&ir)?,
-            Retries::Dropped => Router::from_ir(&ir)?.dropping_retries(),
+            Retries::Refused => Router::from_shared(&ir)?,
+            Retries::Dropped => Router::from_shared(&ir)?.dropping_retries(),
         };
         let mut components = BTreeMap::new();
         for (name, bindings) in &placements {
