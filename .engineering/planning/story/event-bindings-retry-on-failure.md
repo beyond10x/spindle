@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:event-bindings-retry-on-failure
 kind: story
-status: active
+status: implemented
 title: Event bindings retry on failure
 relations:
 - serves: vision:spindle
@@ -14,10 +14,11 @@ scope:
   path: crates/spindle-host/src/host.rs
 - confidence: inferred
   path: crates/spindle-host/tests/retry.rs
-revision: 5
+revision: 6
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-05T09:39:06Z", actor: "human:timo", revision: 4}
 - {from: "proposed", to: "active", at: "2026-11-05T09:39:06Z", actor: "human:timo", revision: 5}
+- {from: "active", to: "implemented", at: "2026-11-05T22:03:27Z", actor: "human:timo", revision: 6, decided_on: {"recorded":{"test_result":2}}}
 ---
 # Event bindings retry on failure
 

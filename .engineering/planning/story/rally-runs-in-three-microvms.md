@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:rally-runs-in-three-microvms
 kind: story
-status: active
+status: implemented
 title: Rally runs in three microVMs
 relations:
 - decomposes: epic:m1-m3-rally-in-three-vms
@@ -18,10 +18,11 @@ scope:
   path: crates/spindle-qemu
 - confidence: inferred
   path: examples/rally
-revision: 8
+revision: 9
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-04T21:33:53Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"review_outcome":1}}}
 - {from: "proposed", to: "active", at: "2026-11-04T21:33:53Z", actor: "human:timo", revision: 8, decided_on: {"recorded":{"review_outcome":1}}}
+- {from: "active", to: "implemented", at: "2026-11-05T22:03:28Z", actor: "human:timo", revision: 9, decided_on: {"recorded":{"test_result":2,"review_outcome":1}}}
 ---
 # Rally runs in three microVMs
 
