@@ -150,8 +150,9 @@ pub enum Command {
     /// the next tick, so the match is the one a single process plays. The component that accepts
     /// `OpenMatch` opens the match, runs the tick, prints `{"view": <MatchState>}` after each and,
     /// once a side has won, tells every peer the match is over and exits 0; a peer exits 0 when
-    /// told. A link that closes before that exits 1 naming the peer, and SIGINT or SIGTERM exits
-    /// 130 or 143, at any point. With `SPINDLE_TELEMETRY` set, it sends its counters there as
+    /// told by it. A link that closes before that, or a peer that breaks the link protocol (such
+    /// as one that is not that component saying the match is over), exits 1 naming the peer, and
+    /// SIGINT or SIGTERM exits 130 or 143, at any point. With `SPINDLE_TELEMETRY` set, it sends its counters there as
     /// `spindle-telemetry/1` frames.
     Play {
         /// The rally specification directory.

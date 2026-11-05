@@ -4,27 +4,34 @@
 //! # Links
 //!
 //! A link is one TCP connection from the component that publishes to the component whose command a
-//! binding invokes. Each message on it is a 4-byte big-endian length and that many bytes of JSON:
+//! binding invokes. Each message on it is a 4-byte big-endian length and that many bytes of JSON,
+//! an object with exactly one of these keys:
 //!
-//! | message | from | means |
+//! | message | sent by | means |
 //! |---|---|---|
-//! | `{"hello": {"from", "to"}}` | the connecting end, first | the components the link joins |
-//! | `{"frame": <Frame>}` | either end | a channel frame: an envelope, or an acknowledgement |
-//! | `{"settled": 1}` | the accepting end | one envelope and everything it led to has run |
-//! | `{"end": true}` | either end | the run is over; the link closes next |
+//! | `{"hello": {"from", "to"}}` | the connecting end, first and once | the components the link joins |
+//! | `{"frame": <Frame>}` | the connecting end: an envelope; the accepting end: an acknowledgement | a channel frame |
+//! | `{"settled": 1}` | the accepting end | the oldest envelope not yet settled on this link has run, and everything it led to |
+//! | `{"end": true}` | the component named by [`Host::accept_end_from`], on either side | the run is over; the link closes next |
 //!
-//! An accepted connection becomes a link only once its `hello` names this component and a peer
-//! whose events lead here, once; any other is refused, and one that closes first changes nothing.
-//! A link that closes, or fails, without an `end` is an error naming its peer.
+//! Each end reads its links as a strict state machine. On an accepted connection only `hello` is
+//! legal first; any other message, a message that is not JSON, a length over the limit or a close
+//! in the middle of a message refuses the connection by name ([`Host::refused`]). A connection that
+//! closes before it says anything changes nothing. After that, a second `hello`, a frame or a
+//! `settled` on the side that does not send it, a `settled` with nothing owed, an `end` from any
+//! other component, anything after `end`, or a close without `end`, is [`HostError::Peer`] naming
+//! the peer. Nothing is dropped or queued silently.
 //!
 //! # Settling
 //!
 //! A call that runs a command here ([`Host::submit`], each tick of [`Host::advance`]) returns once
-//! everything it led to has run on every component, as in one process: the host counts the
-//! envelopes it sent that are not yet `settled`, and a component settles an envelope that found
-//! it idle only once every envelope its commands sent has settled, and any other at once (the
-//! termination detection of Dijkstra and Scholten). So a tick never starts while the last one's
-//! consequences are still running elsewhere.
+//! everything it led to has run on every component, as in one process. Each envelope is settled
+//! once every envelope its own command sent has settled, and the envelopes of one link are settled
+//! in the order they arrived, so the sender reads the `n`-th `settled` as the `n`-th envelope's.
+//! This is the termination detection of Dijkstra and Scholten with an engagement per envelope: an
+//! envelope that arrives while a call waits is settled on its own consequences, never on the
+//! call's, and a cycle of components never waits on itself. So a tick never starts while the last
+//! one's consequences are still running elsewhere.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::{ErrorKind, Read, Write};
@@ -56,37 +63,71 @@ const SETTLE_WITHIN: Duration = Duration::from_secs(10);
 /// How often a waiting call reads its links again.
 const SETTLE_POLL: Duration = Duration::from_micros(200);
 
+/// Which end of the connection this is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Side {
+    /// This end connected: it sends envelopes and reads acknowledgements and `settled`.
+    Opened,
+    /// This end accepted: it reads `hello` and envelopes and sends acknowledgements and `settled`.
+    Accepted,
+}
+
 /// One end of a link.
 struct Link {
+    side: Side,
     stream: TcpStream,
     buffer: Vec<u8>,
     frames: VecDeque<Frame>,
-    hello: Option<(String, String)>,
+    /// The peer: given when this end connected, read from `hello` when it accepted.
+    peer: Option<String>,
+    /// The `to` of the `hello` an accepted connection said.
+    to: Option<String>,
+    /// The one component whose `end` is honoured.
+    end_from: Option<String>,
     sent: u64,
     settled: u64,
     ended: bool,
     closed: Option<String>,
+    violated: bool,
 }
 
 impl Link {
-    fn new(stream: TcpStream) -> std::io::Result<Self> {
+    fn new(
+        stream: TcpStream,
+        side: Side,
+        peer: Option<String>,
+        end_from: Option<String>,
+    ) -> std::io::Result<Self> {
         stream.set_nodelay(true)?;
         stream.set_nonblocking(true)?;
         Ok(Self {
+            side,
             stream,
             buffer: Vec::new(),
             frames: VecDeque::new(),
-            hello: None,
+            peer,
+            to: None,
+            end_from,
             sent: 0,
             settled: 0,
             ended: false,
             closed: None,
+            violated: false,
         })
     }
 
+    fn violate(&mut self, reason: String) {
+        if self.closed.is_none() {
+            self.closed = Some(reason);
+            self.violated = true;
+        }
+        self.buffer.clear();
+        let _ = self.stream.shutdown(Shutdown::Both);
+    }
+
     fn write(&mut self, message: &Value) -> Result<(), String> {
-        if let Some(reason) = &self.closed {
-            return Err(reason.clone());
+        if let Some(reason) = self.broken() {
+            return Err(reason.to_owned());
         }
         let body = serde_json::to_vec(message).map_err(|error| error.to_string())?;
         let size = u32::try_from(body.len())
@@ -103,76 +144,142 @@ impl Link {
         let restored = self.stream.set_nonblocking(true);
         if let Err(error) = written.and(restored) {
             let reason = format!("failed a write: {error}");
-            self.closed = Some(reason.clone());
+            if self.closed.is_none() {
+                self.closed = Some(reason.clone());
+            }
             return Err(reason);
         }
         Ok(())
     }
 
-    /// Reads what has arrived and takes every whole message from it.
+    /// Reads what has arrived and takes every whole message from it, in order.
     fn poll(&mut self) {
         let mut chunk = [0_u8; 8192];
-        while self.closed.is_none() {
+        let mut eof = false;
+        while self.closed.is_none() && !eof {
             match self.stream.read(&mut chunk) {
-                Ok(0) => self.closed = Some("closed".to_owned()),
+                Ok(0) => eof = true,
                 Ok(read) => self.buffer.extend_from_slice(&chunk[..read]),
                 Err(error) if error.kind() == ErrorKind::WouldBlock => break,
                 Err(error) if error.kind() == ErrorKind::Interrupted => {}
                 Err(error) => self.closed = Some(format!("failed a read: {error}")),
             }
         }
-        while let Some(prefix) = self.buffer.first_chunk::<4>() {
+        while self.closed.is_none() {
+            let Some(prefix) = self.buffer.first_chunk::<4>() else {
+                break;
+            };
             let size = u32::from_be_bytes(*prefix) as usize;
             if size > MAX_MESSAGE {
-                self.closed = Some(format!("sent a message of {size} bytes, over the limit"));
-                self.buffer.clear();
+                self.violate(format!(
+                    "sent a length of {size} bytes, over the limit of {MAX_MESSAGE}"
+                ));
                 return;
             }
             if self.buffer.len() < 4 + size {
-                return;
+                break;
             }
             let message = serde_json::from_slice::<Value>(&self.buffer[4..4 + size]);
             self.buffer.drain(..4 + size);
-            if let Err(reason) = message
-                .map_err(|error| error.to_string())
-                .and_then(|message| self.take(message))
-            {
-                self.closed = Some(format!("sent a message this end does not take: {reason}"));
-                self.buffer.clear();
-                return;
+            match message {
+                Ok(message) => {
+                    if let Err(reason) = self.take(message) {
+                        self.violate(reason);
+                    }
+                }
+                Err(error) => self.violate(format!("sent a message that is not JSON: {error}")),
+            }
+        }
+        if eof && self.closed.is_none() {
+            if self.buffer.is_empty() {
+                self.closed = Some("closed".to_owned());
+            } else {
+                self.violate("closed in the middle of a message".to_owned());
             }
         }
     }
 
+    /// Takes one message, or names why it is a violation here.
     fn take(&mut self, message: Value) -> Result<(), String> {
-        let Value::Object(mut message) = message else {
-            return Err("not an object".to_owned());
+        let Value::Object(message) = message else {
+            return Err(format!("sent {message}, which is no link message"));
         };
-        if let Some(hello) = message.remove("hello") {
-            let field = |name: &str| {
-                hello
-                    .get(name)
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-                    .ok_or_else(|| format!("a hello without {name}"))
-            };
-            self.hello = Some((field("from")?, field("to")?));
-        } else if let Some(frame) = message.remove("frame") {
-            let frame = serde_json::from_value(frame).map_err(|error| error.to_string())?;
-            self.frames.push_back(frame);
-        } else if message.remove("settled").is_some() {
-            self.settled += 1;
-        } else if message.remove("end").is_some() {
-            self.ended = true;
-        } else {
-            return Err(format!("{}", Value::Object(message)));
+        let mut entries = message.into_iter();
+        let (Some((kind, body)), None) = (entries.next(), entries.next()) else {
+            return Err(
+                "sent an object without exactly one key, which is no link message".to_owned(),
+            );
+        };
+        if self.ended {
+            return Err(format!("sent {kind} after end"));
+        }
+        if self.side == Side::Accepted && self.peer.is_none() && kind != "hello" {
+            return Err(format!("sent {kind} before hello"));
+        }
+        match kind.as_str() {
+            "hello" => {
+                if self.side == Side::Opened || self.peer.is_some() {
+                    return Err("said hello a second time".to_owned());
+                }
+                let field = |name: &str| {
+                    body.get(name)
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                        .ok_or_else(|| format!("said a hello without {name}"))
+                };
+                let (from, to) = (field("from")?, field("to")?);
+                self.peer = Some(from);
+                self.to = Some(to);
+            }
+            "frame" => {
+                let frame = serde_json::from_value::<Frame>(body)
+                    .map_err(|error| format!("sent a frame that does not decode: {error}"))?;
+                match (self.side, &frame) {
+                    (Side::Accepted, Frame::Deliver(_)) | (Side::Opened, Frame::Acknowledge(_)) => {
+                        self.frames.push_back(frame);
+                    }
+                    (Side::Accepted, Frame::Acknowledge(_)) => {
+                        return Err(
+                            "sent an acknowledgement down a link only envelopes travel".to_owned()
+                        );
+                    }
+                    (Side::Opened, Frame::Deliver(_)) => {
+                        return Err("sent an envelope back up the link this end opened, where \
+                                    only acknowledgements and settled travel"
+                            .to_owned());
+                    }
+                }
+            }
+            "settled" => {
+                if self.side == Side::Accepted {
+                    return Err("sent settled down a link only envelopes travel".to_owned());
+                }
+                if self.settled >= self.sent {
+                    return Err(format!(
+                        "settled {} envelopes, and only {} were sent to it",
+                        self.settled + 1,
+                        self.sent
+                    ));
+                }
+                self.settled += 1;
+            }
+            "end" => {
+                if self.end_from.is_none() || self.end_from != self.peer {
+                    return Err(match &self.end_from {
+                        Some(ender) => format!("said end, which only {ender} may say"),
+                        None => "said end, which no peer may say here".to_owned(),
+                    });
+                }
+                self.ended = true;
+            }
+            other => return Err(format!("sent {other}, which is no link message")),
         }
         Ok(())
     }
 
-    /// Why the link can no longer be used, unless its peer ended it.
+    /// Why the link can no longer be used: a violation, or a close without `end`.
     fn broken(&self) -> Option<&str> {
-        match (&self.closed, self.ended) {
+        match (&self.closed, self.ended && !self.violated) {
             (Some(reason), false) => Some(reason),
             _ => None,
         }
@@ -189,8 +296,11 @@ fn held(link: &Shared) -> MutexGuard<'_, Link> {
 struct LinkChannel(Shared);
 
 impl Channel for LinkChannel {
+    /// Reads the link first, so a message that arrived before this frame is judged against what
+    /// had been sent until now.
     fn send(&mut self, frame: Frame) -> Result<(), ChannelError> {
         let mut link = held(&self.0);
+        link.poll();
         let envelope = matches!(frame, Frame::Deliver(_));
         link.write(&json!({ "frame": frame }))
             .map_err(ChannelError::Broken)?;
@@ -213,45 +323,77 @@ impl Channel for LinkChannel {
     }
 }
 
+/// An envelope this component has run and not yet settled: it is settled once every envelope its
+/// command sent has, each named by its link and its place in that link's order.
+struct Owed {
+    sent: Vec<(String, u64)>,
+}
+
 /// What a one-component host keeps about its links.
 pub(super) struct Remote {
     me: String,
     /// The components whose events lead here: one incoming link from each.
     expected: BTreeSet<String>,
+    end_from: Option<String>,
     outgoing: BTreeMap<String, Shared>,
     incoming: BTreeMap<String, (Shared, Receiver)>,
+    /// The envelopes run and not yet settled, by the link they came on, in arrival order.
+    owed: BTreeMap<String, VecDeque<Owed>>,
     pending: Vec<(Link, Instant)>,
     refused: Vec<String>,
-    /// The peer whose envelope found this component idle, still to be settled.
-    engaged: Option<String>,
     ended: bool,
     stop: Option<Box<dyn Fn() -> bool + Send>>,
 }
 
 impl Remote {
-    fn deficit(&self) -> u64 {
+    /// How many envelopes have been sent on each outgoing link.
+    fn sent(&self) -> BTreeMap<String, u64> {
         self.outgoing
-            .values()
-            .map(|link| {
-                let link = held(link);
-                link.sent.saturating_sub(link.settled)
-            })
-            .sum()
+            .iter()
+            .map(|(peer, link)| (peer.clone(), held(link).sent))
+            .collect()
     }
 
-    fn settle(&self, peer: &str) -> Result<(), HostError> {
-        let Some((link, _)) = self.incoming.get(peer) else {
-            return Ok(());
-        };
-        held(link)
-            .write(&json!({ "settled": 1 }))
-            .map_err(|reason| HostError::Peer {
-                peer: peer.to_owned(),
-                reason,
-            })
+    /// Whether every envelope up to each named place has settled.
+    fn has_settled(&self, through: &[(String, u64)]) -> bool {
+        through.iter().all(|(peer, place)| {
+            self.outgoing
+                .get(peer)
+                .is_some_and(|link| held(link).settled >= *place)
+        })
     }
 
-    /// Reads every link; a link that broke without an `end` is an error naming its peer.
+    /// Settles, link by link and in arrival order, every owed envelope whose sends have settled.
+    fn settle_ready(&mut self) -> Result<(), HostError> {
+        let peers = self.owed.keys().cloned().collect::<Vec<_>>();
+        for peer in peers {
+            loop {
+                let ready = self
+                    .owed
+                    .get(&peer)
+                    .and_then(VecDeque::front)
+                    .is_some_and(|owed| self.has_settled(&owed.sent));
+                if !ready {
+                    break;
+                }
+                if let Some(queue) = self.owed.get_mut(&peer) {
+                    queue.pop_front();
+                }
+                let Some((link, _)) = self.incoming.get(&peer) else {
+                    continue;
+                };
+                held(link)
+                    .write(&json!({ "settled": 1 }))
+                    .map_err(|reason| HostError::Peer {
+                        peer: peer.clone(),
+                        reason,
+                    })?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Reads every link; a link that broke is an error naming its peer.
     fn read(&mut self) -> Result<(), HostError> {
         let links = self
             .outgoing
@@ -260,15 +402,24 @@ impl Remote {
         for (peer, link) in links {
             let mut link = held(link);
             link.poll();
-            self.ended |= link.ended;
             if let Some(reason) = link.broken() {
+                let reason = if link.violated {
+                    reason.to_owned()
+                } else {
+                    format!("{reason} before the run ended")
+                };
                 return Err(HostError::Peer {
                     peer: peer.clone(),
-                    reason: format!("{reason} before the run ended"),
+                    reason,
                 });
             }
+            self.ended |= link.ended;
         }
         Ok(())
+    }
+
+    fn missing() -> HostError {
+        HostError::Unsupported("no links where every component runs".to_owned())
     }
 }
 
@@ -317,11 +468,12 @@ impl Host {
         host.remote = Some(Remote {
             me: component.to_owned(),
             expected,
+            end_from: None,
             outgoing: BTreeMap::new(),
             incoming: BTreeMap::new(),
+            owed: BTreeMap::new(),
             pending: Vec::new(),
             refused: Vec::new(),
-            engaged: None,
             ended: false,
             stop: None,
         });
@@ -354,6 +506,22 @@ impl Host {
         }
     }
 
+    /// Honours `end` from `peer` only, on every link with it; from any other peer, and from
+    /// every peer until this is called, `end` is a violation.
+    pub fn accept_end_from(&mut self, peer: &str) {
+        let Some(remote) = &mut self.remote else {
+            return;
+        };
+        remote.end_from = Some(peer.to_owned());
+        let links = remote
+            .outgoing
+            .values()
+            .chain(remote.incoming.values().map(|(link, _)| link));
+        for link in links {
+            held(link).end_from = Some(peer.to_owned());
+        }
+    }
+
     /// Opens the link to `peer` at `address`, once, and says `hello`; every event bound to
     /// `peer` is carried on it.
     ///
@@ -365,14 +533,16 @@ impl Host {
             peer: peer.to_owned(),
             reason,
         };
-        let Some(remote) = &mut self.remote else {
-            return Err(HostError::Unsupported(
-                "links are made only where one component runs".to_owned(),
-            ));
-        };
+        let remote = self.remote.as_mut().ok_or_else(Remote::missing)?;
         let stream = TcpStream::connect(address)
             .map_err(|error| failed(format!("at {address} cannot be opened: {error}")))?;
-        let mut link = Link::new(stream).map_err(|error| failed(error.to_string()))?;
+        let mut link = Link::new(
+            stream,
+            Side::Opened,
+            Some(peer.to_owned()),
+            remote.end_from.clone(),
+        )
+        .map_err(|error| failed(error.to_string()))?;
         link.write(&json!({ "hello": { "from": remote.me, "to": peer } }))
             .map_err(failed)?;
         let link = Arc::new(Mutex::new(link));
@@ -387,18 +557,15 @@ impl Host {
 
     /// Takes every connection waiting on `listener`, and links each whose `hello` names this
     /// component and a component whose events lead here and that has no link yet; returns how
-    /// many it linked. A connection that says anything else is refused ([`Host::refused`]); one
-    /// that closes before it says `hello`, or says nothing for 5 s, is dropped.
+    /// many it linked. A connection that breaks the link protocol before it is linked, or whose
+    /// `hello` names anything else, is refused ([`Host::refused`]); one that closes before it
+    /// says anything, or says nothing for 5 s, is dropped.
     ///
     /// # Errors
     /// [`HostError::Channel`] when the listener fails; [`HostError::Unsupported`] on a host of
     /// every component.
     pub fn accept(&mut self, listener: &TcpListener) -> Result<usize, HostError> {
-        let Some(remote) = &mut self.remote else {
-            return Err(HostError::Unsupported(
-                "links are accepted only where one component runs".to_owned(),
-            ));
-        };
+        let remote = self.remote.as_mut().ok_or_else(Remote::missing)?;
         let sink = self
             .components
             .get(&remote.me)
@@ -408,7 +575,9 @@ impl Host {
         loop {
             match listener.accept() {
                 Ok((stream, _)) => {
-                    if let Ok(link) = Link::new(stream) {
+                    if let Ok(link) =
+                        Link::new(stream, Side::Accepted, None, remote.end_from.clone())
+                    {
                         remote.pending.push((link, Instant::now()));
                     }
                 }
@@ -420,7 +589,18 @@ impl Host {
         let mut linked = 0;
         for (mut link, since) in std::mem::take(&mut remote.pending) {
             link.poll();
-            let Some((from, to)) = link.hello.clone() else {
+            let address = link
+                .stream
+                .peer_addr()
+                .map_or_else(|_| "a peer".to_owned(), |address| address.to_string());
+            if link.violated {
+                let reason = link.closed.clone().unwrap_or_default();
+                remote
+                    .refused
+                    .push(format!("a connection from {address}: {reason}"));
+                continue;
+            }
+            let (Some(from), Some(to)) = (link.peer.clone(), link.to.clone()) else {
                 if link.closed.is_none() && since.elapsed() < HELLO_WITHIN {
                     remote.pending.push((link, since));
                 }
@@ -436,7 +616,8 @@ impl Host {
             } else if remote.incoming.contains_key(&from) {
                 Some(format!("a second link from {from}"))
             } else {
-                None
+                link.broken()
+                    .map(|reason| format!("a link from {from}: {reason} before it was linked"))
             };
             if let Some(refusal) = refusal {
                 remote.refused.push(refusal);
@@ -482,7 +663,7 @@ impl Host {
         unlinked
     }
 
-    /// Whether a peer has ended the run.
+    /// Whether the peer [`Host::accept_end_from`] names has ended the run.
     pub fn ended(&self) -> bool {
         self.remote.as_ref().is_some_and(|remote| remote.ended)
     }
@@ -522,8 +703,8 @@ impl Host {
     /// returns without waiting.
     ///
     /// # Errors
-    /// [`HostError::Peer`] naming a peer whose link closed or failed before the run ended, and
-    /// as [`Host::advance`].
+    /// [`HostError::Peer`] naming a peer that broke the link protocol or whose link closed
+    /// before the run ended, and as [`Host::advance`].
     pub fn deliver(&mut self) -> Result<Report, HostError> {
         let mut report = Report::default();
         if self.remote.is_some() {
@@ -543,7 +724,7 @@ impl Host {
     }
 
     /// [`Host::settle`] where one component runs: runs what arrives and, when `waiting`, returns
-    /// only once every envelope sent here has settled (see the module documentation).
+    /// only once every envelope sent before the call has settled (see the module documentation).
     pub(super) fn settle_remote(
         &mut self,
         report: &mut Report,
@@ -551,10 +732,15 @@ impl Host {
         waiting: bool,
     ) -> Result<(), HostError> {
         let started = Instant::now();
+        let target = self
+            .remote
+            .as_ref()
+            .ok_or_else(Remote::missing)?
+            .sent()
+            .into_iter()
+            .collect::<Vec<_>>();
         loop {
-            let remote = self.remote.as_mut().ok_or_else(|| {
-                HostError::Unsupported("no links where every component runs".to_owned())
-            })?;
+            let remote = self.remote.as_mut().ok_or_else(Remote::missing)?;
             remote.read()?;
             if remote.ended {
                 return Ok(());
@@ -563,9 +749,7 @@ impl Host {
             let peers = remote.incoming.keys().cloned().collect::<Vec<_>>();
             for peer in peers {
                 loop {
-                    let remote = self.remote.as_mut().ok_or_else(|| {
-                        HostError::Unsupported("no links where every component runs".to_owned())
-                    })?;
+                    let remote = self.remote.as_mut().ok_or_else(Remote::missing)?;
                     let Some((_, receiver)) = remote.incoming.get_mut(&peer) else {
                         break;
                     };
@@ -588,6 +772,7 @@ impl Host {
                     deliveries.count += 1;
                     deliveries.bindings.insert(envelope.binding.clone());
                     delivered = true;
+                    let before = remote.sent();
                     self.run(
                         &envelope.to,
                         &envelope.command.name,
@@ -597,17 +782,21 @@ impl Host {
                         },
                         report,
                     )?;
-                    let remote = self.remote.as_mut().ok_or_else(|| {
-                        HostError::Unsupported("no links where every component runs".to_owned())
-                    })?;
+                    let remote = self.remote.as_mut().ok_or_else(Remote::missing)?;
                     if let Some((_, receiver)) = remote.incoming.get_mut(&peer) {
                         receiver.acknowledge(&envelope)?;
                     }
-                    if waiting || remote.engaged.is_some() {
-                        remote.settle(&peer)?;
-                    } else {
-                        remote.engaged = Some(peer.clone());
-                    }
+                    let sent = remote
+                        .sent()
+                        .into_iter()
+                        .filter(|(link, count)| before.get(link).is_none_or(|was| count > was))
+                        .collect();
+                    remote
+                        .owed
+                        .entry(peer.clone())
+                        .or_default()
+                        .push_back(Owed { sent });
+                    remote.settle_ready()?;
                 }
             }
             for component in self.components.values_mut() {
@@ -615,39 +804,34 @@ impl Host {
                     component.sender.collect_acknowledgements(Duration::ZERO)?;
                 }
             }
-            let remote = self.remote.as_mut().ok_or_else(|| {
-                HostError::Unsupported("no links where every component runs".to_owned())
-            })?;
-            if remote.deficit() == 0 {
-                if let Some(peer) = remote.engaged.take() {
-                    remote.settle(&peer)?;
-                }
-                if waiting {
-                    return Ok(());
-                }
-            }
+            let remote = self.remote.as_mut().ok_or_else(Remote::missing)?;
+            remote.settle_ready()?;
             if !waiting {
                 if delivered {
                     continue;
                 }
                 return Ok(());
             }
+            if remote.has_settled(&target) {
+                return Ok(());
+            }
             if remote.stop.as_ref().is_some_and(|stop| stop()) {
                 return Err(HostError::Stopped);
             }
             if started.elapsed() >= SETTLE_WITHIN {
-                let unsettled = remote
-                    .outgoing
+                let unsettled = target
                     .iter()
-                    .filter(|(_, link)| {
-                        let link = held(link);
-                        link.sent > link.settled
+                    .filter(|(peer, place)| {
+                        remote
+                            .outgoing
+                            .get(peer)
+                            .is_some_and(|link| held(link).settled < *place)
                     })
                     .map(|(peer, _)| peer.clone())
                     .collect::<Vec<_>>();
                 return Err(HostError::Peer {
                     peer: unsettled.join(", "),
-                    reason: format!("settled nothing within {SETTLE_WITHIN:?}"),
+                    reason: format!("settled nothing it owes within {SETTLE_WITHIN:?}"),
                 });
             }
             if !delivered {

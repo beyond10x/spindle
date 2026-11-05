@@ -60,13 +60,18 @@ pub(crate) fn play(playing: &Playing<'_>) -> Result<ExitCode> {
         format!("--component {component} needs the address to listen on: --listen or {ENV_LISTEN}")
     })?;
     let loaded = spindle_spec::load(playing.spec)?;
-    let opens = loaded.ir.components().values().any(|declared| {
-        declared.name.as_str() == component
-            && declared
+    let opener = loaded
+        .ir
+        .components()
+        .values()
+        .find(|declared| {
+            declared
                 .accepts
                 .iter()
                 .any(|accepted| accepted.to_string() == OPEN_MATCH)
-    });
+        })
+        .map(|declared| declared.name.as_str().to_owned());
+    let opens = opener.as_deref() == Some(component);
     let text = std::fs::read_to_string(playing.environment)
         .with_context(|| format!("reading {}", playing.environment.display()))?;
     let parsed = Environment::parse(&text)
@@ -84,6 +89,9 @@ pub(crate) fn play(playing: &Playing<'_>) -> Result<ExitCode> {
         };
     let watched = Arc::clone(&signalled);
     host.stop_when(move || watched.load(Ordering::SeqCst) != 0);
+    if let Some(opener) = opener.as_deref().filter(|opener| *opener != component) {
+        host.accept_end_from(opener);
+    }
 
     let addresses = peer_addresses(&host, component)?;
     let result = linked(

@@ -96,8 +96,8 @@ peer with no `SPINDLE_PEER_<COMPONENT>` exits 1 before it runs anything, naming 
 variable. Each prints one JSON line per command it runs. Everything a tick leads to runs on every
 process before the next tick, so three processes play the match one process plays. The table opens
 the match, runs the tick, prints `{"view": …}`, the `MatchState` row, after each and, once a side
-has won, tells both players the match is over; all three exit 0. A link that closes before that
-exits 1 naming the peer, and SIGINT or SIGTERM exits 130 or 143. With `SPINDLE_TELEMETRY` set, each sends its own counters as
+has won, tells both players the match is over; all three exit 0. Only the table may say so. A link
+that closes before that, or a peer that breaks the link protocol, exits 1 naming the peer, and SIGINT or SIGTERM exits 130 or 143. With `SPINDLE_TELEMETRY` set, each sends its own counters as
 `spindle-telemetry/1` frames. `--speed` runs the match clock that many times faster than real time.
 
 :::caution[Planned]
