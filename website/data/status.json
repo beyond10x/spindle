@@ -165,10 +165,10 @@
     },
     {
       "area": "Rally",
-      "detail": "Each rally component in its own microVM, joined by TCP channels across the VM network.",
+      "detail": "Each rally component in its own microVM, one b10x-spindle play per VM in its per-component mode, joined by TCP channels across the VM network, plays a match to a winner; one placement (examples/rally/placement.toml) runs on QEMU and on Firecracker. Its tests run on a host with /dev/kvm (task check:vm), not in CI.",
       "href": "/docs/examples/rally",
       "label": "Three microVMs",
-      "status": "planned"
+      "status": "shipped"
     },
     {
       "area": "Execution",

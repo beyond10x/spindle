@@ -115,7 +115,7 @@ impl Launcher for ProcessLauncher {
                 plan.instance_id
             )));
         }
-        let variables = variables(plan, self.telemetry.as_ref())?;
+        let variables = launch_variables(plan, self.telemetry.as_ref())?;
 
         fs::create_dir_all(&self.console_dir).map_err(|source| LaunchError::Io {
             what: format!("creating {}", self.console_dir.display()),
@@ -194,12 +194,26 @@ fn is_file_name(id: &str) -> bool {
             .all(|character| character.is_ascii_alphanumeric() || "._-".contains(character))
 }
 
-fn variables(
+/// The variables an instance of `plan` runs with: [`ENV_INSTANCE_ID`], [`ENV_COMPONENT`],
+/// [`ENV_LISTEN`], `SPINDLE_TELEMETRY` when there is an endpoint, one
+/// `SPINDLE_SETTING_<NAME>` per setting and one `SPINDLE_PEER_<COMPONENT>` per peer component,
+/// its addresses comma-separated in plan order. The process launcher sets them for its child; a
+/// microVM launcher hands them to the guest's init.
+///
+/// Refused as [`LaunchError::InvalidPlan`]: a setting without a name, a peer without a
+/// component, two entries that map to one variable, and a value holding a NUL byte, which no
+/// process environment can carry.
+pub fn launch_variables(
     plan: &LaunchPlan,
     telemetry: Option<&spindle_telemetry::Endpoint>,
 ) -> Result<BTreeMap<String, String>, LaunchError> {
     let mut variables = BTreeMap::new();
     let mut set = |name: String, value: String, from: &str| {
+        if value.contains('\0') {
+            return Err(LaunchError::InvalidPlan(format!(
+                "{from} gives {name} a NUL byte, which no process environment can carry"
+            )));
+        }
         if variables.insert(name.clone(), value).is_some() {
             return Err(LaunchError::InvalidPlan(format!(
                 "{from} maps to {name}, which is already set"

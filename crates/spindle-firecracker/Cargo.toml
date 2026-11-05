@@ -22,5 +22,7 @@ thiserror = "2"
 
 [dev-dependencies]
 spindle-capability = { path = "../spindle-capability" }
+spindle-qemu = { path = "../spindle-qemu" }
 spindle-spec = { path = "../spindle-spec" }
 tempfile = "3"
+toml.workspace = true
