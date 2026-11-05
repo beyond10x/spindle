@@ -20,6 +20,8 @@ use spindle_timer::{BindingName, Clock, CompleteError, LifetimeError, Timer};
 
 use crate::admission::{Placements, Refusal, admit};
 
+mod component;
+
 /// The channel implementation this host carries bindings on.
 const IN_PROCESS: &str = "in-process";
 
@@ -211,6 +213,18 @@ pub enum HostError {
         /// The bindings that carried them.
         bindings: BTreeSet<String>,
     },
+    /// The link to a peer component closed or failed before the run ended, or what was sent
+    /// there did not settle in time.
+    #[error("the link to {peer} {reason}")]
+    Peer {
+        /// The peer component, or several, comma-separated.
+        peer: String,
+        /// What happened to it.
+        reason: String,
+    },
+    /// The caller asked the host to stop while it waited for its peers.
+    #[error("stopped while waiting for peers")]
+    Stopped,
 }
 
 struct Component {
@@ -248,6 +262,7 @@ pub struct Host {
     receivers: Vec<Receiver>,
     timer: Timer,
     periodic: BTreeMap<String, Periodic>,
+    remote: Option<component::Remote>,
     published: Vec<Published>,
     /// Answers the `external:` causes of every command any component runs.
     decider: Box<dyn Decider + Send>,
@@ -305,8 +320,21 @@ impl Host {
         state: &Path,
         decider: Option<Box<dyn Decider + Send>>,
     ) -> Result<Self, HostError> {
-        let answers = decider.is_some();
         let placements = admit(&ir, environment).map_err(HostError::Refused)?;
+        Self::assemble(ir, clock, state, placements, IN_PROCESS, decider)
+    }
+
+    /// The host of the components in `placements`, their bindings carried on `carried`: every
+    /// pair joined in this process when it is [`IN_PROCESS`], none otherwise.
+    fn assemble(
+        ir: EssIr,
+        clock: Arc<dyn Clock>,
+        state: &Path,
+        placements: Placements,
+        carried: &str,
+        decider: Option<Box<dyn Decider + Send>>,
+    ) -> Result<Self, HostError> {
+        let answers = decider.is_some();
         for binding in ir.bindings().values() {
             if binding.cause.event().is_some() && binding.failure != Failure::Drop {
                 return Err(HostError::Unsupported(format!(
@@ -350,9 +378,9 @@ impl Host {
                     .find(|binding| binding.capability.as_str() == capability)
                     .map(|binding| binding.implementation.as_str())
             };
-            if let Some(channel) = bound(Capability::CHANNEL).filter(|bound| *bound != IN_PROCESS) {
+            if let Some(channel) = bound(Capability::CHANNEL).filter(|bound| *bound != carried) {
                 return Err(HostError::Unsupported(format!(
-                    "{name} has its channel bound to {channel}; this host carries bindings {IN_PROCESS} only"
+                    "{name} has its channel bound to {channel}; this host carries bindings {carried} only"
                 )));
             }
             let counters = Arc::new(Counters::new(
@@ -390,7 +418,7 @@ impl Host {
             .iter()
             .map(|route| (route.from.clone(), route.to.clone()))
             .collect::<BTreeSet<_>>();
-        for (from, to) in links {
+        for (from, to) in links.into_iter().filter(|_| carried == IN_PROCESS) {
             let (near, far) = in_process::pair();
             if let Some(component) = components.get_mut(&from) {
                 component.sender.connect(&to, near);
@@ -411,6 +439,9 @@ impl Host {
             let command = binding.command.to_string();
             let component =
                 accepting(&ir, &command).ok_or_else(|| HostError::NotAccepted(command.clone()))?;
+            if !components.contains_key(&component) {
+                continue;
+            }
             if !cause.contract.host.read_fields.is_empty() {
                 return Err(HostError::Unsupported(format!(
                     "binding {name} reads fresh host fields on each occurrence"
@@ -463,6 +494,7 @@ impl Host {
             receivers,
             timer,
             periodic,
+            remote: None,
             published: Vec::new(),
             decider: decider.unwrap_or_else(|| Box::new(NoExternals)),
         })
@@ -833,6 +865,9 @@ impl Host {
         report: &mut Report,
         deliveries: &mut Deliveries,
     ) -> Result<(), HostError> {
+        if self.remote.is_some() {
+            return self.settle_remote(report, deliveries, true);
+        }
         loop {
             let mut delivered = false;
             for index in 0..self.receivers.len() {

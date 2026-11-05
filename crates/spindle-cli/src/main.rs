@@ -1,8 +1,10 @@
 //! `b10x-spindle`: load an ESS specification, derive what it needs, admit it, and run or play it.
 
+mod component;
 mod conform;
 mod decisions;
 mod replay;
+mod scaled;
 mod serve;
 
 use std::collections::BTreeMap;
@@ -19,7 +21,7 @@ use decisions::Answers;
 use signal_hook::consts::{SIGINT, SIGTERM};
 use spindle_capability::{Admission, Capability, Environment, Requirements};
 use spindle_cli::cli::{Cli, Command};
-use spindle_host::{Host, HostError, SystemClock, rally};
+use spindle_host::{Host, HostError, rally};
 use spindle_kernel::{External, MemoryStore, SqliteStore, Store};
 
 /// Exit status of an `admit` the environment refused.
@@ -182,7 +184,27 @@ fn run(cli: Cli) -> Result<ExitCode> {
             environment,
             target_score,
             match_id,
-        } => play(&spec, &environment, target_score, &match_id),
+            speed,
+            component: Some(component),
+            listen,
+        } => component::play(&component::Playing {
+            spec: &spec,
+            environment: &environment,
+            target_score,
+            match_id: &match_id,
+            speed,
+            component: &component,
+            listen,
+        }),
+        Command::Play {
+            spec,
+            environment,
+            target_score,
+            match_id,
+            speed,
+            component: None,
+            ..
+        } => play(&spec, &environment, target_score, &match_id, speed),
         Command::Conform {
             spec,
             environment,
@@ -225,7 +247,13 @@ fn signals() -> Result<Arc<AtomicUsize>> {
     Ok(signalled)
 }
 
-fn play(spec: &Path, environment: &Path, target_score: i64, match_id: &str) -> Result<ExitCode> {
+fn play(
+    spec: &Path,
+    environment: &Path,
+    target_score: i64,
+    match_id: &str,
+    speed: u32,
+) -> Result<ExitCode> {
     let signalled = signals()?;
     let loaded = spindle_spec::load(spec)?;
     let text = std::fs::read_to_string(environment)
@@ -233,8 +261,8 @@ fn play(spec: &Path, environment: &Path, target_score: i64, match_id: &str) -> R
     let parsed =
         Environment::parse(&text).with_context(|| format!("in {}", environment.display()))?;
     let state = tempfile::tempdir().context("creating the state directory")?;
-    let clock = std::sync::Arc::new(SystemClock);
-    let mut host = match Host::new(loaded.ir, &parsed, clock, state.path()) {
+    let clock = scaled::Scaled::new(speed);
+    let mut host = match Host::new(loaded.ir, &parsed, Arc::new(clock), state.path()) {
         Ok(host) => host,
         Err(HostError::Refused(refusal)) => {
             println!("{refusal}");
@@ -273,7 +301,7 @@ fn play(spec: &Path, environment: &Path, target_score: i64, match_id: &str) -> R
         let deadline = host
             .next_deadline()
             .context("no periodic binding is running, so the match cannot go on")?;
-        if let Some(signal) = wait_until(deadline, &signalled) {
+        if let Some(signal) = wait_until(deadline, &clock, &signalled) {
             host.stop();
             return Ok(ExitCode::from(SIGNALLED.saturating_add(signal)));
         }
@@ -313,14 +341,15 @@ const SIGNALLED: u8 = 128;
 /// How often a wait looks for a signal.
 const SIGNAL_POLL: Duration = Duration::from_millis(50);
 
-/// Sleeps until `deadline`, or until a signal is recorded in `signalled`; returns its number.
-fn wait_until(deadline: Instant, signalled: &AtomicUsize) -> Option<u8> {
+/// Sleeps until `clock` reads `deadline`, or until a signal is recorded in `signalled`; returns
+/// its number.
+fn wait_until(deadline: Instant, clock: &scaled::Scaled, signalled: &AtomicUsize) -> Option<u8> {
     loop {
         let signal = signalled.load(Ordering::SeqCst);
         if signal != 0 {
             return Some(u8::try_from(signal).unwrap_or(u8::MAX - SIGNALLED));
         }
-        let left = deadline.saturating_duration_since(Instant::now());
+        let left = clock.until(deadline);
         if left.is_zero() {
             return None;
         }

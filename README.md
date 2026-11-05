@@ -19,9 +19,9 @@ in-process channel and in a microVM with a TCP one; admission is the only step t
 
 Status: early. Loading, capability derivation, admission, command execution (with list views,
 minted identities and external decisions from a file), per-component counters and the rally example
-in one process work, and `run` serves a network-reached component over HTTP on 127.0.0.1; the process, QEMU and Firecracker launchers exist as libraries and sample each
+in one process and as three processes joined by TCP channels work, and `run` serves a network-reached component over HTTP on 127.0.0.1; the process, QEMU and Firecracker launchers exist as libraries and sample each
 instance's CPU and memory; the observe UI runs on fixture data. Running each component in its own
-process or microVM, deployment and a live observe API are planned. The
+microVM, deployment and a live observe API are planned. The
 [status page](https://beyond10x.github.io/spindle/docs/status) lists each item with the test that
 holds it; the design is [`docs/design/spindle.md`](docs/design/spindle.md).
 

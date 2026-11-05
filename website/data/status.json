@@ -151,10 +151,10 @@
     },
     {
       "area": "Rally",
-      "detail": "Three b10x-spindle run processes, one per component, joined by TCP channels.",
+      "detail": "Three b10x-spindle play --component processes, one per component, started by the process launcher from its SPINDLE_* variables and joined by TCP channels, play a match to a winner; each sends its telemetry when given an endpoint.",
       "href": "/docs/examples/rally",
       "label": "Three processes",
-      "status": "planned"
+      "status": "shipped"
     },
     {
       "area": "Rally",

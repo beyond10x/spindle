@@ -216,11 +216,12 @@ pub const CAPABILITIES: &[Capability] = &[
         "/docs/concepts/observe",
         "ui/src/screens/TopologyScreen.test.ts::the_topology_shows_one_card_per_component_and_one_edge_per_binding",
     ),
-    planned(
+    shipped(
         "Rally",
         "Three processes",
-        "Three b10x-spindle run processes, one per component, joined by TCP channels.",
+        "Three b10x-spindle play --component processes, one per component, started by the process launcher from its SPINDLE_* variables and joined by TCP channels, play a match to a winner; each sends its telemetry when given an endpoint.",
         "/docs/examples/rally",
+        "crates/spindle-cli/tests/processes.rs::a_match_between_three_processes_ends_with_a_winner",
     ),
     planned(
         "Rally",
