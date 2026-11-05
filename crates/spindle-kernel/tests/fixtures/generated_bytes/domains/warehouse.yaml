@@ -1,0 +1,75 @@
+domain: depot.warehouse
+summary: Labels printed under the caller's id, whose barcode and tags the runtime mints.
+types:
+  - name: depot.warehouse.LabelId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: depot.warehouse.Label
+    identity:
+      name: label_id
+      type: depot.warehouse.LabelId
+    fields:
+      - name: barcode
+        type: Bytes
+      - name: tags
+        type: List<String>
+    lifecycle:
+      initial: Printed
+      states: [Printed]
+      terminal: [Printed]
+commands:
+  - name: depot.warehouse.PrintLabel
+    input:
+      - name: label_id
+        type: depot.warehouse.LabelId
+    outcomes:
+      - name: printed
+        creates: depot.warehouse.Label
+        instance: label_id
+        sets:
+          barcode: {payload: depot.warehouse.LabelPrinted.barcode}
+          tags: {generated: true}
+        emits: [depot.warehouse.LabelPrinted]
+        payload:
+          depot.warehouse.LabelPrinted:
+            label_id: input.label_id
+            barcode: {generated: true}
+        summary: The label is printed; the runtime mints its barcode, which the row stores from the event, and its tags.
+  - name: depot.warehouse.ReprintLabel
+    input:
+      - name: label_id
+        type: depot.warehouse.LabelId
+    outcomes:
+      - name: reprinted
+        updates: depot.warehouse.Label
+        instance: label_id
+        sets:
+          barcode: {generated: true}
+        emits: [depot.warehouse.LabelReprinted]
+        payload:
+          depot.warehouse.LabelReprinted:
+            label_id: input.label_id
+        summary: The label is reprinted with a barcode the runtime mints again.
+events:
+  - name: depot.warehouse.LabelPrinted
+    fields:
+      - name: label_id
+        type: depot.warehouse.LabelId
+      - name: barcode
+        type: Bytes
+  - name: depot.warehouse.LabelReprinted
+    fields:
+      - name: label_id
+        type: depot.warehouse.LabelId
+views:
+  - name: depot.warehouse.LabelCard
+    source: depot.warehouse.Label
+    consistency: read_your_writes
+    fields:
+      - name: label_id
+        type: depot.warehouse.LabelId
+      - name: barcode
+        type: Bytes
+      - name: tags
+        type: List<String>
