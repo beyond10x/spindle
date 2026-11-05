@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:generated-boolean-values
 kind: story
-status: active
+status: implemented
 title: Generated Boolean values
 relations:
 - serves: vision:spindle
@@ -12,10 +12,11 @@ scope:
   path: crates/spindle-capability/src/mint.rs
 - confidence: cited
   path: crates/spindle-kernel/tests/generated.rs
-revision: 4
+revision: 5
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-05T09:39:07Z", actor: "human:timo", revision: 3}
 - {from: "proposed", to: "active", at: "2026-11-05T09:39:07Z", actor: "human:timo", revision: 4}
+- {from: "active", to: "implemented", at: "2026-11-05T15:47:49Z", actor: "human:timo", revision: 5, decided_on: {"recorded":{"test_result":2}}}
 ---
 # Generated Boolean values
 

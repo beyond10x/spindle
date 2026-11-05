@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:serve-what-runs
 kind: story
-status: active
+status: implemented
 title: A run serves what it can run and answers the rest with 501
 relations:
 - depends_on: story:run-over-http-ingress
@@ -16,10 +16,11 @@ scope:
   path: crates/spindle-ingress/src/surface.rs
 - confidence: cited
   path: crates/spindle-kernel/src/supported.rs
-revision: 7
+revision: 8
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-05T09:55:48Z", actor: "agent:sys-mon", revision: 6}
 - {from: "proposed", to: "active", at: "2026-11-05T09:55:48Z", actor: "agent:sys-mon", revision: 7}
+- {from: "active", to: "implemented", at: "2026-11-05T15:47:50Z", actor: "human:timo", revision: 8, decided_on: {"recorded":{"test_result":2}}}
 ---
 # A run serves what it can run and answers the rest with 501
 
