@@ -1,0 +1,21 @@
+format: ess/34
+system: notes
+version: v1
+summary: Notes reached over the network through commands this runtime serves none of.
+domains:
+  - notes.pad
+components:
+  - component: pad
+    summary: Copies and discards notes for callers outside the process.
+    owns:
+      domains:
+        - notes.pad
+    accepts:
+      commands:
+        - notes.pad.CopyNote
+        - notes.pad.DiscardNote
+    publishes:
+      events:
+        - notes.pad.NoteCopied
+        - notes.pad.NoteDiscarded
+    reached_by: network

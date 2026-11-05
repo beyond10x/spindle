@@ -482,3 +482,26 @@ fn a_component_publishes_only_its_own_events() {
     );
     assert_eq!(sink.staged(), 0);
 }
+
+#[test]
+fn dropping_retries_carries_a_retry_binding_as_drop() {
+    let retried = router(&manifest().join("../spindle-cli/tests/fixtures/retried"));
+    let route = retried.route("index-note").expect("the binding is routed");
+    assert_eq!(route.on_failure, Failure::Retry);
+    let dropped = retried.dropping_retries();
+    let route = dropped.route("index-note").expect("the binding is routed");
+    assert_eq!(route.on_failure, Failure::Drop);
+    let kept = router(&relay()).dropping_retries();
+    assert_eq!(
+        kept.routes()
+            .iter()
+            .map(|route| route.on_failure)
+            .collect::<Vec<_>>(),
+        router(&relay())
+            .routes()
+            .iter()
+            .map(|route| route.on_failure)
+            .collect::<Vec<_>>(),
+        "a binding that does not retry keeps its policy"
+    );
+}

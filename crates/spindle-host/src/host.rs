@@ -213,6 +213,27 @@ pub enum HostError {
     },
 }
 
+/// What a host does with an event binding whose `on_failure` is `retry`: this host retries no
+/// invocation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Retries {
+    /// Refuse to start, as for any binding the host does not carry.
+    #[default]
+    Refused,
+    /// Run the binding as a `drop` binding runs: a failed invocation is reported once and never
+    /// run again, and an envelope whose send fails is dropped.
+    Dropped,
+}
+
+/// The event bindings of `ir` whose `on_failure` is `retry`, by name.
+pub fn retried(ir: &EssIr) -> Vec<String> {
+    ir.bindings()
+        .values()
+        .filter(|binding| binding.cause.event().is_some() && binding.failure == Failure::Retry)
+        .map(|binding| binding.name.as_str().to_owned())
+        .collect()
+}
+
 struct Component {
     store: Box<dyn Store>,
     /// The SQLite file the store keeps its state in; `None` for a store in memory.
@@ -271,16 +292,39 @@ impl Host {
     /// # Errors
     /// [`HostError::Refused`] when a component is not admitted, naming everything every component
     /// lacks; [`HostError::Unsupported`] when admission bound something this host does not run,
-    /// or the specification uses a binding it does not carry.
+    /// or the specification uses a binding it does not carry, such as an event binding whose
+    /// `on_failure` is not `drop`.
     pub fn new(
         ir: EssIr,
         environment: &Environment,
         clock: Arc<dyn Clock>,
         state: &Path,
     ) -> Result<Self, HostError> {
+        Self::with_retries(ir, environment, clock, state, Retries::Refused)
+    }
+
+    /// [`Host::new`], with `retries` saying what becomes of an event binding whose `on_failure`
+    /// is `retry` ([`retried`]): refused, as [`Host::new`] refuses it, or run as a `drop` binding
+    /// runs, each failed invocation reported once and never run again. `on_failure: escalate`
+    /// is refused either way.
+    ///
+    /// # Errors
+    /// As [`Host::new`].
+    pub fn with_retries(
+        ir: EssIr,
+        environment: &Environment,
+        clock: Arc<dyn Clock>,
+        state: &Path,
+        retries: Retries,
+    ) -> Result<Self, HostError> {
         let placements = admit(&ir, environment).map_err(HostError::Refused)?;
         for binding in ir.bindings().values() {
-            if binding.cause.event().is_some() && binding.failure != Failure::Drop {
+            let carried = match binding.failure {
+                Failure::Drop => true,
+                Failure::Retry => retries == Retries::Dropped,
+                Failure::Escalate => false,
+            };
+            if binding.cause.event().is_some() && !carried {
                 return Err(HostError::Unsupported(format!(
                     "binding {} says on_failure: {:?}; this host drops an invocation that fails and \
                      neither retries nor escalates it",
@@ -289,7 +333,10 @@ impl Host {
                 )));
             }
         }
-        let router = Router::from_ir(&ir)?;
+        let router = match retries {
+            Retries::Refused => Router::from_ir(&ir)?,
+            Retries::Dropped => Router::from_ir(&ir)?.dropping_retries(),
+        };
         let mut components = BTreeMap::new();
         for (name, bindings) in &placements {
             for binding in bindings {

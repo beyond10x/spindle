@@ -14,8 +14,13 @@ use ess_compiler::ir::{
 
 use crate::ExecuteError;
 
-/// Refuses `command` when any outcome declares a construct the kernel does not run.
-pub(crate) fn check(ir: &EssIr, command: &ResolvedCommand) -> Result<(), ExecuteError> {
+/// Refuses `command` when any outcome declares a construct the kernel does not run: the check
+/// [`execute`](crate::execute) makes before it reads anything, and the one a host asks before it
+/// serves the command.
+///
+/// # Errors
+/// [`ExecuteError::Unsupported`], naming the construct and the outcome that declares it.
+pub fn check(ir: &EssIr, command: &ResolvedCommand) -> Result<(), ExecuteError> {
     for outcome in &command.outcomes {
         let refuse = |what: &str| {
             Err(ExecuteError::Unsupported {

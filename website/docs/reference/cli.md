@@ -94,6 +94,10 @@ With `--scenario`, replays an `ess-scenario` document instead of reading stdin: 
 
 Where a component requires `ingress.network` (`reached_by: network`), runs every component in one process and serves those over HTTP on 127.0.0.1 instead of reading stdin; only `http-loopback` is served, and any other binding exits 1 before listening. Prints `{"listening": "<address>", "components": [...]}` once listening and serves until SIGINT or SIGTERM (exit 130 or 143). Routes are where `ess generate --kind openapi` publishes them: ESS's derived routes, or with `--http` the `ess-http/1` binding's, read and checked by ESS (methods, paths, path variables and per-outcome statuses), an operation it does not name keeping its derived route. A command's body is its input; it answers its outcome's status with the envelope ESS publishes, `{"outcome", "published", "error"?, "payload"?}`. A view answers `{"rows": [...]}`. Beside those it serves a model console's routes: `GET /api/model` (`{"ir", "subjects"}`, the IR as `ess specify compile --format json` prints it and each outcome's subject), `GET /api/events` (`{"events": [...]}`, every event published so far, in order) and `POST /api/reset` (empties every store, `{"emptied": [...]}`); a route the binding or ESS publishes at one of those paths exits 1 before listening.
 
+An operation this ingress cannot route, or a command the kernel does not run, keeps its route and answers `501` with ESS's envelope, `{"refused", "committed": false}`, naming the operation and the construct; nothing is read or written for it. Before listening, `run` prints one line on stderr per such operation, component by component, commands then views, each by qualified name. A run that would serve no operation, one of them one this ingress cannot route, exits 1 before listening; one whose operations only the kernel does not run is served as before, each answering `501`.
+
+An event binding with `on_failure: retry` exits 1 before listening unless `--drop-retries` is given; `on_failure: escalate` always does.
+
 ```console
 b10x-spindle run [OPTIONS] --environment <ENVIRONMENT> <SPEC>
 ```
@@ -102,7 +106,8 @@ b10x-spindle run [OPTIONS] --environment <ENVIRONMENT> <SPEC>
 |---|---|---|---|
 | `<SPEC>` | yes |  | The specification directory |
 | `--environment <ENVIRONMENT>` | yes |  | The `spindle-environment/1` document |
-| `--state <STATE>` | no |  | The state file: required where `store.durable` is bound to `sqlite`, refused otherwise. Where `run` serves HTTP, the directory of one state file per component |
+| `--state <STATE>` | no |  | The state file where `store.durable` is bound to `sqlite`, refused otherwise; where `run` serves HTTP, the directory of one state file per component. Without it, state bound to `sqlite` is kept in a temporary directory, printed on stderr and removed when the run ends |
+| `--drop-retries` | no |  | Run each event binding whose `on_failure` is `retry` as a `drop` binding: a failed invocation is dropped, not retried. Prints one line per such binding on stderr before listening. Only where `run` serves HTTP |
 | `--http <HTTP>` | no |  | An `ess-http/1` binding of the specification's commands and views to methods and paths, JSON or YAML; only where `run` serves HTTP |
 | `--port <PORT>` | no |  | The port to serve HTTP on, on 127.0.0.1; `0`, the default, lets the system choose. Only where `run` serves HTTP |
 | `--decisions <DECISIONS>` | no |  | A TOML file of answers, `<outcome> = true \| false`, at the top level for every command or under a `["<command>"]` table for one; a command's table wins over the top level |

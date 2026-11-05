@@ -10,8 +10,8 @@ use std::sync::atomic::Ordering;
 use anyhow::{Context, Result, bail};
 use ess_gen::http::Binding;
 use spindle_capability::{Capability, Environment};
-use spindle_host::{Host, HostError, SystemClock};
-use spindle_ingress::{Listener, Surface};
+use spindle_host::{Cause, Host, HostError, Retries, SystemClock};
+use spindle_ingress::{Listener, Surface, Unserved};
 use spindle_spec::EssIr;
 
 use crate::{REFUSED, SIGNAL_POLL, SIGNALLED, signals};
@@ -79,6 +79,8 @@ pub(crate) struct Serving<'a> {
     pub port: u16,
     /// What `ingress.network` is bound to; `http-loopback` adds the console routes.
     pub ingress: &'a str,
+    /// `--drop-retries`: run each `on_failure: retry` binding as a `drop` binding.
+    pub drop_retries: bool,
 }
 
 /// Runs every component of `ir` in one host and serves `serving.components` on
@@ -87,8 +89,14 @@ pub(crate) struct Serving<'a> {
 /// Prints one JSON line once listening, `{"listening": "<address>", "components": [...]}`, then
 /// answers each request in arrival order. Beside the routes ESS publishes it serves the console
 /// routes ([`spindle_ingress::Console`]) where `ingress.network` is bound to `http-loopback`. State
-/// bound to `sqlite` is kept in the directory `state`, one file per component; state bound to
+/// bound to `sqlite` is kept in the directory `state`, one file per component, or without one in
+/// a temporary directory, printed on stderr and removed when the run ends; state bound to
 /// `memory` takes none.
+///
+/// Before listening it prints on stderr one line per operation it does not serve
+/// ([`Surface::unserved`]) and, with `drop_retries`, one per binding whose retries it drops. A
+/// run that would serve no operation, one of them one the ingress cannot route, is refused. Each
+/// command a binding invoked that did not execute is printed on stderr as it is dropped.
 pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     let signalled = signals()?;
     let environment = serving.environment;
@@ -99,10 +107,14 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
                 .with_context(|| format!("creating the state directory {}", directory.display()))?;
             directory
         }
-        (Some("sqlite"), None) => bail!(
-            "store.durable is bound to sqlite on {}: name the state directory with --state",
-            environment.name
-        ),
+        (Some("sqlite"), None) => {
+            scratch = tempfile::tempdir().context("creating a temporary state directory")?;
+            eprintln!(
+                "b10x-spindle: state is kept in {}, removed when the run ends",
+                scratch.path().display()
+            );
+            scratch.path()
+        }
         (None | Some("memory"), Some(path)) => bail!(
             "nothing on {} keeps state in a file, so --state {} would be ignored",
             environment.name,
@@ -116,14 +128,63 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     };
     let surface = Surface::new(&ir, &serving.components, serving.binding.as_ref())?
         .with_console(serving.ingress)?;
-    let mut host = match Host::new(ir, environment, Arc::new(SystemClock), directory) {
-        Ok(host) => host,
-        Err(HostError::Refused(refusal)) => {
-            println!("{refusal}");
-            return Ok(ExitCode::from(REFUSED));
-        }
-        Err(error) => return Err(error.into()),
+    let unserved = surface.unserved();
+    for route in &unserved {
+        eprintln!(
+            "b10x-spindle: not served: {} at {} {}: {}",
+            route.operation,
+            route.method.as_str().to_uppercase(),
+            route.path,
+            route
+                .unserved()
+                .map(ToString::to_string)
+                .unwrap_or_default()
+        );
+    }
+    if !unserved.is_empty()
+        && unserved.len() == surface.routes().len()
+        && unserved
+            .iter()
+            .any(|route| matches!(route.unserved(), Some(Unserved::Ingress(_))))
+    {
+        bail!(
+            "{} serves no operation: each one above is one this ingress cannot route or the \
+             kernel does not run",
+            serving.components.join(", ")
+        );
+    }
+    let retried = spindle_host::retried(&ir);
+    let retries = if serving.drop_retries {
+        Retries::Dropped
+    } else {
+        Retries::Refused
     };
+    let mut host =
+        match Host::with_retries(ir, environment, Arc::new(SystemClock), directory, retries) {
+            Ok(host) => host,
+            Err(HostError::Refused(refusal)) => {
+                println!("{refusal}");
+                return Ok(ExitCode::from(REFUSED));
+            }
+            Err(error @ HostError::Unsupported(_))
+                if !serving.drop_retries && !retried.is_empty() =>
+            {
+                return Err(anyhow::Error::from(error).context(format!(
+                    "on_failure: retry on {}: this host retries no invocation; --drop-retries runs \
+                 each such binding as a drop binding, dropping a failed invocation",
+                    retried.join(", ")
+                )));
+            }
+            Err(error) => return Err(error.into()),
+        };
+    if serving.drop_retries {
+        for binding in &retried {
+            eprintln!(
+                "b10x-spindle: binding {binding} says on_failure: retry; --drop-retries: a failed \
+                 invocation is dropped, not retried"
+            );
+        }
+    }
     let listener = Listener::bind(serving.port, surface).context("binding the HTTP listener")?;
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
@@ -143,7 +204,16 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             return Ok(ExitCode::from(SIGNALLED.saturating_add(signal)));
         }
         if let Some(exchange) = listener.next(SIGNAL_POLL) {
-            exchange.serve(&mut host);
+            for failed in exchange.serve(&mut host) {
+                let binding = match &failed.cause {
+                    Cause::Delivered { binding } | Cause::Tick { binding } => binding.as_str(),
+                    Cause::Submitted => "the request",
+                };
+                eprintln!(
+                    "b10x-spindle: {} did not run {} ({binding}), dropped: {}",
+                    failed.component, failed.command, failed.error
+                );
+            }
         }
     }
 }

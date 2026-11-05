@@ -122,6 +122,18 @@ impl Router {
         Ok(Self { routes, publishes })
     }
 
+    /// These routes with every `on_failure: retry` carried as `on_failure: drop`: an envelope
+    /// whose send fails is dropped, never sent again.
+    #[must_use]
+    pub fn dropping_retries(mut self) -> Self {
+        for route in &mut self.routes {
+            if route.on_failure == Failure::Retry {
+                route.on_failure = Failure::Drop;
+            }
+        }
+        self
+    }
+
     /// The route of the binding named `binding`.
     pub fn route(&self, binding: &str) -> Option<&Route> {
         self.routes.iter().find(|route| route.binding == binding)

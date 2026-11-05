@@ -101,16 +101,34 @@ pub enum Command {
     /// and each outcome's subject), `GET /api/events` (`{"events": [...]}`, every event published
     /// so far, in order) and `POST /api/reset` (empties every store, `{"emptied": [...]}`); a
     /// route the binding or ESS publishes at one of those paths exits 1 before listening.
+    ///
+    /// An operation this ingress cannot route, or a command the kernel does not run, keeps its
+    /// route and answers `501` with ESS's envelope, `{"refused", "committed": false}`, naming the
+    /// operation and the construct; nothing is read or written for it. Before listening, `run`
+    /// prints one line on stderr per such operation, component by component, commands then views,
+    /// each by qualified name. A run that would serve no operation, one of them one this ingress
+    /// cannot route, exits 1 before listening; one whose operations only the kernel does not run
+    /// is served as before, each answering `501`.
+    ///
+    /// An event binding with `on_failure: retry` exits 1 before listening unless
+    /// `--drop-retries` is given; `on_failure: escalate` always does.
     Run {
         /// The specification directory.
         spec: PathBuf,
         /// The `spindle-environment/1` document.
         #[arg(long)]
         environment: PathBuf,
-        /// The state file: required where `store.durable` is bound to `sqlite`, refused otherwise.
-        /// Where `run` serves HTTP, the directory of one state file per component.
+        /// The state file where `store.durable` is bound to `sqlite`, refused otherwise; where
+        /// `run` serves HTTP, the directory of one state file per component. Without it, state
+        /// bound to `sqlite` is kept in a temporary directory, printed on stderr and removed when
+        /// the run ends.
         #[arg(long)]
         state: Option<PathBuf>,
+        /// Run each event binding whose `on_failure` is `retry` as a `drop` binding: a failed
+        /// invocation is dropped, not retried. Prints one line per such binding on stderr before
+        /// listening. Only where `run` serves HTTP.
+        #[arg(long, conflicts_with = "scenario")]
+        drop_retries: bool,
         /// An `ess-http/1` binding of the specification's commands and views to methods and paths,
         /// JSON or YAML; only where `run` serves HTTP.
         #[arg(long, conflicts_with = "scenario")]

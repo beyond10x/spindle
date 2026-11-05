@@ -243,6 +243,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "crates/spindle-cli/tests/console.rs::reset_empties_every_store_of_the_run",
     ),
     shipped(
+        "Execution",
+        "Serve what runs",
+        "An HTTP run serves every command and view that runs and answers each other one 501 with ESS's envelope, naming the construct; the list is printed at startup. on_failure: retry bindings start only with --drop-retries, and sqlite state without --state is kept in a temporary directory removed when the run ends.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-cli/tests/unserved.rs::an_unrunnable_command_answers_501_and_the_rest_serve",
+    ),
+    shipped(
         "Conformance",
         "Scenario replay",
         "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: captures feed later steps, view asserts are checked, and the first divergent step is named and ends the run.",
