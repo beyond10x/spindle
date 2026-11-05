@@ -1,0 +1,25 @@
+format: ess/34
+system: minttext
+version: v1
+summary: Badges whose text identity the runtime mints, and seals and stamps whose text identity it cannot.
+domains:
+  - minttext.badge
+components:
+  - component: desk
+    summary: Issues badges, seals and stamps.
+    owns:
+      domains:
+        - minttext.badge
+    accepts:
+      commands:
+        - minttext.badge.IssueBadge
+        - minttext.badge.RevokeBadge
+        - minttext.badge.OpenSeal
+        - minttext.badge.OpenStamp
+    publishes:
+      events:
+        - minttext.badge.BadgeIssued
+        - minttext.badge.BadgeRevoked
+        - minttext.badge.SealOpened
+        - minttext.badge.StampOpened
+    reached_by: in_process

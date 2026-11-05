@@ -1,0 +1,134 @@
+domain: minttext.badge
+summary: Instances opened without an id, whose identity is a newtype of text.
+types:
+  - name: minttext.badge.BadgeId
+    kind: newtype
+    of: String
+    prefix: "bdg_"
+    alphabet: "_0123456789abcdefg-"
+  - name: minttext.badge.SealId
+    kind: newtype
+    of: String
+    invariants:
+      - 'value.count <= 8'
+  - name: minttext.badge.StampId
+    kind: newtype
+    of: String
+    alphabet: "0123456789"
+entities:
+  - name: minttext.badge.Badge
+    identity:
+      name: badge_id
+      type: minttext.badge.BadgeId
+    fields:
+      - name: holder
+        type: String
+    lifecycle:
+      initial: Active
+      states: [Active, Revoked]
+      terminal: [Revoked]
+      transitions:
+        - name: revoke
+          from: [Active]
+          to: Revoked
+  - name: minttext.badge.Seal
+    identity:
+      name: seal_id
+      type: minttext.badge.SealId
+    fields:
+      - name: note
+        type: String
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+  - name: minttext.badge.Stamp
+    identity:
+      name: stamp_id
+      type: minttext.badge.StampId
+    fields:
+      - name: note
+        type: String
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+commands:
+  - name: minttext.badge.IssueBadge
+    input:
+      - name: holder
+        type: String
+    outcomes:
+      - name: issued
+        creates: minttext.badge.Badge
+        instance: badge_id
+        sets:
+          holder: input.holder
+        emits: [minttext.badge.BadgeIssued]
+        payload:
+          minttext.badge.BadgeIssued:
+            badge_id: {generated: true}
+            holder: input.holder
+        summary: The badge is issued under an identity the runtime mints.
+  - name: minttext.badge.RevokeBadge
+    input:
+      - name: badge_id
+        type: minttext.badge.BadgeId
+    outcomes:
+      - name: revoked
+        moves: minttext.badge.Badge.revoke
+        instance: badge_id
+        emits: [minttext.badge.BadgeRevoked]
+        payload:
+          minttext.badge.BadgeRevoked:
+            badge_id: input.badge_id
+        summary: The badge is revoked.
+  - name: minttext.badge.OpenSeal
+    input:
+      - name: note
+        type: String
+    outcomes:
+      - name: opened
+        creates: minttext.badge.Seal
+        instance: seal_id
+        sets:
+          note: input.note
+        emits: [minttext.badge.SealOpened]
+        payload:
+          minttext.badge.SealOpened:
+            seal_id: {generated: true}
+        summary: The seal opens under an identity no minted text fits.
+  - name: minttext.badge.OpenStamp
+    input:
+      - name: note
+        type: String
+    outcomes:
+      - name: opened
+        creates: minttext.badge.Stamp
+        instance: stamp_id
+        sets:
+          note: input.note
+        emits: [minttext.badge.StampOpened]
+        payload:
+          minttext.badge.StampOpened:
+            stamp_id: {generated: true}
+        summary: The stamp opens under an identity whose alphabet no minted text fits.
+events:
+  - name: minttext.badge.BadgeIssued
+    fields:
+      - name: badge_id
+        type: minttext.badge.BadgeId
+      - name: holder
+        type: String
+  - name: minttext.badge.BadgeRevoked
+    fields:
+      - name: badge_id
+        type: minttext.badge.BadgeId
+  - name: minttext.badge.SealOpened
+    fields:
+      - name: seal_id
+        type: minttext.badge.SealId
+  - name: minttext.badge.StampOpened
+    fields:
+      - name: stamp_id
+        type: minttext.badge.StampId

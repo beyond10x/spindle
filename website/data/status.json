@@ -102,7 +102,7 @@
     },
     {
       "area": "Execution",
-      "detail": "A creation whose identity no input or payload supplies needs identity.mint; a Uuid identity is minted as a UUIDv4 and emitted.",
+      "detail": "A creation whose identity no input or payload supplies needs identity.mint; a Uuid identity is minted as a UUIDv4, a String newtype identity as its prefix and a UUIDv4's text, and emitted.",
       "href": "/docs/concepts/capabilities",
       "label": "Minted creation identities",
       "status": "shipped"

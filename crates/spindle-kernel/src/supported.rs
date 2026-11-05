@@ -29,14 +29,23 @@ pub(crate) fn check(ir: &EssIr, command: &ResolvedCommand) -> Result<(), Execute
             return refuse(what);
         }
         let minted = crate::mint::slot(ir, outcome);
-        if let Some((entity, field)) = minted
-            && !crate::mint::is_uuid(ir, &entity.identity.type_ref)
-        {
-            return refuse(&format!(
-                "a creation whose identity `{}.{}` of type `{}` neither the input nor the outcome \
-                 determines; the runtime mints only a `Uuid` identity",
-                entity.name, field.name, entity.identity.type_ref
-            ));
+        if let Some((entity, field)) = minted {
+            let Some(shape) = crate::mint::identity(ir, &entity.identity.type_ref) else {
+                return refuse(&format!(
+                    "a creation whose identity `{}.{}` of type `{}` neither the input nor the \
+                     outcome determines; the runtime mints a `Uuid` identity or a newtype of one \
+                     without invariants, or a `String` newtype whose prefix and alphabet admit a \
+                     UUID's text and whose invariants bound only a length that text meets",
+                    entity.name, field.name, entity.identity.type_ref
+                ));
+            };
+            if let Some(bound) = crate::mint::identity_bound(entity, &shape) {
+                return refuse(&format!(
+                    "a creation whose identity `{}.{}` of type `{}` the runtime mints, but the \
+                     entity's invariant `{}` holds for no minted identity",
+                    entity.name, field.name, entity.identity.type_ref, bound.statement
+                ));
+            }
         }
         // `{generated: true}` in the top-level field `instance:` names, on the event it names, is
         // the identity mint; anywhere else it is a generated value of its own.
