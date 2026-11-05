@@ -410,7 +410,7 @@ our own design (rules, names, look); it borrows only the genre.
 
 | component | owns | does |
 |---|---|---|
-| `rally-table` | the match: ball position and direction on a grid, both paddles, score, serve, winner | on each `Tick` (periodic binding) moves the ball one cell diagonally or turns it; bounces off walls and paddles; a ball past a paddle is a point; first to a target score wins |
+| `rally-table` | the match: ball position and direction on a grid, both paddles, score, serve, winner | on each `Tick` (periodic binding) moves the ball one cell diagonally, serves it or turns it; bounces off walls and paddles; a ball past a paddle is a point; first to a target score wins |
 | `rally-player-west` | one player: a copy of its paddle row and of the ball | on `BallMoved` decides by rule whether to move its paddle up, down or hold, and asks the table to move it |
 | `rally-player-east` | the same rules for the other side | the same |
 
@@ -422,15 +422,20 @@ for observers, as `PointScored` and `MatchWon` are: no binding consumes them.
 The rules, each declared in `examples/rally/ess/` and checked by
 `crates/spindle-kernel/tests/rally.rs`:
 
-- **A tick moves the ball or turns it.** `Tick` answers with the first declared branch whose guard
-  holds. A plain move shifts the ball one cell across and one cell up or down; a serve, a paddle
-  return and a wall bounce change only the heading and leave the ball where it is, so the next
-  tick moves it.
+- **A tick moves the ball, serves it, turns it, scores or ends the match.** `Tick` answers with
+  the first declared branch whose guard holds. A plain move shifts the ball one cell across and
+  one cell up or down. A serve changes only the state, from `Serving` to `InPlay`; a paddle return
+  or a wall bounce changes only the heading; both leave the ball where it is, so the next tick
+  moves it. A point puts the ball back in the middle and the match back to `Serving`, and a
+  winning tick ends the match in `Won`.
 - **The grid is an invariant.** The ball stays in columns 1 to 14 and rows 0 to 8, each paddle in
   rows 0 to 8; `rally.table.Match`, `rally.west.Player` and `rally.east.Player` declare these
   bounds as invariants, which the terminal frame relies on (`crates/spindle-host/src/rally.rs`).
-  The kernel refuses a step that would break one, and the synthesized suite checks them after
-  every state-changing branch it reaches.
+  The kernel refuses a step that would break one, and the kernel tests
+  (`crates/spindle-kernel/tests/rally.rs`) put a row one cell past each bound. ESS's synthesized
+  suite checks the invariants only after the branches it reaches (3 of the 13 state-changing
+  `Tick` branches), and no synthesized scenario offers a value outside the grid and expects it
+  refused.
 - **A winner means a won match.** An invariant ties a non-empty `winner` to state `Won` and `Won` to
   a winner, whose side needs no more points; a caller that ends play on a winner reads a match that
   is over.

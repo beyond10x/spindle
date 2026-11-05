@@ -3,8 +3,9 @@ domain: rally.table
 summary: >-
   One match on a grid 16 columns wide (x 0 to 15) and 9 rows high (y 0 at the top to 8). The west
   paddle stands in column 0 and the east paddle in column 15, each one cell tall; the ball travels
-  in columns 1 to 14, one cell across and one cell up or down on a tick that moves it. A serve, a
-  paddle return and a wall bounce change only the heading; the next tick moves the ball. The
+  in columns 1 to 14, one cell across and one cell up or down on a tick that moves it. A serve
+  changes only the state, and a paddle return or a wall bounce only the heading; the next tick
+  moves the ball. A point puts the ball back in the middle, and a winning tick ends the match. The
   invariants below hold the ball and both paddles on the grid and tie a winner to a won match.
 
 types:

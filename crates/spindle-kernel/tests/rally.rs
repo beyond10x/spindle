@@ -1,11 +1,13 @@
 //! The `rally` example: one match on the table, ticked until a point is scored.
 
+mod rally_cases;
+
 use std::path::Path;
 
+use ess_domain::binding::{Delivery, Failure};
+use rally_cases::{Rule, check, match_row, seed, stored, table_cases};
 use serde_json::{Map, Value, json};
-use spindle_kernel::{
-    Change, ExecuteError, Executed, MemoryStore, NoExternals, Row, Store, execute,
-};
+use spindle_kernel::{ExecuteError, Executed, MemoryStore, NoExternals, Row, Store, execute};
 use spindle_spec::EssIr;
 
 fn rally() -> EssIr {
@@ -332,64 +334,6 @@ fn states(section: &str, phrase: &str) {
     );
 }
 
-/// A match row with the ball at (`x`, `y`) heading (`heading_x`, `heading_y`), both paddles at
-/// row 4 unless `overrides` says otherwise.
-fn match_row(
-    state: &str,
-    x: i64,
-    y: i64,
-    heading_x: &str,
-    heading_y: &str,
-    overrides: Value,
-) -> Row {
-    let mut fields = json!({
-        "ball_x": x,
-        "ball_y": y,
-        "heading_x": heading_x,
-        "heading_y": heading_y,
-        "west_paddle_y": 4,
-        "east_paddle_y": 4,
-        "west_score": 0,
-        "east_score": 0,
-        "target_score": 3,
-        "west_needs": 3,
-        "east_needs": 3,
-    });
-    for (field, value) in overrides.as_object().expect("an object") {
-        fields[field] = value.clone();
-    }
-    Row {
-        state: state.to_owned(),
-        fields: fields
-            .as_object()
-            .expect("an object")
-            .iter()
-            .map(|(field, value)| (field.clone(), value.clone()))
-            .collect(),
-    }
-}
-
-/// Puts `row` in the store as match `m1`, bypassing every command: the arrangement a test needs
-/// that no sequence of commands reaches.
-fn seed(store: &mut dyn Store, row: Row) {
-    store
-        .commit(&Change {
-            entity: "rally.table.Match".to_owned(),
-            identity: json!("m1"),
-            expected: None,
-            row,
-            events: Vec::new(),
-        })
-        .expect("the seed commits");
-}
-
-fn stored(store: &mut dyn Store, entity: &str) -> Option<Row> {
-    store
-        .load(entity, &json!("m1"))
-        .expect("the store reads")
-        .map(|stored| stored.row)
-}
-
 fn ball(row: &Row) -> (i64, i64, String, String) {
     (
         row.fields["ball_x"].as_i64().expect("an integer"),
@@ -417,10 +361,16 @@ fn broken(ir: &EssIr, store: &mut dyn Store, command: &str, request: Value) -> S
 #[test]
 fn each_tick_moves_the_ball_or_the_design_says_when_it_does_not() {
     let section = showcase();
+    states(&section, "A serve changes only the state");
     states(
         &section,
-        "a serve, a paddle return and a wall bounce change only the heading",
+        "a paddle return or a wall bounce changes only the heading",
     );
+    states(
+        &section,
+        "A point puts the ball back in the middle and the match back to `Serving`",
+    );
+    states(&section, "a winning tick ends the match in `Won`");
 
     let ir = rally();
     let turns = |store: &mut MemoryStore, outcome: &str, row: Option<Row>| {
@@ -453,10 +403,11 @@ fn each_tick_moves_the_ball_or_the_design_says_when_it_does_not() {
     let before = ball(&stored(&mut store, "rally.table.Match").expect("the match"));
     let served = tick(&ir, &mut store);
     assert_eq!(served.outcome, "served");
+    let after = stored(&mut store, "rally.table.Match").expect("the match");
     assert_eq!(
-        ball(&stored(&mut store, "rally.table.Match").expect("the match")),
-        before,
-        "a serve leaves the ball and its heading as the point left them"
+        (ball(&after), after.state.as_str()),
+        (before, "InPlay"),
+        "a serve changes only the state"
     );
 
     for (outcome, row) in [
@@ -560,76 +511,43 @@ fn value_changes_match_the_design() {
     );
 }
 
+/// Runs every shared case of `rule` and asserts each breaks exactly its invariant; at least one
+/// case per rule runs.
+fn assert_cases(ir: &EssIr, rule: Rule) {
+    let cases: Vec<_> = table_cases()
+        .into_iter()
+        .filter(|case| case.rule == rule)
+        .collect();
+    assert!(!cases.is_empty(), "no case of {rule:?}");
+    let failed: Vec<String> = cases
+        .iter()
+        .filter_map(|case| check(ir, case).err())
+        .collect();
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
 #[test]
 fn the_grid_bounds_are_invariants() {
     let ir = rally();
-
-    for (row, command, request, field) in [
-        (
-            match_row("InPlay", 0, 4, "West", "Up", json!({})),
-            "rally.table.Tick",
-            json!({"match_id": "m1"}),
-            "ball_x",
-        ),
-        (
-            match_row("InPlay", 15, 4, "East", "Up", json!({})),
-            "rally.table.Tick",
-            json!({"match_id": "m1"}),
-            "ball_x",
-        ),
-        (
-            match_row("InPlay", 5, 9, "East", "Down", json!({})),
-            "rally.table.Tick",
-            json!({"match_id": "m1"}),
-            "ball_y",
-        ),
-        (
-            match_row("InPlay", 5, 4, "East", "Up", json!({"west_paddle_y": 9})),
-            "rally.table.MovePaddle",
-            json!({"match_id": "m1", "side": "West", "step": "Down"}),
-            "west_paddle_y",
-        ),
-        (
-            match_row("InPlay", 5, 4, "East", "Up", json!({"east_paddle_y": -1})),
-            "rally.table.MovePaddle",
-            json!({"match_id": "m1", "side": "East", "step": "Up"}),
-            "east_paddle_y",
-        ),
-    ] {
-        let mut store = MemoryStore::default();
-        seed(&mut store, row.clone());
-        let invariant = broken(&ir, &mut store, command, request);
-        assert!(
-            invariant.contains(field),
-            "{command} breaks `{invariant}`, not one on {field}"
-        );
-        assert_eq!(
-            stored(&mut store, "rally.table.Match"),
-            Some(row),
-            "nothing changed"
-        );
-    }
+    assert_cases(&ir, Rule::Grid);
 
     for side in ["west", "east"] {
-        for (ball_x, ball_y, paddle_y, field) in [
-            (0, 4, 4, "ball_x"),
-            (15, 4, 4, "ball_x"),
-            (8, -1, 4, "ball_y"),
-            (8, 9, 4, "ball_y"),
-            (8, 4, -1, "paddle_y"),
-            (8, 4, 9, "paddle_y"),
+        for (ball_x, ball_y, paddle_y, invariant) in [
+            (0, 4, 4, "ball_x >= 1"),
+            (15, 4, 4, "ball_x <= 14"),
+            (8, -1, 4, "ball_y >= 0"),
+            (8, 9, 4, "ball_y <= 8"),
+            (8, 4, -1, "paddle_y >= 0"),
+            (8, 4, 9, "paddle_y <= 8"),
         ] {
             let mut store = MemoryStore::default();
-            let invariant = broken(
+            let broke = broken(
                 &ir,
                 &mut store,
                 &format!("rally.{side}.ObserveBall"),
                 json!({"match_id": "m1", "ball_x": ball_x, "ball_y": ball_y, "paddle_y": paddle_y}),
             );
-            assert!(
-                invariant.contains(field),
-                "{side} breaks `{invariant}`, not one on {field}"
-            );
+            assert_eq!(broke, invariant, "{side}");
             assert_eq!(stored(&mut store, &format!("rally.{side}.Player")), None);
         }
     }
@@ -638,26 +556,7 @@ fn the_grid_bounds_are_invariants() {
 #[test]
 fn a_winner_implies_won() {
     let ir = rally();
-
-    let mut store = MemoryStore::default();
-    seed(
-        &mut store,
-        match_row(
-            "InPlay",
-            5,
-            4,
-            "East",
-            "Up",
-            json!({"winner": "West", "west_needs": 0}),
-        ),
-    );
-    let invariant = broken(
-        &ir,
-        &mut store,
-        "rally.table.MovePaddle",
-        json!({"match_id": "m1", "side": "West", "step": "Up"}),
-    );
-    assert!(invariant.contains("winner"), "{invariant}");
+    assert_cases(&ir, Rule::Winner);
 
     let mut store = MemoryStore::default();
     seed(
@@ -748,6 +647,29 @@ fn paddle_moved_is_consumed_or_dropped() {
         json!({"match_id": "m1", "side": "East", "step": "Down"}),
     );
     assert_eq!(emitted(&moved)[0]["event"], "rally.table.PaddleMoved");
+
+    let consumers = |event: &str| -> Vec<String> {
+        ir.bindings()
+            .values()
+            .filter(|binding| {
+                binding
+                    .cause
+                    .event()
+                    .is_some_and(|cause| cause.to_string() == event)
+            })
+            .map(|binding| binding.name.to_string())
+            .collect()
+    };
+    assert_eq!(
+        consumers("rally.table.BallMoved"),
+        ["east-watches", "west-watches"],
+        "the bindings are read by their cause"
+    );
+    assert_eq!(
+        consumers("rally.table.PaddleMoved"),
+        Vec::<String>::new(),
+        "no binding consumes PaddleMoved"
+    );
 }
 
 #[test]
@@ -785,6 +707,25 @@ fn binding_delivery_is_stated() {
     states(&section, "`delivery: at_most_once`");
     states(&section, "`on_failure: drop`");
     states(&section, "`ESS-SYNTH-010`");
+
+    let ir = rally();
+    let declared: Vec<(String, Delivery, Failure)> = ir
+        .bindings()
+        .values()
+        .map(|binding| (binding.name.to_string(), binding.delivery, binding.failure))
+        .collect();
+    assert_eq!(
+        declared.len(),
+        5,
+        "the tick and the four event bindings: {declared:?}"
+    );
+    for (name, delivery, failure) in &declared {
+        assert_eq!(
+            (delivery, failure),
+            (&Delivery::AtMostOnce, &Failure::Drop),
+            "{name}"
+        );
+    }
 }
 
 #[test]
@@ -807,4 +748,6 @@ fn target_too_low_is_stated() {
     );
     assert!(refused.events.is_empty());
     assert_eq!(stored(&mut store, "rally.table.Match"), None);
+
+    assert_cases(&ir, Rule::Score);
 }

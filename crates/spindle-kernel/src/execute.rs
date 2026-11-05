@@ -24,6 +24,45 @@ use crate::{DeclaredError, Event, ExecuteError, Executed};
 /// it.
 const EXTERNAL: &str = "external.";
 
+/// Checks `row`, held as the instance of `entity` with `identity`, against every invariant the
+/// entity declares, as a command's change is checked before it is committed.
+///
+/// For a row that reaches a store without a command: a seed, an import, a test's arrangement.
+/// An invariant the row leaves `Unknown` concludes nothing.
+///
+/// # Errors
+/// [`ExecuteError::BrokenInvariant`] for the first declared invariant the row breaks, and
+/// [`ExecuteError::InvalidInput`] when the model declares no entity `entity`.
+pub fn at_rest(ir: &EssIr, entity: &str, identity: &Value, row: &Row) -> Result<(), ExecuteError> {
+    let resolved = ir
+        .entities()
+        .iter()
+        .find_map(|(name, resolved)| (name.to_string() == entity).then_some(resolved))
+        .ok_or_else(|| {
+            ExecuteError::InvalidInput(format!("the model declares no entity {entity}"))
+        })?;
+    rests(ir, resolved, identity, row)
+}
+
+/// [`at_rest`] for a resolved entity.
+fn rests(
+    ir: &EssIr,
+    entity: &ResolvedEntity,
+    identity: &Value,
+    row: &Row,
+) -> Result<(), ExecuteError> {
+    let facts = Facts::row(ir, entity, identity, row, None);
+    for invariant in &entity.invariants {
+        if invariant.predicate.evaluate(&facts) == Truth::False {
+            return Err(ExecuteError::BrokenInvariant {
+                instance: format!("`{}` {}", entity.name, identity),
+                invariant: invariant.statement.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Executes `command` with `input` against the instances in `store`.
 ///
 /// Reads the instance the command addresses, selects the outcome, and commits that outcome's
@@ -550,16 +589,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
     /// ESS's `at_rest` does. An invariant the row leaves `Unknown`, reading a field no outcome has
     /// written, concludes nothing.
     fn at_rest(&self, entity: &ResolvedEntity, change: &Change) -> Result<(), ExecuteError> {
-        let facts = Facts::row(self.ir, entity, &change.identity, &change.row, None);
-        for invariant in &entity.invariants {
-            if invariant.predicate.evaluate(&facts) == Truth::False {
-                return Err(ExecuteError::BrokenInvariant {
-                    instance: format!("`{}` {}", entity.name, change.identity),
-                    invariant: invariant.statement.clone(),
-                });
-            }
-        }
-        Ok(())
+        rests(self.ir, entity, &change.identity, &change.row)
     }
 
     /// What the fields of `owner` in `outcome` read, with the instance as it was `before`;
