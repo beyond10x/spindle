@@ -191,7 +191,11 @@ fn an_instance_whose_environment_refuses_its_component_is_refused() {
         missing,
         &vec![
             Capability::new("external.spindle.deployment.DecideAdmission.refused"),
-            Capability::new("external.spindle.placement.PlaceInstance.refused"),
+            Capability::new("external.spindle.placement.LaunchInstance.not-admitted"),
+            Capability::new("external.spindle.placement.PlaceInstance.above-ceiling"),
+            Capability::new("external.spindle.placement.PlaceInstance.not-admitted"),
+            Capability::new("external.spindle.placement.PlaceInstance.target-retired"),
+            Capability::new("external.spindle.placement.PlanInstance.not-admitted"),
         ]
     );
 
@@ -232,7 +236,11 @@ fn an_instance_whose_environment_refuses_its_component_is_refused() {
         reasons[1].to_string(),
         "the target's environment does not provide \
          external.spindle.deployment.DecideAdmission.refused, \
-         external.spindle.placement.PlaceInstance.refused"
+         external.spindle.placement.LaunchInstance.not-admitted, \
+         external.spindle.placement.PlaceInstance.above-ceiling, \
+         external.spindle.placement.PlaceInstance.not-admitted, \
+         external.spindle.placement.PlaceInstance.target-retired, \
+         external.spindle.placement.PlanInstance.not-admitted"
     );
 
     let mut launcher = Recording::default();

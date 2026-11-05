@@ -118,14 +118,18 @@ admitted on laptop
   timer = tokio
 ```
 
-Admission can refuse. Spindle's own specification (`ess/`) has two outcomes decided outside the
+Admission can refuse. Spindle's own specification (`ess/`) has six outcomes decided outside the
 model, and the `microvm` environment provides nothing for them:
 
 ```console
 $ b10x-spindle admit ess --environment examples/environments/microvm.toml
 refused on microvm: no implementation for
   external.spindle.deployment.DecideAdmission.refused
-  external.spindle.placement.PlaceInstance.refused
+  external.spindle.placement.LaunchInstance.not-admitted
+  external.spindle.placement.PlaceInstance.above-ceiling
+  external.spindle.placement.PlaceInstance.not-admitted
+  external.spindle.placement.PlaceInstance.target-retired
+  external.spindle.placement.PlanInstance.not-admitted
 $ echo $?
 3
 ```

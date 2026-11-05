@@ -34,6 +34,10 @@ types:
       - name: disk_mib
         type: Integer
 
+  - name: spindle.placement.RefusalCause
+    kind: enum
+    variants: [TargetRetired, NotAdmitted, AboveCeiling]
+
   - name: spindle.placement.Setting
     kind: struct
     fields:
@@ -90,6 +94,8 @@ entities:
         type: spindle.placement.TargetId
       - name: request
         type: spindle.placement.Resources
+      - name: refusal
+        type: Optional<spindle.placement.RefusalCause>
 
     relations:
       - name: deployment
@@ -144,6 +150,14 @@ errors:
     fields:
       - name: state
         type: spindle.placement.Instance.State
+
+  - name: spindle.placement.DeploymentNotAdmitted
+    summary: >-
+      The deployment is neither admitted nor running, so nothing of it is planned or launched, and
+      nothing moved.
+    fields:
+      - name: deployment_id
+        type: spindle.deployment.DeploymentId
 
   - name: spindle.placement.TargetAlreadyRetired
     summary: The target is retired, so it takes no instance and cannot be retired again.
@@ -222,6 +236,16 @@ commands:
       - name: request
         type: spindle.placement.Resources
     outcomes:
+      - name: not-admitted
+        external: the deployment is neither admitted nor running
+        error: spindle.placement.DeploymentNotAdmitted
+        payload:
+          spindle.placement.DeploymentNotAdmitted:
+            deployment_id: input.deployment_id
+        summary: >-
+          Admission gates placement: nothing of a deployment that is offered, refused or stopped is
+          planned.
+
       - name: planned
         creates: spindle.placement.Instance
         instance: instance_id
@@ -258,11 +282,11 @@ commands:
           spindle.placement.InstancePlaced:
             instance_id: input.instance_id
         summary: >-
-          The target is available, its environment admits the component, and the request is within
-          the target's ceiling.
+          The target is available, the deployment is admitted or running for the environment the
+          target provides, and the request is within the target's ceiling.
 
-      - name: refused
-        external: the target is retired, its environment refuses the component, or the request exceeds its ceiling
+      - name: target-retired
+        external: the instance's target is retired
         moves: spindle.placement.Instance.refuse
         instance: instance_id
         emits:
@@ -270,7 +294,44 @@ commands:
         payload:
           spindle.placement.InstanceRefused:
             instance_id: input.instance_id
-        summary: The instance is refused and never launched.
+            cause: TargetRetired
+        sets:
+          refusal: TargetRetired
+        summary: The instance is refused and never launched, because its target takes no instance.
+
+      - name: not-admitted
+        external: >-
+          the deployment is neither admitted nor running, or was admitted for another environment
+          than the instance's target provides
+        moves: spindle.placement.Instance.refuse
+        instance: instance_id
+        emits:
+          - spindle.placement.InstanceRefused
+        payload:
+          spindle.placement.InstanceRefused:
+            instance_id: input.instance_id
+            cause: NotAdmitted
+        sets:
+          refusal: NotAdmitted
+        summary: >-
+          The instance is refused and never launched, because the target's environment does not
+          admit its deployment.
+
+      - name: above-ceiling
+        external: the instance's request exceeds its target's ceiling for at least one resource
+        moves: spindle.placement.Instance.refuse
+        instance: instance_id
+        emits:
+          - spindle.placement.InstanceRefused
+        payload:
+          spindle.placement.InstanceRefused:
+            instance_id: input.instance_id
+            cause: AboveCeiling
+        sets:
+          refusal: AboveCeiling
+        summary: >-
+          The instance is refused and never launched, because it asks for more of a resource than
+          its target allows one instance.
 
       - name: wrong-state
         wrong_state: true
@@ -285,6 +346,18 @@ commands:
       - name: instance_id
         type: spindle.placement.InstanceId
     outcomes:
+      - name: not-admitted
+        external: the instance's deployment is neither admitted nor running
+        when_subject:
+          predicate: state == Placed
+        error: spindle.placement.DeploymentNotAdmitted
+        payload:
+          spindle.placement.DeploymentNotAdmitted:
+            deployment_id: {subject: deployment_id}
+        summary: >-
+          A deployment stopped after its instance was placed launches nothing more; the instance
+          stays placed. Only a placed instance is asked: any other answers `wrong-state` first.
+
       - name: launched
         moves: spindle.placement.Instance.launch
         instance: instance_id
@@ -329,7 +402,9 @@ commands:
       - name: already-ended
         wrong_state: true
         refuses: false
-        summary: A refused or exited instance stays as it is.
+        summary: >-
+          A planned, refused or exited instance stays as it is: no launcher ran a planned
+          instance, so an exit reported for one is accepted and changes nothing.
 
 events:
   - name: spindle.placement.TargetDeclared
@@ -360,6 +435,8 @@ events:
     fields:
       - name: instance_id
         type: spindle.placement.InstanceId
+      - name: cause
+        type: spindle.placement.RefusalCause
 
   - name: spindle.placement.InstanceLaunched
     fields:
@@ -388,3 +465,26 @@ views:
         type: String
       - name: target_id
         type: spindle.placement.TargetId
+      - name: deployment_id
+        type: spindle.deployment.DeploymentId
+      - name: settings
+        type: List<spindle.placement.Setting>
+      - name: request
+        type: spindle.placement.Resources
+      - name: refusal
+        type: Optional<spindle.placement.RefusalCause>
+
+  - name: spindle.placement.TargetState
+    source: spindle.placement.Target
+    consistency: read_your_writes
+    fields:
+      - name: target_id
+        type: spindle.placement.TargetId
+      - name: state
+        type: spindle.placement.Target.State
+      - name: kind
+        type: spindle.placement.TargetKind
+      - name: environment_id
+        type: spindle.deployment.EnvironmentId
+      - name: ceiling
+        type: spindle.placement.Resources

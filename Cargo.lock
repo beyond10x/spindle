@@ -1391,6 +1391,7 @@ name = "spindle-kernel"
 version = "0.1.0"
 dependencies = [
  "ess-compiler",
+ "ess-conformance",
  "ess-domain",
  "ess-primitives",
  "eventlog-core",
