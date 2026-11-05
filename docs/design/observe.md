@@ -112,8 +112,8 @@ later launcher puts it in a cgroup, and the UI shows "no limit" instead of a per
 `b10x-spindle deploy <spec> --environment <file> --placement <file>` runs component
 `spindle-control`, which already exists in spindle's own specification and owns
 `spindle.deployment` and `spindle.placement`. So the control process is itself a spindle
-instance: it runs spindle's own specification on `spindle-kernel` (declare targets, plan, place,
-launch, report exit), plus three runtime parts:
+instance: it runs spindle's own specification on `spindle-kernel` (declare and retire targets,
+plan, place, launch, report exit), plus three runtime parts:
 
 1. **Launch** through the `Launcher` of each target.
 2. **Collect**: a telemetry listener per transport; keeps the last 15 minutes of samples per
@@ -122,7 +122,7 @@ launch, report exit), plus three runtime parts:
 
    | path | answer |
    |---|---|
-   | `GET /api/deployment` | components, bindings (from the IR), instances, targets, requests, states |
+   | `GET /api/deployment` | components, bindings (from the IR), instances, targets, requests, states (targets and requests from the views `TargetState` and `InstanceState`, § 5a) |
    | `GET /api/catalogue` | the derived counter catalogue |
    | `GET /api/stream` | Server-Sent Events: one message per sample per instance, plus state changes |
    | `GET /api/views/<component>/<view>` | a view answer, queried through the instance's own ingress, read only |
@@ -135,6 +135,62 @@ launch, report exit), plus three runtime parts:
 
 Spindle's own `ess/` gets a domain `spindle.observe` for the nouns the API returns (Sample,
 Counter, Catalogue), so the API types are specified, and `ess` projects their JSON Schema.
+
+## 5a. What `spindle.placement` declares
+
+`ess/domains/placement.yaml` is the model the control process runs. What it declares, and what
+stays a runtime rule outside it (each item names the case in
+`crates/spindle-kernel/tests/placement.rs` that checks it):
+
+- **Admission gates placement.** Nothing of a deployment that is not admitted is planned, placed
+  or launched; a running deployment counts as admitted. `PlanInstance` answers `not-admitted`
+  with `DeploymentNotAdmitted` and creates no instance; `PlaceInstance` answers `not-admitted` and
+  refuses the instance; `LaunchInstance` answers `not-admitted` with `DeploymentNotAdmitted` and
+  the instance stays `Placed`, which covers a deployment stopped after its instance was placed.
+  The deployment's state is read by the runtime, not by a guard: each of the three is an
+  `external:` outcome, and the control process answers `external.spindle.placement.<Command>.not-admitted`
+  from the stored `spindle.deployment.Deployment`, true unless it is `Admitted` or `Running`
+  (for `PlaceInstance`, also true when the deployment was admitted for another environment than
+  the target provides). The kernel does not evaluate `when_related:` and refuses to run a command
+  that declares it (`crates/spindle-kernel/src/supported.rs`), so a guard over the deployment
+  would stop the whole command (`an_instance_of_a_refused_deployment_cannot_be_placed`).
+
+- **A placement refusal names its cause.** `PlaceInstance` has one refusal per cause, asked in the
+  order `spindle_target::place` lists its reasons: `target-retired`, `not-admitted`,
+  `above-ceiling`. The first that holds is taken; `InstanceRefused.cause` and the instance's
+  `refusal` record it as `TargetRetired`, `NotAdmitted` or `AboveCeiling`. An environment
+  mismatch is `NotAdmitted`. The model records one cause; `spindle_target::place` names every
+  reason that applies and every capability the environment lacks, and `spindle_target::start`
+  refuses with that whole list (`StartError::Refused`) (`a_placement_refusal_names_its_cause`).
+
+- **Targets and requests are published by views.** `InstanceState` publishes each instance's
+  state, deployment, component, settings, target, request and refusal; `TargetState` publishes
+  each target's state, kind, environment and ceiling. `GET /api/deployment` answers its targets
+  and requests from these two views (`targets_and_requests_are_published_by_a_view`), and with
+  `TargetState` ESS synthesises the refusal of `RetireTarget` on a retired target
+  (`retire_target_is_synthesised`).
+
+- **A retired target takes no further instance.** `RetireTarget` moves a target from `Available`
+  to `Retired`, which is terminal; retiring it again answers `TargetAlreadyRetired` and changes
+  nothing. An instance planned onto a retired target is refused `target-retired` when it is
+  placed. Instances already placed or running there are not moved; the operator retires a
+  target to stop placing on it, not to stop what runs (`retire_target_is_stated`).
+
+- **The ceiling bounds one instance.** `Target.ceiling` is the most one instance may take on the
+  target, in vCPUs, memory MiB and disk MiB, declared with the target. An instance whose request
+  exceeds the ceiling in any resource is refused `above-ceiling` with cause `AboveCeiling`; a
+  resource left at zero in the request is raised to the ceiling when the instance is placed, so a
+  placed instance never runs unbounded on a target that bounds it (`target_ceiling_is_stated`).
+
+- **`Browser` is a target kind without a launcher.** Beside the kinds in § 3's transport table,
+  `TargetKind` declares `Browser`, a browser tab, as `spindle_target::TargetKind` does. A
+  target of that kind can be declared and planned onto; no launcher starts one yet, and § 3 gives
+  it no telemetry endpoint (`browser_target_kind_is_stated`).
+
+- **An exit reported for a planned instance changes nothing.** `ReportExit` moves only a `Placed`
+  or `Running` instance to `Exited`. For a `Planned` instance, as for a `Refused` or `Exited` one,
+  it is accepted as `already-ended` and changes nothing: no launcher ran it, so the report carries
+  nothing to record (`report_exit_of_a_planned_instance_is_stated`).
 
 ## 6. The UI
 

@@ -32,7 +32,7 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "source_digest": "b67f37c39b3b49e2924b9dae9baa9980542ec56cffbaf73501740884cc6b965c",
+    "source_digest": "b0323bd1b17b440667a0e30d35c641bb4c677631463b1780fc33bb351942384a",
     "contract_digest": "slice-sha256/2:3c61a67d1277cadfacc714df595ef027267921b672e6cf9d78f072853f213034",
     "regenerate": "ess generate"
   },

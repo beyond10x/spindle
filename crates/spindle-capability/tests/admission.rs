@@ -40,7 +40,11 @@ fn entities_need_a_durable_store_and_an_external_outcome_needs_a_decider() {
         names(&requirements),
         vec![
             "external.spindle.deployment.DecideAdmission.refused",
-            "external.spindle.placement.PlaceInstance.refused",
+            "external.spindle.placement.LaunchInstance.not-admitted",
+            "external.spindle.placement.PlaceInstance.above-ceiling",
+            "external.spindle.placement.PlaceInstance.not-admitted",
+            "external.spindle.placement.PlaceInstance.target-retired",
+            "external.spindle.placement.PlanInstance.not-admitted",
             "store.durable"
         ]
     );
@@ -127,7 +131,23 @@ fn a_prefix_key_provides_every_capability_under_it_and_an_exact_key_wins() {
                 "operator"
             ),
             (
-                "external.spindle.placement.PlaceInstance.refused",
+                "external.spindle.placement.LaunchInstance.not-admitted",
+                "operator"
+            ),
+            (
+                "external.spindle.placement.PlaceInstance.above-ceiling",
+                "operator"
+            ),
+            (
+                "external.spindle.placement.PlaceInstance.not-admitted",
+                "operator"
+            ),
+            (
+                "external.spindle.placement.PlaceInstance.target-retired",
+                "operator"
+            ),
+            (
+                "external.spindle.placement.PlanInstance.not-admitted",
                 "operator"
             ),
             ("store.durable", "sqlite"),

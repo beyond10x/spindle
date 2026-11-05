@@ -25,7 +25,7 @@ fn admitted_exits_zero_and_prints_the_bindings() {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let admission: serde_json::Value = serde_json::from_slice(&output.stdout).expect("JSON");
     assert_eq!(admission["outcome"], "admitted");
-    assert_eq!(admission["bindings"].as_array().map(Vec::len), Some(3));
+    assert_eq!(admission["bindings"].as_array().map(Vec::len), Some(7));
 }
 
 #[test]
@@ -44,7 +44,11 @@ fn refused_exits_three_and_names_the_missing_capability() {
         admission["missing"],
         serde_json::json!([
             "external.spindle.deployment.DecideAdmission.refused",
-            "external.spindle.placement.PlaceInstance.refused"
+            "external.spindle.placement.LaunchInstance.not-admitted",
+            "external.spindle.placement.PlaceInstance.above-ceiling",
+            "external.spindle.placement.PlaceInstance.not-admitted",
+            "external.spindle.placement.PlaceInstance.target-retired",
+            "external.spindle.placement.PlanInstance.not-admitted"
         ])
     );
 }

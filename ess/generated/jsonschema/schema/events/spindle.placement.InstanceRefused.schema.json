@@ -8,17 +8,21 @@
   "properties": {
     "instance_id": {
       "$ref": "#/$defs/spindle.placement.InstanceId"
+    },
+    "cause": {
+      "$ref": "#/$defs/spindle.placement.RefusalCause"
     }
   },
   "required": [
-    "instance_id"
+    "instance_id",
+    "cause"
   ],
   "additionalProperties": false,
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "source_digest": "b67f37c39b3b49e2924b9dae9baa9980542ec56cffbaf73501740884cc6b965c",
-    "contract_digest": "slice-sha256/2:69a583f4d1c61b8264bb6c922148740db27ce85447d5d5e951315715911dd3b3",
+    "source_digest": "b0323bd1b17b440667a0e30d35c641bb4c677631463b1780fc33bb351942384a",
+    "contract_digest": "slice-sha256/2:a4fa1e8d9f930af0fd7d3d12e01fdf1e7c71aedd194045d2e51a5ca495ed371c",
     "regenerate": "ess generate"
   },
   "$defs": {
@@ -27,6 +31,17 @@
       "x-ess-name": "spindle.placement.InstanceId",
       "x-ess-kind": "newtype",
       "type": "string"
+    },
+    "spindle.placement.RefusalCause": {
+      "title": "RefusalCause",
+      "x-ess-name": "spindle.placement.RefusalCause",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "TargetRetired",
+        "NotAdmitted",
+        "AboveCeiling"
+      ]
     }
   }
 }

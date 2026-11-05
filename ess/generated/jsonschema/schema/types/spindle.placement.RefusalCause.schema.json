@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.placement.RefusalCause.schema.json",
+  "$ref": "#/$defs/spindle.placement.RefusalCause",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "b0323bd1b17b440667a0e30d35c641bb4c677631463b1780fc33bb351942384a",
+    "contract_digest": "slice-sha256/2:544cb186bbe27069c7b1457578f625e275467deeabf6cc9803e962015156a9af",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.placement.RefusalCause": {
+      "title": "RefusalCause",
+      "x-ess-name": "spindle.placement.RefusalCause",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "TargetRetired",
+        "NotAdmitted",
+        "AboveCeiling"
+      ]
+    }
+  }
+}
