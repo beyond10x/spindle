@@ -3,7 +3,9 @@ domain: rally.table
 summary: >-
   One match on a grid 16 columns wide (x 0 to 15) and 9 rows high (y 0 at the top to 8). The west
   paddle stands in column 0 and the east paddle in column 15, each one cell tall; the ball travels
-  in columns 1 to 14, one cell across and one cell up or down per tick.
+  in columns 1 to 14, one cell across and one cell up or down on a tick that moves it. A serve, a
+  paddle return and a wall bounce change only the heading; the next tick moves the ball. The
+  invariants below hold the ball and both paddles on the grid and tie a winner to a won match.
 
 types:
   - name: rally.table.MatchId
@@ -48,6 +50,21 @@ entities:
         type: Integer
       - name: winner
         type: Optional<rally.table.Side>
+    invariants:
+      - ball_x >= 1
+      - ball_x <= 14
+      - ball_y >= 0
+      - ball_y <= 8
+      - west_paddle_y >= 0
+      - west_paddle_y <= 8
+      - east_paddle_y >= 0
+      - east_paddle_y <= 8
+      - target_score >= 1
+      - west_needs >= 0
+      - east_needs >= 0
+      - any: [state == Won, {not: defined(winner)}]
+      - any: [state != Won, defined(winner)]
+      - any: [{not: defined(winner)}, {all: [winner == West, west_needs == 0]}, {all: [winner == East, east_needs == 0]}]
     lifecycle:
       initial: Serving
       states: [Serving, InPlay, Won]
