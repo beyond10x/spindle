@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use ess_compiler::EssIr;
-use ess_gen::http::{Binding, Flat};
-use ess_http::{Body, Encoding, Method, Operation, ResponseEncoding, Segment, ViewBody};
+use ess_gen::http::{Binding, Flat, Shape};
+use ess_http::{Body, Encoding, Method, Operation, ResponseEncoding, Segment, Unknown, ViewBody};
 use serde_json::{Map, Value};
 
 use crate::console::Console;
@@ -22,7 +22,18 @@ pub struct Variable {
     pub flat: Flat,
 }
 
-/// One route: a method and path of a served component and the command or view behind it.
+/// One input field of a `form` or `query` request: the key it is sent under, the field it fills,
+/// how its text is read ([`ess_gen::http::flat`]), and whether the path carries it instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Parameter {
+    wire: String,
+    field: String,
+    flat: Flat,
+    shape: Shape,
+    carried: bool,
+}
+
+/// One route:a method and path of a served component and the command or view behind it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Route {
     /// The component whose surface it is on.
@@ -38,6 +49,9 @@ pub struct Route {
     variables: Vec<Variable>,
     statuses: BTreeMap<String, u16>,
     input: Vec<String>,
+    encoding: Encoding,
+    unknown: Unknown,
+    parameters: Vec<Parameter>,
     /// The outcomes answered with the command's response beside the envelope.
     responding: Vec<String>,
     unserved: Option<Unserved>,
@@ -114,6 +128,83 @@ impl Route {
         &self.input
     }
 
+    /// How a command's request carries its input ([`ess_gen::http::request`]): ESS's own `json`
+    /// body, an `application/x-www-form-urlencoded` body, or the query string.
+    pub fn encoding(&self) -> Encoding {
+        self.encoding
+    }
+
+    /// A `form` body or a query string, `text`, read as the command's input, as ESS's served
+    /// application reads it (`ess-synth` `http::flat_object`): keys and values form-decoded (`+`
+    /// and `%XX`, UTF-8), each value read by its field's [`Flat`], a `List` field the array of
+    /// its key's values (empty when absent), any other field present once at most. A key no field
+    /// declares, the path carries, or that does not decode is refused naming it under `at`, or
+    /// dropped where the binding says `unknown: ignore`.
+    pub(crate) fn flat_input(&self, text: &str, at: &str) -> Result<Map<String, Value>, String> {
+        let ignore = self.unknown == Unknown::Ignore;
+        let mut found: Vec<Vec<String>> = vec![Vec::new(); self.parameters.len()];
+        for pair in text.split('&').filter(|pair| !pair.is_empty()) {
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            let Some(key) = form_decoded(key) else {
+                if ignore {
+                    continue;
+                }
+                return Err(format!("{at}: a key is not percent-encoded UTF-8: `{key}`"));
+            };
+            let place = format!("{at}.{key}");
+            let index = self
+                .parameters
+                .iter()
+                .position(|parameter| parameter.wire == key);
+            let carried = index.is_some_and(|index| self.parameters[index].carried);
+            let Some(index) = index.filter(|_| !carried) else {
+                if ignore {
+                    continue;
+                }
+                return Err(if carried {
+                    format!("{place}: the path carries this field, so it is not a parameter here")
+                } else {
+                    format!("{place}: no field of this request is named so")
+                });
+            };
+            let value = form_decoded(value).ok_or_else(|| {
+                format!("{place}: expected percent-encoded UTF-8 text, found `{value}`")
+            })?;
+            found[index].push(value);
+        }
+        let mut input = Map::new();
+        for (parameter, values) in self.parameters.iter().zip(found) {
+            if parameter.carried {
+                continue;
+            }
+            let place = format!("{at}.{}", parameter.wire);
+            let flat = |text: String| {
+                read(parameter.flat, text)
+                    .ok_or_else(|| format!("{place}: expected a value, found the empty text"))
+            };
+            match parameter.shape {
+                Shape::List => {
+                    let items = values
+                        .into_iter()
+                        .map(flat)
+                        .collect::<Result<Vec<_>, String>>()?;
+                    input.insert(parameter.field.clone(), Value::Array(items));
+                }
+                Shape::One | Shape::Optional => match values.len() {
+                    0 => {}
+                    1 => {
+                        let value = values.into_iter().next().unwrap_or_default();
+                        input.insert(parameter.field.clone(), flat(value)?);
+                    }
+                    several => {
+                        return Err(format!("{place}: expected one value, found {several}"));
+                    }
+                },
+            }
+        }
+        Ok(input)
+    }
+
     /// The caller a command is sent as, where the surface fixes one; `None` for none.
     pub fn caller(&self) -> Option<&Caller> {
         self.caller.as_ref()
@@ -180,6 +271,13 @@ fn decoded(text: &str) -> Option<String> {
         }
     }
     String::from_utf8(out).ok()
+}
+
+/// A `form` or query key or value with every `+` a space and every `%XX` decoded, as ESS's
+/// served application decodes one; `None` where an escape is not two hexadecimal digits or the
+/// bytes are not UTF-8.
+fn form_decoded(text: &str) -> Option<String> {
+    decoded(&text.replace('+', " "))
 }
 
 /// One scalar read from flat text, as ESS's served applications read it: any text for a
@@ -306,13 +404,13 @@ impl Surface {
     /// `ess generate --kind openapi` (with `--http`, where a binding is given) publishes it:
     /// without a binding, or for an operation the binding does not name, ESS's derived route and
     /// status; for one it names, the binding's method and path, its path variables read into the
-    /// input, and the status it lists for an outcome ([`ess_gen::http::listed`]).
+    /// input, the request it declares (`json`, `form` or `query`) and the status it lists for an
+    /// outcome ([`ess_gen::http::listed`]).
     ///
     /// A command this ingress cannot route keeps its route and is marked [`Unserved::Ingress`]:
-    /// a `form` or `query` request, an outcome answered other than with the envelope (a body,
-    /// headers, a redirect or text), a standard refusal the binding answers its own way, an
-    /// outcome that answers with the command's retained result, or a path variable that is not a
-    /// scalar. A command the kernel's [`runs`](spindle_kernel::runs) refuses is marked
+    /// an outcome answered other than with the envelope (a body, headers, a redirect or text), a
+    /// standard refusal the binding answers its own way, an outcome that answers with the
+    /// command's retained result, or a path variable that is not a scalar. A command the kernel's [`runs`](spindle_kernel::runs) refuses is marked
     /// [`Unserved::Kernel`], and a view the host's [`reads`](spindle_host::reads) refuses
     /// [`Unserved::Host`].
     ///
@@ -507,6 +605,9 @@ fn route(
         variables: Vec::new(),
         statuses: BTreeMap::new(),
         input: Vec::new(),
+        encoding: Encoding::Json,
+        unknown: Unknown::Refuse,
+        parameters: Vec::new(),
         responding: Vec::new(),
         unserved: None,
         caller: caller.cloned(),
@@ -562,9 +663,9 @@ fn may_read(ir: &EssIr, actor: &str, view: &str) -> bool {
         .any(|(name, declared)| name.to_string() == actor && names(declared))
 }
 
-/// Fills `route`'s variables, input and statuses; `Err` names what it uses that this ingress
-/// does not serve: a `form` or `query` request, an outcome answered other than with the envelope
-/// (a body, headers, a redirect or text), a view answered other than as `rows`, a standard
+/// Fills `route`'s variables, input, request and statuses; `Err` names what it uses that this
+/// ingress does not serve: an outcome answered other than with the envelope (a body, headers, a
+/// redirect or text), a view answered other than as `rows`, a standard
 /// refusal the binding answers its own way, a command whose outcome answers with its retained
 /// result, a path variable that is not a scalar, or a command that reads its caller where the
 /// route fixes no caller: how an HTTP caller proves its attributes is an authentication technical
@@ -607,8 +708,27 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
                 .iter()
                 .map(|field| field.name.clone())
                 .collect();
-            if ess_gen::http::request(bound).encoding != Encoding::Json {
-                return Err("a request that is not a JSON body".to_owned());
+            let request = ess_gen::http::request(bound);
+            route.encoding = request.encoding;
+            route.unknown = request.unknown;
+            if request.encoding != Encoding::Json {
+                let carried = ess_gen::http::carried(ir, bound);
+                route.parameters = ir
+                    .command(handle)
+                    .input
+                    .iter()
+                    .map(|field| {
+                        let (shape, flat) = ess_gen::http::flat(ir, &field.type_ref)
+                            .unwrap_or((Shape::One, Flat::Text));
+                        Parameter {
+                            wire: ess_gen::schema::wire_field_name(field).to_owned(),
+                            field: field.name.clone(),
+                            flat,
+                            shape,
+                            carried: carried.contains(field.name.as_str()),
+                        }
+                    })
+                    .collect();
             }
             for outcome in &ir.command(handle).outcomes {
                 if outcome.retains_result {

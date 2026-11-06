@@ -1,0 +1,30 @@
+type: ess-http/1
+specification:
+  system: library
+  version: v1
+  source_digest: sha256:47c8bb412ca6e443515538efbf016f27cee38142ec3261e436c5bdfef5ee056b
+routes:
+  - command: library.catalogue.CatalogueBook
+    method: post
+    path: /books/{id}
+    parameters: {id: input.id}
+    request: {encoding: form}
+    outcomes:
+      catalogued: {status: 201}
+  - command: library.catalogue.LendBook
+    method: get
+    path: /books/{id}/lend
+    parameters: {id: input.id}
+    request: {encoding: query}
+    outcomes:
+      lent: {status: 200}
+  - command: library.catalogue.RetireBook
+    method: delete
+    path: /books/{id}
+    parameters: {id: input.id}
+    request: {encoding: query}
+    outcomes:
+      retired: {status: 200}
+  - view: library.catalogue.CataloguedBooks
+    method: get
+    path: /books
