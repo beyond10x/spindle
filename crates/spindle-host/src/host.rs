@@ -16,8 +16,8 @@ use spindle_channel::{
     ChannelError, Envelope, Receiver, Route, RouteError, Router, Sender, in_process,
 };
 use spindle_kernel::{
-    Change, Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, NoExternals, Row,
-    SqliteStore, Store, StoreError, UuidV4,
+    Change, Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, Mint, NoExternals,
+    Row, Seeded, SqliteStore, Store, StoreError, Uuid, UuidV4,
 };
 use spindle_telemetry::{Counters, CountingStore, Retried, Sink};
 use spindle_timer::{BindingName, Clock, CompleteError, LifetimeError, Timer};
@@ -96,6 +96,42 @@ pub struct RefusedCommand {
     pub error: DeclaredError,
     /// How many times it was run.
     pub attempts: u32,
+}
+
+/// What a run starts from after a [reset](Host::reset_to); the default is an empty run.
+#[derive(Default)]
+pub struct World {
+    /// The rows written once every store is empty, in order.
+    pub rows: Vec<Seed>,
+    /// What answers every `external:` cause until the next reset; `None` for the decider the
+    /// host was opened with.
+    pub answers: Option<Box<dyn Decider + Send>>,
+    /// The seed every identity and generated value is minted from until the next reset
+    /// ([`Seeded`]); `None` for random version 4 UUIDs.
+    pub mint: Option<u64>,
+}
+
+impl std::fmt::Debug for World {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("World")
+            .field("rows", &self.rows)
+            .field("answers", &self.answers.is_some())
+            .field("mint", &self.mint)
+            .finish()
+    }
+}
+
+/// One row of a [`World`]: the instance of `entity` (its qualified name) with `identity`, as it
+/// rests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Seed {
+    /// The entity's qualified name.
+    pub entity: String,
+    /// The instance's identity.
+    pub identity: Value,
+    /// Its state and fields.
+    pub row: Row,
 }
 
 /// One event a command published: committed with the command's effect, in the order published.
@@ -220,6 +256,9 @@ pub enum HostError {
         /// Whether its store was reopened as it was before the reset.
         restored: bool,
     },
+    /// [`Host::reset_to`] refused a world before it changed anything.
+    #[error("the world was refused: {0}")]
+    World(String),
     /// One call delivered [`DELIVERY_LIMIT`] envelopes and more were still in flight; those
     /// were discarded, and nothing runs after them.
     #[error(
@@ -332,8 +371,13 @@ pub struct Host {
     periodic: BTreeMap<String, Periodic>,
     remote: Option<component::Remote>,
     published: Vec<Published>,
-    /// Answers the `external:` causes of every command any component runs.
+    /// Answers the `external:` causes of every command any component runs, unless the world of
+    /// the last reset carries its own answers.
     decider: Box<dyn Decider + Send>,
+    /// The answers of the world the last [reset](Host::reset_to) loaded, if it carried any.
+    answers: Option<Box<dyn Decider + Send>>,
+    /// Mints the identities and generated values of every command any component runs.
+    mint: Box<dyn Mint + Send>,
     /// The routes of the event bindings this host may retry, by binding name: read from its own
     /// routes, never from an envelope, so a peer's frame does not decide the policy.
     retrying: BTreeMap<String, Arc<Route>>,
@@ -616,6 +660,8 @@ impl Host {
             remote: None,
             published: Vec::new(),
             decider: decider.unwrap_or_else(|| Box::new(NoExternals)),
+            answers: None,
+            mint: Box::new(UuidV4),
             retrying,
         })
     }
@@ -636,6 +682,20 @@ impl Host {
     /// [`HostError::Store`], a [`StoreError::Conflict`], when the instance already exists, and
     /// any other store failure.
     pub fn establish(&mut self, entity: &str, identity: &Value, row: Row) -> Result<(), HostError> {
+        let owner = self.resting(entity, identity, &row)?;
+        store_of(&mut self.components, &owner)?.commit(&Change {
+            entity: entity.to_owned(),
+            identity: identity.clone(),
+            expected: None,
+            row,
+            events: Vec::new(),
+        })?;
+        Ok(())
+    }
+
+    /// The running component whose store `row` of `entity` rests in, once the row is checked
+    /// against the entity's invariants; the errors of [`Host::establish`] before it writes.
+    fn resting(&self, entity: &str, identity: &Value, row: &Row) -> Result<String, HostError> {
         let declared = self
             .ir
             .entities()
@@ -651,21 +711,17 @@ impl Host {
             .ok_or_else(|| {
                 HostError::Unsupported(format!("no component owns {}", declared.domain))
             })?;
-        spindle_kernel::at_rest(&self.ir, entity, identity, &row).map_err(|error| {
+        if !self.components.contains_key(&owner) {
+            return Err(HostError::Unsupported(format!("{owner} is not running")));
+        }
+        spindle_kernel::at_rest(&self.ir, entity, identity, row).map_err(|error| {
             HostError::Execute {
                 component: owner.clone(),
                 command: format!("establishing {entity}"),
                 error: Box::new(error),
             }
         })?;
-        store_of(&mut self.components, &owner)?.commit(&Change {
-            entity: entity.to_owned(),
-            identity: identity.clone(),
-            expected: None,
-            row,
-            events: Vec::new(),
-        })?;
-        Ok(())
+        Ok(owner)
     }
 
     /// Every event a command published since the host started or was last [reset](Self::reset),
@@ -682,7 +738,8 @@ impl Host {
     /// A store in memory is replaced by an empty one. A store in SQLite is closed, its file and
     /// the SQLite side files beside it moved aside, and an empty one opened at the same path; the
     /// moved files are removed only once the empty store is open. Periodic bindings keep running,
-    /// and the counters keep their counts.
+    /// and the counters keep their counts. The answers and the mint of the world an earlier
+    /// [`Host::reset_to`] loaded are dropped.
     ///
     /// # Errors
     /// [`HostError::Reset`] when a component's files cannot be moved aside or the empty store
@@ -691,6 +748,76 @@ impl Host {
     /// from then on, naming why (`restored: false`). The components emptied before it stay
     /// empty, and the published events are forgotten only when every store was emptied.
     pub fn reset(&mut self) -> Result<Vec<String>, HostError> {
+        self.reset_to(World::default())
+    }
+
+    /// [`Host::reset`], then `world` loaded: each of its rows written where its entity rests, as
+    /// [`Host::establish`] writes it, every external cause answered by its answers until the next
+    /// reset, and every identity and generated value minted by its mint until then. A world
+    /// without answers leaves causes to the decider the host was opened with, and one without a
+    /// mint mints random version 4 UUIDs. A seeded mint never answers a UUID a row's identity
+    /// holds, or ends in ([`Seeded::avoiding`]).
+    ///
+    /// Every row is checked before any store is emptied: its entity declared and owned by a
+    /// running component, its invariants held, its identity one its store can key (read from the
+    /// store as it is), and no two rows one instance. The answers and the mint are taken only once
+    /// every row is written.
+    ///
+    /// # Errors
+    /// [`HostError::World`] for a row that does not pass, before anything changed; then as
+    /// [`Host::reset`], and as [`Host::establish`] for a row a store did not take, the rows
+    /// before it written and the answers and mint of the last world kept.
+    pub fn reset_to(&mut self, world: World) -> Result<Vec<String>, HostError> {
+        let mut owners = Vec::with_capacity(world.rows.len());
+        let mut instances = BTreeSet::new();
+        for (index, seed) in world.rows.iter().enumerate() {
+            let owner = self
+                .resting(&seed.entity, &seed.identity, &seed.row)
+                .map_err(|error| HostError::World(format!("row {index}: {error}")))?;
+            if !instances.insert((seed.entity.as_str(), seed.identity.to_string())) {
+                return Err(HostError::World(format!(
+                    "row {index}: {} {} is already a row of this world",
+                    seed.entity, seed.identity
+                )));
+            }
+            store_of(&mut self.components, &owner)?
+                .load(&seed.entity, &seed.identity)
+                .map_err(|error| {
+                    HostError::World(format!(
+                        "row {index}: {owner}'s store cannot hold {} {}: {error}",
+                        seed.entity, seed.identity
+                    ))
+                })?;
+            owners.push(owner);
+        }
+        let held = world
+            .rows
+            .iter()
+            .filter_map(|seed| seed.identity.as_str())
+            .filter_map(|text| {
+                let tail = text.len().checked_sub(36).and_then(|at| text.get(at..))?;
+                Uuid::parse_str(tail).ok()
+            })
+            .collect::<Vec<_>>();
+        let emptied = self.empty()?;
+        for (seed, owner) in world.rows.into_iter().zip(owners) {
+            store_of(&mut self.components, &owner)?.commit(&Change {
+                entity: seed.entity,
+                identity: seed.identity,
+                expected: None,
+                row: seed.row,
+                events: Vec::new(),
+            })?;
+        }
+        self.answers = world.answers;
+        self.mint = world.mint.map_or_else(
+            || Box::new(UuidV4) as Box<dyn Mint + Send>,
+            |seed| Box::new(Seeded::new(seed).avoiding(held)),
+        );
+        Ok(emptied)
+    }
+
+    fn empty(&mut self) -> Result<Vec<String>, HostError> {
         let mut emptied = Vec::new();
         for (name, component) in &mut self.components {
             if let Some(file) = component.file.clone() {
@@ -969,8 +1096,11 @@ impl Host {
         let result = spindle_kernel::execute_as(
             &self.ir,
             held.store.as_mut(),
-            self.decider.as_mut(),
-            &mut UuidV4,
+            match &mut self.answers {
+                Some(answers) => answers.as_mut(),
+                None => self.decider.as_mut(),
+            },
+            self.mint.as_mut(),
             &|| clock.wall(),
             &spindle_kernel::Invocation {
                 command,

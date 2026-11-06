@@ -253,6 +253,13 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "A world per reset",
+        "POST /api/reset may carry a world: rows checked by ESS and written where their entity rests, a decision table answering external causes and a seed identities are minted from, each until the next reset; a world that does not validate is refused 400 and changes nothing.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-cli/tests/served_world.rs::a_reset_with_seed_rows_serves_them",
+    ),
+    shipped(
+        "Execution",
         "Serve what runs",
         "An HTTP run serves every command and view that runs and answers each other one 501 naming the construct, ESS's envelope for a command; the list is printed at startup, in name order. A view the ingress cannot route still refuses startup by name, since ESS publishes no 501 for a view. SQLite state without --state is kept in a temporary directory removed when the run ends.",
         "/docs/concepts/capabilities",

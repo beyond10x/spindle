@@ -7,6 +7,7 @@ mod deploy;
 mod replay;
 mod scaled;
 mod serve;
+mod world;
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
@@ -438,7 +439,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 spindle_ingress::HTTP_LOOPBACK
             );
         }
-        let decider = (decisions.is_some() || answer_default).then(|| answers.served());
+        let decider = (decisions.is_some() || answer_default).then(|| answers.clone().served());
         let binding = match http {
             Some(path) => match serve::binding(path, &loaded.ir)? {
                 Some(binding) => Some(binding),
@@ -459,6 +460,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 ingress: ingress.implementation.as_str(),
                 drop_retries,
                 decider,
+                answers,
             },
         );
     }

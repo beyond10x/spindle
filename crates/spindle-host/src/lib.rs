@@ -8,7 +8,8 @@
 //! injected [`Clock`]. Each event a command emits is carried to the commands it binds to, and each
 //! of those runs on its own component, until nothing is left in flight. [`Host::view`] answers a
 //! view from the store of the component that owns its source. [`Host::published`] lists every event
-//! published so far, and [`Host::reset`] empties every store.
+//! published so far, and [`Host::reset`] empties every store; [`Host::reset_to`] then loads a
+//! [`World`]: rows, answers to external causes and a mint seed.
 //!
 //! [`Host::component`] runs one component on its own instead, its bindings carried over TCP links:
 //! [`Host::connect`] links each peer its events lead to, [`Host::accept`] takes the links its
@@ -26,6 +27,6 @@ mod view;
 pub use admission::{Placements, Refusal, admit};
 pub use host::{
     Cause, DELIVERY_LIMIT, Failed, Host, HostError, Published, RETRY_ATTEMPTS, Ran, RefusedCommand,
-    Report, Retries, reads, retried, uncarried,
+    Report, Retries, Seed, World, reads, retried, uncarried,
 };
 pub use spindle_timer::{Clock, ManualClock, SystemClock};

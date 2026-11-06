@@ -100,6 +100,8 @@ A command this ingress cannot route or the kernel does not run, and a view the h
 
 A served request carries no `external` object: its external causes are answered by `--decisions`, then by `--answer-default`, each answer per command and outcome, never per input value. A request nothing answers is refused `501`, naming the outcome. Without either flag, a specification that declares an external outcome exits 1 before listening.
 
+`POST /api/reset` may carry a world as its JSON body, each key optional: `{"rows": [{"entity", "identity", "state", "fields"}], "decisions": {...}, "mint": <seed>}`. Every store is emptied, then each row, checked by ESS as a scenario's setup is, written where its entity rests. `decisions`, in the decisions file's shape, answers external causes before `--decisions` and `--answer-default` do, and `mint` seeds every identity and generated value minted, so the same requests mint the same identities; both hold until the next reset. A world that does not validate is refused `400` and changes nothing.
+
 An event binding with `on_failure: retry` runs its command again at once after each attempt that fails, up to 5 attempts, unless `--drop-retries` is given; one with `on_failure: escalate` exits 1 before listening.
 
 ```console

@@ -15,6 +15,7 @@ use spindle_ingress::{Listener, Surface, Unserved};
 use spindle_kernel::Decider;
 use spindle_spec::EssIr;
 
+use crate::decisions::Answers;
 use crate::{REFUSED, SIGNAL_POLL, SIGNALLED, signals};
 
 /// The components of `ir` that require `ingress.network` when each runs on its own.
@@ -85,6 +86,8 @@ pub(crate) struct Serving<'a> {
     /// With `--decisions` or `--answer-default`, what answers every request's external causes;
     /// without either, the host answers none and refuses a specification that declares one.
     pub decider: Option<Box<dyn Decider + Send>>,
+    /// The run's own answers, beneath the decision table a reset's world carries.
+    pub answers: Answers,
 }
 
 /// Runs every component of `ir` in one host and serves `serving.components` on
@@ -105,6 +108,10 @@ pub(crate) struct Serving<'a> {
 ///
 /// The `external:` causes of every request are answered by `serving.decider`; without one, a
 /// specification that declares an external outcome is refused before listening.
+///
+/// A `POST /api/reset` may carry a world ([`crate::world`]): rows written once every store is
+/// empty, a decision table answering external causes before `serving.decider` does, and a seed
+/// identities are minted from, each until the next reset.
 pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     let signalled = signals()?;
     let environment = serving.environment;
@@ -195,6 +202,10 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         }
     }
     let listener = Listener::bind(serving.port, surface).context("binding the HTTP listener")?;
+    let answers = serving.answers;
+    let worlds = |ir: &EssIr, body: &serde_json::Value| {
+        crate::world::read(ir, body, &answers).map_err(|error| format!("{error:#}"))
+    };
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     writeln!(
@@ -213,7 +224,7 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             return Ok(ExitCode::from(SIGNALLED.saturating_add(signal)));
         }
         if let Some(exchange) = listener.next(SIGNAL_POLL) {
-            for failed in exchange.serve(&mut host) {
+            for failed in exchange.serve_with(&mut host, &worlds) {
                 let binding = match &failed.cause {
                     Cause::Delivered { binding } | Cause::Tick { binding } => binding.as_str(),
                     Cause::Submitted => "the request",
