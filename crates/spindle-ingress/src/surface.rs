@@ -39,6 +39,18 @@ pub struct Route {
     statuses: BTreeMap<String, u16>,
     input: Vec<String>,
     unserved: Option<Unserved>,
+    caller: Option<Caller>,
+}
+
+/// The actor and caller every command of a surface is sent as, fixed for the whole run
+/// ([`Surface::fixing_caller`]): a test-backend switch, not authentication. A request proves
+/// nothing about who sends it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Caller {
+    /// The qualified name of the actor.
+    pub actor: String,
+    /// The caller's attributes, by declared attribute name.
+    pub attributes: Map<String, Value>,
 }
 
 /// Why a route is kept but its operation not served.
@@ -88,6 +100,11 @@ impl Route {
     /// request carrying any other is refused. Empty for a view.
     pub fn input(&self) -> &[String] {
         &self.input
+    }
+
+    /// The caller a command is sent as, where the surface fixes one; `None` for none.
+    pub fn caller(&self) -> Option<&Caller> {
+        self.caller.as_ref()
     }
 
     /// The input `path` carries in its variables, read as [`ess_gen::http::Flat`] says; `None`
@@ -284,6 +301,30 @@ impl Surface {
         components: &[String],
         binding: Option<&Binding>,
     ) -> Result<Self, SurfaceError> {
+        Self::routed(ir, components, binding, None)
+    }
+
+    /// [`Surface::new`], every command sent as `caller`: a command that reads its caller is
+    /// served rather than marked [`Unserved::Ingress`], and the grant check still runs on each
+    /// one. The caller is not checked here; bind it first ([`spindle_kernel::caller_binds`]).
+    ///
+    /// # Errors
+    /// As [`Surface::new`].
+    pub fn fixing_caller(
+        ir: &EssIr,
+        components: &[String],
+        binding: Option<&Binding>,
+        caller: &Caller,
+    ) -> Result<Self, SurfaceError> {
+        Self::routed(ir, components, binding, Some(caller))
+    }
+
+    fn routed(
+        ir: &EssIr,
+        components: &[String],
+        binding: Option<&Binding>,
+        caller: Option<&Caller>,
+    ) -> Result<Self, SurfaceError> {
         if let Some(binding) = binding
             && let Some(key) = binding.ir().refusals().keys().next()
         {
@@ -300,7 +341,7 @@ impl Surface {
                 .find(|component| component.name.as_str() == name)
                 .ok_or_else(|| SurfaceError::NoComponent(name.clone()))?;
             for bound in ess_gen::http::bound_routes(ir, component, binding) {
-                let route = route(ir, name, &bound)?;
+                let route = route(ir, name, &bound, caller)?;
                 if let Some(taken) = routes
                     .iter()
                     .find(|taken| taken.method == route.method && taken.path == route.path)
@@ -421,6 +462,7 @@ fn route(
     ir: &EssIr,
     component: &str,
     bound: &ess_gen::http::Route<'_>,
+    caller: Option<&Caller>,
 ) -> Result<Route, SurfaceError> {
     let operation = bound.serves.operation();
     let path = bound.path.clone();
@@ -438,6 +480,7 @@ fn route(
         statuses: BTreeMap::new(),
         input: Vec::new(),
         unserved: None,
+        caller: caller.cloned(),
     };
     match (served(ir, bound, &mut route), &route.operation) {
         (Err(what), Operation::View(_)) => {
@@ -471,8 +514,9 @@ fn route(
 /// does not serve: a `form` or `query` request, an outcome answered other than with the envelope
 /// (a body, headers, a redirect or text), a view answered other than as `rows`, a standard
 /// refusal the binding answers its own way, a command whose outcome answers with its response,
-/// a path variable that is not a scalar, or a command that reads its caller: how an HTTP caller
-/// proves its attributes is an authentication technical not yet decided (design §11).
+/// a path variable that is not a scalar, or a command that reads its caller where the route fixes
+/// no caller: how an HTTP caller proves its attributes is an authentication technical not yet
+/// decided (design §11).
 fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Result<(), String> {
     for (variable, field) in ess_gen::http::path_fields(ir, bound) {
         let position = route
@@ -496,7 +540,7 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
     match bound.serves {
         ess_gen::http::Served::Command(handle) => {
             let read = spindle_kernel::caller_reads(ir, ir.command(handle));
-            if !read.is_empty() {
+            if !read.is_empty() && route.caller.is_none() {
                 return Err(format!(
                     "the caller attributes it reads ({}), which no HTTP caller proves here",
                     read.iter()

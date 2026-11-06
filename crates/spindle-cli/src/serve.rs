@@ -11,7 +11,7 @@ use anyhow::{Context, Result, bail};
 use ess_gen::http::Binding;
 use spindle_capability::{Capability, Environment};
 use spindle_host::{Cause, Host, HostError, Retries, SystemClock};
-use spindle_ingress::{Listener, Surface, Unserved};
+use spindle_ingress::{Caller, Listener, Surface, Unserved};
 use spindle_kernel::Decider;
 use spindle_spec::EssIr;
 
@@ -85,6 +85,27 @@ pub(crate) struct Serving<'a> {
     /// With `--decisions` or `--answer-default`, what answers every request's external causes;
     /// without either, the host answers none and refuses a specification that declares one.
     pub decider: Option<Box<dyn Decider + Send>>,
+    /// `--fixed-actor` with `--fixed-caller`: the caller every served command is sent as, a
+    /// test-backend switch, not authentication; without it, as no caller.
+    pub caller: Option<Caller>,
+}
+
+/// Refuses a fixed caller `ir` would refuse on the first command sent as it: an actor it does not
+/// declare, or a caller that is not one of that actor's, by the kernel's own binding
+/// ([`spindle_kernel::caller_binds`]).
+fn fixed(ir: &EssIr, caller: &Caller) -> Result<()> {
+    if !ir
+        .actors()
+        .keys()
+        .any(|name| name.to_string() == caller.actor)
+    {
+        bail!(
+            "--fixed-actor {}: the specification declares no such actor",
+            caller.actor
+        );
+    }
+    spindle_kernel::caller_binds(ir, Some(&caller.actor), Some(&caller.attributes))
+        .with_context(|| format!("--fixed-caller for --fixed-actor {}", caller.actor))
 }
 
 /// Runs every component of `ir` in one host and serves `serving.components` on
@@ -105,7 +126,13 @@ pub(crate) struct Serving<'a> {
 ///
 /// The `external:` causes of every request are answered by `serving.decider`; without one, a
 /// specification that declares an external outcome is refused before listening.
+///
+/// With `serving.caller`, every command is sent as that actor and caller, bound against the model
+/// and printed on stderr before listening; a caller the model refuses stops the run first.
 pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
+    if let Some(caller) = &serving.caller {
+        fixed(&ir, caller)?;
+    }
     let signalled = signals()?;
     let environment = serving.environment;
     let scratch;
@@ -134,8 +161,19 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         }
         (Some(other), _) => bail!("this build has no `{other}` store for store.durable"),
     };
-    let surface = Surface::new(&ir, &serving.components, serving.binding.as_ref())?
-        .with_console(serving.ingress)?;
+    let surface = match &serving.caller {
+        Some(caller) => {
+            eprintln!(
+                "b10x-spindle: every command is sent as {} with the caller {} (--fixed-actor, \
+                 --fixed-caller): a test backend, not authentication",
+                caller.actor,
+                serde_json::Value::Object(caller.attributes.clone())
+            );
+            Surface::fixing_caller(&ir, &serving.components, serving.binding.as_ref(), caller)?
+        }
+        None => Surface::new(&ir, &serving.components, serving.binding.as_ref())?,
+    }
+    .with_console(serving.ingress)?;
     let unserved = surface.unserved();
     for route in &unserved {
         eprintln!(

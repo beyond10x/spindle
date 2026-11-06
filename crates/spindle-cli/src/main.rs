@@ -175,6 +175,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
             http,
             port,
             drop_retries,
+            fixed_actor,
+            fixed_caller,
             scenario: None,
         } => execute(&Execute {
             spec: &spec,
@@ -185,6 +187,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
             http: http.as_deref(),
             port,
             drop_retries,
+            caller: fixed_actor.map(|actor| spindle_ingress::Caller {
+                actor,
+                attributes: fixed_caller.unwrap_or_default(),
+            }),
         }),
         Command::Play {
             spec,
@@ -385,6 +391,7 @@ struct Execute<'a> {
     http: Option<&'a Path>,
     port: Option<u16>,
     drop_retries: bool,
+    caller: Option<spindle_ingress::Caller>,
 }
 
 fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
@@ -397,6 +404,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         http,
         port,
         drop_retries,
+        ref caller,
     } = *arguments;
     let loaded = spindle_spec::load(spec)?;
     let answers = Answers::load(&loaded.ir, decisions, answer_default)?;
@@ -459,7 +467,15 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 ingress: ingress.implementation.as_str(),
                 drop_retries,
                 decider,
+                caller: caller.clone(),
             },
+        );
+    }
+    if let Some(caller) = caller {
+        bail!(
+            "nothing in {} requires ingress.network, so --fixed-actor {} would be ignored",
+            spec.display(),
+            caller.actor
         );
     }
     if let Some(path) = http {

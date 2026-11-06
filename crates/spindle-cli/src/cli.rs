@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use serde_json::{Map, Value};
 
 /// The `b10x-spindle` command line.
 #[derive(Debug, Parser)]
@@ -158,6 +159,18 @@ pub enum Command {
         /// default branch, so the model selects as it would without it.
         #[arg(long)]
         answer_default: bool,
+        /// Send every served command as this actor (qualified name): a test-backend switch, not
+        /// authentication; no request proves who sends it. A command that reads its caller is then
+        /// served instead of answering `501`, and one the actor's `may:` does not name is refused
+        /// `403` "not granted", writing nothing. The actor and `--fixed-caller` are checked
+        /// against the model and printed on stderr before listening; an undeclared actor or
+        /// attribute, or a required attribute left out, exits 1. Only where `run` serves HTTP.
+        #[arg(long, conflicts_with = "scenario")]
+        fixed_actor: Option<String>,
+        /// The caller attributes every served command is sent with, as a JSON object
+        /// (`{"<attribute>": <value>}`), every required one of `--fixed-actor`'s.
+        #[arg(long, requires = "fixed_actor", value_parser = json_object)]
+        fixed_caller: Option<Map<String, Value>>,
         /// The `ess-scenario` document to replay.
         #[arg(long, conflicts_with_all = ["state", "decisions", "answer_default"])]
         scenario: Option<PathBuf>,
@@ -302,4 +315,13 @@ pub enum Command {
         #[arg(long, requires = "known_failing")]
         accounting_out: Option<PathBuf>,
     },
+}
+
+/// A JSON object, as `--fixed-caller` reads it.
+fn json_object(text: &str) -> Result<Map<String, Value>, String> {
+    match serde_json::from_str::<Value>(text) {
+        Ok(Value::Object(object)) => Ok(object),
+        Ok(other) => Err(format!("not a JSON object: {other}")),
+        Err(error) => Err(format!("not JSON: {error}")),
+    }
 }

@@ -1,5 +1,6 @@
 //! One request's answer, from the host that runs the command or reads the view.
 
+use ess_gen::http::{FORBIDDEN, NOT_GRANTED};
 use ess_http::Operation;
 use serde_json::{Map, Value, json};
 use spindle_host::{Failed, Host, HostError};
@@ -54,6 +55,10 @@ impl Answer {
 /// kernel does not run answers `501` with `committed: false`; one whose effect was written and
 /// whose consequences could not be carried answers `501` with `committed: true`. A view the host
 /// cannot answer is refused `501`, naming what it does not read.
+///
+/// A command is sent as the route's fixed caller ([`Route::caller`]), else as no caller. One its
+/// actor's `may:` does not name answers ESS's standard refusal, `403`
+/// `{"refused": "not granted", "actor": <actor>}`, and nothing is written.
 ///
 /// An operation the route marks [`Unserved::Ingress`] answers `501` with `committed: false`,
 /// naming the operation and what it uses, before the body is read or the host asked.
@@ -122,7 +127,13 @@ fn run(
         }
         input.insert(field.clone(), value.clone());
     }
-    let answer = match host.submit(command, input) {
+    let caller = route.caller();
+    let answer = match host.submit_as(
+        command,
+        input,
+        caller.map(|caller| caller.actor.as_str()),
+        caller.map(|caller| &caller.attributes),
+    ) {
         Ok(report) => {
             let answer = match report.ran.first() {
                 Some(ran) => envelope(
@@ -143,6 +154,10 @@ fn run(
             ExecuteError::InvalidInput(detail) => {
                 Answer::refusal(400, format!("invalid input: {detail}"))
             }
+            ExecuteError::NotGranted { actor } => Answer {
+                status: FORBIDDEN.parse().unwrap_or(403),
+                body: json!({"refused": NOT_GRANTED, "actor": actor}),
+            },
             other => Answer::unfinished(other.to_string(), false),
         },
         Err(error @ HostError::NotAccepted(_)) => Answer::unfinished(error.to_string(), false),
