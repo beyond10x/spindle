@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:structured-response-values
 kind: story
-status: active
+status: implemented
 title: Response fields of every type ESS's interpreter chooses
 relations:
 - serves: vision:spindle
@@ -14,16 +14,17 @@ scope:
   path: crates/spindle-kernel/src/mint.rs
 - confidence: cited
   path: crates/spindle-kernel/src/supported.rs
-revision: 4
+revision: 6
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-06T10:10:59Z", actor: "agent:b10x-chef-orchestrator", revision: 3}
 - {from: "proposed", to: "active", at: "2026-11-06T10:10:59Z", actor: "agent:b10x-chef-orchestrator", revision: 4}
+- {from: "active", to: "implemented", at: "2026-11-06T16:03:00Z", actor: "human:timo", revision: 6, decided_on: {"recorded":{"test_result":1}}}
 ---
 # Response fields of every type ESS's interpreter chooses
 
 ## Outcome
 
-A returning outcome whose response declares a field of a record (struct), union, map, enum-free
+A returning outcome whose response declares a field of a record (struct), union, map, enum,
 list or constrained newtype answers it with a value of that type, as ESS's interpreter chooses one
 (ESS 0.87.0 `crates/verify/ess-conformance/src/interpret/response.rs`, `base`: a struct's members
 each by the same rules, a union's first variant, one map entry, one list element, a newtype's
@@ -36,8 +37,8 @@ such a field by name ("which the runtime does not choose"), so the command answe
   `Optional<Integer>` members: the answer passes ESS's `direct_response::Observation::compare`.
 - `union_map_and_list_response_fields_answer_their_type` — one fixture per kind.
 - `a_constrained_newtype_response_field_satisfies_its_invariants`.
-- A type ESS's interpreter does not choose either (an enum field, per `base`) is still refused by
-  name before the command runs.
+- `an_enum_response_field_answers_one_of_its_variants`: an enum field answers a variant, as ESS
+  `witness.rs:6435-6443` chooses one (revised after the adversary showed the interpreter answers enums).
 
 ## Origin
 

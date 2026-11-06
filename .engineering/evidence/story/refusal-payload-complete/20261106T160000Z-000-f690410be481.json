@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-06T16:00:00Z",
+  "actor": "human:timo",
+  "artifact": "story:refusal-payload-complete",
+  "kind": "story",
+  "revision": 4,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "task check (CI Gate, PR 22)",
+    "reference": "https://github.com/beyond10x/spindle/actions/runs/42246822224/job/127991097041"
+  }
+}

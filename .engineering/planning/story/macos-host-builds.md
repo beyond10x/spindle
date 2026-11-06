@@ -2,12 +2,18 @@
 format: aep.planning-md/3
 id: story:macos-host-builds
 kind: story
-status: draft
+status: active
 title: b10x-spindle builds and runs on macOS
 relations:
 - serves: vision:spindle
 - depends_on: story:release-process
-revision: 1
+scope:
+- confidence: cited
+  path: .github/workflows/release.yml
+revision: 4
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-06T14:45:47Z", actor: "human:timo", revision: 2}
+- {from: "proposed", to: "active", at: "2026-11-06T14:45:47Z", actor: "human:timo", revision: 3}
 ---
 # b10x-spindle builds and runs on macOS
 
