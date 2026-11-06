@@ -27,6 +27,15 @@ impl Answer {
         }
     }
 
+    /// ESS's standard refusal for an actor no grant admits, on a command or a read-granted view:
+    /// `403` `{"refused": "not granted", "actor": <actor>}`.
+    pub fn not_granted(actor: &str) -> Self {
+        Self {
+            status: FORBIDDEN.parse().unwrap_or(403),
+            body: json!({"refused": NOT_GRANTED, "actor": actor}),
+        }
+    }
+
     /// The `501` the contract declares on every command: the realization is unfinished.
     /// `committed` says whether the command's effect was written before it stopped.
     pub fn unfinished(detail: impl Into<String>, committed: bool) -> Self {
@@ -58,7 +67,8 @@ impl Answer {
 ///
 /// A command is sent as the route's fixed caller ([`Route::caller`]), else as no caller. One its
 /// actor's `may:` does not name answers ESS's standard refusal, `403`
-/// `{"refused": "not granted", "actor": <actor>}`, and nothing is written.
+/// `{"refused": "not granted", "actor": <actor>}`, and nothing is written. So does a read-granted
+/// view the fixed actor may not read ([`Route::not_granted`]), before anything is read.
 ///
 /// An operation the route marks [`Unserved::Ingress`] answers `501` with `committed: false`,
 /// naming the operation and what it uses, before the body is read or the host asked.
@@ -82,6 +92,10 @@ pub fn answered(
     }
     match &route.operation {
         Operation::Command(command) => run(host, route, command, carried, body),
+        Operation::View(_) if route.not_granted() => (
+            Answer::not_granted(route.caller().map_or("", |caller| caller.actor.as_str())),
+            Vec::new(),
+        ),
         Operation::View(view) => match host.list(view) {
             Ok(rows) => (
                 Answer {
@@ -154,10 +168,7 @@ fn run(
             ExecuteError::InvalidInput(detail) => {
                 Answer::refusal(400, format!("invalid input: {detail}"))
             }
-            ExecuteError::NotGranted { actor } => Answer {
-                status: FORBIDDEN.parse().unwrap_or(403),
-                body: json!({"refused": NOT_GRANTED, "actor": actor}),
-            },
+            ExecuteError::NotGranted { actor } => Answer::not_granted(&actor),
             other => Answer::unfinished(other.to_string(), false),
         },
         Err(error @ HostError::NotAccepted(_)) => Answer::unfinished(error.to_string(), false),

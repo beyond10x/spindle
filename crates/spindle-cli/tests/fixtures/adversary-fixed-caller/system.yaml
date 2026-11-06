@@ -1,0 +1,21 @@
+format: ess/34
+system: shelf
+version: v1
+summary: Books added and shelved over the network by the librarian or visitor who sends each command.
+domains:
+  - shelf.book
+components:
+  - component: stacks
+    summary: Adds and shelves books for callers outside the process.
+    owns:
+      domains:
+        - shelf.book
+    accepts:
+      commands:
+        - shelf.book.AddBook
+        - shelf.book.ShelveBook
+    publishes:
+      events:
+        - shelf.book.BookAdded
+        - shelf.book.BookShelved
+    reached_by: network

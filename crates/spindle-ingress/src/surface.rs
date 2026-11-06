@@ -40,6 +40,7 @@ pub struct Route {
     input: Vec<String>,
     unserved: Option<Unserved>,
     caller: Option<Caller>,
+    not_granted: bool,
 }
 
 /// The actor and caller every command of a surface is sent as, fixed for the whole run
@@ -105,6 +106,13 @@ impl Route {
     /// The caller a command is sent as, where the surface fixes one; `None` for none.
     pub fn caller(&self) -> Option<&Caller> {
         self.caller.as_ref()
+    }
+
+    /// Whether the route's view is read-granted (ess/22 `may:` naming a view, `x-ess-may-read`)
+    /// and the fixed caller's actor may not read it: ESS's served surface then refuses it `403`
+    /// "not granted" before reading anything. Always `false` without a fixed caller.
+    pub fn not_granted(&self) -> bool {
+        self.not_granted
     }
 
     /// The input `path` carries in its variables, read as [`ess_gen::http::Flat`] says; `None`
@@ -481,6 +489,7 @@ fn route(
         input: Vec::new(),
         unserved: None,
         caller: caller.cloned(),
+        not_granted: false,
     };
     match (served(ir, bound, &mut route), &route.operation) {
         (Err(what), Operation::View(_)) => {
@@ -505,9 +514,30 @@ fn route(
             if let Err(refused) = spindle_host::reads(ir, view) {
                 route.unserved = Some(Unserved::Host(refused.to_string()));
             }
+            if let Some(caller) = caller {
+                route.not_granted = !may_read(ir, &caller.actor, view);
+            }
         }
     }
     Ok(route)
+}
+
+/// Whether `actor` may read `view`, by ESS's read grants: a view no actor's `may:` names is open
+/// to every actor; a read-granted one only to an actor whose `may:` names it
+/// ([`ess_compiler::ir::ResolvedActor::may_read`]).
+fn may_read(ir: &EssIr, actor: &str, view: &str) -> bool {
+    let names = |declared: &ess_compiler::ir::ResolvedActor| {
+        declared
+            .may_read
+            .iter()
+            .any(|granted| granted.name().to_string() == view)
+    };
+    if !ir.actors().values().any(names) {
+        return true;
+    }
+    ir.actors()
+        .iter()
+        .any(|(name, declared)| name.to_string() == actor && names(declared))
 }
 
 /// Fills `route`'s variables, input and statuses; `Err` names what it uses that this ingress

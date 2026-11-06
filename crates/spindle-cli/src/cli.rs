@@ -162,9 +162,10 @@ pub enum Command {
         /// Send every served command as this actor (qualified name): a test-backend switch, not
         /// authentication; no request proves who sends it. A command that reads its caller is then
         /// served instead of answering `501`, and one the actor's `may:` does not name is refused
-        /// `403` "not granted", writing nothing. The actor and `--fixed-caller` are checked
-        /// against the model and printed on stderr before listening; an undeclared actor or
-        /// attribute, or a required attribute left out, exits 1. Only where `run` serves HTTP.
+        /// `403` "not granted", writing nothing, as is a read-granted view it may not read. The
+        /// actor and `--fixed-caller` are checked against the model and printed on stderr before
+        /// listening; an undeclared actor or attribute, or a required attribute left out, exits 1.
+        /// Only where `run` serves HTTP.
         #[arg(long, conflicts_with = "scenario")]
         fixed_actor: Option<String>,
         /// The caller attributes every served command is sent with, as a JSON object
