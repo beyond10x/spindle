@@ -29,6 +29,21 @@ jobs:
         with:
           toolchain: '1.98.1'
           components: rustfmt,clippy
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen-test-runner
+        env:
+          WASM_BINDGEN_VERSION: '0.2.130'
+          WASM_BINDGEN_SHA256: 9687f3bb551b9f66f37ed32a40d7913a00f7962db653054e56857bc306c3227f
+        run: |
+          set -o pipefail
+          archive="wasm-bindgen-$WASM_BINDGEN_VERSION-x86_64-unknown-linux-musl"
+          curl --fail --silent --show-error --location --retry 3 --output "$RUNNER_TEMP/$archive.tar.gz" \
+            "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/$WASM_BINDGEN_VERSION/$archive.tar.gz"
+          echo "$WASM_BINDGEN_SHA256  $RUNNER_TEMP/$archive.tar.gz" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$archive.tar.gz" -C "$RUNNER_TEMP"
+          install -D -m 755 "$RUNNER_TEMP/$archive/wasm-bindgen-test-runner" "$RUNNER_TEMP/bin/wasm-bindgen-test-runner"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       - name: Install go-task
         env:

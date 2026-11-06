@@ -1,0 +1,23 @@
+type: ess-http/1
+specification:
+  system: desk
+  version: v1
+  source_digest: sha256:26360090a100409006092aaabb2317b33029af076ce95fda8ad6d13e65ea923a
+routes:
+  - command: desk.notebook.FileNotebook
+    method: post
+    path: /notebooks/{id}
+    parameters: {id: input.id}
+    request: {encoding: form}
+    outcomes:
+      filed: {status: 201}
+  - command: desk.notebook.CloseNotebook
+    method: delete
+    path: /notebooks/{id}
+    parameters: {id: input.id}
+    request: {encoding: query, unknown: ignore}
+    outcomes:
+      closed: {status: 200}
+  - view: desk.notebook.OpenNotebooks
+    method: get
+    path: /notebooks

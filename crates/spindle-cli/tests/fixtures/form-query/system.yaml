@@ -1,0 +1,23 @@
+format: ess/34
+system: library
+version: v1
+summary: Books catalogued from a form, lent and retired from a query string, and read as a list.
+domains:
+  - library.catalogue
+components:
+  - component: catalogue
+    summary: Catalogues, lends, retires and lists books for callers outside the process.
+    owns:
+      domains:
+        - library.catalogue
+    accepts:
+      commands:
+        - library.catalogue.CatalogueBook
+        - library.catalogue.LendBook
+        - library.catalogue.RetireBook
+    publishes:
+      events:
+        - library.catalogue.BookCatalogued
+        - library.catalogue.BookLent
+        - library.catalogue.BookRetired
+    reached_by: network

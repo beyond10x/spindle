@@ -1,0 +1,19 @@
+format: ess/34
+system: desk
+version: v1
+summary: Notebooks opened under an identity and a time the runtime mints.
+domains:
+  - desk.notebooks
+components:
+  - component: desk
+    summary: Opens notebooks and answers their cards.
+    owns:
+      domains:
+        - desk.notebooks
+    accepts:
+      commands:
+        - desk.notebooks.OpenNotebook
+    publishes:
+      events:
+        - desk.notebooks.NotebookOpened
+    reached_by: in_process

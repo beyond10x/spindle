@@ -1,0 +1,30 @@
+format: ess/34
+system: study
+version: v1
+summary: Desks that open and close, and books shelved at a desk, lent and returned to it.
+domains:
+  - study.reading
+components:
+  - component: room
+    summary: Opens and closes desks, and shelves, lends and returns books.
+    owns:
+      domains:
+        - study.reading
+    accepts:
+      commands:
+        - study.reading.OpenDesk
+        - study.reading.CloseDesk
+        - study.reading.ShelveBook
+        - study.reading.LendBook
+        - study.reading.LendBookBare
+        - study.reading.ReturnBook
+        - study.reading.LendBookChecked
+        - study.reading.ReturnBookChecked
+    publishes:
+      events:
+        - study.reading.DeskOpened
+        - study.reading.DeskClosed
+        - study.reading.BookShelved
+        - study.reading.BookLent
+        - study.reading.BookReturned
+    reached_by: in_process

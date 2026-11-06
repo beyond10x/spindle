@@ -2,11 +2,15 @@
 //! or every row the view holds, kept by its filter and ranked by its `order_by`.
 
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::{ResolvedBody, ResolvedEntity, ResolvedTypeRef, ResolvedView};
+use ess_conformance::input::Completeness;
 use ess_domain::types::{MAX_TYPE_DEPTH, Presence, Primitive};
-use ess_domain::view::Direction;
+use ess_domain::view::{Direction, ViewSpec};
+use ess_primitives::facts::FactSource;
+use ess_primitives::node::Node;
 use ess_primitives::predicate::{CompareOp, Operand, Predicate, Truth};
 use ess_primitives::{FactPath, FactStore, FactValue, Rfc3339Instant};
 use serde_json::{Map, Value};
@@ -18,14 +22,13 @@ const STATE: &str = "state";
 /// Why a view cannot be answered here: the constructs a read of the source's own rows does not
 /// cover, named.
 ///
-/// A filter is read only where it reads the lifecycle state and nothing else, as the compiler
-/// parsed it: `state == <State>`, `state != <State>`, `state: {in: [..]}` or `{none_of: [..]}`,
-/// combined by `any`, `all` and `not`. Any other filter is named with its text and refused whole,
-/// since evaluating it over the state alone would answer a subset of its rows.
-pub(crate) fn unsupported(view: &ResolvedView) -> Option<String> {
-    if !view.params.is_empty() {
-        Some("parameters".to_owned())
-    } else if !view.computed.is_empty() {
+/// A filter is read only where each leaf, as the compiler parsed it, is one of: `state == <State>`,
+/// `state != <State>`, `state: {in: [..]}` or `{none_of: [..]}`; a parameter compared with `==`
+/// or `!=` to the state, the identity or a field of the source (`book_id == param.id`); or
+/// `defined(param.<name>)`; leaves combined by `any`, `all` and `not`. Any other filter is named
+/// with its text and refused whole, since evaluating part of it would answer a subset of its rows.
+pub(crate) fn unsupported(ir: &EssIr, view: &ResolvedView) -> Option<String> {
+    if !view.computed.is_empty() {
         Some("computed fields".to_owned())
     } else if view.aggregation.is_some() {
         Some("an aggregation".to_owned())
@@ -37,8 +40,9 @@ pub(crate) fn unsupported(view: &ResolvedView) -> Option<String> {
         Some("paging".to_owned())
     } else {
         match &view.filter {
-            Some(filter) if !reads_only_state(filter) => Some(format!(
-                "the filter `{filter}`; only comparisons of `state` with a state, \
+            Some(filter) if !reads(ir.entity(&view.source), view, filter) => Some(format!(
+                "the filter `{filter}`; only comparisons of `state` with a state, and of a \
+                 parameter with the state, the identity or a field by `==` or `!=`, \
                  combined by `any`, `all` and `not`, are read"
             )),
             _ => None,
@@ -46,17 +50,36 @@ pub(crate) fn unsupported(view: &ResolvedView) -> Option<String> {
     }
 }
 
-/// Whether `filter` reads the state fact and nothing else: each leaf compares it for equality or
-/// inequality with a text literal, or lists the states it is or is not among, and every inner
-/// node is `any`, `all` or `not`. The parser bounds the nesting at `MAX_PREDICATE_DEPTH`.
-fn reads_only_state(filter: &Predicate) -> bool {
+/// Whether every leaf of `filter` is one [`unsupported`] admits: the state compared for equality
+/// or inequality with a text literal, or listed among states it is or is not in; a declared
+/// parameter compared by `==` or `!=` with the state, the identity or a field of `entity`; or a
+/// parameter's `defined`. Every inner node is `any`, `all` or `not`. The parser bounds the nesting
+/// at `MAX_PREDICATE_DEPTH`.
+fn reads(entity: &ResolvedEntity, view: &ResolvedView, filter: &Predicate) -> bool {
     let is_state = |path: &FactPath| path.segments() == [STATE];
     let all_text = |values: &[FactValue]| {
         values
             .iter()
             .all(|value| matches!(value, FactValue::Text(_)))
     };
+    let param = |path: &FactPath| match path.segments() {
+        [namespace, name] => {
+            namespace == ViewSpec::PARAM && view.params.iter().any(|param| &param.name == name)
+        }
+        _ => false,
+    };
+    let row = |path: &FactPath| match path.segments() {
+        [name] => entity.observable_field(name).is_some(),
+        _ => false,
+    };
     match filter {
+        Predicate::Compare {
+            left: Operand::Fact(left),
+            op: CompareOp::Eq | CompareOp::Ne,
+            right: Operand::Fact(right),
+            ..
+        } => (param(left) && row(right)) || (row(left) && param(right)),
+        Predicate::Defined(path) => param(path),
         Predicate::Compare {
             left: Operand::Fact(path),
             op: CompareOp::Eq | CompareOp::Ne,
@@ -67,25 +90,147 @@ fn reads_only_state(filter: &Predicate) -> bool {
             is_state(path) && all_text(values)
         }
         Predicate::Any(children) | Predicate::All(children) => {
-            children.iter().all(reads_only_state)
+            children.iter().all(|child| reads(entity, view, child))
         }
-        Predicate::Not(child) => reads_only_state(child),
+        Predicate::Not(child) => reads(entity, view, child),
         _ => false,
     }
 }
 
-/// Whether the view holds `row`: always without a filter; with one, where ESS evaluates the
-/// filter to true over the state the row holds. Only a filter [`unsupported`] admits is read, and
-/// that filter reads nothing but the state.
-pub(crate) fn holds(view: &ResolvedView, row: &Row) -> bool {
-    let Some(filter) = &view.filter else {
-        return true;
-    };
-    let mut facts = FactStore::new();
-    if let Ok(path) = FactPath::new(STATE) {
-        facts.set(path, FactValue::text(row.state.clone()));
+/// The values `given` holds for `view`'s parameters, by declared name, as the facts its filter
+/// reads under `param.`. Each value given is checked as ESS's interpreter checks a view parameter
+/// (`interpret/views.rs:45` `query`, `input::validate_typed_value`) by [`spindle_kernel::admits`],
+/// the check every command input goes through: its type, and a newtype's prefix, alphabet and
+/// invariants. It is then bound by ESS ([`ess_conformance::input::bind`]).
+///
+/// # Errors
+/// Naming the parameter: one `view` does not declare, a required one `given` leaves out (or holds
+/// as `null`), or one whose value is not of its declared type or breaks its newtype.
+pub(crate) fn parameters(
+    ir: &EssIr,
+    view: &ResolvedView,
+    given: &Map<String, Value>,
+) -> Result<FactStore, String> {
+    if let Some(name) = given
+        .keys()
+        .find(|name| !view.params.iter().any(|param| &param.name == *name))
+    {
+        return Err(format!("`{name}` is not a parameter of {}", view.name));
     }
-    filter.evaluate(&facts) == Truth::True
+    let mut values = BTreeMap::new();
+    for param in &view.params {
+        match given.get(&param.name).filter(|value| !value.is_null()) {
+            Some(value) => {
+                spindle_kernel::admits(ir, &param.type_ref, value)
+                    .map_err(|error| format!("`{}`: {error}", param.name))?;
+                let node = serde_json::from_value::<Node>(value.clone())
+                    .map_err(|error| format!("`{}`: {error}", param.name))?;
+                values.insert(param.name.clone(), node);
+            }
+            None if param.type_ref.is_optional() => {}
+            None => return Err(format!("the parameter `{}` is required", param.name)),
+        }
+    }
+    ess_conformance::input::bind(ir, &view.params, &values, Completeness::Partial)
+        .map_err(|errors| format!("the parameter {errors}"))
+}
+
+/// What a filter reads: the row's facts at their own paths, the parameters under `param.`.
+struct Read<'a> {
+    row: &'a FactStore,
+    parameters: &'a FactStore,
+}
+
+impl Read<'_> {
+    fn source<'p>(&self, path: &'p FactPath) -> (&FactStore, std::borrow::Cow<'p, FactPath>) {
+        match path.segments() {
+            [namespace, rest @ ..] if namespace == ViewSpec::PARAM && !rest.is_empty() => (
+                self.parameters,
+                std::borrow::Cow::Owned(FactPath::from_segments(rest)),
+            ),
+            _ => (self.row, std::borrow::Cow::Borrowed(path)),
+        }
+    }
+}
+
+impl FactSource for Read<'_> {
+    fn fact(&self, path: &FactPath) -> Option<FactValue> {
+        let (source, path) = self.source(path);
+        source.fact(&path)
+    }
+
+    fn present(&self, path: &FactPath) -> bool {
+        let (source, path) = self.source(path);
+        source.present(&path)
+    }
+}
+
+/// Whether the view holds `row`, the instance `identity` names: always without a filter; with
+/// one, where ESS evaluates the filter to true over the row and `parameters`
+/// ([`parameters`]). Only a filter [`unsupported`] admits is read.
+///
+/// A view without parameters reads the state alone, the only fact such a filter reads; one with
+/// them binds the state, the identity and every stored field, as ESS binds a source row
+/// ([`ess_conformance::input::bind`] over the entity's observable fields).
+///
+/// A filter unknown for the row is refused, as ESS's interpreter refuses the read
+/// (`ess-conformance` `src/interpret/views.rs:214` at ESS 0.87.0, `select`,
+/// `Truth::Unknown => return Err(unsupported())`): one comparing with `==` or `!=` against an
+/// `Optional` parameter the read left out is unknown, not false. The interpreter hides such a row
+/// only where the omitted parameter is read by a string operator (`absent_text_operands`,
+/// `views.rs:210`), and no filter [`unsupported`] admits has one.
+///
+/// # Errors
+/// When the row is not a value of the source's declared fields, naming what it holds, or when the
+/// filter is unknown for it.
+pub(crate) fn holds(
+    ir: &EssIr,
+    view: &ResolvedView,
+    identity: &Value,
+    row: &Row,
+    parameters: &FactStore,
+) -> Result<bool, String> {
+    let Some(filter) = &view.filter else {
+        return Ok(true);
+    };
+    let facts = if view.params.is_empty() {
+        let mut facts = FactStore::new();
+        if let Ok(path) = FactPath::new(STATE) {
+            facts.set(path, FactValue::text(row.state.clone()));
+        }
+        facts
+    } else {
+        let entity = ir.entity(&view.source);
+        let mut held = row
+            .fields
+            .iter()
+            .filter(|(_, value)| !value.is_null())
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect::<Map<String, Value>>();
+        held.insert(entity.identity.name.clone(), identity.clone());
+        held.insert(STATE.to_owned(), Value::String(row.state.clone()));
+        let held: BTreeMap<String, Node> = serde_json::from_value(Value::Object(held))
+            .map_err(|error| format!("a row of {}: {error}", entity.name))?;
+        ess_conformance::input::bind(
+            ir,
+            &entity.observable_fields(),
+            &held,
+            Completeness::Partial,
+        )
+        .map_err(|errors| format!("a row of {}: {errors}", entity.name))?
+    };
+    let read = Read {
+        row: &facts,
+        parameters,
+    };
+    match filter.evaluate(&read) {
+        Truth::True => Ok(true),
+        Truth::False => Ok(false),
+        Truth::Unknown => Err(format!(
+            "the filter `{filter}` is unknown for a row, so the model does not determine the rows \
+             it holds"
+        )),
+    }
 }
 
 /// The view's row for the instance `identity` names, held as `row`.

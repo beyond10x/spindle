@@ -38,14 +38,14 @@ use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ess_compiler::EssIr;
 use serde_json::{Value, json};
 use spindle_capability::{Admission, Environment};
 use spindle_channel::{Channel, ChannelError, Frame, Receiver, Router};
 use spindle_telemetry::Counters;
-use spindle_timer::Clock;
+use spindle_timer::{Clock, Instant};
 
 use super::{DELIVERY_LIMIT, Deliveries, Host, HostError, Report, Retries};
 use crate::admission::{Placements, Refusal};

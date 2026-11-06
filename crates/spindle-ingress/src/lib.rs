@@ -10,7 +10,9 @@
 //! variables and status per outcome for the operations it names, and ESS's derived routes for
 //! the rest.
 //!
-//! A command's body is the input ESS publishes; it answers the envelope ESS publishes for the
+//! A command's request carries the input ESS publishes, as a JSON body or, where its binding
+//! declares `request: {encoding: form}` or `{encoding: query}`, as a form body or the query
+//! string; it answers the envelope ESS publishes for the
 //! outcome, `{outcome, published, error?, payload?, response?}` ([`answer`]). A view answers the body ESS
 //! publishes, `{"rows": [...]}`.
 //!
@@ -40,7 +42,7 @@ mod surface;
 pub use answer::{Answer, answer, answered};
 pub use console::Console;
 pub use listener::{BODY_LIMIT, BODY_READ, Exchange, HEADER_READ, Listener};
-pub use surface::{Caller, Resolved, Route, Surface, SurfaceError, Unserved, Variable};
+pub use surface::{Caller, Queried, Resolved, Route, Surface, SurfaceError, Unserved, Variable};
 
 /// The `ingress.network` implementation this crate serves: HTTP on the loopback address.
 pub const HTTP_LOOPBACK: &str = "http-loopback";

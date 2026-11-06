@@ -1,0 +1,19 @@
+format: ess/34
+system: desk
+version: v1
+summary: Notebooks added to a desk and read by id, page count, instant, colour and drawer over the network.
+domains:
+  - desk.notebook
+components:
+  - component: drawer
+    summary: Adds notebooks and answers what the desk holds.
+    owns:
+      domains:
+        - desk.notebook
+    accepts:
+      commands:
+        - desk.notebook.AddNotebook
+    publishes:
+      events:
+        - desk.notebook.NotebookAdded
+    reached_by: network

@@ -186,6 +186,20 @@
     },
     {
       "area": "Execution",
+      "detail": "A view that declares parameters is served: each is read from the path or the query string where the OpenAPI document ESS publishes places it, and the view answers the rows ESS's interpreter answers for those values; a required parameter left out, or one not of its declared type, is refused 400 naming it.",
+      "href": "/docs/concepts/capabilities",
+      "label": "View parameters",
+      "status": "shipped"
+    },
+    {
+      "area": "Execution",
+      "detail": "A command an ess-http/1 binding reads as request: {encoding: form} or {encoding: query} is served: its input is read from an application/x-www-form-urlencoded body or from the query string, each value by its field's type as ESS's served application reads it; an undeclared field, one the path carries, or a form body under another Content-Type is refused 400 and writes nothing.",
+      "href": "/docs/concepts/capabilities",
+      "label": "Form and query requests",
+      "status": "shipped"
+    },
+    {
+      "area": "Execution",
       "detail": "A loopback run also serves GET /api/model (the IR as ess specify compile prints it, and each outcome's subject), GET /api/events (every event published, in order) and POST /api/reset (empties every store); a route the binding or ESS publishes at one of those paths is refused at startup.",
       "href": "/docs/concepts/capabilities",
       "label": "Console routes",

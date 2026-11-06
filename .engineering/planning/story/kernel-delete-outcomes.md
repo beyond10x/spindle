@@ -2,11 +2,21 @@
 format: aep.planning-md/3
 id: story:kernel-delete-outcomes
 kind: story
-status: draft
+status: active
 title: The kernel runs outcomes that delete their subject
 relations:
 - serves: vision:spindle
-revision: 1
+scope:
+- confidence: cited
+  path: crates/spindle-kernel/src/execute.rs
+- confidence: cited
+  path: crates/spindle-kernel/src/supported.rs
+- confidence: cited
+  path: crates/spindle-kernel/tests/deletes.rs
+revision: 4
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-06T09:08:51Z", actor: "human:timo", revision: 2}
+- {from: "proposed", to: "active", at: "2026-11-06T09:08:51Z", actor: "human:timo", revision: 3}
 ---
 # The kernel runs outcomes that delete their subject
 

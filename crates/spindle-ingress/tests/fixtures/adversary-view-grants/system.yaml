@@ -1,0 +1,19 @@
+format: ess/34
+system: desk
+version: v1
+summary: Leaves added by a guest and read by a reader over the network.
+domains:
+  - desk.leaf
+components:
+  - component: binder
+    summary: Adds leaves and answers which leaves a page count selects.
+    owns:
+      domains:
+        - desk.leaf
+    accepts:
+      commands:
+        - desk.leaf.AddLeaf
+    publishes:
+      events:
+        - desk.leaf.LeafAdded
+    reached_by: network

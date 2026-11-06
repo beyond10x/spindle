@@ -1,0 +1,119 @@
+domain: library.shelf
+summary: Books on a shelf, each lent at most once at a time, read by the values a caller names.
+types:
+  - name: library.shelf.BookId
+    kind: newtype
+    of: String
+entities:
+  - name: library.shelf.Book
+    identity:
+      name: book_id
+      type: library.shelf.BookId
+    fields:
+      - name: title
+        type: String
+      - name: year
+        type: Integer
+    lifecycle:
+      initial: Available
+      states: [Available, Lent]
+      terminal: [Lent]
+      transitions:
+        - name: lend
+          from: [Available]
+          to: Lent
+errors:
+  - name: library.shelf.BookNotFound
+    summary: No book carries the id.
+    fields: []
+  - name: library.shelf.AlreadyLent
+    summary: The book is already lent.
+    fields: []
+commands:
+  - name: library.shelf.ShelveBook
+    input:
+      - name: book_id
+        type: library.shelf.BookId
+      - name: title
+        type: String
+      - name: year
+        type: Integer
+    outcomes:
+      - name: shelved
+        creates: library.shelf.Book
+        instance: book_id
+        sets:
+          title: input.title
+          year: input.year
+        emits: [library.shelf.BookShelved]
+        payload:
+          library.shelf.BookShelved: {book_id: input.book_id}
+        summary: The book is on the shelf.
+  - name: library.shelf.LendBook
+    input:
+      - name: book_id
+        type: library.shelf.BookId
+    outcomes:
+      - name: no-such-book
+        unknown_instance: true
+        error: library.shelf.BookNotFound
+        summary: No book carries the id.
+      - name: already-lent
+        when_subject: {predicate: state == Lent}
+        error: library.shelf.AlreadyLent
+        summary: A lent book is not lent again.
+      - name: lent
+        moves: library.shelf.Book.lend
+        instance: book_id
+        emits: [library.shelf.BookLent]
+        payload:
+          library.shelf.BookLent: {book_id: input.book_id}
+        summary: The book is lent.
+events:
+  - name: library.shelf.BookShelved
+    fields:
+      - name: book_id
+        type: library.shelf.BookId
+  - name: library.shelf.BookLent
+    fields:
+      - name: book_id
+        type: library.shelf.BookId
+views:
+  - name: library.shelf.BookById
+    source: library.shelf.Book
+    consistency: read_your_writes
+    params:
+      - name: id
+        type: library.shelf.BookId
+    filter: book_id == param.id
+    fields:
+      - name: book_id
+        type: library.shelf.BookId
+      - name: title
+        type: String
+      - name: state
+        type: library.shelf.Book.State
+  - name: library.shelf.BooksIn
+    source: library.shelf.Book
+    consistency: read_your_writes
+    params:
+      - name: state
+        type: library.shelf.Book.State
+    filter: state == param.state
+    fields:
+      - name: book_id
+        type: library.shelf.BookId
+      - name: title
+        type: String
+  - name: library.shelf.BooksOfYear
+    source: library.shelf.Book
+    consistency: read_your_writes
+    params:
+      - name: year
+        type: Integer
+    filter: year == param.year
+    fields:
+      - name: book_id
+        type: library.shelf.BookId
+      - name: year
+        type: Integer
