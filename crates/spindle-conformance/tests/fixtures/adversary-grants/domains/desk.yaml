@@ -1,0 +1,70 @@
+domain: gate.desk
+summary: Reviews a desk may flag; a clerk sends them, a guest only waves.
+actors:
+  - name: gate.desk.Clerk
+    may:
+      - gate.desk.Review
+  - name: gate.desk.Guest
+    may:
+      - gate.desk.Wave
+entities:
+  - name: gate.desk.Verdict
+    identity:
+      name: review_id
+      type: String
+    fields: []
+    lifecycle:
+      initial: Passed
+      states: [Passed]
+      terminal: [Passed]
+  - name: gate.desk.Greeting
+    identity:
+      name: wave_id
+      type: String
+    fields: []
+    lifecycle:
+      initial: Seen
+      states: [Seen]
+      terminal: [Seen]
+errors:
+  - name: gate.desk.Flagged
+    summary: The desk flagged the review.
+    fields: []
+commands:
+  - name: gate.desk.Review
+    input:
+      - name: review_id
+        type: String
+    outcomes:
+      - name: flagged
+        external: the desk flags the review
+        error: gate.desk.Flagged
+        summary: The desk may flag any review.
+      - name: passed
+        creates: gate.desk.Verdict
+        instance: review_id
+        emits: [gate.desk.Reviewed]
+        payload:
+          gate.desk.Reviewed: {review_id: input.review_id}
+        summary: The review passes.
+  - name: gate.desk.Wave
+    input:
+      - name: wave_id
+        type: String
+    outcomes:
+      - name: waved
+        creates: gate.desk.Greeting
+        instance: wave_id
+        emits: [gate.desk.Waved]
+        payload:
+          gate.desk.Waved: {wave_id: input.wave_id}
+        summary: The guest waves.
+events:
+  - name: gate.desk.Reviewed
+    fields:
+      - name: review_id
+        type: String
+  - name: gate.desk.Waved
+    fields:
+      - name: wave_id
+        type: String

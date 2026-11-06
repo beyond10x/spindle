@@ -233,7 +233,14 @@ impl ConformanceTarget for HostTarget {
         let submitted = running
             .host
             .submit_as(&command, input, actor.as_deref(), caller.as_ref());
-        self.lapse(&command);
+        let not_granted = matches!(
+            &submitted,
+            Err(HostError::Execute { error, .. })
+                if matches!(**error, ExecuteError::NotGranted { .. })
+        );
+        if !not_granted {
+            self.lapse(&command);
+        }
         if let Ok(report) = &submitted {
             for invoked in invoked(report) {
                 self.lapse(invoked);
