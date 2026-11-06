@@ -195,7 +195,9 @@ jobs:
           tar -C dist -czf "dist/${name}.tar.gz" "${name}"
           rm -r "dist/${name}"
           test -s "dist/${name}.tar.gz"
-          tar -tzf "dist/${name}.tar.gz" | grep -Fxq "${name}/b10x-spindle"
+          tar -tzf "dist/${name}.tar.gz" > "dist/${name}.list"
+          grep -Fxq "${name}/b10x-spindle" "dist/${name}.list"
+          rm "dist/${name}.list"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
