@@ -1,0 +1,127 @@
+domain: desk.notebook
+summary: Notebooks filed on a desk from a form and closed from a query string.
+types:
+  - name: desk.notebook.NotebookId
+    kind: newtype
+    of: String
+  - name: desk.notebook.Colour
+    kind: enum
+    variants: [red, blue]
+entities:
+  - name: desk.notebook.Notebook
+    identity:
+      name: id
+      type: desk.notebook.NotebookId
+    fields:
+      - name: pages
+        type: Integer
+    lifecycle:
+      initial: Open
+      states: [Open, Closed]
+      terminal: [Closed]
+      transitions:
+        - name: close
+          from: [Open]
+          to: Closed
+errors:
+  - name: desk.notebook.NotebookNotFound
+    summary: No notebook carries the id.
+    fields: []
+  - name: desk.notebook.AlreadyClosed
+    summary: The notebook is already closed.
+    fields: []
+commands:
+  - name: desk.notebook.FileNotebook
+    input:
+      - name: id
+        type: desk.notebook.NotebookId
+      - name: pages
+        type: Integer
+      - name: ruled
+        type: Boolean
+      - name: colour
+        type: desk.notebook.Colour
+      - name: shelf
+        type: Optional<Integer>
+      - name: label
+        type: Optional<String>
+      - name: tags
+        type: List<Integer>
+      - name: shelf_mark
+        type: String
+        naming: {wire: shelfMark}
+    outcomes:
+      - name: filed
+        creates: desk.notebook.Notebook
+        instance: id
+        sets:
+          pages: input.pages
+        emits: [desk.notebook.NotebookFiled]
+        payload:
+          desk.notebook.NotebookFiled:
+            id: input.id
+            pages: input.pages
+            ruled: input.ruled
+            colour: input.colour
+            shelf: input.shelf
+            label: input.label
+            tags: input.tags
+            shelf_mark: input.shelf_mark
+        summary: The notebook is filed.
+  - name: desk.notebook.CloseNotebook
+    input:
+      - name: id
+        type: desk.notebook.NotebookId
+      - name: reason
+        type: String
+    outcomes:
+      - name: no-such-notebook
+        unknown_instance: true
+        error: desk.notebook.NotebookNotFound
+        summary: No notebook carries the id.
+      - name: already-closed
+        when_subject: {predicate: state == Closed}
+        error: desk.notebook.AlreadyClosed
+        summary: A closed notebook stays closed.
+      - name: closed
+        moves: desk.notebook.Notebook.close
+        instance: id
+        emits: [desk.notebook.NotebookClosed]
+        payload:
+          desk.notebook.NotebookClosed: {id: input.id, reason: input.reason}
+        summary: The notebook is closed.
+events:
+  - name: desk.notebook.NotebookFiled
+    fields:
+      - name: id
+        type: desk.notebook.NotebookId
+      - name: pages
+        type: Integer
+      - name: ruled
+        type: Boolean
+      - name: colour
+        type: desk.notebook.Colour
+      - name: shelf
+        type: Optional<Integer>
+      - name: label
+        type: Optional<String>
+      - name: tags
+        type: List<Integer>
+      - name: shelf_mark
+        type: String
+  - name: desk.notebook.NotebookClosed
+    fields:
+      - name: id
+        type: desk.notebook.NotebookId
+      - name: reason
+        type: String
+views:
+  - name: desk.notebook.OpenNotebooks
+    source: desk.notebook.Notebook
+    consistency: read_your_writes
+    filter: state != Closed
+    fields:
+      - name: id
+        type: desk.notebook.NotebookId
+      - name: pages
+        type: Integer

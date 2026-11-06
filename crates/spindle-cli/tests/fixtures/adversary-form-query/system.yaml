@@ -1,0 +1,21 @@
+format: ess/34
+system: desk
+version: v1
+summary: Notebooks filed from a form, closed from a query string, and read as a list.
+domains:
+  - desk.notebook
+components:
+  - component: notebooks
+    summary: Files, closes and lists notebooks for callers outside the process.
+    owns:
+      domains:
+        - desk.notebook
+    accepts:
+      commands:
+        - desk.notebook.FileNotebook
+        - desk.notebook.CloseNotebook
+    publishes:
+      events:
+        - desk.notebook.NotebookFiled
+        - desk.notebook.NotebookClosed
+    reached_by: network
