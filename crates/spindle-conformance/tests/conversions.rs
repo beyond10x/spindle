@@ -1,4 +1,4 @@
-//! A binding mapping across a declared conversion, run by the in-process host and by ESS 0.86.0's
+//! A binding mapping across a declared conversion, run by the in-process host and by ESS 0.87.0's
 //! interpreter on the same neutral fixture: closing a loan thanks its member as a reader.
 
 use std::collections::BTreeMap;

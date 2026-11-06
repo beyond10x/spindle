@@ -1,5 +1,5 @@
 //! Adversary cases for `story:generated-boolean-values`, over the neutral fixture
-//! `tests/fixtures/adversary_boolean`: each case runs one command sequence on ESS 0.86.0's own
+//! `tests/fixtures/adversary_boolean`: each case runs one command sequence on ESS 0.87.0's own
 //! interpreter and on the kernel with a mint that answers ESS's tick UUIDs, and compares the
 //! minted Booleans.
 //!

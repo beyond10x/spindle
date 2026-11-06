@@ -329,7 +329,7 @@ fn lamps() -> spindle_spec::EssIr {
         .ir
 }
 
-/// What ESS 0.86.0's interpreter does with the lamp fixture: installs `LAMP_ID`, then arms it,
+/// What ESS 0.87.0's interpreter does with the lamp fixture: installs `LAMP_ID`, then arms it,
 /// answering the `lit` the install published and the row `LampCard` reads after each command.
 ///
 /// `Interpreted::for_model` mints every value the model leaves to the implementation from one
@@ -424,7 +424,7 @@ fn a_generated_boolean_is_minted_as_ess_mints_it() {
     assert_eq!(
         ess_lit,
         Node::Bool(false),
-        "ESS 0.86.0 mints `false` on tick 1"
+        "ESS 0.87.0 mints `false` on tick 1"
     );
 
     let mut store = MemoryStore::default();
@@ -607,7 +607,7 @@ fn labels() -> spindle_spec::EssIr {
         .ir
 }
 
-/// What ESS 0.86.0's interpreter publishes and answers for the warehouse fixture.
+/// What ESS 0.87.0's interpreter publishes and answers for the warehouse fixture.
 struct Warehouse {
     /// The `barcode` `LabelPrinted` published.
     printed: Node,
@@ -617,7 +617,7 @@ struct Warehouse {
     after_reprint: BTreeMap<String, Node>,
 }
 
-/// Prints `LABEL_ID` on ESS 0.86.0's interpreter, then reprints it.
+/// Prints `LABEL_ID` on ESS 0.87.0's interpreter, then reprints it.
 ///
 /// ESS draws every value the model leaves to the implementation from one counter per scenario,
 /// advanced before each draw (`ess-conformance/src/interpret/execute.rs`, `minted`, line 2828:
@@ -725,7 +725,7 @@ fn a_generated_bytes_value_is_minted_as_ess_mints_it() {
     assert_eq!(
         ess.printed,
         Node::Text("AQ==".to_owned()),
-        "ESS 0.86.0 mints the one byte 0x01, padded base64, on tick 1"
+        "ESS 0.87.0 mints the one byte 0x01, padded base64, on tick 1"
     );
 
     let mut store = MemoryStore::default();
@@ -757,7 +757,7 @@ fn a_generated_list_value_is_minted_as_ess_mints_it() {
     assert_eq!(
         ess.after_print["tags"],
         Node::Seq(Vec::new()),
-        "ESS 0.86.0 mints a generated `List<String>` as `[]`"
+        "ESS 0.87.0 mints a generated `List<String>` as `[]`"
     );
 
     let mut store = MemoryStore::default();
@@ -788,7 +788,7 @@ fn two_mints_differ() {
     assert_eq!(
         ess.after_reprint["barcode"],
         Node::Text("Aw==".to_owned()),
-        "ESS 0.86.0 reprints on tick 3, after the list's tick 2"
+        "ESS 0.87.0 reprints on tick 3, after the list's tick 2"
     );
 
     let mut store = MemoryStore::default();

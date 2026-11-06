@@ -1,4 +1,4 @@
-//! Adversary cases for policies chosen per refusal: the in-process host against ESS 0.86.0's
+//! Adversary cases for policies chosen per refusal: the in-process host against ESS 0.87.0's
 //! interpreter, with failures that carry no declared outcome (`PortAnswer::Untyped` on the ESS
 //! side, a decider with no answer on the host side), with a policy that changes on the last
 //! attempt, and with a second fixture whose fallback is `drop` and whose named refusal retries.

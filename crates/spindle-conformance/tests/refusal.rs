@@ -1,5 +1,5 @@
 //! A binding whose failure policy is chosen per refusal, run by the in-process host and by ESS
-//! 0.86.0's interpreter on the same neutral fixture: closing a loan thanks its member, giving up
+//! 0.87.0's interpreter on the same neutral fixture: closing a loan thanks its member, giving up
 //! at once on `no-reader` and retrying any other refusal. For each sequence of answers the notices
 //! give, both make the same attempts and leave the same rows.
 

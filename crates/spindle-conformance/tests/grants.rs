@@ -1,4 +1,4 @@
-//! Who may send what (story:actor-command-grants), held to ESS 0.86.0's interpreter: the same
+//! Who may send what (story:actor-command-grants), held to ESS 0.87.0's interpreter: the same
 //! requests, each sent as an actor or as none, answer the same on the in-process host, and the
 //! `…/grant/denied` scenarios ESS synthesises for a served component pass on it.
 //!
