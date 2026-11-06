@@ -107,3 +107,58 @@ fn an_error_field_the_runtime_cannot_fill_is_refused_by_name_before_the_command_
         .expect_err("a command the kernel does not run is refused whichever branch it would take"),
     );
 }
+
+/// `tests/fixtures/held-refusal`: `LendBook` lends a free book (`when_subject:`), refuses any
+/// other with the default branch `unavailable` (`Unavailable.keeper`, no source), and answers an
+/// unknown book with `no-such-book` (`NoSuchBook.book_id`, no source).
+fn loans() -> spindle_spec::EssIr {
+    spindle_spec::load(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/held-refusal"),
+    )
+    .expect("the held-refusal fixture compiles")
+    .ir
+}
+
+fn object(value: Value) -> Map<String, Value> {
+    match value {
+        Value::Object(fields) => fields,
+        other => panic!("not an object: {other}"),
+    }
+}
+
+/// ESS's served application reads an unsourced error field from the addressed row for every
+/// refusal without a subject of its own in a subject-guarded command, the default branch among
+/// them (`ess-synth` `determined::outcome`, `reads_held`), and leaves an `unknown_instance:`
+/// refusal's unsourced fields out: there is no row to describe.
+#[test]
+fn a_default_refusal_of_a_subject_guarded_command_reads_its_field_from_the_row() {
+    let ir = loans();
+    let mut store = MemoryStore::default();
+    let mut send = |command: &str, input: Value| {
+        execute(&ir, &mut store, &mut NoExternals, command, &object(input))
+            .unwrap_or_else(|error| panic!("{command} runs: {error}"))
+    };
+    send(
+        "study.loan.AddBook",
+        json!({"book_id": "b1", "keeper": "ada"}),
+    );
+    assert_eq!(
+        send("study.loan.LendBook", json!({"book_id": "b1"})).outcome,
+        "lent"
+    );
+    let refused = send("study.loan.LendBook", json!({"book_id": "b1"}));
+    assert_eq!(refused.outcome, "unavailable");
+    assert_eq!(
+        refused.error.map(|error| error.fields),
+        Some(object(json!({"keeper": "ada"}))),
+        "the keeper is read from the lent book, not minted"
+    );
+
+    let unknown = send("study.loan.LendBook", json!({"book_id": "b9"}));
+    assert_eq!(unknown.outcome, "no-such-book");
+    assert_eq!(
+        unknown.error.map(|error| error.fields),
+        Some(Map::new()),
+        "an unknown book is described by nothing"
+    );
+}

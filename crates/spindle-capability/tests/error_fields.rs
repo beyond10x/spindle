@@ -31,3 +31,18 @@ fn an_error_field_nothing_fills_requires_identity_mint_and_a_held_one_does_not()
         "`AlreadyTaken.holder` is read from the taken desk and mints nothing"
     );
 }
+
+#[test]
+fn a_default_refusal_read_from_the_row_and_an_unknown_instance_refusal_mint_nothing() {
+    let root: PathBuf = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let ir = spindle_spec::load(&root.join("crates/spindle-kernel/tests/fixtures/held-refusal"))
+        .expect("the held-refusal fixture compiles")
+        .ir;
+    let requirements = derive(&ir, Some("loan")).expect("loan is a component");
+    assert_eq!(
+        requirements.get(&Capability::new(Capability::IDENTITY_MINT)),
+        None,
+        "`Unavailable.keeper` is read from the addressed book and `NoSuchBook.book_id` is left \
+         out for a book that does not exist"
+    );
+}

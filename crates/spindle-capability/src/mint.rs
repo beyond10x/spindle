@@ -8,8 +8,8 @@
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::{
-    ResolvedBody, ResolvedCommand, ResolvedCondition, ResolvedEffect, ResolvedEntity,
-    ResolvedField, ResolvedInstance, ResolvedOutcome, ResolvedTypeRef,
+    ResolvedBody, ResolvedCommand, ResolvedCondition, ResolvedEntity, ResolvedField,
+    ResolvedInstance, ResolvedOutcome, ResolvedTypeRef,
 };
 use ess_domain::Invariant;
 use ess_domain::types::{MAX_TYPE_DEPTH, Primitive};
@@ -194,6 +194,9 @@ pub enum Unsourced<'ir> {
     Minted(Minted),
     /// Nothing fills it: a required field no row holds, of a type the runtime does not mint.
     Unfilled,
+    /// Left out: the refusal answers an identity no record carries (`unknown_instance:`), and an
+    /// instance that does not exist has nothing for the error to describe.
+    Unanswered,
 }
 
 /// Every field of the error `outcome` of `command` reports that `outcome` gives no source
@@ -202,12 +205,15 @@ pub enum Unsourced<'ir> {
 ///
 /// ESS's served application reads such a field from the row the refusal is answered for, where
 /// that row holds a stored field of the same name and type or the field is of the entity's state
-/// type (`ess-synth` `determined::held_field`); the row is the addressed instance of a branch
-/// answered after the row is read (`when_subject:`, `wrong_state:`, an `external:` over the
-/// subject). ESS's interpreter leaves every other one to the implementation
-/// (`interpret::execute::declared_error`, a generated value of its type), so it is minted by the
-/// rule for generated fields, an `Optional` one left absent. Empty for an outcome that reports no
-/// error.
+/// type (`ess-synth` `determined::held_field`). It reads that row for a `wrong_state:` branch,
+/// and, in a command with a subject guard ([`subject_guarded`]), for every refusal that names no
+/// subject of its own except an input guard (`when:`, answered before the row is read) and
+/// `unknown_instance:` (no row): the instance the command's first supplied subject addresses
+/// (`ess-synth` `determined::outcome`, `reads_held`). ESS's interpreter leaves every other field
+/// to the implementation (`interpret::execute::declared_error`, a generated value of its type),
+/// so it is minted by the rule for generated fields, an `Optional` one left absent. An
+/// `unknown_instance:` refusal leaves each one out ([`Unsourced::Unanswered`]). Empty for an
+/// outcome that reports no error.
 pub fn unsourced<'ir>(
     ir: &'ir EssIr,
     command: &'ir ResolvedCommand,
@@ -216,16 +222,15 @@ pub fn unsourced<'ir>(
     let Some(error) = outcome.error.as_ref().filter(|_| outcome.refuses) else {
         return Vec::new();
     };
-    let held = matches!(
-        outcome.condition,
-        ResolvedCondition::SubjectPredicate { .. }
-            | ResolvedCondition::SubjectField { .. }
-            | ResolvedCondition::SubjectState { .. }
-            | ResolvedCondition::ExternalSubject { .. }
-            | ResolvedCondition::WrongState
-    )
-    .then(|| addressed(ir, command))
-    .flatten();
+    let unknown = outcome.condition == ResolvedCondition::UnknownInstance;
+    let reads_held = outcome.condition == ResolvedCondition::WrongState
+        || (subject_guarded(command)
+            && outcome.subject.is_none()
+            && !matches!(
+                outcome.condition,
+                ResolvedCondition::When { .. } | ResolvedCondition::UnknownInstance
+            ));
+    let held = reads_held.then(|| addressed(ir, command)).flatten();
     ir.error(error)
         .fields
         .iter()
@@ -238,6 +243,7 @@ pub fn unsourced<'ir>(
         .map(|field| {
             let fill = match held.and_then(|entity| held_field(entity, field)) {
                 Some(fill) => fill,
+                None if unknown => Unsourced::Unanswered,
                 None if absent(&field.type_ref, false) => Unsourced::Absent,
                 None => minted(ir, &field.type_ref, false)
                     .map_or(Unsourced::Unfilled, Unsourced::Minted),
@@ -247,13 +253,29 @@ pub fn unsourced<'ir>(
         .collect()
 }
 
-/// The entity whose existing instance `command` addresses by an identity the caller supplies.
+/// The entity of the first subject in `command` whose identity the caller supplies: the row a
+/// refusal is answered for (`ess-synth` `determined::selection_subject`).
 fn addressed<'ir>(ir: &'ir EssIr, command: &ResolvedCommand) -> Option<&'ir ResolvedEntity> {
-    command.outcomes.iter().find_map(|outcome| {
-        let subject = outcome.subject.as_ref()?;
-        (!matches!(subject.effect, ResolvedEffect::Creates)
-            && matches!(subject.instance, ResolvedInstance::Supplied { .. }))
-        .then(|| ir.entity(&subject.entity))
+    command
+        .outcomes
+        .iter()
+        .filter_map(|outcome| outcome.subject.as_ref())
+        .find(|subject| matches!(subject.instance, ResolvedInstance::Supplied { .. }))
+        .map(|subject| ir.entity(&subject.entity))
+}
+
+/// Whether `command` declares a branch guarded by its subject (`ess-synth`
+/// `determined::subject_guarded`): it reads the addressed row before it answers.
+fn subject_guarded(command: &ResolvedCommand) -> bool {
+    command.outcomes.iter().any(|outcome| {
+        matches!(
+            outcome.condition,
+            ResolvedCondition::SubjectField { .. }
+                | ResolvedCondition::SubjectPredicate { .. }
+                | ResolvedCondition::ExternalSubject { .. }
+                | ResolvedCondition::SubjectState { .. }
+                | ResolvedCondition::StateChange { .. }
+        )
     })
 }
 

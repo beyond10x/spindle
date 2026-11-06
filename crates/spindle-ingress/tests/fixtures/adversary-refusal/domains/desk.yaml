@@ -1,0 +1,74 @@
+domain: study.desk
+summary: Desks a reader releases once taken; a release of a free or unknown desk is refused with the state it rests in.
+types:
+  - name: study.desk.DeskId
+    kind: newtype
+    of: String
+entities:
+  - name: study.desk.Desk
+    identity:
+      name: desk_id
+      type: study.desk.DeskId
+    fields:
+      - name: holder
+        type: String
+    lifecycle:
+      initial: Taken
+      states: [Free, Taken]
+      terminal: [Free]
+      transitions:
+        - name: release
+          from: [Taken]
+          to: Free
+errors:
+  - name: study.desk.NotTaken
+    summary: The desk is not taken, naming it and the state it rests in.
+    fields:
+      - name: desk_id
+        type: study.desk.DeskId
+      - name: state
+        type: study.desk.Desk.State
+commands:
+  - name: study.desk.OpenDesk
+    input:
+      - name: desk_id
+        type: study.desk.DeskId
+      - name: holder
+        type: String
+    outcomes:
+      - name: opened
+        creates: study.desk.Desk
+        instance: desk_id
+        sets:
+          holder: input.holder
+        emits: [study.desk.DeskOpened]
+        payload:
+          study.desk.DeskOpened: {desk_id: input.desk_id}
+        summary: The desk opens taken by its first holder.
+  - name: study.desk.ReleaseDesk
+    input:
+      - name: desk_id
+        type: study.desk.DeskId
+    outcomes:
+      - name: released
+        moves: study.desk.Desk.release
+        instance: desk_id
+        emits: [study.desk.DeskReleased]
+        payload:
+          study.desk.DeskReleased: {desk_id: input.desk_id}
+        summary: A taken desk is released.
+      - name: not-taken
+        wrong_state: true
+        error: study.desk.NotTaken
+        payload:
+          study.desk.NotTaken: {desk_id: input.desk_id}
+        summary: Only a taken desk is released.
+events:
+  - name: study.desk.DeskOpened
+    fields:
+      - name: desk_id
+        type: study.desk.DeskId
+  - name: study.desk.DeskReleased
+    fields:
+      - name: desk_id
+        type: study.desk.DeskId

@@ -1,0 +1,21 @@
+format: ess/34
+system: study
+version: v1
+summary: Desks a reading room opens and releases, refused with the state a desk rests in.
+domains:
+  - study.desk
+components:
+  - component: desk
+    summary: Opens and releases desks.
+    owns:
+      domains:
+        - study.desk
+    accepts:
+      commands:
+        - study.desk.OpenDesk
+        - study.desk.ReleaseDesk
+    publishes:
+      events:
+        - study.desk.DeskOpened
+        - study.desk.DeskReleased
+    reached_by: network

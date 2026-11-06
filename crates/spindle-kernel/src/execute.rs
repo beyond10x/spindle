@@ -1200,6 +1200,8 @@ impl<'a, 'ir> Run<'a, 'ir> {
         Ok(Some(DeclaredError {
             name: error.name().to_string(),
             fields,
+            unknown_instance: outcome.condition == ResolvedCondition::WrongState
+                && before.is_none(),
         }))
     }
 
@@ -1229,7 +1231,8 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     .map(|held| held.identity.clone())
                     .or_else(|| row.fields.get(stored).cloned())
                     .filter(|value| !value.is_null()),
-                (Unsourced::State | Unsourced::Stored(_), None) | (Unsourced::Absent, _) => None,
+                (Unsourced::State | Unsourced::Stored(_), None)
+                | (Unsourced::Absent | Unsourced::Unanswered, _) => None,
                 (Unsourced::Minted(shape), _) => {
                     let minted = self
                         .generator

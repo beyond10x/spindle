@@ -60,7 +60,8 @@ impl Answer {
 /// route gives the outcome the model selected ([`Route::status`]: the binding's, else ESS's
 /// derived one) with the envelope ESS publishes for it: `outcome`, `published` (each event as
 /// `{"event", "payload"}`, in emit order), on a refusing outcome `error`, the error's
-/// qualified name, with `payload` where the kernel determined its fields, and on an outcome that
+/// qualified name, with `payload` where the kernel determined its fields, none for the
+/// `wrong_state:` answer to an identity no record carries, and on an outcome that
 /// returns the command's response (`returns: true`, `200`) `response`, the values the kernel
 /// chose for its declared fields.
 ///
@@ -292,7 +293,7 @@ fn envelope(
     );
     if let Some(refusal) = refusal {
         body.insert("error".to_owned(), Value::String(refusal.name.clone()));
-        if !refusal.fields.is_empty() {
+        if !refusal.fields.is_empty() && !refusal.unknown_instance {
             body.insert("payload".to_owned(), Value::Object(refusal.fields.clone()));
         }
     }
