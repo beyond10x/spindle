@@ -246,6 +246,13 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "DELETE routes",
+        "A command an ess-http/1 binding puts on method: delete is served at its path: a DELETE with no body runs with the input its path carries and answers the status the binding lists; a method the path does not serve answers 405 with Allow naming DELETE.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-cli/tests/ingress.rs::a_command_bound_to_delete_is_served",
+    ),
+    shipped(
+        "Execution",
         "Console routes",
         "A loopback run also serves GET /api/model (the IR as ess specify compile prints it, and each outcome's subject), GET /api/events (every event published, in order) and POST /api/reset (empties every store); a route the binding or ESS publishes at one of those paths is refused at startup.",
         "/docs/concepts/capabilities",
