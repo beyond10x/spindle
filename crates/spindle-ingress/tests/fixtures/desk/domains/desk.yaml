@@ -1,0 +1,121 @@
+domain: study.desk
+summary: Desks a reader takes once, and books on weekdays only; each refusal names the desk and what stood in the way.
+types:
+  - name: study.desk.DeskId
+    kind: newtype
+    of: String
+entities:
+  - name: study.desk.Desk
+    identity:
+      name: desk_id
+      type: study.desk.DeskId
+    fields:
+      - name: holder
+        type: String
+    lifecycle:
+      initial: Free
+      states: [Free, Taken]
+      terminal: [Taken]
+      transitions:
+        - name: take
+          from: [Free]
+          to: Taken
+errors:
+  - name: study.desk.NoSuchDesk
+    summary: No desk carries the id.
+    fields: []
+  - name: study.desk.AlreadyTaken
+    summary: The desk is taken, naming it and who holds it.
+    fields:
+      - name: desk_id
+        type: study.desk.DeskId
+      - name: holder
+        type: String
+  - name: study.desk.ClosedOnWeekends
+    summary: The room is closed on the day asked for, naming the desk and a note.
+    fields:
+      - name: desk_id
+        type: study.desk.DeskId
+      - name: note
+        type: String
+commands:
+  - name: study.desk.OpenDesk
+    input:
+      - name: desk_id
+        type: study.desk.DeskId
+      - name: holder
+        type: String
+    outcomes:
+      - name: opened
+        creates: study.desk.Desk
+        instance: desk_id
+        sets:
+          holder: input.holder
+        emits: [study.desk.DeskOpened]
+        payload:
+          study.desk.DeskOpened: {desk_id: input.desk_id}
+        summary: The desk is open for its first holder.
+  - name: study.desk.TakeDesk
+    input:
+      - name: desk_id
+        type: study.desk.DeskId
+    outcomes:
+      - name: no-such-desk
+        unknown_instance: true
+        error: study.desk.NoSuchDesk
+        summary: No desk carries the id.
+      - name: already-taken
+        when_subject: {predicate: state == Taken}
+        error: study.desk.AlreadyTaken
+        payload:
+          study.desk.AlreadyTaken: {desk_id: input.desk_id}
+        summary: A taken desk is not taken again.
+      - name: taken
+        moves: study.desk.Desk.take
+        instance: desk_id
+        emits: [study.desk.DeskTaken]
+        payload:
+          study.desk.DeskTaken: {desk_id: input.desk_id}
+        summary: The desk is taken.
+  - name: study.desk.BookDesk
+    input:
+      - name: desk_id
+        type: study.desk.DeskId
+      - name: weekend
+        type: Boolean
+    outcomes:
+      - name: closed
+        when: weekend
+        error: study.desk.ClosedOnWeekends
+        payload:
+          study.desk.ClosedOnWeekends: {desk_id: input.desk_id}
+        summary: A weekend booking is refused.
+      - name: booked
+        emits: [study.desk.DeskBooked]
+        payload:
+          study.desk.DeskBooked: {desk_id: input.desk_id}
+        summary: A weekday booking is taken.
+events:
+  - name: study.desk.DeskOpened
+    fields:
+      - name: desk_id
+        type: study.desk.DeskId
+  - name: study.desk.DeskTaken
+    fields:
+      - name: desk_id
+        type: study.desk.DeskId
+  - name: study.desk.DeskBooked
+    fields:
+      - name: desk_id
+        type: study.desk.DeskId
+views:
+  - name: study.desk.AllDesks
+    source: study.desk.Desk
+    consistency: read_your_writes
+    fields:
+      - name: desk_id
+        type: study.desk.DeskId
+      - name: holder
+        type: String
+      - name: state
+        type: study.desk.Desk.State
