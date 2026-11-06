@@ -6,6 +6,10 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Changed
+
+- ESS moved to 0.88.0.
+
 ## [0.1.0] - 2026-11-06
 
 The first release: `b10x-spindle` loads an ESS specification, derives the capabilities it needs,
