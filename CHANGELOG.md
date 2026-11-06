@@ -6,6 +6,13 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- `spindle_ingress::route` answers a request value on a host with a response value, with no
+  listener, socket or async runtime; the loopback listener answers through it. Without the default
+  `listener` feature `spindle-ingress` builds for `wasm32-unknown-unknown`, and the wasm build
+  check covers it.
+
 ### Changed
 
 - Each crate's integration tests build into one test binary, `tests/<crate>/main.rs` with one
