@@ -320,7 +320,7 @@ fn generated_mints(ir: &EssIr, outcome: &ResolvedOutcome) -> Vec<(&'static str, 
 /// The mints the command's response needs where `outcome` returns it (`returns: true`) and
 /// reports no error: each declared `response:` field is the runtime's to choose, minted by the
 /// rule for generated fields, an `Optional` one as its required type, a record, union, map or
-/// constrained newtype by [`crate::mint::chosen`]: one reason per capability its minted leaves
+/// constrained newtype by [`crate::mint::response`]: one reason per capability its minted leaves
 /// need. None for a field the kernel refuses by name.
 fn response_mints(
     ir: &EssIr,
@@ -334,9 +334,10 @@ fn response_mints(
         .response
         .iter()
         .filter_map(|field| {
-            let choice = crate::mint::chosen(ir, &field.type_ref)?;
+            let one_time = outcome.one_time_response.contains(&field.name);
+            let choice = crate::mint::response(ir, &field.type_ref, one_time).ok()?;
             let at = format!("the response field `{}.{}`", command.name, field.name);
-            Some(capabilities(&choice).into_iter().map(move |capability| {
+            Some(choice.capabilities().into_iter().map(move |capability| {
                 if capability == Capability::CLOCK {
                     (capability, format!("stamps {at} with the current time"))
                 } else {
@@ -346,17 +347,6 @@ fn response_mints(
         })
         .flatten()
         .collect()
-}
-
-/// The capabilities `choice`'s minted leaves need, each once, in the order they are first drawn.
-fn capabilities(choice: &crate::mint::Choice) -> Vec<&'static str> {
-    let mut needed = Vec::new();
-    for leaf in choice.mints() {
-        if !needed.contains(&leaf.capability()) {
-            needed.push(leaf.capability());
-        }
-    }
-    needed
 }
 
 /// The mints `fields` of `place` need; `identity` is the top-level field holding the minted
@@ -393,7 +383,7 @@ fn generated_in(
             continue;
         };
         let at = format!("`{place}.{}`", field.target);
-        for capability in capabilities(&choice) {
+        for capability in choice.capabilities() {
             let because = match (capability == Capability::CLOCK, fallback) {
                 (true, false) => format!("stamps {at} with the current time"),
                 (true, true) => {

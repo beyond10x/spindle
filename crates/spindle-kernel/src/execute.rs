@@ -1201,7 +1201,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
     }
 
     /// The command's response, where `outcome` answers it ([`crate::mint::answers`]): each
-    /// declared field chosen from its type through the [`Generator`] ([`crate::mint::chosen`]),
+    /// declared field chosen from its type through the [`Generator`] ([`crate::mint::response`]),
     /// drawn after everything else the outcome draws. `None` for every other outcome.
     ///
     /// A one-time field's value is checked to appear in no other field and no field name of this
@@ -1224,18 +1224,19 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     outcome.name.as_str()
                 )
             };
-            let choice = crate::mint::chosen(self.ir, &field.type_ref).ok_or_else(|| {
-                ExecuteError::Unsupported {
-                    construct: format!(
-                        "the response field {}, whose type the runtime does not choose",
-                        at()
-                    ),
-                }
-            })?;
+            let one_time = outcome.one_time_response.contains(&field.name);
+            let choice =
+                crate::mint::response(self.ir, &field.type_ref, one_time).map_err(|_| {
+                    ExecuteError::Unsupported {
+                        construct: format!(
+                            "the response field {}, whose type the runtime does not choose",
+                            at()
+                        ),
+                    }
+                })?;
             let value = self
                 .generator
                 .choose(
-                    self.ir,
                     &choice,
                     &Identity {
                         capability: IDENTITY_MINT,

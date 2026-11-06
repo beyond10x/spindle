@@ -1,8 +1,8 @@
 //! A returning outcome answers a response field of a record, union, map, list or constrained
 //! newtype with a value of that type, as ESS's interpreter chooses one
 //! (`interpret::response::base`): a record's members each by the same rules, a union's first
-//! variant, one map entry, a newtype's invariant literal where one satisfies it. An enum field,
-//! which `base` does not choose, is refused by name before the command runs. A `{generated: true}`
+//! variant, one map entry, an enum's variant drawn fresh, a newtype's invariant literal where one
+//! satisfies it. A `{generated: true}`
 //! payload field of a record type is minted by the same rules, as ESS mints one
 //! (`interpret::values::mint`).
 
@@ -16,7 +16,7 @@ use ess_conformance::target::{ConformanceTarget, ScenarioContext, SemanticComman
 use ess_primitives::ids::CorrelationId;
 use ess_primitives::node::Node;
 use serde_json::{Map, Value};
-use spindle_kernel::{ExecuteError, Executed, MemoryStore, NoExternals, execute};
+use spindle_kernel::{Executed, MemoryStore, NoExternals, execute};
 
 const SYSTEM: &str = r"format: ess/34
 system: library
@@ -333,13 +333,38 @@ fn union_map_and_list_response_fields_answer_their_type() {
         assert_eq!(counts.len(), 1, "a map answers one entry: {counts:?}");
         assert!(counts.values().all(Value::is_i64), "{counts:?}");
 
-        let (response, _) = answered(ir, "library.shelf.ListShelves");
-        let Value::Array(layouts) = &response["layouts"] else {
-            panic!("a list answers an array: {response:?}");
-        };
-        for (index, layout) in layouts.iter().enumerate() {
-            assert_layout(layout, &format!("layouts[{index}]"));
-        }
+        let (response, theirs) = answered(ir, "library.shelf.ListShelves");
+        assert_eq!(
+            response["layouts"],
+            Value::Array(Vec::new()),
+            "a list answers `[]`, as the runtime mints every list"
+        );
+        assert_eq!(
+            node_map(&response)["layouts"],
+            theirs["layouts"],
+            "the interpreter answers the same empty list"
+        );
+        // The check reads the element type: a list of one record the kernel answers elsewhere
+        // passes it, and a list of one value that is no record does not.
+        let (arranged, _) = answered(ir, "library.shelf.ArrangeShelf");
+        let (_, _, spec, selected) = run_both(ir, "library.shelf.ListShelves");
+        let check = Observation::of(ir, spec, Some(selected), BTreeMap::new())
+            .expect("ESS derives the response check from the command");
+        let mut one = Map::new();
+        one.insert(
+            "layouts".to_owned(),
+            Value::Array(vec![arranged["item"].clone()]),
+        );
+        check
+            .compare(Some(&node_map(&one)))
+            .unwrap_or_else(|refused| {
+                panic!("a list of one layout is a list of layouts: {refused}")
+            });
+        one.insert("layouts".to_owned(), Value::Array(vec![Value::from(3)]));
+        assert!(
+            check.compare(Some(&node_map(&one))).is_err(),
+            "the check refuses a list whose element is no layout, so it checks the element type"
+        );
     });
 }
 
@@ -369,31 +394,37 @@ fn a_constrained_newtype_response_field_satisfies_its_invariants() {
 }
 
 #[test]
-fn an_enum_response_field_is_refused_by_name_before_the_command_runs() {
+fn an_enum_response_field_answers_one_of_its_variants() {
     with_ir(|ir| {
         let spec = ir
             .commands()
             .values()
             .find(|spec| spec.name.to_string() == "library.shelf.SortShelf")
             .expect("the fixture declares SortShelf");
-        let Err(ExecuteError::Unsupported { construct }) = spindle_kernel::runs(ir, spec) else {
-            panic!("an enum response field is refused before the command runs");
-        };
-        assert!(
-            construct.contains("`order`") && construct.contains("library.shelf.Order"),
-            "the refusal names the field and its type: {construct}"
-        );
-        let mut store = MemoryStore::default();
-        let refused = execute(
-            ir,
-            &mut store,
-            &mut NoExternals,
-            "library.shelf.SortShelf",
-            &input(),
-        );
-        assert!(
-            matches!(refused, Err(ExecuteError::Unsupported { .. })),
-            "{refused:?}"
+        spindle_kernel::runs(ir, spec).expect("an enum response field runs");
+        let mut seen = Vec::new();
+        for _ in 0..32 {
+            let (response, theirs) = answered(ir, "library.shelf.SortShelf");
+            let order = response["order"]
+                .as_str()
+                .unwrap_or_else(|| panic!("an enum answers its variant's name: {response:?}"))
+                .to_owned();
+            assert!(
+                ["by_title", "by_author"].contains(&order.as_str()),
+                "{order:?} is a variant of the order"
+            );
+            assert!(
+                matches!(&theirs["order"], Node::Text(text) if text == "by_title" || text == "by_author"),
+                "the interpreter answers a variant too: {theirs:?}"
+            );
+            if !seen.contains(&order) {
+                seen.push(order);
+            }
+        }
+        assert_eq!(
+            seen.len(),
+            2,
+            "fresh draws cycle through the variants, as ESS's witness cycles them: {seen:?}"
         );
     });
 }
@@ -456,6 +487,10 @@ fn derivation_names_identity_mint_for_each_minted_member() {
             (
                 "library.shelf.TrackShelf/tracked",
                 "`library.shelf.ShelfTracked.progress`",
+            ),
+            (
+                "library.shelf.SortShelf/sorted",
+                "`library.shelf.SortShelf.order`",
             ),
         ] {
             assert!(

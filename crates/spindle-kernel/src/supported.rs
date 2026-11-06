@@ -210,24 +210,14 @@ fn response(ir: &EssIr, command: &ResolvedCommand, outcome: &ResolvedOutcome) ->
     }
     command.response.iter().find_map(|field| {
         let one_time = outcome.one_time_response.contains(&field.name);
-        let choice = crate::mint::chosen(ir, &field.type_ref);
-        let unsettled = choice
-            .as_ref()
-            .and_then(|choice| crate::mint::unsettled(ir, choice));
-        match (&choice, unsettled) {
-            (Some(_), Some(kind)) => Some(format!(
-                "the command's response field `{}` of type `{}`, whose part `{kind}` none of the \
-                 literals its invariants name satisfies, so the runtime does not choose it",
-                field.name, field.type_ref
-            )),
-            (Some(crate::mint::Choice::Mint(crate::mint::Minted::Text { .. })), None) => None,
-            (Some(_), None) if !one_time => None,
-            (Some(_), None) => Some(format!(
+        match crate::mint::response(ir, &field.type_ref, one_time) {
+            Ok(_) => None,
+            Err(crate::mint::Unanswered::OneTimeNotText) => Some(format!(
                 "the command's one-time response field `{}` of type `{}`, which the runtime mints \
                  only as text",
                 field.name, field.type_ref
             )),
-            (None, _) => Some(format!(
+            Err(crate::mint::Unanswered::Unchosen) => Some(format!(
                 "the command's response field `{}` of type `{}`, which the runtime does not \
                  choose; {}",
                 field.name,

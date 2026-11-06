@@ -11,6 +11,7 @@ use ess_compiler::ir::{ResolvedBody, ResolvedTypeRef};
 use ess_domain::Invariant;
 use ess_domain::types::{MAX_TYPE_DEPTH, Primitive};
 use ess_primitives::facts::{FactStore, FactValue};
+use ess_primitives::node::Node;
 use ess_primitives::predicate::{Operand, Predicate, Truth};
 
 use crate::Capability;
@@ -178,21 +179,20 @@ pub fn absent(kind: &ResolvedTypeRef, present: bool) -> bool {
 }
 
 /// How the runtime builds a value it chooses of a type [`minted`] does not answer: a response
-/// field the command returns, or a `{generated: true}` field. The structure follows ESS's
-/// interpreter (`interpret::response::base`): a record's members each by the same rules, a
-/// union's first variant, one map entry, a newtype's invariant literal where one satisfies it.
+/// field the command returns, or a `{generated: true}` field ([`generated`]). The structure follows
+/// ESS's interpreter (`interpret::response::base`): a record's members each by the same rules, a
+/// union's first variant, one map entry, an enum's variant drawn as its input witness cycles them,
+/// and a constrained newtype's literal. The literal is Spindle's choice among the literals the
+/// newtype's invariants name, the first that ESS's predicates find true of it ([`admits`]); the
+/// kernel then holds the whole value to ESS's type check.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Choice {
     /// A leaf [`minted`] answers.
     Mint(Minted),
-    /// A constrained newtype: the first of `candidates` that is a value of `kind`. Which one is
-    /// the kernel's to decide, where it validates values; none at all refuses the field.
-    Literal {
-        /// The newtype.
-        kind: ResolvedTypeRef,
-        /// The literals its invariants compare `value` with, each integer with its neighbours.
-        candidates: Vec<FactValue>,
-    },
+    /// A constrained newtype: a literal its invariants, or those of the type it wraps, name.
+    Literal(FactValue),
+    /// An enum: one of its variants, drawn through `identity.mint`.
+    Enum(Vec<String>),
     /// A record: each member, an `Optional` one as its required type.
     Record(Vec<(String, Choice)>),
     /// A union's first variant by tag value: the tag, and its content under `value` (`content`
@@ -215,64 +215,96 @@ pub enum Choice {
 }
 
 impl Choice {
-    /// Every [`Minted`] leaf, in the order the runtime draws them.
-    pub fn mints(&self) -> Vec<&Minted> {
-        let mut leaves = Vec::new();
-        self.collect(&mut leaves);
-        leaves
+    /// The capabilities the parts the runtime draws need, each once, in the order they are first
+    /// drawn: `clock` for a `Timestamp`, `identity.mint` for every other minted leaf, an enum's
+    /// variant among them. A literal draws nothing.
+    pub fn capabilities(&self) -> Vec<&'static str> {
+        let mut needed = Vec::new();
+        self.collect(&mut needed);
+        needed
     }
 
-    fn collect<'c>(&'c self, leaves: &mut Vec<&'c Minted>) {
+    fn collect(&self, needed: &mut Vec<&'static str>) {
+        let mut need = |capability: &'static str| {
+            if !needed.contains(&capability) {
+                needed.push(capability);
+            }
+        };
         match self {
-            Self::Mint(minted) => leaves.push(minted),
-            Self::Literal { .. } | Self::Variant { content: None, .. } => {}
+            Self::Mint(minted) => need(minted.capability()),
+            Self::Enum(_) => need(Capability::IDENTITY_MINT),
+            Self::Literal(_) | Self::Variant { content: None, .. } => {}
             Self::Record(members) => {
                 for (_, member) in members {
-                    member.collect(leaves);
+                    member.collect(needed);
                 }
             }
             Self::Variant {
                 content: Some((_, content)),
                 ..
-            } => content.collect(leaves),
+            } => content.collect(needed),
             Self::Entry { key, value } => {
-                leaves.push(key);
-                value.collect(leaves);
+                need(key.capability());
+                value.collect(needed);
             }
+        }
+    }
+
+    /// Whether any part is a response field's alone: a constrained newtype's literal or an
+    /// enum's variant.
+    pub fn response_only(&self) -> bool {
+        match self {
+            Self::Literal(_) | Self::Enum(_) => true,
+            Self::Mint(_) | Self::Variant { content: None, .. } => false,
+            Self::Record(members) => members.iter().any(|(_, member)| member.response_only()),
+            Self::Variant {
+                content: Some((_, content)),
+                ..
+            } => content.response_only(),
+            Self::Entry { value, .. } => value.response_only(),
         }
     }
 }
 
 /// How the runtime mints a `{generated: true}` field of `kind`: by [`minted`], or a record, union
-/// or map of such leaves by [`chosen`]. Never through a constrained newtype's literal, which only
-/// a response field takes (`interpret::response::base`): ESS's interpreter mints a generated
-/// value from its input witness (`interpret::values::mint`), which reads no invariant literal.
+/// or map of such leaves by [`chosen`]. Never through a constrained newtype's literal or an enum,
+/// which only a response field takes here ([`Choice::response_only`]).
 pub fn generated(ir: &EssIr, kind: &ResolvedTypeRef, present: bool) -> Option<Choice> {
     minted(ir, kind, present)
         .map(Choice::Mint)
-        .or_else(|| chosen(ir, kind).filter(|choice| !choice.literal()))
+        .or_else(|| chosen(ir, kind).filter(|choice| !choice.response_only()))
 }
 
-impl Choice {
-    /// Whether any part is a constrained newtype's literal ([`Choice::Literal`]).
-    pub fn literal(&self) -> bool {
-        match self {
-            Self::Literal { .. } => true,
-            Self::Mint(_) | Self::Variant { content: None, .. } => false,
-            Self::Record(members) => members.iter().any(|(_, member)| member.literal()),
-            Self::Variant {
-                content: Some((_, content)),
-                ..
-            } => content.literal(),
-            Self::Entry { value, .. } => value.literal(),
-        }
+/// Why the runtime does not answer a response field: the kernel's refusal by name, and the field
+/// derivation names no capability for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unanswered {
+    /// No [`chosen`] value of the field's type.
+    Unchosen,
+    /// A one-time field (`one_time_response:`) whose value is not minted as text.
+    OneTimeNotText,
+}
+
+/// How the runtime answers a response field of `kind`, where `one_time` says the outcome lists
+/// it in `one_time_response:`: the one rule the kernel answers and refuses by and derivation
+/// names capabilities by.
+///
+/// # Errors
+/// [`Unanswered`], where the kernel refuses the field by name before the command runs.
+pub fn response(ir: &EssIr, kind: &ResolvedTypeRef, one_time: bool) -> Result<Choice, Unanswered> {
+    match chosen(ir, kind) {
+        None => Err(Unanswered::Unchosen),
+        Some(choice @ Choice::Mint(Minted::Text { .. })) => Ok(choice),
+        Some(_) if one_time => Err(Unanswered::OneTimeNotText),
+        Some(choice) => Ok(choice),
     }
 }
 
 /// How the runtime chooses a value of `kind`, an `Optional` one as its required type; `None`
-/// where it does not: an enum, a record that declares invariants, a constrained newtype whose
-/// invariants compare `value` with no literal, a map whose key is not minted as text, and every
-/// primitive [`minted`] does not answer.
+/// where it does not, and then the kernel refuses the field by name and derivation names no
+/// capability for it: a record that declares invariants, a record that holds itself, a
+/// constrained newtype neither whose literals nor its wrapped type's are a value of it, a map
+/// whose key is not minted as text, and every primitive [`minted`] does not answer.
 pub fn chosen(ir: &EssIr, kind: &ResolvedTypeRef) -> Option<Choice> {
     choose(ir, kind, 0)
 }
@@ -318,17 +350,34 @@ fn choose(ir: &EssIr, kind: &ResolvedTypeRef, depth: usize) -> Option<Choice> {
                 prefix: None,
                 invariants,
             } if invariants.is_empty() => choose(ir, of, depth + 1),
-            ResolvedBody::Newtype { invariants, .. } => {
+            ResolvedBody::Newtype { of, invariants, .. } => {
                 let mut candidates = Vec::new();
                 for invariant in invariants {
                     literals(&invariant.predicate, &mut candidates);
                 }
-                (!candidates.is_empty()).then(|| Choice::Literal {
-                    kind: kind.clone(),
-                    candidates,
-                })
+                if let Some(found) = candidates
+                    .into_iter()
+                    .find(|candidate| admits(ir, kind, candidate))
+                {
+                    return Some(Choice::Literal(found));
+                }
+                // As `base` does: the wrapped type's value, held to this newtype's rules too.
+                match choose(ir, of, depth + 1)? {
+                    Choice::Literal(wrapped) if admits(ir, kind, &wrapped) => {
+                        Some(Choice::Literal(wrapped))
+                    }
+                    _ => None,
+                }
             }
-            ResolvedBody::Struct { .. } | ResolvedBody::Enum { .. } => None,
+            ResolvedBody::Enum { variants } => (!variants.is_empty()).then(|| {
+                Choice::Enum(
+                    variants
+                        .iter()
+                        .map(|variant| variant.name().to_owned())
+                        .collect(),
+                )
+            }),
+            ResolvedBody::Struct { .. } => None,
         },
         ResolvedTypeRef::Map { key, value } => {
             let key = minted(ir, &ResolvedTypeRef::Primitive { name: *key }, true)
@@ -342,6 +391,57 @@ fn choose(ir: &EssIr, kind: &ResolvedTypeRef, depth: usize) -> Option<Choice> {
         | ResolvedTypeRef::List { .. }
         | ResolvedTypeRef::Primitive { .. } => None,
     }
+}
+
+/// Whether `literal` is a value of `kind`, a chain of newtypes over a primitive: the primitive
+/// admits it ([`Primitive::admits`]), and at every layer its text starts with the prefix, draws
+/// from the alphabet, and every invariant is true with it bound at `value`, as ESS evaluates one.
+pub fn admits(ir: &EssIr, kind: &ResolvedTypeRef, literal: &FactValue) -> bool {
+    let mut kind = kind;
+    for _ in 0..=MAX_TYPE_DEPTH {
+        match kind {
+            ResolvedTypeRef::Primitive { name } => {
+                let node = match literal {
+                    FactValue::Bool(value) => Node::Bool(*value),
+                    FactValue::Number(number) => Node::Number(*number),
+                    FactValue::Text(text) => Node::Text(text.clone()),
+                };
+                return name.admits(&node).is_some();
+            }
+            ResolvedTypeRef::Declared { name } => {
+                let ResolvedBody::Newtype {
+                    of,
+                    alphabet,
+                    prefix,
+                    invariants,
+                } = &ir.named_type(name).body
+                else {
+                    return false;
+                };
+                if let FactValue::Text(text) = literal
+                    && (prefix
+                        .as_ref()
+                        .is_some_and(|prefix| !text.starts_with(prefix.as_str()))
+                        || alphabet.as_ref().is_some_and(|alphabet| {
+                            text.chars().any(|character| !alphabet.contains(character))
+                        }))
+                {
+                    return false;
+                }
+                let mut facts = FactStore::new();
+                facts.set_path("value", literal.clone());
+                if !invariants
+                    .iter()
+                    .all(|invariant| invariant.predicate.evaluate(&facts) == Truth::True)
+                {
+                    return false;
+                }
+                kind = of;
+            }
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// The most literals one newtype offers.
