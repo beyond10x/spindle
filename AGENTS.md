@@ -69,6 +69,7 @@ environment, and executes it. Humans start at [`README.md`](README.md); the desi
   (`cargo test -p <crate> --lib`, `--test <file>`); `cargo test -p <crate>` links every test
   binary of the crate and runs once, at the gate.
 - Tests that need a directory use `tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR"))`.
+- A change that removes or renames an `adversary_` test names its story (`story:<id>`) in a comment in that hunk; the organisation's release check refuses a release whose diff removes one otherwise.
 - Planning store mutations use `aep plan artifact` only. Scratch bodies go in
   `.engineering/drafts/`, which is git-ignored.
 - Use managed worktrees for changes; keep the primary checkout clean.
