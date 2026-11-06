@@ -1,0 +1,21 @@
+format: ess/34
+system: gate
+version: v1
+summary: Reviews a clerk may send and a guest may not.
+domains:
+  - gate.desk
+components:
+  - component: desk
+    summary: Reviews.
+    owns:
+      domains:
+        - gate.desk
+    accepts:
+      commands:
+        - gate.desk.Review
+        - gate.desk.Wave
+    publishes:
+      events:
+        - gate.desk.Reviewed
+        - gate.desk.Waved
+    reached_by: in_process

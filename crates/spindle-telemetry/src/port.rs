@@ -95,11 +95,13 @@ pub enum Failure {
     Undeclared,
     /// The store could not read or commit.
     Store,
+    /// The actor it was sent as holds no grant for it.
+    NotGranted,
 }
 
 impl Failure {
     /// Every failure, in declaration order.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::UnknownCommand,
         Self::Unsupported,
         Self::InvalidInput,
@@ -110,6 +112,7 @@ impl Failure {
         Self::BrokenInvariant,
         Self::Undeclared,
         Self::Store,
+        Self::NotGranted,
     ];
 
     /// The kernel's name for it, as `ExecuteError::kind` gives it.
@@ -125,6 +128,7 @@ impl Failure {
             Self::BrokenInvariant => "broken_invariant",
             Self::Undeclared => "undeclared",
             Self::Store => "store",
+            Self::NotGranted => "not_granted",
         }
     }
 

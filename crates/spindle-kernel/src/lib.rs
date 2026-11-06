@@ -40,7 +40,8 @@
 //! example use, and the guarded forms beside them (an input guard beside `when_subject:`,
 //! `when_subject: {field, equals}`, `when_subject_state:`, `external:` with `when:` or
 //! `when_subject:`), and the caller a command is sent as ([`execute_as`]): `{caller: <attribute>}`
-//! as a value source, `caller.<attribute>` in a guard, and a branch the caller decides. Any other
+//! as a value source, `caller.<attribute>` in a guard, and a branch the caller decides. A command
+//! sent as an actor whose `may:` does not name it is [`ExecuteError::NotGranted`]. Any other
 //! construct is [`ExecuteError::Unsupported`], named, before the
 //! command reads or writes anything. [`runs`] makes the same check without running anything, so
 //! a host can name what it will not run before it serves.
@@ -49,6 +50,7 @@ mod caller;
 mod decider;
 mod execute;
 mod facts;
+mod grant;
 mod mint;
 mod sqlite;
 mod store;
@@ -172,6 +174,13 @@ pub enum ExecuteError {
     /// The store could not read or commit.
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// The command was sent as an actor whose `may:` does not name it, or as an actor the model
+    /// does not declare: ESS's standard refusal for an actor no grant admits. Nothing was read.
+    #[error("refused as not granted to `{actor}`")]
+    NotGranted {
+        /// The qualified name of the actor it was sent as.
+        actor: String,
+    },
 }
 
 impl ExecuteError {
@@ -188,6 +197,7 @@ impl ExecuteError {
             Self::BrokenInvariant { .. } => "broken_invariant",
             Self::Undeclared { .. } => "undeclared",
             Self::Store(_) => "store",
+            Self::NotGranted { .. } => "not_granted",
         }
     }
 }

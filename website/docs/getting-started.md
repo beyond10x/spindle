@@ -243,6 +243,7 @@ command.rally.west.ObserveBall.failed.invalid_value counter kernel
 command.rally.west.ObserveBall.failed.broken_invariant counter kernel
 command.rally.west.ObserveBall.failed.undeclared counter kernel
 command.rally.west.ObserveBall.failed.store counter kernel
+command.rally.west.ObserveBall.failed.not_granted counter kernel
 command.rally.west.ObserveBall.duration_us histogram kernel
 event.rally.west.BallSeen.appended counter store
 event.rally.west.PaddleMoveRequested.appended counter store
