@@ -1,0 +1,12 @@
+format = "spindle-environment/1"
+name = "browser"
+os = "unknown"
+arch = "wasm32"
+
+[provides]
+"store.durable" = ["indexeddb"]
+"store.ephemeral" = ["memory"]
+"identity.mint" = ["uuid-v4"]
+clock = ["system"]
+channel = ["in-process"]
+projection = ["in-process"]

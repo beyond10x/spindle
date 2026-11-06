@@ -117,12 +117,15 @@ impl SqliteStore {
         }
     }
 
-    /// Appends `events` followed by `end` to `stream` in one append, at `expected`.
+    /// Appends `events` followed by `end` to `stream` in one append, at `expected`. A conflict
+    /// names `named`, the version the change or removal named (`None` for a creation), not the
+    /// stream position the append was made at, and no held version for a stream never written
+    /// (eventlog's 0), as [`crate::MemoryStore`] names them.
     fn append(
         &self,
         stream: &StreamId,
         (entity, identity): (&str, &Value),
-        expected: Expected,
+        (expected, named): (Expected, Option<u64>),
         events: &[crate::Event],
         end: NewEvent,
     ) -> Result<(), StoreError> {
@@ -154,11 +157,11 @@ impl SqliteStore {
             .block_on(self.log.append(stream, expected, &events, &meta))
             .map(|_| ())
             .map_err(|error| match error {
-                EventLogError::Conflict { expected, actual } => StoreError::Conflict {
+                EventLogError::Conflict { actual, .. } => StoreError::Conflict {
                     entity: entity.to_owned(),
                     identity: identity.to_string(),
-                    expected: Some(expected),
-                    actual: Some(actual),
+                    expected: named,
+                    actual: (actual > 0).then_some(actual),
                 },
                 other => backend(other),
             })
@@ -204,7 +207,7 @@ impl Store for SqliteStore {
         self.append(
             &stream,
             (&change.entity, &change.identity),
-            expected,
+            (expected, change.expected),
             &change.events,
             NewEvent::new(ROW, SCHEMA, row).map_err(backend)?,
         )
@@ -222,7 +225,7 @@ impl Store for SqliteStore {
         self.append(
             &stream,
             (&removal.entity, &removal.identity),
-            Expected::Exact(removal.expected),
+            (Expected::Exact(removal.expected), Some(removal.expected)),
             &removal.events,
             NewEvent::new(REMOVED, SCHEMA, Value::Object(serde_json::Map::new()))
                 .map_err(backend)?,
