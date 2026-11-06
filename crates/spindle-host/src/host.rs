@@ -226,6 +226,15 @@ pub enum HostError {
     /// No view has this name.
     #[error("no view {0}")]
     NoView(String),
+    /// A view was read with parameter values it refuses ([`Host::list_with`]): one it does not
+    /// declare, a required one left out, or one not of its declared type. Nothing was read.
+    #[error("{view}: {detail}")]
+    Parameters {
+        /// The view.
+        view: String,
+        /// What is wrong, naming the parameter.
+        detail: String,
+    },
     /// The model refused a command [`Host::submit`] was asked to run: its outcome declares an
     /// error. Nothing was written.
     #[error("{component} refused {command} with {} {}", error.name, Value::Object(error.fields.clone()))]
@@ -1031,47 +1040,94 @@ impl Host {
     /// `consistency` changes nothing here: every component's store is in this process, so an
     /// `eventual` view reads the same store a `read_your_writes` one does.
     ///
+    /// A view that declares parameters is read as [`Host::list_with`] reads it with no parameter
+    /// values, so a required parameter is refused as left out.
+    ///
     /// # Errors
     /// [`HostError::NoView`], [`HostError::Unsupported`] for a view [`Host::list`] cannot answer,
-    /// and [`HostError::Store`] when the store cannot be read.
+    /// [`HostError::Parameters`] for a view with a required parameter, and [`HostError::Store`]
+    /// when the store cannot be read.
     pub fn view(
         &mut self,
         view: &str,
         identity: &Value,
     ) -> Result<Option<Map<String, Value>>, HostError> {
         let (declared, owner) = readable(&self.ir, view)?;
+        let parameters =
+            crate::view::parameters(&self.ir, declared, &Map::new()).map_err(|detail| {
+                HostError::Parameters {
+                    view: view.to_owned(),
+                    detail,
+                }
+            })?;
         let entity = self.ir.entity(&declared.source).name.to_string();
         let stored = store_of(&mut self.components, &owner)?.load(&entity, identity)?;
-        Ok(stored
-            .filter(|stored| crate::view::holds(declared, &stored.row))
-            .map(|stored| crate::view::project(&self.ir, declared, identity, &stored.row)))
+        let Some(stored) = stored else {
+            return Ok(None);
+        };
+        Ok(
+            held(&self.ir, view, declared, identity, &stored.row, &parameters)?
+                .then(|| crate::view::project(&self.ir, declared, identity, &stored.row)),
+        )
     }
 
-    /// Every row `view` holds: each instance of its source its filter keeps, projected, in the
-    /// order its `order_by` ranks them, ties and a view without `order_by` by identity.
+    /// Every row `view` holds: [`Host::list_with`] with no parameter values.
     ///
-    /// The filter read is one over the lifecycle state alone, as the compiler parsed it:
-    /// `state == <State>` and `!=`, `in` and `none_of` over states, combined by `any`, `all` and
-    /// `not`, and evaluated by ESS. Read from the
-    /// same store as [`Host::view`], for either consistency.
+    /// # Errors
+    /// As [`Host::list_with`]; a view with a required parameter is refused
+    /// [`HostError::Parameters`].
+    pub fn list(&mut self, view: &str) -> Result<Vec<Map<String, Value>>, HostError> {
+        self.list_with(view, &Map::new())
+    }
+
+    /// Every row `view` holds for the parameter values `parameters`, by declared parameter name:
+    /// each instance of its source its filter keeps, projected, in the order its `order_by` ranks
+    /// them, ties and a view without `order_by` by identity.
+    ///
+    /// The filter is evaluated by ESS, as the compiler parsed it, over the row and the parameters
+    /// (each read as `param.<name>`). The filters read are those whose leaves compare the state
+    /// with a state (`state == <State>` and `!=`, `in` and `none_of` over states), compare a
+    /// parameter by `==` or `!=` with the state, the identity or a field, or ask whether a
+    /// parameter is `defined`, combined by `any`, `all` and `not`. A filter unknown for a row, such
+    /// as `==` with an `Optional` parameter left out, refuses the read, as ESS's interpreter
+    /// refuses it. Read from the same store as [`Host::view`], for either consistency.
     ///
     /// # Errors
     /// [`HostError::NoView`]; [`HostError::Unsupported`], naming the construct, for a view that
-    /// declares parameters, computed fields, an aggregation, paging, fields read through a
-    /// reference, a default row for an absent identity, or any other filter; and
-    /// [`HostError::Store`] when the store cannot be read.
-    pub fn list(&mut self, view: &str) -> Result<Vec<Map<String, Value>>, HostError> {
+    /// declares computed fields, an aggregation, paging, fields read through a reference, a
+    /// default row for an absent identity, or any other filter; [`HostError::Parameters`],
+    /// naming the parameter, for a value the view does not declare, a required one left out or
+    /// one not of its declared type or newtype, before anything is read;
+    /// [`HostError::Unsupported`] for a filter unknown for a row; and [`HostError::Store`] when
+    /// the store cannot be read.
+    pub fn list_with(
+        &mut self,
+        view: &str,
+        parameters: &Map<String, Value>,
+    ) -> Result<Vec<Map<String, Value>>, HostError> {
         let (declared, owner) = readable(&self.ir, view)?;
+        let parameters =
+            crate::view::parameters(&self.ir, declared, parameters).map_err(|detail| {
+                HostError::Parameters {
+                    view: view.to_owned(),
+                    detail,
+                }
+            })?;
         let entity = self.ir.entity(&declared.source).name.to_string();
-        let mut rows = store_of(&mut self.components, &owner)?
-            .scan(&entity)?
-            .into_iter()
-            .filter(|(_, stored)| crate::view::holds(declared, &stored.row))
-            .map(|(identity, stored)| {
+        let mut rows = Vec::new();
+        for (identity, stored) in store_of(&mut self.components, &owner)?.scan(&entity)? {
+            if held(
+                &self.ir,
+                view,
+                declared,
+                &identity,
+                &stored.row,
+                &parameters,
+            )? {
                 let row = crate::view::project(&self.ir, declared, &identity, &stored.row);
-                (identity, row)
-            })
-            .collect::<Vec<_>>();
+                rows.push((identity, row));
+            }
+        }
         crate::view::order(&self.ir, declared, &mut rows);
         Ok(rows.into_iter().map(|(_, row)| row).collect())
     }
@@ -1439,7 +1495,7 @@ fn readable<'ir>(ir: &'ir EssIr, view: &str) -> Result<(&'ir ResolvedView, Strin
         .iter()
         .find_map(|(name, declared)| (name.to_string() == view).then_some(declared))
         .ok_or_else(|| HostError::NoView(view.to_owned()))?;
-    if let Some(construct) = crate::view::unsupported(declared) {
+    if let Some(construct) = crate::view::unsupported(ir, declared) {
         return Err(HostError::Unsupported(format!(
             "view {view} declares {construct}"
         )));
@@ -1452,6 +1508,20 @@ fn readable<'ir>(ir: &'ir EssIr, view: &str) -> Result<(&'ir ResolvedView, Strin
         .map(|component| component.name.as_str().to_owned())
         .ok_or_else(|| HostError::Unsupported(format!("no component owns {}", entity.domain)))?;
     Ok((declared, owner))
+}
+
+/// Whether `declared`, the view `view`, holds `row` for `parameters` ([`crate::view::holds`]); a
+/// row that is not a value of its source's fields is refused [`HostError::Unsupported`], naming it.
+fn held(
+    ir: &EssIr,
+    view: &str,
+    declared: &ResolvedView,
+    identity: &Value,
+    row: &Row,
+    parameters: &ess_primitives::FactStore,
+) -> Result<bool, HostError> {
+    crate::view::holds(ir, declared, identity, row, parameters)
+        .map_err(|detail| HostError::Unsupported(format!("view {view}: {detail}")))
 }
 
 /// The store of the running component `owner`.

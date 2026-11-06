@@ -1,0 +1,55 @@
+domain: desk.leaf
+summary: Leaves added by a guest and read by page count only by a reader.
+actors:
+  - name: desk.leaf.Reader
+    may:
+      - desk.leaf.AddLeaf
+      - desk.leaf.LeavesOfPages
+  - name: desk.leaf.Guest
+    may:
+      - desk.leaf.AddLeaf
+entities:
+  - name: desk.leaf.Leaf
+    identity:
+      name: leaf_id
+      type: String
+    fields:
+      - name: pages
+        type: Integer
+    lifecycle:
+      initial: Loose
+      states: [Loose]
+      terminal: [Loose]
+commands:
+  - name: desk.leaf.AddLeaf
+    input:
+      - name: leaf_id
+        type: String
+      - name: pages
+        type: Integer
+    outcomes:
+      - name: added
+        creates: desk.leaf.Leaf
+        instance: leaf_id
+        sets:
+          pages: input.pages
+        emits: [desk.leaf.LeafAdded]
+        payload:
+          desk.leaf.LeafAdded: {leaf_id: input.leaf_id}
+        summary: The leaf is added.
+events:
+  - name: desk.leaf.LeafAdded
+    fields:
+      - name: leaf_id
+        type: String
+views:
+  - name: desk.leaf.LeavesOfPages
+    source: desk.leaf.Leaf
+    consistency: read_your_writes
+    params:
+      - name: pages
+        type: Integer
+    filter: pages == param.pages
+    fields:
+      - name: leaf_id
+        type: String

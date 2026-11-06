@@ -90,7 +90,8 @@ impl Exchange {
         }
     }
 
-    /// The input the request's path carries in the route's variables.
+    /// The input the request's path carries in the route's variables and, for a view, the
+    /// parameters its query string carries ([`Route::parameters`]).
     pub fn carried(&self) -> &Map<String, Value> {
         &self.carried
     }

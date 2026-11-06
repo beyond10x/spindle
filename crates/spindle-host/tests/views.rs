@@ -208,13 +208,52 @@ fn a_filter_other_than_a_state_comparison_stays_unsupported_and_named() {
 }
 
 #[test]
-fn a_view_with_parameters_stays_unsupported_and_named() {
-    on_every_store(|store, host| match host.list("tasks.board.TasksTitled") {
-        Err(HostError::Unsupported(text)) => assert!(
-            text.contains("tasks.board.TasksTitled") && text.contains("parameters"),
-            "{store}: the refusal names the view and its parameters: {text}"
-        ),
-        other => panic!("{store}: a parameterised view is not refused as unsupported: {other:?}"),
+fn a_view_with_parameters_answers_the_rows_its_values_select() {
+    on_every_store(|store, host| {
+        open(host, "t1", "Chores", "2026-01-01T00:00:00Z");
+        open(host, "t2", "Errands", "2026-01-02T00:00:00Z");
+        open(host, "t3", "Chores", "2026-01-03T00:00:00Z");
+        let rows = host
+            .list_with(
+                "tasks.board.TasksTitled",
+                &object(json!({"wanted": "Chores"})),
+            )
+            .unwrap_or_else(|error| panic!("{store}: the titled view is answered: {error}"));
+        assert_eq!(ids(&rows), ["t1", "t3"], "{store}");
+        let rows = host
+            .list_with(
+                "tasks.board.TasksTitled",
+                &object(json!({"wanted": "Nothing"})),
+            )
+            .unwrap_or_else(|error| panic!("{store}: the titled view is answered: {error}"));
+        assert!(rows.is_empty(), "{store}: {rows:?}");
+    });
+}
+
+#[test]
+fn a_view_read_without_its_required_parameter_is_refused_naming_it() {
+    on_every_store(|store, host| {
+        match host.list("tasks.board.TasksTitled") {
+            Err(HostError::Parameters { view, detail }) => assert!(
+                view == "tasks.board.TasksTitled" && detail.contains("wanted"),
+                "{store}: the refusal names the view and the parameter: {view}: {detail}"
+            ),
+            other => panic!("{store}: a read without `wanted` is not refused: {other:?}"),
+        }
+        match host.list_with("tasks.board.TasksTitled", &object(json!({"wanted": 3}))) {
+            Err(HostError::Parameters { detail, .. }) => assert!(
+                detail.contains("wanted"),
+                "{store}: a value of the wrong type is refused naming it: {detail}"
+            ),
+            other => panic!("{store}: `wanted: 3` is not refused: {other:?}"),
+        }
+        match host.list_with("tasks.board.TasksTitled", &object(json!({"other": "x"}))) {
+            Err(HostError::Parameters { detail, .. }) => assert!(
+                detail.contains("other"),
+                "{store}: an undeclared parameter is refused naming it: {detail}"
+            ),
+            other => panic!("{store}: `other` is not refused: {other:?}"),
+        }
     });
 }
 

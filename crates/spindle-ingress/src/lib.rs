@@ -42,7 +42,7 @@ mod surface;
 pub use answer::{Answer, answer, answered};
 pub use console::Console;
 pub use listener::{BODY_LIMIT, BODY_READ, Exchange, HEADER_READ, Listener};
-pub use surface::{Caller, Resolved, Route, Surface, SurfaceError, Unserved, Variable};
+pub use surface::{Caller, Queried, Resolved, Route, Surface, SurfaceError, Unserved, Variable};
 
 /// The `ingress.network` implementation this crate serves: HTTP on the loopback address.
 pub const HTTP_LOOPBACK: &str = "http-loopback";
