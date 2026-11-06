@@ -17,7 +17,7 @@ use spindle_channel::{
 };
 use spindle_kernel::{
     Change, Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, Mint, NoExternals,
-    Row, Seeded, SqliteStore, Store, StoreError, UuidV4,
+    Row, Seeded, SqliteStore, Store, StoreError, Uuid, UuidV4,
 };
 use spindle_telemetry::{Counters, CountingStore, Retried, Sink};
 use spindle_timer::{BindingName, Clock, CompleteError, LifetimeError, Timer};
@@ -755,15 +755,18 @@ impl Host {
     /// [`Host::establish`] writes it, every external cause answered by its answers until the next
     /// reset, and every identity and generated value minted by its mint until then. A world
     /// without answers leaves causes to the decider the host was opened with, and one without a
-    /// mint mints random version 4 UUIDs.
+    /// mint mints random version 4 UUIDs. A seeded mint never answers a UUID a row's identity
+    /// holds, or ends in ([`Seeded::avoiding`]).
     ///
     /// Every row is checked before any store is emptied: its entity declared and owned by a
-    /// running component, its invariants held, and no two rows one instance.
+    /// running component, its invariants held, its identity one its store can key (read from the
+    /// store as it is), and no two rows one instance. The answers and the mint are taken only once
+    /// every row is written.
     ///
     /// # Errors
     /// [`HostError::World`] for a row that does not pass, before anything changed; then as
     /// [`Host::reset`], and as [`Host::establish`] for a row a store did not take, the rows
-    /// before it written.
+    /// before it written and the answers and mint of the last world kept.
     pub fn reset_to(&mut self, world: World) -> Result<Vec<String>, HostError> {
         let mut owners = Vec::with_capacity(world.rows.len());
         let mut instances = BTreeSet::new();
@@ -777,14 +780,26 @@ impl Host {
                     seed.entity, seed.identity
                 )));
             }
+            store_of(&mut self.components, &owner)?
+                .load(&seed.entity, &seed.identity)
+                .map_err(|error| {
+                    HostError::World(format!(
+                        "row {index}: {owner}'s store cannot hold {} {}: {error}",
+                        seed.entity, seed.identity
+                    ))
+                })?;
             owners.push(owner);
         }
+        let held = world
+            .rows
+            .iter()
+            .filter_map(|seed| seed.identity.as_str())
+            .filter_map(|text| {
+                let tail = text.len().checked_sub(36).and_then(|at| text.get(at..))?;
+                Uuid::parse_str(tail).ok()
+            })
+            .collect::<Vec<_>>();
         let emptied = self.empty()?;
-        self.answers = world.answers;
-        self.mint = world.mint.map_or_else(
-            || Box::new(UuidV4) as Box<dyn Mint + Send>,
-            |seed| Box::new(Seeded::new(seed)),
-        );
         for (seed, owner) in world.rows.into_iter().zip(owners) {
             store_of(&mut self.components, &owner)?.commit(&Change {
                 entity: seed.entity,
@@ -794,6 +809,11 @@ impl Host {
                 events: Vec::new(),
             })?;
         }
+        self.answers = world.answers;
+        self.mint = world.mint.map_or_else(
+            || Box::new(UuidV4) as Box<dyn Mint + Send>,
+            |seed| Box::new(Seeded::new(seed).avoiding(held)),
+        );
         Ok(emptied)
     }
 

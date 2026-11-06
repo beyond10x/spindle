@@ -1,0 +1,27 @@
+format: ess/34
+system: shelf
+version: v1
+summary: Books added, lent, returned and donated over the network, some donations decided outside the model.
+domains:
+  - shelf.books
+components:
+  - component: library
+    summary: Holds books for callers outside the process.
+    owns:
+      domains:
+        - shelf.books
+    accepts:
+      commands:
+        - shelf.books.AddBook
+        - shelf.books.AddDesk
+        - shelf.books.LendBook
+        - shelf.books.ReturnBook
+        - shelf.books.Donate
+    publishes:
+      events:
+        - shelf.books.BookAdded
+        - shelf.books.DeskPlaced
+        - shelf.books.BookLent
+        - shelf.books.BookReturned
+        - shelf.books.BookDonated
+    reached_by: network

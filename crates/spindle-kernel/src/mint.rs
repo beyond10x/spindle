@@ -26,6 +26,7 @@
 //! `{payload: <Event>.<field>}` in `sets:` stores what the event published.
 
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::time::SystemTime;
 
 use ess_compiler::EssIr;
@@ -357,16 +358,37 @@ impl Mint for UuidV4 {
 /// Version 4 UUIDs drawn from a seed: two mints made from one seed answer the same UUIDs in the
 /// same order, so the same commands mint the same identities. Each UUID's random bits are the
 /// next 128 bits of a `SplitMix64` sequence started at the seed; not for anything an attacker may
-/// guess.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// guess. A UUID it was told is [held](Seeded::avoiding) is skipped and the next one drawn, so it
+/// never mints an identity a seeded instance already holds and stays deterministic.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Seeded {
     state: u64,
+    held: BTreeSet<Uuid>,
 }
 
 impl Seeded {
     /// A mint whose UUIDs follow from `seed`.
     pub fn new(seed: u64) -> Self {
-        Self { state: seed }
+        Self {
+            state: seed,
+            held: BTreeSet::new(),
+        }
+    }
+
+    /// This mint, never answering a UUID among `held`.
+    #[must_use]
+    pub fn avoiding(mut self, held: impl IntoIterator<Item = Uuid>) -> Self {
+        self.held.extend(held);
+        self
+    }
+
+    fn draw(&mut self) -> Uuid {
+        let high = self.next().to_be_bytes();
+        let low = self.next().to_be_bytes();
+        let mut bytes = [0; 16];
+        bytes[..8].copy_from_slice(&high);
+        bytes[8..].copy_from_slice(&low);
+        uuid::Builder::from_random_bytes(bytes).into_uuid()
     }
 
     fn next(&mut self) -> u64 {
@@ -380,11 +402,13 @@ impl Seeded {
 
 impl Mint for Seeded {
     fn uuid(&mut self, _identity: &Identity<'_>) -> Uuid {
-        let high = self.next().to_be_bytes();
-        let low = self.next().to_be_bytes();
-        let mut bytes = [0; 16];
-        bytes[..8].copy_from_slice(&high);
-        bytes[8..].copy_from_slice(&low);
-        uuid::Builder::from_random_bytes(bytes).into_uuid()
+        let mut drawn = self.draw();
+        for _ in 0..=self.held.len() {
+            if !self.held.contains(&drawn) {
+                break;
+            }
+            drawn = self.draw();
+        }
+        drawn
     }
 }
