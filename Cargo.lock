@@ -1636,6 +1636,7 @@ dependencies = [
  "time",
  "tokio",
  "uuid",
+ "web-time",
 ]
 
 [[package]]
@@ -1694,6 +1695,7 @@ dependencies = [
  "spindle-kernel",
  "spindle-spec",
  "tempfile",
+ "web-time",
 ]
 
 [[package]]

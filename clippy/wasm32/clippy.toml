@@ -1,0 +1,4 @@
+disallowed-methods = [
+    { path = "std::time::SystemTime::now", reason = "std has no clock on wasm32-unknown-unknown; read the civil time through web-time or a clock passed in" },
+    { path = "std::time::Instant::now", reason = "std has no clock on wasm32-unknown-unknown; use web-time's Instant or a clock passed in" },
+]

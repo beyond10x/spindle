@@ -29,6 +29,7 @@ uuid = { version = "1.29", features = ["v4"] }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 uuid = { version = "1.29", features = ["v4", "js"] }
+web-time = "1.1"
 
 [dev-dependencies]
 spindle-capability = { path = "../spindle-capability" }
