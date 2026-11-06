@@ -1,0 +1,10 @@
+type: ess-http/1
+specification:
+  system: desk
+  version: v1
+  source_digest: sha256:b03338328d8acf359881f418f2652bb09303a160d64dca3227a6884087037d0d
+routes:
+  - view: desk.notebook.NotebooksPlaced
+    method: get
+    path: /pages/{pages}/notebooks
+    parameters: {pages: param.pages}

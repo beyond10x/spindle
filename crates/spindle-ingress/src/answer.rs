@@ -65,9 +65,11 @@ impl Answer {
 /// chose for its declared fields.
 ///
 /// A view answers `200` with the body ESS publishes for it, `{"rows": [...]}`, every row it
-/// holds for the parameters `carried` holds, from the path and the query string
-/// ([`spindle_host::Host::list_with`]). A required parameter left out, or one not of its declared
-/// type, is refused `400`, naming it.
+/// holds for its parameters: those `carried` holds from the path, and those `query` holds
+/// ([`Route::parameters`]), read by [`spindle_host::Host::list_with`]. A required parameter left out, one
+/// not of its declared type or breaking its newtype, or a malformed query value is refused `400`,
+/// naming it. A filter the model leaves unknown for a row is refused `501`, as ESS's interpreter
+/// refuses the read.
 ///
 /// A body that is not a JSON object, or input the kernel refuses, is refused `400`. A command the
 /// kernel does not run answers `501` with `committed: false`; one whose effect was written and
@@ -77,7 +79,8 @@ impl Answer {
 /// A command is sent as the route's fixed caller ([`Route::caller`]), else as no caller. One its
 /// actor's `may:` does not name answers ESS's standard refusal, `403`
 /// `{"refused": "not granted", "actor": <actor>}`, and nothing is written. So does a read-granted
-/// view the fixed actor may not read ([`Route::not_granted`]), before anything is read.
+/// view the fixed actor may not read ([`Route::not_granted`]), before anything is read, its
+/// path variables and query string included, as ESS's served surface checks the reader first.
 ///
 /// An operation the route marks [`Unserved::Ingress`] answers `501` with `committed: false`,
 /// naming the operation and what it uses, before the body is read or the host asked.
@@ -126,19 +129,26 @@ pub fn answered(
             Answer::not_granted(route.caller().map_or("", |caller| caller.actor.as_str())),
             Vec::new(),
         ),
-        Operation::View(view) => match host.list_with(view, carried) {
-            Ok(rows) => (
-                Answer {
-                    status: 200,
-                    body: json!({"rows": rows}),
-                },
-                Vec::new(),
-            ),
-            Err(error @ HostError::Parameters { .. }) => {
-                (Answer::refusal(400, error.to_string()), Vec::new())
+        Operation::View(view) => {
+            let mut given = carried.clone();
+            match route.parameters(query) {
+                Ok(queried) => given.extend(queried),
+                Err(why) => return (Answer::refusal(400, why), Vec::new()),
             }
-            Err(error) => (Answer::refusal(501, error.to_string()), Vec::new()),
-        },
+            match host.list_with(view, &given) {
+                Ok(rows) => (
+                    Answer {
+                        status: 200,
+                        body: json!({"rows": rows}),
+                    },
+                    Vec::new(),
+                ),
+                Err(error @ HostError::Parameters { .. }) => {
+                    (Answer::refusal(400, error.to_string()), Vec::new())
+                }
+                Err(error) => (Answer::refusal(501, error.to_string()), Vec::new()),
+            }
+        }
     }
 }
 

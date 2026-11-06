@@ -279,7 +279,9 @@ impl Route {
     /// The input `path` carries in its variables, read as [`ess_gen::http::Flat`] says; `None`
     /// when `path` does not match the template or leaves a variable's segment empty (ESS's
     /// served application matches only a variable holding a segment that is not empty),
-    /// `Some(Err)` when a variable's text is malformed.
+    /// `Some(Err)` when a variable's text is malformed. Nothing is read from a matched path for a
+    /// command the ingress does not serve or a view the fixed caller may not read: both are
+    /// refused before their request is read.
     fn carried(&self, path: &str) -> Option<Result<Map<String, Value>, String>> {
         if !ess_gen::http::template_matches(&self.segments, path) {
             return None;
@@ -292,7 +294,7 @@ impl Route {
         }) {
             return None;
         }
-        if matches!(self.unserved, Some(Unserved::Ingress(_))) {
+        if matches!(self.unserved, Some(Unserved::Ingress(_))) || self.not_granted {
             return Some(Ok(Map::new()));
         }
         let mut carried = Map::new();

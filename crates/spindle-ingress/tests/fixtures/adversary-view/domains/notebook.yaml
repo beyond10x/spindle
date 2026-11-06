@@ -1,0 +1,162 @@
+domain: desk.notebook
+summary: Notebooks kept in a desk, read by the values a caller names.
+types:
+  - name: desk.notebook.NotebookId
+    kind: newtype
+    of: String
+    prefix: "N-"
+  - name: desk.notebook.PageCount
+    kind: newtype
+    of: Integer
+    invariants: [value > 0]
+  - name: desk.notebook.Colour
+    kind: enum
+    variants: [Red, Blue]
+entities:
+  - name: desk.notebook.Notebook
+    identity:
+      name: notebook_id
+      type: desk.notebook.NotebookId
+    fields:
+      - name: pages
+        type: Integer
+      - name: opened_at
+        type: Timestamp
+      - name: bound
+        type: Boolean
+      - name: colour
+        type: desk.notebook.Colour
+      - name: drawer
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+commands:
+  - name: desk.notebook.AddNotebook
+    input:
+      - name: notebook_id
+        type: desk.notebook.NotebookId
+      - name: pages
+        type: Integer
+      - name: opened_at
+        type: Timestamp
+      - name: bound
+        type: Boolean
+      - name: colour
+        type: desk.notebook.Colour
+      - name: drawer
+        type: String
+    outcomes:
+      - name: added
+        creates: desk.notebook.Notebook
+        instance: notebook_id
+        sets:
+          pages: input.pages
+          opened_at: input.opened_at
+          bound: input.bound
+          colour: input.colour
+          drawer: input.drawer
+        emits: [desk.notebook.NotebookAdded]
+        payload:
+          desk.notebook.NotebookAdded: {notebook_id: input.notebook_id}
+        summary: The notebook is in the desk.
+events:
+  - name: desk.notebook.NotebookAdded
+    fields:
+      - name: notebook_id
+        type: desk.notebook.NotebookId
+views:
+  - name: desk.notebook.NotebookById
+    source: desk.notebook.Notebook
+    consistency: read_your_writes
+    params:
+      - name: id
+        type: desk.notebook.NotebookId
+    filter: notebook_id == param.id
+    fields:
+      - name: notebook_id
+        type: desk.notebook.NotebookId
+      - name: pages
+        type: Integer
+  - name: desk.notebook.NotebooksWithPages
+    source: desk.notebook.Notebook
+    consistency: read_your_writes
+    params:
+      - name: pages
+        type: Integer
+    filter: pages == param.pages
+    fields:
+      - name: notebook_id
+        type: desk.notebook.NotebookId
+      - name: pages
+        type: Integer
+  - name: desk.notebook.NotebooksWithCount
+    source: desk.notebook.Notebook
+    consistency: read_your_writes
+    params:
+      - name: count
+        type: desk.notebook.PageCount
+    filter: pages == param.count
+    fields:
+      - name: notebook_id
+        type: desk.notebook.NotebookId
+      - name: pages
+        type: Integer
+  - name: desk.notebook.NotebooksOpenedAt
+    source: desk.notebook.Notebook
+    consistency: read_your_writes
+    params:
+      - name: at
+        type: Timestamp
+    filter: opened_at == param.at
+    fields:
+      - name: notebook_id
+        type: desk.notebook.NotebookId
+      - name: opened_at
+        type: Timestamp
+  - name: desk.notebook.NotebooksBound
+    source: desk.notebook.Notebook
+    consistency: read_your_writes
+    params:
+      - name: bound
+        type: Boolean
+    filter: bound == param.bound
+    fields:
+      - name: notebook_id
+        type: desk.notebook.NotebookId
+  - name: desk.notebook.NotebooksOfColour
+    source: desk.notebook.Notebook
+    consistency: read_your_writes
+    params:
+      - name: colour
+        type: desk.notebook.Colour
+    filter: colour == param.colour
+    fields:
+      - name: notebook_id
+        type: desk.notebook.NotebookId
+  - name: desk.notebook.NotebooksInDrawer
+    source: desk.notebook.Notebook
+    consistency: read_your_writes
+    params:
+      - name: drawer
+        type: Optional<String>
+    filter: drawer == param.drawer
+    fields:
+      - name: notebook_id
+        type: desk.notebook.NotebookId
+  - name: desk.notebook.NotebooksPlaced
+    source: desk.notebook.Notebook
+    consistency: read_your_writes
+    params:
+      - name: drawer
+        type: String
+      - name: pages
+        type: Integer
+    filter:
+      all:
+        - drawer == param.drawer
+        - pages == param.pages
+    fields:
+      - name: notebook_id
+        type: desk.notebook.NotebookId

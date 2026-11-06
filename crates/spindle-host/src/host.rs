@@ -1088,17 +1088,18 @@ impl Host {
     /// (each read as `param.<name>`). The filters read are those whose leaves compare the state
     /// with a state (`state == <State>` and `!=`, `in` and `none_of` over states), compare a
     /// parameter by `==` or `!=` with the state, the identity or a field, or ask whether a
-    /// parameter is `defined`, combined by `any`, `all` and `not`. A row whose filter is unknown,
-    /// such as one comparing with an `Optional` parameter left out, is not held. Read from the
-    /// same store as [`Host::view`], for either consistency.
+    /// parameter is `defined`, combined by `any`, `all` and `not`. A filter unknown for a row, such
+    /// as `==` with an `Optional` parameter left out, refuses the read, as ESS's interpreter
+    /// refuses it. Read from the same store as [`Host::view`], for either consistency.
     ///
     /// # Errors
     /// [`HostError::NoView`]; [`HostError::Unsupported`], naming the construct, for a view that
     /// declares computed fields, an aggregation, paging, fields read through a reference, a
     /// default row for an absent identity, or any other filter; [`HostError::Parameters`],
     /// naming the parameter, for a value the view does not declare, a required one left out or
-    /// one not of its declared type, before anything is read; and [`HostError::Store`] when the
-    /// store cannot be read.
+    /// one not of its declared type or newtype, before anything is read;
+    /// [`HostError::Unsupported`] for a filter unknown for a row; and [`HostError::Store`] when
+    /// the store cannot be read.
     pub fn list_with(
         &mut self,
         view: &str,

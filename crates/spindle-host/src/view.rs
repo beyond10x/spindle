@@ -98,13 +98,14 @@ fn reads(entity: &ResolvedEntity, view: &ResolvedView, filter: &Predicate) -> bo
 }
 
 /// The values `given` holds for `view`'s parameters, by declared name, as the facts its filter
-/// reads under `param.`: bound by ESS ([`ess_conformance::input::bind`]), so a value that is not
-/// of its parameter's declared type (a text for an `Integer`, a name an enum does not declare) is
-/// refused naming the parameter.
+/// reads under `param.`. Each value given is checked as ESS's interpreter checks a view parameter
+/// (`interpret/views.rs:45` `query`, `input::validate_typed_value`) by [`spindle_kernel::admits`],
+/// the check every command input goes through: its type, and a newtype's prefix, alphabet and
+/// invariants. It is then bound by ESS ([`ess_conformance::input::bind`]).
 ///
 /// # Errors
 /// Naming the parameter: one `view` does not declare, a required one `given` leaves out (or holds
-/// as `null`), or one whose value is not of its declared type.
+/// as `null`), or one whose value is not of its declared type or breaks its newtype.
 pub(crate) fn parameters(
     ir: &EssIr,
     view: &ResolvedView,
@@ -120,6 +121,8 @@ pub(crate) fn parameters(
     for param in &view.params {
         match given.get(&param.name).filter(|value| !value.is_null()) {
             Some(value) => {
+                spindle_kernel::admits(ir, &param.type_ref, value)
+                    .map_err(|error| format!("`{}`: {error}", param.name))?;
                 let node = serde_json::from_value::<Node>(value.clone())
                     .map_err(|error| format!("`{}`: {error}", param.name))?;
                 values.insert(param.name.clone(), node);
@@ -164,16 +167,22 @@ impl FactSource for Read<'_> {
 
 /// Whether the view holds `row`, the instance `identity` names: always without a filter; with
 /// one, where ESS evaluates the filter to true over the row and `parameters`
-/// ([`parameters`]). A filter that is unknown for the row, such as one comparing with an
-/// `Optional` parameter the read left out, does not hold. Only a filter [`unsupported`] admits is
-/// read.
+/// ([`parameters`]). Only a filter [`unsupported`] admits is read.
 ///
 /// A view without parameters reads the state alone, the only fact such a filter reads; one with
 /// them binds the state, the identity and every stored field, as ESS binds a source row
 /// ([`ess_conformance::input::bind`] over the entity's observable fields).
 ///
+/// A filter unknown for the row is refused, as ESS's interpreter refuses the read
+/// (`ess-conformance` `src/interpret/views.rs:214` at ESS 0.87.0, `select`,
+/// `Truth::Unknown => return Err(unsupported())`): one comparing with `==` or `!=` against an
+/// `Optional` parameter the read left out is unknown, not false. The interpreter hides such a row
+/// only where the omitted parameter is read by a string operator (`absent_text_operands`,
+/// `views.rs:210`), and no filter [`unsupported`] admits has one.
+///
 /// # Errors
-/// When the row is not a value of the source's declared fields, naming what it holds.
+/// When the row is not a value of the source's declared fields, naming what it holds, or when the
+/// filter is unknown for it.
 pub(crate) fn holds(
     ir: &EssIr,
     view: &ResolvedView,
@@ -210,10 +219,18 @@ pub(crate) fn holds(
         )
         .map_err(|errors| format!("a row of {}: {errors}", entity.name))?
     };
-    Ok(filter.evaluate(&Read {
+    let read = Read {
         row: &facts,
         parameters,
-    }) == Truth::True)
+    };
+    match filter.evaluate(&read) {
+        Truth::True => Ok(true),
+        Truth::False => Ok(false),
+        Truth::Unknown => Err(format!(
+            "the filter `{filter}` is unknown for a row, so the model does not determine the rows \
+             it holds"
+        )),
+    }
 }
 
 /// The view's row for the instance `identity` names, held as `row`.
