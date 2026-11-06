@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:ingress-delete-routes
 kind: story
-status: active
+status: implemented
 title: HTTP ingress serves commands bound to DELETE
 relations:
 - serves: vision:spindle
@@ -13,10 +13,11 @@ scope:
   path: crates/spindle-ingress/src/listener.rs
 - confidence: inferred
   path: crates/spindle-ingress/src/surface.rs
-revision: 4
+revision: 5
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-06T00:36:51Z", actor: "agent:b10x-chef-orchestrator", revision: 3}
 - {from: "proposed", to: "active", at: "2026-11-06T00:36:51Z", actor: "agent:b10x-chef-orchestrator", revision: 4}
+- {from: "active", to: "implemented", at: "2026-11-06T08:35:38Z", actor: "human:timo", revision: 5, decided_on: {"recorded":{"test_result":2}}}
 ---
 # HTTP ingress serves commands bound to DELETE
 

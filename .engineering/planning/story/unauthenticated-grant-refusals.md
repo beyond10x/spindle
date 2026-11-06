@@ -1,0 +1,29 @@
+---
+format: aep.planning-md/3
+id: story:unauthenticated-grant-refusals
+kind: story
+status: draft
+title: Without a fixed caller, granted operations are refused as ESS refuses them
+relations:
+- serves: vision:spindle
+revision: 1
+---
+# Without a fixed caller, granted operations are refused as ESS refuses them
+
+## Outcome
+
+A run serving HTTP without `--fixed-actor` answers a read-granted view, and a command whose grant
+names actors, with ESS's standard 403 "not granted" (`actor: null`), as ESS's served surface does
+for a request that proves no actor. Today such views are served to anyone and such commands run
+with no actor (`crates/spindle-ingress/src/answer.rs`).
+
+## Acceptance
+
+- `a_read_granted_view_without_a_caller_is_refused_403` — nothing is read.
+- `a_granted_command_without_a_caller_is_refused_403` — nothing is written.
+- An ungranted view and command are served as today.
+
+## Origin
+
+Pre-existing. Found by the adversary of `story:served-fixed-caller` (wave 8). Whether an HTTP
+caller can prove an actor stays undecided (design §11); this story only refuses as ESS does.

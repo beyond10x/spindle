@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-06T08:35:38Z",
+  "actor": "human:timo",
+  "artifact": "story:kernel-command-responses",
+  "kind": "story",
+  "revision": 9,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "CI Gate on PR 18 head 3fe5b82 (run 42187711699), merged to main 62b97a9: task check passed, including cargo test --workspace and ess specify validate, which hold this story's acceptance tests",
+    "reference": "https://github.com/beyond10x/spindle/actions/runs/42187711699"
+  }
+}
