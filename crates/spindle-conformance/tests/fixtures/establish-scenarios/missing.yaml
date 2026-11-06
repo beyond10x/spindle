@@ -1,0 +1,20 @@
+type: ess-scenario/2
+domain: post.parcel
+scenario: a-missing-parcel-is-lost
+summary: A parcel on its way, marked missing, is reported lost.
+arrange:
+  - instance: adrift
+    entity: post.parcel.Parcel
+    setup:
+      identity: parcel-7
+      fields: {label: books, missing: true}
+      state: Sent
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: post.parcel.ReportLoss
+    input:
+      parcel_id: {$instance: adrift}
+    outcome: lost
+assert:
+  - view: post.parcel.AllParcels
+    contains: {parcel_id: parcel-7, state: Lost, label: books}

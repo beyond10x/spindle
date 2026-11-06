@@ -68,6 +68,10 @@ from an empty system, halving each time, and the replay it prints ran no step af
 document ESS refuses, such as one with an unknown `type:`, or one of more than 1000 steps, exits 1
 before any step runs.
 
+An entity the document arranges with `setup:` (an identity, its fields and a lifecycle state) is
+checked by ESS and written as it rests into the store of the component that owns it, as ESS's
+interpreter establishes it: no command runs, no event is published, and the acts after it read it.
+
 A replay forces no external cause, sends no command as an actor and reads no view with
 parameters; a step that needs one is reported as unsupported, which also exits 1.
 

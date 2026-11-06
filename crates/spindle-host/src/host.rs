@@ -16,8 +16,8 @@ use spindle_channel::{
     ChannelError, Envelope, Receiver, Route, RouteError, Router, Sender, in_process,
 };
 use spindle_kernel::{
-    Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, NoExternals, SqliteStore,
-    Store, StoreError, UuidV4,
+    Change, Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, NoExternals, Row,
+    SqliteStore, Store, StoreError, UuidV4,
 };
 use spindle_telemetry::{Counters, CountingStore, Retried, Sink};
 use spindle_timer::{BindingName, Clock, CompleteError, LifetimeError, Timer};
@@ -623,6 +623,49 @@ impl Host {
     /// The compiled specification the host runs.
     pub fn ir(&self) -> &EssIr {
         &self.ir
+    }
+
+    /// Writes `row` as the instance of `entity` (its qualified name) with `identity` into the
+    /// store of the component that owns the entity's domain, as it rests, with no command: the
+    /// state a scenario arranges. Nothing is published and no binding runs. The row is checked
+    /// against the entity's invariants first ([`spindle_kernel::at_rest`]).
+    ///
+    /// # Errors
+    /// [`HostError::Unsupported`] for an entity the model does not declare or no running
+    /// component owns; [`HostError::Execute`] when the row breaks an invariant of its entity;
+    /// [`HostError::Store`], a [`StoreError::Conflict`], when the instance already exists, and
+    /// any other store failure.
+    pub fn establish(&mut self, entity: &str, identity: &Value, row: Row) -> Result<(), HostError> {
+        let declared = self
+            .ir
+            .entities()
+            .iter()
+            .find_map(|(name, declared)| (name.to_string() == entity).then_some(declared))
+            .ok_or_else(|| HostError::Unsupported(format!("no entity {entity}")))?;
+        let owner = self
+            .ir
+            .components()
+            .values()
+            .find(|component| component.owns.contains(&declared.domain))
+            .map(|component| component.name.as_str().to_owned())
+            .ok_or_else(|| {
+                HostError::Unsupported(format!("no component owns {}", declared.domain))
+            })?;
+        spindle_kernel::at_rest(&self.ir, entity, identity, &row).map_err(|error| {
+            HostError::Execute {
+                component: owner.clone(),
+                command: format!("establishing {entity}"),
+                error: Box::new(error),
+            }
+        })?;
+        store_of(&mut self.components, &owner)?.commit(&Change {
+            entity: entity.to_owned(),
+            identity: identity.clone(),
+            expected: None,
+            row,
+            events: Vec::new(),
+        })?;
+        Ok(())
     }
 
     /// Every event a command published since the host started or was last [reset](Self::reset),

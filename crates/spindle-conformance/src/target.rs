@@ -39,8 +39,10 @@ type Forcing = Arc<Mutex<Option<(String, String)>>>;
 ///
 /// A command sent as an actor is sent as it is: the host checks no grant, which is the caller's
 /// where no component serves the actor; a step's actor and `caller` are the caller the command
-/// runs as ([`Host::submit_as`]). An entity the scenario establishes, fixture values and
-/// redelivery are unsupported, each with its reason, and so is a send whose `on_failure: retry`
+/// runs as ([`Host::submit_as`]). An entity the scenario establishes is written as it rests into
+/// the store of the component that owns it ([`Host::establish`]), checked by ESS first, as ESS's
+/// interpreter establishes it. Fixture values and redelivery are unsupported, each with its
+/// reason, and so is a send whose `on_failure: retry`
 /// binding gave up after [`RETRY_ATTEMPTS`](spindle_host::RETRY_ATTEMPTS), as ESS's interpreter
 /// answers a retry that exceeds its execution budget.
 pub struct HostTarget {
@@ -179,11 +181,17 @@ impl ConformanceTarget for HostTarget {
         &self,
         request: ess_conformance::target::EntitySetupRequest,
     ) -> Result<(), TargetError> {
-        self.unarranged.set(true);
-        Err(TargetError::unsupported(
-            format!("establishing `{}`", request.entity),
-            "the in-process host holds only state its commands wrote",
-        ))
+        let established = match self.running.borrow_mut().as_mut() {
+            Some(running) => crate::establish::establish(&self.ir, &mut running.host, &request),
+            None => Err(TargetError::unavailable(
+                "entity setup",
+                "no scenario is open",
+            )),
+        };
+        if established.is_err() {
+            self.unarranged.set(true);
+        }
+        established
     }
 
     fn begin_scenario(&self, _scenario: &ScenarioContext) -> Result<(), TargetError> {

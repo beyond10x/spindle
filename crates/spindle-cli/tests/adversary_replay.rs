@@ -199,10 +199,64 @@ fn scenario_refuses_each_flag_of_the_stdin_run() {
     }
 }
 
-/// An arranged entity the in-process host cannot establish is the arrangement's failure; naming
-/// the first timeline act as the step that diverged points the author at a command that never ran.
+/// An arrangement the in-process host cannot make, a fixture value it does not provide, is the
+/// arrangement's failure; naming the first timeline act as the step that diverged points the
+/// author at a command that never ran.
 #[test]
 fn an_arrangement_that_cannot_be_established_is_not_named_as_the_first_act() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("directory");
+    let source = root().join(SPEC);
+    let spec = directory.path().join("spec");
+    let domain =
+        std::fs::read_to_string(source.join("domains/ticket.yaml")).expect("ticket domain");
+    let fixtured = domain.replacen(
+        "    outcomes:\n      - name: opened\n",
+        "    fixture_inputs:\n      title: current-title\n    outcomes:\n      - name: opened\n",
+        1,
+    );
+    assert_ne!(
+        fixtured, domain,
+        "OpenTicket takes its title from a fixture"
+    );
+    write(
+        &spec,
+        "system.yaml",
+        &std::fs::read_to_string(source.join("system.yaml")).expect("system"),
+    );
+    write(&spec, "domains/ticket.yaml", &fixtured);
+    let scenario = write(
+        directory.path(),
+        "fixture.yaml",
+        "type: ess-scenario/3\n\
+         domain: desk.ticket\n\
+         scenario: a-ticket-titled-from-a-fixture-opens\n\
+         summary: A ticket titled from a fixture value opens.\n\
+         fixtures:\n\
+         \x20 current-title: String\n\
+         timeline:\n\
+         \x20 - at: 2026-01-05T09:00:00Z\n\
+         \x20   command: desk.ticket.OpenTicket\n\
+         \x20   input:\n\
+         \x20     title: {$fixture: current-title}\n\
+         \x20   outcome: opened\n",
+    );
+    let output = replay(&spec, &laptop(), &scenario);
+    let printed = stdout(&output);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(
+        printed.contains("arrange: diverges"),
+        "the fixture was never provided: {output:?}"
+    );
+    assert!(
+        !printed.contains("timeline[0] desk.ticket.OpenTicket: diverges"),
+        "the open never ran; the arrangement did not hold: {printed}"
+    );
+}
+
+/// An entity the document establishes is written into the store of the component that owns it,
+/// and the act after it reads it: every step holds.
+#[test]
+fn an_established_arrangement_is_read_by_the_first_act() {
     let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("directory");
     let scenario = write(
         directory.path(),
@@ -223,16 +277,21 @@ fn an_arrangement_that_cannot_be_established_is_not_named_as_the_first_act() {
          \x20   command: desk.ticket.CloseTicket\n\
          \x20   input:\n\
          \x20     ticket_id: {$instance: printer}\n\
-         \x20   outcome: closed\n",
+         \x20   outcome: closed\n\
+         assert:\n\
+         \x20 - view: desk.ticket.AllTickets\n\
+         \x20   contains: {ticket_id: 00000000-0000-4000-8000-000000000001, state: Closed, title: printer}\n",
     );
     let output = replay(&root().join(SPEC), &laptop(), &scenario);
     let printed = stdout(&output);
-    assert_eq!(output.status.code(), Some(1), "{output:?}");
-    assert!(printed.contains("diverges"), "the replay ran: {output:?}");
-    assert!(
-        !printed.contains("timeline[0] desk.ticket.CloseTicket: diverges"),
-        "the close never ran; the arrangement did not hold: {printed}"
-    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    for step in [
+        "arrange: holds",
+        "timeline[0] desk.ticket.CloseTicket: holds",
+        "assert[0] desk.ticket.AllTickets: holds",
+    ] {
+        assert!(printed.contains(step), "{step}: {printed}");
+    }
 }
 
 #[test]
