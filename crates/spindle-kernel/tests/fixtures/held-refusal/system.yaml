@@ -1,0 +1,21 @@
+format: ess/34
+system: study
+version: v1
+summary: Books a reading room lends once, refused with what the book's row holds.
+domains:
+  - study.loan
+components:
+  - component: loan
+    summary: Adds and lends books.
+    owns:
+      domains:
+        - study.loan
+    accepts:
+      commands:
+        - study.loan.AddBook
+        - study.loan.LendBook
+    publishes:
+      events:
+        - study.loan.BookAdded
+        - study.loan.BookLent
+    reached_by: in_process

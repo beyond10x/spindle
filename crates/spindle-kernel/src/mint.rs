@@ -237,6 +237,18 @@ pub(crate) fn unmintable(field: &str, kind: &ResolvedTypeRef) -> String {
     )
 }
 
+/// The refusal of the error field `field` of `error` that the refusing outcome gives no source,
+/// no row it is answered for holds and whose type the runtime does not mint
+/// ([`spindle_capability::mint::Unsourced::Unfilled`]).
+pub(crate) fn unfilled(error: &str, field: &ResolvedField) -> String {
+    format!(
+        "the error field `{error}.{}` of type `{}`, which the outcome gives no source and no row \
+         it is answered for holds; the runtime mints a `Uuid`, a `String`, an `Integer`, a \
+         `Boolean`, a `Bytes`, a `List` or a `Timestamp`, or a newtype of one without invariants",
+        field.name, field.type_ref
+    )
+}
+
 /// The value one [`Minted`] shape takes, the UUID it needs drawn from `uuid` and the time from
 /// `now`; the reason where `now` is a time RFC 3339 does not spell (before the Unix epoch's
 /// representable range or past year 9999).

@@ -105,6 +105,8 @@ commands:
       - name: target-too-low
         when: target_score < 1
         error: rally.table.TargetScoreTooLow
+        payload:
+          rally.table.TargetScoreTooLow: {target_score: input.target_score}
         summary: A match to no points could never be won, so it does not open.
 
       - name: opened
@@ -144,6 +146,8 @@ commands:
       - name: no-such-match
         unknown_instance: true
         error: rally.table.MatchNotFound
+        payload:
+          rally.table.MatchNotFound: {match_id: input.match_id}
         summary: No match carries this id, so nothing moved.
 
       - name: match-over
@@ -385,6 +389,8 @@ commands:
       - name: no-such-match
         unknown_instance: true
         error: rally.table.MatchNotFound
+        payload:
+          rally.table.MatchNotFound: {match_id: input.match_id}
         summary: No match carries this id, so nothing moved.
 
       - name: match-over

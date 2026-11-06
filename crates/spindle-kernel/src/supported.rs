@@ -104,8 +104,26 @@ pub fn check(ir: &EssIr, command: &ResolvedCommand) -> Result<(), ExecuteError> 
                 return refuse(&what);
             }
         }
+        if let Some(what) = unfilled_error_field(ir, command, outcome) {
+            return refuse(&what);
+        }
     }
     Ok(())
+}
+
+/// The error field, named, that `outcome` gives no source, that no row it is answered for holds
+/// and whose type the runtime does not mint: a refusal would answer without a field its
+/// published schema requires ([`spindle_capability::mint::unsourced`]).
+fn unfilled_error_field(
+    ir: &EssIr,
+    command: &ResolvedCommand,
+    outcome: &ResolvedOutcome,
+) -> Option<String> {
+    let error = outcome.error.as_ref()?.name().to_string();
+    spindle_capability::mint::unsourced(ir, command, outcome)
+        .into_iter()
+        .find(|(_, fill)| *fill == spindle_capability::mint::Unsourced::Unfilled)
+        .map(|(field, _)| crate::mint::unfilled(&error, field))
 }
 
 /// The condition, named, when the kernel does not run it.

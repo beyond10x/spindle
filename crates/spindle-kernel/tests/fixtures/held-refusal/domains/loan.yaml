@@ -1,0 +1,75 @@
+domain: study.loan
+summary: A book is lent while it is free; any other lending is refused with its keeper, and an unknown book with nothing.
+entities:
+  - name: study.loan.Book
+    identity:
+      name: book_id
+      type: String
+    fields:
+      - name: keeper
+        type: String
+    lifecycle:
+      initial: Free
+      states: [Free, Lent]
+      terminal: [Lent]
+      transitions:
+        - name: lend
+          from: [Free]
+          to: Lent
+errors:
+  - name: study.loan.NoSuchBook
+    summary: No book carries the id, which the refusal would name.
+    fields:
+      - name: book_id
+        type: String
+  - name: study.loan.Unavailable
+    summary: The book is not free, naming who keeps it.
+    fields:
+      - name: keeper
+        type: String
+commands:
+  - name: study.loan.AddBook
+    input:
+      - name: book_id
+        type: String
+      - name: keeper
+        type: String
+    outcomes:
+      - name: added
+        creates: study.loan.Book
+        instance: book_id
+        sets:
+          keeper: input.keeper
+        emits: [study.loan.BookAdded]
+        payload:
+          study.loan.BookAdded: {book_id: input.book_id}
+        summary: The book is on the shelf.
+  - name: study.loan.LendBook
+    input:
+      - name: book_id
+        type: String
+    outcomes:
+      - name: no-such-book
+        unknown_instance: true
+        error: study.loan.NoSuchBook
+        summary: No book carries the id.
+      - name: lent
+        when_subject: {predicate: state == Free}
+        moves: study.loan.Book.lend
+        instance: book_id
+        emits: [study.loan.BookLent]
+        payload:
+          study.loan.BookLent: {book_id: input.book_id}
+        summary: A free book is lent.
+      - name: unavailable
+        error: study.loan.Unavailable
+        summary: Any other book is refused.
+events:
+  - name: study.loan.BookAdded
+    fields:
+      - name: book_id
+        type: String
+  - name: study.loan.BookLent
+    fields:
+      - name: book_id
+        type: String

@@ -172,6 +172,7 @@ pub fn derive(ir: &EssIr, component: Option<&str>) -> Option<Requirements> {
             for (capability, because) in generated_mints(ir, outcome)
                 .into_iter()
                 .chain(response_mints(ir, command, outcome))
+                .chain(unsourced_error_mints(ir, command, outcome))
             {
                 need(
                     capability,
@@ -341,6 +342,41 @@ fn response_mints(
                     format!("stamps {at} with the current time"),
                 ),
                 _ => (shape.capability(), format!("mints {at}")),
+            })
+        })
+        .collect()
+}
+
+/// The mints the error `outcome` reports needs for the fields it gives no source and no row it is
+/// answered for holds ([`crate::mint::unsourced`]): each is the runtime's to choose, minted by the
+/// rule for generated fields. None for a field the row fills, one left absent, or one the kernel
+/// refuses by name.
+fn unsourced_error_mints(
+    ir: &EssIr,
+    command: &ResolvedCommand,
+    outcome: &ResolvedOutcome,
+) -> Vec<(&'static str, String)> {
+    let Some(error) = &outcome.error else {
+        return Vec::new();
+    };
+    crate::mint::unsourced(ir, command, outcome)
+        .into_iter()
+        .filter_map(|(field, fill)| {
+            let crate::mint::Unsourced::Minted(shape) = fill else {
+                return None;
+            };
+            let at = format!("`{}.{}`", error.name(), field.name);
+            Some(match shape {
+                crate::mint::Minted::Timestamp => (
+                    shape.capability(),
+                    format!(
+                        "stamps {at}, which the outcome gives no source, with the current time"
+                    ),
+                ),
+                _ => (
+                    shape.capability(),
+                    format!("mints {at}, which the outcome gives no source"),
+                ),
             })
         })
         .collect()

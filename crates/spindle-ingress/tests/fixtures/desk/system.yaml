@@ -1,0 +1,23 @@
+format: ess/34
+system: study
+version: v1
+summary: Desks a reading room opens, books and hands to a reader, refused with what each refusal names.
+domains:
+  - study.desk
+components:
+  - component: desk
+    summary: Opens, books and takes desks.
+    owns:
+      domains:
+        - study.desk
+    accepts:
+      commands:
+        - study.desk.OpenDesk
+        - study.desk.TakeDesk
+        - study.desk.BookDesk
+    publishes:
+      events:
+        - study.desk.DeskOpened
+        - study.desk.DeskTaken
+        - study.desk.DeskBooked
+    reached_by: network
