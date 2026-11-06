@@ -1,5 +1,5 @@
 //! Adversary cases for the caller a command is sent as (story:kernel-caller-attributes): the same
-//! requests, actor and caller included, sent to ESS 0.86.0's interpreter and to the in-process
+//! requests, actor and caller included, sent to ESS 0.87.0's interpreter and to the in-process
 //! host, and the HTTP surface of the commands that read the caller.
 //!
 //! The fixture `tests/fixtures/adversary-caller` declares two actors. `Author` carries `owner_id`,

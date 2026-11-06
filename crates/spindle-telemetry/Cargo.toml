@@ -20,6 +20,6 @@ serde_json = "1"
 spindle-kernel = { path = "../spindle-kernel", optional = true }
 
 [dev-dependencies]
-schema-contract = { git = "https://github.com/beyond10x/ess", tag = "0.86.0" }
+schema-contract = { git = "https://github.com/beyond10x/ess", tag = "0.87.0" }
 spindle-spec = { path = "../spindle-spec" }
 tempfile = "3"

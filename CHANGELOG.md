@@ -26,7 +26,7 @@ Spindle has no release yet. Everything below is on `main` and unreleased.
 - The `spindle.observe` domain with generated JSON Schema, Rust (`spindle-observe-api`) and
   TypeScript types, and the observe UI in `ui/` (Vue 3) built and tested on fixture answers.
 - A specification directory is read through its `ess-inputs.yaml` when it has one. ESS moved to
-  0.86.0.
+  0.87.0.
 - `b10x-spindle play`: the rally example's three components in one process, redrawn in the
   terminal after every tick until a side wins (`spindle-host`).
 - `b10x-spindle run`: admit a specification, then execute commands read as JSON lines on stdin

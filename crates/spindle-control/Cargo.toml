@@ -29,4 +29,4 @@ tokio = { version = "1", default-features = false, features = ["macros", "net", 
 toml.workspace = true
 
 [dev-dependencies]
-schema-contract = { git = "https://github.com/beyond10x/ess", tag = "0.86.0" }
+schema-contract = { git = "https://github.com/beyond10x/ess", tag = "0.87.0" }

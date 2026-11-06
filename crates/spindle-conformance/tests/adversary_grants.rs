@@ -1,4 +1,4 @@
-//! Adversary cases for story:actor-command-grants, held to ESS 0.86.0's interpreter.
+//! Adversary cases for story:actor-command-grants, held to ESS 0.87.0's interpreter.
 //!
 //! ESS's interpreter refuses an ungranted actor before it takes what a scenario forced
 //! (`Interpreted::decide`: `command_grant`, then `Caller::bind`, then `scenario.forced.take()`),

@@ -1,5 +1,5 @@
 //! Scenarios that arrange their starting state with `establish` steps (story:scenario-establish-steps),
-//! on the host and on ESS 0.86.0's interpreter, over the neutral two-component `post` fixture.
+//! on the host and on ESS 0.87.0's interpreter, over the neutral two-component `post` fixture.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

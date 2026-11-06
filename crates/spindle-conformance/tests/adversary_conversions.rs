@@ -1,5 +1,5 @@
 //! Adversarial cases for a binding mapping across a declared conversion: the host against ESS
-//! 0.86.0's interpreter when the converted value is refused and the event triggers a sibling
+//! 0.87.0's interpreter when the converted value is refused and the event triggers a sibling
 //! binding, and at the bound of the target newtype's invariant.
 
 use std::collections::BTreeMap;
@@ -191,7 +191,7 @@ fn an_admitted_converted_value_runs_both_bindings_on_both_sides() {
     assert_eq!(spindle, ess);
 }
 
-/// `member-0042` is no `ReaderRef`. ESS 0.86.0's interpreter answers the scenario unsupported
+/// `member-0042` is no `ReaderRef`. ESS 0.87.0's interpreter answers the scenario unsupported
 /// (`interpret/bindings.rs`: a binding without `on_refusal` whose mapped input does not satisfy its
 /// type returns an error), so it defines no result here. Spindle has already committed `CloseLoan`
 /// when the binding maps: it answers taken, runs the sibling `z-note-closure`, and reports
