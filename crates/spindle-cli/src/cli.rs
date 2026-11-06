@@ -131,9 +131,10 @@ pub enum Command {
         /// the run ends.
         #[arg(long)]
         state: Option<PathBuf>,
-        /// Run each event binding whose `on_failure` is `retry` as a `drop` binding: a failed
-        /// invocation is dropped, not retried. Prints one line per such binding on stderr before
-        /// listening. Only where `run` serves HTTP.
+        /// Run each event binding that retries on failure (`on_failure: retry`, or a per-refusal
+        /// policy that retries some refusal) as a `drop` binding: a failed invocation is dropped,
+        /// not retried. Prints one line per such binding on stderr before listening. Only where `run`
+        /// serves HTTP.
         #[arg(long, conflicts_with = "scenario")]
         drop_retries: bool,
         /// An `ess-http/1` binding of the specification's commands and views to methods and paths,

@@ -109,7 +109,7 @@ b10x-spindle run [OPTIONS] --environment <ENVIRONMENT> <SPEC>
 | `<SPEC>` | yes |  | The specification directory |
 | `--environment <ENVIRONMENT>` | yes |  | The `spindle-environment/1` document |
 | `--state <STATE>` | no |  | The state file where `store.durable` is bound to `sqlite`, refused otherwise; where `run` serves HTTP, the directory of one state file per component. Without it, state bound to `sqlite` is kept in a temporary directory, printed on stderr and removed when the run ends |
-| `--drop-retries` | no |  | Run each event binding whose `on_failure` is `retry` as a `drop` binding: a failed invocation is dropped, not retried. Prints one line per such binding on stderr before listening. Only where `run` serves HTTP |
+| `--drop-retries` | no |  | Run each event binding that retries on failure (`on_failure: retry`, or a per-refusal policy that retries some refusal) as a `drop` binding: a failed invocation is dropped, not retried. Prints one line per such binding on stderr before listening. Only where `run` serves HTTP |
 | `--http <HTTP>` | no |  | An `ess-http/1` binding of the specification's commands and views to methods and paths, JSON or YAML; only where `run` serves HTTP |
 | `--port <PORT>` | no |  | The port to serve HTTP on, on 127.0.0.1; `0`, the default, lets the system choose. Only where `run` serves HTTP |
 | `--decisions <DECISIONS>` | no |  | A TOML file of answers, `<outcome> = true \| false`, at the top level for every command or under a `["<command>"]` table for one; a command's table wins over the top level |

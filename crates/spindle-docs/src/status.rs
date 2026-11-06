@@ -135,7 +135,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Bindings",
         "Retry on failure",
-        "An on_failure: retry binding runs its command again at once after each refused or failed attempt, up to 5 attempts, before the next envelope runs; each attempt and each given-up invocation is counted. --drop-retries runs such a binding as a drop binding.",
+        "An on_failure: retry binding runs its command again at once after each refused or failed attempt, up to 5 attempts, before the next envelope runs; each attempt and each given-up invocation is counted. A per-refusal policy (on_failure with named refusals) retries or drops by refusal, with the same limit. --drop-retries runs every retrying binding as a drop binding.",
         "/docs/concepts/components-and-bindings",
         "crates/spindle-host/tests/retry.rs::a_failing_invocation_is_retried_until_it_succeeds",
     ),

@@ -1,0 +1,52 @@
+domain: library.notices
+summary: Thanks sent to readers; the notices desk may find no reader on file, or be busy.
+entities:
+  - name: library.notices.Thanks
+    identity:
+      name: reader_id
+      type: String
+    fields: []
+    lifecycle:
+      initial: Sent
+      states: [Sent]
+      terminal: [Sent]
+errors:
+  - name: library.notices.NoReader
+    summary: No reader is on file for the member.
+    fields: []
+  - name: library.notices.Busy
+    summary: The notices desk is not sending now.
+    fields: []
+commands:
+  - name: library.notices.SendThanks
+    input:
+      - name: reader_id
+        type: String
+    outcomes:
+      - name: no-reader
+        external: no reader is on file for the member
+        error: library.notices.NoReader
+        summary: Nobody can be thanked; trying again would find nobody either.
+      - name: busy
+        external: the notices desk is not sending now
+        error: library.notices.Busy
+        summary: The desk may send later.
+      - name: sent
+        creates: library.notices.Thanks
+        instance: reader_id
+        emits: [library.notices.ThanksSent]
+        payload:
+          library.notices.ThanksSent: {reader_id: input.reader_id}
+        summary: The reader is thanked.
+events:
+  - name: library.notices.ThanksSent
+    fields:
+      - name: reader_id
+        type: String
+views:
+  - name: library.notices.AllThanks
+    source: library.notices.Thanks
+    consistency: read_your_writes
+    fields:
+      - name: reader_id
+        type: String
