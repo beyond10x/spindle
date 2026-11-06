@@ -88,9 +88,40 @@ pub(crate) struct Serving<'a> {
     pub decider: Option<Box<dyn Decider + Send>>,
     /// The run's own answers, beneath the decision table a reset's world carries.
     pub answers: Answers,
-    /// `--fixed-actor` with `--fixed-caller`: the caller every served command is sent as, a
-    /// test-backend switch, not authentication; without it, as no caller.
-    pub caller: Option<Caller>,
+    /// `--fixed-actor` with `--fixed-caller`, in the order given: each served operation is sent
+    /// or read as the first its grant names ([`Surface::fixing_callers`]), a test-backend switch,
+    /// not authentication; with none, as no caller.
+    pub callers: Vec<Caller>,
+}
+
+/// The fixed callers `run` was given: the n-th `--fixed-caller` is the n-th `--fixed-actor`'s.
+/// One actor may leave its caller out (the empty caller, which [`fixed`] then binds); with several
+/// each needs its own, and no actor is given twice, since the second would never be sent as.
+pub(crate) fn callers(
+    actors: Vec<String>,
+    attributes: Vec<serde_json::Map<String, serde_json::Value>>,
+) -> Result<Vec<Caller>> {
+    let paired = actors.len() == attributes.len() || (actors.len() == 1 && attributes.is_empty());
+    if !paired {
+        bail!(
+            "{} --fixed-actor and {} --fixed-caller: give each --fixed-actor its own \
+             --fixed-caller, in the same order (`{{}}` for an actor with no attribute)",
+            actors.len(),
+            attributes.len()
+        );
+    }
+    let mut attributes = attributes.into_iter();
+    let mut callers: Vec<Caller> = Vec::with_capacity(actors.len());
+    for actor in actors {
+        if callers.iter().any(|caller| caller.actor == actor) {
+            bail!("--fixed-actor {actor} is given twice; the first would always be sent as");
+        }
+        callers.push(Caller {
+            actor,
+            attributes: attributes.next().unwrap_or_default(),
+        });
+    }
+    Ok(callers)
 }
 
 /// Refuses a fixed caller `ir` would refuse on the first command sent as it: an actor it does not
@@ -134,10 +165,11 @@ fn fixed(ir: &EssIr, caller: &Caller) -> Result<()> {
 /// empty, a decision table answering external causes before `serving.decider` does, and a seed
 /// identities are minted from, each until the next reset.
 ///
-/// With `serving.caller`, every command is sent as that actor and caller, bound against the model
-/// and printed on stderr before listening; a caller the model refuses stops the run first.
+/// With `serving.callers`, each command is sent as the first of them its grant names, each bound
+/// against the model and printed on stderr, in order, before listening; a caller the model refuses
+/// stops the run first.
 pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
-    if let Some(caller) = &serving.caller {
+    for caller in &serving.callers {
         fixed(&ir, caller)?;
     }
     let signalled = signals()?;
@@ -168,18 +200,34 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         }
         (Some(other), _) => bail!("this build has no `{other}` store for store.durable"),
     };
-    let surface = match &serving.caller {
-        Some(caller) => {
-            eprintln!(
-                "b10x-spindle: every command is sent as {} with the caller {} (--fixed-actor, \
-                 --fixed-caller): a test backend, not authentication",
-                caller.actor,
-                serde_json::Value::Object(caller.attributes.clone())
-            );
-            Surface::fixing_caller(&ir, &serving.components, serving.binding.as_ref(), caller)?
+    match serving.callers.as_slice() {
+        [] => {}
+        [caller] => eprintln!(
+            "b10x-spindle: every command is sent as {} with the caller {} (--fixed-actor, \
+             --fixed-caller): a test backend, not authentication",
+            caller.actor,
+            serde_json::Value::Object(caller.attributes.clone())
+        ),
+        callers => {
+            for (position, caller) in callers.iter().enumerate() {
+                eprintln!(
+                    "b10x-spindle: fixed actor {} of {}: {} with the caller {}; an operation is \
+                     sent as the first fixed actor its grant names (--fixed-actor, \
+                     --fixed-caller): a test backend, not authentication",
+                    position + 1,
+                    callers.len(),
+                    caller.actor,
+                    serde_json::Value::Object(caller.attributes.clone())
+                );
+            }
         }
-        None => Surface::new(&ir, &serving.components, serving.binding.as_ref())?,
     }
+    let surface = Surface::fixing_callers(
+        &ir,
+        &serving.components,
+        serving.binding.as_ref(),
+        &serving.callers,
+    )?
     .with_console(serving.ingress)?;
     let unserved = surface.unserved();
     for route in &unserved {

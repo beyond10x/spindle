@@ -167,19 +167,23 @@ pub enum Command {
         /// default branch, so the model selects as it would without it.
         #[arg(long)]
         answer_default: bool,
-        /// Send every served command as this actor (qualified name): a test-backend switch, not
+        /// Send served commands as this actor (qualified name): a test-backend switch, not
         /// authentication; no request proves who sends it. A command that reads its caller is then
-        /// served instead of answering `501`, and one the actor's `may:` does not name is refused
-        /// `403` "not granted", writing nothing, as is a read-granted view it may not read. The
-        /// actor and `--fixed-caller` are checked against the model and printed on stderr before
-        /// listening; an undeclared actor or attribute, or a required attribute left out, exits 1.
+        /// served instead of answering `501`. Given more than once, each served command is sent
+        /// as the first fixed actor whose `may:` names it, and a read-granted view read as the
+        /// first that may read it; one no fixed actor may run is refused `403` "not granted",
+        /// naming the first, and writes nothing. Each actor and its `--fixed-caller` are checked
+        /// against the model and printed on stderr, in order, before listening; an undeclared
+        /// actor or attribute, a required attribute left out, or an actor given twice exits 1.
         /// Only where `run` serves HTTP.
         #[arg(long, conflicts_with = "scenario")]
-        fixed_actor: Option<String>,
-        /// The caller attributes every served command is sent with, as a JSON object
-        /// (`{"<attribute>": <value>}`), every required one of `--fixed-actor`'s.
+        fixed_actor: Vec<String>,
+        /// The caller attributes a fixed actor's commands are sent with, as a JSON object
+        /// (`{"<attribute>": <value>}`), every required one of that actor's. The n-th
+        /// `--fixed-caller` is the n-th `--fixed-actor`'s; with several actors each needs its
+        /// own, `{}` for one that declares no attribute.
         #[arg(long, requires = "fixed_actor", value_parser = json_object)]
-        fixed_caller: Option<Map<String, Value>>,
+        fixed_caller: Vec<Map<String, Value>>,
         /// The `ess-scenario` document to replay.
         #[arg(long, conflicts_with_all = ["state", "decisions", "answer_default"])]
         scenario: Option<PathBuf>,

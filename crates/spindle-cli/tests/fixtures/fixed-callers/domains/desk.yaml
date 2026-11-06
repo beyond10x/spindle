@@ -1,0 +1,185 @@
+domain: bureau.desk
+summary: A desk a clerk opens, a keeper locks, either notes, and only a warden reserves.
+types:
+  - name: bureau.desk.DeskId
+    kind: newtype
+    of: Uuid
+actors:
+  - name: bureau.desk.Clerk
+    attributes:
+      - name: badge
+        type: String
+      - name: shift
+        type: String
+    may:
+      - bureau.desk.OpenDesk
+      - bureau.desk.NoteDesk
+  - name: bureau.desk.Keeper
+    attributes:
+      - name: key
+        type: String
+      - name: shift
+        type: String
+    may:
+      - bureau.desk.LockDesk
+      - bureau.desk.NoteDesk
+      - bureau.desk.DeskLedger
+  - name: bureau.desk.Warden
+    may:
+      - bureau.desk.ReserveDesk
+entities:
+  - name: bureau.desk.Desk
+    identity:
+      name: desk_id
+      type: bureau.desk.DeskId
+    fields:
+      - name: opened_by
+        type: String
+      - name: locked_by
+        type: Optional<String>
+      - name: noted_shift
+        type: Optional<String>
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+errors:
+  - name: bureau.desk.NoSuchDesk
+    summary: No desk carries the id.
+    fields: []
+  - name: bureau.desk.NamedForSelf
+    summary: The clerk names the desk after their own badge.
+    fields: []
+  - name: bureau.desk.WrongKey
+    summary: The key given is not the keeper's own.
+    fields: []
+commands:
+  - name: bureau.desk.OpenDesk
+    input:
+      - name: desk_id
+        type: bureau.desk.DeskId
+      - name: name
+        type: String
+    outcomes:
+      - name: own-name
+        when: name == caller.badge
+        error: bureau.desk.NamedForSelf
+        summary: The clerk names the desk after their own badge.
+      - name: opened
+        creates: bureau.desk.Desk
+        instance: desk_id
+        sets:
+          opened_by: {caller: badge}
+        emits: [bureau.desk.DeskOpened]
+        payload:
+          bureau.desk.DeskOpened:
+            desk_id: input.desk_id
+            opened_by: {caller: badge}
+        summary: The desk is opened by the clerk who sent the command.
+  - name: bureau.desk.LockDesk
+    input:
+      - name: desk_id
+        type: bureau.desk.DeskId
+      - name: with_key
+        type: String
+    outcomes:
+      - name: wrong-key
+        when: with_key != caller.key
+        error: bureau.desk.WrongKey
+        summary: The key given is not the keeper's own.
+      - name: no-such-desk
+        unknown_instance: true
+        error: bureau.desk.NoSuchDesk
+        summary: No desk carries the id.
+      - name: locked
+        updates: bureau.desk.Desk
+        instance: desk_id
+        sets:
+          locked_by: {caller: key}
+        emits: [bureau.desk.DeskLocked]
+        payload:
+          bureau.desk.DeskLocked:
+            desk_id: input.desk_id
+            locked_by: {caller: key}
+        summary: The desk is locked with the keeper's key.
+  - name: bureau.desk.NoteDesk
+    input:
+      - name: desk_id
+        type: bureau.desk.DeskId
+    outcomes:
+      - name: no-such-desk
+        unknown_instance: true
+        error: bureau.desk.NoSuchDesk
+        summary: No desk carries the id.
+      - name: noted
+        updates: bureau.desk.Desk
+        instance: desk_id
+        sets:
+          noted_shift: {caller: shift}
+        emits: [bureau.desk.DeskNoted]
+        payload:
+          bureau.desk.DeskNoted:
+            desk_id: input.desk_id
+            shift: {caller: shift}
+        summary: The desk is noted with the shift of whoever sent the command.
+  - name: bureau.desk.ReserveDesk
+    input:
+      - name: desk_id
+        type: bureau.desk.DeskId
+      - name: opened_by
+        type: String
+    outcomes:
+      - name: reserved
+        creates: bureau.desk.Desk
+        instance: desk_id
+        sets:
+          opened_by: input.opened_by
+        emits: [bureau.desk.DeskReserved]
+        payload:
+          bureau.desk.DeskReserved:
+            desk_id: input.desk_id
+        summary: The desk is reserved by a warden.
+events:
+  - name: bureau.desk.DeskOpened
+    fields:
+      - name: desk_id
+        type: bureau.desk.DeskId
+      - name: opened_by
+        type: String
+  - name: bureau.desk.DeskLocked
+    fields:
+      - name: desk_id
+        type: bureau.desk.DeskId
+      - name: locked_by
+        type: String
+  - name: bureau.desk.DeskNoted
+    fields:
+      - name: desk_id
+        type: bureau.desk.DeskId
+      - name: shift
+        type: String
+  - name: bureau.desk.DeskReserved
+    fields:
+      - name: desk_id
+        type: bureau.desk.DeskId
+views:
+  - name: bureau.desk.DeskCard
+    source: bureau.desk.Desk
+    consistency: read_your_writes
+    fields:
+      - name: desk_id
+        type: bureau.desk.DeskId
+      - name: opened_by
+        type: String
+      - name: locked_by
+        type: Optional<String>
+      - name: noted_shift
+        type: Optional<String>
+  - name: bureau.desk.DeskLedger
+    source: bureau.desk.Desk
+    consistency: read_your_writes
+    fields:
+      - name: desk_id
+        type: bureau.desk.DeskId
+      - name: locked_by
+        type: Optional<String>
