@@ -3,7 +3,7 @@ title: Rally
 sidebar_position: 1
 description: The rally example, a two-player paddle-and-ball game written as an ESS system of three components that talk only through bindings.
 lede: Three components, one periodic binding and four event bindings play a match to a winner, with no game code outside the specification.
-source: examples/rally/ess, crates/spindle-host/tests/rally.rs, crates/spindle-host/src/rally.rs, crates/spindle-cli/tests/play.rs, crates/spindle-cli/tests/processes.rs, crates/spindle-cli/tests/adversary_processes.rs, crates/spindle-host/src/host/component.rs, docs/design/spindle.md §13
+source: examples/rally/ess, crates/spindle-host/tests/spindle-host/rally.rs, crates/spindle-host/src/rally.rs, crates/spindle-cli/tests/spindle-cli/play.rs, crates/spindle-cli/tests/spindle-cli/processes.rs, crates/spindle-cli/tests/spindle-cli/adversary_processes.rs, crates/spindle-host/src/host/component.rs, docs/design/spindle.md §13
 ---
 
 Rally is an original two-player paddle-and-ball game, written as an ESS system in

@@ -3,7 +3,7 @@ title: The specification
 sidebar_position: 1
 description: What Spindle reads, how it compiles it, and what the kernel executes from it.
 lede: A specification is a directory of ESS documents, compiled by ESS's own compiler into the program Spindle runs.
-source: crates/spindle-spec/src/lib.rs, crates/spindle-spec/tests/load.rs, crates/spindle-kernel/src/lib.rs, crates/spindle-kernel/src/supported.rs, docs/design/spindle.md §3a
+source: crates/spindle-spec/src/lib.rs, crates/spindle-spec/tests/spindle-spec/load.rs, crates/spindle-kernel/src/lib.rs, crates/spindle-kernel/src/supported.rs, docs/design/spindle.md §3a
 ---
 
 A specification is a directory of [ESS](https://beyond10x.github.io/ess/)

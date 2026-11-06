@@ -3,7 +3,7 @@ title: Observe
 sidebar_position: 6
 description: What a running Spindle instance counts without the specification saying anything about metrics, the observe API contract and the observe UI.
 lede: Every effect of an instance passes through the runtime, so the runtime counts it, and the counters are derived from the specification like capabilities.
-source: crates/spindle-telemetry/src/lib.rs, crates/spindle-target/src/process.rs, crates/spindle-qemu/src/lib.rs, crates/spindle-firecracker/src/lib.rs, crates/spindle-telemetry/tests, crates/spindle-target/src/sample.rs, crates/spindle-target/tests/sampling.rs, ess/domains/observe.yaml, Taskfile.yml, ui/, docs/design/observe.md
+source: crates/spindle-telemetry/src/lib.rs, crates/spindle-target/src/process.rs, crates/spindle-qemu/src/lib.rs, crates/spindle-firecracker/src/lib.rs, crates/spindle-telemetry/tests, crates/spindle-target/src/sample.rs, crates/spindle-target/tests/spindle-target/sampling.rs, ess/domains/observe.yaml, Taskfile.yml, ui/, docs/design/observe.md
 ---
 
 ## Counters

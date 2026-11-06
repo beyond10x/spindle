@@ -43,7 +43,7 @@ tasks:
     env:
       CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
     cmds:
-      - cargo test --locked --target wasm32-unknown-unknown --no-default-features -p spindle-host --test wasm --test adversary_wasm
+      - cargo test --locked --target wasm32-unknown-unknown --no-default-features -p spindle-host --test spindle-host
 
   check:vm:
     desc: The VM tests, on a host with KVM
