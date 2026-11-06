@@ -154,9 +154,9 @@ stays a runtime rule outside it (each item names the case in
   `external:` outcome, and the control process answers `external.spindle.placement.<Command>.not-admitted`
   from the stored `spindle.deployment.Deployment`, true unless it is `Admitted` or `Running`
   (for `PlaceInstance`, also true when the deployment was admitted for another environment than
-  the target provides). The kernel does not evaluate `when_related:` and refuses to run a command
-  that declares it (`crates/spindle-kernel/src/supported.rs`), so a guard over the deployment
-  would stop the whole command (`an_instance_of_a_refused_deployment_cannot_be_placed`).
+  the target provides). This was decided while the kernel refused every `when_related:`
+  (`crates/spindle-kernel/src/supported.rs`); it now runs a guard over one row, and still refuses
+  one over a row set (`an_instance_of_a_refused_deployment_cannot_be_placed`).
 
 - **A placement refusal names its cause.** `PlaceInstance` has one refusal per cause, asked in the
   order `spindle_target::place` lists its reasons: `target-retired`, `not-admitted`,
