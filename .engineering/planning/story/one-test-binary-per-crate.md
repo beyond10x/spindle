@@ -17,7 +17,7 @@ scope:
   path: crates/spindle-host/tests
 - confidence: cited
   path: crates/spindle-kernel/tests
-revision: 4
+revision: 5
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-06T09:14:32Z", actor: "human:timo", revision: 3}
 - {from: "proposed", to: "active", at: "2026-11-06T09:14:32Z", actor: "human:timo", revision: 4}
@@ -48,3 +48,7 @@ iowait).
 
 The operator, 2026-11-06, after a load check: "figure out, if you can do anything about the load
 your own session is causing on a constant basis".
+
+## Order
+
+Leads wave 11. `b10x-chef-orchestrator`, 2026-11-06: "Wave 10: at most 4 units (wave rule, chef-orchestrator SKILL.md § Delivery rule 1). Keep kernel-delete-outcomes, refusal-payload-complete, structured-response-values, fixed-caller-per-grant; one-test-binary-per-crate leads wave 11."
