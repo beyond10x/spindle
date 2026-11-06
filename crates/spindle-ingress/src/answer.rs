@@ -1,5 +1,6 @@
 //! One request's answer, from the host that runs the command or reads the view.
 
+use ess_gen::http::{FORBIDDEN, NOT_GRANTED};
 use ess_http::Operation;
 use serde_json::{Map, Value, json};
 use spindle_host::{Failed, Host, HostError};
@@ -26,6 +27,15 @@ impl Answer {
         }
     }
 
+    /// ESS's standard refusal for an actor no grant admits, on a command or a read-granted view:
+    /// `403` `{"refused": "not granted", "actor": <actor>}`.
+    pub fn not_granted(actor: &str) -> Self {
+        Self {
+            status: FORBIDDEN.parse().unwrap_or(403),
+            body: json!({"refused": NOT_GRANTED, "actor": actor}),
+        }
+    }
+
     /// The `501` the contract declares on every command: the realization is unfinished.
     /// `committed` says whether the command's effect was written before it stopped.
     pub fn unfinished(detail: impl Into<String>, committed: bool) -> Self {
@@ -44,8 +54,10 @@ impl Answer {
 /// declare, or one both the path and the body carry, is refused `400`. It answers the status the
 /// route gives the outcome the model selected ([`Route::status`]: the binding's, else ESS's
 /// derived one) with the envelope ESS publishes for it: `outcome`, `published` (each event as
-/// `{"event", "payload"}`, in emit order), and on a refusing outcome `error`, the error's
-/// qualified name, with `payload` where the kernel determined its fields.
+/// `{"event", "payload"}`, in emit order), on a refusing outcome `error`, the error's
+/// qualified name, with `payload` where the kernel determined its fields, and on an outcome that
+/// returns the command's response (`returns: true`, `200`) `response`, the values the kernel
+/// chose for its declared fields.
 ///
 /// A view answers `200` with the body ESS publishes for it, `{"rows": [...]}`, every row it
 /// holds.
@@ -54,6 +66,11 @@ impl Answer {
 /// kernel does not run answers `501` with `committed: false`; one whose effect was written and
 /// whose consequences could not be carried answers `501` with `committed: true`. A view the host
 /// cannot answer is refused `501`, naming what it does not read.
+///
+/// A command is sent as the route's fixed caller ([`Route::caller`]), else as no caller. One its
+/// actor's `may:` does not name answers ESS's standard refusal, `403`
+/// `{"refused": "not granted", "actor": <actor>}`, and nothing is written. So does a read-granted
+/// view the fixed actor may not read ([`Route::not_granted`]), before anything is read.
 ///
 /// An operation the route marks [`Unserved::Ingress`] answers `501` with `committed: false`,
 /// naming the operation and what it uses, before the body is read or the host asked.
@@ -77,6 +94,10 @@ pub fn answered(
     }
     match &route.operation {
         Operation::Command(command) => run(host, route, command, carried, body),
+        Operation::View(_) if route.not_granted() => (
+            Answer::not_granted(route.caller().map_or("", |caller| caller.actor.as_str())),
+            Vec::new(),
+        ),
         Operation::View(view) => match host.list(view) {
             Ok(rows) => (
                 Answer {
@@ -122,7 +143,13 @@ fn run(
         }
         input.insert(field.clone(), value.clone());
     }
-    let answer = match host.submit(command, input) {
+    let caller = route.caller();
+    let answer = match host.submit_as(
+        command,
+        input,
+        caller.map(|caller| caller.actor.as_str()),
+        caller.map(|caller| &caller.attributes),
+    ) {
         Ok(report) => {
             let answer = match report.ran.first() {
                 Some(ran) => envelope(
@@ -131,18 +158,20 @@ fn run(
                     &ran.executed.outcome,
                     &ran.executed.events,
                     None,
+                    ran.executed.response.as_ref(),
                 ),
                 None => Answer::unfinished(format!("{command} ran and reported nothing"), true),
             };
             return (answer, report.failed);
         }
         Err(HostError::CommandRefused { outcome, error, .. }) => {
-            envelope(route, command, &outcome, &[], Some(&error))
+            envelope(route, command, &outcome, &[], Some(&error), None)
         }
         Err(HostError::Execute { error, .. }) => match *error {
             ExecuteError::InvalidInput(detail) => {
                 Answer::refusal(400, format!("invalid input: {detail}"))
             }
+            ExecuteError::NotGranted { actor } => Answer::not_granted(&actor),
             other => Answer::unfinished(other.to_string(), false),
         },
         Err(error @ HostError::NotAccepted(_)) => Answer::unfinished(error.to_string(), false),
@@ -176,6 +205,7 @@ fn envelope(
     outcome: &str,
     emitted: &[Event],
     refusal: Option<&DeclaredError>,
+    response: Option<&Map<String, Value>>,
 ) -> Answer {
     let Some(status) = route.status(outcome) else {
         return Answer::unfinished(
@@ -199,6 +229,9 @@ fn envelope(
         if !refusal.fields.is_empty() {
             body.insert("payload".to_owned(), Value::Object(refusal.fields.clone()));
         }
+    }
+    if let Some(response) = response.filter(|_| route.responds(outcome)) {
+        body.insert("response".to_owned(), Value::Object(response.clone()));
     }
     Answer {
         status,

@@ -246,6 +246,13 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "DELETE routes",
+        "A command an ess-http/1 binding puts on method: delete is served at its path: a DELETE with no body runs with the input its path carries and answers the status the binding lists; a method the path does not serve answers 405 with Allow naming DELETE.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-cli/tests/ingress.rs::a_command_bound_to_delete_is_served",
+    ),
+    shipped(
+        "Execution",
         "Console routes",
         "A loopback run also serves GET /api/model (the IR as ess specify compile prints it, and each outcome's subject), GET /api/events (every event published, in order) and POST /api/reset (empties every store); a route the binding or ESS publishes at one of those paths is refused at startup.",
         "/docs/concepts/capabilities",
@@ -253,10 +260,24 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "A world per reset",
+        "POST /api/reset may carry a world: rows checked by ESS and written where their entity rests, a decision table answering external causes and a seed identities are minted from, each until the next reset; a world that does not validate is refused 400 and changes nothing.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-cli/tests/served_world.rs::a_reset_with_seed_rows_serves_them",
+    ),
+    shipped(
+        "Execution",
         "Serve what runs",
         "An HTTP run serves every command and view that runs and answers each other one 501 naming the construct, ESS's envelope for a command; the list is printed at startup, in name order. A view the ingress cannot route still refuses startup by name, since ESS publishes no 501 for a view. SQLite state without --state is kept in a temporary directory removed when the run ends.",
         "/docs/concepts/capabilities",
         "crates/spindle-cli/tests/unserved.rs::an_unrunnable_command_answers_501_and_the_rest_serve",
+    ),
+    shipped(
+        "Execution",
+        "Fixed caller (test backend)",
+        "run --fixed-actor with --fixed-caller sends every served command as one actor and caller for the whole run, so a command that reads its caller is served: a test-backend switch, not authentication, opt-in only and printed on stderr at startup. The grant check still runs: a command the actor may not send answers 403 not granted and writes nothing.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-cli/tests/fixed_caller.rs::a_command_reading_the_caller_runs_with_the_fixed_caller",
     ),
     shipped(
         "Conformance",

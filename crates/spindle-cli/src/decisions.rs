@@ -4,8 +4,9 @@
 //! object, then the decisions file (`--decisions`), then `--answer-default`. In the file an answer
 //! under a `[<command>]` table wins over a top-level answer, which holds for every command. A
 //! request served over HTTP carries no `external` object, so the file answers first there
-//! ([`Answers::served`]). The file keys an answer by command and outcome only, never by an input
-//! value: every request to one command gets the same answer.
+//! ([`Answers::served`]), unless the world of the last reset carries a decision table of the same
+//! shape, which answers before it ([`Answers::over`]). The file keys an answer by command and
+//! outcome only, never by an input value: every request to one command gets the same answer.
 //!
 //! `--answer-default` answers "the cause does not hold" for a command whose IR declares a default
 //! branch ([`ResolvedCondition::Otherwise`]), so selection goes on as the model reads it and ends
@@ -21,7 +22,7 @@ use ess_compiler::ir::{ResolvedCommand, ResolvedCondition};
 use spindle_kernel::{Decider, External};
 
 /// Every source of answers a `run` reads, besides the request line.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Answers {
     /// Top-level answers in the decisions file, by outcome.
     every: BTreeMap<String, bool>,
@@ -64,9 +65,26 @@ impl Answers {
     /// # Errors
     /// As [`Self::load`].
     pub fn parse(ir: &EssIr, text: &str) -> Result<Self> {
-        let table: toml::Table = toml::from_str(text)?;
+        Self::from_table(ir, &toml::from_str(text)?)
+    }
+
+    /// Reads a decision table sent as JSON, as a reset's world carries it: the decisions file's
+    /// shape, `{"<outcome>": true | false, "<command>": {"<outcome>": true | false}}`.
+    ///
+    /// # Errors
+    /// The table is not a JSON object, and as [`Self::load`].
+    pub fn from_json(ir: &EssIr, table: &serde_json::Value) -> Result<Self> {
+        let toml::Value::Table(table) = toml::Value::try_from(table)
+            .map_err(|error| anyhow::anyhow!("the decision table is not a table: {error}"))?
+        else {
+            bail!("the decision table is not a JSON object");
+        };
+        Self::from_table(ir, &table)
+    }
+
+    fn from_table(ir: &EssIr, table: &toml::Table) -> Result<Self> {
         let mut answers = Vec::new();
-        flatten(&mut Vec::new(), &table, &mut answers)?;
+        flatten(&mut Vec::new(), table, &mut answers)?;
         let externals = externals(ir);
         let mut parsed = Self::default();
         for (command, outcome, answer) in answers {
@@ -118,13 +136,8 @@ impl Answers {
         if let Some(answer) = request.get(question.outcome) {
             return Ok(*answer);
         }
-        if let Some(answer) = self
-            .commands
-            .get(question.command)
-            .and_then(|outcomes| outcomes.get(question.outcome))
-            .or_else(|| self.every.get(question.outcome))
-        {
-            return Ok(*answer);
+        if let Some(answer) = self.table(question) {
+            return Ok(answer);
         }
         let unanswered = format!(
             "neither the request nor a decisions file answers `external.{}` for `{}`",
@@ -141,11 +154,30 @@ impl Answers {
         }
     }
 
+    /// The answer the table gives `question`: under its command, else at the top level.
+    fn table(&self, question: &External<'_>) -> Option<bool> {
+        self.commands
+            .get(question.command)
+            .and_then(|outcomes| outcomes.get(question.outcome))
+            .or_else(|| self.every.get(question.outcome))
+            .copied()
+    }
+
     /// These answers as the decider of a served run: a request over HTTP carries no `external`
     /// object, so each cause is answered by the decisions file, then by `--answer-default`.
     pub fn served(self) -> Box<dyn Decider + Send> {
         let request = BTreeMap::new();
         Box::new(move |question: &External<'_>| self.decide(&request, question))
+    }
+
+    /// These answers, a reset's decision table, laid over `run`'s: a cause the table answers is
+    /// answered by it, any other as `run` answers it ([`Self::served`]).
+    pub fn over(self, run: Self) -> Box<dyn Decider + Send> {
+        let request = BTreeMap::new();
+        Box::new(move |question: &External<'_>| match self.table(question) {
+            Some(answer) => Ok(answer),
+            None => run.decide(&request, question),
+        })
     }
 }
 

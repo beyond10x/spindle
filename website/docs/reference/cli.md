@@ -100,6 +100,8 @@ A command this ingress cannot route or the kernel does not run, and a view the h
 
 A served request carries no `external` object: its external causes are answered by `--decisions`, then by `--answer-default`, each answer per command and outcome, never per input value. A request nothing answers is refused `501`, naming the outcome. Without either flag, a specification that declares an external outcome exits 1 before listening.
 
+`POST /api/reset` may carry a world as its JSON body, each key optional: `{"rows": [{"entity", "identity", "state", "fields"}], "decisions": {...}, "mint": <seed>}`. Every store is emptied, then each row, checked by ESS as a scenario's setup is, written where its entity rests. `decisions`, in the decisions file's shape, answers external causes before `--decisions` and `--answer-default` do, and `mint` seeds every identity and generated value minted, so the same requests mint the same identities; both hold until the next reset. A world that does not validate is refused `400` and changes nothing.
+
 An event binding with `on_failure: retry` runs its command again at once after each attempt that fails, up to 5 attempts, unless `--drop-retries` is given; one with `on_failure: escalate` exits 1 before listening.
 
 ```console
@@ -116,6 +118,8 @@ b10x-spindle run [OPTIONS] --environment <ENVIRONMENT> <SPEC>
 | `--port <PORT>` | no |  | The port to serve HTTP on, on 127.0.0.1; `0`, the default, lets the system choose. Only where `run` serves HTTP |
 | `--decisions <DECISIONS>` | no |  | A TOML file of answers, `<outcome> = true \| false`, at the top level for every command or under a `["<command>"]` table for one; a command's table wins over the top level |
 | `--answer-default` | no |  | Answer every remaining external cause "does not hold" on a command that declares a default branch, so the model selects as it would without it |
+| `--fixed-actor <FIXED_ACTOR>` | no |  | Send every served command as this actor (qualified name): a test-backend switch, not authentication; no request proves who sends it. A command that reads its caller is then served instead of answering `501`, and one the actor's `may:` does not name is refused `403` "not granted", writing nothing, as is a read-granted view it may not read. The actor and `--fixed-caller` are checked against the model and printed on stderr before listening; an undeclared actor or attribute, or a required attribute left out, exits 1. Only where `run` serves HTTP |
+| `--fixed-caller <FIXED_CALLER>` | no |  | The caller attributes every served command is sent with, as a JSON object (`{"<attribute>": <value>}`), every required one of `--fixed-actor`'s |
 | `--scenario <SCENARIO>` | no |  | The `ess-scenario` document to replay |
 
 ## `play`

@@ -1,11 +1,11 @@
 //! The routes a generic model console reads, served beside the routes ESS publishes where
 //! `ingress.network` is bound to `http-loopback`: the model, the events published so far, and a
-//! reset of every store.
+//! reset of every store, which may load a world.
 
 use ess_compiler::EssIr;
 use ess_http::Method;
 use serde_json::{Value, json};
-use spindle_host::Host;
+use spindle_host::{Host, HostError, World};
 
 use crate::answer::Answer;
 
@@ -16,7 +16,7 @@ pub enum Console {
     Model,
     /// `GET /api/events`: every event published so far, in order.
     Events,
-    /// `POST /api/reset`: empty every store of the run.
+    /// `POST /api/reset`: empty every store of the run, then load the world its body carries.
     Reset,
 }
 
@@ -102,15 +102,38 @@ pub fn events(host: &Host) -> Answer {
     }
 }
 
-/// What `POST /api/reset` answers once every store of the run is empty: `200` with
-/// `{"emptied": [<component>, ...]}`; a store that could not be emptied is refused `500`, naming
-/// why.
-pub fn reset(host: &mut Host) -> Answer {
-    match host.reset() {
+/// Reads the world a `POST /api/reset` body carries, as JSON, against the model the host runs;
+/// the reason it is refused otherwise.
+pub type Worlds<'a> = &'a dyn Fn(&EssIr, &Value) -> Result<World, String>;
+
+/// What `POST /api/reset` answers once every store of the run is empty and the world `body`
+/// carries is loaded ([`Host::reset_to`]): `200` with `{"emptied": [<component>, ...]}`.
+///
+/// A body empty or all whitespace loads no world. Any other body is read as JSON by `worlds`; a
+/// body that is not JSON, a run with no `worlds`, and a world `worlds` or the host refuses are
+/// refused `400` before any store is emptied. A store that could not be emptied or written is
+/// refused `500`, naming why.
+pub fn reset(host: &mut Host, body: &[u8], worlds: Option<Worlds<'_>>) -> Answer {
+    let world = if body.iter().all(u8::is_ascii_whitespace) {
+        World::default()
+    } else {
+        let read = serde_json::from_slice::<Value>(body)
+            .map_err(|error| format!("the reset body is not JSON: {error}"))
+            .and_then(|value| match worlds {
+                Some(worlds) => worlds(host.ir(), &value),
+                None => Err("this run loads no world; send the reset without a body".to_owned()),
+            });
+        match read {
+            Ok(world) => world,
+            Err(why) => return Answer::refusal(400, why),
+        }
+    };
+    match host.reset_to(world) {
         Ok(emptied) => Answer {
             status: 200,
             body: json!({"emptied": emptied}),
         },
+        Err(error @ HostError::World(_)) => Answer::refusal(400, error.to_string()),
         Err(error) => Answer::refusal(500, error.to_string()),
     }
 }

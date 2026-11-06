@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use serde_json::{Map, Value};
 
 /// The `b10x-spindle` command line.
 #[derive(Debug, Parser)]
@@ -121,6 +122,14 @@ pub enum Command {
     /// input value. A request nothing answers is refused `501`, naming the outcome. Without either
     /// flag, a specification that declares an external outcome exits 1 before listening.
     ///
+    /// `POST /api/reset` may carry a world as its JSON body, each key optional: `{"rows":
+    /// [{"entity", "identity", "state", "fields"}], "decisions": {...}, "mint": <seed>}`. Every
+    /// store is emptied, then each row, checked by ESS as a scenario's setup is, written where its
+    /// entity rests. `decisions`, in the decisions file's shape, answers external causes before
+    /// `--decisions` and `--answer-default` do, and `mint` seeds every identity and generated value
+    /// minted, so the same requests mint the same identities; both hold until the next reset. A
+    /// world that does not validate is refused `400` and changes nothing.
+    ///
     /// An event binding with `on_failure: retry` runs its command again at once after each
     /// attempt that fails, up to 5 attempts, unless `--drop-retries` is given; one with
     /// `on_failure: escalate` exits 1 before listening.
@@ -158,6 +167,19 @@ pub enum Command {
         /// default branch, so the model selects as it would without it.
         #[arg(long)]
         answer_default: bool,
+        /// Send every served command as this actor (qualified name): a test-backend switch, not
+        /// authentication; no request proves who sends it. A command that reads its caller is then
+        /// served instead of answering `501`, and one the actor's `may:` does not name is refused
+        /// `403` "not granted", writing nothing, as is a read-granted view it may not read. The
+        /// actor and `--fixed-caller` are checked against the model and printed on stderr before
+        /// listening; an undeclared actor or attribute, or a required attribute left out, exits 1.
+        /// Only where `run` serves HTTP.
+        #[arg(long, conflicts_with = "scenario")]
+        fixed_actor: Option<String>,
+        /// The caller attributes every served command is sent with, as a JSON object
+        /// (`{"<attribute>": <value>}`), every required one of `--fixed-actor`'s.
+        #[arg(long, requires = "fixed_actor", value_parser = json_object)]
+        fixed_caller: Option<Map<String, Value>>,
         /// The `ess-scenario` document to replay.
         #[arg(long, conflicts_with_all = ["state", "decisions", "answer_default"])]
         scenario: Option<PathBuf>,
@@ -302,4 +324,13 @@ pub enum Command {
         #[arg(long, requires = "known_failing")]
         accounting_out: Option<PathBuf>,
     },
+}
+
+/// A JSON object, as `--fixed-caller` reads it.
+fn json_object(text: &str) -> Result<Map<String, Value>, String> {
+    match serde_json::from_str::<Value>(text) {
+        Ok(Value::Object(object)) => Ok(object),
+        Ok(other) => Err(format!("not a JSON object: {other}")),
+        Err(error) => Err(format!("not JSON: {error}")),
+    }
 }

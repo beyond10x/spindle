@@ -1,0 +1,187 @@
+domain: shelf.books
+summary: Books added under an identity the runtime mints, lent out, returned, and donated when the librarian accepts them.
+types:
+  - name: shelf.books.BookId
+    kind: newtype
+    of: Uuid
+  - name: shelf.books.DeskId
+    kind: newtype
+    of: String
+entities:
+  - name: shelf.books.Desk
+    identity:
+      name: desk_id
+      type: shelf.books.DeskId
+    fields:
+      - name: label
+        type: String
+    lifecycle:
+      initial: Free
+      states: [Free]
+      terminal: [Free]
+      transitions: []
+  - name: shelf.books.Book
+    identity:
+      name: book_id
+      type: shelf.books.BookId
+    fields:
+      - name: title
+        type: String
+    lifecycle:
+      initial: Shelved
+      states: [Shelved, Lent]
+      transitions:
+        - name: lend
+          from: [Shelved]
+          to: Lent
+        - name: return
+          from: [Lent]
+          to: Shelved
+errors:
+  - name: shelf.books.BookNotFound
+    summary: No book carries the id.
+    fields: []
+  - name: shelf.books.AlreadyLent
+    summary: The book is lent out.
+    fields: []
+  - name: shelf.books.NotLent
+    summary: The book is on the shelf.
+    fields: []
+  - name: shelf.books.DonationRefused
+    summary: The librarian refused the donation.
+    fields: []
+commands:
+  - name: shelf.books.AddDesk
+    input:
+      - name: desk_id
+        type: shelf.books.DeskId
+      - name: label
+        type: String
+    outcomes:
+      - name: placed
+        creates: shelf.books.Desk
+        instance: desk_id
+        sets:
+          label: input.label
+        emits: [shelf.books.DeskPlaced]
+        payload:
+          shelf.books.DeskPlaced: {desk_id: input.desk_id}
+        summary: The desk is placed in the reading room.
+  - name: shelf.books.AddBook
+    input:
+      - name: title
+        type: String
+    outcomes:
+      - name: added
+        creates: shelf.books.Book
+        instance: book_id
+        sets:
+          title: input.title
+        emits: [shelf.books.BookAdded]
+        payload:
+          shelf.books.BookAdded:
+            book_id: {generated: true}
+            title: input.title
+        summary: The book is shelved under an identity the runtime mints.
+  - name: shelf.books.LendBook
+    input:
+      - name: book_id
+        type: shelf.books.BookId
+    outcomes:
+      - name: no-such-book
+        unknown_instance: true
+        error: shelf.books.BookNotFound
+        summary: No book carries the id.
+      - name: already-lent
+        when_subject: {predicate: state == Lent}
+        error: shelf.books.AlreadyLent
+        summary: A lent book cannot be lent again.
+      - name: lent
+        moves: shelf.books.Book.lend
+        instance: book_id
+        emits: [shelf.books.BookLent]
+        payload:
+          shelf.books.BookLent: {book_id: input.book_id}
+        summary: The book leaves the shelf.
+  - name: shelf.books.ReturnBook
+    input:
+      - name: book_id
+        type: shelf.books.BookId
+    outcomes:
+      - name: no-such-book
+        unknown_instance: true
+        error: shelf.books.BookNotFound
+        summary: No book carries the id.
+      - name: not-lent
+        when_subject: {predicate: state == Shelved}
+        error: shelf.books.NotLent
+        summary: A shelved book cannot be returned.
+      - name: returned
+        moves: shelf.books.Book.return
+        instance: book_id
+        emits: [shelf.books.BookReturned]
+        payload:
+          shelf.books.BookReturned: {book_id: input.book_id}
+        summary: The lent book is back on the shelf.
+  - name: shelf.books.Donate
+    input:
+      - name: book_id
+        type: shelf.books.BookId
+      - name: title
+        type: String
+    outcomes:
+      - name: refused
+        external: the librarian refuses the donation
+        error: shelf.books.DonationRefused
+        summary: The librarian may refuse any donation.
+      - name: donated
+        creates: shelf.books.Book
+        instance: book_id
+        sets:
+          title: input.title
+        emits: [shelf.books.BookDonated]
+        payload:
+          shelf.books.BookDonated: {book_id: input.book_id}
+        summary: The donated book is shelved.
+events:
+  - name: shelf.books.DeskPlaced
+    fields:
+      - name: desk_id
+        type: shelf.books.DeskId
+  - name: shelf.books.BookAdded
+    fields:
+      - name: book_id
+        type: shelf.books.BookId
+      - name: title
+        type: String
+  - name: shelf.books.BookLent
+    fields:
+      - name: book_id
+        type: shelf.books.BookId
+  - name: shelf.books.BookReturned
+    fields:
+      - name: book_id
+        type: shelf.books.BookId
+  - name: shelf.books.BookDonated
+    fields:
+      - name: book_id
+        type: shelf.books.BookId
+views:
+  - name: shelf.books.AllBooks
+    source: shelf.books.Book
+    consistency: read_your_writes
+    fields:
+      - name: book_id
+        type: shelf.books.BookId
+      - name: state
+        type: shelf.books.Book.State
+      - name: title
+        type: String
+  - name: shelf.books.AllDesks
+    source: shelf.books.Desk
+    consistency: read_your_writes
+    fields:
+      - name: desk_id
+        type: shelf.books.DeskId
+      - name: label
+        type: String

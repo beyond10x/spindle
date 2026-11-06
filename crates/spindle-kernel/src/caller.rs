@@ -74,6 +74,22 @@ pub(crate) fn bind<'ir>(
     Ok(&declared.attributes)
 }
 
+/// Refuses `caller` sent as `actor` exactly as [`execute_as`](crate::execute_as) refuses it before
+/// a command reads anything, without running one: so a caller fixed once for many commands can be
+/// refused before the first.
+///
+/// # Errors
+/// As the caller binding of [`execute_as`](crate::execute_as): [`ExecuteError::InvalidInput`]
+/// for attributes sent as no declared actor, an undeclared attribute, a value its type does not
+/// admit, or a required attribute left out.
+pub fn binds(
+    ir: &EssIr,
+    actor: Option<&str>,
+    caller: Option<&Map<String, Value>>,
+) -> Result<(), ExecuteError> {
+    bind(ir, actor, caller).map(|_| ())
+}
+
 /// Every caller attribute `command` reads, each once, in name order: a `caller.<attribute>`
 /// operand of any condition's guard whose fields declare no `caller` of their own, and every
 /// `{caller: <attribute>}` of `sets:`, a payload or an error's payload, struct members included.

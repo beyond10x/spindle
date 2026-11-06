@@ -1,0 +1,26 @@
+type: ess-http/1
+specification:
+  system: library
+  version: v1
+  source_digest: sha256:196fda5bf89d9ef468c57d5ec9355696cefae3d521d33a46a3dfebed44a85ecc
+routes:
+  - command: library.shelf.ShelveBook
+    method: post
+    path: /books
+    outcomes:
+      shelved: {status: 201}
+  - command: library.shelf.LendBook
+    method: put
+    path: /books/{id}
+    parameters: {id: input.id}
+    outcomes:
+      lent: {status: 200}
+  - command: library.shelf.RemoveBook
+    method: delete
+    path: /books/{id}
+    parameters: {id: input.id}
+    outcomes:
+      removed: {status: 200}
+  - view: library.shelf.ShelvedBooks
+    method: get
+    path: /books

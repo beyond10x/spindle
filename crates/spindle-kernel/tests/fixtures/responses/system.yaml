@@ -1,0 +1,23 @@
+format: ess/34
+system: notes
+version: v1
+summary: Notebooks opened, shared with a link and a share code disclosed once, closed, and listed.
+domains:
+  - notes.book
+components:
+  - component: desk
+    summary: Opens, shares and closes notebooks for callers outside the process.
+    owns:
+      domains:
+        - notes.book
+    accepts:
+      commands:
+        - notes.book.OpenNotebook
+        - notes.book.ShareNotebook
+        - notes.book.CloseNotebook
+    publishes:
+      events:
+        - notes.book.NotebookOpened
+        - notes.book.NotebookShared
+        - notes.book.NotebookClosed
+    reached_by: network

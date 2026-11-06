@@ -61,10 +61,10 @@ mod values;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-pub use caller::reads as caller_reads;
+pub use caller::{binds as caller_binds, reads as caller_reads};
 pub use decider::{Decider, External, NoExternals};
 pub use execute::{Invocation, at_rest, execute, execute_as, execute_at, execute_minting};
-pub use mint::{Identity, Mint, Uuid, UuidV4};
+pub use mint::{Identity, Mint, Seeded, Uuid, UuidV4};
 pub use sqlite::SqliteStore;
 pub use store::{Change, MemoryStore, Row, Store, StoreError, Stored};
 pub use supported::check as runs;
@@ -113,6 +113,11 @@ pub struct Executed {
     /// The declared error, where the outcome refuses.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<DeclaredError>,
+    /// The command's response, where the outcome returns it (`returns: true`) and reports no
+    /// error: each declared `response:` field with a value of its type the runtime chose. A field
+    /// the outcome lists in `one_time_response:` is disclosed here and nowhere else.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response: Option<Map<String, Value>>,
 }
 
 /// Why a command did not execute. Nothing was written.

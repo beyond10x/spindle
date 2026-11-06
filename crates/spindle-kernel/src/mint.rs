@@ -22,10 +22,20 @@
 //! UUIDs mints the values the interpreter does: the kernel draws in the interpreter's order
 //! (`interpret::execute::take`), each published value a `{payload: <Event>.<field>}` reads
 //! first, then a minted creation identity, then the other `sets:`, then the payloads.
+//! That holds up to the first response field a command answers: the kernel draws response values
+//! from the same [`Mint`], where the interpreter draws them from a counter of its own, so after a
+//! returning outcome the two sequences no longer line up.
 //! Each such field is minted once per command run ([`Generator`]), so
 //! `{payload: <Event>.<field>}` in `sets:` stores what the event published.
+//!
+//! An outcome that returns the command's response ([`answers`]) has each declared `response:`
+//! field minted by the same rule, an `Optional` one as its required type, after everything else
+//! the outcome draws: ESS leaves every response value to the implementation. A one-time field
+//! (`one_time_response:`) is a `String` and so a fresh UUID's text on every draw; it is minted
+//! for the answer alone and written nowhere else.
 
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::time::SystemTime;
 
 use ess_compiler::EssIr;
@@ -103,6 +113,12 @@ pub(crate) fn identity_bound<'ir>(
         .invariants
         .iter()
         .find(|invariant| length_only(invariant, subject) && !holds_for(invariant, subject, &text))
+}
+
+/// Whether `outcome` answers the command's response: it returns it (`returns: true`) and reports
+/// no error, as ESS's interpreter decides it (`interpret::protected::response`).
+pub(crate) fn answers(outcome: &ResolvedOutcome) -> bool {
+    outcome.returns && outcome.error.is_none()
 }
 
 /// The low 53 bits: the integers every JSON reader holds exactly.
@@ -351,5 +367,63 @@ impl UuidV4 {
 impl Mint for UuidV4 {
     fn uuid(&mut self, _identity: &Identity<'_>) -> Uuid {
         Uuid::new_v4()
+    }
+}
+
+/// Version 4 UUIDs drawn from a seed: two mints made from one seed answer the same UUIDs in the
+/// same order, so the same commands mint the same identities. Each UUID's random bits are the
+/// next 128 bits of a `SplitMix64` sequence started at the seed; not for anything an attacker may
+/// guess. A UUID it was told is [held](Seeded::avoiding) is skipped and the next one drawn, so it
+/// never mints an identity a seeded instance already holds and stays deterministic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Seeded {
+    state: u64,
+    held: BTreeSet<Uuid>,
+}
+
+impl Seeded {
+    /// A mint whose UUIDs follow from `seed`.
+    pub fn new(seed: u64) -> Self {
+        Self {
+            state: seed,
+            held: BTreeSet::new(),
+        }
+    }
+
+    /// This mint, never answering a UUID among `held`.
+    #[must_use]
+    pub fn avoiding(mut self, held: impl IntoIterator<Item = Uuid>) -> Self {
+        self.held.extend(held);
+        self
+    }
+
+    fn draw(&mut self) -> Uuid {
+        let high = self.next().to_be_bytes();
+        let low = self.next().to_be_bytes();
+        let mut bytes = [0; 16];
+        bytes[..8].copy_from_slice(&high);
+        bytes[8..].copy_from_slice(&low);
+        uuid::Builder::from_random_bytes(bytes).into_uuid()
+    }
+
+    fn next(&mut self) -> u64 {
+        self.state = self.state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut mixed = self.state;
+        mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        mixed ^ (mixed >> 31)
+    }
+}
+
+impl Mint for Seeded {
+    fn uuid(&mut self, _identity: &Identity<'_>) -> Uuid {
+        let mut drawn = self.draw();
+        for _ in 0..=self.held.len() {
+            if !self.held.contains(&drawn) {
+                break;
+            }
+            drawn = self.draw();
+        }
+        drawn
     }
 }

@@ -277,6 +277,22 @@ impl ConformanceTarget for HostTarget {
                 for event in &submitted.executed.events {
                     result = result.emitting(observed(event, &request)?);
                 }
+                // The response, as the kernel answered it: each value read as a node, an integer
+                // kept exact. A value that cannot be read is named by its field alone, since a
+                // one-time value must reach no message.
+                if let Some(response) = &submitted.executed.response {
+                    let mut answered = BTreeMap::new();
+                    for (field, value) in response {
+                        let read = serde_json::from_value::<Node>(value.clone()).map_err(|_| {
+                            TargetError::unsupported(
+                                format!("the response field `{field}` of `{command}`"),
+                                "its value is not one ESS reads",
+                            )
+                        })?;
+                        answered.insert(field.clone(), read);
+                    }
+                    result.response = Some(answered);
+                }
                 for ran in &report.ran {
                     for event in &ran.executed.events {
                         running.events.push(observed(event, &request)?);

@@ -11,7 +11,7 @@
 //! the rest.
 //!
 //! A command's body is the input ESS publishes; it answers the envelope ESS publishes for the
-//! outcome, `{outcome, published, error?, payload?}` ([`answer`]). A view answers the body ESS
+//! outcome, `{outcome, published, error?, payload?, response?}` ([`answer`]). A view answers the body ESS
 //! publishes, `{"rows": [...]}`.
 //!
 //! A command this ingress cannot route or the kernel does not run, and a view the host does not
@@ -40,7 +40,7 @@ mod surface;
 pub use answer::{Answer, answer, answered};
 pub use console::Console;
 pub use listener::{BODY_LIMIT, BODY_READ, Exchange, HEADER_READ, Listener};
-pub use surface::{Resolved, Route, Surface, SurfaceError, Unserved, Variable};
+pub use surface::{Caller, Resolved, Route, Surface, SurfaceError, Unserved, Variable};
 
 /// The `ingress.network` implementation this crate serves: HTTP on the loopback address.
 pub const HTTP_LOOPBACK: &str = "http-loopback";

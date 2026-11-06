@@ -1,0 +1,114 @@
+domain: notes.book
+summary: A notebook, shared with an audience; each share answers a link and a share code disclosed once.
+types:
+  - name: notes.book.NotebookId
+    kind: newtype
+    of: String
+entities:
+  - name: notes.book.Notebook
+    identity:
+      name: notebook_id
+      type: notes.book.NotebookId
+    fields:
+      - name: title
+        type: String
+      - name: audience
+        type: Optional<String>
+    lifecycle:
+      initial: Open
+      states: [Open, Closed]
+      terminal: [Closed]
+      transitions:
+        - name: close
+          from: [Open]
+          to: Closed
+errors:
+  - name: notes.book.NoSuchNotebook
+    summary: No notebook carries the id.
+    fields: []
+commands:
+  - name: notes.book.OpenNotebook
+    input:
+      - name: notebook_id
+        type: notes.book.NotebookId
+      - name: title
+        type: String
+    outcomes:
+      - name: opened
+        creates: notes.book.Notebook
+        instance: notebook_id
+        sets:
+          title: input.title
+        emits: [notes.book.NotebookOpened]
+        payload:
+          notes.book.NotebookOpened: {notebook_id: input.notebook_id}
+        summary: The notebook is opened.
+  - name: notes.book.ShareNotebook
+    input:
+      - name: notebook_id
+        type: notes.book.NotebookId
+      - name: audience
+        type: String
+    response:
+      - name: link
+        type: String
+      - name: share_code
+        type: String
+    outcomes:
+      - name: no-such-notebook
+        unknown_instance: true
+        error: notes.book.NoSuchNotebook
+        summary: No notebook carries the id.
+      - name: shared
+        updates: notes.book.Notebook
+        instance: notebook_id
+        sets:
+          audience: input.audience
+        emits: [notes.book.NotebookShared]
+        payload:
+          notes.book.NotebookShared: {notebook_id: input.notebook_id, audience: input.audience}
+        returns: true
+        one_time_response: [share_code]
+        summary: The notebook is shared; the share code is disclosed in this answer only.
+  - name: notes.book.CloseNotebook
+    input:
+      - name: notebook_id
+        type: notes.book.NotebookId
+    outcomes:
+      - name: no-such-notebook
+        unknown_instance: true
+        error: notes.book.NoSuchNotebook
+        summary: No notebook carries the id.
+      - name: closed
+        moves: notes.book.Notebook.close
+        instance: notebook_id
+        emits: [notes.book.NotebookClosed]
+        payload:
+          notes.book.NotebookClosed: {notebook_id: input.notebook_id}
+        summary: The notebook is closed.
+events:
+  - name: notes.book.NotebookOpened
+    fields:
+      - name: notebook_id
+        type: notes.book.NotebookId
+  - name: notes.book.NotebookShared
+    fields:
+      - name: notebook_id
+        type: notes.book.NotebookId
+      - name: audience
+        type: String
+  - name: notes.book.NotebookClosed
+    fields:
+      - name: notebook_id
+        type: notes.book.NotebookId
+views:
+  - name: notes.book.Notebooks
+    source: notes.book.Notebook
+    consistency: read_your_writes
+    fields:
+      - name: notebook_id
+        type: notes.book.NotebookId
+      - name: title
+        type: String
+      - name: audience
+        type: Optional<String>
