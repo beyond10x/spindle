@@ -98,17 +98,6 @@ impl Served {
         stderr.extend(receiver.try_iter().flatten());
         String::from_utf8_lossy(&stderr).into_owned()
     }
-
-    /// Stops the run and returns everything it wrote on stderr.
-    fn stop(mut self) -> String {
-        let _ = self.child.kill();
-        let mut stderr = String::new();
-        if let Some(mut pipe) = self.child.stderr.take() {
-            let _ = pipe.read_to_string(&mut stderr);
-        }
-        let _ = self.child.wait();
-        stderr
-    }
 }
 
 impl Drop for Served {
