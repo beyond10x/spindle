@@ -103,6 +103,13 @@ prefix; an exact key wins over it.
 
 Agents start at [`AGENTS.md`](AGENTS.md).
 
+## Releases
+
+Binaries for Linux (x86_64 and aarch64; macOS not yet) are attached to each
+[GitHub release](https://github.com/beyond10x/spindle/releases) with a `SHA256SUMS` file; changes
+are in [`CHANGELOG.md`](CHANGELOG.md), and the release steps in
+[`AGENTS.md`](AGENTS.md#cutting-a-release).
+
 ## License
 
 Apache-2.0.

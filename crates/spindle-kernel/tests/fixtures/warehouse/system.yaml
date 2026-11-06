@@ -1,0 +1,27 @@
+format: ess/34
+system: depot
+version: v1
+summary: Shelves that open and close, and items stocked on a shelf, picked from one and returned to their own.
+domains:
+  - depot.warehouse
+components:
+  - component: floor
+    summary: Opens and closes shelves, and stocks, picks and returns items.
+    owns:
+      domains:
+        - depot.warehouse
+    accepts:
+      commands:
+        - depot.warehouse.OpenShelf
+        - depot.warehouse.CloseShelf
+        - depot.warehouse.StockItem
+        - depot.warehouse.PickItem
+        - depot.warehouse.ReturnItem
+    publishes:
+      events:
+        - depot.warehouse.ShelfOpened
+        - depot.warehouse.ShelfClosed
+        - depot.warehouse.ItemStocked
+        - depot.warehouse.ItemPicked
+        - depot.warehouse.ItemReturned
+    reached_by: in_process

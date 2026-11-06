@@ -260,6 +260,13 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "Form and query requests",
+        "A command an ess-http/1 binding reads as request: {encoding: form} or {encoding: query} is served: its input is read from an application/x-www-form-urlencoded body or from the query string, each value by its field's type as ESS's served application reads it; an undeclared field, one the path carries, or a form body under another Content-Type is refused 400 and writes nothing.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-cli/tests/form_query.rs::a_form_encoded_command_runs",
+    ),
+    shipped(
+        "Execution",
         "Console routes",
         "A loopback run also serves GET /api/model (the IR as ess specify compile prints it, and each outcome's subject), GET /api/events (every event published, in order) and POST /api/reset (empties every store); a route the binding or ESS publishes at one of those paths is refused at startup.",
         "/docs/concepts/capabilities",

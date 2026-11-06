@@ -1,0 +1,134 @@
+domain: library.catalogue
+summary: Books catalogued with a title and a year, lent for some days and retired with a reason.
+types:
+  - name: library.catalogue.BookId
+    kind: newtype
+    of: String
+entities:
+  - name: library.catalogue.Book
+    identity:
+      name: id
+      type: library.catalogue.BookId
+    fields:
+      - name: title
+        type: String
+      - name: year
+        type: Integer
+    lifecycle:
+      initial: Shelved
+      states: [Shelved, Lent, Retired]
+      terminal: [Retired]
+      transitions:
+        - name: lend
+          from: [Shelved]
+          to: Lent
+        - name: retire
+          from: [Shelved, Lent]
+          to: Retired
+errors:
+  - name: library.catalogue.BookNotFound
+    summary: No book carries the id.
+    fields: []
+  - name: library.catalogue.NotOnShelf
+    summary: The book is not on the shelf.
+    fields: []
+  - name: library.catalogue.AlreadyRetired
+    summary: The book is already retired.
+    fields: []
+commands:
+  - name: library.catalogue.CatalogueBook
+    input:
+      - name: id
+        type: library.catalogue.BookId
+      - name: title
+        type: String
+      - name: year
+        type: Integer
+    outcomes:
+      - name: catalogued
+        creates: library.catalogue.Book
+        instance: id
+        sets:
+          title: input.title
+          year: input.year
+        emits: [library.catalogue.BookCatalogued]
+        payload:
+          library.catalogue.BookCatalogued: {id: input.id, title: input.title, year: input.year}
+        summary: The book is catalogued.
+  - name: library.catalogue.LendBook
+    input:
+      - name: id
+        type: library.catalogue.BookId
+      - name: days
+        type: Integer
+    outcomes:
+      - name: no-such-book
+        unknown_instance: true
+        error: library.catalogue.BookNotFound
+        summary: No book carries the id.
+      - name: not-on-shelf
+        when_subject: {predicate: state != Shelved}
+        error: library.catalogue.NotOnShelf
+        summary: Only a shelved book is lent.
+      - name: lent
+        moves: library.catalogue.Book.lend
+        instance: id
+        emits: [library.catalogue.BookLent]
+        payload:
+          library.catalogue.BookLent: {id: input.id, days: input.days}
+        summary: The book is lent.
+  - name: library.catalogue.RetireBook
+    input:
+      - name: id
+        type: library.catalogue.BookId
+      - name: reason
+        type: String
+    outcomes:
+      - name: no-such-book
+        unknown_instance: true
+        error: library.catalogue.BookNotFound
+        summary: No book carries the id.
+      - name: already-retired
+        when_subject: {predicate: state == Retired}
+        error: library.catalogue.AlreadyRetired
+        summary: A retired book stays retired.
+      - name: retired
+        moves: library.catalogue.Book.retire
+        instance: id
+        emits: [library.catalogue.BookRetired]
+        payload:
+          library.catalogue.BookRetired: {id: input.id, reason: input.reason}
+        summary: The book is retired.
+events:
+  - name: library.catalogue.BookCatalogued
+    fields:
+      - name: id
+        type: library.catalogue.BookId
+      - name: title
+        type: String
+      - name: year
+        type: Integer
+  - name: library.catalogue.BookLent
+    fields:
+      - name: id
+        type: library.catalogue.BookId
+      - name: days
+        type: Integer
+  - name: library.catalogue.BookRetired
+    fields:
+      - name: id
+        type: library.catalogue.BookId
+      - name: reason
+        type: String
+views:
+  - name: library.catalogue.CataloguedBooks
+    source: library.catalogue.Book
+    consistency: read_your_writes
+    filter: state != Retired
+    fields:
+      - name: id
+        type: library.catalogue.BookId
+      - name: title
+        type: String
+      - name: year
+        type: Integer

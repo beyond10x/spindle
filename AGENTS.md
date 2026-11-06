@@ -65,7 +65,9 @@ environment, and executes it. Humans start at [`README.md`](README.md); the desi
   product or host, and no absolute home-directory path, in any file or commit message.
 - No comments in `Cargo.toml`, `Taskfile.yml`, workflow files or environment documents.
 - Builds: `CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_INCREMENTAL=0`, the tree's own
-  `target/`; check `df -h /` first.
+  `target/`; check `df -h /` first. While implementing, build only the targets you change
+  (`cargo test -p <crate> --lib`, `--test <file>`); `cargo test -p <crate>` links every test
+  binary of the crate and runs once, at the gate.
 - Tests that need a directory use `tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR"))`.
 - Planning store mutations use `aep plan artifact` only. Scratch bodies go in
   `.engineering/drafts/`, which is git-ignored.
@@ -118,4 +120,40 @@ reference and the status page.
 ## Publishing
 
 Commits and pushes are `b10x-bot[bot]` through `b10x-gates bot`; every GitHub write goes through
-`b10x-gates api`. No release process yet; the crates are `publish = false`.
+`b10x-gates api`. The crates are `publish = false`; nothing goes to a registry.
+
+### Cutting a release
+
+Tags are bare semantic versions (`0.1.0`); `CHANGELOG.md` follows Keep a Changelog. A release is
+cut from `main`:
+
+1. On a branch from current `origin/main`, set `version` under `[workspace.package]` in
+   `Cargo.toml` and refresh `Cargo.lock` (`cargo update -w`). Rename `## [Unreleased]` in
+   `CHANGELOG.md` to `## [<version>] - <YYYY-MM-DD>` and open a new empty `## [Unreleased]` above
+   it.
+2. Run `task check`, exit 0.
+3. Commit `chore: release <version>` through the bot (`git add <paths> && b10x-gates bot --
+   commit -F <file>`), push the branch through the bot, open the pull request through
+   `b10x-gates api` and merge it with a merge commit once CI's `Gate` is green. `git fetch` and
+   confirm the merge commit on `origin/main`.
+4. Tag that merge commit and push the tag through the bot:
+   `b10x-gates bot -- tag -a <version> <commit> -m "spindle <version>"`, then
+   `b10x-gates bot -- push origin <version>`. Released tags are immutable.
+5. Create the release page through the bot, so it is authored by `b10x-bot[bot]`:
+   `b10x-gates gh --policy <policy> --repository beyond10x/spindle -- release create <version>
+   --verify-tag --title <version> --notes-file <file>`, the notes being the version's
+   `CHANGELOG.md` section. Never with a personal `gh` login; such a page is deleted and recreated
+   under the bot.
+6. The tag push starts [`release.yml`](.github/workflows/release.yml). It checks that the tag is
+   annotated, on `main`, equal to the workspace version and named by a dated `CHANGELOG.md`
+   heading; waits for CI's `Gate` to be green on the tagged commit; builds the observe UI once and
+   `b10x-spindle` with it embedded for `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`;
+   and uploads `b10x-spindle-<version>-<target>.tar.gz` and `SHA256SUMS` to the page once it
+   exists. macOS builds are not released yet: the host crates use Linux-only APIs (`accept4` and
+   `SOCK_CLOEXEC` in `spindle-telemetry`, the parent-death signal in `spindle-target`). A target is
+   added as a matrix row in the `build` job and a name in the `publish` job's `targets`. It never
+   creates or edits the page and never replaces an asset. A pull request that changes the workflow
+   runs the builds and publishes nothing; `workflow_dispatch` with `tag` backfills an existing tag.
+7. Verify: the `Release` run for the tag succeeded; the page is authored by `b10x-bot[bot]`, is
+   Latest and resolves to the tag's commit; it carries one archive per target and `SHA256SUMS`, and
+   `sha256sum --check SHA256SUMS` passes on the downloaded archives.

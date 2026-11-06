@@ -67,6 +67,8 @@ impl From<Answer> for Reply {
 pub struct Exchange {
     asked: Asked,
     carried: Map<String, Value>,
+    query: String,
+    content_type: Option<String>,
     body: Vec<u8>,
     reply: oneshot::Sender<Reply>,
 }
@@ -92,6 +94,17 @@ impl Exchange {
     /// parameters its query string carries ([`Route::parameters`]).
     pub fn carried(&self) -> &Map<String, Value> {
         &self.carried
+    }
+
+    /// The request's query string, after the `?` and still percent-encoded; empty without one. On
+    /// a guarded listener the token's `t=<token>` is not part of it.
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    /// The request's `Content-Type`, where it has one that is visible ASCII.
+    pub fn content_type(&self) -> Option<&str> {
+        self.content_type.as_deref()
     }
 
     /// The request body.
@@ -121,7 +134,14 @@ impl Exchange {
         let mut failed = Vec::new();
         let reply = match &self.asked {
             Asked::Route(route) => {
-                let (answer, dropped) = crate::answered(host, route, &self.carried, &self.body);
+                let (answer, dropped) = crate::answered(
+                    host,
+                    route,
+                    &self.carried,
+                    &self.query,
+                    self.content_type.as_deref(),
+                    &self.body,
+                );
                 failed = dropped;
                 answer.into()
             }
@@ -185,6 +205,20 @@ impl Guard {
                 .any(|given| same(given, &self.token))
         });
         (!in_header && !in_query).then(|| Answer::refusal(401, "the token is missing or wrong"))
+    }
+
+    /// `query` without the pairs that carry the token, which are the listener's and no
+    /// command's input.
+    fn strip(&self, query: &str) -> String {
+        query
+            .split('&')
+            .filter(|pair| {
+                !pair
+                    .strip_prefix("t=")
+                    .is_some_and(|given| same(given, &self.token))
+            })
+            .collect::<Vec<_>>()
+            .join("&")
     }
 }
 
@@ -373,6 +407,16 @@ async fn handle(
             format!("the body is announced over {BODY_LIMIT} bytes"),
         )));
     }
+    let query = request.uri().query().unwrap_or_default();
+    let query = match &served.guard {
+        Some(guard) => guard.strip(query),
+        None => query.to_owned(),
+    };
+    let content_type = request
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
     let read = tokio::time::timeout(
         BODY_READ,
         Limited::new(request.into_body(), BODY_LIMIT).collect(),
@@ -397,6 +441,8 @@ async fn handle(
     let exchange = Exchange {
         asked,
         carried,
+        query,
+        content_type,
         body,
         reply,
     };
@@ -424,4 +470,25 @@ fn replied(reply: Reply) -> Response<Full<Bytes>> {
         .headers_mut()
         .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Guard;
+
+    #[test]
+    fn the_token_pair_is_not_query_input() {
+        let guard = Guard {
+            port: 1,
+            token: "secret".to_owned(),
+        };
+        assert_eq!(guard.strip("t=secret&reason=worn"), "reason=worn");
+        assert_eq!(guard.strip("reason=worn&t=secret"), "reason=worn");
+        assert_eq!(guard.strip("t=secret"), "");
+        assert_eq!(
+            guard.strip("t=other&reason=worn"),
+            "t=other&reason=worn",
+            "a `t` that is not the token is the request's own"
+        );
+    }
 }

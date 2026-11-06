@@ -7,7 +7,7 @@ use ess_compiler::EssIr;
 use ess_compiler::ir::{
     EventHandle, PrecedencePlan, ResolvedCommand, ResolvedCondition, ResolvedEffect,
     ResolvedEntity, ResolvedField, ResolvedInstance, ResolvedOutcome, ResolvedPayloadField,
-    ResolvedPayloadValue,
+    ResolvedPayloadValue, ResolvedRelatedTest, ResolvedRelatedVia,
 };
 use ess_domain::QualifiedName;
 use ess_domain::command::precedence::Phase;
@@ -218,6 +218,7 @@ pub fn execute_as(
         held,
         generator: Generator::new(mint, now, command),
         minted: None,
+        answered: BTreeMap::new(),
     };
     match run.select()? {
         Selected::Outcome(outcome) => run.take(outcome),
@@ -230,6 +231,42 @@ struct Addressed<'ir> {
     entity: &'ir ResolvedEntity,
     identity: Value,
     stored: Option<Stored>,
+}
+
+/// What a `when_related:` reference names, read as the store held it before selection (ESS
+/// `interpret::execute::related::Reference`).
+enum Reference {
+    /// No identity: an `Optional` reference left absent. No row is read, and no related branch is
+    /// selected.
+    Absent,
+    /// An identity no row of the entity carries: the `exists: false` branch's answer.
+    Missing,
+    /// The row it names, with its identity.
+    Row(Value, Row),
+}
+
+/// Whether `phase` of `plan` holds an `exists: false` branch over a row the input names: the
+/// phase a missing such row is answered in (ESS `related::reads_missing`).
+fn reads_missing(plan: &PrecedencePlan<'_>, phase: Phase) -> bool {
+    plan.branches(phase).iter().any(|outcome| {
+        matches!(
+            outcome.condition,
+            ResolvedCondition::Related {
+                via: ResolvedRelatedVia::Input { .. },
+                test: ResolvedRelatedTest::Absent,
+                ..
+            }
+        )
+    })
+}
+
+/// Whether `outcome` reads a related row or a row set: in [`Phase::PresentRelated`], a branch a
+/// look-ahead leaves out (ESS `present_related_refusal`).
+fn present_related(outcome: &ResolvedOutcome) -> bool {
+    matches!(
+        outcome.condition,
+        ResolvedCondition::Related { .. } | ResolvedCondition::RelatedSet { .. }
+    )
 }
 
 /// What selection found.
@@ -256,45 +293,98 @@ struct Run<'a, 'ir> {
     /// The identity this run minted: the creating event that publishes it, and the identity
     /// field's name.
     minted: Option<(&'ir EventHandle, String, Value)>,
+    /// What the decider answered for each external branch it was asked about, by outcome name:
+    /// asked once per run, whether the look-ahead or selection reads the branch first.
+    answered: BTreeMap<String, bool>,
 }
 
 impl<'a, 'ir> Run<'a, 'ir> {
     /// Reads the outcomes in the order of the command's precedence plan; the first whose
     /// condition holds is selected.
+    ///
+    /// A `when_related:` row is read where ESS's interpreter reads it (`interpret::execute`,
+    /// `responding_phases`): a missing row the input names is answered by its `exists: false`
+    /// branch at the step the plan places that branch; a stored reference is read with the
+    /// addressed row's existence, once the held state answered for the branch the request selects
+    /// with no related row read; and where present-related refusals are read after the held state,
+    /// the held state answers first for the branch the request selects without them.
     fn select(&mut self) -> Result<Selected<'ir>, ExecuteError> {
         let plan = PrecedencePlan::new(self.spec, self.ir.format());
+        let stored = self.spec.outcomes.iter().any(|outcome| {
+            matches!(
+                &outcome.condition,
+                ResolvedCondition::Related {
+                    via: ResolvedRelatedVia::Subject { .. },
+                    ..
+                }
+            )
+        });
+        let missing_late = reads_missing(&plan, Phase::PresentRelated);
+        let mut looked_ahead = false;
         for planned in plan.phases() {
             match planned.phase {
-                Phase::Existence => {
-                    let Some(addressed) = &self.held else {
-                        continue;
-                    };
-                    if addressed.stored.is_some() {
-                        continue;
-                    }
-                    if let Some(outcome) = planned
-                        .branches
-                        .iter()
-                        .find(|outcome| outcome.condition == ResolvedCondition::UnknownInstance)
-                    {
+                Phase::RelatedRow if !stored && reads_missing(&plan, planned.phase) => {
+                    if let Some(outcome) = self.missing_related(&plan, planned.phase)? {
                         return Ok(Selected::Outcome(outcome));
                     }
-                    // An instance nobody holds rests in no state any move of this command starts
-                    // from: the wrong-state answer, where the command declares one.
-                    return self.wrong_state().map(Selected::Answered);
                 }
-                Phase::InputRefusal
-                | Phase::HeldState
-                | Phase::PresentRelated
-                | Phase::Accepting
-                | Phase::Default => {
+                Phase::RelatedRow => {}
+                Phase::Existence => {
+                    if let Some(addressed) = &self.held
+                        && addressed.stored.is_none()
+                    {
+                        if let Some(outcome) = planned
+                            .branches
+                            .iter()
+                            .find(|outcome| outcome.condition == ResolvedCondition::UnknownInstance)
+                        {
+                            return Ok(Selected::Outcome(outcome));
+                        }
+                        // An instance nobody holds rests in no state any move of this command
+                        // starts from: the wrong-state answer, where the command declares one.
+                        return self.wrong_state().map(Selected::Answered);
+                    }
+                    if stored {
+                        if let Some(selected) = self.stored_reference(&plan)? {
+                            return Ok(selected);
+                        }
+                    } else if !missing_late {
+                        self.no_missing_row()?;
+                    }
+                }
+                Phase::InputRefusal => {
                     for outcome in &planned.branches {
                         if self.holds(outcome)? {
                             return Ok(Selected::Outcome(outcome));
                         }
                     }
                 }
-                Phase::InputAbsent | Phase::RelatedRow => {
+                Phase::HeldState | Phase::PresentRelated | Phase::Accepting | Phase::Default => {
+                    if !looked_ahead {
+                        looked_ahead = true;
+                        if !stored
+                            && plan
+                                .branches(Phase::PresentRelated)
+                                .iter()
+                                .any(|outcome| present_related(outcome))
+                            && let Some(answered) = self.look_ahead(&plan, true)?
+                        {
+                            return Ok(Selected::Answered(answered));
+                        }
+                    }
+                    if missing_late && !stored && planned.phase == Phase::PresentRelated {
+                        if let Some(outcome) = self.missing_related(&plan, planned.phase)? {
+                            return Ok(Selected::Outcome(outcome));
+                        }
+                        self.no_missing_row()?;
+                    }
+                    for outcome in &planned.branches {
+                        if self.holds(outcome)? {
+                            return Ok(Selected::Outcome(outcome));
+                        }
+                    }
+                }
+                Phase::InputAbsent => {
                     if let Some(outcome) = planned.branches.first() {
                         return Err(ExecuteError::Unsupported {
                             construct: format!(
@@ -320,7 +410,27 @@ impl<'a, 'ir> Run<'a, 'ir> {
     /// then the input guard, then the external cause. The decider is asked only once every other
     /// part holds, so a request the model already turns away never reaches it.
     fn holds(&mut self, outcome: &ResolvedOutcome) -> Result<bool, ExecuteError> {
-        let held = match &outcome.condition {
+        match self.truth(outcome, false)? {
+            Truth::True => {}
+            Truth::False => return Ok(false),
+            Truth::Unknown => {
+                return Err(ExecuteError::Undecidable {
+                    outcome: format!("{}/{}", self.command, outcome.name.as_str()),
+                });
+            }
+        }
+        match &outcome.condition {
+            ResolvedCondition::External { cause }
+            | ResolvedCondition::ExternalWhen { cause, .. }
+            | ResolvedCondition::ExternalSubject { cause, .. } => self.ask(outcome, cause),
+            _ => Ok(true),
+        }
+    }
+
+    /// What `outcome`'s condition evaluates to before any external cause is asked. `ahead` reads
+    /// it for a look-ahead ([`Self::look_ahead`]), where a related row not read yet holds nothing.
+    fn truth(&mut self, outcome: &ResolvedOutcome, ahead: bool) -> Result<Truth, ExecuteError> {
+        Ok(match &outcome.condition {
             ResolvedCondition::Otherwise | ResolvedCondition::External { .. } => Truth::True,
             ResolvedCondition::When { predicate }
             | ResolvedCondition::ExternalWhen { predicate, .. } => self.guard(Some(predicate)),
@@ -351,6 +461,31 @@ impl<'a, 'ir> Run<'a, 'ir> {
             // A marker, never selected by reading: the wrong-state answer comes from the branch that
             // is selected, when its move does not start from the state held (ESS `act`).
             ResolvedCondition::WrongState => Truth::False,
+            ResolvedCondition::Related {
+                via,
+                entity,
+                test,
+                input,
+                ..
+            } => {
+                let ir = self.ir;
+                let entity = ir.entity(entity);
+                match (self.reference(via, entity)?, test) {
+                    (Reference::Absent, _) | (Reference::Row(..), ResolvedRelatedTest::Absent) => {
+                        Truth::False
+                    }
+                    (Reference::Missing, ResolvedRelatedTest::Absent) => Truth::True,
+                    (Reference::Missing, ResolvedRelatedTest::Holds { .. }) if ahead => {
+                        Truth::False
+                    }
+                    (Reference::Missing, ResolvedRelatedTest::Holds { .. }) => Truth::Unknown,
+                    (Reference::Row(identity, row), ResolvedRelatedTest::Holds { predicate }) => {
+                        let related =
+                            predicate.evaluate(&self.related_facts(entity, &identity, &row));
+                        both(related, || self.guard(input.as_ref()))
+                    }
+                }
+            }
             other => {
                 return Err(ExecuteError::Unsupported {
                     construct: format!(
@@ -360,22 +495,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     ),
                 });
             }
-        };
-        match held {
-            Truth::True => {}
-            Truth::False => return Ok(false),
-            Truth::Unknown => {
-                return Err(ExecuteError::Undecidable {
-                    outcome: format!("{}/{}", self.command, outcome.name.as_str()),
-                });
-            }
-        }
-        match &outcome.condition {
-            ResolvedCondition::External { cause }
-            | ResolvedCondition::ExternalWhen { cause, .. }
-            | ResolvedCondition::ExternalSubject { cause, .. } => self.ask(outcome, cause),
-            _ => Ok(true),
-        }
+        })
     }
 
     /// An input guard over the command's input, read at the input fields' own names as `when:`
@@ -387,6 +507,233 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     .with_caller(self.attributes, self.caller),
             )
         })
+    }
+
+    /// The row `via` names among `entity`'s, as the store holds it before selection: an input
+    /// field, or a stored field of the addressed instance as it was before the branch (ESS
+    /// `interpret::execute::related`). A reference left absent or `null` names no row.
+    fn reference(
+        &mut self,
+        via: &ResolvedRelatedVia,
+        entity: &ResolvedEntity,
+    ) -> Result<Reference, ExecuteError> {
+        let identity = match via {
+            ResolvedRelatedVia::Input { field, .. } => self.input.get(field),
+            ResolvedRelatedVia::Subject { field, .. } => {
+                self.before().and_then(|row| row.fields.get(field))
+            }
+        };
+        let Some(identity) = identity.filter(|identity| !identity.is_null()).cloned() else {
+            return Ok(Reference::Absent);
+        };
+        Ok(
+            match self.store.load(&entity.name.to_string(), &identity)? {
+                Some(stored) => Reference::Row(identity, stored.row),
+                None => Reference::Missing,
+            },
+        )
+    }
+
+    /// The facts a guard over a related row reads: the row, the input under `input.` and the
+    /// caller under `caller.`, as [`Self::subject_facts`] reads the addressed one.
+    fn related_facts(&self, entity: &'ir ResolvedEntity, identity: &Value, row: &Row) -> Facts<'_> {
+        let shadowed = entity
+            .fields
+            .iter()
+            .any(|field| field.name == crate::facts::INPUT);
+        let input = (!shadowed).then_some((self.spec.input.as_slice(), self.input));
+        Facts::row(self.ir, entity, identity, row, input).with_caller(self.attributes, self.caller)
+    }
+
+    /// The `exists: false` branch answering the first missing row the input names, the rows read
+    /// in the order of their `exists: false` branches in `phase`, then any other row in
+    /// declaration order (ESS `related::reads_in_order`, `related_absent`). `None` where every row
+    /// is present or absent, or the first missing one has no `exists: false` branch: that row is
+    /// [`Self::no_missing_row`]'s.
+    fn missing_related(
+        &mut self,
+        plan: &PrecedencePlan<'ir>,
+        phase: Phase,
+    ) -> Result<Option<&'ir ResolvedOutcome>, ExecuteError> {
+        let spec = self.spec;
+        let ir = self.ir;
+        let mut read: Vec<&str> = Vec::new();
+        for outcome in plan.branches(phase).iter().copied().chain(&spec.outcomes) {
+            let ResolvedCondition::Related { via, entity, .. } = &outcome.condition else {
+                continue;
+            };
+            if read.contains(&via.field()) {
+                continue;
+            }
+            read.push(via.field());
+            if !matches!(via, ResolvedRelatedVia::Input { .. }) {
+                continue;
+            }
+            if let Reference::Missing = self.reference(via, ir.entity(entity))? {
+                return Ok(spec.outcomes.iter().find(|absent| {
+                    matches!(
+                        &absent.condition,
+                        ResolvedCondition::Related {
+                            via: named,
+                            test: ResolvedRelatedTest::Absent,
+                            ..
+                        } if named.field() == via.field()
+                    )
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Refuses a missing row the input names that no `exists: false` branch answered: a predicate
+    /// over it is `Unknown`, never a branch taken by default, and ESS's interpreter refuses the
+    /// whole selection where it reads it.
+    fn no_missing_row(&mut self) -> Result<(), ExecuteError> {
+        let spec = self.spec;
+        let ir = self.ir;
+        for outcome in &spec.outcomes {
+            if let ResolvedCondition::Related {
+                via: via @ ResolvedRelatedVia::Input { .. },
+                entity,
+                ..
+            } = &outcome.condition
+                && let Reference::Missing = self.reference(via, ir.entity(entity))?
+            {
+                return Err(ExecuteError::Undecidable {
+                    outcome: format!("{}/{}", self.command, outcome.name.as_str()),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// The row a stored reference names, read once the addressed row exists: the held state first
+    /// answers for the branch the request selects with no related row read, then a missing row
+    /// takes the command's `exists: false` branch (ESS `stored_reference`). `None` where selection
+    /// goes on, with the row present or the reference absent.
+    fn stored_reference(
+        &mut self,
+        plan: &PrecedencePlan<'ir>,
+    ) -> Result<Option<Selected<'ir>>, ExecuteError> {
+        if let Some(answered) = self.look_ahead(plan, false)? {
+            return Ok(Some(Selected::Answered(answered)));
+        }
+        let spec = self.spec;
+        let ir = self.ir;
+        let Some((outcome, via, entity)) = spec.outcomes.iter().find_map(|outcome| match &outcome
+            .condition
+        {
+            ResolvedCondition::Related { via, entity, .. } => Some((outcome, via, entity)),
+            _ => None,
+        }) else {
+            return Ok(None);
+        };
+        if self.held.is_none() {
+            return Err(self.no_subject(outcome));
+        }
+        let Reference::Missing = self.reference(via, ir.entity(entity))? else {
+            return Ok(None);
+        };
+        let absent = spec.outcomes.iter().find(|absent| {
+            matches!(
+                absent.condition,
+                ResolvedCondition::Related {
+                    test: ResolvedRelatedTest::Absent,
+                    ..
+                }
+            )
+        });
+        match absent {
+            Some(absent) => Ok(Some(Selected::Outcome(absent))),
+            None => Err(ExecuteError::Undecidable {
+                outcome: format!("{}/{}", self.command, outcome.name.as_str()),
+            }),
+        }
+    }
+
+    /// The addressed row's held-state answer for the branch the request selects with the
+    /// present-related refusals left out, where that branch moves the row from a state it does
+    /// not hold (ESS `subject_refusals_before_present_related`, `selected_subject_refusals`).
+    /// `subjects: false` leaves the held-state guards out too, as ESS's look-ahead before a stored
+    /// reference reads no held row, so an external branch narrowed by one (`ExternalSubject`)
+    /// passes there.
+    ///
+    /// An external branch is read as ESS's `select` reads it under the request's provider
+    /// answer: once every other part of its condition holds, the decider is asked, and a branch it
+    /// takes is the selected one, so nothing after it is read and no decider is asked past it.
+    /// The answer is kept for selection ([`Self::ask`]). A selected refusal acts on no row, so
+    /// selection goes on to the related rows.
+    fn look_ahead(
+        &mut self,
+        plan: &PrecedencePlan<'ir>,
+        subjects: bool,
+    ) -> Result<Option<Executed>, ExecuteError> {
+        let mut selected = None;
+        'phases: for planned in plan.phases() {
+            match planned.phase {
+                Phase::HeldState | Phase::PresentRelated | Phase::Accepting | Phase::Default => {}
+                Phase::InputAbsent | Phase::RelatedRow | Phase::InputRefusal | Phase::Existence => {
+                    continue;
+                }
+            }
+            for outcome in &planned.branches {
+                let skipped = match &outcome.condition {
+                    ResolvedCondition::Related { .. } | ResolvedCondition::RelatedSet { .. } => {
+                        planned.phase == Phase::PresentRelated
+                    }
+                    ResolvedCondition::SubjectState { .. }
+                    | ResolvedCondition::SubjectField { .. }
+                    | ResolvedCondition::SubjectPredicate { .. }
+                    | ResolvedCondition::StateChange { .. }
+                    | ResolvedCondition::ExternalSubject { .. } => !subjects,
+                    _ => false,
+                };
+                if skipped {
+                    continue;
+                }
+                match self.truth(outcome, true)? {
+                    Truth::True => {
+                        let taken = match &outcome.condition {
+                            ResolvedCondition::External { cause }
+                            | ResolvedCondition::ExternalWhen { cause, .. }
+                            | ResolvedCondition::ExternalSubject { cause, .. } => {
+                                self.ask(outcome, cause)?
+                            }
+                            _ => true,
+                        };
+                        if taken {
+                            selected = Some(*outcome);
+                            break 'phases;
+                        }
+                    }
+                    Truth::False => {}
+                    Truth::Unknown => {
+                        return Err(ExecuteError::Undecidable {
+                            outcome: format!("{}/{}", self.command, outcome.name.as_str()),
+                        });
+                    }
+                }
+            }
+        }
+        let Some(subject) = selected.and_then(|outcome| outcome.subject.as_ref()) else {
+            return Ok(None);
+        };
+        let (ResolvedEffect::Moves { transition }, ResolvedInstance::Supplied { .. }) =
+            (&subject.effect, &subject.instance)
+        else {
+            return Ok(None);
+        };
+        match self.before() {
+            Some(row)
+                if !transition
+                    .from
+                    .iter()
+                    .any(|state| state.as_str() == row.state) =>
+            {
+                self.wrong_state().map(Some)
+            }
+            _ => Ok(None),
+        }
     }
 
     /// The facts a guard over the subject reads: the held instance, the input under `input.` and
@@ -423,7 +770,20 @@ impl<'a, 'ir> Run<'a, 'ir> {
     }
 
     /// Whether an external cause holds, as the decider answers it.
+    ///
+    /// The decider is asked once per branch and run: a branch the look-ahead already asked about
+    /// ([`Self::look_ahead`]) keeps that answer when selection reaches it.
     fn ask(&mut self, outcome: &ResolvedOutcome, cause: &str) -> Result<bool, ExecuteError> {
+        if let Some(answer) = self.answered.get(outcome.name.as_str()) {
+            return Ok(*answer);
+        }
+        let answer = self.decide(outcome, cause)?;
+        self.answered
+            .insert(outcome.name.as_str().to_owned(), answer);
+        Ok(answer)
+    }
+
+    fn decide(&mut self, outcome: &ResolvedOutcome, cause: &str) -> Result<bool, ExecuteError> {
         let capability = format!("{EXTERNAL}{}.{}", self.command, outcome.name.as_str());
         let question = External {
             capability: capability.clone(),

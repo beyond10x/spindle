@@ -1,0 +1,229 @@
+domain: depot.warehouse
+summary: A shelf is open or closed; an item is stocked on a shelf or on none, picked from an open shelf and returned while its own shelf is open.
+types:
+  - name: depot.warehouse.ShelfId
+    kind: newtype
+    of: Uuid
+  - name: depot.warehouse.ItemId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: depot.warehouse.Shelf
+    identity:
+      name: shelf_id
+      type: depot.warehouse.ShelfId
+    fields:
+      - name: label
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open, Closed]
+      terminal: [Closed]
+      transitions:
+        - {name: close, from: [Open], to: Closed}
+  - name: depot.warehouse.Item
+    identity:
+      name: item_id
+      type: depot.warehouse.ItemId
+    fields:
+      - name: home
+        type: Optional<depot.warehouse.ShelfId>
+    relations:
+      - {name: home, kind: references, target: depot.warehouse.Shelf, cardinality: one, via: home}
+    lifecycle:
+      initial: Stocked
+      states: [Stocked, Picked]
+      terminal: [Stocked]
+      transitions:
+        - {name: pick, from: [Stocked], to: Picked}
+        - {name: put_back, from: [Picked], to: Stocked}
+errors:
+  - name: depot.warehouse.NoShelf
+    summary: No shelf carries the id.
+    fields: []
+  - name: depot.warehouse.ShelfShut
+    summary: The shelf is closed.
+    fields: []
+  - name: depot.warehouse.NoItem
+    summary: No item carries the id.
+    fields: []
+  - name: depot.warehouse.NotStocked
+    summary: The item is not in a state this command acts from.
+    fields: []
+commands:
+  - name: depot.warehouse.OpenShelf
+    input:
+      - name: shelf_id
+        type: depot.warehouse.ShelfId
+      - name: label
+        type: String
+    outcomes:
+      - name: opened
+        creates: depot.warehouse.Shelf
+        instance: shelf_id
+        sets:
+          label: input.label
+        emits: [depot.warehouse.ShelfOpened]
+        payload:
+          depot.warehouse.ShelfOpened:
+            shelf_id: input.shelf_id
+        summary: The shelf opens.
+  - name: depot.warehouse.CloseShelf
+    input:
+      - name: shelf_id
+        type: depot.warehouse.ShelfId
+    outcomes:
+      - name: closed
+        moves: depot.warehouse.Shelf.close
+        instance: shelf_id
+        emits: [depot.warehouse.ShelfClosed]
+        payload:
+          depot.warehouse.ShelfClosed:
+            shelf_id: input.shelf_id
+        summary: The shelf closes.
+      - name: wrong-state
+        wrong_state: true
+        error: depot.warehouse.ShelfShut
+        summary: The shelf is already closed.
+  - name: depot.warehouse.StockItem
+    input:
+      - name: item_id
+        type: depot.warehouse.ItemId
+      - name: shelf_id
+        type: Optional<depot.warehouse.ShelfId>
+    outcomes:
+      - name: no-shelf
+        when_related:
+          via: input.shelf_id
+          exists: false
+        error: depot.warehouse.NoShelf
+        summary: The named shelf does not exist.
+      - name: shelf-closed
+        when_related:
+          via: input.shelf_id
+          predicate: state == Closed
+        error: depot.warehouse.ShelfShut
+        summary: The named shelf is closed.
+      - name: stocked
+        creates: depot.warehouse.Item
+        instance: item_id
+        sets:
+          home: input.shelf_id
+        emits: [depot.warehouse.ItemStocked]
+        payload:
+          depot.warehouse.ItemStocked:
+            item_id: input.item_id
+        summary: The item is stocked on the named shelf, or on none where no shelf is named.
+  - name: depot.warehouse.PickItem
+    input:
+      - name: item_id
+        type: depot.warehouse.ItemId
+      - name: shelf_id
+        type: depot.warehouse.ShelfId
+    outcomes:
+      - name: no-item
+        unknown_instance: true
+        error: depot.warehouse.NoItem
+        summary: No item carries the id.
+      - name: no-shelf
+        when_related:
+          via: input.shelf_id
+          exists: false
+        error: depot.warehouse.NoShelf
+        summary: The named shelf does not exist.
+      - name: shelf-closed
+        when_related:
+          via: input.shelf_id
+          predicate: state == Closed
+        error: depot.warehouse.ShelfShut
+        summary: The named shelf is closed.
+      - name: picked
+        moves: depot.warehouse.Item.pick
+        instance: item_id
+        emits: [depot.warehouse.ItemPicked]
+        payload:
+          depot.warehouse.ItemPicked:
+            item_id: input.item_id
+            shelf_id: input.shelf_id
+        summary: The item is picked from the named shelf.
+      - name: wrong-state
+        wrong_state: true
+        error: depot.warehouse.NotStocked
+        summary: The item is already picked.
+  - name: depot.warehouse.ReturnItem
+    input:
+      - name: item_id
+        type: depot.warehouse.ItemId
+    outcomes:
+      - name: no-item
+        unknown_instance: true
+        error: depot.warehouse.NoItem
+        summary: No item carries the id.
+      - name: home-gone
+        when_related:
+          via: home
+          exists: false
+        error: depot.warehouse.NoShelf
+        summary: The item's own shelf does not exist.
+      - name: home-closed
+        when_related:
+          via: home
+          predicate: state == Closed
+        error: depot.warehouse.ShelfShut
+        summary: The item's own shelf is closed.
+      - name: returned
+        moves: depot.warehouse.Item.put_back
+        instance: item_id
+        emits: [depot.warehouse.ItemReturned]
+        payload:
+          depot.warehouse.ItemReturned:
+            item_id: input.item_id
+        summary: The item goes back to its own shelf, or to none where it has none.
+      - name: wrong-state
+        wrong_state: true
+        error: depot.warehouse.NotStocked
+        summary: The item is not picked.
+events:
+  - name: depot.warehouse.ShelfOpened
+    fields:
+      - name: shelf_id
+        type: depot.warehouse.ShelfId
+  - name: depot.warehouse.ShelfClosed
+    fields:
+      - name: shelf_id
+        type: depot.warehouse.ShelfId
+  - name: depot.warehouse.ItemStocked
+    fields:
+      - name: item_id
+        type: depot.warehouse.ItemId
+  - name: depot.warehouse.ItemPicked
+    fields:
+      - name: item_id
+        type: depot.warehouse.ItemId
+      - name: shelf_id
+        type: depot.warehouse.ShelfId
+  - name: depot.warehouse.ItemReturned
+    fields:
+      - name: item_id
+        type: depot.warehouse.ItemId
+views:
+  - name: depot.warehouse.ItemCard
+    source: depot.warehouse.Item
+    consistency: read_your_writes
+    fields:
+      - name: item_id
+        type: depot.warehouse.ItemId
+      - name: home
+        type: Optional<depot.warehouse.ShelfId>
+      - name: state
+        type: depot.warehouse.Item.State
+  - name: depot.warehouse.ShelfCard
+    source: depot.warehouse.Shelf
+    consistency: read_your_writes
+    fields:
+      - name: shelf_id
+        type: depot.warehouse.ShelfId
+      - name: label
+        type: String
+      - name: state
+        type: depot.warehouse.Shelf.State

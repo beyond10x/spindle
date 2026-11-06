@@ -9,7 +9,7 @@
 use ess_compiler::EssIr;
 use ess_compiler::ir::{
     ResolvedCommand, ResolvedCondition, ResolvedEffect, ResolvedInstance, ResolvedOutcome,
-    ResolvedPayloadField, ResolvedPayloadValue,
+    ResolvedPayloadField, ResolvedPayloadValue, ResolvedRelatedVia, ResolvedTypeRef,
 };
 
 use crate::ExecuteError;
@@ -21,6 +21,16 @@ use crate::ExecuteError;
 /// # Errors
 /// [`ExecuteError::Unsupported`], naming the construct and the outcome that declares it.
 pub fn check(ir: &EssIr, command: &ResolvedCommand) -> Result<(), ExecuteError> {
+    if let Some(outcome) = mixed_references(command) {
+        return Err(ExecuteError::Unsupported {
+            construct: format!(
+                "`when_related:` over rows named both by the input and by a stored field, in \
+                 `{}/{}`",
+                command.name,
+                outcome.name.as_str()
+            ),
+        });
+    }
     for outcome in &command.outcomes {
         let refuse = |what: &str| {
             Err(ExecuteError::Unsupported {
@@ -111,12 +121,40 @@ fn condition(condition: &ResolvedCondition) -> Option<&'static str> {
         | ResolvedCondition::SubjectPredicate { .. }
         | ResolvedCondition::SubjectField { .. }
         | ResolvedCondition::SubjectState { .. } => None,
-        ResolvedCondition::Related { .. } => Some("`when_related:` over one row"),
+        ResolvedCondition::Related { also, .. } if !also.is_empty() => {
+            Some("`when_related: {all: […]}` over several rows")
+        }
+        ResolvedCondition::Related { via, .. }
+            if matches!(via.type_ref(), ResolvedTypeRef::List { .. }) =>
+        {
+            Some("`when_related:` over a list of references")
+        }
+        ResolvedCondition::Related { .. } => None,
         ResolvedCondition::RelatedSet { .. } => Some("`when_related:` over a row set"),
         ResolvedCondition::StateChange { .. } => Some("`when_state_changes:`"),
         ResolvedCondition::InputAbsent => Some("`input_absent:`"),
         ResolvedCondition::ExistingInstance => Some("`existing_instance:`"),
     }
+}
+
+/// The first `when_related:` branch over a row the input names, where another names its row by a
+/// stored field of the addressed subject. ESS's interpreter reads only the stored row on such a
+/// command (`interpret::execute::related::stored`), so the kernel does not guess at the other.
+fn mixed_references(command: &ResolvedCommand) -> Option<&ResolvedOutcome> {
+    let via = |outcome: &&ResolvedOutcome| match &outcome.condition {
+        ResolvedCondition::Related { via, .. } => {
+            Some(matches!(via, ResolvedRelatedVia::Subject { .. }))
+        }
+        _ => None,
+    };
+    let stored = command
+        .outcomes
+        .iter()
+        .any(|outcome| via(&outcome) == Some(true));
+    command
+        .outcomes
+        .iter()
+        .find(|outcome| stored && via(outcome) == Some(false))
 }
 
 /// The outcome's shape, named, when the kernel does not run it.
