@@ -1,0 +1,27 @@
+[package]
+name = "spindle-store-browser"
+description = "A Store in the browser's IndexedDB: store.durable bound to indexeddb, for a run that keeps its state across page reloads."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+spindle-kernel = { path = "../spindle-kernel", default-features = false }
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["DomException", "DomStringList", "Event", "IdbDatabase", "IdbFactory", "IdbObjectStore", "IdbObjectStoreParameters", "IdbOpenDbRequest", "IdbRequest", "IdbTransaction", "IdbTransactionMode"] }
+
+[dev-dependencies]
+spindle-capability = { path = "../spindle-capability" }
+spindle-spec = { path = "../spindle-spec" }
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]
+wasm-bindgen-test = "0.3"

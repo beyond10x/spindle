@@ -6,6 +6,21 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- `spindle-store-browser`: a `Store` on the browser's IndexedDB, `store.durable` bound to
+  `indexeddb` (`examples/environments/browser.toml`). It answers versions, conflicts and removed
+  instances as the memory store does, writes each commit in one IndexedDB transaction, and its
+  state is read back after the database is reopened. `task check` runs its tests in a headless
+  browser. The host does not open it yet.
+- `spindle_kernel::contract`: the cases every `Store` passes, run on the memory, SQLite and
+  IndexedDB stores.
+
+### Fixed
+
+- A SQLite conflict names the version the change named (none for a creation) and no held version
+  for an instance never written, as the memory store does, instead of eventlog's stream positions.
+
 ### Changed
 
 - Each crate's integration tests build into one test binary, `tests/<crate>/main.rs` with one

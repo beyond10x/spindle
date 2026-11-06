@@ -119,6 +119,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "crates/spindle-kernel/tests/spindle-kernel/deployment.rs::state_survives_a_restart_on_sqlite",
     ),
     shipped(
+        "Execution",
+        "Browser store",
+        "spindle-store-browser keeps instances in the browser's IndexedDB (store.durable bound to indexeddb in examples/environments/browser.toml): it passes the store contract the memory and SQLite stores pass, and a command's effect is read back after the database is reopened. The host does not open it yet.",
+        "/docs/concepts/environment-and-admission",
+        "crates/spindle-store-browser/tests/spindle-store-browser/reload.rs::state_survives_a_reload",
+    ),
+    shipped(
         "Bindings",
         "Periodic bindings",
         "spindle-timer yields due ticks for periodic bindings on an injected clock, honouring the ESS periodic profile.",

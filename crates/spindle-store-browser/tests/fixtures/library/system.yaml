@@ -1,0 +1,23 @@
+format: ess/34
+system: library
+version: v1
+summary: Books shelved, lent and removed from the catalogue.
+domains:
+  - library.books
+components:
+  - component: catalogue
+    summary: Shelves, lends and removes books, and lists those it holds.
+    owns:
+      domains:
+        - library.books
+    accepts:
+      commands:
+        - library.books.ShelveBook
+        - library.books.LendBook
+        - library.books.RemoveBook
+    publishes:
+      events:
+        - library.books.BookShelved
+        - library.books.BookLent
+        - library.books.BookRemoved
+    reached_by: in_process
