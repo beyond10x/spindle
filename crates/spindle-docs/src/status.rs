@@ -289,7 +289,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "Fixed caller (test backend)",
-        "run --fixed-actor with --fixed-caller sends every served command as one actor and caller for the whole run, so a command that reads its caller is served: a test-backend switch, not authentication, opt-in only and printed on stderr at startup. The grant check still runs: a command the actor may not send answers 403 not granted and writes nothing.",
+        "run --fixed-actor with --fixed-caller sends served commands as actors and callers fixed for the whole run, so a command that reads its caller is served: a test-backend switch, not authentication, opt-in only and printed on stderr at startup. The grant check still runs: a command the actor may not send answers 403 not granted and writes nothing. Given more than once, each command is sent as the first fixed actor its grant names.",
         "/docs/concepts/capabilities",
         "crates/spindle-cli/tests/fixed_caller.rs::a_command_reading_the_caller_runs_with_the_fixed_caller",
     ),

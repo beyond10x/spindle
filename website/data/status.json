@@ -221,7 +221,7 @@
     },
     {
       "area": "Execution",
-      "detail": "run --fixed-actor with --fixed-caller sends every served command as one actor and caller for the whole run, so a command that reads its caller is served: a test-backend switch, not authentication, opt-in only and printed on stderr at startup. The grant check still runs: a command the actor may not send answers 403 not granted and writes nothing.",
+      "detail": "run --fixed-actor with --fixed-caller sends served commands as actors and callers fixed for the whole run, so a command that reads its caller is served: a test-backend switch, not authentication, opt-in only and printed on stderr at startup. The grant check still runs: a command the actor may not send answers 403 not granted and writes nothing. Given more than once, each command is sent as the first fixed actor its grant names.",
       "href": "/docs/concepts/capabilities",
       "label": "Fixed caller (test backend)",
       "status": "shipped"
