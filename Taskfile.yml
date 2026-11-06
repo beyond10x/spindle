@@ -31,12 +31,12 @@ tasks:
       - cargo run -q --locked -p spindle-cli -- conform ess --environment examples/environments/laptop.toml --suite target/conformance/suite.json --counts conformance.toml --known-failing conformance-known-failures.json --accounting-out target/conformance/accounting.json --report target/conformance/report.json --results target/conformance/results.json
 
   check:the_wasm_build_of_the_host_succeeds:
-    desc: spindle-spec, spindle-kernel and spindle-host build for wasm32-unknown-unknown without SQLite, and nothing they compile there reads std's clock
+    desc: spindle-spec, spindle-kernel, spindle-host and the spindle-ingress router build for wasm32-unknown-unknown without SQLite or the listener, and nothing they compile there reads std's clock
     env:
       CLIPPY_CONF_DIR: '{{.ROOT_DIR}}/clippy/wasm32'
     cmds:
-      - cargo build --locked --target wasm32-unknown-unknown --no-default-features -p spindle-spec -p spindle-kernel -p spindle-host
-      - cargo clippy --locked --target wasm32-unknown-unknown --no-default-features -p spindle-spec -p spindle-kernel -p spindle-host -p spindle-timer -p spindle-channel -p spindle-telemetry -p spindle-capability --lib -- -D warnings
+      - cargo build --locked --target wasm32-unknown-unknown --no-default-features -p spindle-spec -p spindle-kernel -p spindle-host -p spindle-ingress
+      - cargo clippy --locked --target wasm32-unknown-unknown --no-default-features -p spindle-spec -p spindle-kernel -p spindle-host -p spindle-ingress -p spindle-timer -p spindle-channel -p spindle-telemetry -p spindle-capability --lib -- -D warnings
 
   check:a_command_runs_in_wasm_on_the_memory_store:
     desc: The wasm host runs a command on the memory store, under wasm-bindgen-test-runner on Node

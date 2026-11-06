@@ -22,10 +22,16 @@
 //! `{refused, committed: false}`), and [`Surface::unserved`] lists them so a run can name them
 //! before it listens.
 //!
-//! [`Listener::bind`] owns the socket and a hyper HTTP/1.1 server on a thread of its own; every
-//! request for a route of the [`Surface`] arrives as an [`Exchange`] on [`Listener::next`], so
-//! the [`spindle_host::Host`] that answers it stays on the caller's thread
-//! ([`Exchange::serve`]).
+//! The routing itself is transport-free: [`route`] answers a [`Request`] value on a
+//! [`spindle_host::Host`] with a [`Response`] value, with no listener, socket or async runtime in
+//! it, so a host with no socket, such as a Service Worker, answers the same routes the same way.
+//! Without the default `listener` feature only that part is built, and it builds for
+//! `wasm32-unknown-unknown`.
+//!
+//! `Listener::bind` (feature `listener`) owns the socket and a hyper HTTP/1.1 server on a thread
+//! of its own; every request for a route of the [`Surface`] arrives as an `Exchange` on
+//! `Listener::next`, so the [`spindle_host::Host`] that answers it stays on the caller's thread
+//! (`Exchange::serve`, which answers it through the router).
 //!
 //! Beside those, a surface bound to `http-loopback` serves the routes a generic model console
 //! reads ([`Surface::with_console`], [`Console`]): `GET /api/model`, the IR as
@@ -35,12 +41,16 @@
 
 mod answer;
 pub mod console;
+#[cfg(feature = "listener")]
 mod listener;
+mod router;
 mod surface;
 
 pub use answer::{Answer, answer, answered};
 pub use console::Console;
-pub use listener::{BODY_LIMIT, BODY_READ, Exchange, HEADER_READ, Listener};
+#[cfg(feature = "listener")]
+pub use listener::{BODY_READ, Exchange, HEADER_READ, Listener};
+pub use router::{BODY_LIMIT, CONTENT_TYPE, Request, Response, Routed, route, route_with};
 pub use surface::{Caller, Queried, Resolved, Route, Surface, SurfaceError, Unserved, Variable};
 
 /// The `ingress.network` implementation this crate serves: HTTP on the loopback address.
