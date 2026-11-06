@@ -103,6 +103,15 @@ fn small() -> Resources {
     }
 }
 
+/// A guest holding the unoptimized `b10x-spindle` (about 65 MB): the kernel keeps the initramfs
+/// in memory while it unpacks a second copy, which no longer fits in [`small`].
+fn with_spindle() -> Resources {
+    Resources {
+        memory_mib: 512,
+        ..small()
+    }
+}
+
 fn paper_artifact() -> Artifact {
     Artifact::Guest {
         kernel: PathBuf::from("vmlinuz"),
@@ -185,7 +194,12 @@ fn a_qemu_microvm_instance_boots_and_runs_b10x_spindle() {
     let mut launcher = launcher(host, dir.path());
     let artifact = guest(host, initramfs, "/bin/b10x-spindle check /spec");
     let mut vm = launcher
-        .launch(&plan("table-1", artifact, small(), guest_address(2, 7000)))
+        .launch(&plan(
+            "table-1",
+            artifact,
+            with_spindle(),
+            guest_address(2, 7000),
+        ))
         .expect("the microVM starts");
     let exit = finished(&mut vm);
     let text = console(vm.console());
