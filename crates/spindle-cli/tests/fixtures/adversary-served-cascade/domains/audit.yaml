@@ -1,0 +1,38 @@
+domain: relay.audit
+summary: Audits of taken requests, which an auditor outside the model may reject.
+entities:
+  - name: relay.audit.Entry
+    identity:
+      name: request_id
+      type: String
+    fields: []
+    lifecycle:
+      initial: Audited
+      states: [Audited]
+      terminal: [Audited]
+errors:
+  - name: relay.audit.Rejected
+    summary: The auditor rejected the request.
+    fields: []
+commands:
+  - name: relay.audit.Audit
+    input:
+      - name: request_id
+        type: String
+    outcomes:
+      - name: rejected
+        external: the auditor rejects the request
+        error: relay.audit.Rejected
+        summary: The auditor may reject any request.
+      - name: audited
+        creates: relay.audit.Entry
+        instance: request_id
+        emits: [relay.audit.Audited]
+        payload:
+          relay.audit.Audited: {request_id: input.request_id}
+        summary: The request is audited.
+events:
+  - name: relay.audit.Audited
+    fields:
+      - name: request_id
+        type: String

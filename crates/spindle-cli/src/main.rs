@@ -438,12 +438,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 spindle_ingress::HTTP_LOOPBACK
             );
         }
-        if decisions.is_some() || answer_default {
-            bail!(
-                "--decisions and --answer-default answer external causes of stdin lines, and run \
-                 serving ingress.network reads no stdin"
-            );
-        }
+        let decider = (decisions.is_some() || answer_default).then(|| answers.served());
         let binding = match http {
             Some(path) => match serve::binding(path, &loaded.ir)? {
                 Some(binding) => Some(binding),
@@ -463,6 +458,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 port: port.unwrap_or(0),
                 ingress: ingress.implementation.as_str(),
                 drop_retries,
+                decider,
             },
         );
     }

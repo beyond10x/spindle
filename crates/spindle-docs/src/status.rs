@@ -170,7 +170,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "External decisions from a file",
-        "run --decisions answers external outcomes from a TOML file, per command or for all; --answer-default takes a command's default branch.",
+        "run --decisions answers external outcomes from a TOML file, per command or for all, for stdin lines and served requests; --answer-default takes a command's default branch.",
         "/docs/concepts/capabilities",
         "crates/spindle-cli/tests/decisions.rs::a_decisions_file_answers_every_external_outcome",
     ),

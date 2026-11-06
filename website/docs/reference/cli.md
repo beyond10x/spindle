@@ -98,6 +98,8 @@ Where a component requires `ingress.network` (`reached_by: network`), runs every
 
 A command this ingress cannot route or the kernel does not run, and a view the host does not read, keeps its route and answers `501` naming the operation and the construct (a command with ESS's envelope, `{"refused", "committed": false}`); nothing is read or written for it. Before listening, `run` prints one line on stderr per such operation, in name order: component by component, commands then views, each by qualified name. A view this ingress cannot route (such as one a binding answers other than as `rows`) still exits 1 before listening, naming it: ESS publishes no `501` for a view. A run that would serve no operation, one of them a command this ingress cannot route, exits 1 before listening; one whose operations only the kernel or the host does not run is served as before, each answering `501`.
 
+A served request carries no `external` object: its external causes are answered by `--decisions`, then by `--answer-default`, each answer per command and outcome, never per input value. A request nothing answers is refused `501`, naming the outcome. Without either flag, a specification that declares an external outcome exits 1 before listening.
+
 An event binding with `on_failure: retry` runs its command again at once after each attempt that fails, up to 5 attempts, unless `--drop-retries` is given; one with `on_failure: escalate` exits 1 before listening.
 
 ```console

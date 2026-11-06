@@ -1,0 +1,42 @@
+format: ess/34
+system: relay
+version: v1
+summary: Requests taken over the network whose consequence, run by a binding, an auditor outside the model may reject.
+domains:
+  - relay.desk
+  - relay.audit
+components:
+  - component: desk
+    summary: Takes requests for callers outside the process.
+    owns:
+      domains:
+        - relay.desk
+    accepts:
+      commands:
+        - relay.desk.Take
+    publishes:
+      events:
+        - relay.desk.Taken
+    reached_by: network
+  - component: audit
+    summary: Audits each taken request; only a binding reaches it.
+    owns:
+      domains:
+        - relay.audit
+    accepts:
+      commands:
+        - relay.audit.Audit
+    publishes:
+      events:
+        - relay.audit.Audited
+    reached_by: in_process
+bindings:
+  - id: audit-taken
+    when:
+      event: relay.desk.Taken
+    invoke:
+      command: relay.audit.Audit
+    mapping:
+      request_id: event.request_id
+    delivery: at_most_once
+    on_failure: retry
