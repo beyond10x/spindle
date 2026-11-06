@@ -1,0 +1,21 @@
+format: ess/34
+system: library
+version: v1
+summary: Books shelved and deleted over the network, and read as a list.
+domains:
+  - library.shelf
+components:
+  - component: shelf
+    summary: Shelves, deletes and lists books for callers outside the process.
+    owns:
+      domains:
+        - library.shelf
+    accepts:
+      commands:
+        - library.shelf.ShelveBook
+        - library.shelf.RemoveBook
+    publishes:
+      events:
+        - library.shelf.BookShelved
+        - library.shelf.BookRemoved
+    reached_by: network

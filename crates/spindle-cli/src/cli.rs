@@ -106,16 +106,15 @@ pub enum Command {
     /// so far, in order) and `POST /api/reset` (empties every store, `{"emptied": [...]}`); a
     /// route the binding or ESS publishes at one of those paths exits 1 before listening.
     ///
-    /// A command this ingress cannot route or the kernel does not run, and a view the host does
-    /// not read, keeps its route and answers `501` naming the operation and the construct (a
-    /// command with ESS's envelope, `{"refused", "committed": false}`); nothing is read or
-    /// written for it. Before listening, `run` prints one line on stderr per such operation, in
-    /// name order: component by component, commands then views, each by qualified name. A view
-    /// this ingress cannot route (such as one a binding answers other than as `rows`) still exits
-    /// 1 before listening, naming it: ESS publishes no `501` for a view. A run that would serve no
-    /// operation, one of them a command this ingress cannot route, exits 1 before listening; one
-    /// whose operations only the kernel or the host does not run is served as before, each
-    /// answering `501`.
+    /// A command or view this ingress cannot route (such as a view a binding answers other than
+    /// as `rows`, or one whose parameter no single query value carries), a command the kernel does
+    /// not run, and a view the host does not read, keeps its route and answers `501` naming the
+    /// operation and the construct (with ESS's envelope, `{"refused", "committed": false}`);
+    /// nothing is read or written for it. Before listening, `run` prints one line on stderr per
+    /// such operation, in name order: component by component, commands then views, each by
+    /// qualified name. A run that would serve no operation, one of them an operation this ingress
+    /// cannot route, exits 1 before listening; one whose operations only the kernel or the host
+    /// does not run is served as before, each answering `501`.
     ///
     /// A served request carries no `external` object: its external causes are answered by
     /// `--decisions`, then by `--answer-default`, each answer per command and outcome, never per
@@ -167,19 +166,23 @@ pub enum Command {
         /// default branch, so the model selects as it would without it.
         #[arg(long)]
         answer_default: bool,
-        /// Send every served command as this actor (qualified name): a test-backend switch, not
+        /// Send served commands as this actor (qualified name): a test-backend switch, not
         /// authentication; no request proves who sends it. A command that reads its caller is then
-        /// served instead of answering `501`, and one the actor's `may:` does not name is refused
-        /// `403` "not granted", writing nothing, as is a read-granted view it may not read. The
-        /// actor and `--fixed-caller` are checked against the model and printed on stderr before
-        /// listening; an undeclared actor or attribute, or a required attribute left out, exits 1.
+        /// served instead of answering `501`. Given more than once, each served command is sent
+        /// as the first fixed actor whose `may:` names it, and a read-granted view read as the
+        /// first that may read it; one no fixed actor may run is refused `403` "not granted",
+        /// naming the first, and writes nothing. Each actor and its `--fixed-caller` are checked
+        /// against the model and printed on stderr, in order, before listening; an undeclared
+        /// actor or attribute, a required attribute left out, or an actor given twice exits 1.
         /// Only where `run` serves HTTP.
         #[arg(long, conflicts_with = "scenario")]
-        fixed_actor: Option<String>,
-        /// The caller attributes every served command is sent with, as a JSON object
-        /// (`{"<attribute>": <value>}`), every required one of `--fixed-actor`'s.
+        fixed_actor: Vec<String>,
+        /// The caller attributes a fixed actor's commands are sent with, as a JSON object
+        /// (`{"<attribute>": <value>}`), every required one of that actor's. The n-th
+        /// `--fixed-caller` is the n-th `--fixed-actor`'s; with several actors each needs its
+        /// own, `{}` for one that declares no attribute.
         #[arg(long, requires = "fixed_actor", value_parser = json_object)]
-        fixed_caller: Option<Map<String, Value>>,
+        fixed_caller: Vec<Map<String, Value>>,
         /// The `ess-scenario` document to replay.
         #[arg(long, conflicts_with_all = ["state", "decisions", "answer_default"])]
         scenario: Option<PathBuf>,

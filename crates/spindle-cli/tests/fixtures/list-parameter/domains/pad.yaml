@@ -1,0 +1,61 @@
+domain: notes.pad
+summary: Notes written once, read whole or selected by a list of texts.
+types:
+  - name: notes.pad.NoteId
+    kind: newtype
+    of: String
+entities:
+  - name: notes.pad.Note
+    identity:
+      name: note_id
+      type: notes.pad.NoteId
+    fields:
+      - name: text
+        type: String
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+commands:
+  - name: notes.pad.WriteNote
+    input:
+      - name: note_id
+        type: notes.pad.NoteId
+      - name: text
+        type: String
+    outcomes:
+      - name: written
+        creates: notes.pad.Note
+        instance: note_id
+        sets:
+          text: input.text
+        emits: [notes.pad.NoteWritten]
+        payload:
+          notes.pad.NoteWritten: {note_id: input.note_id}
+        summary: The note is kept.
+events:
+  - name: notes.pad.NoteWritten
+    fields:
+      - name: note_id
+        type: notes.pad.NoteId
+views:
+  - name: notes.pad.AllNotes
+    source: notes.pad.Note
+    consistency: read_your_writes
+    fields:
+      - name: note_id
+        type: notes.pad.NoteId
+      - name: text
+        type: String
+  - name: notes.pad.NotesTagged
+    source: notes.pad.Note
+    consistency: read_your_writes
+    params:
+      - name: tags
+        type: List<String>
+    filter: {exists: {in: param.tags, as: tag, that: text == tag}}
+    fields:
+      - name: note_id
+        type: notes.pad.NoteId
+      - name: text
+        type: String

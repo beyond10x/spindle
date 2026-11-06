@@ -7,11 +7,15 @@
 //! mints.
 
 use ess_compiler::EssIr;
-use ess_compiler::ir::{ResolvedBody, ResolvedTypeRef};
+use ess_compiler::ir::{
+    ResolvedBody, ResolvedCommand, ResolvedCondition, ResolvedEntity, ResolvedField,
+    ResolvedInstance, ResolvedOutcome, ResolvedTypeRef,
+};
 use ess_domain::Invariant;
 use ess_domain::types::{MAX_TYPE_DEPTH, Primitive};
 use ess_primitives::facts::{FactStore, FactValue};
-use ess_primitives::predicate::Truth;
+use ess_primitives::node::Node;
+use ess_primitives::predicate::{Operand, Predicate, Truth};
 
 use crate::Capability;
 
@@ -175,4 +179,422 @@ pub fn holds_for(invariant: &Invariant, subject: &str, text: &str) -> bool {
 /// (`interpret::execute::mint`).
 pub fn absent(kind: &ResolvedTypeRef, present: bool) -> bool {
     !present && kind.is_optional()
+}
+
+/// How the runtime fills an error field the refusing outcome gives no source ([`unsourced`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unsourced<'ir> {
+    /// The state the row the refusal is answered for rests in: the field's type is the
+    /// entity's state type.
+    State,
+    /// The row's stored field (or identity) of the same name and type.
+    Stored(&'ir str),
+    /// Left absent: an `Optional` field no row fills.
+    Absent,
+    /// Minted from its type by the rule for generated fields ([`generated`]): a leaf [`minted`]
+    /// spells, or a record, union or map of such leaves.
+    Minted(Choice),
+    /// Nothing fills it: a required field no row holds, of a type the runtime does not mint.
+    Unfilled,
+    /// Left out: the refusal answers an identity no record carries (`unknown_instance:`), and an
+    /// instance that does not exist has nothing for the error to describe.
+    Unanswered,
+}
+
+/// Every field of the error `outcome` of `command` reports that `outcome` gives no source
+/// (`payload:` on the error, ess/19), in the error's declaration order, with how the runtime
+/// fills it, so that a refusal answers every field the error's published schema requires.
+///
+/// ESS's served application reads such a field from the row the refusal is answered for, where
+/// that row holds a stored field of the same name and type or the field is of the entity's state
+/// type (`ess-synth` `determined::held_field`). It reads that row for a `wrong_state:` branch,
+/// and, in a command with a subject guard ([`subject_guarded`]), for every refusal that names no
+/// subject of its own except an input guard (`when:`, answered before the row is read) and
+/// `unknown_instance:` (no row): the instance the command's first supplied subject addresses
+/// (`ess-synth` `determined::outcome`, `reads_held`). ESS's interpreter leaves every other field
+/// to the implementation (`interpret::execute::declared_error`, a generated value of its type),
+/// so it is minted by the rule for generated fields, an `Optional` one left absent. An
+/// `unknown_instance:` refusal leaves each one out ([`Unsourced::Unanswered`]). Empty for an
+/// outcome that reports no error.
+pub fn unsourced<'ir>(
+    ir: &'ir EssIr,
+    command: &'ir ResolvedCommand,
+    outcome: &ResolvedOutcome,
+) -> Vec<(&'ir ResolvedField, Unsourced<'ir>)> {
+    let Some(error) = outcome.error.as_ref().filter(|_| outcome.refuses) else {
+        return Vec::new();
+    };
+    let unknown = outcome.condition == ResolvedCondition::UnknownInstance;
+    let reads_held = outcome.condition == ResolvedCondition::WrongState
+        || (subject_guarded(command)
+            && outcome.subject.is_none()
+            && !matches!(
+                outcome.condition,
+                ResolvedCondition::When { .. } | ResolvedCondition::UnknownInstance
+            ));
+    let held = reads_held.then(|| addressed(ir, command)).flatten();
+    ir.error(error)
+        .fields
+        .iter()
+        .filter(|field| {
+            !outcome
+                .error_payload
+                .iter()
+                .any(|source| source.target == field.name)
+        })
+        .map(|field| {
+            let fill = match held.and_then(|entity| held_field(entity, field)) {
+                Some(fill) => fill,
+                None if unknown => Unsourced::Unanswered,
+                None if absent(&field.type_ref, false) => Unsourced::Absent,
+                None => generated(ir, &field.type_ref, false)
+                    .map_or(Unsourced::Unfilled, Unsourced::Minted),
+            };
+            (field, fill)
+        })
+        .collect()
+}
+
+/// The entity of the first subject in `command` whose identity the caller supplies: the row a
+/// refusal is answered for (`ess-synth` `determined::selection_subject`).
+fn addressed<'ir>(ir: &'ir EssIr, command: &ResolvedCommand) -> Option<&'ir ResolvedEntity> {
+    command
+        .outcomes
+        .iter()
+        .filter_map(|outcome| outcome.subject.as_ref())
+        .find(|subject| matches!(subject.instance, ResolvedInstance::Supplied { .. }))
+        .map(|subject| ir.entity(&subject.entity))
+}
+
+/// Whether `command` declares a branch guarded by its subject (`ess-synth`
+/// `determined::subject_guarded`): it reads the addressed row before it answers.
+fn subject_guarded(command: &ResolvedCommand) -> bool {
+    command.outcomes.iter().any(|outcome| {
+        matches!(
+            outcome.condition,
+            ResolvedCondition::SubjectField { .. }
+                | ResolvedCondition::SubjectPredicate { .. }
+                | ResolvedCondition::ExternalSubject { .. }
+                | ResolvedCondition::SubjectState { .. }
+                | ResolvedCondition::StateChange { .. }
+        )
+    })
+}
+
+/// How the row of `entity` fills the error field `field`, where it does.
+fn held_field<'ir>(entity: &'ir ResolvedEntity, field: &ResolvedField) -> Option<Unsourced<'ir>> {
+    if matches!(&field.type_ref, ResolvedTypeRef::Declared { name } if *name == entity.state_type) {
+        return Some(Unsourced::State);
+    }
+    std::iter::once(&entity.identity)
+        .chain(&entity.fields)
+        .find(|stored| stored.name == field.name && stored.type_ref == field.type_ref)
+        .map(|stored| Unsourced::Stored(stored.name.as_str()))
+}
+
+/// How the runtime builds a value it chooses of a type [`minted`] does not answer: a response
+/// field the command returns, or a `{generated: true}` field ([`generated`]). The structure follows
+/// ESS's interpreter (`interpret::response::base`): a record's members each by the same rules, a
+/// union's first variant, one map entry, an enum's variant drawn as its input witness cycles them,
+/// and a constrained newtype's literal. The literal is Spindle's choice among the literals the
+/// newtype's invariants name, the first that ESS's predicates find true of it ([`admits`]); the
+/// kernel then holds the whole value to ESS's type check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Choice {
+    /// A leaf [`minted`] answers.
+    Mint(Minted),
+    /// A constrained newtype: a literal its invariants, or those of the type it wraps, name.
+    Literal(FactValue),
+    /// An enum: one of its variants, drawn through `identity.mint`.
+    Enum(Vec<String>),
+    /// A record: each member, an `Optional` one as its required type.
+    Record(Vec<(String, Choice)>),
+    /// A union's first variant by tag value: the tag, and its content under `value` (`content`
+    /// where the tag itself is named `value`), none for a unit variant.
+    Variant {
+        /// The tag field.
+        tag: String,
+        /// The variant's tag value.
+        label: String,
+        /// The content key and the content.
+        content: Option<(&'static str, Box<Choice>)>,
+    },
+    /// A map of one entry: a key minted as text, and its value.
+    Entry {
+        /// The key, a [`Minted::Uuid`] or [`Minted::Text`].
+        key: Minted,
+        /// The value.
+        value: Box<Choice>,
+    },
+}
+
+impl Choice {
+    /// The capabilities the parts the runtime draws need, each once, in the order they are first
+    /// drawn: `clock` for a `Timestamp`, `identity.mint` for every other minted leaf, an enum's
+    /// variant among them. A literal draws nothing.
+    pub fn capabilities(&self) -> Vec<&'static str> {
+        let mut needed = Vec::new();
+        self.collect(&mut needed);
+        needed
+    }
+
+    fn collect(&self, needed: &mut Vec<&'static str>) {
+        let mut need = |capability: &'static str| {
+            if !needed.contains(&capability) {
+                needed.push(capability);
+            }
+        };
+        match self {
+            Self::Mint(minted) => need(minted.capability()),
+            Self::Enum(_) => need(Capability::IDENTITY_MINT),
+            Self::Literal(_) | Self::Variant { content: None, .. } => {}
+            Self::Record(members) => {
+                for (_, member) in members {
+                    member.collect(needed);
+                }
+            }
+            Self::Variant {
+                content: Some((_, content)),
+                ..
+            } => content.collect(needed),
+            Self::Entry { key, value } => {
+                need(key.capability());
+                value.collect(needed);
+            }
+        }
+    }
+
+    /// Whether any part is a response field's alone: a constrained newtype's literal or an
+    /// enum's variant.
+    pub fn response_only(&self) -> bool {
+        match self {
+            Self::Literal(_) | Self::Enum(_) => true,
+            Self::Mint(_) | Self::Variant { content: None, .. } => false,
+            Self::Record(members) => members.iter().any(|(_, member)| member.response_only()),
+            Self::Variant {
+                content: Some((_, content)),
+                ..
+            } => content.response_only(),
+            Self::Entry { value, .. } => value.response_only(),
+        }
+    }
+}
+
+/// How the runtime mints a `{generated: true}` field of `kind`: by [`minted`], or a record, union
+/// or map of such leaves by [`chosen`]. Never through a constrained newtype's literal or an enum,
+/// which only a response field takes here ([`Choice::response_only`]).
+pub fn generated(ir: &EssIr, kind: &ResolvedTypeRef, present: bool) -> Option<Choice> {
+    minted(ir, kind, present)
+        .map(Choice::Mint)
+        .or_else(|| chosen(ir, kind).filter(|choice| !choice.response_only()))
+}
+
+/// Why the runtime does not answer a response field: the kernel's refusal by name, and the field
+/// derivation names no capability for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unanswered {
+    /// No [`chosen`] value of the field's type.
+    Unchosen,
+    /// A one-time field (`one_time_response:`) whose value is not minted as text.
+    OneTimeNotText,
+}
+
+/// How the runtime answers a response field of `kind`, where `one_time` says the outcome lists
+/// it in `one_time_response:`: the one rule the kernel answers and refuses by and derivation
+/// names capabilities by.
+///
+/// # Errors
+/// [`Unanswered`], where the kernel refuses the field by name before the command runs.
+pub fn response(ir: &EssIr, kind: &ResolvedTypeRef, one_time: bool) -> Result<Choice, Unanswered> {
+    match chosen(ir, kind) {
+        None => Err(Unanswered::Unchosen),
+        Some(choice @ Choice::Mint(Minted::Text { .. })) => Ok(choice),
+        Some(_) if one_time => Err(Unanswered::OneTimeNotText),
+        Some(choice) => Ok(choice),
+    }
+}
+
+/// How the runtime chooses a value of `kind`, an `Optional` one as its required type; `None`
+/// where it does not, and then the kernel refuses the field by name and derivation names no
+/// capability for it: a record that declares invariants, a record that holds itself, a
+/// constrained newtype neither whose literals nor its wrapped type's are a value of it, a map
+/// whose key is not minted as text, and every primitive [`minted`] does not answer.
+pub fn chosen(ir: &EssIr, kind: &ResolvedTypeRef) -> Option<Choice> {
+    choose(ir, kind, 0)
+}
+
+fn choose(ir: &EssIr, kind: &ResolvedTypeRef, depth: usize) -> Option<Choice> {
+    if depth > MAX_TYPE_DEPTH {
+        return None;
+    }
+    let kind = kind.required();
+    if let Some(minted) = minted(ir, kind, true) {
+        return Some(Choice::Mint(minted));
+    }
+    match kind {
+        ResolvedTypeRef::Declared { name } => match &ir.named_type(name).body {
+            ResolvedBody::Struct { fields, invariants } if invariants.is_empty() => fields
+                .iter()
+                .map(|member| {
+                    Some((
+                        member.name.clone(),
+                        choose(ir, &member.type_ref, depth + 1)?,
+                    ))
+                })
+                .collect::<Option<_>>()
+                .map(Choice::Record),
+            ResolvedBody::Union { tag, variants } => {
+                let (label, variant) = variants.iter().next()?;
+                let content = match variant {
+                    Some(variant) => Some((
+                        if tag == "value" { "content" } else { "value" },
+                        Box::new(choose(ir, variant, depth + 1)?),
+                    )),
+                    None => None,
+                };
+                Some(Choice::Variant {
+                    tag: tag.clone(),
+                    label: label.clone(),
+                    content,
+                })
+            }
+            ResolvedBody::Newtype {
+                of,
+                alphabet: None,
+                prefix: None,
+                invariants,
+            } if invariants.is_empty() => choose(ir, of, depth + 1),
+            ResolvedBody::Newtype { of, invariants, .. } => {
+                let mut candidates = Vec::new();
+                for invariant in invariants {
+                    literals(&invariant.predicate, &mut candidates);
+                }
+                if let Some(found) = candidates
+                    .into_iter()
+                    .find(|candidate| admits(ir, kind, candidate))
+                {
+                    return Some(Choice::Literal(found));
+                }
+                // As `base` does: the wrapped type's value, held to this newtype's rules too.
+                match choose(ir, of, depth + 1)? {
+                    Choice::Literal(wrapped) if admits(ir, kind, &wrapped) => {
+                        Some(Choice::Literal(wrapped))
+                    }
+                    _ => None,
+                }
+            }
+            ResolvedBody::Enum { variants } => (!variants.is_empty()).then(|| {
+                Choice::Enum(
+                    variants
+                        .iter()
+                        .map(|variant| variant.name().to_owned())
+                        .collect(),
+                )
+            }),
+            ResolvedBody::Struct { .. } => None,
+        },
+        ResolvedTypeRef::Map { key, value } => {
+            let key = minted(ir, &ResolvedTypeRef::Primitive { name: *key }, true)
+                .filter(|key| matches!(key, Minted::Uuid | Minted::Text { .. }))?;
+            Some(Choice::Entry {
+                key,
+                value: Box::new(choose(ir, value, depth + 1)?),
+            })
+        }
+        ResolvedTypeRef::Optional { .. }
+        | ResolvedTypeRef::List { .. }
+        | ResolvedTypeRef::Primitive { .. } => None,
+    }
+}
+
+/// Whether `literal` is a value of `kind`, a chain of newtypes over a primitive: the primitive
+/// admits it ([`Primitive::admits`]), and at every layer its text starts with the prefix, draws
+/// from the alphabet, and every invariant is true with it bound at `value`, as ESS evaluates one.
+pub fn admits(ir: &EssIr, kind: &ResolvedTypeRef, literal: &FactValue) -> bool {
+    let mut kind = kind;
+    for _ in 0..=MAX_TYPE_DEPTH {
+        match kind {
+            ResolvedTypeRef::Primitive { name } => {
+                let node = match literal {
+                    FactValue::Bool(value) => Node::Bool(*value),
+                    FactValue::Number(number) => Node::Number(*number),
+                    FactValue::Text(text) => Node::Text(text.clone()),
+                };
+                return name.admits(&node).is_some();
+            }
+            ResolvedTypeRef::Declared { name } => {
+                let ResolvedBody::Newtype {
+                    of,
+                    alphabet,
+                    prefix,
+                    invariants,
+                } = &ir.named_type(name).body
+                else {
+                    return false;
+                };
+                if let FactValue::Text(text) = literal
+                    && (prefix
+                        .as_ref()
+                        .is_some_and(|prefix| !text.starts_with(prefix.as_str()))
+                        || alphabet.as_ref().is_some_and(|alphabet| {
+                            text.chars().any(|character| !alphabet.contains(character))
+                        }))
+                {
+                    return false;
+                }
+                let mut facts = FactStore::new();
+                facts.set_path("value", literal.clone());
+                if !invariants
+                    .iter()
+                    .all(|invariant| invariant.predicate.evaluate(&facts) == Truth::True)
+                {
+                    return false;
+                }
+                kind = of;
+            }
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// The most literals one newtype offers.
+const MAX_LITERALS: usize = 512;
+
+/// The literals `predicate` compares with, in order, each number followed by its neighbours one
+/// above and one below: the candidates ESS's interpreter tries (`interpret::response::literals`).
+fn literals(predicate: &Predicate, values: &mut Vec<FactValue>) {
+    match predicate {
+        Predicate::All(children) | Predicate::Any(children) => {
+            for child in children {
+                literals(child, values);
+            }
+        }
+        Predicate::Not(child) => literals(child, values),
+        Predicate::Compare { left, right, .. } => {
+            for operand in [left, right] {
+                let Operand::Literal(value) = operand else {
+                    continue;
+                };
+                let found = match value {
+                    FactValue::Number(number) => [
+                        Some(*number),
+                        number.checked_add(1i64.into()),
+                        number.checked_add((-1i64).into()),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .map(FactValue::Number)
+                    .collect(),
+                    other => vec![other.clone()],
+                };
+                for value in found {
+                    if values.len() < MAX_LITERALS {
+                        values.push(value);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
 }

@@ -72,9 +72,9 @@ pub struct Route {
     not_granted: bool,
 }
 
-/// The actor and caller every command of a surface is sent as, fixed for the whole run
-/// ([`Surface::fixing_caller`]): a test-backend switch, not authentication. A request proves
-/// nothing about who sends it.
+/// An actor and caller a surface sends commands as, fixed for the whole run
+/// ([`Surface::fixing_caller`], [`Surface::fixing_callers`]): a test-backend switch, not
+/// authentication. A request proves nothing about who sends it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Caller {
     /// The qualified name of the actor.
@@ -86,9 +86,8 @@ pub struct Caller {
 /// Why a route is kept but its operation not served.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unserved {
-    /// The command's route uses what this ingress does not serve, named. A request for it is
-    /// answered `501` before anything is read or written. A view this ingress cannot route is
-    /// not kept: its contract declares no `501`, so [`Surface::new`] refuses it.
+    /// The command's or view's route uses what this ingress does not serve, named. A request for
+    /// it is answered `501` before anything is read or written.
     Ingress(String),
     /// The kernel's [`runs`](spindle_kernel::runs) refuses the command, as its text. A request
     /// for it is answered as before this was known: the host refuses it before anything is read
@@ -264,13 +263,14 @@ impl Route {
         Ok(input)
     }
 
-    /// The caller a command is sent as, where the surface fixes one; `None` for none.
+    /// The fixed caller this route's operation is sent or read as: the first whose actor its
+    /// grant names, else the first fixed; `None` where the surface fixes none.
     pub fn caller(&self) -> Option<&Caller> {
         self.caller.as_ref()
     }
 
     /// Whether the route's view is read-granted (ess/22 `may:` naming a view, `x-ess-may-read`)
-    /// and the fixed caller's actor may not read it: ESS's served surface then refuses it `403`
+    /// and no fixed caller's actor may read it: ESS's served surface then refuses it `403`
     /// "not granted" before reading anything. Always `false` without a fixed caller.
     pub fn not_granted(&self) -> bool {
         self.not_granted
@@ -279,8 +279,8 @@ impl Route {
     /// The input `path` carries in its variables, read as [`ess_gen::http::Flat`] says; `None`
     /// when `path` does not match the template or leaves a variable's segment empty (ESS's
     /// served application matches only a variable holding a segment that is not empty),
-    /// `Some(Err)` when a variable's text is malformed. Nothing is read from a matched path for a
-    /// command the ingress does not serve or a view the fixed caller may not read: both are
+    /// `Some(Err)` when a variable's text is malformed. Nothing is read from a matched path for an
+    /// operation the ingress does not serve or a view the fixed caller may not read: both are
     /// refused before their request is read.
     fn carried(&self, path: &str) -> Option<Result<Map<String, Value>, String>> {
         if !ess_gen::http::template_matches(&self.segments, path) {
@@ -467,28 +467,27 @@ impl Surface {
     /// input, the request it declares (`json`, `form` or `query`) and the status it lists for an
     /// outcome ([`ess_gen::http::listed`]).
     ///
-    /// A command this ingress cannot route keeps its route and is marked [`Unserved::Ingress`]:
-    /// an outcome answered other than with the envelope (a body, headers, a redirect or text), a
-    /// standard refusal the binding answers its own way, an outcome that answers with the
-    /// command's retained result, or a path variable that is not a scalar. A command the kernel's [`runs`](spindle_kernel::runs) refuses is marked
-    /// [`Unserved::Kernel`], and a view the host's [`reads`](spindle_host::reads) refuses
-    /// [`Unserved::Host`].
+    /// A command or view this ingress cannot route keeps its route and is marked
+    /// [`Unserved::Ingress`]: for a command, an outcome answered other than with the envelope (a
+    /// body, headers, a redirect or text), an outcome that answers with the command's retained
+    /// result, or the caller attributes it reads where no caller is fixed; for a view, one
+    /// answered other than as `rows`, or a parameter in the query string that no single scalar
+    /// value carries; for either, a standard refusal the binding answers its own way or a path
+    /// variable that is not a scalar. A command the kernel's [`runs`](spindle_kernel::runs)
+    /// refuses is marked [`Unserved::Kernel`], and a view the host's
+    /// [`reads`](spindle_host::reads) refuses [`Unserved::Host`].
     ///
     /// # Errors
     /// [`SurfaceError::NoComponent`] for a name `ir` does not declare,
     /// [`SurfaceError::Collision`] when two components claim one route, and
     /// [`SurfaceError::Unsupported`] for a binding that answers a standard refusal its own way
-    /// for every operation, a path that is not a template, or a view this ingress cannot route
-    /// (one answered other than as `rows`, a standard refusal the binding answers its own way, a
-    /// path variable or a parameter in the query string that is not a scalar): ESS publishes no
-    /// `501` for a view, so it is refused rather than answered with a status its contract does
-    /// not declare.
+    /// for every operation, or a path that is not a template.
     pub fn new(
         ir: &EssIr,
         components: &[String],
         binding: Option<&Binding>,
     ) -> Result<Self, SurfaceError> {
-        Self::routed(ir, components, binding, None)
+        Self::routed(ir, components, binding, &[])
     }
 
     /// [`Surface::new`], every command sent as `caller`: a command that reads its caller is
@@ -503,14 +502,32 @@ impl Surface {
         binding: Option<&Binding>,
         caller: &Caller,
     ) -> Result<Self, SurfaceError> {
-        Self::routed(ir, components, binding, Some(caller))
+        Self::routed(ir, components, binding, std::slice::from_ref(caller))
+    }
+
+    /// [`Surface::new`], each command sent as the first of `callers` whose actor's `may:` names
+    /// it, and each read-granted view read as the first that may read it ([`Route::caller`]). An
+    /// operation none of them may run is sent as the first, so it answers ESS's standard refusal
+    /// naming that actor and writes nothing. A command that reads its caller is served rather than
+    /// marked [`Unserved::Ingress`]. With no callers this is [`Surface::new`]. The callers are not
+    /// checked here; bind each first ([`spindle_kernel::caller_binds`]).
+    ///
+    /// # Errors
+    /// As [`Surface::new`].
+    pub fn fixing_callers(
+        ir: &EssIr,
+        components: &[String],
+        binding: Option<&Binding>,
+        callers: &[Caller],
+    ) -> Result<Self, SurfaceError> {
+        Self::routed(ir, components, binding, callers)
     }
 
     fn routed(
         ir: &EssIr,
         components: &[String],
         binding: Option<&Binding>,
-        caller: Option<&Caller>,
+        callers: &[Caller],
     ) -> Result<Self, SurfaceError> {
         if let Some(binding) = binding
             && let Some(key) = binding.ir().refusals().keys().next()
@@ -528,7 +545,7 @@ impl Surface {
                 .find(|component| component.name.as_str() == name)
                 .ok_or_else(|| SurfaceError::NoComponent(name.clone()))?;
             for bound in ess_gen::http::bound_routes(ir, component, binding) {
-                let route = route(ir, name, &bound, caller)?;
+                let route = route(ir, name, &bound, callers)?;
                 if let Some(taken) = routes
                     .iter()
                     .find(|taken| taken.method == route.method && taken.path == route.path)
@@ -644,12 +661,12 @@ impl Surface {
 ///
 /// # Errors
 /// [`SurfaceError::Unsupported`] when the route's path is not a template ESS reads, so that no
-/// request can be matched to it, or for a view this ingress cannot route.
+/// request can be matched to it.
 fn route(
     ir: &EssIr,
     component: &str,
     bound: &ess_gen::http::Route<'_>,
-    caller: Option<&Caller>,
+    callers: &[Caller],
 ) -> Result<Route, SurfaceError> {
     let operation = bound.serves.operation();
     let path = bound.path.clone();
@@ -657,6 +674,7 @@ fn route(
         operation: operation.to_string(),
         what: format!("the path {path}: {reasons:?}"),
     })?;
+    let caller = chosen(ir, &operation, callers);
     let mut route = Route {
         component: component.to_owned(),
         method: bound.method.binding(),
@@ -676,14 +694,9 @@ fn route(
         not_granted: false,
     };
     match (served(ir, bound, &mut route), &route.operation) {
-        (Err(what), Operation::View(_)) => {
-            return Err(SurfaceError::Unsupported {
-                operation: route.operation.to_string(),
-                what,
-            });
-        }
-        (Err(what), Operation::Command(_)) => {
+        (Err(what), _) => {
             route.variables.clear();
+            route.queried.clear();
             route.statuses.clear();
             route.responding.clear();
             route.unserved = Some(Unserved::Ingress(what));
@@ -705,6 +718,29 @@ fn route(
         }
     }
     Ok(route)
+}
+
+/// The fixed caller `operation` is sent or read as: the first of `callers` whose actor may run the
+/// command or read the view, else the first, whom the grant check then refuses; `None` without
+/// callers. A view no actor's grant names is open, so the first may read it.
+fn chosen<'a>(ir: &EssIr, operation: &Operation, callers: &'a [Caller]) -> Option<&'a Caller> {
+    let granted = |caller: &&Caller| match operation {
+        Operation::Command(command) => may_run(ir, &caller.actor, command),
+        Operation::View(view) => may_read(ir, &caller.actor, view),
+    };
+    callers.iter().find(granted).or_else(|| callers.first())
+}
+
+/// Whether `actor` may send `command`: a declared actor whose `may:` names it
+/// ([`ess_compiler::ir::ResolvedActor::may`]), the grant the kernel checks before it runs one.
+fn may_run(ir: &EssIr, actor: &str, command: &str) -> bool {
+    ir.actors().iter().any(|(name, declared)| {
+        name.to_string() == actor
+            && declared
+                .may
+                .iter()
+                .any(|granted| granted.name().to_string() == command)
+    })
 }
 
 /// Whether `actor` may read `view`, by ESS's read grants: a view no actor's `may:` names is open

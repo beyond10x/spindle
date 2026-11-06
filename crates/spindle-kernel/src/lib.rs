@@ -68,7 +68,7 @@ pub use execute::{Invocation, at_rest, execute, execute_as, execute_at, execute_
 pub use mint::{Identity, Mint, Seeded, Uuid, UuidV4};
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteStore;
-pub use store::{Change, MemoryStore, Row, Store, StoreError, Stored};
+pub use store::{Change, MemoryStore, Removal, Row, Store, StoreError, Stored};
 pub use supported::check as runs;
 
 /// Refuses `value` unless it is a value of `kind`, naming what it is not: the check every command
@@ -103,6 +103,12 @@ pub struct DeclaredError {
     pub name: String,
     /// The error fields the outcome determines.
     pub fields: Map<String, Value>,
+    /// Whether this is the `wrong_state:` refusal answered for an identity no record carries.
+    /// Its fields are the ones ESS's interpreter carries there, those the outcome reads from
+    /// anything but the row; ESS's served application answers it with no payload, and its
+    /// published schema describes the payload as absent (`ess-gen` `openapi::outcome_schema`).
+    #[serde(skip)]
+    pub unknown_instance: bool,
 }
 
 /// What one command did.

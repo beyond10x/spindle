@@ -22,7 +22,7 @@ cargo build --locked --release -p spindle-cli
 The last lines of the build:
 
 ```text
-   Compiling spindle-cli v0.1.0 (…/spindle/crates/spindle-cli)
+   Compiling spindle-cli v0.2.0 (…/spindle/crates/spindle-cli)
     Finished `release` profile [optimized] target(s) in 37.59s
 ```
 
@@ -31,7 +31,7 @@ The binary is `target/release/b10x-spindle`. The commands below call it `b10x-sp
 
 ```console
 $ b10x-spindle --version
-b10x-spindle 0.1.0
+b10x-spindle 0.2.0
 ```
 
 ## Compile the specification

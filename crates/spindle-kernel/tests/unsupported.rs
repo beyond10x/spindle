@@ -72,7 +72,7 @@ commands:
     outcomes:
       - name: removed
         deletes: probe.counter.Counter
-        instance: counter_id
+        instances: {where: counter_id == input.counter_id}
         emits: [probe.counter.CounterRemoved]
         payload:
           probe.counter.CounterRemoved: {counter_id: input.counter_id}
@@ -144,7 +144,7 @@ fn a_when_guard_over_the_input_refuses_before_anything_is_created() {
 }
 
 #[test]
-fn a_deletion_is_refused_as_unsupported_and_changes_nothing() {
+fn a_set_deletion_is_refused_as_unsupported_and_changes_nothing() {
     let ir = probe();
     let mut store = MemoryStore::default();
     execute(
@@ -163,10 +163,11 @@ fn a_deletion_is_refused_as_unsupported_and_changes_nothing() {
         "probe.counter.RemoveCounter",
         &input(json!({"counter_id": "c1"})),
     )
-    .expect_err("`deletes:` is not run");
+    .expect_err("a set outcome (`instances:`) is not run");
     match &error {
         ExecuteError::Unsupported { construct } => {
-            assert!(construct.contains("deletes"), "{construct}");
+            assert!(construct.contains("instances"), "{construct}");
+            assert!(construct.contains("RemoveCounter"), "{construct}");
         }
         other => panic!("expected Unsupported, got {other:?}"),
     }

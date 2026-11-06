@@ -1,0 +1,115 @@
+domain: library.books
+summary: Books shelved once, lent while shelved, and removed from the catalogue unless lent.
+types:
+  - name: library.books.BookId
+    kind: newtype
+    of: String
+entities:
+  - name: library.books.Book
+    identity:
+      name: book_id
+      type: library.books.BookId
+    fields:
+      - name: title
+        type: String
+    lifecycle:
+      initial: Shelved
+      states: [Shelved, Lent]
+      terminal: [Shelved, Lent]
+      transitions:
+        - name: lend
+          from: [Shelved]
+          to: Lent
+errors:
+  - name: library.books.BookNotFound
+    summary: No book carries the id.
+    fields: []
+  - name: library.books.BookOnLoan
+    summary: A lent book is not removed.
+    fields: []
+  - name: library.books.BookHeld
+    summary: The book is held already.
+    fields: []
+commands:
+  - name: library.books.ShelveBook
+    input:
+      - name: book_id
+        type: library.books.BookId
+      - name: title
+        type: String
+    outcomes:
+      - name: shelved
+        creates: library.books.Book
+        instance: book_id
+        sets:
+          title: input.title
+        emits: [library.books.BookShelved]
+        payload:
+          library.books.BookShelved: {book_id: input.book_id, title: input.title}
+        summary: The book is shelved.
+  - name: library.books.LendBook
+    input:
+      - name: book_id
+        type: library.books.BookId
+    outcomes:
+      - name: no-such-book
+        unknown_instance: true
+        error: library.books.BookNotFound
+        summary: No book carries the id.
+      - name: lent
+        moves: library.books.Book.lend
+        instance: book_id
+        emits: [library.books.BookLent]
+        payload:
+          library.books.BookLent: {book_id: input.book_id}
+        summary: The book is lent.
+      - name: wrong-state
+        wrong_state: true
+        error: library.books.BookHeld
+        summary: Only a shelved book is lent.
+  - name: library.books.RemoveBook
+    input:
+      - name: book_id
+        type: library.books.BookId
+    outcomes:
+      - name: no-such-book
+        unknown_instance: true
+        error: library.books.BookNotFound
+        summary: No book carries the id.
+      - name: on-loan
+        when_subject: {predicate: state == Lent}
+        error: library.books.BookOnLoan
+        summary: A lent book stays in the catalogue.
+      - name: removed
+        deletes: library.books.Book
+        instance: book_id
+        emits: [library.books.BookRemoved]
+        payload:
+          library.books.BookRemoved: {book_id: input.book_id}
+        summary: The book leaves the catalogue.
+events:
+  - name: library.books.BookShelved
+    fields:
+      - name: book_id
+        type: library.books.BookId
+      - name: title
+        type: String
+  - name: library.books.BookLent
+    fields:
+      - name: book_id
+        type: library.books.BookId
+  - name: library.books.BookRemoved
+    fields:
+      - name: book_id
+        type: library.books.BookId
+views:
+  - name: library.books.Catalogue
+    source: library.books.Book
+    consistency: read_your_writes
+    fields:
+      - name: book_id
+        type: library.books.BookId
+      - name: title
+        type: String
+      - name: state
+        type: library.books.Book.State

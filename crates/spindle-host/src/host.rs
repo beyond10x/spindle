@@ -246,7 +246,7 @@ pub enum HostError {
         /// The refusing outcome.
         outcome: String,
         /// The declared error.
-        error: DeclaredError,
+        error: Box<DeclaredError>,
     },
     /// [`Host::reset`] could not empty a component's store.
     #[error(
@@ -928,7 +928,7 @@ impl Host {
                     component,
                     command: command.to_owned(),
                     outcome,
-                    error,
+                    error: Box::new(error),
                 });
             }
             Ok(executed) => report.ran.push(Ran {
@@ -1401,6 +1401,10 @@ impl Store for Lost {
     }
 
     fn commit(&mut self, _: &spindle_kernel::Change) -> Result<(), StoreError> {
+        Err(StoreError::Backend(self.0.clone()))
+    }
+
+    fn remove(&mut self, _: &spindle_kernel::Removal) -> Result<(), StoreError> {
         Err(StoreError::Backend(self.0.clone()))
     }
 

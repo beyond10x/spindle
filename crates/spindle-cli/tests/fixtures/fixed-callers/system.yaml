@@ -1,0 +1,25 @@
+format: ess/34
+system: bureau
+version: v1
+summary: Desks opened, locked and noted over the network, each by the actor whose grant names the command.
+domains:
+  - bureau.desk
+components:
+  - component: office
+    summary: Opens, locks, notes and reserves desks for callers outside the process.
+    owns:
+      domains:
+        - bureau.desk
+    accepts:
+      commands:
+        - bureau.desk.OpenDesk
+        - bureau.desk.LockDesk
+        - bureau.desk.NoteDesk
+        - bureau.desk.ReserveDesk
+    publishes:
+      events:
+        - bureau.desk.DeskOpened
+        - bureau.desk.DeskLocked
+        - bureau.desk.DeskNoted
+        - bureau.desk.DeskReserved
+    reached_by: network

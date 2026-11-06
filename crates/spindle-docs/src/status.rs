@@ -183,6 +183,13 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "Deleting outcomes",
+        "An outcome that declares deletes: on the instance its input names removes the row as ESS's interpreter does: it leaves every view, a later command on the identity answers as an unknown instance, and the outcome's events are published; on SQLite the removal survives a restart.",
+        "/docs/concepts/specification",
+        "crates/spindle-kernel/tests/deletes.rs::deletes_agree_with_the_interpreter",
+    ),
+    shipped(
+        "Execution",
         "List views with filters",
         "List views over every instance of an entity, with a state filter and an order.",
         "/docs/concepts/specification",
@@ -282,14 +289,14 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "Serve what runs",
-        "An HTTP run serves every command and view that runs and answers each other one 501 naming the construct, ESS's envelope for a command; the list is printed at startup, in name order. A view the ingress cannot route still refuses startup by name, since ESS publishes no 501 for a view. SQLite state without --state is kept in a temporary directory removed when the run ends.",
+        "An HTTP run serves every command and view that runs and answers each other one 501 naming the construct, ESS's envelope for a command; the list is printed at startup, in name order. A view the ingress cannot route answers 501 naming the construct too, and is listed at startup. SQLite state without --state is kept in a temporary directory removed when the run ends.",
         "/docs/concepts/capabilities",
         "crates/spindle-cli/tests/unserved.rs::an_unrunnable_command_answers_501_and_the_rest_serve",
     ),
     shipped(
         "Execution",
         "Fixed caller (test backend)",
-        "run --fixed-actor with --fixed-caller sends every served command as one actor and caller for the whole run, so a command that reads its caller is served: a test-backend switch, not authentication, opt-in only and printed on stderr at startup. The grant check still runs: a command the actor may not send answers 403 not granted and writes nothing.",
+        "run --fixed-actor with --fixed-caller sends served commands as actors and callers fixed for the whole run, so a command that reads its caller is served: a test-backend switch, not authentication, opt-in only and printed on stderr at startup. The grant check still runs: a command the actor may not send answers 403 not granted and writes nothing. Given more than once, each command is sent as the first fixed actor its grant names.",
         "/docs/concepts/capabilities",
         "crates/spindle-cli/tests/fixed_caller.rs::a_command_reading_the_caller_runs_with_the_fixed_caller",
     ),

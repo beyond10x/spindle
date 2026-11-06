@@ -130,7 +130,9 @@ cut from `main`:
 1. On a branch from current `origin/main`, set `version` under `[workspace.package]` in
    `Cargo.toml` and refresh `Cargo.lock` (`cargo update -w`). Rename `## [Unreleased]` in
    `CHANGELOG.md` to `## [<version>] - <YYYY-MM-DD>` and open a new empty `## [Unreleased]` above
-   it.
+   it. Rebind `conformance-known-failures.json` to the version: `implementation` is
+   `b10x-spindle <version>` and `implementation_build` is `sha256:` of that string
+   (`spindle_conformance::build`); otherwise `check:conformance` refuses the declaration.
 2. Run `task check`, exit 0.
 3. Commit `chore: release <version>` through the bot (`git add <paths> && b10x-gates bot --
    commit -F <file>`), push the branch through the bot, open the pull request through

@@ -33,6 +33,20 @@
 //! the outcome draws: ESS leaves every response value to the implementation. A one-time field
 //! (`one_time_response:`) is a `String` and so a fresh UUID's text on every draw; it is minted
 //! for the answer alone and written nowhere else.
+//!
+//! A response field of a type [`minted`] does not answer is built in the shape ESS's interpreter
+//! builds one (`interpret::response::base`) by [`response`], the rule derivation reads too: a
+//! record without invariants holds each member by these rules, an `Optional` one as its
+//! required type; a union is its first variant by tag value; a map holds one entry, its key
+//! minted as text; an enum is the variant a fresh draw names, as ESS's input witness cycles them.
+//! A constrained newtype is a literal its invariants, or those of the newtype it wraps, name: the
+//! first that ESS's predicates find true of it (`spindle_capability::mint::admits`). That literal
+//! is Spindle's choice, not ESS's own pick; what holds it to ESS is that the whole answer passes
+//! ESS's type check before it is returned. Each drawn leaf takes its draw in that order. A record
+//! with invariants, a record that holds itself, a map keyed by anything but text, and a newtype
+//! for which no literal fits are refused by name before the command runs, and derivation names
+//! no capability for them. A `{generated: true}` field takes [`generated`], the same structure
+//! without literals or enums.
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -45,8 +59,11 @@ use ess_compiler::ir::{
 };
 use ess_domain::Invariant;
 use ess_domain::QualifiedName;
-use serde_json::Value;
-pub(crate) use spindle_capability::mint::{Minted, absent, minted};
+use ess_primitives::facts::FactValue;
+use serde_json::{Map, Value};
+pub(crate) use spindle_capability::mint::{
+    Choice, Minted, Unanswered, absent, generated, minted, response,
+};
 use spindle_capability::mint::{candidate, holds_for, length_only};
 pub use uuid::Uuid;
 
@@ -190,31 +207,29 @@ impl<'m> Generator<'m> {
         let value = if absent(&field.target_type, present) {
             None
         } else {
-            let shape = minted(ir, &field.target_type, present).ok_or_else(|| {
+            let choice = generated(ir, &field.target_type, present).ok_or_else(|| {
                 ExecuteError::Unsupported {
                     construct: unmintable(&field.target, &field.target_type),
                 }
             })?;
             let owner = owner.to_string();
-            let value = value(
-                &shape,
-                || {
-                    self.uuid(&Identity {
+            let value = self
+                .choose(
+                    &choice,
+                    &Identity {
                         capability: IDENTITY_MINT,
                         command: self.command,
                         outcome,
                         entity: &owner,
                         field: &field.target,
-                    })
-                },
-                self.now,
-            )
-            .map_err(|error| {
-                ExecuteError::InvalidValue(format!(
-                    "the value minted for `{owner}.{}` in `{}/{outcome}` would be {error}",
-                    field.target, self.command
-                ))
-            })?;
+                    },
+                )
+                .map_err(|error| {
+                    ExecuteError::InvalidValue(format!(
+                        "the value minted for `{owner}.{}` in `{}/{outcome}` would be {error}",
+                        field.target, self.command
+                    ))
+                })?;
             crate::typed::validate(ir, &field.target_type, &value).map_err(|error| {
                 ExecuteError::InvalidValue(format!(
                     "the value minted for `{owner}.{}` in `{}/{outcome}` would hold {error}",
@@ -226,14 +241,100 @@ impl<'m> Generator<'m> {
         self.minted.borrow_mut().push((place, value.clone()));
         Ok(value)
     }
+
+    /// A value built as `choice` says ([`spindle_capability::mint::chosen`]), each minted leaf
+    /// drawn for `identity`, a record member's under the member's own name.
+    ///
+    /// # Errors
+    /// The reason, where a leaf cannot be spelled.
+    pub(crate) fn choose(&self, choice: &Choice, identity: &Identity<'_>) -> Result<Value, String> {
+        match choice {
+            Choice::Mint(shape) => self.mint(shape, identity),
+            Choice::Literal(literal) => spelled(literal),
+            Choice::Enum(variants) => Ok(Value::String(variant(variants, self.uuid(identity)))),
+            Choice::Record(members) => members
+                .iter()
+                .map(|(name, member)| {
+                    let at = Identity {
+                        field: name,
+                        ..*identity
+                    };
+                    Ok((name.clone(), self.choose(member, &at)?))
+                })
+                .collect::<Result<Map<_, _>, String>>()
+                .map(Value::Object),
+            Choice::Variant {
+                tag,
+                label,
+                content,
+            } => {
+                let mut variant = Map::new();
+                variant.insert(tag.clone(), Value::String(label.clone()));
+                if let Some((key, content)) = content {
+                    variant.insert((*key).to_owned(), self.choose(content, identity)?);
+                }
+                Ok(Value::Object(variant))
+            }
+            Choice::Entry { key, value } => {
+                let Value::String(key) = self.mint(key, identity)? else {
+                    return Err("a map key that is not text".to_owned());
+                };
+                let value = self.choose(value, identity)?;
+                Ok(Value::Object(Map::from_iter([(key, value)])))
+            }
+        }
+    }
 }
+
+/// `literal` as JSON: an integral number as an integer, as ESS's interpreter answers one.
+fn spelled(literal: &FactValue) -> Result<Value, String> {
+    match literal {
+        FactValue::Number(number) => match number.as_i64() {
+            Some(integer) => Ok(Value::from(integer)),
+            None => serde_json::to_value(literal).map_err(|error| error.to_string()),
+        },
+        _ => serde_json::to_value(literal).map_err(|error| error.to_string()),
+    }
+}
+
+/// The variant of `variants` a drawn `uuid` names: the UUID modulo their count. ESS's input
+/// witness cycles an enum's variants by the distinction it builds for (`witness.rs`,
+/// `Builder::value`, `ResolvedBody::Enum`: `variants[distinction % variants.len()]`), so a fresh
+/// draw per answer cycles them too. `variants` is never empty ([`spindle_capability::mint::chosen`]).
+fn variant(variants: &[String], uuid: Uuid) -> String {
+    let count = u128::try_from(variants.len()).unwrap_or(u128::MAX).max(1);
+    let index = usize::try_from(uuid.as_u128() % count).unwrap_or_default();
+    variants.get(index).cloned().unwrap_or_default()
+}
+
+/// What the runtime chooses, as the refusals of a type it does not name it.
+pub(crate) const CHOOSES: &str = "it mints a `Uuid`, a `String`, an `Integer`, a `Boolean`, a \
+     `Bytes`, a `List` or a `Timestamp`, or a newtype of one without invariants, and builds a \
+     record without invariants, a union's first variant, a map of one entry keyed by text, an \
+     enum's variant, or a constrained newtype from a literal its invariants, or its wrapped \
+     type's, name";
 
 /// The refusal of `{generated: true}` on `field`, whose type the runtime does not mint.
 pub(crate) fn unmintable(field: &str, kind: &ResolvedTypeRef) -> String {
     format!(
         "`{{generated: true}}` on `{field}` of type `{kind}`; the runtime mints a `Uuid`, a \
          `String`, an `Integer`, a `Boolean`, a `Bytes`, a `List` or a `Timestamp`, or a newtype \
-         of one without invariants"
+         of one without invariants, and builds a record without invariants, a union's first \
+         variant or a map of one entry keyed by text from them"
+    )
+}
+
+/// The refusal of the error field `field` of `error` that the refusing outcome gives no source,
+/// no row it is answered for holds and whose type the runtime does not mint
+/// ([`spindle_capability::mint::Unsourced::Unfilled`]).
+pub(crate) fn unfilled(error: &str, field: &ResolvedField) -> String {
+    format!(
+        "the error field `{error}.{}` of type `{}`, which the outcome gives no source and no row \
+         it is answered for holds; the runtime mints a `Uuid`, a `String`, an `Integer`, a \
+         `Boolean`, a `Bytes`, a `List` or a `Timestamp`, or a newtype of one without invariants, \
+         and builds a record without invariants, a union's first variant or a map of one entry \
+         keyed by text from them",
+        field.name, field.type_ref
     )
 }
 

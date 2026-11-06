@@ -1,0 +1,63 @@
+format: ess/34
+system: study
+version: v1
+summary: Desks and books in one component, and a ledger kept and dropped by bindings in another.
+domains:
+  - study.room
+  - study.ledger
+components:
+  - component: room
+    summary: Opens, closes and removes desks, and shelves, checks and discards books.
+    owns:
+      domains:
+        - study.room
+    accepts:
+      commands:
+        - study.room.OpenDesk
+        - study.room.CloseDesk
+        - study.room.RemoveDesk
+        - study.room.ShelveBook
+        - study.room.DiscardBook
+        - study.room.CheckBook
+    publishes:
+      events:
+        - study.room.DeskOpened
+        - study.room.DeskClosed
+        - study.room.DeskRemoved
+        - study.room.BookShelved
+        - study.room.BookDiscarded
+        - study.room.BookChecked
+    reached_by: in_process
+  - component: ledger
+    summary: Keeps one entry per desk; only bindings reach it.
+    owns:
+      domains:
+        - study.ledger
+    accepts:
+      commands:
+        - study.ledger.KeepEntry
+        - study.ledger.DropEntry
+    publishes:
+      events:
+        - study.ledger.EntryKept
+        - study.ledger.EntryDropped
+    reached_by: in_process
+bindings:
+  - id: keep-entry
+    when:
+      event: study.room.DeskOpened
+    invoke:
+      command: study.ledger.KeepEntry
+    mapping:
+      desk_id: event.desk_id
+    delivery: at_most_once
+    on_failure: drop
+  - id: drop-entry
+    when:
+      event: study.room.DeskRemoved
+    invoke:
+      command: study.ledger.DropEntry
+    mapping:
+      desk_id: event.desk_id
+    delivery: at_most_once
+    on_failure: drop

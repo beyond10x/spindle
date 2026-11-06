@@ -1,0 +1,19 @@
+format: ess/34
+system: notes
+version: v1
+summary: Notes written over the network and read whole or by a list of texts.
+domains:
+  - notes.pad
+components:
+  - component: pad
+    summary: Writes notes for callers outside the process and answers their views.
+    owns:
+      domains:
+        - notes.pad
+    accepts:
+      commands:
+        - notes.pad.WriteNote
+    publishes:
+      events:
+        - notes.pad.NoteWritten
+    reached_by: network

@@ -354,8 +354,8 @@ dependencies = [
 
 [[package]]
 name = "ess-compiler"
-version = "0.87.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.87.0#92a26d29f6c73e1170fb3d5e816dda86016d4c9a"
+version = "0.88.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.88.0#bd6ecb330d7747a98418b35fc13c80771303484f"
 dependencies = [
  "ess-domain",
  "ess-primitives",
@@ -366,8 +366,8 @@ dependencies = [
 
 [[package]]
 name = "ess-conformance"
-version = "0.87.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.87.0#92a26d29f6c73e1170fb3d5e816dda86016d4c9a"
+version = "0.88.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.88.0#bd6ecb330d7747a98418b35fc13c80771303484f"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -381,8 +381,8 @@ dependencies = [
 
 [[package]]
 name = "ess-domain"
-version = "0.87.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.87.0#92a26d29f6c73e1170fb3d5e816dda86016d4c9a"
+version = "0.88.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.88.0#bd6ecb330d7747a98418b35fc13c80771303484f"
 dependencies = [
  "ess-primitives",
  "ess-yaml",
@@ -394,8 +394,8 @@ dependencies = [
 
 [[package]]
 name = "ess-gen"
-version = "0.87.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.87.0#92a26d29f6c73e1170fb3d5e816dda86016d4c9a"
+version = "0.88.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.88.0#bd6ecb330d7747a98418b35fc13c80771303484f"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -411,8 +411,8 @@ dependencies = [
 
 [[package]]
 name = "ess-http"
-version = "0.87.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.87.0#92a26d29f6c73e1170fb3d5e816dda86016d4c9a"
+version = "0.88.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.88.0#bd6ecb330d7747a98418b35fc13c80771303484f"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -425,8 +425,8 @@ dependencies = [
 
 [[package]]
 name = "ess-primitives"
-version = "0.87.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.87.0#92a26d29f6c73e1170fb3d5e816dda86016d4c9a"
+version = "0.88.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.88.0#bd6ecb330d7747a98418b35fc13c80771303484f"
 dependencies = [
  "ess-yaml",
  "schemars",
@@ -437,8 +437,8 @@ dependencies = [
 
 [[package]]
 name = "ess-transport"
-version = "0.87.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.87.0#92a26d29f6c73e1170fb3d5e816dda86016d4c9a"
+version = "0.88.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.88.0#bd6ecb330d7747a98418b35fc13c80771303484f"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -449,8 +449,8 @@ dependencies = [
 
 [[package]]
 name = "ess-yaml"
-version = "0.87.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.87.0#92a26d29f6c73e1170fb3d5e816dda86016d4c9a"
+version = "0.88.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.88.0#bd6ecb330d7747a98418b35fc13c80771303484f"
 dependencies = [
  "serde",
  "serde_norway",
@@ -1264,8 +1264,8 @@ dependencies = [
 
 [[package]]
 name = "schema-contract"
-version = "0.87.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.87.0#92a26d29f6c73e1170fb3d5e816dda86016d4c9a"
+version = "0.88.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.88.0#bd6ecb330d7747a98418b35fc13c80771303484f"
 dependencies = [
  "base64",
  "ess-gen",
@@ -1456,7 +1456,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-capability"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -1469,7 +1469,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-channel"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -1484,7 +1484,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1515,7 +1515,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-conformance"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ess-compiler",
  "ess-conformance",
@@ -1533,7 +1533,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-control"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ess-compiler",
  "http-body-util",
@@ -1557,7 +1557,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-docs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1567,7 +1567,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-firecracker"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "libc",
@@ -1584,7 +1584,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-host"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ess-compiler",
  "ess-conformance",
@@ -1604,7 +1604,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-ingress"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ess-compiler",
  "ess-conformance",
@@ -1626,7 +1626,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-kernel"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ess-compiler",
  "ess-conformance",
@@ -1648,7 +1648,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-qemu"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "libc",
@@ -1665,7 +1665,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-spec"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -1677,7 +1677,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-target"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ess-compiler",
  "rustix",
@@ -1692,7 +1692,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-telemetry"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ess-compiler",
  "libc",
@@ -1707,7 +1707,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-timer"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ess-compiler",
  "ess-domain",

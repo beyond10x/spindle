@@ -13,6 +13,7 @@ use ess_domain::QualifiedName;
 use ess_domain::command::precedence::Phase;
 use ess_primitives::predicate::{Predicate, Truth};
 use serde_json::{Map, Value};
+use spindle_capability::mint::Unsourced;
 
 use crate::decider::{Decider, External};
 use crate::facts::Facts;
@@ -20,6 +21,8 @@ use crate::mint::{Generator, IDENTITY_MINT, Identity, Mint, UuidV4};
 use crate::store::{Change, Row, Store, Stored};
 use crate::values::Sources;
 use crate::{DeclaredError, Event, ExecuteError, Executed};
+
+mod delete;
 
 /// The prefix of the capability an `external:` outcome is answered through, as admission derives
 /// it.
@@ -876,6 +879,11 @@ impl<'a, 'ir> Run<'a, 'ir> {
             });
         };
         let entity = self.ir.entity(&subject.entity);
+        if let (ResolvedEffect::Deletes, ResolvedInstance::Supplied { .. }) =
+            (&subject.effect, &subject.instance)
+        {
+            return self.delete(outcome, entity);
+        }
         let (change, events) = match (&subject.effect, &subject.instance) {
             (ResolvedEffect::Creates, ResolvedInstance::Observed { event, field }) => {
                 self.publish_reads(outcome, None)?;
@@ -1194,15 +1202,91 @@ impl<'a, 'ir> Run<'a, 'ir> {
             error: true,
             ..self.sources(outcome, error.name(), None, before)
         };
+        let mut fields = sources.object(&outcome.error_payload)?;
+        self.unsourced_error_fields(outcome, before, &mut fields)?;
         Ok(Some(DeclaredError {
             name: error.name().to_string(),
-            fields: sources.object(&outcome.error_payload)?,
+            fields,
+            unknown_instance: outcome.condition == ResolvedCondition::WrongState
+                && before.is_none(),
         }))
     }
 
+    /// Fills each field of `outcome`'s error that `outcome` gives no source, after the sourced
+    /// ones, as [`spindle_capability::mint::unsourced`] says: from the row the refusal is
+    /// answered for (`before`), as ESS's served application reads it, else minted from its type,
+    /// as ESS's interpreter leaves it to the implementation; an `Optional` one no row fills stays
+    /// absent. Without a row (the unknown-instance arm of `wrong_state:`) a field the row would
+    /// fill is left out: an instance that does not exist has nothing to describe.
+    fn unsourced_error_fields(
+        &self,
+        outcome: &ResolvedOutcome,
+        before: Option<&Row>,
+        fields: &mut Map<String, Value>,
+    ) -> Result<(), ExecuteError> {
+        let Some(error) = outcome.error.as_ref() else {
+            return Ok(());
+        };
+        let owner = error.name().to_string();
+        for (field, fill) in spindle_capability::mint::unsourced(self.ir, self.spec, outcome) {
+            let value = match (fill, before) {
+                (Unsourced::State, Some(row)) => Some(Value::String(row.state.clone())),
+                (Unsourced::Stored(stored), Some(row)) => self
+                    .held
+                    .as_ref()
+                    .filter(|held| held.entity.identity.name == stored)
+                    .map(|held| held.identity.clone())
+                    .or_else(|| row.fields.get(stored).cloned())
+                    .filter(|value| !value.is_null()),
+                (Unsourced::State | Unsourced::Stored(_), None)
+                | (Unsourced::Absent | Unsourced::Unanswered, _) => None,
+                (Unsourced::Minted(choice), _) => {
+                    let minted = self
+                        .generator
+                        .choose(
+                            &choice,
+                            &Identity {
+                                capability: IDENTITY_MINT,
+                                command: self.command,
+                                outcome: outcome.name.as_str(),
+                                entity: &owner,
+                                field: &field.name,
+                            },
+                        )
+                        .map_err(|why| {
+                            ExecuteError::InvalidValue(format!(
+                                "the value minted for `{owner}.{}` in `{}/{}` would be {why}",
+                                field.name,
+                                self.command,
+                                outcome.name.as_str()
+                            ))
+                        })?;
+                    crate::typed::validate(self.ir, &field.type_ref, &minted).map_err(|why| {
+                        ExecuteError::InvalidValue(format!(
+                            "the value minted for `{owner}.{}` in `{}/{}` would hold {why}",
+                            field.name,
+                            self.command,
+                            outcome.name.as_str()
+                        ))
+                    })?;
+                    Some(minted)
+                }
+                (Unsourced::Unfilled, _) => {
+                    return Err(ExecuteError::Unsupported {
+                        construct: crate::mint::unfilled(&owner, field),
+                    });
+                }
+            };
+            if let Some(value) = value {
+                fields.insert(field.name.clone(), value);
+            }
+        }
+        Ok(())
+    }
+
     /// The command's response, where `outcome` answers it ([`crate::mint::answers`]): each
-    /// declared field minted from its type through the [`Generator`], drawn after everything else
-    /// the outcome draws. `None` for every other outcome.
+    /// declared field chosen from its type through the [`Generator`] ([`crate::mint::response`]),
+    /// drawn after everything else the outcome draws. `None` for every other outcome.
     ///
     /// A one-time field's value is checked to appear in no other field and no field name of this
     /// answer, as ESS's interpreter checks the one it originates; a refusal names the field, never
@@ -1224,18 +1308,20 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     outcome.name.as_str()
                 )
             };
-            let shape = crate::mint::minted(self.ir, &field.type_ref, true).ok_or_else(|| {
-                ExecuteError::Unsupported {
-                    construct: format!(
-                        "the response field {}, whose type the runtime does not mint",
-                        at()
-                    ),
-                }
-            })?;
+            let one_time = outcome.one_time_response.contains(&field.name);
+            let choice =
+                crate::mint::response(self.ir, &field.type_ref, one_time).map_err(|_| {
+                    ExecuteError::Unsupported {
+                        construct: format!(
+                            "the response field {}, whose type the runtime does not choose",
+                            at()
+                        ),
+                    }
+                })?;
             let value = self
                 .generator
-                .mint(
-                    &shape,
+                .choose(
+                    &choice,
                     &Identity {
                         capability: IDENTITY_MINT,
                         command: self.command,
