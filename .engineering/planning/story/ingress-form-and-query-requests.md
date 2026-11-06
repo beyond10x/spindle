@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:ingress-form-and-query-requests
 kind: story
-status: active
+status: implemented
 title: Form- and query-encoded command requests are accepted
 relations:
 - serves: vision:spindle
@@ -13,10 +13,11 @@ scope:
   path: crates/spindle-ingress/src/listener.rs
 - confidence: cited
   path: crates/spindle-ingress/src/surface.rs
-revision: 5
+revision: 7
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-06T00:36:51Z", actor: "agent:b10x-chef-orchestrator", revision: 4}
 - {from: "proposed", to: "active", at: "2026-11-06T00:36:51Z", actor: "agent:b10x-chef-orchestrator", revision: 5}
+- {from: "active", to: "implemented", at: "2026-11-06T13:06:14Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"test_result":2}}}
 ---
 # Form- and query-encoded command requests are accepted
 
@@ -39,7 +40,7 @@ every request for it is answered `501`.
   written.
 - `a_form_field_carried_in_the_path_too_is_refused_400` — as for a JSON body today.
 - `a_json_body_to_a_form_route_is_refused` — a body whose content type is not the declared
-  encoding is refused `415`, nothing written.
+  encoding is refused `400`, nothing written, as ESS's served application refuses it.
 
 ## Origin
 

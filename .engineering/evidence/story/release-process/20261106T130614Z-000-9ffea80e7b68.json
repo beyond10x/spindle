@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-06T13:06:14Z",
+  "actor": "human:timo",
+  "artifact": "story:release-process",
+  "kind": "story",
+  "revision": 5,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "Release 0.1.0 from main a27ef32: Release run 42221058578 success; verify-release.sh spindle 0.1.0 exit 0; release by b10x-bot[bot] with Linux x86_64 and aarch64 archives and SHA256SUMS, sha256sum --check OK",
+    "reference": "https://github.com/beyond10x/spindle/releases/tag/0.1.0"
+  }
+}

@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:ingress-view-parameters
 kind: story
-status: active
+status: implemented
 title: Views with path or query parameters are served
 relations:
 - serves: vision:spindle
@@ -15,10 +15,11 @@ scope:
   path: crates/spindle-ingress/src/answer.rs
 - confidence: inferred
   path: crates/spindle-ingress/src/surface.rs
-revision: 5
+revision: 6
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-06T00:36:51Z", actor: "agent:b10x-chef-orchestrator", revision: 4}
 - {from: "proposed", to: "active", at: "2026-11-06T00:36:51Z", actor: "agent:b10x-chef-orchestrator", revision: 5}
+- {from: "active", to: "implemented", at: "2026-11-06T13:06:13Z", actor: "human:timo", revision: 6, decided_on: {"recorded":{"test_result":2}}}
 ---
 # Views with path or query parameters are served
 
