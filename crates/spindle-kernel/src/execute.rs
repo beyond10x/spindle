@@ -21,6 +21,8 @@ use crate::store::{Change, Row, Store, Stored};
 use crate::values::Sources;
 use crate::{DeclaredError, Event, ExecuteError, Executed};
 
+mod delete;
+
 /// The prefix of the capability an `external:` outcome is answered through, as admission derives
 /// it.
 const EXTERNAL: &str = "external.";
@@ -876,6 +878,11 @@ impl<'a, 'ir> Run<'a, 'ir> {
             });
         };
         let entity = self.ir.entity(&subject.entity);
+        if let (ResolvedEffect::Deletes, ResolvedInstance::Supplied { .. }) =
+            (&subject.effect, &subject.instance)
+        {
+            return self.delete(outcome, entity);
+        }
         let (change, events) = match (&subject.effect, &subject.instance) {
             (ResolvedEffect::Creates, ResolvedInstance::Observed { event, field }) => {
                 self.publish_reads(outcome, None)?;

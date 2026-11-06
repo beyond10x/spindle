@@ -1,0 +1,75 @@
+domain: library.shelf
+summary: Books shelved once and deleted from the shelf, read as the list of those still held.
+types:
+  - name: library.shelf.BookId
+    kind: newtype
+    of: String
+entities:
+  - name: library.shelf.Book
+    identity:
+      name: id
+      type: library.shelf.BookId
+    fields:
+      - name: title
+        type: String
+    lifecycle:
+      initial: Shelved
+      states: [Shelved]
+      terminal: [Shelved]
+errors:
+  - name: library.shelf.BookNotFound
+    summary: No book carries the id.
+    fields: []
+commands:
+  - name: library.shelf.ShelveBook
+    input:
+      - name: id
+        type: library.shelf.BookId
+      - name: title
+        type: String
+    outcomes:
+      - name: shelved
+        creates: library.shelf.Book
+        instance: id
+        sets:
+          title: input.title
+        emits: [library.shelf.BookShelved]
+        payload:
+          library.shelf.BookShelved: {id: input.id, title: input.title}
+        summary: The book is shelved.
+  - name: library.shelf.RemoveBook
+    input:
+      - name: id
+        type: library.shelf.BookId
+    outcomes:
+      - name: no-such-book
+        unknown_instance: true
+        error: library.shelf.BookNotFound
+        summary: No book carries the id.
+      - name: removed
+        deletes: library.shelf.Book
+        instance: id
+        emits: [library.shelf.BookRemoved]
+        payload:
+          library.shelf.BookRemoved: {id: input.id}
+        summary: The book is deleted from the shelf.
+events:
+  - name: library.shelf.BookShelved
+    fields:
+      - name: id
+        type: library.shelf.BookId
+      - name: title
+        type: String
+  - name: library.shelf.BookRemoved
+    fields:
+      - name: id
+        type: library.shelf.BookId
+views:
+  - name: library.shelf.ShelvedBooks
+    source: library.shelf.Book
+    consistency: read_your_writes
+    fields:
+      - name: id
+        type: library.shelf.BookId
+      - name: title
+        type: String

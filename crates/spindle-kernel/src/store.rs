@@ -48,6 +48,20 @@ pub struct Change {
     pub events: Vec<Event>,
 }
 
+/// One command removing one instance: `deletes:`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Removal {
+    /// The entity, by qualified name.
+    pub entity: String,
+    /// The instance's identity.
+    pub identity: Value,
+    /// The version read before deciding. A store refuses the removal when the instance moved in
+    /// between.
+    pub expected: u64,
+    /// The events the command emitted, in order.
+    pub events: Vec<Event>,
+}
+
 /// Why a store could not read or commit.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -83,6 +97,15 @@ pub trait Store {
     /// [`StoreError::Backend`] when the store cannot be written.
     fn commit(&mut self, change: &Change) -> Result<(), StoreError>;
 
+    /// Removes the instance `removal` names and records its events, atomically: once it returns,
+    /// [`Store::load`] answers `None` for the identity, [`Store::scan`] leaves it out, and a later
+    /// [`Change`] with `expected: None` may create it again.
+    ///
+    /// # Errors
+    /// [`StoreError::Conflict`] when the instance is absent or not at `removal.expected`, and
+    /// [`StoreError::Backend`] when the store cannot be written.
+    fn remove(&mut self, removal: &Removal) -> Result<(), StoreError>;
+
     /// Every instance of `entity`, each with its identity, ordered by the identity's canonical
     /// JSON text: one order on every store, whatever order the instances were written in. Each
     /// carries the row and the version [`Store::load`] would answer for it.
@@ -108,6 +131,9 @@ pub(crate) fn identity_from_key(text: &str) -> Result<Value, StoreError> {
 #[derive(Debug, Default)]
 pub struct MemoryStore {
     rows: BTreeMap<(String, String), Stored>,
+    /// The last version of each removed instance, so one created again under its identity goes
+    /// on from it and no commit that read the removed row matches the new one.
+    removed: BTreeMap<(String, String), u64>,
     events: Vec<Event>,
 }
 
@@ -134,14 +160,35 @@ impl Store for MemoryStore {
                 actual,
             });
         }
+        let version = actual
+            .or_else(|| self.removed.get(&key).copied())
+            .unwrap_or(0)
+            + 1;
         self.rows.insert(
             key,
             Stored {
                 row: change.row.clone(),
-                version: actual.unwrap_or(0) + 1,
+                version,
             },
         );
         self.events.extend(change.events.iter().cloned());
+        Ok(())
+    }
+
+    fn remove(&mut self, removal: &Removal) -> Result<(), StoreError> {
+        let key = key(&removal.entity, &removal.identity);
+        let actual = self.rows.get(&key).map(|stored| stored.version);
+        if actual != Some(removal.expected) {
+            return Err(StoreError::Conflict {
+                entity: removal.entity.clone(),
+                identity: key.1,
+                expected: Some(removal.expected),
+                actual,
+            });
+        }
+        self.rows.remove(&key);
+        self.removed.insert(key, removal.expected);
+        self.events.extend(removal.events.iter().cloned());
         Ok(())
     }
 
