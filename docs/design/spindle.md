@@ -131,16 +131,16 @@ What `spindle.deployment` declares, and what stays a runtime rule outside the mo
   capability outside `requires`. The model does not guard it: ESS synthesis cannot witness a
   forced external outcome whose guard relates an input list to a stored list, and the guard cost
   the `refused` scenario and every scenario through `Refused`
-  (`crates/spindle-kernel/tests/adversary_admission.rs::adversary_admission_names_only_required_capabilities_missing_at_runtime`).
+  (`crates/spindle-kernel/tests/spindle-kernel/adversary_admission.rs::adversary_admission_names_only_required_capabilities_missing_at_runtime`).
 - **That the environment provides each binding is a runtime rule.** `admitted` does not read the
   environment's `provides`: the kernel does not yet evaluate a guard over a related row. The
   check is `spindle_capability::admit`, which binds only an implementation the environment
   document lists for the capability, and names every required capability it lists none for as
-  missing (`crates/spindle-capability/tests/admission.rs`).
+  missing (`crates/spindle-capability/tests/spindle-capability/admission.rs`).
 - **Preference order is a runtime rule.** The model holds the bindings admission chose, not their
   rank. The rank is the order of each capability's list in the environment document, most
   preferred first, and `spindle_capability::admit` takes the first
-  (`crates/spindle-kernel/tests/deployment.rs::preference_order_is_declared`).
+  (`crates/spindle-kernel/tests/spindle-kernel/deployment.rs::preference_order_is_declared`).
 - **`requires` is an input, and its value is derived.** ESS cannot compute a list from a bundle
   digest, so `OfferBundle` takes `requires` from its caller. The caller passes exactly what
   `spindle_capability::derive` computes from the bundle's compiled specification; nothing else may
@@ -430,7 +430,7 @@ player's `PaddleMoveRequested` event binds to the table's `MovePaddle`. `PaddleM
 for observers, as `PointScored` and `MatchWon` are: no binding consumes them.
 
 The rules, each declared in `examples/rally/ess/` and checked by
-`crates/spindle-kernel/tests/rally.rs`:
+`crates/spindle-kernel/tests/spindle-kernel/rally.rs`:
 
 - **A tick moves the ball, serves it, turns it, scores or ends the match.** `Tick` answers with
   the first declared branch whose guard holds. A plain move shifts the ball one cell across and
@@ -442,7 +442,7 @@ The rules, each declared in `examples/rally/ess/` and checked by
   rows 0 to 8; `rally.table.Match`, `rally.west.Player` and `rally.east.Player` declare these
   bounds as invariants, which the terminal frame relies on (`crates/spindle-host/src/rally.rs`).
   The kernel refuses a step that would break one, and the kernel tests
-  (`crates/spindle-kernel/tests/rally.rs`) put a row one cell past each bound. ESS's synthesized
+  (`crates/spindle-kernel/tests/spindle-kernel/rally.rs`) put a row one cell past each bound. ESS's synthesized
   suite checks the invariants only after the branches it reaches (3 of the 13 state-changing
   `Tick` branches), and no synthesized scenario offers a value outside the grid and expects it
   refused.
@@ -474,7 +474,7 @@ Deployed on microVMs, it is one deployment: the bundle offered once to the envir
 three placement instances of that deployment, each on its own microVM target, and every target
 provides the same environment. A deployment has one environment, so a component's bindings are the
 deployment's bindings for the capabilities that component uses
-(`crates/spindle-kernel/tests/deployment.rs::one_bundle_in_three_environments_is_decided`). On a
+(`crates/spindle-kernel/tests/spindle-kernel/deployment.rs::one_bundle_in_three_environments_is_decided`). On a
 laptop the same bundle runs with `channel = in-process`, and admission is the only thing that
 differs.
 

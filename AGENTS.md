@@ -66,8 +66,14 @@ environment, and executes it. Humans start at [`README.md`](README.md); the desi
 - No comments in `Cargo.toml`, `Taskfile.yml`, workflow files or environment documents.
 - Builds: `CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_INCREMENTAL=0`, the tree's own
   `target/`; check `df -h /` first. While implementing, build only the targets you change
-  (`cargo test -p <crate> --lib`, `--test <file>`); `cargo test -p <crate>` links every test
-  binary of the crate and runs once, at the gate.
+  (`cargo test -p <crate> --lib`, `--test <crate> <module>::`); `cargo test -p <crate>` links
+  every test binary of the crate and runs once, at the gate.
+- Integration tests: one binary per crate, `tests/<crate>/main.rs` with one `mod` per file
+  beside it; a new test file is a new `mod` line there, never a new `tests/*.rs`. Only a test
+  that holds process-wide state keeps its own binary: `crates/spindle-telemetry/tests/blocking.rs`
+  (a global allocator) and `crates/spindle-qemu/tests/context_ids.rs` (every guest context id of
+  the process); `spindle-docs` refuses any other. A test that re-runs its own binary names itself
+  with its module path (`--exact <module>::<name>`).
 - Tests that need a directory use `tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR"))`.
 - A change that removes or renames an `adversary_` test names its story (`story:<id>`) in a comment in that hunk; the organisation's release check refuses a release whose diff removes one otherwise.
 - Planning store mutations use `aep plan artifact` only. Scratch bodies go in

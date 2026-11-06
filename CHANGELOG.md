@@ -6,6 +6,13 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Changed
+
+- Each crate's integration tests build into one test binary, `tests/<crate>/main.rs` with one
+  module per former `tests/*.rs` file; test names are unchanged under their module path. Two
+  tests that hold process-wide state keep their own binary: telemetry's allocation test and
+  QEMU's context-id test.
+
 ## [0.2.0] - 2026-11-06
 
 ### Added

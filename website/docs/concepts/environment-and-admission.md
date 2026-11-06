@@ -3,7 +3,7 @@ title: Environment and admission
 sidebar_position: 3
 description: An environment names the implementations available where Spindle runs; admission binds one to every capability or refuses.
 lede: The environment, not the specification, chooses the implementations, and admission is the only step that differs between a laptop and a VM.
-source: crates/spindle-capability/src/environment.rs, crates/spindle-capability/src/admission.rs, crates/spindle-capability/tests/admission.rs, crates/spindle-cli/tests/admit.rs, crates/spindle-host/src/host.rs
+source: crates/spindle-capability/src/environment.rs, crates/spindle-capability/src/admission.rs, crates/spindle-capability/tests/spindle-capability/admission.rs, crates/spindle-cli/tests/spindle-cli/admit.rs, crates/spindle-host/src/host.rs
 ---
 
 ## The environment

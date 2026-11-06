@@ -141,7 +141,7 @@ Counter, Catalogue), so the API types are specified, and `ess` projects their JS
 
 `ess/domains/placement.yaml` is the model the control process runs. What it declares, and what
 stays a runtime rule outside it (each item names the case in
-`crates/spindle-kernel/tests/placement.rs` that checks it):
+`crates/spindle-kernel/tests/spindle-kernel/placement.rs` that checks it):
 
 - **Admission gates placement.** Nothing of a deployment that is not admitted is planned, placed
   or launched; a running deployment counts as admitted. `PlanInstance` answers `not-admitted`

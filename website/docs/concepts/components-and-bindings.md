@@ -3,7 +3,7 @@ title: Components and bindings
 sidebar_position: 4
 description: How the components of one ESS system run together, and how periodic and event bindings drive their commands.
 lede: Components own domains and accept commands; bindings are the only way one drives another.
-source: crates/spindle-host/src/lib.rs, crates/spindle-timer/src/lib.rs, crates/spindle-timer/tests/periodic.rs, crates/spindle-channel/src/lib.rs, crates/spindle-channel/tests/channel.rs, examples/rally/ess/components.yaml
+source: crates/spindle-host/src/lib.rs, crates/spindle-timer/src/lib.rs, crates/spindle-timer/tests/spindle-timer/periodic.rs, crates/spindle-channel/src/lib.rs, crates/spindle-channel/tests/spindle-channel/channel.rs, examples/rally/ess/components.yaml
 ---
 
 ## Components

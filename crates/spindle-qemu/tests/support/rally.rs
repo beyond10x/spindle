@@ -1,7 +1,8 @@
 //! The rally example on three microVMs: the placement document `examples/rally/placement.toml`,
 //! the QEMU guest that plays one component, and a match played on any launcher.
 //!
-//! Shared by `crates/spindle-qemu/tests/rally.rs` and `crates/spindle-firecracker/tests/rally.rs`.
+//! Shared by `crates/spindle-qemu/tests/spindle-qemu/rally.rs` and
+//! `crates/spindle-firecracker/tests/spindle-firecracker/rally.rs`.
 //! Every instance a match starts is dropped when the match is read or a check fails, and both
 //! launchers kill a VM that still runs when its handle is dropped.
 
@@ -306,7 +307,7 @@ pub struct Qemu {
 
 /// The QEMU host, or a panic naming what this host lacks to boot a QEMU microVM (`/dev/kvm`,
 /// `qemu-system-x86_64`, the host kernel and its modules, the musl target) or why the static
-/// guest build failed, as `tests/microvm.rs` does: these cases run only when asked for.
+/// guest build failed, as `tests/spindle-qemu/microvm.rs` does: these cases run only when asked for.
 pub fn qemu() -> Qemu {
     let (qemu, kernel) = spindle_qemu::vm_prerequisites()
         .unwrap_or_else(|reason| panic!("this host cannot boot a QEMU microVM: {reason}"));
