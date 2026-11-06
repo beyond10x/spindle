@@ -42,6 +42,8 @@ pub use spindle_target::{
 };
 pub use static_build::{BuildError, GUEST_TARGET, StaticBinaries};
 
+#[cfg(not(target_os = "linux"))]
+pub use namespace::LINUX_ONLY;
 use namespace::{Shared, failure, io_error};
 
 /// The console text the guest init reports the command's exit with: `code=<n>` or `signal=<n>`

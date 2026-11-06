@@ -1,5 +1,6 @@
 //! The HTTP server: one socket on 127.0.0.1, hyper on a thread of its own, and every request for
-//! a route handed to the caller's thread as an [`Exchange`].
+//! a route handed to the caller's thread as an [`Exchange`], answered there by the router
+//! ([`crate::route`]).
 
 use std::convert::Infallible;
 use std::io;
@@ -21,11 +22,8 @@ use spindle_host::{Failed, Host};
 
 use crate::answer::Answer;
 use crate::console::{Console, Worlds};
-use crate::surface::{Resolved, Route, Surface};
-
-/// The largest request body read, in bytes; one announced larger is refused `413` before it is
-/// read.
-pub const BODY_LIMIT: usize = 1 << 20;
+use crate::router::{Asked, BODY_LIMIT, Pending, Response as Reply};
+use crate::surface::{Route, Surface};
 
 /// How long a connection may take to send a request's head; a slower one is closed.
 pub const HEADER_READ: Duration = Duration::from_secs(10);
@@ -37,46 +35,17 @@ pub const BODY_READ: Duration = Duration::from_secs(10);
 /// out of descriptors, before it accepts again.
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
 
-/// What a request asks for.
-#[derive(Debug)]
-enum Asked {
-    /// A command or view the surface serves.
-    Route(Box<Route>),
-    /// A console route.
-    Console(Console),
-}
-
-/// A status and the body written under it, as `application/json`.
-#[derive(Debug)]
-struct Reply {
-    status: u16,
-    text: String,
-}
-
-impl From<Answer> for Reply {
-    fn from(answer: Answer) -> Self {
-        Self {
-            status: answer.status,
-            text: answer.body.to_string(),
-        }
-    }
-}
-
 /// One request for a route, waiting for its answer.
 #[derive(Debug)]
 pub struct Exchange {
-    asked: Asked,
-    carried: Map<String, Value>,
-    query: String,
-    content_type: Option<String>,
-    body: Vec<u8>,
+    pending: Pending,
     reply: oneshot::Sender<Reply>,
 }
 
 impl Exchange {
     /// The route the request is for; `None` for a console route.
     pub fn route(&self) -> Option<&Route> {
-        match &self.asked {
+        match &self.pending.asked {
             Asked::Route(route) => Some(route.as_ref()),
             Asked::Console(_) => None,
         }
@@ -84,7 +53,7 @@ impl Exchange {
 
     /// The console route the request is for; `None` for a command or view.
     pub fn console(&self) -> Option<Console> {
-        match self.asked {
+        match self.pending.asked {
             Asked::Console(console) => Some(console),
             Asked::Route(_) => None,
         }
@@ -93,23 +62,23 @@ impl Exchange {
     /// The input the request's path carries in the route's variables and, for a view, the
     /// parameters its query string carries ([`Route::parameters`]).
     pub fn carried(&self) -> &Map<String, Value> {
-        &self.carried
+        &self.pending.carried
     }
 
     /// The request's query string, after the `?` and still percent-encoded; empty without one. On
     /// a guarded listener the token's `t=<token>` is not part of it.
     pub fn query(&self) -> &str {
-        &self.query
+        &self.pending.query
     }
 
     /// The request's `Content-Type`, where it has one that is visible ASCII.
     pub fn content_type(&self) -> Option<&str> {
-        self.content_type.as_deref()
+        self.pending.content_type.as_deref()
     }
 
     /// The request body.
     pub fn body(&self) -> &[u8] {
-        &self.body
+        &self.pending.body
     }
 
     /// Sends `answer` to the caller; a caller that has gone away is not an error.
@@ -131,29 +100,7 @@ impl Exchange {
     }
 
     fn serve_loading(self, host: &mut Host, worlds: Option<Worlds<'_>>) -> Vec<Failed> {
-        let mut failed = Vec::new();
-        let reply = match &self.asked {
-            Asked::Route(route) => {
-                let (answer, dropped) = crate::answered(
-                    host,
-                    route,
-                    &self.carried,
-                    &self.query,
-                    self.content_type.as_deref(),
-                    &self.body,
-                );
-                failed = dropped;
-                answer.into()
-            }
-            Asked::Console(Console::Model) => Reply {
-                status: 200,
-                text: crate::console::model(host.ir()),
-            },
-            Asked::Console(Console::Events) => crate::console::events(host).into(),
-            Asked::Console(Console::Reset) => {
-                crate::console::reset(host, &self.body, worlds).into()
-            }
-        };
+        let (reply, failed) = self.pending.serve(host, worlds);
         let _ = self.reply.send(reply);
         failed
     }
@@ -357,32 +304,13 @@ async fn handle(
     {
         return Ok(written(refusal));
     }
-    let (asked, carried) = match served
-        .surface
-        .resolve(request.method().as_str(), request.uri().path())
-    {
-        Resolved::Found(route, carried) => (Asked::Route(Box::new(route.clone())), carried),
-        Resolved::Console(console) => (Asked::Console(console), Map::new()),
-        Resolved::Malformed(why) => return Ok(written(Answer::refusal(400, why))),
-        Resolved::WrongMethod(allowed) => {
-            let allowed = allowed
-                .iter()
-                .map(|method| method.as_str().to_uppercase())
-                .collect::<Vec<_>>()
-                .join(", ");
-            let mut response =
-                written(Answer::refusal(405, format!("this path answers {allowed}")));
-            if let Ok(value) = HeaderValue::from_str(&allowed) {
-                response.headers_mut().insert(ALLOW, value);
-            }
-            return Ok(response);
-        }
-        Resolved::NotFound => {
-            return Ok(written(Answer::refusal(
-                404,
-                format!("no route serves {}", request.uri().path()),
-            )));
-        }
+    let (asked, carried) = match crate::router::ask(
+        &served.surface,
+        request.method().as_str(),
+        request.uri().path(),
+    ) {
+        Ok(asked) => asked,
+        Err(refusal) => return Ok(replied(refusal)),
     };
     if request.headers().contains_key(TRANSFER_ENCODING) {
         return Ok(written(Answer::refusal(
@@ -396,10 +324,7 @@ async fn handle(
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok());
     if announced.is_some_and(|length| length > BODY_LIMIT as u64) {
-        return Ok(written(Answer::refusal(
-            413,
-            format!("the body is announced over {BODY_LIMIT} bytes"),
-        )));
+        return Ok(written(crate::router::oversized()));
     }
     let query = request.uri().query().unwrap_or_default();
     let query = match &served.guard {
@@ -433,11 +358,13 @@ async fn handle(
     };
     let (reply, answered) = oneshot::channel();
     let exchange = Exchange {
-        asked,
-        carried,
-        query,
-        content_type,
-        body,
+        pending: Pending {
+            asked,
+            carried,
+            query,
+            content_type,
+            body,
+        },
         reply,
     };
     if served.exchanges.send(exchange).is_err() {
@@ -457,12 +384,20 @@ fn written(answer: Answer) -> Response<Full<Bytes>> {
 }
 
 fn replied(reply: Reply) -> Response<Full<Bytes>> {
-    let mut response = Response::new(Full::new(Bytes::from(reply.text)));
+    let mut response = Response::new(Full::new(Bytes::from(reply.body)));
     *response.status_mut() =
         StatusCode::from_u16(reply.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    response
-        .headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static(crate::router::CONTENT_TYPE),
+    );
+    if let Some(value) = reply
+        .allow
+        .as_deref()
+        .and_then(|allow| HeaderValue::from_str(allow).ok())
+    {
+        response.headers_mut().insert(ALLOW, value);
+    }
     response
 }
 

@@ -59,7 +59,10 @@ mod resources;
 mod sender;
 #[cfg(unix)]
 mod sys;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
+pub mod vsock;
+#[cfg(all(unix, not(target_os = "linux")))]
+#[path = "vsock_refused.rs"]
 pub mod vsock;
 
 pub use catalogue::{Catalogue, Counter, Key, Kind, Source, catalogue};
@@ -76,6 +79,6 @@ pub use frame::{
 pub use kernel::CountingStore;
 pub use port::{Carried, Failure, Outcome, Record, Retried, Sink, Telemetry, Timed};
 #[cfg(unix)]
-pub use resources::{Readings, read_resources};
+pub use resources::{READINGS_REFUSAL, Readings, read_resources};
 #[cfg(unix)]
 pub use sender::{Delivery, Sender, SenderOptions, Transmitter};

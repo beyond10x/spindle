@@ -12,6 +12,7 @@
 
 use std::collections::BTreeMap;
 use std::io::{self, Read};
+#[cfg(target_os = "linux")]
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -21,6 +22,11 @@ use std::time::{Duration, Instant};
 use spindle_target::LaunchError;
 
 const READY_WITHIN: Duration = Duration::from_secs(10);
+
+/// What spawning answers off Linux: user and network namespaces, KVM and the parent-death signal
+/// are Linux's.
+#[cfg(not(target_os = "linux"))]
+pub const LINUX_ONLY: &str = "the QEMU microVM launcher runs on Linux only";
 
 pub(crate) fn failure(what: impl Into<String>, detail: impl Into<String>) -> LaunchError {
     LaunchError::Io {
@@ -39,6 +45,7 @@ type Request = (Command, mpsc::Sender<io::Result<Child>>);
 /// The thread every child of a launcher is spawned from.
 #[derive(Debug)]
 struct Spawner {
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     requests: Mutex<mpsc::Sender<Request>>,
 }
 
@@ -57,6 +64,12 @@ impl Spawner {
         })
     }
 
+    #[cfg(not(target_os = "linux"))]
+    fn spawn(&self, _command: Command) -> io::Result<Child> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, LINUX_ONLY))
+    }
+
+    #[cfg(target_os = "linux")]
     fn spawn(&self, mut command: Command) -> io::Result<Child> {
         let launcher = std::process::id();
         // SAFETY: the closure runs in the forked child before exec and only makes the

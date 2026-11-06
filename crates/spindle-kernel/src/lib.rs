@@ -47,6 +47,7 @@
 //! a host can name what it will not run before it serves.
 
 mod caller;
+pub mod contract;
 mod decider;
 mod execute;
 mod facts;

@@ -15,11 +15,43 @@ pub(crate) fn check(result: libc::c_int) -> io::Result<libc::c_int> {
 }
 
 /// A new stream socket of `family`, close-on-exec.
+#[cfg(target_os = "linux")]
 pub(crate) fn stream_socket(family: libc::c_int) -> io::Result<OwnedFd> {
     // SAFETY: a plain socket(2) call.
     let fd = check(unsafe { libc::socket(family, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) })?;
     // SAFETY: the descriptor was just created and is owned by nothing else.
     Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+/// A new stream socket of `family`, close-on-exec, and on Apple systems one whose writes to a
+/// peer that went away fail with `EPIPE` instead of raising `SIGPIPE` (`SO_NOSIGPIPE`).
+///
+/// Without `SOCK_CLOEXEC` the flag is set after the socket exists, so a process forked by
+/// another thread in between inherits the descriptor without the flag, keeps it across its exec
+/// and holds it for the life of the program it runs.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn stream_socket(family: libc::c_int) -> io::Result<OwnedFd> {
+    // SAFETY: a plain socket(2) call.
+    let fd = check(unsafe { libc::socket(family, libc::SOCK_STREAM, 0) })?;
+    // SAFETY: the descriptor was just created and is owned by nothing else.
+    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+    // SAFETY: fcntl on a descriptor this process owns; no pointers.
+    check(unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) })?;
+    #[cfg(target_vendor = "apple")]
+    {
+        let on: libc::c_int = 1;
+        // SAFETY: `on` is a valid c_int for the duration of the call.
+        check(unsafe {
+            libc::setsockopt(
+                fd.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_NOSIGPIPE,
+                (&raw const on).cast(),
+                mem::size_of::<libc::c_int>() as libc::socklen_t,
+            )
+        })?;
+    }
+    Ok(fd)
 }
 
 fn set_nonblocking(fd: RawFd, nonblocking: bool) -> io::Result<()> {
@@ -44,7 +76,8 @@ pub(crate) fn set_timeout(
     // SAFETY: timeval is plain old data; all-zero is a valid value.
     let mut value: libc::timeval = unsafe { mem::zeroed() };
     value.tv_sec = timeout.as_secs().try_into().unwrap_or(i32::MAX.into());
-    value.tv_usec = timeout.subsec_micros().into();
+    // Under a million, so it fits `suseconds_t` everywhere: 64 bits on Linux, 32 on macOS.
+    value.tv_usec = timeout.subsec_micros() as libc::suseconds_t;
     // SAFETY: `value` is a valid timeval for the duration of the call.
     check(unsafe {
         libc::setsockopt(

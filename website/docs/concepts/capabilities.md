@@ -3,7 +3,7 @@ title: Capabilities
 sidebar_position: 2
 description: The technical needs of a specification, derived from what it declares and never written down by its author.
 lede: Capabilities are derived from the specification, never authored, so they cannot drift from it.
-source: crates/spindle-capability/src/derive.rs, crates/spindle-capability/tests/admission.rs, crates/spindle-capability/tests/mint.rs, crates/spindle-cli/src/cli.rs, crates/spindle-cli/tests/decisions.rs, crates/spindle-cli/tests/served_decisions.rs, README.md
+source: crates/spindle-capability/src/derive.rs, crates/spindle-capability/tests/spindle-capability/admission.rs, crates/spindle-capability/tests/spindle-capability/mint.rs, crates/spindle-cli/src/cli.rs, crates/spindle-cli/tests/spindle-cli/decisions.rs, crates/spindle-cli/tests/spindle-cli/served_decisions.rs, README.md
 ---
 
 A capability is something technical a specification needs from the runtime: a durable store, a

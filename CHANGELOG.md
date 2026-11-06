@@ -6,6 +6,41 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-06
+
+### Added
+
+- `spindle_ingress::route` answers a request value on a host with a response value, with no
+  listener, socket or async runtime; the loopback listener answers through it. Without the default
+  `listener` feature `spindle-ingress` builds for `wasm32-unknown-unknown`, and the wasm build
+  check covers it.
+- `spindle-store-browser`: a `Store` on the browser's IndexedDB, `store.durable` bound to
+  `indexeddb` (`examples/environments/browser.toml`). It answers versions, conflicts and removed
+  instances as the memory store does, writes each commit in one IndexedDB transaction, and its
+  state is read back after the database is reopened. `task check` runs its tests in a headless
+  browser. The host does not open it yet.
+- `spindle_kernel::contract`: the cases every `Store` passes, run on the memory, SQLite and
+  IndexedDB stores.
+- `b10x-spindle` builds for macOS (`aarch64-apple-darwin`, `x86_64-apple-darwin`), and each
+  release carries both archives in `SHA256SUMS`. The in-process commands run there as on Linux;
+  `deploy`'s telemetry peer check reads `LOCAL_PEERPID`, and the longest telemetry socket path
+  follows the platform's `sun_path` (103 bytes on macOS). The microVM launchers, vsock and the
+  `/proc` resource readings answer `Unsupported` off Linux, and a process instance gets no
+  parent-death signal there. CI checks and lints both macOS targets and runs the in-process test
+  lanes on a macOS runner; a release publishes only once that job is green on the tagged commit.
+
+### Fixed
+
+- A SQLite conflict names the version the change named (none for a creation) and no held version
+  for an instance never written, as the memory store does, instead of eventlog's stream positions.
+
+### Changed
+
+- Each crate's integration tests build into one test binary, `tests/<crate>/main.rs` with one
+  module per former `tests/*.rs` file; test names are unchanged under their module path. Two
+  tests that hold process-wide state keep their own binary: telemetry's allocation test and
+  QEMU's context-id test.
+
 ## [0.2.0] - 2026-11-06
 
 ### Added

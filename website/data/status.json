@@ -52,6 +52,13 @@
       "status": "shipped"
     },
     {
+      "area": "Execution",
+      "detail": "spindle-store-browser keeps instances in the browser's IndexedDB (store.durable bound to indexeddb in examples/environments/browser.toml): it passes the store contract the memory and SQLite stores pass, and a command's effect is read back after the database is reopened. The host does not open it yet.",
+      "href": "/docs/concepts/environment-and-admission",
+      "label": "Browser store",
+      "status": "shipped"
+    },
+    {
       "area": "Bindings",
       "detail": "spindle-timer yields due ticks for periodic bindings on an injected clock, honouring the ESS periodic profile.",
       "href": "/docs/concepts/components-and-bindings",

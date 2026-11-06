@@ -93,6 +93,7 @@ prefix; an exact key wins over it.
 - `crates/spindle-qemu`, `crates/spindle-firecracker` — microVM launchers.
 - `crates/spindle-telemetry` — counters and histograms per instance, their catalogue derived from the specification, and the sender that reports them as `spindle-telemetry/1` frames over a Unix socket or vsock.
 - `crates/spindle-host` — runs every component of a system in one process.
+- `crates/spindle-store-browser` — the store on the browser's IndexedDB, for a run in a page or a Service Worker.
 - `crates/spindle-conformance` — runs an ESS conformance suite against every component in one process.
 - `crates/spindle-control` — the control process `deploy` runs: launch, collect, and the observe API and UI on 127.0.0.1.
 - `crates/spindle-cli` — the `b10x-spindle` binary.
@@ -105,7 +106,7 @@ Agents start at [`AGENTS.md`](AGENTS.md).
 
 ## Releases
 
-Binaries for Linux (x86_64 and aarch64; macOS not yet) are attached to each
+Binaries for Linux and macOS (x86_64 and aarch64 each) are attached to each
 [GitHub release](https://github.com/beyond10x/spindle/releases) with a `SHA256SUMS` file; changes
 are in [`CHANGELOG.md`](CHANGELOG.md), and the release steps in
 [`AGENTS.md`](AGENTS.md#cutting-a-release).

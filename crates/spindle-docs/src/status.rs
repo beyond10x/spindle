@@ -74,147 +74,154 @@ pub const CAPABILITIES: &[Capability] = &[
         "Load and compile",
         "A directory of ESS documents is compiled by ess-compiler to the resolved IR; a document ESS refuses is refused with ESS's diagnostics.",
         "/docs/concepts/specification",
-        "crates/spindle-spec/tests/load.rs::a_refused_document_reports_what_ess_said",
+        "crates/spindle-spec/tests/spindle-spec/load.rs::a_refused_document_reports_what_ess_said",
     ),
     shipped(
         "Capabilities",
         "Derived from the specification",
         "Entities need store.durable, periodic bindings timer and clock, cross-component bindings channel, external outcomes external.<command>.<outcome>.",
         "/docs/concepts/capabilities",
-        "crates/spindle-capability/tests/admission.rs::a_periodic_cause_needs_a_timer_and_a_clock_and_a_cross_component_binding_a_channel",
+        "crates/spindle-capability/tests/spindle-capability/admission.rs::a_periodic_cause_needs_a_timer_and_a_clock_and_a_cross_component_binding_a_channel",
     ),
     shipped(
         "Capabilities",
         "Per component",
         "capabilities --component lists only what one component needs when it runs on its own.",
         "/docs/concepts/capabilities",
-        "crates/spindle-capability/tests/admission.rs::each_component_needs_only_what_it_runs",
+        "crates/spindle-capability/tests/spindle-capability/admission.rs::each_component_needs_only_what_it_runs",
     ),
     shipped(
         "Admission",
         "Bind by preference",
         "Each required capability is bound to the first implementation the environment lists for it; an exact key wins over a prefix key.",
         "/docs/concepts/environment-and-admission",
-        "crates/spindle-capability/tests/admission.rs::admission_takes_the_most_preferred_implementation",
+        "crates/spindle-capability/tests/spindle-capability/admission.rs::admission_takes_the_most_preferred_implementation",
     ),
     shipped(
         "Admission",
         "Refusal names what is missing",
         "A refused admission names every capability without an implementation and exits 3.",
         "/docs/concepts/environment-and-admission",
-        "crates/spindle-cli/tests/admit.rs::refused_exits_three_and_names_the_missing_capability",
+        "crates/spindle-cli/tests/spindle-cli/admit.rs::refused_exits_three_and_names_the_missing_capability",
     ),
     shipped(
         "Execution",
         "Commands against the compiled model",
         "spindle-kernel selects the outcome by the IR's conditions and guards, applies its effect and emits its events; b10x-spindle run reads commands as JSON lines.",
         "/docs/reference/cli",
-        "crates/spindle-kernel/tests/deployment.rs::offer_then_admit_moves_a_deployment_to_admitted",
+        "crates/spindle-kernel/tests/spindle-kernel/deployment.rs::offer_then_admit_moves_a_deployment_to_admitted",
     ),
     shipped(
         "Execution",
         "Memory and SQLite stores",
         "The store follows the store.durable binding; SQLite state survives a restart.",
         "/docs/concepts/environment-and-admission",
-        "crates/spindle-kernel/tests/deployment.rs::state_survives_a_restart_on_sqlite",
+        "crates/spindle-kernel/tests/spindle-kernel/deployment.rs::state_survives_a_restart_on_sqlite",
+    ),
+    shipped(
+        "Execution",
+        "Browser store",
+        "spindle-store-browser keeps instances in the browser's IndexedDB (store.durable bound to indexeddb in examples/environments/browser.toml): it passes the store contract the memory and SQLite stores pass, and a command's effect is read back after the database is reopened. The host does not open it yet.",
+        "/docs/concepts/environment-and-admission",
+        "crates/spindle-store-browser/tests/spindle-store-browser/reload.rs::state_survives_a_reload",
     ),
     shipped(
         "Bindings",
         "Periodic bindings",
         "spindle-timer yields due ticks for periodic bindings on an injected clock, honouring the ESS periodic profile.",
         "/docs/concepts/components-and-bindings",
-        "crates/spindle-timer/tests/periodic.rs::a_periodic_binding_is_due_every_period",
+        "crates/spindle-timer/tests/spindle-timer/periodic.rs::a_periodic_binding_is_due_every_period",
     ),
     shipped(
         "Bindings",
         "Event bindings in process and over TCP",
         "spindle-channel carries an event to the command it binds to, in process or as length-prefixed JSON frames over TCP; at_least_once redelivers.",
         "/docs/concepts/components-and-bindings",
-        "crates/spindle-channel/tests/channel.rs::an_event_reaches_the_bound_component_over_tcp",
+        "crates/spindle-channel/tests/spindle-channel/channel.rs::an_event_reaches_the_bound_component_over_tcp",
     ),
     shipped(
         "Bindings",
         "Retry on failure",
         "An on_failure: retry binding runs its command again at once after each refused or failed attempt, up to 5 attempts, before the next envelope runs; each attempt and each given-up invocation is counted. A per-refusal policy (on_failure with named refusals) retries or drops by refusal, with the same limit. --drop-retries runs every retrying binding as a drop binding.",
         "/docs/concepts/components-and-bindings",
-        "crates/spindle-host/tests/retry.rs::a_failing_invocation_is_retried_until_it_succeeds",
+        "crates/spindle-host/tests/spindle-host/retry.rs::a_failing_invocation_is_retried_until_it_succeeds",
     ),
     shipped(
         "Rally",
         "Every component in one process",
         "b10x-spindle play runs the three rally components in one process with in-process channels until a side wins.",
         "/docs/examples/rally",
-        "crates/spindle-host/tests/rally.rs::a_match_played_in_one_process_ends_with_a_winner",
+        "crates/spindle-host/tests/spindle-host/rally.rs::a_match_played_in_one_process_ends_with_a_winner",
     ),
     shipped(
         "Targets",
         "The target contract and the process launcher",
         "Placement refuses an instance above its target's ceiling; the process launcher starts and stops an instance and reports its exit.",
         "/docs/concepts/deployment-targets",
-        "crates/spindle-target/tests/target.rs::the_process_launcher_starts_and_stops_an_instance_and_reports_its_exit",
+        "crates/spindle-target/tests/spindle-target/target.rs::the_process_launcher_starts_and_stops_an_instance_and_reports_its_exit",
     ),
     shipped(
         "Targets",
         "QEMU microvm launcher",
         "A library launcher: one qemu-system-x86_64 -M microvm per instance with KVM, without root. Its tests run on a host with /dev/kvm (task check:vm), not in CI.",
         "/docs/concepts/deployment-targets",
-        "crates/spindle-qemu/tests/microvm.rs::a_qemu_microvm_instance_boots_and_runs_b10x_spindle",
+        "crates/spindle-qemu/tests/spindle-qemu/microvm.rs::a_qemu_microvm_instance_boots_and_runs_b10x_spindle",
     ),
     shipped(
         "Targets",
         "Firecracker launcher",
         "A library launcher: Firecracker VMs on a bridge inside a user and network namespace, without root. Its tests need /dev/kvm, the Firecracker binary and a guest kernel (task check:vm), not in CI.",
         "/docs/concepts/deployment-targets",
-        "crates/spindle-firecracker/tests/firecracker.rs::a_firecracker_instance_boots_and_runs_b10x_spindle",
+        "crates/spindle-firecracker/tests/spindle-firecracker/firecracker.rs::a_firecracker_instance_boots_and_runs_b10x_spindle",
     ),
     shipped(
         "Execution",
         "External decisions from a file",
         "run --decisions answers external outcomes from a TOML file, per command or for all, for stdin lines and served requests; --answer-default takes a command's default branch.",
         "/docs/concepts/capabilities",
-        "crates/spindle-cli/tests/decisions.rs::a_decisions_file_answers_every_external_outcome",
+        "crates/spindle-cli/tests/spindle-cli/decisions.rs::a_decisions_file_answers_every_external_outcome",
     ),
     shipped(
         "Execution",
         "Minted creation identities",
         "A creation whose identity no input or payload supplies needs identity.mint; a Uuid identity is minted as a UUIDv4, a String newtype identity as its prefix and a UUIDv4's text, and emitted.",
         "/docs/concepts/capabilities",
-        "crates/spindle-kernel/tests/mint.rs::a_creation_without_an_id_input_mints_one_and_emits_it",
+        "crates/spindle-kernel/tests/spindle-kernel/mint.rs::a_creation_without_an_id_input_mints_one_and_emits_it",
     ),
     shipped(
         "Execution",
         "Deleting outcomes",
         "An outcome that declares deletes: on the instance its input names removes the row as ESS's interpreter does: it leaves every view, a later command on the identity answers as an unknown instance, and the outcome's events are published; on SQLite the removal survives a restart.",
         "/docs/concepts/specification",
-        "crates/spindle-kernel/tests/deletes.rs::deletes_agree_with_the_interpreter",
+        "crates/spindle-kernel/tests/spindle-kernel/deletes.rs::deletes_agree_with_the_interpreter",
     ),
     shipped(
         "Execution",
         "List views with filters",
         "List views over every instance of an entity, with a state filter and an order.",
         "/docs/concepts/specification",
-        "crates/spindle-host/tests/views.rs::a_state_filter_keeps_only_instances_in_that_state",
+        "crates/spindle-host/tests/spindle-host/views.rs::a_state_filter_keeps_only_instances_in_that_state",
     ),
     shipped(
         "Observe",
         "Counters derived from the specification",
         "spindle-telemetry counts commands by outcome, events, bindings, timer ticks and store writes per component; b10x-spindle metrics prints the catalogue, play prints the table's counters.",
         "/docs/concepts/observe",
-        "crates/spindle-telemetry/tests/catalogue.rs::every_command_outcome_and_event_of_a_component_has_a_counter",
+        "crates/spindle-telemetry/tests/spindle-telemetry/catalogue.rs::every_command_outcome_and_event_of_a_component_has_a_counter",
     ),
     shipped(
         "Observe",
         "Host-side resource sampling",
         "Launchers read CPU seconds and resident memory per instance from /proc and its share of the requested quota.",
         "/docs/concepts/observe",
-        "crates/spindle-target/tests/sampling.rs::cpu_share_is_cpu_seconds_over_wall_time_and_requested_vcpus",
+        "crates/spindle-target/tests/spindle-target/sampling.rs::cpu_share_is_cpu_seconds_over_wall_time_and_requested_vcpus",
     ),
     shipped(
         "Observe",
         "Telemetry transport",
         "An instance that starts the spindle-telemetry sender sends its cumulative counters and its own resource readings as spindle-telemetry/1 frames every second, over a Unix socket for a process and vsock for QEMU and Firecracker, and drops and counts frames no collector takes.",
         "/docs/concepts/observe",
-        "crates/spindle-telemetry/tests/transport.rs::a_lost_frame_loses_no_count",
+        "crates/spindle-telemetry/tests/spindle-telemetry/transport.rs::a_lost_frame_loses_no_count",
     ),
     shipped(
         "Observe",
@@ -235,91 +242,91 @@ pub const CAPABILITIES: &[Capability] = &[
         "Three processes",
         "Three b10x-spindle play --component processes, one per component, started by the process launcher from its SPINDLE_* variables and joined by TCP channels, play a match to a winner; each sends its telemetry when given an endpoint.",
         "/docs/examples/rally",
-        "crates/spindle-cli/tests/processes.rs::a_match_between_three_processes_ends_with_a_winner",
+        "crates/spindle-cli/tests/spindle-cli/processes.rs::a_match_between_three_processes_ends_with_a_winner",
     ),
     shipped(
         "Rally",
         "Three microVMs",
         "Each rally component in its own microVM, one b10x-spindle play per VM in its per-component mode, joined by TCP channels across the VM network, plays a match to a winner; one placement (examples/rally/placement.toml) runs on QEMU and on Firecracker. Its tests run on a host with /dev/kvm (task check:vm), not in CI.",
         "/docs/examples/rally",
-        "crates/spindle-qemu/tests/rally.rs::a_match_between_three_qemu_microvms_ends_with_a_winner",
+        "crates/spindle-qemu/tests/spindle-qemu/rally.rs::a_match_between_three_qemu_microvms_ends_with_a_winner",
     ),
     shipped(
         "Execution",
         "HTTP ingress",
         "run serves the accepted commands and views over HTTP on 127.0.0.1 where ingress.network is bound to http-loopback: at the routes ess generate --kind openapi publishes, with or without an ess-http/1 binding, answering the envelope ESS publishes.",
         "/docs/concepts/capabilities",
-        "crates/spindle-cli/tests/ingress.rs::a_bound_route_answers_with_the_bindings_status_per_outcome",
+        "crates/spindle-cli/tests/spindle-cli/ingress.rs::a_bound_route_answers_with_the_bindings_status_per_outcome",
     ),
     shipped(
         "Execution",
         "DELETE routes",
         "A command an ess-http/1 binding puts on method: delete is served at its path: a DELETE with no body runs with the input its path carries and answers the status the binding lists; a method the path does not serve answers 405 with Allow naming DELETE.",
         "/docs/concepts/capabilities",
-        "crates/spindle-cli/tests/ingress.rs::a_command_bound_to_delete_is_served",
+        "crates/spindle-cli/tests/spindle-cli/ingress.rs::a_command_bound_to_delete_is_served",
     ),
     shipped(
         "Execution",
         "View parameters",
         "A view that declares parameters is served: each is read from the path or the query string where the OpenAPI document ESS publishes places it, and the view answers the rows ESS's interpreter answers for those values; a required parameter left out, or one not of its declared type, is refused 400 naming it.",
         "/docs/concepts/capabilities",
-        "crates/spindle-ingress/tests/view_parameters.rs::a_view_parameter_in_the_query_filters_the_rows",
+        "crates/spindle-ingress/tests/spindle-ingress/view_parameters.rs::a_view_parameter_in_the_query_filters_the_rows",
     ),
     shipped(
         "Execution",
         "Form and query requests",
         "A command an ess-http/1 binding reads as request: {encoding: form} or {encoding: query} is served: its input is read from an application/x-www-form-urlencoded body or from the query string, each value by its field's type as ESS's served application reads it; an undeclared field, one the path carries, or a form body under another Content-Type is refused 400 and writes nothing.",
         "/docs/concepts/capabilities",
-        "crates/spindle-cli/tests/form_query.rs::a_form_encoded_command_runs",
+        "crates/spindle-cli/tests/spindle-cli/form_query.rs::a_form_encoded_command_runs",
     ),
     shipped(
         "Execution",
         "Console routes",
         "A loopback run also serves GET /api/model (the IR as ess specify compile prints it, and each outcome's subject), GET /api/events (every event published, in order) and POST /api/reset (empties every store); a route the binding or ESS publishes at one of those paths is refused at startup.",
         "/docs/concepts/capabilities",
-        "crates/spindle-cli/tests/console.rs::reset_empties_every_store_of_the_run",
+        "crates/spindle-cli/tests/spindle-cli/console.rs::reset_empties_every_store_of_the_run",
     ),
     shipped(
         "Execution",
         "A world per reset",
         "POST /api/reset may carry a world: rows checked by ESS and written where their entity rests, a decision table answering external causes and a seed identities are minted from, each until the next reset; a world that does not validate is refused 400 and changes nothing.",
         "/docs/concepts/capabilities",
-        "crates/spindle-cli/tests/served_world.rs::a_reset_with_seed_rows_serves_them",
+        "crates/spindle-cli/tests/spindle-cli/served_world.rs::a_reset_with_seed_rows_serves_them",
     ),
     shipped(
         "Execution",
         "Serve what runs",
         "An HTTP run serves every command and view that runs and answers each other one 501 naming the construct, ESS's envelope for a command; the list is printed at startup, in name order. A view the ingress cannot route answers 501 naming the construct too, and is listed at startup. SQLite state without --state is kept in a temporary directory removed when the run ends.",
         "/docs/concepts/capabilities",
-        "crates/spindle-cli/tests/unserved.rs::an_unrunnable_command_answers_501_and_the_rest_serve",
+        "crates/spindle-cli/tests/spindle-cli/unserved.rs::an_unrunnable_command_answers_501_and_the_rest_serve",
     ),
     shipped(
         "Execution",
         "Fixed caller (test backend)",
         "run --fixed-actor with --fixed-caller sends served commands as actors and callers fixed for the whole run, so a command that reads its caller is served: a test-backend switch, not authentication, opt-in only and printed on stderr at startup. The grant check still runs: a command the actor may not send answers 403 not granted and writes nothing. Given more than once, each command is sent as the first fixed actor its grant names.",
         "/docs/concepts/capabilities",
-        "crates/spindle-cli/tests/fixed_caller.rs::a_command_reading_the_caller_runs_with_the_fixed_caller",
+        "crates/spindle-cli/tests/spindle-cli/fixed_caller.rs::a_command_reading_the_caller_runs_with_the_fixed_caller",
     ),
     shipped(
         "Conformance",
         "Scenario replay",
         "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: an entity it arranges with setup is written into the store of the component that owns it, captures feed later steps, view asserts are checked, and the first divergent step is named and ends the run.",
         "/docs/concepts/specification",
-        "crates/spindle-conformance/tests/establish.rs::an_established_row_is_read_by_the_next_command",
+        "crates/spindle-conformance/tests/spindle-conformance/establish.rs::an_established_row_is_read_by_the_next_command",
     ),
     shipped(
         "Conformance",
         "Self-conformance",
         "conform runs the suite ESS synthesises from a specification, or one written for it, against every component in one process; task check runs it on Spindle's own specification, lists every synthesis refusal with its code and holds the executed and skipped counts.",
         "/docs/concepts/specification",
-        "crates/spindle-cli/tests/conform.rs::every_executed_scenario_passes",
+        "crates/spindle-cli/tests/spindle-cli/conform.rs::every_executed_scenario_passes",
     ),
     shipped(
         "Observe",
         "The control process",
         "b10x-spindle deploy places and launches the instances of a spindle-placement/1 document on process targets, collects their samples, keeps the last 15 minutes and serves the read-only observe API and the UI embedded in the binary on 127.0.0.1, with a token and a Host check.",
         "/docs/concepts/observe",
-        "crates/spindle-control/tests/control.rs::the_stream_carries_one_sample_per_instance_per_period",
+        "crates/spindle-control/tests/spindle-control/control.rs::the_stream_carries_one_sample_per_instance_per_period",
     ),
     planned(
         "Deploy",
@@ -440,6 +447,47 @@ mod tests {
             assert_eq!(c.status == "shipped", c.test.is_some(), "{}", c.label);
             assert!(c.href.starts_with("/docs/"), "{}", c.href);
         }
+    }
+
+    /// `story:one-test-binary-per-crate`: every test target cargo discovers under a crate's
+    /// `tests/` (a `*.rs` file there, or a directory with a `main.rs`) is that crate's
+    /// `tests/<crate>/main.rs`, so a citation `crates/<crate>/tests/<crate>/<file>.rs` names the
+    /// one binary that runs it. Two tests hold process-wide state and keep their own binary: the
+    /// telemetry allocation test (its global allocator would replace every other test's) and the
+    /// QEMU context-id test (it takes every guest context id the process may give out).
+    #[test]
+    fn each_crate_links_one_integration_test_binary() {
+        let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut found = Vec::new();
+        for entry in fs::read_dir(&crates).expect("crates/ reads") {
+            let package = entry.expect("a crate").path();
+            let Ok(tests) = fs::read_dir(package.join("tests")) else {
+                continue;
+            };
+            let name = package.file_name().unwrap().to_string_lossy().into_owned();
+            for target in tests {
+                let path = target.expect("a test entry").path();
+                let file = path.file_name().unwrap().to_string_lossy().into_owned();
+                if path.extension().is_some_and(|ext| ext == "rs") {
+                    found.push(format!("{name}/tests/{file}"));
+                } else if path.join("main.rs").is_file() {
+                    found.push(format!("{name}/tests/{file}/main.rs"));
+                }
+            }
+        }
+        let stray: Vec<&String> = found
+            .iter()
+            .filter(|target| {
+                let (name, rest) = target.split_once("/tests/").unwrap();
+                rest != format!("{name}/main.rs")
+                    && ![
+                        "spindle-telemetry/tests/blocking.rs",
+                        "spindle-qemu/tests/context_ids.rs",
+                    ]
+                    .contains(&target.as_str())
+            })
+            .collect();
+        assert_eq!(stray, Vec::<&String>::new(), "of {found:?}");
     }
 
     #[test]

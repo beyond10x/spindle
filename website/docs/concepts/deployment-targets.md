@@ -3,7 +3,7 @@ title: Deployment targets
 sidebar_position: 5
 description: Where an instance of a component runs - a host process, a QEMU microvm or a Firecracker microVM - and the launcher contract they share.
 lede: Every target kind implements one launcher contract, so the rest of Spindle never knows whether an instance is a process or a virtual machine.
-source: ess/domains/placement.yaml, crates/spindle-target/src/lib.rs, crates/spindle-target/tests/target.rs, crates/spindle-qemu/src/lib.rs, crates/spindle-firecracker/src/lib.rs, AGENTS.md (Gate), docs/design/spindle.md §12, docs/design/observe.md
+source: ess/domains/placement.yaml, crates/spindle-target/src/lib.rs, crates/spindle-target/tests/spindle-target/target.rs, crates/spindle-qemu/src/lib.rs, crates/spindle-firecracker/src/lib.rs, AGENTS.md (Gate), docs/design/spindle.md §12, docs/design/observe.md
 ---
 
 Spindle's own specification has a domain for this decision, `spindle.placement`
