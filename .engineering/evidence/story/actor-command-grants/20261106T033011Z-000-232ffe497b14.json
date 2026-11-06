@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-06T03:30:11Z",
+  "actor": "human:timo",
+  "artifact": "story:actor-command-grants",
+  "kind": "story",
+  "revision": 6,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "CI Gate on PR 16 head 10d0cdb (run 42155812488), merged to main c69fbbd: task check passed, including cargo test --workspace and ess specify validate, which hold this story's acceptance tests",
+    "reference": "https://github.com/beyond10x/spindle/actions/runs/42155812488"
+  }
+}

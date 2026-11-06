@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-06T03:30:12Z",
+  "actor": "human:timo",
+  "artifact": "story:actor-command-grants",
+  "kind": "story",
+  "revision": 6,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "task check:vm on wave/7 23f0988: 66 passed, 0 failed (QEMU and Firecracker rally cases)"
+  }
+}
