@@ -56,7 +56,8 @@ instance's own readings (CPU seconds and memory in use, from `/proc/self` for a 
 no count. The sender runs on its own thread: with no collector, or a slow one, it drops frames and
 reports the number dropped in the next frame it delivers, and a command never waits for it.
 A frame counts as sent once it is written to the socket, which does not prove a collector read it.
-A Unix socket path must be UTF-8 and at most 107 bytes; the launcher refuses any other.
+A Unix socket path must be UTF-8 and fit the platform's `sun_path` less its NUL: at most 107 bytes
+on Linux and 103 on macOS. The launcher refuses any other.
 
 ## The observe API and UI
 

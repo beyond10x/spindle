@@ -392,6 +392,10 @@ fn a_malformed_chunked_body_is_not_answered_as_too_large() {
 
 /// The listener keeps serving after accepting a connection failed once: a run of connections that
 /// exhausts the process's descriptors is answered again once they close.
+///
+/// Linux only: it lowers the child's limit with `prlimit` and counts `/proc/<pid>/fd`
+/// (`story:macos-host-builds`).
+#[cfg(target_os = "linux")]
 #[test]
 fn the_listener_survives_running_out_of_descriptors() {
     use rustix::process::{Pid, Resource, Rlimit, getrlimit, prlimit};

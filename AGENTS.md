@@ -25,10 +25,10 @@ environment, and executes it. Humans start at [`README.md`](README.md); the desi
 | `crates/spindle-kernel/` | executes commands against the compiled IR: guards, outcomes, entity and newtype invariants, events; SQLite or memory store |
 | `crates/spindle-timer/` | fires periodic bindings on an injected clock |
 | `crates/spindle-channel/` | carries event bindings between components (in-process, TCP) |
-| `crates/spindle-target/` | the deployment target contract: `Launcher`, `LaunchPlan`, `Running`, `Exit`, `place`/`start`; the process launcher (`with_telemetry`: `SPINDLE_TELEMETRY=unix:<socket>`; each instance in its own process group, sent SIGTERM by `PR_SET_PDEATHSIG` when the launching thread ends) |
-| `crates/spindle-qemu/` | `QemuLauncher`: QEMU `microvm` with the host kernel, a Rust `/init` in a cpio initramfs, a private user and network namespace; `with_telemetry`: a `vhost-vsock-device` per guest |
-| `crates/spindle-firecracker/` | Firecracker launcher: API socket, taps on a bridge inside a private user and network namespace; `with_telemetry`: a vsock device, `vsock.sock_<port>` |
-| `crates/spindle-telemetry/` | the `Telemetry` port: atomic counters and fixed-bucket histograms per instance, `CountingStore`, the counter catalogue derived from the IR; the transport: `Sender` (one `spindle-telemetry/1` frame per period to `SPINDLE_TELEMETRY`, `unix:` or `vsock:`), `Frame`, `FrameReader`, `vsock` |
+| `crates/spindle-target/` | the deployment target contract: `Launcher`, `LaunchPlan`, `Running`, `Exit`, `place`/`start`; the process launcher (`with_telemetry`: `SPINDLE_TELEMETRY=unix:<socket>`; each instance in its own process group, sent SIGTERM by `PR_SET_PDEATHSIG` when the launching thread ends, on Linux only) |
+| `crates/spindle-qemu/` | `QemuLauncher`: QEMU `microvm` with the host kernel, a Rust `/init` in a cpio initramfs, a private user and network namespace; `with_telemetry`: a `vhost-vsock-device` per guest; Linux only: elsewhere every spawn answers `Unsupported` and `spindle-qemu-init` exits 2 |
+| `crates/spindle-firecracker/` | Firecracker launcher: API socket, taps on a bridge inside a private user and network namespace; `with_telemetry`: a vsock device, `vsock.sock_<port>`; Linux only: elsewhere every spawn answers `Unsupported` and `spindle-guest-init` exits 2 |
+| `crates/spindle-telemetry/` | the `Telemetry` port: atomic counters and fixed-bucket histograms per instance, `CountingStore`, the counter catalogue derived from the IR; the transport: `Sender` (one `spindle-telemetry/1` frame per period to `SPINDLE_TELEMETRY`, `unix:` or `vsock:`), `Frame`, `FrameReader`, `vsock` (Linux; elsewhere `vsock_refused.rs`: the same types, every connect and bind `Unsupported`; `read_resources` reads `/proc` and is `Unsupported` off Linux too) |
 | `crates/spindle-host/` | every component of a system in one process: per-component admission and store, the timer on an injected clock, in-process channels, one-row and list view reads, an injected decider for `external:` causes (`Host::deciding`), a row written as it rests into its owning component's store (`Host::establish`); `rally::frame` |
 | `crates/spindle-conformance/` | `HostTarget`, the in-process `ess-conformance` target (`external:` causes answered as a scenario forces them, `establish` steps written through `Host::establish` after ESS checks them); `synthesize`, `execute`, `Run` (`account`: ESS's known-failure accounting, bound to `build()`), `Counts` (`spindle-conformance-counts/1`) |
 | `crates/spindle-ingress/` | the HTTP adapter behind `ingress.network` (`http-loopback`): routes and answers as ESS publishes them (derived, or from an `ess-http/1` binding compiled by ESS); hyper on 127.0.0.1, requests handed to the host's thread; `bind_guarded` also refuses a foreign `Host` (403) and a request without its token (401) |
@@ -155,12 +155,15 @@ cut from `main`:
    under the bot.
 6. The tag push starts [`release.yml`](.github/workflows/release.yml). It checks that the tag is
    annotated, on `main`, equal to the workspace version and named by a dated `CHANGELOG.md`
-   heading; waits for CI's `Gate` to be green on the tagged commit; builds the observe UI once and
-   `b10x-spindle` with it embedded for `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`;
-   and uploads `b10x-spindle-<version>-<target>.tar.gz` and `SHA256SUMS` to the page once it
-   exists. macOS builds are not released yet: the host crates use Linux-only APIs (`accept4` and
-   `SOCK_CLOEXEC` in `spindle-telemetry`, the parent-death signal in `spindle-target`). A target is
-   added as a matrix row in the `build` job and a name in the `publish` job's `targets`. It never
+   heading; waits for CI's `Gate` and `macOS` checks to be green on the tagged commit; builds the
+   observe UI once and `b10x-spindle` with it embedded for `x86_64-unknown-linux-gnu`,
+   `aarch64-unknown-linux-gnu`, `aarch64-apple-darwin` (`macos-14`) and `x86_64-apple-darwin`
+   (`macos-15-intel`); and uploads `b10x-spindle-<version>-<target>.tar.gz` and `SHA256SUMS` to
+   the page once it exists. On macOS the in-process commands run as on Linux; the microVM
+   launchers, vsock, `/proc` resource readings and the parent-death signal are Linux-only and
+   compile to a declared refusal there. CI's `macOS` job checks and lints the workspace for both
+   macOS targets and runs the in-process test lanes and the off-Linux refusals of the microVM
+   crates. A target is added as a matrix row in the `build` job and a name in the `publish` job's `targets`. It never
    creates or edits the page and never replaces an asset. A pull request that changes the workflow
    runs the builds and publishes nothing; `workflow_dispatch` with `tag` backfills an existing tag.
 7. Verify: the `Release` run for the tag succeeded; the page is authored by `b10x-bot[bot]`, is

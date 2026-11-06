@@ -20,8 +20,13 @@ pub const ENV_TELEMETRY_PERIOD_MS: &str = "SPINDLE_TELEMETRY_PERIOD_MS";
 pub const DEFAULT_PERIOD: Duration = Duration::from_secs(1);
 /// The vsock context id of the host, as a guest addresses it.
 pub const VSOCK_HOST_CID: u32 = 2;
-/// The longest Unix socket path, in bytes: `sun_path` holds 108, the last of them the NUL.
-pub const MAX_UNIX_PATH: usize = 107;
+/// The longest Unix socket path, in bytes: `sun_path` less its last byte, the NUL. `sun_path`
+/// holds 108 bytes on Linux (107) and 104 on macOS (103).
+pub const MAX_UNIX_PATH: usize = {
+    // SAFETY: sockaddr_un is plain old data; all-zero is a valid value.
+    let address: libc::sockaddr_un = unsafe { mem::zeroed() };
+    address.sun_path.len() - 1
+};
 
 /// A collector's address: `unix:<path>` or `vsock:<cid>:<port>`.
 ///

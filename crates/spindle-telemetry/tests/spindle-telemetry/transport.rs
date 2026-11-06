@@ -213,6 +213,7 @@ fn a_frame_validates_against_the_sample_schema() {
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn the_frame_carries_the_guest_resource_readings() {
     let mut steps = 0u64;
@@ -265,5 +266,67 @@ fn an_endpoint_reads_back_as_it_is_written() {
         "vsock:2:70000000000",
     ] {
         assert!(text.parse::<Endpoint>().is_err(), "{text:?} is refused");
+    }
+}
+
+/// `sun_path` is 108 bytes on Linux and 104 on macOS; the longest path is one less, for the NUL,
+/// and a path of that length is accepted while one byte more is refused.
+#[test]
+fn the_longest_unix_path_is_the_platform_sun_path_less_its_nul() {
+    let expected = if cfg!(target_os = "linux") {
+        107
+    } else if cfg!(target_vendor = "apple") {
+        103
+    } else {
+        spindle_telemetry::MAX_UNIX_PATH
+    };
+    assert_eq!(spindle_telemetry::MAX_UNIX_PATH, expected);
+    let longest = format!("/{}", "s".repeat(spindle_telemetry::MAX_UNIX_PATH - 1));
+    assert!(Endpoint::unix(&longest).is_ok(), "{} bytes", longest.len());
+    assert!(
+        Endpoint::unix(format!("{longest}s")).is_err(),
+        "{} bytes",
+        longest.len() + 1
+    );
+}
+
+/// Off Linux a vsock endpoint still reads back, and connecting to it, listening and reading
+/// resources are each refused by name.
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn vsock_and_proc_readings_are_refused_off_linux() {
+    use spindle_telemetry::vsock::{REFUSAL, VsockListener, VsockStream};
+
+    let endpoint: Endpoint = "vsock:2:7341".parse().expect("an endpoint");
+    let connected = endpoint.connect(Duration::from_millis(50));
+    assert!(
+        connected
+            .as_ref()
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::Unsupported
+                && error.to_string() == REFUSAL),
+        "{connected:?}"
+    );
+    let stream = VsockStream::connect_within(2, 7341, Duration::from_millis(50));
+    assert!(
+        stream
+            .as_ref()
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::Unsupported),
+        "{stream:?}"
+    );
+    let listener = VsockListener::bind_any_port();
+    assert!(
+        listener
+            .as_ref()
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::Unsupported),
+        "{listener:?}"
+    );
+    for readings in [Readings::Process, Readings::Machine] {
+        let read = read_resources(readings);
+        assert!(
+            read.as_ref()
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::Unsupported
+                    && error.to_string() == spindle_telemetry::READINGS_REFUSAL),
+            "{read:?}"
+        );
     }
 }

@@ -71,7 +71,7 @@ fn stuck_listener(path: &Path, backlog: i32) -> std::os::fd::OwnedFd {
     use std::os::fd::FromRawFd;
     // SAFETY: plain socket/bind/listen calls on a fresh descriptor.
     unsafe {
-        let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0);
+        let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
         assert!(fd >= 0, "socket");
         let mut address: libc::sockaddr_un = std::mem::zeroed();
         address.sun_family = libc::AF_UNIX as libc::sa_family_t;

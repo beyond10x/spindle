@@ -6,6 +6,16 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- `b10x-spindle` builds for macOS (`aarch64-apple-darwin`, `x86_64-apple-darwin`), and each
+  release carries both archives in `SHA256SUMS`. The in-process commands run there as on Linux;
+  `deploy`'s telemetry peer check reads `LOCAL_PEERPID`, and the longest telemetry socket path
+  follows the platform's `sun_path` (103 bytes on macOS). The microVM launchers, vsock and the
+  `/proc` resource readings answer `Unsupported` off Linux, and a process instance gets no
+  parent-death signal there. CI checks and lints both macOS targets and runs the in-process test
+  lanes on a macOS runner; a release publishes only once that job is green on the tagged commit.
+
 ### Changed
 
 - Each crate's integration tests build into one test binary, `tests/<crate>/main.rs` with one
