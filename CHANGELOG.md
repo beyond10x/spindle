@@ -26,6 +26,8 @@ are Spindle's releases.
   runs. Capability derivation requires `identity.mint` or `clock` for such fields.
 - A `wrong_state` refusal for an identity with no record answers no payload, as the published
   schema describes.
+- A view the ingress cannot route (a `List` parameter in the query string, a body other than
+  `rows`) answers 501 naming the construct and is listed at startup, instead of refusing startup.
 - ESS moved to 0.88.0.
 
 ## [0.1.0] - 2026-11-06

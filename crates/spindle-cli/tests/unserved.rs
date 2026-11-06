@@ -6,7 +6,9 @@
 //! ingress does not serve; `DiscardNote`, whose set outcome (`instances:`) the kernel does not
 //! run; and `WriteNote`, which runs. `tests/fixtures/unservable` holds only the first two.
 //! `tests/fixtures/retried` binds an event to a command with `on_failure: retry`, and the command
-//! it invokes fails.
+//! it invokes fails. `tests/fixtures/list-parameter` declares `WriteNote`, which runs, `AllNotes`,
+//! which the host reads, and `NotesTagged`, whose `List<String>` parameter no single query value
+//! carries, which this ingress does not serve.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -22,6 +24,7 @@ const UNSERVABLE: &str = "crates/spindle-cli/tests/fixtures/unservable";
 const RETRIED: &str = "crates/spindle-cli/tests/fixtures/retried";
 const ESCALATE: &str = "crates/spindle-cli/tests/fixtures/adversary_escalate";
 const INGRESS: &str = "crates/spindle-cli/tests/fixtures/ingress";
+const LIST_PARAMETER: &str = "crates/spindle-cli/tests/fixtures/list-parameter";
 const LAPTOP: &str = "examples/environments/laptop.toml";
 const COMPONENT: &str = "pad";
 
@@ -29,6 +32,7 @@ const WRITE_NOTE: &str = "notes.pad.WriteNote";
 const DISCARD_NOTE: &str = "notes.pad.DiscardNote";
 const COPY_NOTE: &str = "notes.pad.CopyNote";
 const ALL_NOTES: &str = "notes.pad.AllNotes";
+const NOTES_TAGGED: &str = "notes.pad.NotesTagged";
 
 /// How long `run` may take to admit, open its state and print where it listens.
 const STARTUP: Duration = Duration::from_secs(60);
@@ -399,6 +403,56 @@ fn a_run_with_nothing_to_serve_is_refused() {
         "the refusal lists what is not served: {stderr}"
     );
     assert!(stderr.contains("serves no operation"), "{stderr}");
+}
+
+#[test]
+fn a_view_with_a_list_parameter_answers_501_and_the_rest_serve() {
+    let contract = Contract::load(LIST_PARAMETER);
+    let served = serve(LIST_PARAMETER, &[]);
+
+    let lines = unserved(&served.stderr.until(NOTES_TAGGED));
+    assert_eq!(
+        lines.len(),
+        1,
+        "one line per unserved operation: {lines:#?}"
+    );
+    assert!(
+        lines[0].contains(NOTES_TAGGED)
+            && lines[0].contains("the parameter tags, which no single query value carries"),
+        "startup names the view and the construct: {lines:#?}"
+    );
+
+    let (status, answer) = call(
+        &served,
+        &contract,
+        WRITE_NOTE,
+        Some(&json!({"note_id": "n1", "text": "kept"})),
+    );
+    assert_eq!(status, 202, "{answer}");
+    assert_eq!(answer["outcome"], "written");
+    contract.validate(WRITE_NOTE, status, &answer);
+    let (status, rows) = call(&served, &contract, ALL_NOTES, None);
+    assert_eq!(status, 200, "{rows}");
+    contract.validate(ALL_NOTES, status, &rows);
+    assert_eq!(rows, json!({"rows": [{"note_id": "n1", "text": "kept"}]}));
+
+    let (method, path) = contract.route(NOTES_TAGGED);
+    for target in [
+        format!("{path}?tags=kept"),
+        format!("{path}?tags=kept&tags=other"),
+        format!("{path}?tags=%ZZ"),
+        path.clone(),
+    ] {
+        let (status, answer) = exchange(served.address, &method, &target, None);
+        assert_eq!(status, 501, "{target}: {answer}");
+        assert_eq!(answer["committed"], false, "{target}: {answer}");
+        let refused = answer["refused"].as_str().expect("a refusal in words");
+        assert!(
+            refused.contains(NOTES_TAGGED)
+                && refused.contains("the parameter tags, which no single query value carries"),
+            "the 501 names the view and the construct before the query is read: {refused}"
+        );
+    }
 }
 
 #[test]

@@ -106,16 +106,15 @@ pub enum Command {
     /// so far, in order) and `POST /api/reset` (empties every store, `{"emptied": [...]}`); a
     /// route the binding or ESS publishes at one of those paths exits 1 before listening.
     ///
-    /// A command this ingress cannot route or the kernel does not run, and a view the host does
-    /// not read, keeps its route and answers `501` naming the operation and the construct (a
-    /// command with ESS's envelope, `{"refused", "committed": false}`); nothing is read or
-    /// written for it. Before listening, `run` prints one line on stderr per such operation, in
-    /// name order: component by component, commands then views, each by qualified name. A view
-    /// this ingress cannot route (such as one a binding answers other than as `rows`) still exits
-    /// 1 before listening, naming it: ESS publishes no `501` for a view. A run that would serve no
-    /// operation, one of them a command this ingress cannot route, exits 1 before listening; one
-    /// whose operations only the kernel or the host does not run is served as before, each
-    /// answering `501`.
+    /// A command or view this ingress cannot route (such as a view a binding answers other than
+    /// as `rows`, or one whose parameter no single query value carries), a command the kernel does
+    /// not run, and a view the host does not read, keeps its route and answers `501` naming the
+    /// operation and the construct (with ESS's envelope, `{"refused", "committed": false}`);
+    /// nothing is read or written for it. Before listening, `run` prints one line on stderr per
+    /// such operation, in name order: component by component, commands then views, each by
+    /// qualified name. A run that would serve no operation, one of them an operation this ingress
+    /// cannot route, exits 1 before listening; one whose operations only the kernel or the host
+    /// does not run is served as before, each answering `501`.
     ///
     /// A served request carries no `external` object: its external causes are answered by
     /// `--decisions`, then by `--answer-default`, each answer per command and outcome, never per

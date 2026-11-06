@@ -86,9 +86,8 @@ pub struct Caller {
 /// Why a route is kept but its operation not served.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unserved {
-    /// The command's route uses what this ingress does not serve, named. A request for it is
-    /// answered `501` before anything is read or written. A view this ingress cannot route is
-    /// not kept: its contract declares no `501`, so [`Surface::new`] refuses it.
+    /// The command's or view's route uses what this ingress does not serve, named. A request for
+    /// it is answered `501` before anything is read or written.
     Ingress(String),
     /// The kernel's [`runs`](spindle_kernel::runs) refuses the command, as its text. A request
     /// for it is answered as before this was known: the host refuses it before anything is read
@@ -280,8 +279,8 @@ impl Route {
     /// The input `path` carries in its variables, read as [`ess_gen::http::Flat`] says; `None`
     /// when `path` does not match the template or leaves a variable's segment empty (ESS's
     /// served application matches only a variable holding a segment that is not empty),
-    /// `Some(Err)` when a variable's text is malformed. Nothing is read from a matched path for a
-    /// command the ingress does not serve or a view the fixed caller may not read: both are
+    /// `Some(Err)` when a variable's text is malformed. Nothing is read from a matched path for an
+    /// operation the ingress does not serve or a view the fixed caller may not read: both are
     /// refused before their request is read.
     fn carried(&self, path: &str) -> Option<Result<Map<String, Value>, String>> {
         if !ess_gen::http::template_matches(&self.segments, path) {
@@ -468,22 +467,21 @@ impl Surface {
     /// input, the request it declares (`json`, `form` or `query`) and the status it lists for an
     /// outcome ([`ess_gen::http::listed`]).
     ///
-    /// A command this ingress cannot route keeps its route and is marked [`Unserved::Ingress`]:
-    /// an outcome answered other than with the envelope (a body, headers, a redirect or text), a
-    /// standard refusal the binding answers its own way, an outcome that answers with the
-    /// command's retained result, or a path variable that is not a scalar. A command the kernel's [`runs`](spindle_kernel::runs) refuses is marked
-    /// [`Unserved::Kernel`], and a view the host's [`reads`](spindle_host::reads) refuses
-    /// [`Unserved::Host`].
+    /// A command or view this ingress cannot route keeps its route and is marked
+    /// [`Unserved::Ingress`]: for a command, an outcome answered other than with the envelope (a
+    /// body, headers, a redirect or text), an outcome that answers with the command's retained
+    /// result, or the caller attributes it reads where no caller is fixed; for a view, one
+    /// answered other than as `rows`, or a parameter in the query string that no single scalar
+    /// value carries; for either, a standard refusal the binding answers its own way or a path
+    /// variable that is not a scalar. A command the kernel's [`runs`](spindle_kernel::runs)
+    /// refuses is marked [`Unserved::Kernel`], and a view the host's
+    /// [`reads`](spindle_host::reads) refuses [`Unserved::Host`].
     ///
     /// # Errors
     /// [`SurfaceError::NoComponent`] for a name `ir` does not declare,
     /// [`SurfaceError::Collision`] when two components claim one route, and
     /// [`SurfaceError::Unsupported`] for a binding that answers a standard refusal its own way
-    /// for every operation, a path that is not a template, or a view this ingress cannot route
-    /// (one answered other than as `rows`, a standard refusal the binding answers its own way, a
-    /// path variable or a parameter in the query string that is not a scalar): ESS publishes no
-    /// `501` for a view, so it is refused rather than answered with a status its contract does
-    /// not declare.
+    /// for every operation, or a path that is not a template.
     pub fn new(
         ir: &EssIr,
         components: &[String],
@@ -663,7 +661,7 @@ impl Surface {
 ///
 /// # Errors
 /// [`SurfaceError::Unsupported`] when the route's path is not a template ESS reads, so that no
-/// request can be matched to it, or for a view this ingress cannot route.
+/// request can be matched to it.
 fn route(
     ir: &EssIr,
     component: &str,
@@ -696,14 +694,9 @@ fn route(
         not_granted: false,
     };
     match (served(ir, bound, &mut route), &route.operation) {
-        (Err(what), Operation::View(_)) => {
-            return Err(SurfaceError::Unsupported {
-                operation: route.operation.to_string(),
-                what,
-            });
-        }
-        (Err(what), Operation::Command(_)) => {
+        (Err(what), _) => {
             route.variables.clear();
+            route.queried.clear();
             route.statuses.clear();
             route.responding.clear();
             route.unserved = Some(Unserved::Ingress(what));

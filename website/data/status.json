@@ -221,7 +221,7 @@
     },
     {
       "area": "Execution",
-      "detail": "An HTTP run serves every command and view that runs and answers each other one 501 naming the construct, ESS's envelope for a command; the list is printed at startup, in name order. A view the ingress cannot route still refuses startup by name, since ESS publishes no 501 for a view. SQLite state without --state is kept in a temporary directory removed when the run ends.",
+      "detail": "An HTTP run serves every command and view that runs and answers each other one 501 naming the construct, ESS's envelope for a command; the list is printed at startup, in name order. A view the ingress cannot route answers 501 naming the construct too, and is listed at startup. SQLite state without --state is kept in a temporary directory removed when the run ends.",
       "href": "/docs/concepts/capabilities",
       "label": "Serve what runs",
       "status": "shipped"

@@ -293,11 +293,12 @@ fn adversary_startup_lists_exactly_the_operations_that_answer_501() {
     );
 }
 
-/// A view this ingress cannot route has no `501` in the OpenAPI ESS projects for the run's
-/// binding, so it is not served with one: the run refuses to start, naming the view and what it
-/// uses, as the base did, and nothing listens.
+/// A view this ingress cannot route keeps its route and is marked unserved, as a command is: the
+/// run starts, lists the view at startup naming what it uses, answers it `501` naming the
+/// construct, and serves the rest. The OpenAPI ESS projects for the binding declares no `501` for
+/// the view, as it declares none for a view the host does not read, which also answers `501`.
 #[test]
-fn adversary_an_unroutable_view_refuses_startup_by_name() {
+fn adversary_an_unroutable_view_answers_501_by_name() {
     let contract = Contract::load(UNSERVED, Some(UNSERVED_HTTP));
     assert!(
         !contract.statuses(ALL_NOTES).contains(&"501".to_owned()),
@@ -305,37 +306,39 @@ fn adversary_an_unroutable_view_refuses_startup_by_name() {
     );
     let state = scratch();
     let file = state.path().join("state");
-    let mut running = Running::start(
+    let (running, address) = serve(
+        UNSERVED,
         &[
-            "run",
-            UNSERVED,
-            "--environment",
-            LAPTOP,
             "--http",
             UNSERVED_HTTP,
             "--state",
             file.to_str().expect("a UTF-8 path"),
         ],
-        Stdio::null(),
     );
-    let status = running.exited();
-    let mut stdout = String::new();
-    running
-        .child
-        .stdout
-        .take()
-        .expect("stdout")
-        .read_to_string(&mut stdout)
-        .expect("stdout is read");
     let stderr = running.stderr.until(ALL_NOTES);
-    assert!(!status.success(), "{status:?} {stdout} {stderr:#?}");
-    assert!(!stdout.contains("listening"), "nothing listened: {stdout}");
     assert!(
-        stderr
-            .iter()
-            .any(|line| line.contains(&format!("`{ALL_NOTES}`"))
-                && line.contains("a view answered other than as rows")),
-        "the refusal names the view and what it uses: {stderr:#?}"
+        stderr.iter().any(|line| line.contains("not served:")
+            && line.contains(&format!("`{ALL_NOTES}`"))
+            && line.contains("a view answered other than as rows")),
+        "startup names the view and what it uses: {stderr:#?}"
+    );
+    let (method, path) = contract.route(WRITE_NOTE);
+    let (status, answer) = exchange(
+        address,
+        &method,
+        &path,
+        Some(r#"{"note_id": "n1", "text": "kept"}"#),
+    );
+    assert_eq!(status, 202, "{answer}");
+    let (method, path) = contract.route(ALL_NOTES);
+    let (status, answer) = exchange(address, &method, &path, None);
+    assert_eq!(status, 501, "{answer}");
+    assert_eq!(answer["committed"], false, "{answer}");
+    assert!(
+        answer["refused"].as_str().is_some_and(|refused| {
+            refused.contains(ALL_NOTES) && refused.contains("a view answered other than as rows")
+        }),
+        "the 501 names the view and the construct: {answer}"
     );
 }
 
