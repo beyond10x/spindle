@@ -187,6 +187,9 @@ fn every_kernel_failure_is_named_as_the_kernel_names_it() {
             reason: "r".to_owned(),
         },
         ExecuteError::Store(StoreError::Backend("b".to_owned())),
+        ExecuteError::NotGranted {
+            actor: "a".to_owned(),
+        },
     ];
     let mapped = every
         .iter()

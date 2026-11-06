@@ -1,0 +1,127 @@
+domain: shelf.books
+summary: A book on the shelf; a reader may only read it, a librarian adds and removes it.
+types:
+  - name: shelf.books.BookId
+    kind: newtype
+    of: Uuid
+actors:
+  - name: shelf.books.Librarian
+    may:
+      - shelf.books.AddBook
+      - shelf.books.ReadBook
+      - shelf.books.DeleteBook
+  - name: shelf.books.Reader
+    may:
+      - shelf.books.ReadBook
+entities:
+  - name: shelf.books.Book
+    identity:
+      name: book_id
+      type: shelf.books.BookId
+    fields:
+      - name: title
+        type: String
+      - name: note
+        type: Optional<String>
+    lifecycle:
+      initial: Shelved
+      states: [Shelved, Removed]
+      terminal: [Removed]
+      transitions:
+        - name: remove
+          from: [Shelved]
+          to: Removed
+errors:
+  - name: shelf.books.NoSuchBook
+    summary: No book carries the id.
+    fields: []
+  - name: shelf.books.NotShelved
+    summary: The book has been removed.
+    fields: []
+commands:
+  - name: shelf.books.AddBook
+    input:
+      - name: book_id
+        type: shelf.books.BookId
+      - name: title
+        type: String
+    outcomes:
+      - name: added
+        creates: shelf.books.Book
+        instance: book_id
+        sets:
+          title: input.title
+        emits: [shelf.books.BookAdded]
+        payload:
+          shelf.books.BookAdded: {book_id: input.book_id}
+        summary: The book is put on the shelf.
+  - name: shelf.books.ReadBook
+    input:
+      - name: book_id
+        type: shelf.books.BookId
+      - name: note
+        type: String
+    outcomes:
+      - name: no-such-book
+        unknown_instance: true
+        error: shelf.books.NoSuchBook
+        summary: No book carries the id.
+      - name: not-shelved
+        when_subject: {predicate: state != Shelved}
+        error: shelf.books.NotShelved
+        summary: A removed book is not read.
+      - name: read
+        updates: shelf.books.Book
+        instance: book_id
+        sets:
+          note: input.note
+        emits: [shelf.books.BookRead]
+        payload:
+          shelf.books.BookRead: {book_id: input.book_id}
+        summary: The book is read and the reader's note kept.
+  - name: shelf.books.DeleteBook
+    input:
+      - name: book_id
+        type: shelf.books.BookId
+    outcomes:
+      - name: no-such-book
+        unknown_instance: true
+        error: shelf.books.NoSuchBook
+        summary: No book carries the id.
+      - name: not-shelved
+        when_subject: {predicate: state != Shelved}
+        error: shelf.books.NotShelved
+        summary: A removed book is not removed again.
+      - name: deleted
+        moves: shelf.books.Book.remove
+        instance: book_id
+        emits: [shelf.books.BookDeleted]
+        payload:
+          shelf.books.BookDeleted: {book_id: input.book_id}
+        summary: The book is taken off the shelf.
+events:
+  - name: shelf.books.BookAdded
+    fields:
+      - name: book_id
+        type: shelf.books.BookId
+  - name: shelf.books.BookRead
+    fields:
+      - name: book_id
+        type: shelf.books.BookId
+  - name: shelf.books.BookDeleted
+    fields:
+      - name: book_id
+        type: shelf.books.BookId
+views:
+  - name: shelf.books.Books
+    source: shelf.books.Book
+    consistency: read_your_writes
+    fields:
+      - name: book_id
+        type: shelf.books.BookId
+      - name: title
+        type: String
+      - name: note
+        type: Optional<String>
+      - name: state
+        type: shelf.books.Book.State

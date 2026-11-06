@@ -37,12 +37,13 @@ type Forcing = Arc<Mutex<Option<(String, String)>>>;
 /// did not ask it. A cause nothing forced does not hold, so the model selects as it would without
 /// it. Nothing forced in one scenario reaches the next.
 ///
-/// A command sent as an actor is sent as it is: the host checks no grant, which is the caller's
-/// where no component serves the actor; a step's actor and `caller` are the caller the command
-/// runs as ([`Host::submit_as`]). An entity the scenario establishes, fixture values and
-/// redelivery are unsupported, each with its reason, and so is a send whose `on_failure: retry`
-/// binding gave up after [`RETRY_ATTEMPTS`](spindle_host::RETRY_ATTEMPTS), as ESS's interpreter
-/// answers a retry that exceeds its execution budget.
+/// A command sent as an actor whose `may:` does not name it is refused before it runs, as ESS's
+/// interpreter refuses it ([`TargetError::NotGranted`]); one sent as no actor is not checked. A
+/// step's actor and `caller` are the caller the command runs as ([`Host::submit_as`]). An entity
+/// the scenario establishes, fixture values and redelivery are unsupported, each with its reason,
+/// and so is a send whose `on_failure: retry` binding gave up after
+/// [`RETRY_ATTEMPTS`](spindle_host::RETRY_ATTEMPTS), as ESS's interpreter answers a retry that
+/// exceeds its execution budget.
 pub struct HostTarget {
     ir: EssIr,
     environment: Environment,
@@ -289,6 +290,7 @@ impl ConformanceTarget for HostTarget {
             }
             Err(HostError::Execute { error, .. }) => match *error {
                 ExecuteError::Undeclared { .. } => Ok(SemanticCommandResult::undeclared()),
+                ExecuteError::NotGranted { actor } => Err(TargetError::not_granted(Some(actor))),
                 ExecuteError::Unsupported { construct } => Err(TargetError::unsupported(
                     format!("running `{command}`"),
                     construct,

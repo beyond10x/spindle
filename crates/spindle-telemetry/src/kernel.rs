@@ -21,6 +21,7 @@ impl From<&ExecuteError> for Failure {
             ExecuteError::BrokenInvariant { .. } => Self::BrokenInvariant,
             ExecuteError::Undeclared { .. } => Self::Undeclared,
             ExecuteError::Store(_) => Self::Store,
+            ExecuteError::NotGranted { .. } => Self::NotGranted,
         }
     }
 }
