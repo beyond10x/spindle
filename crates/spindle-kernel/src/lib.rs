@@ -68,7 +68,7 @@ pub use execute::{Invocation, at_rest, execute, execute_as, execute_at, execute_
 pub use mint::{Identity, Mint, Seeded, Uuid, UuidV4};
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteStore;
-pub use store::{Change, MemoryStore, Row, Store, StoreError, Stored};
+pub use store::{Change, MemoryStore, Removal, Row, Store, StoreError, Stored};
 pub use supported::check as runs;
 
 /// Refuses `value` unless it is a value of `kind`, naming what it is not: the check every command

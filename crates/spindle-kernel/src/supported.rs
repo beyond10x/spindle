@@ -198,7 +198,7 @@ fn shape(outcome: &ResolvedOutcome) -> Option<&'static str> {
         Some(subject) => match (&subject.effect, &subject.instance) {
             (ResolvedEffect::Creates, ResolvedInstance::Observed { .. })
             | (
-                ResolvedEffect::Moves { .. } | ResolvedEffect::Updates,
+                ResolvedEffect::Moves { .. } | ResolvedEffect::Updates | ResolvedEffect::Deletes,
                 ResolvedInstance::Supplied { .. },
             ) => None,
             (ResolvedEffect::Preserves, ResolvedInstance::Supplied { .. })
@@ -207,7 +207,7 @@ fn shape(outcome: &ResolvedOutcome) -> Option<&'static str> {
                 None
             }
             (ResolvedEffect::Preserves, _) => Some("`preserves:` beside `sets:`"),
-            (ResolvedEffect::Deletes, _) => Some("`deletes:`"),
+            (ResolvedEffect::Deletes, _) => Some("`deletes:` with an observed identity"),
             (ResolvedEffect::Creates, ResolvedInstance::Supplied { .. }) => {
                 Some("`creates:` with a supplied identity")
             }

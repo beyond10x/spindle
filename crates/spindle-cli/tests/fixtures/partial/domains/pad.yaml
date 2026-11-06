@@ -42,13 +42,9 @@ commands:
       - name: note_id
         type: notes.pad.NoteId
     outcomes:
-      - name: no-such-note
-        unknown_instance: true
-        error: notes.pad.NoteNotFound
-        summary: No note carries the id.
       - name: discarded
         deletes: notes.pad.Note
-        instance: note_id
+        instances: {where: note_id == input.note_id}
         emits: [notes.pad.NoteDiscarded]
         payload:
           notes.pad.NoteDiscarded: {note_id: input.note_id}

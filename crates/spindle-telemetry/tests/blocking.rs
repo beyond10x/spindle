@@ -63,6 +63,10 @@ impl Store for Nowhere {
         Ok(())
     }
 
+    fn remove(&mut self, _: &spindle_kernel::Removal) -> Result<(), StoreError> {
+        Ok(())
+    }
+
     fn scan(&mut self, _: &str) -> Result<Vec<(serde_json::Value, Stored)>, StoreError> {
         Ok(Vec::new())
     }

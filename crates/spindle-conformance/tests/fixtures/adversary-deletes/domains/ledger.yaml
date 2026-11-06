@@ -1,0 +1,61 @@
+domain: study.ledger
+summary: One ledger entry per opened desk, dropped when its desk is removed.
+entities:
+  - name: study.ledger.Entry
+    identity:
+      name: desk_id
+      type: study.room.DeskId
+    fields: []
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+errors:
+  - name: study.ledger.NoEntry
+    summary: No entry carries the id.
+    fields: []
+commands:
+  - name: study.ledger.KeepEntry
+    input:
+      - name: desk_id
+        type: study.room.DeskId
+    outcomes:
+      - name: kept
+        creates: study.ledger.Entry
+        instance: desk_id
+        emits: [study.ledger.EntryKept]
+        payload:
+          study.ledger.EntryKept: {desk_id: input.desk_id}
+        summary: The desk's entry is kept.
+  - name: study.ledger.DropEntry
+    input:
+      - name: desk_id
+        type: study.room.DeskId
+    outcomes:
+      - name: no-entry
+        unknown_instance: true
+        error: study.ledger.NoEntry
+        summary: No entry carries the id.
+      - name: dropped
+        deletes: study.ledger.Entry
+        instance: desk_id
+        emits: [study.ledger.EntryDropped]
+        payload:
+          study.ledger.EntryDropped: {desk_id: input.desk_id}
+        summary: The desk's entry is dropped.
+events:
+  - name: study.ledger.EntryKept
+    fields:
+      - name: desk_id
+        type: study.room.DeskId
+  - name: study.ledger.EntryDropped
+    fields:
+      - name: desk_id
+        type: study.room.DeskId
+views:
+  - name: study.ledger.Entries
+    source: study.ledger.Entry
+    consistency: read_your_writes
+    fields:
+      - name: desk_id
+        type: study.room.DeskId

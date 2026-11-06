@@ -183,6 +183,13 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "Deleting outcomes",
+        "An outcome that declares deletes: on the instance its input names removes the row as ESS's interpreter does: it leaves every view, a later command on the identity answers as an unknown instance, and the outcome's events are published; on SQLite the removal survives a restart.",
+        "/docs/concepts/specification",
+        "crates/spindle-kernel/tests/deletes.rs::deletes_agree_with_the_interpreter",
+    ),
+    shipped(
+        "Execution",
         "List views with filters",
         "List views over every instance of an entity, with a state filter and an order.",
         "/docs/concepts/specification",

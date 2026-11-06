@@ -1,0 +1,200 @@
+domain: study.room
+summary: Desks opened and removed, books shelved at a desk and discarded, read as lists.
+types:
+  - name: study.room.DeskId
+    kind: newtype
+    of: String
+  - name: study.room.BookId
+    kind: newtype
+    of: String
+entities:
+  - name: study.room.Desk
+    identity:
+      name: desk_id
+      type: study.room.DeskId
+    fields:
+      - name: label
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open, Closed]
+      terminal: [Open, Closed]
+      transitions:
+        - {name: close, from: [Open], to: Closed}
+  - name: study.room.Book
+    identity:
+      name: book_id
+      type: study.room.BookId
+    fields:
+      - name: home
+        type: Optional<study.room.DeskId>
+    relations:
+      - {name: home, kind: references, target: study.room.Desk, cardinality: one, via: home}
+    lifecycle:
+      initial: Shelved
+      states: [Shelved]
+      transitions:
+        - {name: check, from: [Shelved], to: Shelved}
+      terminal: [Shelved]
+errors:
+  - name: study.room.NoDesk
+    summary: No desk carries the id.
+    fields: []
+  - name: study.room.NoBook
+    summary: No book carries the id.
+    fields: []
+  - name: study.room.DeskShut
+    summary: The desk is closed.
+    fields: []
+commands:
+  - name: study.room.OpenDesk
+    input:
+      - name: desk_id
+        type: study.room.DeskId
+      - name: label
+        type: String
+    outcomes:
+      - name: opened
+        creates: study.room.Desk
+        instance: desk_id
+        sets:
+          label: input.label
+        emits: [study.room.DeskOpened]
+        payload:
+          study.room.DeskOpened: {desk_id: input.desk_id}
+        summary: The desk opens.
+  - name: study.room.CloseDesk
+    input:
+      - name: desk_id
+        type: study.room.DeskId
+    outcomes:
+      - name: no-desk
+        unknown_instance: true
+        error: study.room.NoDesk
+        summary: No desk carries the id.
+      - name: closed
+        moves: study.room.Desk.close
+        instance: desk_id
+        emits: [study.room.DeskClosed]
+        payload:
+          study.room.DeskClosed: {desk_id: input.desk_id}
+        summary: The desk closes.
+      - name: wrong-state
+        wrong_state: true
+        error: study.room.DeskShut
+        summary: The desk is already closed.
+  - name: study.room.RemoveDesk
+    input:
+      - name: desk_id
+        type: study.room.DeskId
+    outcomes:
+      - name: no-desk
+        unknown_instance: true
+        error: study.room.NoDesk
+        summary: No desk carries the id.
+      - name: removed
+        deletes: study.room.Desk
+        instance: desk_id
+        emits: [study.room.DeskRemoved]
+        payload:
+          study.room.DeskRemoved:
+            desk_id: input.desk_id
+        summary: The desk is removed.
+  - name: study.room.ShelveBook
+    input:
+      - name: book_id
+        type: study.room.BookId
+      - name: home
+        type: study.room.DeskId
+    outcomes:
+      - name: no-desk
+        when_related:
+          via: input.home
+          exists: false
+        error: study.room.NoDesk
+        summary: The named desk does not exist.
+      - name: shelved
+        creates: study.room.Book
+        instance: book_id
+        sets:
+          home: input.home
+        emits: [study.room.BookShelved]
+        payload:
+          study.room.BookShelved: {book_id: input.book_id}
+        summary: The book is shelved at its desk.
+  - name: study.room.DiscardBook
+    input:
+      - name: book_id
+        type: study.room.BookId
+    outcomes:
+      - name: discarded
+        deletes: study.room.Book
+        instance: book_id
+        emits: [study.room.BookDiscarded]
+        payload:
+          study.room.BookDiscarded: {book_id: input.book_id}
+        summary: The book is discarded; no branch answers an unknown book.
+  - name: study.room.CheckBook
+    input:
+      - name: book_id
+        type: study.room.BookId
+    outcomes:
+      - name: no-book
+        unknown_instance: true
+        error: study.room.NoBook
+        summary: No book carries the id.
+      - name: homeless
+        when_related:
+          via: home
+          exists: false
+        error: study.room.NoDesk
+        summary: The book's own desk no longer exists.
+      - name: checked
+        moves: study.room.Book.check
+        instance: book_id
+        emits: [study.room.BookChecked]
+        payload:
+          study.room.BookChecked: {book_id: input.book_id}
+        summary: The book and its desk are both held.
+events:
+  - name: study.room.DeskOpened
+    fields:
+      - name: desk_id
+        type: study.room.DeskId
+  - name: study.room.DeskClosed
+    fields:
+      - name: desk_id
+        type: study.room.DeskId
+  - name: study.room.DeskRemoved
+    fields:
+      - name: desk_id
+        type: study.room.DeskId
+  - name: study.room.BookShelved
+    fields:
+      - name: book_id
+        type: study.room.BookId
+  - name: study.room.BookDiscarded
+    fields:
+      - name: book_id
+        type: study.room.BookId
+  - name: study.room.BookChecked
+    fields:
+      - name: book_id
+        type: study.room.BookId
+views:
+  - name: study.room.Desks
+    source: study.room.Desk
+    consistency: read_your_writes
+    fields:
+      - name: desk_id
+        type: study.room.DeskId
+      - name: label
+        type: String
+      - name: state
+        type: study.room.Desk.State
+  - name: study.room.Books
+    source: study.room.Book
+    consistency: read_your_writes
+    fields:
+      - name: book_id
+        type: study.room.BookId

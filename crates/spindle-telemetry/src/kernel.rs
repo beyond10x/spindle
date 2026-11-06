@@ -4,7 +4,7 @@ use std::io;
 use std::time::Duration;
 
 use serde_json::Value;
-use spindle_kernel::{Change, ExecuteError, Executed, Store, StoreError, Stored};
+use spindle_kernel::{Change, ExecuteError, Executed, Removal, Store, StoreError, Stored};
 
 use crate::port::{Failure, Outcome, Record, Sink};
 
@@ -98,6 +98,26 @@ impl<S: Store> Store for CountingStore<S> {
             });
         }
         for event in &change.events {
+            self.sink.record(Record::Appended { event: &event.name });
+        }
+        Ok(())
+    }
+
+    /// A removal counts as one row written, its bytes those of its events: no row rests.
+    fn remove(&mut self, removal: &Removal) -> Result<(), StoreError> {
+        self.inner.remove(removal)?;
+        let mut length = Length::default();
+        let encoded = removal
+            .events
+            .iter()
+            .all(|event| serde_json::to_writer(&mut length, event).is_ok());
+        if encoded {
+            self.sink.record(Record::Written {
+                rows: 1,
+                bytes: length.0,
+            });
+        }
+        for event in &removal.events {
             self.sink.record(Record::Appended { event: &event.name });
         }
         Ok(())

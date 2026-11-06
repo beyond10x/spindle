@@ -3,8 +3,8 @@
 //!
 //! `tests/fixtures/partial` declares three commands on one component reached over the network:
 //! `CopyNote`, whose outcome answers with the command's retained result (`replays:`), which this
-//! ingress does not serve; `DiscardNote`, whose `deletes:` the kernel does not run; and
-//! `WriteNote`, which runs. `tests/fixtures/unservable` holds only the first two.
+//! ingress does not serve; `DiscardNote`, whose set outcome (`instances:`) the kernel does not
+//! run; and `WriteNote`, which runs. `tests/fixtures/unservable` holds only the first two.
 //! `tests/fixtures/retried` binds an event to a command with `on_failure: retry`, and the command
 //! it invokes fails.
 
@@ -325,7 +325,7 @@ fn an_unrunnable_command_answers_501_and_the_rest_serve() {
     assert_eq!(answer["committed"], false, "{answer}");
     let refused = answer["refused"].as_str().expect("a refusal in words");
     assert!(
-        refused.contains(DISCARD_NOTE) && refused.contains("`deletes:`"),
+        refused.contains(DISCARD_NOTE) && refused.contains("`instances:`"),
         "the 501 names the command and the construct: {refused}"
     );
 
@@ -372,7 +372,7 @@ fn startup_lists_every_unserved_operation() {
         "{lines:#?}"
     );
     assert!(
-        lines[1].contains(DISCARD_NOTE) && lines[1].contains("`deletes:`"),
+        lines[1].contains(DISCARD_NOTE) && lines[1].contains("`instances:`"),
         "{lines:#?}"
     );
     assert!(

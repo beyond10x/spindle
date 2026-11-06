@@ -1404,6 +1404,10 @@ impl Store for Lost {
         Err(StoreError::Backend(self.0.clone()))
     }
 
+    fn remove(&mut self, _: &spindle_kernel::Removal) -> Result<(), StoreError> {
+        Err(StoreError::Backend(self.0.clone()))
+    }
+
     fn scan(&mut self, _: &str) -> Result<Vec<(Value, spindle_kernel::Stored)>, StoreError> {
         Err(StoreError::Backend(self.0.clone()))
     }

@@ -116,6 +116,13 @@
     },
     {
       "area": "Execution",
+      "detail": "An outcome that declares deletes: on the instance its input names removes the row as ESS's interpreter does: it leaves every view, a later command on the identity answers as an unknown instance, and the outcome's events are published; on SQLite the removal survives a restart.",
+      "href": "/docs/concepts/specification",
+      "label": "Deleting outcomes",
+      "status": "shipped"
+    },
+    {
+      "area": "Execution",
       "detail": "List views over every instance of an entity, with a state filter and an order.",
       "href": "/docs/concepts/specification",
       "label": "List views with filters",
