@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:structured-response-values
 kind: story
-status: draft
+status: active
 title: Response fields of every type ESS's interpreter chooses
 relations:
 - serves: vision:spindle
@@ -14,7 +14,10 @@ scope:
   path: crates/spindle-kernel/src/mint.rs
 - confidence: cited
   path: crates/spindle-kernel/src/supported.rs
-revision: 2
+revision: 4
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-06T10:10:59Z", actor: "agent:b10x-chef-orchestrator", revision: 3}
+- {from: "proposed", to: "active", at: "2026-11-06T10:10:59Z", actor: "agent:b10x-chef-orchestrator", revision: 4}
 ---
 # Response fields of every type ESS's interpreter chooses
 
