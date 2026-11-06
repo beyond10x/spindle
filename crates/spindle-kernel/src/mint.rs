@@ -22,6 +22,9 @@
 //! UUIDs mints the values the interpreter does: the kernel draws in the interpreter's order
 //! (`interpret::execute::take`), each published value a `{payload: <Event>.<field>}` reads
 //! first, then a minted creation identity, then the other `sets:`, then the payloads.
+//! That holds up to the first response field a command answers: the kernel draws response values
+//! from the same [`Mint`], where the interpreter draws them from a counter of its own, so after a
+//! returning outcome the two sequences no longer line up.
 //! Each such field is minted once per command run ([`Generator`]), so
 //! `{payload: <Event>.<field>}` in `sets:` stores what the event published.
 //!
