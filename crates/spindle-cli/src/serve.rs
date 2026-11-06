@@ -172,7 +172,7 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     if serving.drop_retries {
         for binding in &retried {
             eprintln!(
-                "b10x-spindle: binding {binding} says on_failure: retry; --drop-retries: a failed \
+                "b10x-spindle: binding {binding} retries on failure; --drop-retries: a failed \
                  invocation is dropped, not retried"
             );
         }
