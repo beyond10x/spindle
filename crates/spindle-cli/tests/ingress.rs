@@ -56,8 +56,14 @@ impl Contract {
     /// The document ESS projects with the `ess-http/1` binding at [`BINDING`], compiled as
     /// `ess specify http validate` compiles it.
     fn bound() -> Self {
-        let loaded = spindle_spec::load(&root().join(SPEC)).expect("the fixture compiles");
-        let text = std::fs::read_to_string(root().join(BINDING)).expect("the binding is read");
+        Self::bound_on(SPEC, BINDING, COMPONENT)
+    }
+
+    /// As [`Contract::bound`], for the component `name` of the fixture `spec` with the
+    /// binding `binding`.
+    fn bound_on(spec: &str, binding: &str, name: &str) -> Self {
+        let loaded = spindle_spec::load(&root().join(spec)).expect("the fixture compiles");
+        let text = std::fs::read_to_string(root().join(binding)).expect("the binding is read");
         let spec = ess_http::HttpSpec::from_yaml(&text).expect("the binding parses");
         let http = ess_http::compile(&spec, &loaded.ir, &ess_gen::http::derived(&loaded.ir))
             .unwrap_or_else(|refused| panic!("ESS refuses the binding: {refused}"));
@@ -67,7 +73,7 @@ impl Contract {
             .ir
             .components()
             .values()
-            .find(|component| component.name.as_str() == COMPONENT)
+            .find(|component| component.name.as_str() == name)
             .expect("the fixture declares the component");
         let document = ess_gen::openapi::bound_json(&loaded.ir, component, Some(&binding));
         Self(serde_json::from_str(&document).expect("the projection is JSON"))
@@ -140,10 +146,15 @@ fn serve() -> Served {
 
 /// `run` on the fixture and laptop, with `arguments` added.
 fn serve_with(arguments: &[&str]) -> Served {
+    serve_on(SPEC, arguments)
+}
+
+/// `run` on the fixture `spec` and laptop, with `arguments` added.
+fn serve_on(spec: &str, arguments: &[&str]) -> Served {
     let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
     let mut child = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
         .current_dir(root())
-        .args(["run", SPEC, "--environment", LAPTOP, "--state"])
+        .args(["run", spec, "--environment", LAPTOP, "--state"])
         .arg(state.path().join("state"))
         .args(arguments)
         .stdin(Stdio::null())
@@ -527,4 +538,154 @@ fn a_bound_route_answers_with_the_bindings_status_per_outcome() {
         status, 404,
         "with a binding, an operation it names is not served at its derived route: {answer}"
     );
+}
+
+const SHELF_SPEC: &str = "crates/spindle-cli/tests/fixtures/ingress-delete";
+const SHELF_BINDING: &str = "crates/spindle-cli/tests/fixtures/ingress-delete-http.yaml";
+const SHELF: &str = "shelf";
+
+const SHELVE_BOOK: &str = "library.shelf.ShelveBook";
+const REMOVE_BOOK: &str = "library.shelf.RemoveBook";
+const SHELVED_BOOKS: &str = "library.shelf.ShelvedBooks";
+
+/// `run` on the shelf fixture with its binding, `b1` and `b2` shelved through it, and the bound
+/// contract, whose `RemoveBook` is on `DELETE /books/{id}`.
+fn shelf() -> (Served, Contract) {
+    let contract = Contract::bound_on(SHELF_SPEC, SHELF_BINDING, SHELF);
+    assert_eq!(
+        contract.route(REMOVE_BOOK),
+        ("DELETE".to_owned(), "/books/{id}".to_owned())
+    );
+    let served = serve_on(SHELF_SPEC, &["--http", SHELF_BINDING]);
+    for (id, title) in [("b1", "Atlas of Rivers"), ("b2", "Field Notes")] {
+        let (status, answer) = exchange(
+            served.address,
+            "POST",
+            "/books",
+            Some(&json!({"id": id, "title": title})),
+        );
+        assert_eq!(status, 201, "{answer}");
+        contract.validate(SHELVE_BOOK, status, &answer);
+    }
+    (served, contract)
+}
+
+/// `request`, written as given on its own connection: the status, the head and the JSON body.
+fn sent(address: SocketAddr, request: &str) -> (u16, String, Value) {
+    let mut stream = TcpStream::connect_timeout(&address, ANSWER).expect("the listener accepts");
+    stream
+        .set_read_timeout(Some(ANSWER))
+        .expect("a read timeout");
+    stream
+        .set_write_timeout(Some(ANSWER))
+        .expect("a write timeout");
+    stream
+        .write_all(request.as_bytes())
+        .expect("the request is written");
+    let mut answer = Vec::new();
+    stream
+        .read_to_end(&mut answer)
+        .expect("the answer is read before the timeout");
+    let answer = String::from_utf8(answer).expect("the answer is UTF-8");
+    let (head, body) = answer
+        .split_once("\r\n\r\n")
+        .unwrap_or_else(|| panic!("an answer with a head: {answer:?}"));
+    let status = head
+        .split(' ')
+        .nth(1)
+        .and_then(|status| status.parse().ok())
+        .unwrap_or_else(|| panic!("a status line: {head:?}"));
+    let body = serde_json::from_str(body).unwrap_or_else(|error| panic!("{error}: {body:?}"));
+    (status, head.to_owned(), body)
+}
+
+#[test]
+fn a_command_bound_to_delete_is_served() {
+    let (served, contract) = shelf();
+
+    let (status, answer) = exchange(served.address, "DELETE", "/books/b1", None);
+    assert_eq!(status, 200, "the binding answers removed 200: {answer}");
+    assert_eq!(
+        answer,
+        json!({
+            "outcome": "removed",
+            "published": [{"event": "library.shelf.BookRemoved", "payload": {"id": "b1"}}],
+        })
+    );
+    contract.validate(REMOVE_BOOK, status, &answer);
+
+    let (status, answer) = exchange(served.address, "GET", "/books", None);
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(
+        answer,
+        json!({"rows": [{"id": "b2", "title": "Field Notes"}]}),
+        "the removed book is no longer listed"
+    );
+    contract.validate(SHELVED_BOOKS, status, &answer);
+
+    let (status, answer) = exchange(served.address, "DELETE", "/books/b1", None);
+    assert_eq!(status, 409, "{answer}");
+    assert_eq!(answer["error"], "library.shelf.AlreadyRemoved");
+    contract.validate(REMOVE_BOOK, status, &answer);
+}
+
+#[test]
+fn a_delete_without_a_body_is_the_path_input() {
+    let (served, contract) = shelf();
+    let address = served.address;
+    let bare = |id: &str| {
+        sent(
+            address,
+            &format!("DELETE /books/{id} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n"),
+        )
+    };
+
+    let (status, head, answer) = bare("b2");
+    assert_eq!(status, 200, "{head}\n{answer}");
+    assert_eq!(answer["outcome"], "removed");
+    assert_eq!(
+        answer["published"],
+        json!([{"event": "library.shelf.BookRemoved", "payload": {"id": "b2"}}]),
+        "the input is the id the path carries"
+    );
+    contract.validate(REMOVE_BOOK, status, &answer);
+
+    let (status, head, answer) = bare("nobody");
+    assert_eq!(status, 404, "{head}\n{answer}");
+    assert_eq!(answer["outcome"], "no-such-book");
+    contract.validate(REMOVE_BOOK, status, &answer);
+
+    let (status, answer) = exchange(address, "GET", "/books", None);
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(
+        answer,
+        json!({"rows": [{"id": "b1", "title": "Atlas of Rivers"}]})
+    );
+}
+
+#[test]
+fn a_get_to_a_delete_route_is_refused_405() {
+    let (served, contract) = shelf();
+    let address = served.address;
+
+    let (status, head, answer) = sent(
+        address,
+        &format!("GET /books/b1 HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n"),
+    );
+    assert_eq!(status, 405, "{head}\n{answer}");
+    assert!(answer["refused"].is_string(), "{answer}");
+    let allow = head
+        .lines()
+        .find_map(|line| {
+            line.split_once(':')
+                .filter(|(name, _)| name.eq_ignore_ascii_case("allow"))
+                .map(|(_, value)| value.trim().to_owned())
+        })
+        .unwrap_or_else(|| panic!("a 405 names what the path answers in Allow: {head}"));
+    assert_eq!(allow, "DELETE", "{head}");
+
+    let (status, answer) = exchange(address, "GET", "/books", None);
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(answer["rows"].as_array().map(Vec::len), Some(2), "{answer}");
+    contract.validate(SHELVED_BOOKS, status, &answer);
 }

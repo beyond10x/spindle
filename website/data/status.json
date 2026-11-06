@@ -179,6 +179,13 @@
     },
     {
       "area": "Execution",
+      "detail": "A command an ess-http/1 binding puts on method: delete is served at its path: a DELETE with no body runs with the input its path carries and answers the status the binding lists; a method the path does not serve answers 405 with Allow naming DELETE.",
+      "href": "/docs/concepts/capabilities",
+      "label": "DELETE routes",
+      "status": "shipped"
+    },
+    {
+      "area": "Execution",
       "detail": "A loopback run also serves GET /api/model (the IR as ess specify compile prints it, and each outcome's subject), GET /api/events (every event published, in order) and POST /api/reset (empties every store); a route the binding or ESS publishes at one of those paths is refused at startup.",
       "href": "/docs/concepts/capabilities",
       "label": "Console routes",

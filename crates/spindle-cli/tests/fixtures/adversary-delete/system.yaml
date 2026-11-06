@@ -1,0 +1,23 @@
+format: ess/34
+system: library
+version: v1
+summary: Books shelved, lent and removed over the network, and read as a list.
+domains:
+  - library.shelf
+components:
+  - component: shelf
+    summary: Shelves, lends, removes and lists books for callers outside the process.
+    owns:
+      domains:
+        - library.shelf
+    accepts:
+      commands:
+        - library.shelf.ShelveBook
+        - library.shelf.LendBook
+        - library.shelf.RemoveBook
+    publishes:
+      events:
+        - library.shelf.BookShelved
+        - library.shelf.BookLent
+        - library.shelf.BookRemoved
+    reached_by: network

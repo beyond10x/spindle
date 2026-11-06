@@ -1,0 +1,87 @@
+domain: library.shelf
+summary: Books shelved once and removed once, read as the list of those still shelved.
+types:
+  - name: library.shelf.BookId
+    kind: newtype
+    of: String
+entities:
+  - name: library.shelf.Book
+    identity:
+      name: id
+      type: library.shelf.BookId
+    fields:
+      - name: title
+        type: String
+    lifecycle:
+      initial: Shelved
+      states: [Shelved, Removed]
+      terminal: [Removed]
+      transitions:
+        - name: remove
+          from: [Shelved]
+          to: Removed
+errors:
+  - name: library.shelf.BookNotFound
+    summary: No book carries the id.
+    fields: []
+  - name: library.shelf.AlreadyRemoved
+    summary: The book is already removed.
+    fields: []
+commands:
+  - name: library.shelf.ShelveBook
+    input:
+      - name: id
+        type: library.shelf.BookId
+      - name: title
+        type: String
+    outcomes:
+      - name: shelved
+        creates: library.shelf.Book
+        instance: id
+        sets:
+          title: input.title
+        emits: [library.shelf.BookShelved]
+        payload:
+          library.shelf.BookShelved: {id: input.id, title: input.title}
+        summary: The book is shelved.
+  - name: library.shelf.RemoveBook
+    input:
+      - name: id
+        type: library.shelf.BookId
+    outcomes:
+      - name: no-such-book
+        unknown_instance: true
+        error: library.shelf.BookNotFound
+        summary: No book carries the id.
+      - name: already-removed
+        when_subject: {predicate: state == Removed}
+        error: library.shelf.AlreadyRemoved
+        summary: A removed book stays removed.
+      - name: removed
+        moves: library.shelf.Book.remove
+        instance: id
+        emits: [library.shelf.BookRemoved]
+        payload:
+          library.shelf.BookRemoved: {id: input.id}
+        summary: The book is removed.
+events:
+  - name: library.shelf.BookShelved
+    fields:
+      - name: id
+        type: library.shelf.BookId
+      - name: title
+        type: String
+  - name: library.shelf.BookRemoved
+    fields:
+      - name: id
+        type: library.shelf.BookId
+views:
+  - name: library.shelf.ShelvedBooks
+    source: library.shelf.Book
+    consistency: read_your_writes
+    filter: state == Shelved
+    fields:
+      - name: id
+        type: library.shelf.BookId
+      - name: title
+        type: String

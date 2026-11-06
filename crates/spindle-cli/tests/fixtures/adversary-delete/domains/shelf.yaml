@@ -1,0 +1,121 @@
+domain: library.shelf
+summary: Books shelved, lent and removed with a reason, read as the list of those still shelved.
+types:
+  - name: library.shelf.BookId
+    kind: newtype
+    of: String
+entities:
+  - name: library.shelf.Book
+    identity:
+      name: id
+      type: library.shelf.BookId
+    fields:
+      - name: title
+        type: String
+    lifecycle:
+      initial: Shelved
+      states: [Shelved, Lent, Removed]
+      terminal: [Removed]
+      transitions:
+        - name: lend
+          from: [Shelved]
+          to: Lent
+        - name: remove
+          from: [Shelved, Lent]
+          to: Removed
+errors:
+  - name: library.shelf.BookNotFound
+    summary: No book carries the id.
+    fields: []
+  - name: library.shelf.AlreadyRemoved
+    summary: The book is already removed.
+    fields: []
+  - name: library.shelf.NotOnShelf
+    summary: The book is not on the shelf.
+    fields: []
+commands:
+  - name: library.shelf.ShelveBook
+    input:
+      - name: id
+        type: library.shelf.BookId
+      - name: title
+        type: String
+    outcomes:
+      - name: shelved
+        creates: library.shelf.Book
+        instance: id
+        sets:
+          title: input.title
+        emits: [library.shelf.BookShelved]
+        payload:
+          library.shelf.BookShelved: {id: input.id, title: input.title}
+        summary: The book is shelved.
+  - name: library.shelf.LendBook
+    input:
+      - name: id
+        type: library.shelf.BookId
+    outcomes:
+      - name: no-such-book
+        unknown_instance: true
+        error: library.shelf.BookNotFound
+        summary: No book carries the id.
+      - name: not-on-shelf
+        when_subject: {predicate: state != Shelved}
+        error: library.shelf.NotOnShelf
+        summary: Only a shelved book is lent.
+      - name: lent
+        moves: library.shelf.Book.lend
+        instance: id
+        emits: [library.shelf.BookLent]
+        payload:
+          library.shelf.BookLent: {id: input.id}
+        summary: The book is lent.
+  - name: library.shelf.RemoveBook
+    input:
+      - name: id
+        type: library.shelf.BookId
+      - name: reason
+        type: String
+    outcomes:
+      - name: no-such-book
+        unknown_instance: true
+        error: library.shelf.BookNotFound
+        summary: No book carries the id.
+      - name: already-removed
+        when_subject: {predicate: state == Removed}
+        error: library.shelf.AlreadyRemoved
+        summary: A removed book stays removed.
+      - name: removed
+        moves: library.shelf.Book.remove
+        instance: id
+        emits: [library.shelf.BookRemoved]
+        payload:
+          library.shelf.BookRemoved: {id: input.id, reason: input.reason}
+        summary: The book is removed.
+events:
+  - name: library.shelf.BookShelved
+    fields:
+      - name: id
+        type: library.shelf.BookId
+      - name: title
+        type: String
+  - name: library.shelf.BookLent
+    fields:
+      - name: id
+        type: library.shelf.BookId
+  - name: library.shelf.BookRemoved
+    fields:
+      - name: id
+        type: library.shelf.BookId
+      - name: reason
+        type: String
+views:
+  - name: library.shelf.ShelvedBooks
+    source: library.shelf.Book
+    consistency: read_your_writes
+    filter: state == Shelved
+    fields:
+      - name: id
+        type: library.shelf.BookId
+      - name: title
+        type: String
