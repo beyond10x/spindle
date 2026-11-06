@@ -288,10 +288,9 @@ fn read(flat: Flat, text: String) -> Option<Value> {
     match flat {
         Flat::String => Some(Value::String(text)),
         _ if text.is_empty() => None,
-        Flat::Integer if whole(&text) => Some(
-            serde_json::from_str::<serde_json::Number>(&text)
-                .map_or(Value::String(text), Value::Number),
-        ),
+        Flat::Integer if whole(&text) => {
+            Some(text.parse::<i64>().map_or(Value::String(text), Value::from))
+        }
         Flat::Integer => Some(Value::String(text)),
         Flat::Boolean => Some(match text.as_str() {
             "true" => Value::Bool(true),
