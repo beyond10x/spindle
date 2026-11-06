@@ -22,8 +22,17 @@
 //! UUIDs mints the values the interpreter does: the kernel draws in the interpreter's order
 //! (`interpret::execute::take`), each published value a `{payload: <Event>.<field>}` reads
 //! first, then a minted creation identity, then the other `sets:`, then the payloads.
+//! That holds up to the first response field a command answers: the kernel draws response values
+//! from the same [`Mint`], where the interpreter draws them from a counter of its own, so after a
+//! returning outcome the two sequences no longer line up.
 //! Each such field is minted once per command run ([`Generator`]), so
 //! `{payload: <Event>.<field>}` in `sets:` stores what the event published.
+//!
+//! An outcome that returns the command's response ([`answers`]) has each declared `response:`
+//! field minted by the same rule, an `Optional` one as its required type, after everything else
+//! the outcome draws: ESS leaves every response value to the implementation. A one-time field
+//! (`one_time_response:`) is a `String` and so a fresh UUID's text on every draw; it is minted
+//! for the answer alone and written nowhere else.
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -104,6 +113,12 @@ pub(crate) fn identity_bound<'ir>(
         .invariants
         .iter()
         .find(|invariant| length_only(invariant, subject) && !holds_for(invariant, subject, &text))
+}
+
+/// Whether `outcome` answers the command's response: it returns it (`returns: true`) and reports
+/// no error, as ESS's interpreter decides it (`interpret::protected::response`).
+pub(crate) fn answers(outcome: &ResolvedOutcome) -> bool {
+    outcome.returns && outcome.error.is_none()
 }
 
 /// The low 53 bits: the integers every JSON reader holds exactly.

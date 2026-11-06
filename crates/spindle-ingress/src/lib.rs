@@ -11,7 +11,7 @@
 //! the rest.
 //!
 //! A command's body is the input ESS publishes; it answers the envelope ESS publishes for the
-//! outcome, `{outcome, published, error?, payload?}` ([`answer`]). A view answers the body ESS
+//! outcome, `{outcome, published, error?, payload?, response?}` ([`answer`]). A view answers the body ESS
 //! publishes, `{"rows": [...]}`.
 //!
 //! A command this ingress cannot route or the kernel does not run, and a view the host does not

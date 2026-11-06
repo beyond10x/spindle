@@ -44,8 +44,10 @@ impl Answer {
 /// declare, or one both the path and the body carry, is refused `400`. It answers the status the
 /// route gives the outcome the model selected ([`Route::status`]: the binding's, else ESS's
 /// derived one) with the envelope ESS publishes for it: `outcome`, `published` (each event as
-/// `{"event", "payload"}`, in emit order), and on a refusing outcome `error`, the error's
-/// qualified name, with `payload` where the kernel determined its fields.
+/// `{"event", "payload"}`, in emit order), on a refusing outcome `error`, the error's
+/// qualified name, with `payload` where the kernel determined its fields, and on an outcome that
+/// returns the command's response (`returns: true`, `200`) `response`, the values the kernel
+/// chose for its declared fields.
 ///
 /// A view answers `200` with the body ESS publishes for it, `{"rows": [...]}`, every row it
 /// holds.
@@ -131,13 +133,14 @@ fn run(
                     &ran.executed.outcome,
                     &ran.executed.events,
                     None,
+                    ran.executed.response.as_ref(),
                 ),
                 None => Answer::unfinished(format!("{command} ran and reported nothing"), true),
             };
             return (answer, report.failed);
         }
         Err(HostError::CommandRefused { outcome, error, .. }) => {
-            envelope(route, command, &outcome, &[], Some(&error))
+            envelope(route, command, &outcome, &[], Some(&error), None)
         }
         Err(HostError::Execute { error, .. }) => match *error {
             ExecuteError::InvalidInput(detail) => {
@@ -176,6 +179,7 @@ fn envelope(
     outcome: &str,
     emitted: &[Event],
     refusal: Option<&DeclaredError>,
+    response: Option<&Map<String, Value>>,
 ) -> Answer {
     let Some(status) = route.status(outcome) else {
         return Answer::unfinished(
@@ -199,6 +203,9 @@ fn envelope(
         if !refusal.fields.is_empty() {
             body.insert("payload".to_owned(), Value::Object(refusal.fields.clone()));
         }
+    }
+    if let Some(response) = response.filter(|_| route.responds(outcome)) {
+        body.insert("response".to_owned(), Value::Object(response.clone()));
     }
     Answer {
         status,

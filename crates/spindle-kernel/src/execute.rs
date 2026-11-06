@@ -475,6 +475,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
             outcome: outcome.name.as_str().to_owned(),
             events: Vec::new(),
             error: self.declared_error(outcome, self.before())?,
+            response: self.response(outcome)?,
         })
     }
 
@@ -494,6 +495,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 outcome: outcome.name.as_str().to_owned(),
                 events: self.emit(outcome, before)?,
                 error: self.declared_error(outcome, before)?,
+                response: self.response(outcome)?,
             });
         };
         let entity = self.ir.entity(&subject.entity);
@@ -591,6 +593,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
             }
         };
         let error = self.declared_error(outcome, self.before())?;
+        let response = self.response(outcome)?;
         if let Some(change) = &change {
             self.at_rest(entity, change)?;
             self.store.commit(change)?;
@@ -599,6 +602,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
             outcome: outcome.name.as_str().to_owned(),
             events,
             error,
+            response,
         })
     }
 
@@ -817,6 +821,90 @@ impl<'a, 'ir> Run<'a, 'ir> {
             name: error.name().to_string(),
             fields: sources.object(&outcome.error_payload)?,
         }))
+    }
+
+    /// The command's response, where `outcome` answers it ([`crate::mint::answers`]): each
+    /// declared field minted from its type through the [`Generator`], drawn after everything else
+    /// the outcome draws. `None` for every other outcome.
+    ///
+    /// A one-time field's value is checked to appear in no other field and no field name of this
+    /// answer, as ESS's interpreter checks the one it originates; a refusal names the field, never
+    /// the value.
+    fn response(
+        &self,
+        outcome: &ResolvedOutcome,
+    ) -> Result<Option<Map<String, Value>>, ExecuteError> {
+        if !crate::mint::answers(outcome) {
+            return Ok(None);
+        }
+        let command = self.spec.name.to_string();
+        let mut response = Map::new();
+        for field in &self.spec.response {
+            let at = || {
+                format!(
+                    "`{command}.{}` in `{command}/{}`",
+                    field.name,
+                    outcome.name.as_str()
+                )
+            };
+            let shape = crate::mint::minted(self.ir, &field.type_ref, true).ok_or_else(|| {
+                ExecuteError::Unsupported {
+                    construct: format!(
+                        "the response field {}, whose type the runtime does not mint",
+                        at()
+                    ),
+                }
+            })?;
+            let value = self
+                .generator
+                .mint(
+                    &shape,
+                    &Identity {
+                        capability: IDENTITY_MINT,
+                        command: self.command,
+                        outcome: outcome.name.as_str(),
+                        entity: &command,
+                        field: &field.name,
+                    },
+                )
+                .map_err(|error| {
+                    ExecuteError::InvalidValue(format!(
+                        "the response value minted for {} would be {error}",
+                        at()
+                    ))
+                })?;
+            crate::typed::validate(self.ir, &field.type_ref, &value).map_err(|_| {
+                ExecuteError::InvalidValue(format!(
+                    "the response value minted for {} is not a `{}`",
+                    at(),
+                    field.type_ref
+                ))
+            })?;
+            response.insert(field.name.clone(), value);
+        }
+        for name in &outcome.one_time_response {
+            let disclosed = match response.get(name) {
+                Some(Value::String(text)) if !text.is_empty() => text,
+                _ => {
+                    return Err(ExecuteError::InvalidValue(format!(
+                        "the one-time response field `{name}` of `{command}/{}` is not minted as \
+                         text",
+                        outcome.name.as_str()
+                    )));
+                }
+            };
+            if response.iter().any(|(other, value)| {
+                other.contains(disclosed.as_str())
+                    || (other != name && value.to_string().contains(disclosed.as_str()))
+            }) {
+                return Err(ExecuteError::InvalidValue(format!(
+                    "the one-time response field `{name}` of `{command}/{}` would be disclosed \
+                     beside its own field too",
+                    outcome.name.as_str()
+                )));
+            }
+        }
+        Ok(Some(response))
     }
 }
 

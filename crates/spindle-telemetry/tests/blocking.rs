@@ -101,6 +101,7 @@ fn recording_never_blocks_a_command() {
         outcome: "opened".to_owned(),
         events: Vec::new(),
         error: None,
+        response: None,
     });
     let failed = Err(spindle_kernel::ExecuteError::InvalidInput("x".to_owned()));
 

@@ -113,6 +113,11 @@ pub struct Executed {
     /// The declared error, where the outcome refuses.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<DeclaredError>,
+    /// The command's response, where the outcome returns it (`returns: true`) and reports no
+    /// error: each declared `response:` field with a value of its type the runtime chose. A field
+    /// the outcome lists in `one_time_response:` is disclosed here and nowhere else.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response: Option<Map<String, Value>>,
 }
 
 /// Why a command did not execute. Nothing was written.
