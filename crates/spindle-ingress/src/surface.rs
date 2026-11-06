@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use ess_compiler::EssIr;
-use ess_gen::http::{Binding, Flat};
+use ess_gen::http::{Binding, Flat, Shape};
 use ess_http::{Body, Encoding, Method, Operation, ResponseEncoding, Segment, ViewBody};
 use serde_json::{Map, Value};
 
@@ -18,6 +18,18 @@ pub struct Variable {
     pub position: usize,
     /// The input field or view parameter it carries.
     pub field: String,
+    /// How its text is read ([`ess_gen::http::scalar`]).
+    pub flat: Flat,
+}
+
+/// One parameter of a view read from the query string: the parameter, its wire name and how its
+/// text is read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Queried {
+    /// The view parameter it carries.
+    pub field: String,
+    /// The query key it is read under: the parameter's wire name.
+    pub wire: String,
     /// How its text is read ([`ess_gen::http::scalar`]).
     pub flat: Flat,
 }
@@ -36,6 +48,7 @@ pub struct Route {
     pub operation: Operation,
     segments: Vec<Segment>,
     variables: Vec<Variable>,
+    queried: Vec<Queried>,
     statuses: BTreeMap<String, u16>,
     input: Vec<String>,
     /// The outcomes answered with the command's response beside the envelope.
@@ -106,6 +119,52 @@ impl Route {
     /// The path's variables.
     pub fn variables(&self) -> &[Variable] {
         &self.variables
+    }
+
+    /// The view parameters read from the query string: every one the path does not carry. Empty
+    /// for a command.
+    pub fn queried(&self) -> &[Queried] {
+        &self.queried
+    }
+
+    /// The view parameters `query`, a request's query string, carries, by parameter name, as
+    /// ESS's served application reads them (`http::query_object`): each key and value
+    /// form-decoded (`+` and `%XX`), a key no parameter has as its wire name ignored, a value read
+    /// as [`ess_gen::http::Flat`] says. A parameter the query leaves out is left out, for the host
+    /// to refuse where it is required.
+    ///
+    /// # Errors
+    /// Naming the parameter, under `query.`: a key given more than once, a value that is not
+    /// percent-encoded UTF-8, or an empty value for a parameter that is not a `String`.
+    pub fn parameters(&self, query: &str) -> Result<Map<String, Value>, String> {
+        let mut read = Map::new();
+        for queried in &self.queried {
+            let found: Vec<&str> = query
+                .split('&')
+                .filter(|pair| !pair.is_empty())
+                .map(|pair| pair.split_once('=').unwrap_or((pair, "")))
+                .filter(|(key, _)| form_decoded(key).as_deref() == Some(queried.wire.as_str()))
+                .map(|(_, value)| value)
+                .collect();
+            let place = format!("query.{}", queried.wire);
+            let raw = match found.as_slice() {
+                [] => continue,
+                [raw] => *raw,
+                several => {
+                    return Err(format!(
+                        "{place}: expected one value, found {}",
+                        several.len()
+                    ));
+                }
+            };
+            let text = form_decoded(raw).ok_or_else(|| {
+                format!("{place}: expected percent-encoded UTF-8 text, found `{raw}`")
+            })?;
+            let value = self::read(queried.flat, text)
+                .ok_or_else(|| format!("{place}: expected a value, found empty text"))?;
+            read.insert(queried.field.clone(), value);
+        }
+        Ok(read)
     }
 
     /// The input fields a command declares, by name: its published `Input` is closed, so a
@@ -180,6 +239,13 @@ fn decoded(text: &str) -> Option<String> {
         }
     }
     String::from_utf8(out).ok()
+}
+
+/// A query key or value with `+` read as a space and every `%XX` decoded, as ESS's served
+/// application form-decodes one; `None` where an escape is not two hexadecimal digits or the
+/// bytes are not UTF-8.
+fn form_decoded(text: &str) -> Option<String> {
+    decoded(&text.replace('+', "%20"))
 }
 
 /// One scalar read from flat text, as ESS's served applications read it: any text for a
@@ -322,8 +388,9 @@ impl Surface {
     /// [`SurfaceError::Unsupported`] for a binding that answers a standard refusal its own way
     /// for every operation, a path that is not a template, or a view this ingress cannot route
     /// (one answered other than as `rows`, a standard refusal the binding answers its own way, a
-    /// path variable that is not a scalar): ESS publishes no `501` for a view, so it is refused
-    /// rather than answered with a status its contract does not declare.
+    /// path variable or a parameter in the query string that is not a scalar): ESS publishes no
+    /// `501` for a view, so it is refused rather than answered with a status its contract does
+    /// not declare.
     pub fn new(
         ir: &EssIr,
         components: &[String],
@@ -505,6 +572,7 @@ fn route(
         operation,
         segments,
         variables: Vec::new(),
+        queried: Vec::new(),
         statuses: BTreeMap::new(),
         input: Vec::new(),
         responding: Vec::new(),
@@ -566,7 +634,8 @@ fn may_read(ir: &EssIr, actor: &str, view: &str) -> bool {
 /// does not serve: a `form` or `query` request, an outcome answered other than with the envelope
 /// (a body, headers, a redirect or text), a view answered other than as `rows`, a standard
 /// refusal the binding answers its own way, a command whose outcome answers with its retained
-/// result, a path variable that is not a scalar, or a command that reads its caller where the
+/// result, a path variable or a view parameter in the query string that is not a scalar, or a
+/// command that reads its caller where the
 /// route fixes no caller: how an HTTP caller proves its attributes is an authentication technical
 /// not yet decided (design §11).
 fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Result<(), String> {
@@ -641,12 +710,35 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
                 route.statuses.insert(outcome.name.to_string(), status);
             }
         }
-        ess_gen::http::Served::View(_) => {
+        ess_gen::http::Served::View(handle) => {
             if bound
                 .declared
                 .is_some_and(|declared| declared.body != ViewBody::Rows)
             {
                 return Err("a view answered other than as rows".to_owned());
+            }
+            for param in &ir.view(handle).params {
+                if route
+                    .variables
+                    .iter()
+                    .any(|variable| variable.field == param.name)
+                {
+                    continue;
+                }
+                let flat = match ess_gen::http::flat(ir, &param.type_ref) {
+                    Some((Shape::One | Shape::Optional, flat)) => flat,
+                    _ => {
+                        return Err(format!(
+                            "the parameter {}, which no single query value carries",
+                            param.name
+                        ));
+                    }
+                };
+                route.queried.push(Queried {
+                    field: param.name.clone(),
+                    wire: ess_gen::schema::wire_field_name(param).to_owned(),
+                    flat,
+                });
             }
         }
     }

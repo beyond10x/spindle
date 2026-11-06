@@ -1539,6 +1539,7 @@ name = "spindle-host"
 version = "0.1.0"
 dependencies = [
  "ess-compiler",
+ "ess-conformance",
  "ess-domain",
  "ess-primitives",
  "serde_json",
@@ -1557,14 +1558,20 @@ name = "spindle-ingress"
 version = "0.1.0"
 dependencies = [
  "ess-compiler",
+ "ess-conformance",
  "ess-gen",
  "ess-http",
+ "ess-primitives",
  "http-body-util",
  "hyper",
  "hyper-util",
+ "jsonschema",
  "serde_json",
+ "spindle-capability",
  "spindle-host",
  "spindle-kernel",
+ "spindle-spec",
+ "tempfile",
  "tokio",
 ]
 

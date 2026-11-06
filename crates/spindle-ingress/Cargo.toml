@@ -19,3 +19,11 @@ serde_json.workspace = true
 spindle-host = { path = "../spindle-host" }
 spindle-kernel = { path = "../spindle-kernel" }
 tokio = { version = "1", default-features = false, features = ["macros", "net", "rt", "sync", "time"] }
+
+[dev-dependencies]
+ess-conformance.workspace = true
+ess-primitives.workspace = true
+jsonschema = { version = "0.52.1", default-features = false }
+spindle-capability = { path = "../spindle-capability" }
+spindle-spec = { path = "../spindle-spec" }
+tempfile = "3"

@@ -1,0 +1,13 @@
+type: ess-http/1
+specification:
+  system: library
+  version: v1
+  source_digest: sha256:8e08f1c2462b65914b53496a5f9169a05b8139ba66981e1505f9277c5f175d54
+routes:
+  - view: library.shelf.BookById
+    method: get
+    path: /books/{id}
+    parameters: {id: param.id}
+  - view: library.shelf.BooksIn
+    method: get
+    path: /books

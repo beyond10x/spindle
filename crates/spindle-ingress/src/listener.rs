@@ -88,7 +88,8 @@ impl Exchange {
         }
     }
 
-    /// The input the request's path carries in the route's variables.
+    /// The input the request's path carries in the route's variables and, for a view, the
+    /// parameters its query string carries ([`Route::parameters`]).
     pub fn carried(&self) -> &Map<String, Value> {
         &self.carried
     }
@@ -326,7 +327,13 @@ async fn handle(
         .surface
         .resolve(request.method().as_str(), request.uri().path())
     {
-        Resolved::Found(route, carried) => (Asked::Route(Box::new(route.clone())), carried),
+        Resolved::Found(route, mut carried) => {
+            match route.parameters(request.uri().query().unwrap_or_default()) {
+                Ok(queried) => carried.extend(queried),
+                Err(why) => return Ok(written(Answer::refusal(400, why))),
+            }
+            (Asked::Route(Box::new(route.clone())), carried)
+        }
         Resolved::Console(console) => (Asked::Console(console), Map::new()),
         Resolved::Malformed(why) => return Ok(written(Answer::refusal(400, why))),
         Resolved::WrongMethod(allowed) => {

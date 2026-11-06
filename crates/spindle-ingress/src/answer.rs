@@ -60,7 +60,9 @@ impl Answer {
 /// chose for its declared fields.
 ///
 /// A view answers `200` with the body ESS publishes for it, `{"rows": [...]}`, every row it
-/// holds.
+/// holds for the parameters `carried` holds, from the path and the query string
+/// ([`spindle_host::Host::list_with`]). A required parameter left out, or one not of its declared
+/// type, is refused `400`, naming it.
 ///
 /// A body that is not a JSON object, or input the kernel refuses, is refused `400`. A command the
 /// kernel does not run answers `501` with `committed: false`; one whose effect was written and
@@ -98,7 +100,7 @@ pub fn answered(
             Answer::not_granted(route.caller().map_or("", |caller| caller.actor.as_str())),
             Vec::new(),
         ),
-        Operation::View(view) => match host.list(view) {
+        Operation::View(view) => match host.list_with(view, carried) {
             Ok(rows) => (
                 Answer {
                     status: 200,
@@ -106,6 +108,9 @@ pub fn answered(
                 },
                 Vec::new(),
             ),
+            Err(error @ HostError::Parameters { .. }) => {
+                (Answer::refusal(400, error.to_string()), Vec::new())
+            }
             Err(error) => (Answer::refusal(501, error.to_string()), Vec::new()),
         },
     }

@@ -253,6 +253,13 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "View parameters",
+        "A view that declares parameters is served: each is read from the path or the query string where the OpenAPI document ESS publishes places it, and the view answers the rows ESS's interpreter answers for those values; a required parameter left out, or one not of its declared type, is refused 400 naming it.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-ingress/tests/view_parameters.rs::a_view_parameter_in_the_query_filters_the_rows",
+    ),
+    shipped(
+        "Execution",
         "Console routes",
         "A loopback run also serves GET /api/model (the IR as ess specify compile prints it, and each outcome's subject), GET /api/events (every event published, in order) and POST /api/reset (empties every store); a route the binding or ESS publishes at one of those paths is refused at startup.",
         "/docs/concepts/capabilities",
