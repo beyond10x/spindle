@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-06T13:06:14Z",
+  "actor": "human:timo",
+  "artifact": "story:wasm-host-builds",
+  "kind": "story",
+  "revision": 4,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "CI Gate on PR 20 head d649d3d (run 42219518745), merged to main a27ef32: task check passed, including cargo test --workspace, the wasm32 build and test steps and ess specify validate, which hold this story's acceptance tests",
+    "reference": "https://github.com/beyond10x/spindle/actions/runs/42219518745"
+  }
+}
