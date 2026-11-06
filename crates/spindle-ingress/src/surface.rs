@@ -38,6 +38,8 @@ pub struct Route {
     variables: Vec<Variable>,
     statuses: BTreeMap<String, u16>,
     input: Vec<String>,
+    /// The outcomes answered with the command's response beside the envelope.
+    responding: Vec<String>,
     unserved: Option<Unserved>,
 }
 
@@ -77,6 +79,15 @@ impl Route {
     /// derived status otherwise.
     pub fn status(&self, outcome: &str) -> Option<u16> {
         self.statuses.get(outcome).copied()
+    }
+
+    /// Whether the command's outcome `outcome` answers with the command's response under
+    /// `response`, beside the envelope: a branch that returns it, from `ess/22`
+    /// ([`ess_http::status::answers_with_response`]).
+    pub(crate) fn responds(&self, outcome: &str) -> bool {
+        self.responding
+            .iter()
+            .any(|responding| responding == outcome)
     }
 
     /// The path's variables.
@@ -266,7 +277,7 @@ impl Surface {
     /// A command this ingress cannot route keeps its route and is marked [`Unserved::Ingress`]:
     /// a `form` or `query` request, an outcome answered other than with the envelope (a body,
     /// headers, a redirect or text), a standard refusal the binding answers its own way, an
-    /// outcome that answers with the command's response, or a path variable that is not a
+    /// outcome that answers with the command's retained result, or a path variable that is not a
     /// scalar. A command the kernel's [`runs`](spindle_kernel::runs) refuses is marked
     /// [`Unserved::Kernel`], and a view the host's [`reads`](spindle_host::reads) refuses
     /// [`Unserved::Host`].
@@ -437,6 +448,7 @@ fn route(
         variables: Vec::new(),
         statuses: BTreeMap::new(),
         input: Vec::new(),
+        responding: Vec::new(),
         unserved: None,
     };
     match (served(ir, bound, &mut route), &route.operation) {
@@ -449,6 +461,7 @@ fn route(
         (Err(what), Operation::Command(_)) => {
             route.variables.clear();
             route.statuses.clear();
+            route.responding.clear();
             route.unserved = Some(Unserved::Ingress(what));
         }
         (Ok(()), Operation::Command(_)) => {
@@ -470,7 +483,7 @@ fn route(
 /// Fills `route`'s variables, input and statuses; `Err` names what it uses that this ingress
 /// does not serve: a `form` or `query` request, an outcome answered other than with the envelope
 /// (a body, headers, a redirect or text), a view answered other than as `rows`, a standard
-/// refusal the binding answers its own way, a command whose outcome answers with its response,
+/// refusal the binding answers its own way, a command whose outcome answers with its retained result,
 /// a path variable that is not a scalar, or a command that reads its caller: how an HTTP caller
 /// proves its attributes is an authentication technical not yet decided (design §11).
 fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Result<(), String> {
@@ -515,11 +528,14 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
                 return Err("a request that is not a JSON body".to_owned());
             }
             for outcome in &ir.command(handle).outcomes {
-                if outcome.retains_result || ess_http::status::answers_with_response(ir, outcome) {
+                if outcome.retains_result {
                     return Err(format!(
                         "{}, which answers with the command's response",
                         outcome.name
                     ));
+                }
+                if ess_http::status::answers_with_response(ir, outcome) {
+                    route.responding.push(outcome.name.to_string());
                 }
                 let status = match ess_gen::http::listed(bound, outcome) {
                     Some(listed) => {

@@ -33,6 +33,9 @@ pub fn check(ir: &EssIr, command: &ResolvedCommand) -> Result<(), ExecuteError> 
         if let Some(what) = shape(outcome) {
             return refuse(what);
         }
+        if let Some(what) = response(ir, command, outcome) {
+            return refuse(&what);
+        }
         let minted = crate::mint::slot(ir, outcome);
         if let Some((entity, field)) = minted {
             let Some(shape) = crate::mint::identity(ir, &entity.identity.type_ref) else {
@@ -121,9 +124,6 @@ fn shape(outcome: &ResolvedOutcome) -> Option<&'static str> {
     if outcome.replays.is_some() || outcome.retains_result {
         return Some("a replayed or retained result");
     }
-    if outcome.returns || !outcome.one_time_response.is_empty() {
-        return Some("a command response");
-    }
     if outcome.compensates {
         return Some("a refusal that changes its row (`compensates: true`)");
     }
@@ -160,6 +160,34 @@ fn shape(outcome: &ResolvedOutcome) -> Option<&'static str> {
             }
         },
     }
+}
+
+/// The response field, named, whose value the runtime does not choose, where `outcome` answers
+/// the command's response ([`crate::mint::answers`]). Each field is minted from its declared type
+/// by the rule for generated fields, an `Optional` one as its required type; a one-time field
+/// (`one_time_response:`) must be minted as text, which is fresh on every draw.
+fn response(ir: &EssIr, command: &ResolvedCommand, outcome: &ResolvedOutcome) -> Option<String> {
+    if !crate::mint::answers(outcome) {
+        return None;
+    }
+    command.response.iter().find_map(|field| {
+        let one_time = outcome.one_time_response.contains(&field.name);
+        match crate::mint::minted(ir, &field.type_ref, true) {
+            Some(crate::mint::Minted::Text { .. }) => None,
+            Some(_) if !one_time => None,
+            Some(_) => Some(format!(
+                "the command's one-time response field `{}` of type `{}`, which the runtime mints \
+                 only as text",
+                field.name, field.type_ref
+            )),
+            None => Some(format!(
+                "the command's response field `{}` of type `{}`, which the runtime does not \
+                 choose; it mints a `Uuid`, a `String`, an `Integer`, a `Boolean`, a `Bytes`, a \
+                 `List` or a `Timestamp`, or a newtype of one without invariants",
+                field.name, field.type_ref
+            )),
+        }
+    })
 }
 
 /// The value source, named, when the kernel does not read it. A generated value is read where

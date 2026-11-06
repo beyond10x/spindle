@@ -5,8 +5,8 @@ use std::fmt;
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::{
-    ResolvedComponent, ResolvedCondition, ResolvedEffect, ResolvedInstance, ResolvedOutcome,
-    ResolvedPayloadField, ResolvedPayloadValue,
+    ResolvedCommand, ResolvedComponent, ResolvedCondition, ResolvedEffect, ResolvedInstance,
+    ResolvedOutcome, ResolvedPayloadField, ResolvedPayloadValue,
 };
 use ess_domain::component::Reach;
 use ess_domain::view::Consistency;
@@ -169,7 +169,10 @@ pub fn derive(ir: &EssIr, component: Option<&str>) -> Option<Requirements> {
                     ),
                 );
             }
-            for (capability, because) in generated_mints(ir, outcome) {
+            for (capability, because) in generated_mints(ir, outcome)
+                .into_iter()
+                .chain(response_mints(ir, command, outcome))
+            {
                 need(
                     capability,
                     "outcome",
@@ -312,6 +315,35 @@ fn generated_mints(ir: &EssIr, outcome: &ResolvedOutcome) -> Vec<(&'static str, 
         generated_in(ir, &error, &outcome.error_payload, None, &mut mints);
     }
     mints
+}
+
+/// The mints the command's response needs where `outcome` returns it (`returns: true`) and
+/// reports no error: each declared `response:` field is the runtime's to choose, minted by the
+/// rule for generated fields, an `Optional` one as its required type. None for a field the
+/// kernel refuses by name.
+fn response_mints(
+    ir: &EssIr,
+    command: &ResolvedCommand,
+    outcome: &ResolvedOutcome,
+) -> Vec<(&'static str, String)> {
+    if !outcome.returns || outcome.error.is_some() {
+        return Vec::new();
+    }
+    command
+        .response
+        .iter()
+        .filter_map(|field| {
+            let shape = crate::mint::minted(ir, &field.type_ref, true)?;
+            let at = format!("the response field `{}.{}`", command.name, field.name);
+            Some(match shape {
+                crate::mint::Minted::Timestamp => (
+                    shape.capability(),
+                    format!("stamps {at} with the current time"),
+                ),
+                _ => (shape.capability(), format!("mints {at}")),
+            })
+        })
+        .collect()
 }
 
 /// The mints `fields` of `place` need; `identity` is the top-level field holding the minted

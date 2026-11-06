@@ -2,10 +2,11 @@
 //! rest, answers each of those `501` with ESS's envelope, and lists them at startup.
 //!
 //! `tests/fixtures/partial` declares three commands on one component reached over the network:
-//! `CopyNote`, whose outcome answers with the command's response, which this ingress does not
-//! serve; `DiscardNote`, whose `deletes:` the kernel does not run; and `WriteNote`, which runs.
-//! `tests/fixtures/unservable` holds only the first two. `tests/fixtures/retried` binds an event to
-//! a command with `on_failure: retry`, and the command it invokes fails.
+//! `CopyNote`, whose outcome answers with the command's retained result (`replays:`), which this
+//! ingress does not serve; `DiscardNote`, whose `deletes:` the kernel does not run; and
+//! `WriteNote`, which runs. `tests/fixtures/unservable` holds only the first two.
+//! `tests/fixtures/retried` binds an event to a command with `on_failure: retry`, and the command
+//! it invokes fails.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};

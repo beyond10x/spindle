@@ -55,6 +55,8 @@ commands:
         summary: The note is gone.
   - name: notes.pad.CopyNote
     input:
+      - name: note_id
+        type: notes.pad.NoteId
       - name: text
         type: String
     response:
@@ -62,11 +64,17 @@ commands:
         type: String
     outcomes:
       - name: copied
+        creates: notes.pad.Note
+        instance: note_id
         returns: true
         emits: [notes.pad.NoteCopied]
         payload:
-          notes.pad.NoteCopied: {text: input.text}
+          notes.pad.NoteCopied: {note_id: input.note_id, text: input.text}
         summary: The copy's identity is answered to the caller.
+      - name: replayed
+        when: text == "again"
+        replays: copied
+        summary: The earlier copy's answer is given again.
 events:
   - name: notes.pad.NoteWritten
     fields:
@@ -78,6 +86,8 @@ events:
         type: notes.pad.NoteId
   - name: notes.pad.NoteCopied
     fields:
+      - name: note_id
+        type: notes.pad.NoteId
       - name: text
         type: String
 views:
