@@ -14,6 +14,13 @@ or deployed from a placement with a live observe API and UI.
 
 ### Added
 
+- Served views take parameters from the path or the query string, typed and checked as ESS's
+  served application reads them; a read-granted view checks its reader before reading the request.
+- Commands accept `form`- and `query`-encoded requests as their HTTP binding declares.
+- Guards over one related row (`when_related:`), including external branches in the look-ahead.
+- `spindle-spec`, `spindle-kernel` and `spindle-host` build for `wasm32-unknown-unknown` with
+  `--no-default-features`; a command runs there on the memory store. SQLite is the default-on
+  `sqlite` feature.
 - A release process: `release.yml` builds `b10x-spindle` for Linux (x86_64 and aarch64) on a
   pushed `X.Y.Z` tag and attaches `b10x-spindle-X.Y.Z-<target>.tar.gz` archives and `SHA256SUMS`
   to the bot-created GitHub release. macOS builds are not released yet: the host crates use
