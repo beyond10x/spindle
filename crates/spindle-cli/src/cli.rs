@@ -116,6 +116,11 @@ pub enum Command {
     /// whose operations only the kernel or the host does not run is served as before, each
     /// answering `501`.
     ///
+    /// A served request carries no `external` object: its external causes are answered by
+    /// `--decisions`, then by `--answer-default`, each answer per command and outcome, never per
+    /// input value. A request nothing answers is refused `501`, naming the outcome. Without either
+    /// flag, a specification that declares an external outcome exits 1 before listening.
+    ///
     /// An event binding with `on_failure: retry` runs its command again at once after each
     /// attempt that fails, up to 5 attempts, unless `--drop-retries` is given; one with
     /// `on_failure: escalate` exits 1 before listening.

@@ -102,7 +102,7 @@
     },
     {
       "area": "Execution",
-      "detail": "run --decisions answers external outcomes from a TOML file, per command or for all; --answer-default takes a command's default branch.",
+      "detail": "run --decisions answers external outcomes from a TOML file, per command or for all, for stdin lines and served requests; --answer-default takes a command's default branch.",
       "href": "/docs/concepts/capabilities",
       "label": "External decisions from a file",
       "status": "shipped"

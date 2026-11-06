@@ -1,0 +1,21 @@
+format: ess/34
+system: probe
+version: v1
+summary: Submissions reached over the network, some of whose outcomes are decided outside the model, one command with a default and one without.
+domains:
+  - probe.review
+components:
+  - component: probe
+    summary: Holds submissions for callers outside the process.
+    owns:
+      domains:
+        - probe.review
+    accepts:
+      commands:
+        - probe.review.Submit
+        - probe.review.Decide
+    publishes:
+      events:
+        - probe.review.Submitted
+        - probe.review.Approved
+    reached_by: network
