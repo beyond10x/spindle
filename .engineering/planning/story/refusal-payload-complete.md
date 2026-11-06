@@ -2,11 +2,19 @@
 format: aep.planning-md/3
 id: story:refusal-payload-complete
 kind: story
-status: draft
+status: active
 title: A refusal answers every error field its schema requires
 relations:
 - serves: vision:spindle
-revision: 1
+scope:
+- confidence: cited
+  path: crates/spindle-ingress/src/answer.rs
+- confidence: cited
+  path: crates/spindle-kernel/src/execute.rs
+revision: 4
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-06T09:08:51Z", actor: "human:timo", revision: 2}
+- {from: "proposed", to: "active", at: "2026-11-06T09:08:51Z", actor: "human:timo", revision: 3}
 ---
 # A refusal answers every error field its schema requires
 
