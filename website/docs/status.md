@@ -75,6 +75,6 @@ Checked against `main` and the planning store on 2026-11-04: 30 shipped, 2 plann
 - HTTP ingress: `a_bound_route_answers_with_the_bindings_status_per_outcome` in [`crates/spindle-cli/tests/ingress.rs`](https://github.com/beyond10x/spindle/blob/main/crates/spindle-cli/tests/ingress.rs)
 - Console routes: `reset_empties_every_store_of_the_run` in [`crates/spindle-cli/tests/console.rs`](https://github.com/beyond10x/spindle/blob/main/crates/spindle-cli/tests/console.rs)
 - Serve what runs: `an_unrunnable_command_answers_501_and_the_rest_serve` in [`crates/spindle-cli/tests/unserved.rs`](https://github.com/beyond10x/spindle/blob/main/crates/spindle-cli/tests/unserved.rs)
-- Scenario replay: `the_first_divergent_step_is_named` in [`crates/spindle-cli/tests/replay.rs`](https://github.com/beyond10x/spindle/blob/main/crates/spindle-cli/tests/replay.rs)
+- Scenario replay: `an_established_row_is_read_by_the_next_command` in [`crates/spindle-conformance/tests/establish.rs`](https://github.com/beyond10x/spindle/blob/main/crates/spindle-conformance/tests/establish.rs)
 - Self-conformance: `every_executed_scenario_passes` in [`crates/spindle-cli/tests/conform.rs`](https://github.com/beyond10x/spindle/blob/main/crates/spindle-cli/tests/conform.rs)
 - The control process: `the_stream_carries_one_sample_per_instance_per_period` in [`crates/spindle-control/tests/control.rs`](https://github.com/beyond10x/spindle/blob/main/crates/spindle-control/tests/control.rs)
