@@ -12,6 +12,7 @@
 
 use std::io::Read;
 use std::net::Ipv4Addr;
+#[cfg(target_os = "linux")]
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -73,6 +74,20 @@ impl Drop for Spawner {
     }
 }
 
+/// What spawning answers off Linux: user and network namespaces, taps, KVM and the parent-death
+/// signal are Linux's.
+#[cfg(not(target_os = "linux"))]
+pub const LINUX_ONLY: &str = "the Firecracker launcher runs on Linux only";
+
+#[cfg(not(target_os = "linux"))]
+fn spawn_with_parent_death_signal(_command: &mut Command) -> std::io::Result<Child> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        LINUX_ONLY,
+    ))
+}
+
+#[cfg(target_os = "linux")]
 fn spawn_with_parent_death_signal(command: &mut Command) -> std::io::Result<Child> {
     let parent = std::process::id();
     // SAFETY: the closure runs between fork and exec and calls only the async-signal-safe

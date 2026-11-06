@@ -17,8 +17,15 @@ pub enum Readings {
     Machine,
 }
 
-/// Reads `readings` now.
+/// What [`read_resources`] answers off Linux, where there is no `/proc` to read.
+pub const READINGS_REFUSAL: &str = "resource readings come from /proc, which only Linux has";
+
+/// Reads `readings` now; refused as [`io::ErrorKind::Unsupported`] off Linux
+/// ([`READINGS_REFUSAL`]), where a sender sends zero readings.
 pub fn read_resources(readings: Readings) -> io::Result<ResourceReading> {
+    if !cfg!(target_os = "linux") {
+        return Err(io::Error::new(io::ErrorKind::Unsupported, READINGS_REFUSAL));
+    }
     let ticks = clock_ticks();
     let (ticks_used, memory_bytes) = match readings {
         Readings::Process => (

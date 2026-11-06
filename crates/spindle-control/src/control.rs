@@ -509,9 +509,7 @@ fn read(stream: UnixStream, frames: &mpsc::Sender<(Option<u32>, Frame)>) {
     if stream.set_nonblocking(false).is_err() {
         return;
     }
-    let peer = rustix::net::sockopt::socket_peercred(&stream)
-        .ok()
-        .map(|credentials| credentials.pid.as_raw_nonzero().get().unsigned_abs());
+    let peer = peer_pid(&stream);
     let mut reader = FrameReader::new(BufReader::new(stream));
     let mut bound: Option<String> = None;
     while let Ok(Some(frame)) = reader.next_frame() {
@@ -520,6 +518,39 @@ fn read(stream: UnixStream, frames: &mpsc::Sender<(Option<u32>, Frame)>) {
             return;
         }
     }
+}
+
+/// The process id of the peer of a Unix stream: `SO_PEERCRED` on Linux, `LOCAL_PEERPID` on
+/// Apple systems; `None` where neither exists, so no frame counts for an instance in a process
+/// group of its own.
+#[cfg(target_os = "linux")]
+fn peer_pid(stream: &UnixStream) -> Option<u32> {
+    rustix::net::sockopt::socket_peercred(stream)
+        .ok()
+        .map(|credentials| credentials.pid.as_raw_nonzero().get().unsigned_abs())
+}
+
+#[cfg(target_vendor = "apple")]
+fn peer_pid(stream: &UnixStream) -> Option<u32> {
+    use std::os::fd::AsRawFd as _;
+    let mut pid: libc::pid_t = 0;
+    let mut length = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
+    // SAFETY: `pid` and `length` are valid for writing for the duration of the call.
+    let result = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_LOCAL,
+            libc::LOCAL_PEERPID,
+            (&raw mut pid).cast(),
+            &raw mut length,
+        )
+    };
+    (result == 0 && pid > 0).then_some(pid.unsigned_abs())
+}
+
+#[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
+fn peer_pid(_stream: &UnixStream) -> Option<u32> {
+    None
 }
 
 /// The thread that owns the launchers and the running instances.

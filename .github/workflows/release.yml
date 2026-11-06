@@ -83,23 +83,29 @@ jobs:
       GH_REPO: ${{ github.repository }}
       COMMIT: ${{ needs.provenance.outputs.commit }}
     steps:
-      - name: Wait for the CI gate of the commit
+      - name: Wait for the CI gate and the macOS job of the commit
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 80); do
-            runs="$(gh api "repos/${GH_REPO}/commits/${COMMIT}/check-runs?check_name=Gate&filter=latest" --jq '[.check_runs[] | {status, conclusion}]')"
-            if [ "$(jq 'length' <<< "$runs")" -gt 0 ] && [ "$(jq '[.[] | select(.status != "completed")] | length' <<< "$runs")" -eq 0 ]; then
-              if [ "$(jq '[.[] | select(.conclusion != "success")] | length' <<< "$runs")" -eq 0 ]; then
-                echo "CI gate green on $COMMIT after $attempt check(s)." | tee -a "$GITHUB_STEP_SUMMARY"
-                exit 0
+          for check in Gate macOS; do
+            green=0
+            for attempt in $(seq 1 80); do
+              runs="$(gh api "repos/${GH_REPO}/commits/${COMMIT}/check-runs?check_name=${check}&filter=latest" --jq '[.check_runs[] | {status, conclusion}]')"
+              if [ "$(jq 'length' <<< "$runs")" -gt 0 ] && [ "$(jq '[.[] | select(.status != "completed")] | length' <<< "$runs")" -eq 0 ]; then
+                if [ "$(jq '[.[] | select(.conclusion != "success")] | length' <<< "$runs")" -eq 0 ]; then
+                  echo "CI check $check green on $COMMIT after $attempt check(s)." | tee -a "$GITHUB_STEP_SUMMARY"
+                  green=1
+                  break
+                fi
+                echo "CI check $check on $COMMIT did not succeed: $runs" | tee -a "$GITHUB_STEP_SUMMARY"
+                exit 1
               fi
-              echo "CI gate on $COMMIT did not succeed: $runs" | tee -a "$GITHUB_STEP_SUMMARY"
+              sleep 30
+            done
+            if [ "$green" -ne 1 ]; then
+              echo "No completed CI check $check on $COMMIT after 40 minutes; nothing published." | tee -a "$GITHUB_STEP_SUMMARY"
               exit 1
             fi
-            sleep 30
           done
-          echo "No completed CI gate on $COMMIT after 40 minutes; nothing published." | tee -a "$GITHUB_STEP_SUMMARY"
-          exit 1
 
   ui:
     name: Build the observe UI
@@ -148,6 +154,10 @@ jobs:
             os: ubuntu-24.04
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            os: macos-14
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
     env:
       TARGET: ${{ matrix.target }}
       VERSION: ${{ needs.provenance.outputs.version }}
@@ -186,6 +196,8 @@ jobs:
 
       - name: Package
         shell: bash
+        env:
+          COPYFILE_DISABLE: "1"
         run: |
           set -euo pipefail
           name="b10x-spindle-${VERSION}-${TARGET}"
@@ -230,7 +242,7 @@ jobs:
         working-directory: dist
         run: |
           set -euo pipefail
-          targets="x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu"
+          targets="x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-apple-darwin x86_64-apple-darwin"
           for target in $targets; do
             test -s "b10x-spindle-${VERSION}-${target}.tar.gz"
           done

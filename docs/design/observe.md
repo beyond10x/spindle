@@ -90,8 +90,8 @@ as written (they implement `Display`), so a name in the UI is the name in the sp
   accepted, until its buffer is full. The sequence number and the cumulative counters let the
   control process see what it missed.
 - **Endpoints are checked where they are given.** A Unix socket path must be UTF-8 and fit
-  `sun_path` (107 bytes); the launcher and the sender refuse any other by name instead of
-  dropping every frame. QEMU guest context ids come from one count per process,
+  `sun_path` less its NUL (107 bytes on Linux, 103 on macOS); the launcher and the sender refuse
+  any other by name instead of dropping every frame. QEMU guest context ids come from one count per process,
   `3 + ((pid - 1) << 10 | n)` for `n` below 1024, so no two guests on the host share one.
 
 ## 4. Resources against the quota

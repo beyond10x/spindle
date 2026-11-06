@@ -28,5 +28,8 @@ thiserror.workspace = true
 tokio = { version = "1", default-features = false, features = ["macros", "net", "rt", "sync", "time"] }
 toml.workspace = true
 
+[target.'cfg(target_vendor = "apple")'.dependencies]
+libc = "0.2.191"
+
 [dev-dependencies]
 schema-contract = { git = "https://github.com/beyond10x/ess", tag = "0.88.0" }

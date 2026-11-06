@@ -33,6 +33,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub use initramfs::Initramfs;
+#[cfg(not(target_os = "linux"))]
+pub use namespace::LINUX_ONLY;
 use namespace::Namespace;
 pub use spindle_target::{
     Artifact, Exit, LaunchPlan, Launcher, Peer, ResourceKind, ResourceSample, Resources, Running,
