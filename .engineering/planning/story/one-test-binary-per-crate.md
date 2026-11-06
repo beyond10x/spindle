@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:one-test-binary-per-crate
 kind: story
-status: active
+status: implemented
 title: One integration-test binary per crate
 relations:
 - serves: vision:spindle
@@ -17,10 +17,11 @@ scope:
   path: crates/spindle-host/tests
 - confidence: cited
   path: crates/spindle-kernel/tests
-revision: 5
+revision: 6
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-06T09:14:32Z", actor: "human:timo", revision: 3}
 - {from: "proposed", to: "active", at: "2026-11-06T09:14:32Z", actor: "human:timo", revision: 4}
+- {from: "active", to: "implemented", at: "2026-11-06T19:57:14Z", actor: "human:timo", revision: 6, decided_on: {"recorded":{"test_result":1}}}
 ---
 # One integration-test binary per crate
 
