@@ -218,6 +218,7 @@ pub fn execute_as(
         held,
         generator: Generator::new(mint, now, command),
         minted: None,
+        answered: BTreeMap::new(),
     };
     match run.select()? {
         Selected::Outcome(outcome) => run.take(outcome),
@@ -292,6 +293,9 @@ struct Run<'a, 'ir> {
     /// The identity this run minted: the creating event that publishes it, and the identity
     /// field's name.
     minted: Option<(&'ir EventHandle, String, Value)>,
+    /// What the decider answered for each external branch it was asked about, by outcome name:
+    /// asked once per run, whether the look-ahead or selection reads the branch first.
+    answered: BTreeMap<String, bool>,
 }
 
 impl<'a, 'ir> Run<'a, 'ir> {
@@ -651,8 +655,14 @@ impl<'a, 'ir> Run<'a, 'ir> {
     /// present-related refusals left out, where that branch moves the row from a state it does
     /// not hold (ESS `subject_refusals_before_present_related`, `selected_subject_refusals`).
     /// `subjects: false` leaves the held-state guards out too, as ESS's look-ahead before a stored
-    /// reference reads no held row. An external branch takes nothing here, as with its provider
-    /// withheld: the decider is asked only where selection reaches it.
+    /// reference reads no held row, so an external branch narrowed by one (`ExternalSubject`)
+    /// passes there.
+    ///
+    /// An external branch is read as ESS's `select` reads it under the request's provider
+    /// answer: once every other part of its condition holds, the decider is asked, and a branch it
+    /// takes is the selected one, so nothing after it is read and no decider is asked past it.
+    /// The answer is kept for selection ([`Self::ask`]). A selected refusal acts on no row, so
+    /// selection goes on to the related rows.
     fn look_ahead(
         &mut self,
         plan: &PrecedencePlan<'ir>,
@@ -674,10 +684,8 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     ResolvedCondition::SubjectState { .. }
                     | ResolvedCondition::SubjectField { .. }
                     | ResolvedCondition::SubjectPredicate { .. }
-                    | ResolvedCondition::StateChange { .. } => !subjects,
-                    ResolvedCondition::External { .. }
-                    | ResolvedCondition::ExternalWhen { .. }
-                    | ResolvedCondition::ExternalSubject { .. } => true,
+                    | ResolvedCondition::StateChange { .. }
+                    | ResolvedCondition::ExternalSubject { .. } => !subjects,
                     _ => false,
                 };
                 if skipped {
@@ -685,8 +693,18 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 }
                 match self.truth(outcome, true)? {
                     Truth::True => {
-                        selected = Some(*outcome);
-                        break 'phases;
+                        let taken = match &outcome.condition {
+                            ResolvedCondition::External { cause }
+                            | ResolvedCondition::ExternalWhen { cause, .. }
+                            | ResolvedCondition::ExternalSubject { cause, .. } => {
+                                self.ask(outcome, cause)?
+                            }
+                            _ => true,
+                        };
+                        if taken {
+                            selected = Some(*outcome);
+                            break 'phases;
+                        }
                     }
                     Truth::False => {}
                     Truth::Unknown => {
@@ -752,7 +770,20 @@ impl<'a, 'ir> Run<'a, 'ir> {
     }
 
     /// Whether an external cause holds, as the decider answers it.
+    ///
+    /// The decider is asked once per branch and run: a branch the look-ahead already asked about
+    /// ([`Self::look_ahead`]) keeps that answer when selection reaches it.
     fn ask(&mut self, outcome: &ResolvedOutcome, cause: &str) -> Result<bool, ExecuteError> {
+        if let Some(answer) = self.answered.get(outcome.name.as_str()) {
+            return Ok(*answer);
+        }
+        let answer = self.decide(outcome, cause)?;
+        self.answered
+            .insert(outcome.name.as_str().to_owned(), answer);
+        Ok(answer)
+    }
+
+    fn decide(&mut self, outcome: &ResolvedOutcome, cause: &str) -> Result<bool, ExecuteError> {
         let capability = format!("{EXTERNAL}{}.{}", self.command, outcome.name.as_str());
         let question = External {
             capability: capability.clone(),

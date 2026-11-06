@@ -1,0 +1,331 @@
+domain: study.reading
+summary: A desk is open or closed; a book is shelved at a desk, lent from an open desk and returned while its own desk is open.
+types:
+  - name: study.reading.DeskId
+    kind: newtype
+    of: Uuid
+  - name: study.reading.BookId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: study.reading.Desk
+    identity:
+      name: desk_id
+      type: study.reading.DeskId
+    fields:
+      - name: label
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open, Closed]
+      terminal: [Closed]
+      transitions:
+        - {name: close, from: [Open], to: Closed}
+  - name: study.reading.Book
+    identity:
+      name: book_id
+      type: study.reading.BookId
+    fields:
+      - name: home
+        type: Optional<study.reading.DeskId>
+    relations:
+      - {name: home, kind: references, target: study.reading.Desk, cardinality: one, via: home}
+    lifecycle:
+      initial: Shelved
+      states: [Shelved, Lent]
+      terminal: [Shelved]
+      transitions:
+        - {name: lend, from: [Shelved], to: Lent}
+        - {name: back, from: [Lent], to: Shelved}
+errors:
+  - name: study.reading.NoDesk
+    summary: No desk carries the id.
+    fields: []
+  - name: study.reading.DeskShut
+    summary: The desk is closed.
+    fields: []
+  - name: study.reading.NoBook
+    summary: No book carries the id.
+    fields: []
+  - name: study.reading.NotLent
+    summary: The book is not in a state this command acts from.
+    fields: []
+  - name: study.reading.AlreadyIn
+    summary: The book is already on its shelf.
+    fields: []
+  - name: study.reading.Withheld
+    summary: The reading room withholds the book.
+    fields: []
+commands:
+  - name: study.reading.OpenDesk
+    input:
+      - name: desk_id
+        type: study.reading.DeskId
+      - name: label
+        type: String
+    outcomes:
+      - name: opened
+        creates: study.reading.Desk
+        instance: desk_id
+        sets:
+          label: input.label
+        emits: [study.reading.DeskOpened]
+        payload:
+          study.reading.DeskOpened:
+            desk_id: input.desk_id
+        summary: The desk opens.
+  - name: study.reading.CloseDesk
+    input:
+      - name: desk_id
+        type: study.reading.DeskId
+    outcomes:
+      - name: closed
+        moves: study.reading.Desk.close
+        instance: desk_id
+        emits: [study.reading.DeskClosed]
+        payload:
+          study.reading.DeskClosed:
+            desk_id: input.desk_id
+        summary: The desk closes.
+      - name: wrong-state
+        wrong_state: true
+        error: study.reading.DeskShut
+        summary: The desk is already closed.
+  - name: study.reading.ShelveBook
+    input:
+      - name: book_id
+        type: study.reading.BookId
+      - name: home
+        type: Optional<study.reading.DeskId>
+    outcomes:
+      - name: shelved
+        creates: study.reading.Book
+        instance: book_id
+        sets:
+          home: input.home
+        emits: [study.reading.BookShelved]
+        payload:
+          study.reading.BookShelved:
+            book_id: input.book_id
+        summary: The book is shelved, its home recorded whether or not a desk carries it.
+  - name: study.reading.LendBook
+    input:
+      - name: book_id
+        type: study.reading.BookId
+      - name: desk_id
+        type: study.reading.DeskId
+    outcomes:
+      - name: no-desk
+        when_related:
+          via: input.desk_id
+          exists: false
+        error: study.reading.NoDesk
+        summary: The named desk does not exist.
+      - name: no-book
+        unknown_instance: true
+        error: study.reading.NoBook
+        summary: No book carries the id.
+      - name: desk-closed
+        when_related:
+          via: input.desk_id
+          predicate: state == Closed
+        error: study.reading.DeskShut
+        summary: The named desk is closed.
+      - name: lent
+        moves: study.reading.Book.lend
+        instance: book_id
+        emits: [study.reading.BookLent]
+        payload:
+          study.reading.BookLent:
+            book_id: input.book_id
+        summary: The book is lent from the named desk.
+      - name: wrong-state
+        wrong_state: true
+        error: study.reading.NotLent
+        summary: The book is already lent.
+  - name: study.reading.LendBookBare
+    input:
+      - name: book_id
+        type: study.reading.BookId
+      - name: desk_id
+        type: study.reading.DeskId
+    outcomes:
+      - name: no-desk
+        when_related:
+          via: input.desk_id
+          exists: false
+        error: study.reading.NoDesk
+        summary: The named desk does not exist.
+      - name: desk-closed
+        when_related:
+          via: input.desk_id
+          predicate: state == Closed
+        error: study.reading.DeskShut
+        summary: The named desk is closed.
+      - name: lent
+        moves: study.reading.Book.lend
+        instance: book_id
+        emits: [study.reading.BookLent]
+        payload:
+          study.reading.BookLent:
+            book_id: input.book_id
+        summary: The book is lent from the named desk.
+      - name: wrong-state
+        wrong_state: true
+        error: study.reading.NotLent
+        summary: The book is already lent.
+  - name: study.reading.ReturnBook
+    input:
+      - name: book_id
+        type: study.reading.BookId
+    outcomes:
+      - name: no-book
+        unknown_instance: true
+        error: study.reading.NoBook
+        summary: No book carries the id.
+      - name: already-in
+        when_subject_state: Shelved
+        error: study.reading.AlreadyIn
+        summary: The book is already on its shelf.
+      - name: home-gone
+        when_related:
+          via: home
+          exists: false
+        error: study.reading.NoDesk
+        summary: The book's own desk does not exist.
+      - name: home-closed
+        when_related:
+          via: home
+          predicate: state == Closed
+        error: study.reading.DeskShut
+        summary: The book's own desk is closed.
+      - name: returned
+        moves: study.reading.Book.back
+        instance: book_id
+        emits: [study.reading.BookReturned]
+        payload:
+          study.reading.BookReturned:
+            book_id: input.book_id
+        summary: The book goes back to its own desk.
+      - name: wrong-state
+        wrong_state: true
+        error: study.reading.NotLent
+        summary: The book is not lent.
+  - name: study.reading.LendBookChecked
+    input:
+      - name: book_id
+        type: study.reading.BookId
+      - name: desk_id
+        type: study.reading.DeskId
+    outcomes:
+      - name: no-book
+        unknown_instance: true
+        error: study.reading.NoBook
+        summary: No book carries the id.
+      - name: no-desk
+        when_related:
+          via: input.desk_id
+          exists: false
+        error: study.reading.NoDesk
+        summary: The named desk does not exist.
+      - name: desk-closed
+        when_related:
+          via: input.desk_id
+          predicate: state == Closed
+        error: study.reading.DeskShut
+        summary: The named desk is closed.
+      - name: withheld
+        external: the reading room withholds the book
+        error: study.reading.Withheld
+        summary: The reading room withholds the book.
+      - name: lent
+        moves: study.reading.Book.lend
+        instance: book_id
+        emits: [study.reading.BookLent]
+        payload:
+          study.reading.BookLent:
+            book_id: input.book_id
+        summary: The book is lent from the named desk.
+      - name: wrong-state
+        wrong_state: true
+        error: study.reading.NotLent
+        summary: The book is already lent.
+  - name: study.reading.ReturnBookChecked
+    input:
+      - name: book_id
+        type: study.reading.BookId
+    outcomes:
+      - name: no-book
+        unknown_instance: true
+        error: study.reading.NoBook
+        summary: No book carries the id.
+      - name: home-gone
+        when_related:
+          via: home
+          exists: false
+        error: study.reading.NoDesk
+        summary: The book's own desk does not exist.
+      - name: home-closed
+        when_related:
+          via: home
+          predicate: state == Closed
+        error: study.reading.DeskShut
+        summary: The book's own desk is closed.
+      - name: withheld
+        external: the reading room withholds the book
+        error: study.reading.Withheld
+        summary: The reading room withholds the book.
+      - name: returned
+        moves: study.reading.Book.back
+        instance: book_id
+        emits: [study.reading.BookReturned]
+        payload:
+          study.reading.BookReturned:
+            book_id: input.book_id
+        summary: The book goes back to its own desk.
+      - name: wrong-state
+        wrong_state: true
+        error: study.reading.NotLent
+        summary: The book is not lent.
+events:
+  - name: study.reading.DeskOpened
+    fields:
+      - name: desk_id
+        type: study.reading.DeskId
+  - name: study.reading.DeskClosed
+    fields:
+      - name: desk_id
+        type: study.reading.DeskId
+  - name: study.reading.BookShelved
+    fields:
+      - name: book_id
+        type: study.reading.BookId
+  - name: study.reading.BookLent
+    fields:
+      - name: book_id
+        type: study.reading.BookId
+  - name: study.reading.BookReturned
+    fields:
+      - name: book_id
+        type: study.reading.BookId
+views:
+  - name: study.reading.BookCard
+    source: study.reading.Book
+    consistency: read_your_writes
+    fields:
+      - name: book_id
+        type: study.reading.BookId
+      - name: home
+        type: Optional<study.reading.DeskId>
+      - name: state
+        type: study.reading.Book.State
+  - name: study.reading.DeskCard
+    source: study.reading.Desk
+    consistency: read_your_writes
+    fields:
+      - name: desk_id
+        type: study.reading.DeskId
+      - name: label
+        type: String
+      - name: state
+        type: study.reading.Desk.State
