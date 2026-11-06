@@ -91,15 +91,24 @@ impl Route {
     }
 
     /// The input `path` carries in its variables, read as [`ess_gen::http::Flat`] says; `None`
-    /// when `path` does not match the template, `Some(Err)` when a variable's text is malformed.
+    /// when `path` does not match the template or leaves a variable's segment empty (ESS's
+    /// served application matches only a variable holding a segment that is not empty),
+    /// `Some(Err)` when a variable's text is malformed.
     fn carried(&self, path: &str) -> Option<Result<Map<String, Value>, String>> {
         if !ess_gen::http::template_matches(&self.segments, path) {
+            return None;
+        }
+        let given: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+        if self.variables.iter().any(|variable| {
+            given
+                .get(variable.position)
+                .is_none_or(|text| text.is_empty())
+        }) {
             return None;
         }
         if matches!(self.unserved, Some(Unserved::Ingress(_))) {
             return Some(Ok(Map::new()));
         }
-        let given: Vec<&str> = path.trim_start_matches('/').split('/').collect();
         let mut carried = Map::new();
         for variable in &self.variables {
             let Some(text) = given.get(variable.position).and_then(|text| decoded(text)) else {
