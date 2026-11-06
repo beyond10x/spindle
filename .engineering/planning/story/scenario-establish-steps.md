@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:scenario-establish-steps
 kind: story
-status: active
+status: implemented
 title: Scenario replay establishes state from fixtures
 relations:
 - serves: vision:spindle
@@ -13,10 +13,11 @@ scope:
   path: crates/spindle-host/src/host.rs
 - confidence: inferred
   path: crates/spindle-kernel
-revision: 6
+revision: 7
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-05T22:53:34Z", actor: "agent:b10x-chef-orchestrator", revision: 5}
 - {from: "proposed", to: "active", at: "2026-11-05T22:53:34Z", actor: "agent:b10x-chef-orchestrator", revision: 6}
+- {from: "active", to: "implemented", at: "2026-11-06T03:30:11Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"test_result":2}}}
 ---
 # Scenario replay establishes state from fixtures
 

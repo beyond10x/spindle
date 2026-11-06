@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:served-run-answers-from-decisions
 kind: story
-status: active
+status: implemented
 title: A served run answers external causes from a decisions file
 relations:
 - serves: vision:spindle
@@ -16,10 +16,11 @@ scope:
   path: crates/spindle-cli/src/serve.rs
 - confidence: inferred
   path: crates/spindle-cli/tests/ingress.rs
-revision: 5
+revision: 6
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-05T22:05:51Z", actor: "agent:b10x-chef-orchestrator", revision: 4}
 - {from: "proposed", to: "active", at: "2026-11-05T22:05:51Z", actor: "agent:b10x-chef-orchestrator", revision: 5}
+- {from: "active", to: "implemented", at: "2026-11-06T03:30:11Z", actor: "human:timo", revision: 6, decided_on: {"recorded":{"test_result":2}}}
 ---
 # A served run answers external causes from a decisions file
 

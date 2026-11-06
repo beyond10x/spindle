@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:actor-command-grants
 kind: story
-status: active
+status: implemented
 title: A command sent as an actor not granted it is refused
 relations:
 - serves: vision:spindle
@@ -13,10 +13,11 @@ scope:
   path: crates/spindle-host/src/host.rs
 - confidence: inferred
   path: crates/spindle-kernel/src/execute.rs
-revision: 6
+revision: 7
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-06T00:36:38Z", actor: "agent:b10x-chef-orchestrator", revision: 5}
 - {from: "proposed", to: "active", at: "2026-11-06T00:36:39Z", actor: "agent:b10x-chef-orchestrator", revision: 6}
+- {from: "active", to: "implemented", at: "2026-11-06T03:30:12Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"test_result":2}}}
 ---
 # A command sent as an actor not granted it is refused
 
