@@ -353,3 +353,38 @@ impl Mint for UuidV4 {
         Uuid::new_v4()
     }
 }
+
+/// Version 4 UUIDs drawn from a seed: two mints made from one seed answer the same UUIDs in the
+/// same order, so the same commands mint the same identities. Each UUID's random bits are the
+/// next 128 bits of a `SplitMix64` sequence started at the seed; not for anything an attacker may
+/// guess.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Seeded {
+    state: u64,
+}
+
+impl Seeded {
+    /// A mint whose UUIDs follow from `seed`.
+    pub fn new(seed: u64) -> Self {
+        Self { state: seed }
+    }
+
+    fn next(&mut self) -> u64 {
+        self.state = self.state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut mixed = self.state;
+        mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        mixed ^ (mixed >> 31)
+    }
+}
+
+impl Mint for Seeded {
+    fn uuid(&mut self, _identity: &Identity<'_>) -> Uuid {
+        let high = self.next().to_be_bytes();
+        let low = self.next().to_be_bytes();
+        let mut bytes = [0; 16];
+        bytes[..8].copy_from_slice(&high);
+        bytes[8..].copy_from_slice(&low);
+        uuid::Builder::from_random_bytes(bytes).into_uuid()
+    }
+}

@@ -64,7 +64,7 @@ use serde_json::{Map, Value};
 pub use caller::reads as caller_reads;
 pub use decider::{Decider, External, NoExternals};
 pub use execute::{Invocation, at_rest, execute, execute_as, execute_at, execute_minting};
-pub use mint::{Identity, Mint, Uuid, UuidV4};
+pub use mint::{Identity, Mint, Seeded, Uuid, UuidV4};
 pub use sqlite::SqliteStore;
 pub use store::{Change, MemoryStore, Row, Store, StoreError, Stored};
 pub use supported::check as runs;

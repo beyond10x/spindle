@@ -20,7 +20,7 @@ use tokio::sync::oneshot;
 use spindle_host::{Failed, Host};
 
 use crate::answer::Answer;
-use crate::console::Console;
+use crate::console::{Console, Worlds};
 use crate::surface::{Resolved, Route, Surface};
 
 /// The largest request body read, in bytes; one announced larger is refused `413` before it is
@@ -105,8 +105,18 @@ impl Exchange {
 
     /// Answers the request on `host` and sends the answer: a command or view as
     /// [`answer`](crate::answer) answers it, a console route as [`crate::console`] does. Returns
-    /// every command a binding invoked on the way that did not execute ([`crate::answered`]).
+    /// every command a binding invoked on the way that did not execute ([`crate::answered`]). A
+    /// reset that carries a world is refused; [`Exchange::serve_with`] loads one.
     pub fn serve(self, host: &mut Host) -> Vec<Failed> {
+        self.serve_loading(host, None)
+    }
+
+    /// [`Exchange::serve`], a reset's world read by `worlds` ([`crate::console::reset`]).
+    pub fn serve_with(self, host: &mut Host, worlds: Worlds<'_>) -> Vec<Failed> {
+        self.serve_loading(host, Some(worlds))
+    }
+
+    fn serve_loading(self, host: &mut Host, worlds: Option<Worlds<'_>>) -> Vec<Failed> {
         let mut failed = Vec::new();
         let reply = match &self.asked {
             Asked::Route(route) => {
@@ -119,7 +129,9 @@ impl Exchange {
                 text: crate::console::model(host.ir()),
             },
             Asked::Console(Console::Events) => crate::console::events(host).into(),
-            Asked::Console(Console::Reset) => crate::console::reset(host).into(),
+            Asked::Console(Console::Reset) => {
+                crate::console::reset(host, &self.body, worlds).into()
+            }
         };
         let _ = self.reply.send(reply);
         failed
