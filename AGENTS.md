@@ -65,7 +65,9 @@ environment, and executes it. Humans start at [`README.md`](README.md); the desi
   product or host, and no absolute home-directory path, in any file or commit message.
 - No comments in `Cargo.toml`, `Taskfile.yml`, workflow files or environment documents.
 - Builds: `CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_INCREMENTAL=0`, the tree's own
-  `target/`; check `df -h /` first.
+  `target/`; check `df -h /` first. While implementing, build only the targets you change
+  (`cargo test -p <crate> --lib`, `--test <file>`); `cargo test -p <crate>` links every test
+  binary of the crate and runs once, at the gate.
 - Tests that need a directory use `tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR"))`.
 - Planning store mutations use `aep plan artifact` only. Scratch bodies go in
   `.engineering/drafts/`, which is git-ignored.
