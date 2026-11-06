@@ -319,8 +319,9 @@ fn generated_mints(ir: &EssIr, outcome: &ResolvedOutcome) -> Vec<(&'static str, 
 
 /// The mints the command's response needs where `outcome` returns it (`returns: true`) and
 /// reports no error: each declared `response:` field is the runtime's to choose, minted by the
-/// rule for generated fields, an `Optional` one as its required type. None for a field the
-/// kernel refuses by name.
+/// rule for generated fields, an `Optional` one as its required type, a record, union, map or
+/// constrained newtype by [`crate::mint::chosen`]: one reason per capability its minted leaves
+/// need. None for a field the kernel refuses by name.
 fn response_mints(
     ir: &EssIr,
     command: &ResolvedCommand,
@@ -333,17 +334,29 @@ fn response_mints(
         .response
         .iter()
         .filter_map(|field| {
-            let shape = crate::mint::minted(ir, &field.type_ref, true)?;
+            let choice = crate::mint::chosen(ir, &field.type_ref)?;
             let at = format!("the response field `{}.{}`", command.name, field.name);
-            Some(match shape {
-                crate::mint::Minted::Timestamp => (
-                    shape.capability(),
-                    format!("stamps {at} with the current time"),
-                ),
-                _ => (shape.capability(), format!("mints {at}")),
-            })
+            Some(capabilities(&choice).into_iter().map(move |capability| {
+                if capability == Capability::CLOCK {
+                    (capability, format!("stamps {at} with the current time"))
+                } else {
+                    (capability, format!("mints {at}"))
+                }
+            }))
         })
+        .flatten()
         .collect()
+}
+
+/// The capabilities `choice`'s minted leaves need, each once, in the order they are first drawn.
+fn capabilities(choice: &crate::mint::Choice) -> Vec<&'static str> {
+    let mut needed = Vec::new();
+    for leaf in choice.mints() {
+        if !needed.contains(&leaf.capability()) {
+            needed.push(leaf.capability());
+        }
+    }
+    needed
 }
 
 /// The mints `fields` of `place` need; `identity` is the top-level field holding the minted
@@ -376,21 +389,21 @@ fn generated_in(
         if crate::mint::absent(&field.target_type, present) {
             continue;
         }
-        let Some(shape) = crate::mint::minted(ir, &field.target_type, present) else {
+        let Some(choice) = crate::mint::generated(ir, &field.target_type, present) else {
             continue;
         };
         let at = format!("`{place}.{}`", field.target);
-        let because = match (&shape, fallback) {
-            (crate::mint::Minted::Timestamp, false) => {
-                format!("stamps {at} with the current time")
-            }
-            (crate::mint::Minted::Timestamp, true) => {
-                format!("stamps {at} with the current time where the input sends none")
-            }
-            (_, false) => format!("mints {at}"),
-            (_, true) => format!("mints {at} where the input sends none"),
-        };
-        mints.push((shape.capability(), because));
+        for capability in capabilities(&choice) {
+            let because = match (capability == Capability::CLOCK, fallback) {
+                (true, false) => format!("stamps {at} with the current time"),
+                (true, true) => {
+                    format!("stamps {at} with the current time where the input sends none")
+                }
+                (false, false) => format!("mints {at}"),
+                (false, true) => format!("mints {at} where the input sends none"),
+            };
+            mints.push((capability, because));
+        }
     }
 }
 

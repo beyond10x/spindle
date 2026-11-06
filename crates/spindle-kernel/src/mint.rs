@@ -33,6 +33,17 @@
 //! the outcome draws: ESS leaves every response value to the implementation. A one-time field
 //! (`one_time_response:`) is a `String` and so a fresh UUID's text on every draw; it is minted
 //! for the answer alone and written nowhere else.
+//!
+//! A response field, or a `{generated: true}` field, of a type [`minted`] does not answer is
+//! built as ESS's interpreter builds one (`interpret::response::base`, `interpret::values::mint`)
+//! by [`chosen`]: a record without invariants holds each member by these rules, an `Optional`
+//! one as its required type; a union is its first variant by tag value; a map holds one entry,
+//! its key minted as text; a constrained newtype is the first literal its invariants name, each
+//! integer with its neighbours, that is a value of it ([`literal`]). Each minted leaf takes its
+//! draw in that order. An enum, a record with invariants, and a newtype none of whose literals
+//! is a value of it are refused by name before the command runs. The literal is a response
+//! field's alone: a `{generated: true}` field takes [`generated`], the same structure without
+//! it, as ESS mints a generated value from its input witness, which reads no invariant literal.
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -45,8 +56,9 @@ use ess_compiler::ir::{
 };
 use ess_domain::Invariant;
 use ess_domain::QualifiedName;
-use serde_json::Value;
-pub(crate) use spindle_capability::mint::{Minted, absent, minted};
+use ess_primitives::facts::FactValue;
+use serde_json::{Map, Value};
+pub(crate) use spindle_capability::mint::{Choice, Minted, absent, chosen, generated, minted};
 use spindle_capability::mint::{candidate, holds_for, length_only};
 pub use uuid::Uuid;
 
@@ -190,31 +202,30 @@ impl<'m> Generator<'m> {
         let value = if absent(&field.target_type, present) {
             None
         } else {
-            let shape = minted(ir, &field.target_type, present).ok_or_else(|| {
+            let choice = generated(ir, &field.target_type, present).ok_or_else(|| {
                 ExecuteError::Unsupported {
                     construct: unmintable(&field.target, &field.target_type),
                 }
             })?;
             let owner = owner.to_string();
-            let value = value(
-                &shape,
-                || {
-                    self.uuid(&Identity {
+            let value = self
+                .choose(
+                    ir,
+                    &choice,
+                    &Identity {
                         capability: IDENTITY_MINT,
                         command: self.command,
                         outcome,
                         entity: &owner,
                         field: &field.target,
-                    })
-                },
-                self.now,
-            )
-            .map_err(|error| {
-                ExecuteError::InvalidValue(format!(
-                    "the value minted for `{owner}.{}` in `{}/{outcome}` would be {error}",
-                    field.target, self.command
-                ))
-            })?;
+                    },
+                )
+                .map_err(|error| {
+                    ExecuteError::InvalidValue(format!(
+                        "the value minted for `{owner}.{}` in `{}/{outcome}` would be {error}",
+                        field.target, self.command
+                    ))
+                })?;
             crate::typed::validate(ir, &field.target_type, &value).map_err(|error| {
                 ExecuteError::InvalidValue(format!(
                     "the value minted for `{owner}.{}` in `{}/{outcome}` would hold {error}",
@@ -226,14 +237,106 @@ impl<'m> Generator<'m> {
         self.minted.borrow_mut().push((place, value.clone()));
         Ok(value)
     }
+
+    /// A value built as `choice` says ([`chosen`]), each minted leaf drawn for `identity`, a
+    /// record member's under the member's own name.
+    ///
+    /// # Errors
+    /// The reason, where a leaf cannot be spelled or a constrained newtype has no literal that
+    /// is a value of it.
+    pub(crate) fn choose(
+        &self,
+        ir: &EssIr,
+        choice: &Choice,
+        identity: &Identity<'_>,
+    ) -> Result<Value, String> {
+        match choice {
+            Choice::Mint(shape) => self.mint(shape, identity),
+            Choice::Literal { kind, candidates } => literal(ir, kind, candidates)
+                .ok_or_else(|| format!("none of the literals `{kind}`'s invariants name")),
+            Choice::Record(members) => members
+                .iter()
+                .map(|(name, member)| {
+                    let at = Identity {
+                        field: name,
+                        ..*identity
+                    };
+                    Ok((name.clone(), self.choose(ir, member, &at)?))
+                })
+                .collect::<Result<Map<_, _>, String>>()
+                .map(Value::Object),
+            Choice::Variant {
+                tag,
+                label,
+                content,
+            } => {
+                let mut variant = Map::new();
+                variant.insert(tag.clone(), Value::String(label.clone()));
+                if let Some((key, content)) = content {
+                    variant.insert((*key).to_owned(), self.choose(ir, content, identity)?);
+                }
+                Ok(Value::Object(variant))
+            }
+            Choice::Entry { key, value } => {
+                let Value::String(key) = self.mint(key, identity)? else {
+                    return Err("a map key that is not text".to_owned());
+                };
+                let value = self.choose(ir, value, identity)?;
+                Ok(Value::Object(Map::from_iter([(key, value)])))
+            }
+        }
+    }
 }
+
+/// The first of `candidates` that is a value of `kind`, as ESS's interpreter picks a constrained
+/// newtype's response value (`interpret::response::base`).
+pub(crate) fn literal(
+    ir: &EssIr,
+    kind: &ResolvedTypeRef,
+    candidates: &[FactValue],
+) -> Option<Value> {
+    candidates
+        .iter()
+        .filter_map(|candidate| match candidate {
+            FactValue::Number(number) => match number.as_i64() {
+                Some(integer) => Some(Value::from(integer)),
+                None => serde_json::to_value(candidate).ok(),
+            },
+            _ => serde_json::to_value(candidate).ok(),
+        })
+        .find(|value| crate::typed::validate(ir, kind, value).is_ok())
+}
+
+/// The first constrained newtype in `choice` none of whose literals is a value of it: the type
+/// the runtime does not choose, which [`crate::supported`] names before a command runs.
+pub(crate) fn unsettled<'c>(ir: &EssIr, choice: &'c Choice) -> Option<&'c ResolvedTypeRef> {
+    match choice {
+        Choice::Mint(_) | Choice::Variant { content: None, .. } => None,
+        Choice::Literal { kind, candidates } => {
+            literal(ir, kind, candidates).is_none().then_some(kind)
+        }
+        Choice::Record(members) => members.iter().find_map(|(_, member)| unsettled(ir, member)),
+        Choice::Variant {
+            content: Some((_, content)),
+            ..
+        } => unsettled(ir, content),
+        Choice::Entry { value, .. } => unsettled(ir, value),
+    }
+}
+
+/// What the runtime chooses, as the refusals of a type it does not name it.
+pub(crate) const CHOOSES: &str = "it mints a `Uuid`, a `String`, an `Integer`, a `Boolean`, a \
+     `Bytes`, a `List` or a `Timestamp`, or a newtype of one without invariants, and builds a \
+     record without invariants, a union's first variant, a map of one entry keyed by text, or a \
+     constrained newtype from a literal its invariants name";
 
 /// The refusal of `{generated: true}` on `field`, whose type the runtime does not mint.
 pub(crate) fn unmintable(field: &str, kind: &ResolvedTypeRef) -> String {
     format!(
         "`{{generated: true}}` on `{field}` of type `{kind}`; the runtime mints a `Uuid`, a \
          `String`, an `Integer`, a `Boolean`, a `Bytes`, a `List` or a `Timestamp`, or a newtype \
-         of one without invariants"
+         of one without invariants, and builds a record without invariants, a union's first \
+         variant or a map of one entry keyed by text from them"
     )
 }
 

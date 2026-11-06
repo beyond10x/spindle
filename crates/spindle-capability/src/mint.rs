@@ -11,7 +11,7 @@ use ess_compiler::ir::{ResolvedBody, ResolvedTypeRef};
 use ess_domain::Invariant;
 use ess_domain::types::{MAX_TYPE_DEPTH, Primitive};
 use ess_primitives::facts::{FactStore, FactValue};
-use ess_primitives::predicate::Truth;
+use ess_primitives::predicate::{Operand, Predicate, Truth};
 
 use crate::Capability;
 
@@ -175,4 +175,212 @@ pub fn holds_for(invariant: &Invariant, subject: &str, text: &str) -> bool {
 /// (`interpret::execute::mint`).
 pub fn absent(kind: &ResolvedTypeRef, present: bool) -> bool {
     !present && kind.is_optional()
+}
+
+/// How the runtime builds a value it chooses of a type [`minted`] does not answer: a response
+/// field the command returns, or a `{generated: true}` field. The structure follows ESS's
+/// interpreter (`interpret::response::base`): a record's members each by the same rules, a
+/// union's first variant, one map entry, a newtype's invariant literal where one satisfies it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Choice {
+    /// A leaf [`minted`] answers.
+    Mint(Minted),
+    /// A constrained newtype: the first of `candidates` that is a value of `kind`. Which one is
+    /// the kernel's to decide, where it validates values; none at all refuses the field.
+    Literal {
+        /// The newtype.
+        kind: ResolvedTypeRef,
+        /// The literals its invariants compare `value` with, each integer with its neighbours.
+        candidates: Vec<FactValue>,
+    },
+    /// A record: each member, an `Optional` one as its required type.
+    Record(Vec<(String, Choice)>),
+    /// A union's first variant by tag value: the tag, and its content under `value` (`content`
+    /// where the tag itself is named `value`), none for a unit variant.
+    Variant {
+        /// The tag field.
+        tag: String,
+        /// The variant's tag value.
+        label: String,
+        /// The content key and the content.
+        content: Option<(&'static str, Box<Choice>)>,
+    },
+    /// A map of one entry: a key minted as text, and its value.
+    Entry {
+        /// The key, a [`Minted::Uuid`] or [`Minted::Text`].
+        key: Minted,
+        /// The value.
+        value: Box<Choice>,
+    },
+}
+
+impl Choice {
+    /// Every [`Minted`] leaf, in the order the runtime draws them.
+    pub fn mints(&self) -> Vec<&Minted> {
+        let mut leaves = Vec::new();
+        self.collect(&mut leaves);
+        leaves
+    }
+
+    fn collect<'c>(&'c self, leaves: &mut Vec<&'c Minted>) {
+        match self {
+            Self::Mint(minted) => leaves.push(minted),
+            Self::Literal { .. } | Self::Variant { content: None, .. } => {}
+            Self::Record(members) => {
+                for (_, member) in members {
+                    member.collect(leaves);
+                }
+            }
+            Self::Variant {
+                content: Some((_, content)),
+                ..
+            } => content.collect(leaves),
+            Self::Entry { key, value } => {
+                leaves.push(key);
+                value.collect(leaves);
+            }
+        }
+    }
+}
+
+/// How the runtime mints a `{generated: true}` field of `kind`: by [`minted`], or a record, union
+/// or map of such leaves by [`chosen`]. Never through a constrained newtype's literal, which only
+/// a response field takes (`interpret::response::base`): ESS's interpreter mints a generated
+/// value from its input witness (`interpret::values::mint`), which reads no invariant literal.
+pub fn generated(ir: &EssIr, kind: &ResolvedTypeRef, present: bool) -> Option<Choice> {
+    minted(ir, kind, present)
+        .map(Choice::Mint)
+        .or_else(|| chosen(ir, kind).filter(|choice| !choice.literal()))
+}
+
+impl Choice {
+    /// Whether any part is a constrained newtype's literal ([`Choice::Literal`]).
+    pub fn literal(&self) -> bool {
+        match self {
+            Self::Literal { .. } => true,
+            Self::Mint(_) | Self::Variant { content: None, .. } => false,
+            Self::Record(members) => members.iter().any(|(_, member)| member.literal()),
+            Self::Variant {
+                content: Some((_, content)),
+                ..
+            } => content.literal(),
+            Self::Entry { value, .. } => value.literal(),
+        }
+    }
+}
+
+/// How the runtime chooses a value of `kind`, an `Optional` one as its required type; `None`
+/// where it does not: an enum, a record that declares invariants, a constrained newtype whose
+/// invariants compare `value` with no literal, a map whose key is not minted as text, and every
+/// primitive [`minted`] does not answer.
+pub fn chosen(ir: &EssIr, kind: &ResolvedTypeRef) -> Option<Choice> {
+    choose(ir, kind, 0)
+}
+
+fn choose(ir: &EssIr, kind: &ResolvedTypeRef, depth: usize) -> Option<Choice> {
+    if depth > MAX_TYPE_DEPTH {
+        return None;
+    }
+    let kind = kind.required();
+    if let Some(minted) = minted(ir, kind, true) {
+        return Some(Choice::Mint(minted));
+    }
+    match kind {
+        ResolvedTypeRef::Declared { name } => match &ir.named_type(name).body {
+            ResolvedBody::Struct { fields, invariants } if invariants.is_empty() => fields
+                .iter()
+                .map(|member| {
+                    Some((
+                        member.name.clone(),
+                        choose(ir, &member.type_ref, depth + 1)?,
+                    ))
+                })
+                .collect::<Option<_>>()
+                .map(Choice::Record),
+            ResolvedBody::Union { tag, variants } => {
+                let (label, variant) = variants.iter().next()?;
+                let content = match variant {
+                    Some(variant) => Some((
+                        if tag == "value" { "content" } else { "value" },
+                        Box::new(choose(ir, variant, depth + 1)?),
+                    )),
+                    None => None,
+                };
+                Some(Choice::Variant {
+                    tag: tag.clone(),
+                    label: label.clone(),
+                    content,
+                })
+            }
+            ResolvedBody::Newtype {
+                of,
+                alphabet: None,
+                prefix: None,
+                invariants,
+            } if invariants.is_empty() => choose(ir, of, depth + 1),
+            ResolvedBody::Newtype { invariants, .. } => {
+                let mut candidates = Vec::new();
+                for invariant in invariants {
+                    literals(&invariant.predicate, &mut candidates);
+                }
+                (!candidates.is_empty()).then(|| Choice::Literal {
+                    kind: kind.clone(),
+                    candidates,
+                })
+            }
+            ResolvedBody::Struct { .. } | ResolvedBody::Enum { .. } => None,
+        },
+        ResolvedTypeRef::Map { key, value } => {
+            let key = minted(ir, &ResolvedTypeRef::Primitive { name: *key }, true)
+                .filter(|key| matches!(key, Minted::Uuid | Minted::Text { .. }))?;
+            Some(Choice::Entry {
+                key,
+                value: Box::new(choose(ir, value, depth + 1)?),
+            })
+        }
+        ResolvedTypeRef::Optional { .. }
+        | ResolvedTypeRef::List { .. }
+        | ResolvedTypeRef::Primitive { .. } => None,
+    }
+}
+
+/// The most literals one newtype offers.
+const MAX_LITERALS: usize = 512;
+
+/// The literals `predicate` compares with, in order, each number followed by its neighbours one
+/// above and one below: the candidates ESS's interpreter tries (`interpret::response::literals`).
+fn literals(predicate: &Predicate, values: &mut Vec<FactValue>) {
+    match predicate {
+        Predicate::All(children) | Predicate::Any(children) => {
+            for child in children {
+                literals(child, values);
+            }
+        }
+        Predicate::Not(child) => literals(child, values),
+        Predicate::Compare { left, right, .. } => {
+            for operand in [left, right] {
+                let Operand::Literal(value) = operand else {
+                    continue;
+                };
+                let found = match value {
+                    FactValue::Number(number) => [
+                        Some(*number),
+                        number.checked_add(1i64.into()),
+                        number.checked_add((-1i64).into()),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .map(FactValue::Number)
+                    .collect(),
+                    other => vec![other.clone()],
+                };
+                for value in found {
+                    if values.len() < MAX_LITERALS {
+                        values.push(value);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
 }
