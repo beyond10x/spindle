@@ -97,6 +97,26 @@ impl SqliteStore {
         Ok(Some((version, last)))
     }
 
+    /// Refuses a write that names `expected` where the stream holds no row: it ends with the
+    /// removal, so the instance is absent, as [`crate::MemoryStore`] answers it. A stream at
+    /// another version, or none, is refused by the append itself.
+    fn held_at(
+        &self,
+        stream: &StreamId,
+        (entity, identity): (&str, &Value),
+        expected: u64,
+    ) -> Result<(), StoreError> {
+        match self.last(stream)? {
+            Some((_, last)) if last.name == REMOVED => Err(StoreError::Conflict {
+                entity: entity.to_owned(),
+                identity: identity.to_string(),
+                expected: Some(expected),
+                actual: None,
+            }),
+            _ => Ok(()),
+        }
+    }
+
     /// Appends `events` followed by `end` to `stream` in one append, at `expected`.
     fn append(
         &self,
@@ -165,13 +185,17 @@ impl Store for SqliteStore {
     }
 
     /// Appends the change's events and its row. A creation (`expected: None`) on the stream of a
-    /// removed instance goes on from the removal's version.
+    /// removed instance goes on from the removal's version; a change naming a version of a removed
+    /// instance is a conflict, as on [`crate::MemoryStore`].
     fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
         let stream = self.stream(&change.entity, &change.identity)?;
         let row = serde_json::to_value(&change.row)
             .map_err(|error| StoreError::Backend(error.to_string()))?;
         let expected = match change.expected {
-            Some(version) => Expected::Exact(version),
+            Some(version) => {
+                self.held_at(&stream, (&change.entity, &change.identity), version)?;
+                Expected::Exact(version)
+            }
             None => match self.last(&stream)? {
                 Some((version, last)) if last.name == REMOVED => Expected::Exact(version),
                 _ => Expected::NoStream,
@@ -190,6 +214,11 @@ impl Store for SqliteStore {
     /// [`Store::load`] and [`Store::scan`] read as no row.
     fn remove(&mut self, removal: &Removal) -> Result<(), StoreError> {
         let stream = self.stream(&removal.entity, &removal.identity)?;
+        self.held_at(
+            &stream,
+            (&removal.entity, &removal.identity),
+            removal.expected,
+        )?;
         self.append(
             &stream,
             (&removal.entity, &removal.identity),
