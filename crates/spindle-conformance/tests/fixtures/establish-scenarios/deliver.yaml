@@ -1,0 +1,25 @@
+type: ess-scenario/2
+domain: post.parcel
+scenario: a-parcel-on-its-way-is-delivered
+summary: A parcel established on its way is delivered, and a second delivery is refused.
+arrange:
+  - instance: onway
+    entity: post.parcel.Parcel
+    setup:
+      identity: parcel-3
+      fields: {label: plates, note: fragile, missing: false}
+      state: Sent
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: post.parcel.DeliverParcel
+    input:
+      parcel_id: {$instance: onway}
+    outcome: delivered
+  - at: 2026-01-05T09:01:00Z
+    command: post.parcel.DeliverParcel
+    input:
+      parcel_id: {$instance: onway}
+    outcome: not-sent
+assert:
+  - view: post.parcel.AllParcels
+    contains: {parcel_id: parcel-3, state: Delivered, label: plates, note: fragile}

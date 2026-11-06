@@ -261,9 +261,9 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Conformance",
         "Scenario replay",
-        "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: captures feed later steps, view asserts are checked, and the first divergent step is named and ends the run.",
+        "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: an entity it arranges with setup is written into the store of the component that owns it, captures feed later steps, view asserts are checked, and the first divergent step is named and ends the run.",
         "/docs/concepts/specification",
-        "crates/spindle-cli/tests/replay.rs::the_first_divergent_step_is_named",
+        "crates/spindle-conformance/tests/establish.rs::an_established_row_is_read_by_the_next_command",
     ),
     shipped(
         "Conformance",

@@ -193,7 +193,7 @@
     },
     {
       "area": "Conformance",
-      "detail": "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: captures feed later steps, view asserts are checked, and the first divergent step is named and ends the run.",
+      "detail": "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: an entity it arranges with setup is written into the store of the component that owns it, captures feed later steps, view asserts are checked, and the first divergent step is named and ends the run.",
       "href": "/docs/concepts/specification",
       "label": "Scenario replay",
       "status": "shipped"

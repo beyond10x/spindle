@@ -1,0 +1,42 @@
+format: ess/34
+system: post
+version: v1
+summary: Parcels a depot sends, recovers and delivers, and bags a counter seals.
+domains:
+  - post.bag
+  - post.parcel
+components:
+  - component: counter
+    summary: Opens and seals bags.
+    owns:
+      domains:
+        - post.bag
+    accepts:
+      commands:
+        - post.bag.OpenBag
+        - post.bag.SealBag
+    publishes:
+      events:
+        - post.bag.BagOpened
+        - post.bag.BagSealed
+    reached_by: in_process
+  - component: depot
+    summary: Packs, sends, recovers and delivers parcels.
+    owns:
+      domains:
+        - post.parcel
+    accepts:
+      commands:
+        - post.parcel.PackParcel
+        - post.parcel.SendParcel
+        - post.parcel.DeliverParcel
+        - post.parcel.ReportLoss
+        - post.parcel.RecoverParcel
+    publishes:
+      events:
+        - post.parcel.ParcelPacked
+        - post.parcel.ParcelSent
+        - post.parcel.ParcelDelivered
+        - post.parcel.ParcelLost
+        - post.parcel.ParcelRecovered
+    reached_by: in_process
