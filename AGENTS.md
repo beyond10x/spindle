@@ -158,7 +158,7 @@ cut from `main`:
    annotated, on `main`, equal to the workspace version and named by a dated `CHANGELOG.md`
    heading; waits for CI's `Gate` and `macOS` checks to be green on the tagged commit; builds the
    observe UI once and `b10x-spindle` with it embedded for `x86_64-unknown-linux-gnu`,
-   `aarch64-unknown-linux-gnu`, `aarch64-apple-darwin` (`macos-14`) and `x86_64-apple-darwin`
+   `aarch64-unknown-linux-gnu`, `aarch64-apple-darwin` (`macos-15`) and `x86_64-apple-darwin`
    (`macos-15-intel`); and uploads `b10x-spindle-<version>-<target>.tar.gz` and `SHA256SUMS` to
    the page once it exists. On macOS the in-process commands run as on Linux; the microVM
    launchers, vsock, `/proc` resource readings and the parent-death signal are Linux-only and
