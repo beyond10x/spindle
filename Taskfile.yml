@@ -17,6 +17,8 @@ tasks:
       - task: check:ui
       - task: docs-check
       - task: check:conformance
+      - task: check:the_wasm_build_of_the_host_succeeds
+      - task: check:a_command_runs_in_wasm_on_the_memory_store
       - cargo fmt --all -- --check
       - cargo clippy --workspace --all-targets --locked -- -D warnings
       - cargo test --workspace --locked --no-fail-fast
@@ -27,6 +29,21 @@ tasks:
       - mkdir -p target/conformance
       - ess conform synthesize --path ess --out target/conformance/suite.json
       - cargo run -q --locked -p spindle-cli -- conform ess --environment examples/environments/laptop.toml --suite target/conformance/suite.json --counts conformance.toml --known-failing conformance-known-failures.json --accounting-out target/conformance/accounting.json --report target/conformance/report.json --results target/conformance/results.json
+
+  check:the_wasm_build_of_the_host_succeeds:
+    desc: spindle-spec, spindle-kernel and spindle-host build for wasm32-unknown-unknown without SQLite, and nothing they compile there reads std's clock
+    env:
+      CLIPPY_CONF_DIR: '{{.ROOT_DIR}}/clippy/wasm32'
+    cmds:
+      - cargo build --locked --target wasm32-unknown-unknown --no-default-features -p spindle-spec -p spindle-kernel -p spindle-host
+      - cargo clippy --locked --target wasm32-unknown-unknown --no-default-features -p spindle-spec -p spindle-kernel -p spindle-host -p spindle-timer -p spindle-channel -p spindle-telemetry -p spindle-capability --lib -- -D warnings
+
+  check:a_command_runs_in_wasm_on_the_memory_store:
+    desc: The wasm host runs a command on the memory store, under wasm-bindgen-test-runner on Node
+    env:
+      CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+    cmds:
+      - cargo test --locked --target wasm32-unknown-unknown --no-default-features -p spindle-host --test wasm --test adversary_wasm
 
   check:vm:
     desc: The VM tests, on a host with KVM

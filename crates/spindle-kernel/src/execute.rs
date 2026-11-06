@@ -89,8 +89,8 @@ pub fn execute(
 /// name.
 ///
 /// A field marked `{generated: true}` other than that identity is minted from its type through
-/// `mint` too; a generated `Timestamp` is the machine's current time ([`execute_at`] takes a
-/// clock instead).
+/// `mint` too; a generated `Timestamp` is the current civil time, the browser's on
+/// `wasm32-unknown-unknown` ([`execute_at`] takes a clock instead).
 ///
 /// # Errors
 /// As [`execute`].
@@ -102,7 +102,24 @@ pub fn execute_minting(
     command: &str,
     input: &Map<String, Value>,
 ) -> Result<Executed, ExecuteError> {
-    execute_at(ir, store, decider, mint, &SystemTime::now, command, input)
+    execute_at(ir, store, decider, mint, &civil_now, command, input)
+}
+
+/// The current civil time: the operating system's, or on `wasm32-unknown-unknown`, where the
+/// standard library has no clock, the browser's `Date.now()` (through `web-time`).
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub(crate) fn civil_now() -> SystemTime {
+    SystemTime::now()
+}
+
+/// The current civil time: the operating system's, or on `wasm32-unknown-unknown`, where the
+/// standard library has no clock, the browser's `Date.now()` (through `web-time`).
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+pub(crate) fn civil_now() -> SystemTime {
+    let since = web_time::SystemTime::now()
+        .duration_since(web_time::SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    SystemTime::UNIX_EPOCH + since
 }
 
 /// [`execute_minting`], stamping every generated `Timestamp` with the civil time `now` answers:

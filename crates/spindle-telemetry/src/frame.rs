@@ -139,7 +139,7 @@ impl Answers {
             answers.pop_back();
         }
         answers.push_front(RecentAnswer {
-            at: timestamp(SystemTime::now()),
+            at: timestamp(civil_now()),
             command: command.to_owned(),
             outcome: outcome.to_owned(),
             events: events.iter().map(|event| (*event).to_owned()).collect(),
@@ -168,6 +168,23 @@ fn truncate(text: &str, limit: usize) -> &str {
         end -= 1;
     }
     &text[..end]
+}
+
+/// The current civil time: the operating system's, or on `wasm32-unknown-unknown`, where the
+/// standard library has no clock, the browser's `Date.now()` (through `web-time`).
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+fn civil_now() -> SystemTime {
+    SystemTime::now()
+}
+
+/// The current civil time: the operating system's, or on `wasm32-unknown-unknown`, where the
+/// standard library has no clock, the browser's `Date.now()` (through `web-time`).
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+fn civil_now() -> SystemTime {
+    let since = web_time::SystemTime::now()
+        .duration_since(web_time::SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    UNIX_EPOCH + since
 }
 
 /// `at` as RFC 3339 in UTC with milliseconds: `2026-11-04T21:01:02.345Z`.

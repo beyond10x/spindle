@@ -38,7 +38,7 @@
 mod clock;
 
 use std::collections::BTreeMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::CommandHandle;
@@ -47,7 +47,7 @@ use ess_domain::binding::periodic::{
     Overlap, Period, PeriodicCause,
 };
 
-pub use clock::{Clock, ManualClock, SystemClock};
+pub use clock::{Clock, Instant, ManualClock, SystemClock};
 pub use ess_domain::binding::BindingName;
 use spindle_telemetry::{Sink, Timed};
 
