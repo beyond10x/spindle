@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:kernel-command-responses
 kind: story
-status: active
+status: implemented
 title: Command responses, executed and served
 relations:
 - serves: vision:spindle
@@ -21,10 +21,11 @@ scope:
   path: crates/spindle-kernel/src/supported.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/responses.rs
-revision: 9
+revision: 10
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-05T12:00:32Z", actor: "human:timo", revision: 8}
 - {from: "proposed", to: "active", at: "2026-11-05T12:00:32Z", actor: "human:timo", revision: 9}
+- {from: "active", to: "implemented", at: "2026-11-06T08:35:38Z", actor: "human:timo", revision: 10, decided_on: {"recorded":{"test_result":2}}}
 ---
 # Command responses, executed and served
 

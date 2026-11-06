@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:served-world-per-reset
 kind: story
-status: active
+status: implemented
 title: A served run loads a world per reset
 relations:
 - serves: vision:spindle
@@ -21,10 +21,11 @@ scope:
   path: crates/spindle-ingress/src/listener.rs
 - confidence: inferred
   path: crates/spindle-kernel/src/mint.rs
-revision: 5
+revision: 6
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-06T00:36:51Z", actor: "agent:b10x-chef-orchestrator", revision: 4}
 - {from: "proposed", to: "active", at: "2026-11-06T00:36:51Z", actor: "agent:b10x-chef-orchestrator", revision: 5}
+- {from: "active", to: "implemented", at: "2026-11-06T08:35:39Z", actor: "human:timo", revision: 6, decided_on: {"recorded":{"test_result":2}}}
 ---
 # A served run loads a world per reset
 
