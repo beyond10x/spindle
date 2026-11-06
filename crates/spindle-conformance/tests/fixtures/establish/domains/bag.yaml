@@ -1,0 +1,82 @@
+domain: post.bag
+summary: Bags a counter opens and seals.
+entities:
+  - name: post.bag.Bag
+    identity:
+      name: bag_id
+      type: String
+    fields:
+      - name: route
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open, Sealed]
+      terminal: [Sealed]
+      transitions:
+        - name: seal
+          from: [Open]
+          to: Sealed
+errors:
+  - name: post.bag.NoSuchBag
+    summary: No bag carries the id.
+    fields: []
+  - name: post.bag.AlreadySealed
+    summary: The bag is already sealed.
+    fields: []
+commands:
+  - name: post.bag.OpenBag
+    input:
+      - name: bag_id
+        type: String
+      - name: route
+        type: String
+    outcomes:
+      - name: opened
+        creates: post.bag.Bag
+        instance: bag_id
+        sets:
+          route: input.route
+        emits: [post.bag.BagOpened]
+        payload:
+          post.bag.BagOpened: {bag_id: input.bag_id}
+        summary: The bag opens for its route.
+  - name: post.bag.SealBag
+    input:
+      - name: bag_id
+        type: String
+    outcomes:
+      - name: no-such-bag
+        unknown_instance: true
+        error: post.bag.NoSuchBag
+        summary: No bag carries the id.
+      - name: already-sealed
+        when_subject: {predicate: state == Sealed}
+        error: post.bag.AlreadySealed
+        summary: A sealed bag stays sealed.
+      - name: sealed
+        moves: post.bag.Bag.seal
+        instance: bag_id
+        emits: [post.bag.BagSealed]
+        payload:
+          post.bag.BagSealed: {bag_id: input.bag_id}
+        summary: The bag is sealed.
+events:
+  - name: post.bag.BagOpened
+    fields:
+      - name: bag_id
+        type: String
+  - name: post.bag.BagSealed
+    fields:
+      - name: bag_id
+        type: String
+views:
+  - name: post.bag.AllBags
+    source: post.bag.Bag
+    consistency: read_your_writes
+    fields:
+      - name: bag_id
+        type: String
+      - name: state
+        type: post.bag.Bag.State
+      - name: route
+        type: String

@@ -153,7 +153,9 @@ pub struct Invocation<'a> {
 
 /// [`execute_at`] for an [`Invocation`], sent as its caller.
 ///
-/// The caller is bound against the attributes of the actor it is sent as, as ESS binds it, before
+/// A command sent as an actor whose `may:` does not name it, or as an actor the model does not
+/// declare, is [`ExecuteError::NotGranted`] before anything else is checked or read, as ESS's
+/// interpreter refuses it; a command sent as no actor is not checked. The caller is bound against the attributes of the actor it is sent as, as ESS binds it, before
 /// anything is read: attributes sent as no declared actor, an attribute the actor does not
 /// declare, a value its type does not admit and a required attribute left out are each
 /// [`ExecuteError::InvalidInput`]. A command sent as no caller that reads a required attribute is
@@ -176,6 +178,7 @@ pub fn execute_as(
         actor,
         caller,
     } = *invocation;
+    crate::grant::check(ir, command, actor)?;
     let spec = ir
         .commands()
         .iter()

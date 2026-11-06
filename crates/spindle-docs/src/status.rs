@@ -135,7 +135,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Bindings",
         "Retry on failure",
-        "An on_failure: retry binding runs its command again at once after each refused or failed attempt, up to 5 attempts, before the next envelope runs; each attempt and each given-up invocation is counted. --drop-retries runs such a binding as a drop binding.",
+        "An on_failure: retry binding runs its command again at once after each refused or failed attempt, up to 5 attempts, before the next envelope runs; each attempt and each given-up invocation is counted. A per-refusal policy (on_failure with named refusals) retries or drops by refusal, with the same limit. --drop-retries runs every retrying binding as a drop binding.",
         "/docs/concepts/components-and-bindings",
         "crates/spindle-host/tests/retry.rs::a_failing_invocation_is_retried_until_it_succeeds",
     ),
@@ -170,7 +170,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "External decisions from a file",
-        "run --decisions answers external outcomes from a TOML file, per command or for all; --answer-default takes a command's default branch.",
+        "run --decisions answers external outcomes from a TOML file, per command or for all, for stdin lines and served requests; --answer-default takes a command's default branch.",
         "/docs/concepts/capabilities",
         "crates/spindle-cli/tests/decisions.rs::a_decisions_file_answers_every_external_outcome",
     ),
@@ -261,9 +261,9 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Conformance",
         "Scenario replay",
-        "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: captures feed later steps, view asserts are checked, and the first divergent step is named and ends the run.",
+        "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: an entity it arranges with setup is written into the store of the component that owns it, captures feed later steps, view asserts are checked, and the first divergent step is named and ends the run.",
         "/docs/concepts/specification",
-        "crates/spindle-cli/tests/replay.rs::the_first_divergent_step_is_named",
+        "crates/spindle-conformance/tests/establish.rs::an_established_row_is_read_by_the_next_command",
     ),
     shipped(
         "Conformance",

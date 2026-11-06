@@ -14,6 +14,7 @@
 //! declared one failed. [`Counts`] holds a run's executed, skipped and known-failed counts against
 //! committed ones.
 
+mod establish;
 mod target;
 
 use std::collections::BTreeSet;

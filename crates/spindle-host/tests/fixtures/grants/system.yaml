@@ -1,0 +1,23 @@
+format: ess/34
+system: shelf
+version: v1
+summary: Books a librarian adds and removes, and that any reader reads.
+domains:
+  - shelf.books
+components:
+  - component: stacks
+    summary: Adds, reads and removes books for the actor sending each command.
+    owns:
+      domains:
+        - shelf.books
+    accepts:
+      commands:
+        - shelf.books.AddBook
+        - shelf.books.ReadBook
+        - shelf.books.DeleteBook
+    publishes:
+      events:
+        - shelf.books.BookAdded
+        - shelf.books.BookRead
+        - shelf.books.BookDeleted
+    reached_by: network

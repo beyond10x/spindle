@@ -1,0 +1,20 @@
+type: ess-scenario/2
+domain: post.parcel
+scenario: a-lost-parcel-is-recovered
+summary: A lost parcel is recovered and packed again.
+arrange:
+  - instance: found
+    entity: post.parcel.Parcel
+    setup:
+      identity: parcel-9
+      fields: {label: lamps, missing: true}
+      state: Lost
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: post.parcel.RecoverParcel
+    input:
+      parcel_id: {$instance: found}
+    outcome: recovered
+assert:
+  - view: post.parcel.AllParcels
+    contains: {parcel_id: parcel-9, state: Packed, label: lamps}

@@ -98,6 +98,8 @@ Where a component requires `ingress.network` (`reached_by: network`), runs every
 
 A command this ingress cannot route or the kernel does not run, and a view the host does not read, keeps its route and answers `501` naming the operation and the construct (a command with ESS's envelope, `{"refused", "committed": false}`); nothing is read or written for it. Before listening, `run` prints one line on stderr per such operation, in name order: component by component, commands then views, each by qualified name. A view this ingress cannot route (such as one a binding answers other than as `rows`) still exits 1 before listening, naming it: ESS publishes no `501` for a view. A run that would serve no operation, one of them a command this ingress cannot route, exits 1 before listening; one whose operations only the kernel or the host does not run is served as before, each answering `501`.
 
+A served request carries no `external` object: its external causes are answered by `--decisions`, then by `--answer-default`, each answer per command and outcome, never per input value. A request nothing answers is refused `501`, naming the outcome. Without either flag, a specification that declares an external outcome exits 1 before listening.
+
 An event binding with `on_failure: retry` runs its command again at once after each attempt that fails, up to 5 attempts, unless `--drop-retries` is given; one with `on_failure: escalate` exits 1 before listening.
 
 ```console
@@ -109,7 +111,7 @@ b10x-spindle run [OPTIONS] --environment <ENVIRONMENT> <SPEC>
 | `<SPEC>` | yes |  | The specification directory |
 | `--environment <ENVIRONMENT>` | yes |  | The `spindle-environment/1` document |
 | `--state <STATE>` | no |  | The state file where `store.durable` is bound to `sqlite`, refused otherwise; where `run` serves HTTP, the directory of one state file per component. Without it, state bound to `sqlite` is kept in a temporary directory, printed on stderr and removed when the run ends |
-| `--drop-retries` | no |  | Run each event binding whose `on_failure` is `retry` as a `drop` binding: a failed invocation is dropped, not retried. Prints one line per such binding on stderr before listening. Only where `run` serves HTTP |
+| `--drop-retries` | no |  | Run each event binding that retries on failure (`on_failure: retry`, or a per-refusal policy that retries some refusal) as a `drop` binding: a failed invocation is dropped, not retried. Prints one line per such binding on stderr before listening. Only where `run` serves HTTP |
 | `--http <HTTP>` | no |  | An `ess-http/1` binding of the specification's commands and views to methods and paths, JSON or YAML; only where `run` serves HTTP |
 | `--port <PORT>` | no |  | The port to serve HTTP on, on 127.0.0.1; `0`, the default, lets the system choose. Only where `run` serves HTTP |
 | `--decisions <DECISIONS>` | no |  | A TOML file of answers, `<outcome> = true \| false`, at the top level for every command or under a `["<command>"]` table for one; a command's table wins over the top level |

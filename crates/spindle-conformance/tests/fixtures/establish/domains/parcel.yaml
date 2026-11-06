@@ -1,0 +1,192 @@
+domain: post.parcel
+summary: Parcels a depot packs, sends and delivers, and recovers once they were lost on the way.
+entities:
+  - name: post.parcel.Parcel
+    identity:
+      name: parcel_id
+      type: String
+    fields:
+      - name: label
+        type: String
+      - name: note
+        type: Optional<String>
+      - name: missing
+        type: Boolean
+    lifecycle:
+      initial: Packed
+      states: [Packed, Sent, Delivered, Lost]
+      terminal: [Delivered]
+      transitions:
+        - name: send
+          from: [Packed]
+          to: Sent
+        - name: deliver
+          from: [Sent]
+          to: Delivered
+        - name: lose
+          from: [Sent]
+          to: Lost
+        - name: recover
+          from: [Lost]
+          to: Packed
+errors:
+  - name: post.parcel.NoSuchParcel
+    summary: No parcel carries the id.
+    fields: []
+  - name: post.parcel.NotSent
+    summary: The parcel is not on its way.
+    fields: []
+  - name: post.parcel.NotPacked
+    summary: The parcel is not packed.
+    fields: []
+  - name: post.parcel.NotMissing
+    summary: The parcel is not marked missing.
+    fields: []
+  - name: post.parcel.NotLost
+    summary: The parcel is not lost.
+    fields: []
+commands:
+  - name: post.parcel.PackParcel
+    input:
+      - name: parcel_id
+        type: String
+      - name: label
+        type: String
+    outcomes:
+      - name: packed
+        creates: post.parcel.Parcel
+        instance: parcel_id
+        sets:
+          label: input.label
+          missing: false
+        emits: [post.parcel.ParcelPacked]
+        payload:
+          post.parcel.ParcelPacked: {parcel_id: input.parcel_id}
+        summary: The parcel is packed under its label.
+  - name: post.parcel.SendParcel
+    input:
+      - name: parcel_id
+        type: String
+    outcomes:
+      - name: no-such-parcel
+        unknown_instance: true
+        error: post.parcel.NoSuchParcel
+        summary: No parcel carries the id.
+      - name: not-packed
+        wrong_state: true
+        error: post.parcel.NotPacked
+        summary: Only a packed parcel is sent.
+      - name: sent
+        moves: post.parcel.Parcel.send
+        instance: parcel_id
+        emits: [post.parcel.ParcelSent]
+        payload:
+          post.parcel.ParcelSent: {parcel_id: input.parcel_id}
+        summary: The parcel is sent.
+  - name: post.parcel.DeliverParcel
+    input:
+      - name: parcel_id
+        type: String
+    outcomes:
+      - name: no-such-parcel
+        unknown_instance: true
+        error: post.parcel.NoSuchParcel
+        summary: No parcel carries the id.
+      - name: not-sent
+        when_subject: {predicate: state != Sent}
+        error: post.parcel.NotSent
+        summary: Only a parcel on its way is delivered.
+      - name: delivered
+        moves: post.parcel.Parcel.deliver
+        instance: parcel_id
+        emits: [post.parcel.ParcelDelivered]
+        payload:
+          post.parcel.ParcelDelivered: {parcel_id: input.parcel_id}
+        summary: The parcel is delivered.
+  - name: post.parcel.ReportLoss
+    input:
+      - name: parcel_id
+        type: String
+    outcomes:
+      - name: no-such-parcel
+        unknown_instance: true
+        error: post.parcel.NoSuchParcel
+        summary: No parcel carries the id.
+      - name: not-sent
+        when_subject: {predicate: state != Sent}
+        error: post.parcel.NotSent
+        summary: Only a parcel on its way is lost.
+      - name: not-missing
+        when_subject: {predicate: missing == false}
+        error: post.parcel.NotMissing
+        summary: Only a parcel marked missing is lost.
+      - name: lost
+        moves: post.parcel.Parcel.lose
+        instance: parcel_id
+        emits: [post.parcel.ParcelLost]
+        payload:
+          post.parcel.ParcelLost: {parcel_id: input.parcel_id}
+        summary: The parcel is lost on its way.
+  - name: post.parcel.RecoverParcel
+    input:
+      - name: parcel_id
+        type: String
+    outcomes:
+      - name: no-such-parcel
+        unknown_instance: true
+        error: post.parcel.NoSuchParcel
+        summary: No parcel carries the id.
+      - name: not-lost
+        when_subject: {predicate: state != Lost}
+        error: post.parcel.NotLost
+        summary: Only a lost parcel is recovered.
+      - name: recovered
+        moves: post.parcel.Parcel.recover
+        instance: parcel_id
+        emits: [post.parcel.ParcelRecovered]
+        payload:
+          post.parcel.ParcelRecovered: {parcel_id: input.parcel_id}
+        summary: The lost parcel is packed again.
+events:
+  - name: post.parcel.ParcelPacked
+    fields:
+      - name: parcel_id
+        type: String
+  - name: post.parcel.ParcelSent
+    fields:
+      - name: parcel_id
+        type: String
+  - name: post.parcel.ParcelDelivered
+    fields:
+      - name: parcel_id
+        type: String
+  - name: post.parcel.ParcelLost
+    fields:
+      - name: parcel_id
+        type: String
+  - name: post.parcel.ParcelRecovered
+    fields:
+      - name: parcel_id
+        type: String
+views:
+  - name: post.parcel.AllParcels
+    source: post.parcel.Parcel
+    consistency: read_your_writes
+    fields:
+      - name: parcel_id
+        type: String
+      - name: state
+        type: post.parcel.Parcel.State
+      - name: label
+        type: String
+      - name: note
+        type: Optional<String>
+  - name: post.parcel.ParcelsOnTheirWay
+    source: post.parcel.Parcel
+    consistency: read_your_writes
+    filter: state == Sent
+    fields:
+      - name: parcel_id
+        type: String
+      - name: label
+        type: String

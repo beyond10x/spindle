@@ -12,6 +12,7 @@ use ess_gen::http::Binding;
 use spindle_capability::{Capability, Environment};
 use spindle_host::{Cause, Host, HostError, Retries, SystemClock};
 use spindle_ingress::{Listener, Surface, Unserved};
+use spindle_kernel::Decider;
 use spindle_spec::EssIr;
 
 use crate::{REFUSED, SIGNAL_POLL, SIGNALLED, signals};
@@ -81,6 +82,9 @@ pub(crate) struct Serving<'a> {
     pub ingress: &'a str,
     /// `--drop-retries`: run each `on_failure: retry` binding as a `drop` binding.
     pub drop_retries: bool,
+    /// With `--decisions` or `--answer-default`, what answers every request's external causes;
+    /// without either, the host answers none and refuses a specification that declares one.
+    pub decider: Option<Box<dyn Decider + Send>>,
 }
 
 /// Runs every component of `ir` in one host and serves `serving.components` on
@@ -98,6 +102,9 @@ pub(crate) struct Serving<'a> {
 /// run that would serve no operation, one of them one the ingress cannot route, is refused. Each
 /// command a binding invoked that did not execute is printed on stderr as it is dropped, after
 /// its last attempt where the binding retries it ([`spindle_host::RETRY_ATTEMPTS`]).
+///
+/// The `external:` causes of every request are answered by `serving.decider`; without one, a
+/// specification that declares an external outcome is refused before listening.
 pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     let signalled = signals()?;
     let environment = serving.environment;
@@ -160,19 +167,29 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     } else {
         Retries::Retried
     };
-    let mut host =
-        match Host::with_retries(ir, environment, Arc::new(SystemClock), directory, retries) {
-            Ok(host) => host,
-            Err(HostError::Refused(refusal)) => {
-                println!("{refusal}");
-                return Ok(ExitCode::from(REFUSED));
-            }
-            Err(error) => return Err(error.into()),
-        };
+    let opened = match serving.decider {
+        Some(decider) => Host::deciding_with_retries(
+            ir,
+            environment,
+            Arc::new(SystemClock),
+            directory,
+            decider,
+            retries,
+        ),
+        None => Host::with_retries(ir, environment, Arc::new(SystemClock), directory, retries),
+    };
+    let mut host = match opened {
+        Ok(host) => host,
+        Err(HostError::Refused(refusal)) => {
+            println!("{refusal}");
+            return Ok(ExitCode::from(REFUSED));
+        }
+        Err(error) => return Err(error.into()),
+    };
     if serving.drop_retries {
         for binding in &retried {
             eprintln!(
-                "b10x-spindle: binding {binding} says on_failure: retry; --drop-retries: a failed \
+                "b10x-spindle: binding {binding} retries on failure; --drop-retries: a failed \
                  invocation is dropped, not retried"
             );
         }

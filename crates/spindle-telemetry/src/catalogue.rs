@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use ess_compiler::EssIr;
-use ess_compiler::ir::ResolvedFailure;
+use ess_compiler::ir::{ResolvedFailure, ResolvedRefusalAction};
 use serde::Serialize;
 
 use crate::port::{Carried, Failure, Retried, Timed};
@@ -90,7 +90,8 @@ pub enum Key {
         /// What happened to the envelope.
         carried: Carried,
     },
-    /// `binding.<binding>.<attempted|exhausted>`, for an `on_failure: retry` binding at the
+    /// `binding.<binding>.<attempted|exhausted>`, for a binding that retries (`on_failure: retry`,
+    /// or an `on_refusal` policy that retries some refusal) at the
     /// component that invokes its command.
     Retried {
         /// The binding.
@@ -215,7 +216,14 @@ pub fn catalogue(ir: &EssIr, component: &str) -> Option<Catalogue> {
                 });
             }
         }
-        if receives && matches!(binding.on_failure(), ResolvedFailure::Retry) {
+        let retries = match binding.on_failure() {
+            ResolvedFailure::Retry => true,
+            ResolvedFailure::ByRefusal { policy } => policy
+                .actions()
+                .any(|action| matches!(action, ResolvedRefusalAction::Retry { bound: None })),
+            _ => false,
+        };
+        if receives && retries {
             for retried in Retried::ALL {
                 add(Key::Retried {
                     binding: name.to_owned(),

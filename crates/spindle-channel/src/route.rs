@@ -4,8 +4,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use ess_compiler::EssIr;
-use ess_compiler::ir::{ResolvedBinding, ResolvedMapping, ResolvedMappingValue, ResolvedTypeRef};
+use ess_compiler::ir::{
+    ResolvedBinding, ResolvedMapping, ResolvedMappingValue, ResolvedRefusalAction,
+    ResolvedRefusalPolicy, ResolvedTypeRef,
+};
 use ess_domain::binding::{Delivery, Failure};
+use ess_domain::command::OutcomeName;
 use ess_domain::types::Primitive;
 use serde_json::{Map, Value};
 
@@ -33,8 +37,12 @@ pub struct Route {
     pub to: String,
     /// How many times the command may run.
     pub delivery: Delivery,
-    /// What happens when it does not.
+    /// What happens when it does not. Under [`Self::on_refusal`] this is the fallback's word, ESS's
+    /// universal view of the table, and only [`Self::answer`] says what answers one refusal.
     pub on_failure: Failure,
+    /// The policy chosen per refusal of the command (`on_refusal`), where the binding declares
+    /// one: each `drop` or an unbounded `retry`.
+    pub on_refusal: Option<ResolvedRefusalPolicy>,
     rules: Vec<Rule>,
 }
 
@@ -136,8 +144,10 @@ impl Router {
     ///
     /// A periodic binding is the timer's and is skipped. A binding that uses anything the channel
     /// does not carry is refused whole, so a specification never runs with part of a binding:
-    /// a delivery context, a `where` condition, a selection, a per-refusal policy, a bounded
-    /// retry, an escalation, or a mapping source other than `event.<field>` or a literal. A mapping
+    /// a delivery context, a `where` condition, a selection, a bounded retry, an escalation
+    /// (universal or chosen per refusal), or a mapping source other than `event.<field>` or a
+    /// literal. A policy chosen per refusal whose entries drop or retry without a bound is
+    /// carried ([`Route::on_refusal`]). A mapping
     /// across a declared conversion is carried, its value checked when it is mapped, against a copy of
     /// `ir` this router holds; [`Self::from_shared`] holds no copy.
     pub fn from_ir(ir: &EssIr) -> Result<Self, RouteError> {
@@ -182,13 +192,15 @@ impl Router {
         Ok(Self { routes, publishes })
     }
 
-    /// These routes with every `on_failure: retry` carried as `on_failure: drop`: an envelope
-    /// whose send fails is dropped, never sent again.
+    /// These routes with every `on_failure: retry`, and every policy chosen per refusal, carried
+    /// as `on_failure: drop`: an envelope whose send fails is dropped, never sent again, and every
+    /// refusal answers [`Failure::Drop`].
     #[must_use]
     pub fn dropping_retries(mut self) -> Self {
         for route in &mut self.routes {
-            if route.on_failure == Failure::Retry {
+            if route.on_failure == Failure::Retry || route.on_refusal.is_some() {
                 route.on_failure = Failure::Drop;
+                route.on_refusal = None;
             }
         }
         self
@@ -220,6 +232,29 @@ impl Router {
 }
 
 impl Route {
+    /// What answers an attempt of this binding's command that did not take effect: refused with
+    /// the declared outcome `refusal`, or, with `None`, failed with no declared outcome. Under
+    /// [`Self::on_refusal`] it is the refusal's policy, else the table's fallback, as ESS's
+    /// [`ResolvedRefusalPolicy::select`] chooses; otherwise [`Self::on_failure`].
+    pub fn answer(&self, refusal: Option<&str>) -> Failure {
+        let Some(policy) = &self.on_refusal else {
+            return self.on_failure;
+        };
+        let outcome = refusal.and_then(|refusal| OutcomeName::new(refusal).ok());
+        policy.select(outcome.as_ref()).word()
+    }
+
+    /// Whether some attempt that does not take effect is retried: under `on_failure: retry`, or
+    /// where a policy chosen per refusal retries a refusal or its fallback.
+    pub fn retries(&self) -> bool {
+        match &self.on_refusal {
+            Some(policy) => policy
+                .actions()
+                .any(|action| matches!(action, ResolvedRefusalAction::Retry { .. })),
+            None => self.on_failure == Failure::Retry,
+        }
+    }
+
     /// The command this binding invokes for `event`.
     ///
     /// An absent `event.<field>` source leaves an Optional input out and refuses a required one. A
@@ -280,8 +315,18 @@ impl Route {
         if binding.selection.is_some() {
             return Err(unsupported("a selection".to_owned()));
         }
-        if binding.refusal_policy.is_some() {
-            return Err(unsupported("an `on_refusal` policy".to_owned()));
+        if let Some(policy) = &binding.refusal_policy {
+            for action in policy.actions() {
+                match action {
+                    ResolvedRefusalAction::Drop | ResolvedRefusalAction::Retry { bound: None } => {}
+                    ResolvedRefusalAction::Retry { bound: Some(_) } => {
+                        return Err(unsupported("a bounded retry in `on_refusal`".to_owned()));
+                    }
+                    ResolvedRefusalAction::Escalate { .. } => {
+                        return Err(unsupported("an escalation in `on_refusal`".to_owned()));
+                    }
+                }
+            }
         }
         if binding.retry.is_some() {
             return Err(unsupported("a bounded retry".to_owned()));
@@ -323,6 +368,7 @@ impl Route {
             to,
             delivery: binding.delivery,
             on_failure: binding.failure,
+            on_refusal: binding.refusal_policy.clone(),
             rules,
         }))
     }

@@ -116,6 +116,11 @@ pub enum Command {
     /// whose operations only the kernel or the host does not run is served as before, each
     /// answering `501`.
     ///
+    /// A served request carries no `external` object: its external causes are answered by
+    /// `--decisions`, then by `--answer-default`, each answer per command and outcome, never per
+    /// input value. A request nothing answers is refused `501`, naming the outcome. Without either
+    /// flag, a specification that declares an external outcome exits 1 before listening.
+    ///
     /// An event binding with `on_failure: retry` runs its command again at once after each
     /// attempt that fails, up to 5 attempts, unless `--drop-retries` is given; one with
     /// `on_failure: escalate` exits 1 before listening.
@@ -131,9 +136,10 @@ pub enum Command {
         /// the run ends.
         #[arg(long)]
         state: Option<PathBuf>,
-        /// Run each event binding whose `on_failure` is `retry` as a `drop` binding: a failed
-        /// invocation is dropped, not retried. Prints one line per such binding on stderr before
-        /// listening. Only where `run` serves HTTP.
+        /// Run each event binding that retries on failure (`on_failure: retry`, or a per-refusal
+        /// policy that retries some refusal) as a `drop` binding: a failed invocation is dropped,
+        /// not retried. Prints one line per such binding on stderr before listening. Only where `run`
+        /// serves HTTP.
         #[arg(long, conflicts_with = "scenario")]
         drop_retries: bool,
         /// An `ess-http/1` binding of the specification's commands and views to methods and paths,

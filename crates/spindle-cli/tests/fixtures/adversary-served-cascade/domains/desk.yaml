@@ -1,0 +1,30 @@
+domain: relay.desk
+summary: Requests taken once.
+entities:
+  - name: relay.desk.Request
+    identity:
+      name: request_id
+      type: String
+    fields: []
+    lifecycle:
+      initial: Taken
+      states: [Taken]
+      terminal: [Taken]
+commands:
+  - name: relay.desk.Take
+    input:
+      - name: request_id
+        type: String
+    outcomes:
+      - name: taken
+        creates: relay.desk.Request
+        instance: request_id
+        emits: [relay.desk.Taken]
+        payload:
+          relay.desk.Taken: {request_id: input.request_id}
+        summary: The request is taken.
+events:
+  - name: relay.desk.Taken
+    fields:
+      - name: request_id
+        type: String

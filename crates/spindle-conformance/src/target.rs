@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use ess_compiler::EssIr;
-use ess_compiler::ir::{ResolvedFailure, ResolvedTypeRef};
+use ess_compiler::ir::{ResolvedFailure, ResolvedRefusalAction, ResolvedTypeRef};
 use ess_compiler::refs::{ErrorRef, EventRef, OutcomeRef};
 use ess_conformance::{
     ConformanceTarget, DeclaredErrorValue, EventObservationRequest, ExternalOutcomeControl,
@@ -37,12 +37,14 @@ type Forcing = Arc<Mutex<Option<(String, String)>>>;
 /// did not ask it. A cause nothing forced does not hold, so the model selects as it would without
 /// it. Nothing forced in one scenario reaches the next.
 ///
-/// A command sent as an actor is sent as it is: the host checks no grant, which is the caller's
-/// where no component serves the actor; a step's actor and `caller` are the caller the command
-/// runs as ([`Host::submit_as`]). An entity the scenario establishes, fixture values and
-/// redelivery are unsupported, each with its reason, and so is a send whose `on_failure: retry`
-/// binding gave up after [`RETRY_ATTEMPTS`](spindle_host::RETRY_ATTEMPTS), as ESS's interpreter
-/// answers a retry that exceeds its execution budget.
+/// A command sent as an actor whose `may:` does not name it is refused before it runs, as ESS's
+/// interpreter refuses it ([`TargetError::NotGranted`]); one sent as no actor is not checked. A
+/// step's actor and `caller` are the caller the command runs as ([`Host::submit_as`]). An entity
+/// the scenario establishes is written as it rests into the store of the component that owns it
+/// ([`Host::establish`]), checked by ESS first, as ESS's interpreter establishes it. Fixture
+/// values and redelivery are unsupported, each with its reason, and so is a send whose
+/// `on_failure: retry` binding gave up after [`RETRY_ATTEMPTS`](spindle_host::RETRY_ATTEMPTS), as
+/// ESS's interpreter answers a retry that exceeds its execution budget.
 pub struct HostTarget {
     ir: EssIr,
     environment: Environment,
@@ -179,11 +181,17 @@ impl ConformanceTarget for HostTarget {
         &self,
         request: ess_conformance::target::EntitySetupRequest,
     ) -> Result<(), TargetError> {
-        self.unarranged.set(true);
-        Err(TargetError::unsupported(
-            format!("establishing `{}`", request.entity),
-            "the in-process host holds only state its commands wrote",
-        ))
+        let established = match self.running.borrow_mut().as_mut() {
+            Some(running) => crate::establish::establish(&self.ir, &mut running.host, &request),
+            None => Err(TargetError::unavailable(
+                "entity setup",
+                "no scenario is open",
+            )),
+        };
+        if established.is_err() {
+            self.unarranged.set(true);
+        }
+        established
     }
 
     fn begin_scenario(&self, _scenario: &ScenarioContext) -> Result<(), TargetError> {
@@ -232,7 +240,14 @@ impl ConformanceTarget for HostTarget {
         let submitted = running
             .host
             .submit_as(&command, input, actor.as_deref(), caller.as_ref());
-        self.lapse(&command);
+        let not_granted = matches!(
+            &submitted,
+            Err(HostError::Execute { error, .. })
+                if matches!(**error, ExecuteError::NotGranted { .. })
+        );
+        if !not_granted {
+            self.lapse(&command);
+        }
         if let Ok(report) = &submitted {
             for invoked in invoked(report) {
                 self.lapse(invoked);
@@ -289,6 +304,7 @@ impl ConformanceTarget for HostTarget {
             }
             Err(HostError::Execute { error, .. }) => match *error {
                 ExecuteError::Undeclared { .. } => Ok(SemanticCommandResult::undeclared()),
+                ExecuteError::NotGranted { actor } => Err(TargetError::not_granted(Some(actor))),
                 ExecuteError::Unsupported { construct } => Err(TargetError::unsupported(
                     format!("running `{command}`"),
                     construct,
@@ -419,29 +435,41 @@ fn invoked(report: &spindle_host::Report) -> impl Iterator<Item = &str> {
         .chain(report.failed.iter().map(|failed| failed.command.as_str()))
 }
 
-/// The first `on_failure: retry` binding (no `retry:` bound) whose invocation in `report` the host
-/// gave up: refused or not executed by the kernel on its last attempt. A binding whose input was
-/// unmet (0 attempts) never reached the kernel and is not one.
+/// The first binding whose invocation in `report` the host gave up while its policy still said
+/// retry: refused or not executed by the kernel on its last attempt, under `on_failure: retry` (no
+/// `retry:` bound) or under an `on_refusal` policy whose choice for that last attempt (its refusal,
+/// or the fallback for a failure with no declared outcome) is an unbounded retry. A binding whose
+/// input was unmet (0 attempts) never reached the kernel and is not one.
 fn exhausted<'a>(ir: &EssIr, report: &'a spindle_host::Report) -> Option<&'a str> {
-    let retries = |binding: &str| {
+    let retries = |binding: &str, refusal: Option<&str>| {
         ir.bindings().values().any(|declared| {
             declared.name.as_str() == binding
-                && matches!(declared.on_failure(), ResolvedFailure::Retry)
+                && match declared.on_failure() {
+                    ResolvedFailure::Retry => true,
+                    ResolvedFailure::ByRefusal { policy } => {
+                        let outcome = refusal.and_then(|refusal| OutcomeName::new(refusal).ok());
+                        matches!(
+                            policy.select(outcome.as_ref()),
+                            ResolvedRefusalAction::Retry { bound: None }
+                        )
+                    }
+                    _ => false,
+                }
         })
     };
     report
         .refused
         .iter()
-        .map(|refused| &refused.cause)
+        .map(|refused| (&refused.cause, Some(refused.outcome.as_str())))
         .chain(
             report
                 .failed
                 .iter()
                 .filter(|failed| failed.attempts > 0)
-                .map(|failed| &failed.cause),
+                .map(|failed| (&failed.cause, None)),
         )
-        .find_map(|cause| match cause {
-            Cause::Delivered { binding } if retries(binding) => Some(binding.as_str()),
+        .find_map(|(cause, refusal)| match cause {
+            Cause::Delivered { binding } if retries(binding, refusal) => Some(binding.as_str()),
             _ => None,
         })
 }

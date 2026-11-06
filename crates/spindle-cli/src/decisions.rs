@@ -2,7 +2,10 @@
 //!
 //! Three sources answer one question, first answer wins: the request line's own `external`
 //! object, then the decisions file (`--decisions`), then `--answer-default`. In the file an answer
-//! under a `[<command>]` table wins over a top-level answer, which holds for every command.
+//! under a `[<command>]` table wins over a top-level answer, which holds for every command. A
+//! request served over HTTP carries no `external` object, so the file answers first there
+//! ([`Answers::served`]). The file keys an answer by command and outcome only, never by an input
+//! value: every request to one command gets the same answer.
 //!
 //! `--answer-default` answers "the cause does not hold" for a command whose IR declares a default
 //! branch ([`ResolvedCondition::Otherwise`]), so selection goes on as the model reads it and ends
@@ -15,7 +18,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use ess_compiler::EssIr;
 use ess_compiler::ir::{ResolvedCommand, ResolvedCondition};
-use spindle_kernel::External;
+use spindle_kernel::{Decider, External};
 
 /// Every source of answers a `run` reads, besides the request line.
 #[derive(Debug, Default)]
@@ -136,6 +139,13 @@ impl Answers {
             )),
             None => Err(format!("{unanswered}: {}", question.cause)),
         }
+    }
+
+    /// These answers as the decider of a served run: a request over HTTP carries no `external`
+    /// object, so each cause is answered by the decisions file, then by `--answer-default`.
+    pub fn served(self) -> Box<dyn Decider + Send> {
+        let request = BTreeMap::new();
+        Box::new(move |question: &External<'_>| self.decide(&request, question))
     }
 }
 

@@ -58,7 +58,7 @@ fn an_inputs_manifest_decides_which_files_are_read() {
     fs::write(root.join("stray.yaml"), "not: an ess document\n").expect("write");
     fs::write(
         root.join("ess-inputs.yaml"),
-        "format: ess-inputs/2\nrequires: ess 0.86\nspecification:\n  - system.yaml\nscenarios: []\n",
+        "format: ess-inputs/2\nrequires: ess 0.87\nspecification:\n  - system.yaml\nscenarios: []\n",
     )
     .expect("write");
     let loaded = spindle_spec::load(root).expect("only the listed file is read");

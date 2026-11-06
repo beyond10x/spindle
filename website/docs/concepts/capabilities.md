@@ -3,7 +3,7 @@ title: Capabilities
 sidebar_position: 2
 description: The technical needs of a specification, derived from what it declares and never written down by its author.
 lede: Capabilities are derived from the specification, never authored, so they cannot drift from it.
-source: crates/spindle-capability/src/derive.rs, crates/spindle-capability/tests/admission.rs, crates/spindle-capability/tests/mint.rs, crates/spindle-cli/src/cli.rs, crates/spindle-cli/tests/decisions.rs, README.md
+source: crates/spindle-capability/src/derive.rs, crates/spindle-capability/tests/admission.rs, crates/spindle-capability/tests/mint.rs, crates/spindle-cli/src/cli.rs, crates/spindle-cli/tests/decisions.rs, crates/spindle-cli/tests/served_decisions.rs, README.md
 ---
 
 A capability is something technical a specification needs from the runtime: a durable store, a
@@ -64,6 +64,12 @@ answers it per command: from the line's `"external"` object, then from a `--deci
 (`<outcome> = true | false` at the top level for every command, or under a `["<command>"]` table
 for one), then, with `--answer-default`, "does not hold" on a command that declares a default
 branch. A line nothing answers fails, naming the outcome, and the run goes on.
+
+A `run` serving `ingress.network` answers a request's external causes the same way, from the
+decisions file and then `--answer-default`; a request carries no `"external"` object, and one
+nothing answers is refused `501`, naming the outcome. The file answers per command and outcome,
+never per input value, so every request to one command gets the same answer. Without either flag
+a served specification that declares an external outcome is refused before anything listens.
 
 ## Serving `ingress.network` over HTTP
 

@@ -1,0 +1,44 @@
+format: ess/34
+system: library
+version: v1
+summary: A library that thanks a member when one of their loans closes, trying again only while the desk is busy and giving up on anything else.
+domains:
+  - library.lending
+  - library.notices
+components:
+  - component: lending
+    summary: Closes loans.
+    owns:
+      domains:
+        - library.lending
+    accepts:
+      commands:
+        - library.lending.CloseLoan
+    publishes:
+      events:
+        - library.lending.LoanClosed
+    reached_by: in_process
+  - component: notices
+    summary: Thanks readers.
+    owns:
+      domains:
+        - library.notices
+    accepts:
+      commands:
+        - library.notices.SendThanks
+    publishes:
+      events:
+        - library.notices.ThanksSent
+    reached_by: in_process
+bindings:
+  - id: thank-on-close
+    when:
+      event: library.lending.LoanClosed
+    invoke:
+      command: library.notices.SendThanks
+    mapping:
+      reader_id: event.member_id
+    delivery: at_most_once
+    on_failure:
+      retry: [busy]
+      drop: {except: [busy]}
