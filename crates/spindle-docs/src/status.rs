@@ -273,6 +273,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "crates/spindle-cli/tests/unserved.rs::an_unrunnable_command_answers_501_and_the_rest_serve",
     ),
     shipped(
+        "Execution",
+        "Fixed caller (test backend)",
+        "run --fixed-actor with --fixed-caller sends every served command as one actor and caller for the whole run, so a command that reads its caller is served: a test-backend switch, not authentication, opt-in only and printed on stderr at startup. The grant check still runs: a command the actor may not send answers 403 not granted and writes nothing.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-cli/tests/fixed_caller.rs::a_command_reading_the_caller_runs_with_the_fixed_caller",
+    ),
+    shipped(
         "Conformance",
         "Scenario replay",
         "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: an entity it arranges with setup is written into the store of the component that owns it, captures feed later steps, view asserts are checked, and the first divergent step is named and ends the run.",

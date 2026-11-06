@@ -118,6 +118,8 @@ b10x-spindle run [OPTIONS] --environment <ENVIRONMENT> <SPEC>
 | `--port <PORT>` | no |  | The port to serve HTTP on, on 127.0.0.1; `0`, the default, lets the system choose. Only where `run` serves HTTP |
 | `--decisions <DECISIONS>` | no |  | A TOML file of answers, `<outcome> = true \| false`, at the top level for every command or under a `["<command>"]` table for one; a command's table wins over the top level |
 | `--answer-default` | no |  | Answer every remaining external cause "does not hold" on a command that declares a default branch, so the model selects as it would without it |
+| `--fixed-actor <FIXED_ACTOR>` | no |  | Send every served command as this actor (qualified name): a test-backend switch, not authentication; no request proves who sends it. A command that reads its caller is then served instead of answering `501`, and one the actor's `may:` does not name is refused `403` "not granted", writing nothing, as is a read-granted view it may not read. The actor and `--fixed-caller` are checked against the model and printed on stderr before listening; an undeclared actor or attribute, or a required attribute left out, exits 1. Only where `run` serves HTTP |
+| `--fixed-caller <FIXED_CALLER>` | no |  | The caller attributes every served command is sent with, as a JSON object (`{"<attribute>": <value>}`), every required one of `--fixed-actor`'s |
 | `--scenario <SCENARIO>` | no |  | The `ess-scenario` document to replay |
 
 ## `play`

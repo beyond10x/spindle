@@ -1,0 +1,126 @@
+domain: quire.notebook
+summary: A notebook owned by the writer who created it and shared by that writer with another.
+types:
+  - name: quire.notebook.NotebookId
+    kind: newtype
+    of: Uuid
+  - name: quire.notebook.OwnerId
+    kind: newtype
+    of: Uuid
+actors:
+  - name: quire.notebook.Writer
+    attributes:
+      - name: owner_id
+        type: quire.notebook.OwnerId
+    may:
+      - quire.notebook.CreateNotebook
+      - quire.notebook.ShareNotebook
+  - name: quire.notebook.Reader
+    attributes:
+      - name: owner_id
+        type: quire.notebook.OwnerId
+    may:
+      - quire.notebook.ShareNotebook
+entities:
+  - name: quire.notebook.Notebook
+    identity:
+      name: notebook_id
+      type: quire.notebook.NotebookId
+    fields:
+      - name: owner_id
+        type: quire.notebook.OwnerId
+      - name: title
+        type: String
+      - name: shared_with
+        type: Optional<quire.notebook.OwnerId>
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+errors:
+  - name: quire.notebook.NoSuchNotebook
+    summary: No notebook carries the id.
+    fields: []
+  - name: quire.notebook.NotYours
+    summary: The notebook is owned by another writer.
+    fields: []
+  - name: quire.notebook.SharedWithSelf
+    summary: A writer shares a notebook with themselves.
+    fields: []
+commands:
+  - name: quire.notebook.CreateNotebook
+    input:
+      - name: notebook_id
+        type: quire.notebook.NotebookId
+      - name: title
+        type: String
+    outcomes:
+      - name: created
+        creates: quire.notebook.Notebook
+        instance: notebook_id
+        sets:
+          owner_id: {caller: owner_id}
+          title: input.title
+        emits: [quire.notebook.NotebookCreated]
+        payload:
+          quire.notebook.NotebookCreated:
+            notebook_id: input.notebook_id
+            owner_id: {caller: owner_id}
+        summary: The notebook is created, owned by the writer who sent the command.
+  - name: quire.notebook.ShareNotebook
+    input:
+      - name: notebook_id
+        type: quire.notebook.NotebookId
+      - name: with
+        type: quire.notebook.OwnerId
+    outcomes:
+      - name: with-self
+        when: with == caller.owner_id
+        error: quire.notebook.SharedWithSelf
+        summary: The writer names themselves.
+      - name: no-such-notebook
+        unknown_instance: true
+        error: quire.notebook.NoSuchNotebook
+        summary: No notebook carries the id.
+      - name: not-yours
+        when_subject:
+          predicate: owner_id != caller.owner_id
+        error: quire.notebook.NotYours
+        summary: Another writer owns the notebook.
+      - name: shared
+        updates: quire.notebook.Notebook
+        instance: notebook_id
+        sets:
+          shared_with: input.with
+        emits: [quire.notebook.NotebookShared]
+        payload:
+          quire.notebook.NotebookShared:
+            notebook_id: input.notebook_id
+            shared_with: input.with
+        summary: The owner shares the notebook with another writer.
+events:
+  - name: quire.notebook.NotebookCreated
+    fields:
+      - name: notebook_id
+        type: quire.notebook.NotebookId
+      - name: owner_id
+        type: quire.notebook.OwnerId
+  - name: quire.notebook.NotebookShared
+    fields:
+      - name: notebook_id
+        type: quire.notebook.NotebookId
+      - name: shared_with
+        type: quire.notebook.OwnerId
+views:
+  - name: quire.notebook.NotebookCard
+    source: quire.notebook.Notebook
+    consistency: read_your_writes
+    fields:
+      - name: notebook_id
+        type: quire.notebook.NotebookId
+      - name: owner_id
+        type: quire.notebook.OwnerId
+      - name: title
+        type: String
+      - name: shared_with
+        type: Optional<quire.notebook.OwnerId>

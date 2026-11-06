@@ -1,0 +1,110 @@
+domain: shelf.book
+summary: A book added by anyone and shelved by a librarian on the librarian's own branch.
+types:
+  - name: shelf.book.BookId
+    kind: newtype
+    of: Uuid
+  - name: shelf.book.Branch
+    kind: enum
+    variants: [North, South]
+actors:
+  - name: shelf.book.Librarian
+    attributes:
+      - name: branch
+        type: shelf.book.Branch
+      - name: level
+        type: Integer
+      - name: nickname
+        type: Optional<String>
+    may:
+      - shelf.book.AddBook
+      - shelf.book.ShelveBook
+      - shelf.book.Catalogue
+  - name: shelf.book.Visitor
+    may:
+      - shelf.book.AddBook
+entities:
+  - name: shelf.book.Book
+    identity:
+      name: book_id
+      type: shelf.book.BookId
+    fields:
+      - name: title
+        type: String
+      - name: branch
+        type: Optional<shelf.book.Branch>
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+errors:
+  - name: shelf.book.NoSuchBook
+    summary: No book carries the id.
+    fields: []
+  - name: shelf.book.OtherBranch
+    summary: The book is for another branch.
+    fields: []
+commands:
+  - name: shelf.book.AddBook
+    input:
+      - name: book_id
+        type: shelf.book.BookId
+      - name: title
+        type: String
+    outcomes:
+      - name: added
+        creates: shelf.book.Book
+        instance: book_id
+        sets:
+          title: input.title
+        emits: [shelf.book.BookAdded]
+        payload:
+          shelf.book.BookAdded:
+            book_id: input.book_id
+        summary: The book is added, on no shelf yet.
+  - name: shelf.book.ShelveBook
+    input:
+      - name: book_id
+        type: shelf.book.BookId
+      - name: branch
+        type: shelf.book.Branch
+    outcomes:
+      - name: other-branch
+        when: branch != caller.branch
+        error: shelf.book.OtherBranch
+        summary: The book is for another branch.
+      - name: no-such-book
+        unknown_instance: true
+        error: shelf.book.NoSuchBook
+        summary: No book carries the id.
+      - name: shelved
+        updates: shelf.book.Book
+        instance: book_id
+        sets:
+          branch: {caller: branch}
+        emits: [shelf.book.BookShelved]
+        payload:
+          shelf.book.BookShelved:
+            book_id: input.book_id
+            branch: {caller: branch}
+        summary: The book is shelved on the librarian's branch.
+events:
+  - name: shelf.book.BookAdded
+    fields:
+      - name: book_id
+        type: shelf.book.BookId
+  - name: shelf.book.BookShelved
+    fields:
+      - name: book_id
+        type: shelf.book.BookId
+      - name: branch
+        type: shelf.book.Branch
+views:
+  - name: shelf.book.Catalogue
+    source: shelf.book.Book
+    consistency: read_your_writes
+    fields:
+      - name: book_id
+        type: shelf.book.BookId
+      - name: title
+        type: String

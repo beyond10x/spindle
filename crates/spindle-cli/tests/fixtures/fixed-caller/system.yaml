@@ -1,0 +1,21 @@
+format: ess/34
+system: quire
+version: v1
+summary: Notebooks created and shared over the network by the writer who sends each command.
+domains:
+  - quire.notebook
+components:
+  - component: desk
+    summary: Creates and shares notebooks for callers outside the process.
+    owns:
+      domains:
+        - quire.notebook
+    accepts:
+      commands:
+        - quire.notebook.CreateNotebook
+        - quire.notebook.ShareNotebook
+    publishes:
+      events:
+        - quire.notebook.NotebookCreated
+        - quire.notebook.NotebookShared
+    reached_by: network
