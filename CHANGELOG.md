@@ -6,8 +6,26 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-06
+
+### Added
+
+- Outcomes that `deletes:` their subject run: the memory store keeps the removed version, SQLite
+  appends a `spindle.removed` event, and a later write to the removed instance is a conflict. A
+  `DELETE` route runs a deleting outcome. Set deletions (`instances: where`) stay refused.
+- Response fields of record, union, map, list, enum and constrained newtype type answer a value of
+  that type; one rule decides the answer, the refusal and the derived capabilities.
+- `--fixed-actor` may repeat: each command runs as the first fixed actor whose grant names it, a
+  view is read as the first that may read it, and anything no fixed actor may run answers 403 and
+  writes nothing. The n-th `--fixed-caller` pairs with the n-th `--fixed-actor`.
+
 ### Changed
 
+- A refusal answers every error field it declares: a field with no source is read from the refused
+  row, left absent when optional, minted from its type, or refused by name before the command
+  runs. Capability derivation requires `identity.mint` or `clock` for such fields.
+- A `wrong_state` refusal for an identity with no record answers no payload, as the published
+  schema describes.
 - ESS moved to 0.88.0.
 
 ## [0.1.0] - 2026-11-06
