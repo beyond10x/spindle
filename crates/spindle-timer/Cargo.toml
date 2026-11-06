@@ -14,5 +14,8 @@ ess-domain.workspace = true
 thiserror.workspace = true
 spindle-telemetry = { path = "../spindle-telemetry", default-features = false }
 
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+web-time = "1.1"
+
 [dev-dependencies]
 spindle-spec.workspace = true

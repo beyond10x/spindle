@@ -1,0 +1,56 @@
+domain: desk.notebooks
+summary: Notebooks opened under an identity the runtime mints, stamped with the time they were opened.
+types:
+  - name: desk.notebooks.NotebookId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: desk.notebooks.Notebook
+    identity:
+      name: notebook_id
+      type: desk.notebooks.NotebookId
+    fields:
+      - name: title
+        type: String
+      - name: opened_at
+        type: Timestamp
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+commands:
+  - name: desk.notebooks.OpenNotebook
+    input:
+      - name: title
+        type: String
+    outcomes:
+      - name: opened
+        creates: desk.notebooks.Notebook
+        instance: notebook_id
+        sets:
+          title: input.title
+          opened_at: {generated: true}
+        emits: [desk.notebooks.NotebookOpened]
+        payload:
+          desk.notebooks.NotebookOpened:
+            notebook_id: {generated: true}
+            title: input.title
+        summary: The notebook opens under an identity the runtime mints, at the time the clock answers.
+events:
+  - name: desk.notebooks.NotebookOpened
+    fields:
+      - name: notebook_id
+        type: desk.notebooks.NotebookId
+      - name: title
+        type: String
+views:
+  - name: desk.notebooks.NotebookCard
+    source: desk.notebooks.Notebook
+    consistency: read_your_writes
+    fields:
+      - name: notebook_id
+        type: desk.notebooks.NotebookId
+      - name: title
+        type: String
+      - name: opened_at
+        type: Timestamp

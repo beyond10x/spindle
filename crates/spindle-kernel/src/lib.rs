@@ -52,6 +52,7 @@ mod execute;
 mod facts;
 mod grant;
 mod mint;
+#[cfg(feature = "sqlite")]
 mod sqlite;
 mod store;
 mod supported;
@@ -65,6 +66,7 @@ pub use caller::{binds as caller_binds, reads as caller_reads};
 pub use decider::{Decider, External, NoExternals};
 pub use execute::{Invocation, at_rest, execute, execute_as, execute_at, execute_minting};
 pub use mint::{Identity, Mint, Seeded, Uuid, UuidV4};
+#[cfg(feature = "sqlite")]
 pub use sqlite::SqliteStore;
 pub use store::{Change, MemoryStore, Row, Store, StoreError, Stored};
 pub use supported::check as runs;

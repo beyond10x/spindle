@@ -47,18 +47,24 @@
 
 mod catalogue;
 mod counters;
+#[cfg(unix)]
 mod endpoint;
 mod frame;
 #[cfg(feature = "kernel")]
 mod kernel;
 mod port;
+#[cfg(unix)]
 mod resources;
+#[cfg(unix)]
 mod sender;
+#[cfg(unix)]
 mod sys;
+#[cfg(unix)]
 pub mod vsock;
 
 pub use catalogue::{Catalogue, Counter, Key, Kind, Source, catalogue};
 pub use counters::{CounterValue, Counters, DURATION_BOUNDS_US, HistogramValue, Snapshot};
+#[cfg(unix)]
 pub use endpoint::{
     Connection, DEFAULT_PERIOD, ENV_TELEMETRY, ENV_TELEMETRY_PERIOD_MS, Endpoint, EndpointError,
     MAX_UNIX_PATH, VSOCK_HOST_CID,
@@ -69,5 +75,7 @@ pub use frame::{
 #[cfg(feature = "kernel")]
 pub use kernel::CountingStore;
 pub use port::{Carried, Failure, Outcome, Record, Retried, Sink, Telemetry, Timed};
+#[cfg(unix)]
 pub use resources::{Readings, read_resources};
+#[cfg(unix)]
 pub use sender::{Delivery, Sender, SenderOptions, Transmitter};

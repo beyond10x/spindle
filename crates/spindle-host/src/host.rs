@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::{
@@ -17,10 +17,10 @@ use spindle_channel::{
 };
 use spindle_kernel::{
     Change, Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, Mint, NoExternals,
-    Row, Seeded, SqliteStore, Store, StoreError, Uuid, UuidV4,
+    Row, Seeded, Store, StoreError, Uuid, UuidV4,
 };
 use spindle_telemetry::{Counters, CountingStore, Retried, Sink};
-use spindle_timer::{BindingName, Clock, CompleteError, LifetimeError, Timer};
+use spindle_timer::{BindingName, Clock, CompleteError, Instant, LifetimeError, Timer};
 
 use crate::admission::{Placements, Refusal, admit};
 
@@ -553,7 +553,9 @@ impl Host {
             let sink = Sink::new(counters.clone());
             let file = match bound(Capability::STORE_DURABLE).or_else(|| bound("store.ephemeral")) {
                 None | Some("memory") => None,
-                Some("sqlite") => Some(state.join(format!("{name}.sqlite"))),
+                Some("sqlite") if cfg!(feature = "sqlite") => {
+                    Some(state.join(format!("{name}.sqlite")))
+                }
                 Some(other) => {
                     return Err(HostError::Unsupported(format!(
                         "{name} has its state bound to {other}, which this host has no store for"
@@ -1318,7 +1320,18 @@ struct Deliveries {
 fn opened(file: Option<&Path>, sink: &Sink) -> Result<Box<dyn Store>, HostError> {
     Ok(match file {
         None => Box::new(CountingStore::new(MemoryStore::default(), sink.clone())),
-        Some(file) => Box::new(CountingStore::new(SqliteStore::open(file)?, sink.clone())),
+        #[cfg(feature = "sqlite")]
+        Some(file) => Box::new(CountingStore::new(
+            spindle_kernel::SqliteStore::open(file)?,
+            sink.clone(),
+        )),
+        #[cfg(not(feature = "sqlite"))]
+        Some(file) => {
+            return Err(HostError::Unsupported(format!(
+                "{} is a SQLite store, which this build leaves out",
+                file.display()
+            )));
+        }
     })
 }
 

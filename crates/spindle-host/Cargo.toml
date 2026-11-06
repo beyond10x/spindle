@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+default = ["sqlite"]
+sqlite = ["spindle-kernel/sqlite"]
+
 [dependencies]
 ess-compiler.workspace = true
 ess-domain.workspace = true
@@ -16,10 +20,13 @@ serde_json.workspace = true
 thiserror.workspace = true
 spindle-capability = { path = "../spindle-capability" }
 spindle-channel = { path = "../spindle-channel" }
-spindle-kernel = { path = "../spindle-kernel" }
+spindle-kernel = { path = "../spindle-kernel", default-features = false }
 spindle-telemetry = { path = "../spindle-telemetry" }
 spindle-timer = { path = "../spindle-timer" }
 
 [dev-dependencies]
 spindle-spec = { path = "../spindle-spec" }
 tempfile = "3"
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]
+wasm-bindgen-test = "0.3"
