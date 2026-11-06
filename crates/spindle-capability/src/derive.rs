@@ -320,8 +320,9 @@ fn generated_mints(ir: &EssIr, outcome: &ResolvedOutcome) -> Vec<(&'static str, 
 
 /// The mints the command's response needs where `outcome` returns it (`returns: true`) and
 /// reports no error: each declared `response:` field is the runtime's to choose, minted by the
-/// rule for generated fields, an `Optional` one as its required type. None for a field the
-/// kernel refuses by name.
+/// rule for generated fields, an `Optional` one as its required type, a record, union, map or
+/// constrained newtype by [`crate::mint::response`]: one reason per capability its minted leaves
+/// need. None for a field the kernel refuses by name.
 fn response_mints(
     ir: &EssIr,
     command: &ResolvedCommand,
@@ -334,16 +335,18 @@ fn response_mints(
         .response
         .iter()
         .filter_map(|field| {
-            let shape = crate::mint::minted(ir, &field.type_ref, true)?;
+            let one_time = outcome.one_time_response.contains(&field.name);
+            let choice = crate::mint::response(ir, &field.type_ref, one_time).ok()?;
             let at = format!("the response field `{}.{}`", command.name, field.name);
-            Some(match shape {
-                crate::mint::Minted::Timestamp => (
-                    shape.capability(),
-                    format!("stamps {at} with the current time"),
-                ),
-                _ => (shape.capability(), format!("mints {at}")),
-            })
+            Some(choice.capabilities().into_iter().map(move |capability| {
+                if capability == Capability::CLOCK {
+                    (capability, format!("stamps {at} with the current time"))
+                } else {
+                    (capability, format!("mints {at}"))
+                }
+            }))
         })
+        .flatten()
         .collect()
 }
 
@@ -362,23 +365,27 @@ fn unsourced_error_mints(
     crate::mint::unsourced(ir, command, outcome)
         .into_iter()
         .filter_map(|(field, fill)| {
-            let crate::mint::Unsourced::Minted(shape) = fill else {
+            let crate::mint::Unsourced::Minted(choice) = fill else {
                 return None;
             };
             let at = format!("`{}.{}`", error.name(), field.name);
-            Some(match shape {
-                crate::mint::Minted::Timestamp => (
-                    shape.capability(),
-                    format!(
-                        "stamps {at}, which the outcome gives no source, with the current time"
-                    ),
-                ),
-                _ => (
-                    shape.capability(),
-                    format!("mints {at}, which the outcome gives no source"),
-                ),
-            })
+            Some(choice.capabilities().into_iter().map(move |capability| {
+                if capability == Capability::CLOCK {
+                    (
+                        capability,
+                        format!(
+                            "stamps {at}, which the outcome gives no source, with the current time"
+                        ),
+                    )
+                } else {
+                    (
+                        capability,
+                        format!("mints {at}, which the outcome gives no source"),
+                    )
+                }
+            }))
         })
+        .flatten()
         .collect()
 }
 
@@ -412,21 +419,21 @@ fn generated_in(
         if crate::mint::absent(&field.target_type, present) {
             continue;
         }
-        let Some(shape) = crate::mint::minted(ir, &field.target_type, present) else {
+        let Some(choice) = crate::mint::generated(ir, &field.target_type, present) else {
             continue;
         };
         let at = format!("`{place}.{}`", field.target);
-        let because = match (&shape, fallback) {
-            (crate::mint::Minted::Timestamp, false) => {
-                format!("stamps {at} with the current time")
-            }
-            (crate::mint::Minted::Timestamp, true) => {
-                format!("stamps {at} with the current time where the input sends none")
-            }
-            (_, false) => format!("mints {at}"),
-            (_, true) => format!("mints {at} where the input sends none"),
-        };
-        mints.push((shape.capability(), because));
+        for capability in choice.capabilities() {
+            let because = match (capability == Capability::CLOCK, fallback) {
+                (true, false) => format!("stamps {at} with the current time"),
+                (true, true) => {
+                    format!("stamps {at} with the current time where the input sends none")
+                }
+                (false, false) => format!("mints {at}"),
+                (false, true) => format!("mints {at} where the input sends none"),
+            };
+            mints.push((capability, because));
+        }
     }
 }
 

@@ -228,19 +228,19 @@ fn response(ir: &EssIr, command: &ResolvedCommand, outcome: &ResolvedOutcome) ->
     }
     command.response.iter().find_map(|field| {
         let one_time = outcome.one_time_response.contains(&field.name);
-        match crate::mint::minted(ir, &field.type_ref, true) {
-            Some(crate::mint::Minted::Text { .. }) => None,
-            Some(_) if !one_time => None,
-            Some(_) => Some(format!(
+        match crate::mint::response(ir, &field.type_ref, one_time) {
+            Ok(_) => None,
+            Err(crate::mint::Unanswered::OneTimeNotText) => Some(format!(
                 "the command's one-time response field `{}` of type `{}`, which the runtime mints \
                  only as text",
                 field.name, field.type_ref
             )),
-            None => Some(format!(
+            Err(crate::mint::Unanswered::Unchosen) => Some(format!(
                 "the command's response field `{}` of type `{}`, which the runtime does not \
-                 choose; it mints a `Uuid`, a `String`, an `Integer`, a `Boolean`, a `Bytes`, a \
-                 `List` or a `Timestamp`, or a newtype of one without invariants",
-                field.name, field.type_ref
+                 choose; {}",
+                field.name,
+                field.type_ref,
+                crate::mint::CHOOSES
             )),
         }
     })
@@ -252,7 +252,7 @@ fn response(ir: &EssIr, command: &ResolvedCommand, outcome: &ResolvedOutcome) ->
 fn value(ir: &EssIr, field: &ResolvedPayloadField) -> Option<String> {
     let mintable = |present: bool| {
         (!crate::mint::absent(&field.target_type, present)
-            && crate::mint::minted(ir, &field.target_type, present).is_none())
+            && crate::mint::generated(ir, &field.target_type, present).is_none())
         .then(|| crate::mint::unmintable(&field.target, &field.target_type))
     };
     if let Some(conversion) = &field.conversion {

@@ -1240,11 +1240,11 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     .filter(|value| !value.is_null()),
                 (Unsourced::State | Unsourced::Stored(_), None)
                 | (Unsourced::Absent | Unsourced::Unanswered, _) => None,
-                (Unsourced::Minted(shape), _) => {
+                (Unsourced::Minted(choice), _) => {
                     let minted = self
                         .generator
-                        .mint(
-                            &shape,
+                        .choose(
+                            &choice,
                             &Identity {
                                 capability: IDENTITY_MINT,
                                 command: self.command,
@@ -1285,8 +1285,8 @@ impl<'a, 'ir> Run<'a, 'ir> {
     }
 
     /// The command's response, where `outcome` answers it ([`crate::mint::answers`]): each
-    /// declared field minted from its type through the [`Generator`], drawn after everything else
-    /// the outcome draws. `None` for every other outcome.
+    /// declared field chosen from its type through the [`Generator`] ([`crate::mint::response`]),
+    /// drawn after everything else the outcome draws. `None` for every other outcome.
     ///
     /// A one-time field's value is checked to appear in no other field and no field name of this
     /// answer, as ESS's interpreter checks the one it originates; a refusal names the field, never
@@ -1308,18 +1308,20 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     outcome.name.as_str()
                 )
             };
-            let shape = crate::mint::minted(self.ir, &field.type_ref, true).ok_or_else(|| {
-                ExecuteError::Unsupported {
-                    construct: format!(
-                        "the response field {}, whose type the runtime does not mint",
-                        at()
-                    ),
-                }
-            })?;
+            let one_time = outcome.one_time_response.contains(&field.name);
+            let choice =
+                crate::mint::response(self.ir, &field.type_ref, one_time).map_err(|_| {
+                    ExecuteError::Unsupported {
+                        construct: format!(
+                            "the response field {}, whose type the runtime does not choose",
+                            at()
+                        ),
+                    }
+                })?;
             let value = self
                 .generator
-                .mint(
-                    &shape,
+                .choose(
+                    &choice,
                     &Identity {
                         capability: IDENTITY_MINT,
                         command: self.command,
