@@ -69,6 +69,36 @@ struct Served {
 }
 
 impl Served {
+    /// Waits up to `ANSWER` for `marker` on stderr, then stops the run and returns everything it
+    /// wrote there. A binding runs after the request that caused it is answered, so a test that
+    /// reads what the binding reported waits for it instead of racing the kill.
+    fn stop_once(mut self, marker: &str) -> String {
+        let mut pipe = self.child.stderr.take().expect("stderr is piped");
+        let (sender, receiver) = mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let mut buffer = [0_u8; 4096];
+            while let Ok(read) = pipe.read(&mut buffer) {
+                if read == 0 || sender.send(buffer[..read].to_vec()).is_err() {
+                    break;
+                }
+            }
+        });
+        let deadline = Instant::now() + ANSWER;
+        let mut stderr = Vec::new();
+        while !String::from_utf8_lossy(&stderr).contains(marker) {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match receiver.recv_timeout(left) {
+                Ok(bytes) => stderr.extend(bytes),
+                Err(_) => break,
+            }
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = reader.join();
+        stderr.extend(receiver.try_iter().flatten());
+        String::from_utf8_lossy(&stderr).into_owned()
+    }
+
     /// Stops the run and returns everything it wrote on stderr.
     fn stop(mut self) -> String {
         let _ = self.child.kill();
@@ -346,7 +376,7 @@ fn served_unanswered_cascaded_external_is_reported_naming_the_outcome() {
         (200..300).contains(&status),
         "the server still answers after an unanswered cascade: {status} {answer}"
     );
-    let stderr = served.stop();
+    let stderr = served.stop_once("external.relay.audit.Audit.rejected");
     assert!(
         stderr.contains("external.relay.audit.Audit.rejected"),
         "the dropped invocation names the unanswered outcome: {stderr}"
@@ -371,7 +401,7 @@ fn served_unanswered_cascade_in_a_retried_binding_is_asked_on_every_attempt() {
         &json!({"request_id": "r1"}),
     );
     assert!((200..300).contains(&status), "{status} {answer}");
-    let stderr = served.stop();
+    let stderr = served.stop_once("dropped after 5 attempts");
     assert!(
         stderr.contains("dropped after 5 attempts")
             && stderr.contains("external.relay.audit.Audit.rejected"),
@@ -396,7 +426,7 @@ fn served_drop_retries_holds_with_a_decider() {
         &json!({"request_id": "r1"}),
     );
     assert!((200..300).contains(&status), "{status} {answer}");
-    let stderr = served.stop();
+    let stderr = served.stop_once("external.relay.audit.Audit.rejected");
     assert!(
         stderr.contains("external.relay.audit.Audit.rejected") && !stderr.contains("attempts:"),
         "with --drop-retries the invocation is tried once: {stderr}"
