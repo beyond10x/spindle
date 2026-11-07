@@ -141,10 +141,22 @@ fn accept_until(host: &mut Host, listener: &TcpListener, done: impl Fn(&mut Host
     }
 }
 
-/// Accepts for a while and returns the refusals and what is still unlinked.
-fn accept_for_a_while(host: &mut Host, listener: &TcpListener) -> (Vec<String>, Vec<String>) {
+/// Accepts until `wanted` refusals are recorded or a deadline of 10 s passes, then a few more
+/// steps so that a refusal beyond `wanted` still shows; returns the refusals and what is still
+/// unlinked.
+fn accept_for_refusals(
+    host: &mut Host,
+    listener: &TcpListener,
+    wanted: usize,
+) -> (Vec<String>, Vec<String>) {
+    let deadline = Instant::now() + Duration::from_secs(10);
     let mut refused = Vec::new();
-    for _ in 0..60 {
+    while refused.len() < wanted && Instant::now() < deadline {
+        host.accept(listener).expect("the listener works");
+        refused.extend(host.refused());
+        std::thread::sleep(STEP);
+    }
+    for _ in 0..10 {
         host.accept(listener).expect("the listener works");
         refused.extend(host.refused());
         std::thread::sleep(STEP);
@@ -271,7 +283,7 @@ fn a_second_hello_before_the_link_opens_is_refused() {
     let mut stream = TcpStream::connect(listener.local_addr().expect("bound")).expect("connects");
     send(&mut stream, &hello(WEST, TABLE));
     send(&mut stream, &hello(EAST, TABLE));
-    let (refused, unlinked) = accept_for_a_while(&mut table, &listener);
+    let (refused, unlinked) = accept_for_refusals(&mut table, &listener, 1);
     assert!(
         !refused.is_empty() && unlinked.contains(&format!("{EAST} (from)")),
         "one connection said hello as {WEST}, then as {EAST}; the table refused {refused:?} and \
@@ -305,7 +317,7 @@ fn a_frame_before_hello_is_refused() {
     let mut stream = TcpStream::connect(listener.local_addr().expect("bound")).expect("connects");
     send(&mut stream, &move_paddle(1));
     send(&mut stream, &hello(WEST, TABLE));
-    let (refused, unlinked) = accept_for_a_while(&mut table, &listener);
+    let (refused, unlinked) = accept_for_refusals(&mut table, &listener, 1);
     assert!(
         !refused.is_empty() && unlinked.contains(&format!("{WEST} (from)")),
         "a connection sent an envelope and only then said hello; the table refused {refused:?} \
@@ -323,7 +335,7 @@ fn garbage_before_hello_is_refused_by_name() {
         .expect("the write");
     let mut huge = TcpStream::connect(address).expect("connects");
     huge.write_all(&u32::MAX.to_be_bytes()).expect("the write");
-    let (refused, _) = accept_for_a_while(&mut table, &listener);
+    let (refused, _) = accept_for_refusals(&mut table, &listener, 2);
     assert_eq!(
         refused.len(),
         2,
@@ -416,7 +428,7 @@ fn a_hello_naming_the_table_as_its_own_peer_is_refused() {
     });
     let mut second = TcpStream::connect(address).expect("connects");
     send(&mut second, &hello(EAST, TABLE));
-    let (refused, unlinked) = accept_for_a_while(&mut table, &listener);
+    let (refused, unlinked) = accept_for_refusals(&mut table, &listener, 3);
     assert_eq!(refused.len(), 3, "{refused:?}");
     assert!(
         refused
