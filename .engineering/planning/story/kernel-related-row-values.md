@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:kernel-related-row-values
 kind: story
-status: active
+status: implemented
 title: Values read from a related row
 relations:
 - serves: vision:spindle
@@ -15,10 +15,11 @@ scope:
   path: crates/spindle-kernel/src/values.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/related_values.rs
-revision: 6
+revision: 7
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-05T12:00:31Z", actor: "human:timo", revision: 5}
 - {from: "proposed", to: "active", at: "2026-11-05T12:00:31Z", actor: "human:timo", revision: 6}
+- {from: "active", to: "implemented", at: "2026-11-07T06:21:23Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"test_result":1,"verification":1}}}
 ---
 # Values read from a related row
 

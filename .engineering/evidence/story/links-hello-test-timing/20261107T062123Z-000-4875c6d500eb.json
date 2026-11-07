@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-07T06:21:23Z",
+  "actor": "human:timo",
+  "artifact": "story:links-hello-test-timing",
+  "kind": "story",
+  "revision": 3,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "spindle-host links hello tests under nice with 4 threads, wave 13 U6",
+    "reference": "merge 1ffa566: 20 of 20 passes"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-07T06:21:23Z",
+  "actor": "human:timo",
+  "artifact": "story:browser-store-several-tabs",
+  "kind": "story",
+  "revision": 4,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "browser lane, wave 13 U5",
+    "reference": "unit fix c362d7e: 12 passed; the ignore on a_second_handle_creating_a_held_identity_is_a_conflict removed"
+  }
+}

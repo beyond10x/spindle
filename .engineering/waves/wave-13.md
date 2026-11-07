@@ -1,5 +1,7 @@
 # Wave 13
 
+**Delivered.** PR https://github.com/beyond10x/spindle/pull/27 (head 5599396) merged as fe72629; released as 0.5.0. The five stories (U1, U2, U3, U5, U6) moved to `implemented` on CI run 42344976479 (Gate and macOS).
+
 Run by the coordinator under `approval-record:wave13-approval` (the operator's standing acceptance
 of future waves). Skill `aep:implementing`, wave mode. All stories serve `vision:spindle`.
 
@@ -17,12 +19,12 @@ queue.
 
 | unit | story | branch | tree (managed id) | model | stage |
 |---|---|---|---|---|---|
-| U1 | `story:ingress-request-log` | `unit/w13-reqlog` | `spindle-w13-reqlog` | opus | building |
-| U2 | `story:kernel-related-row-values` | `unit/w13-relvalues` | `spindle-w13-relvalues` | opus | building |
-| U3 | `story:service-worker-serves-a-specification` | `unit/w13-sworker` | `spindle-w13-sworker` | opus | building |
-| U4 | ESS pin 0.88.0 to 0.89.0 | `unit/w13-esspin` | `spindle-w13-esspin` | sonnet | building |
-| U5 | `story:browser-store-several-tabs` | `unit/w13-tabs` | `spindle-w13-tabs` | opus | building |
-| U6 | `story:links-hello-test-timing` | `unit/w13-hello` | `spindle-w13-hello` | sonnet | building |
+| U1 | `story:ingress-request-log` | `unit/w13-reqlog` | `spindle-w13-reqlog` | opus | merged |
+| U2 | `story:kernel-related-row-values` | `unit/w13-relvalues` | `spindle-w13-relvalues` | opus | merged |
+| U3 | `story:service-worker-serves-a-specification` | `unit/w13-sworker` | `spindle-w13-sworker` | opus | merged |
+| U4 | ESS pin 0.88.0 to 0.89.0 | `unit/w13-esspin` | `spindle-w13-esspin` | sonnet | merged |
+| U5 | `story:browser-store-several-tabs` | `unit/w13-tabs` | `spindle-w13-tabs` | opus | merged |
+| U6 | `story:links-hello-test-timing` | `unit/w13-hello` | `spindle-w13-hello` | sonnet | merged |
 
 Trees live under the worktree manager's `trees/b10x/spindle/`.
 

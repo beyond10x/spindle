@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-07T06:21:23Z",
+  "actor": "human:timo",
+  "artifact": "story:kernel-related-row-values",
+  "kind": "story",
+  "revision": 6,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "adversary cases against the ESS interpreter, wave 13 U2",
+    "reference": "173 kernel tests pass"
+  }
+}

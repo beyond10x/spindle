@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:ingress-request-log
 kind: story
-status: active
+status: implemented
 title: An observed run lists the requests it answered
 relations:
 - serves: vision:spindle
@@ -34,10 +34,11 @@ scope:
   path: crates/spindle-ingress/tests/observe.rs
 - confidence: cited
   path: website
-revision: 16
+revision: 17
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-06T14:45:46Z", actor: "human:timo", revision: 14, decided_on: {"recorded":{"review_outcome":3}}}
 - {from: "proposed", to: "active", at: "2026-11-06T14:45:46Z", actor: "human:timo", revision: 15, decided_on: {"recorded":{"review_outcome":3}}}
+- {from: "active", to: "implemented", at: "2026-11-07T06:21:23Z", actor: "human:timo", revision: 17, decided_on: {"recorded":{"test_result":1,"review_outcome":4,"verification":1}}}
 ---
 # An observed run lists the requests it answered
 
