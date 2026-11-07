@@ -1201,10 +1201,17 @@ impl Host {
         let Some(stored) = stored else {
             return Ok(None);
         };
-        Ok(
-            held(&self.ir, view, declared, identity, &stored.row, &parameters)?
-                .then(|| crate::view::project(&self.ir, declared, identity, &stored.row)),
-        )
+        let now = read_instant(declared, self.clock.as_ref());
+        Ok(held(
+            &self.ir,
+            view,
+            declared,
+            identity,
+            &stored.row,
+            &parameters,
+            now,
+        )?
+        .then(|| crate::view::project(&self.ir, declared, identity, &stored.row)))
     }
 
     /// Every row `view` holds: [`Host::list_with`] with no parameter values.
@@ -1221,12 +1228,23 @@ impl Host {
     /// them, ties and a view without `order_by` by identity.
     ///
     /// The filter is evaluated by ESS, as the compiler parsed it, over the row and the parameters
-    /// (each read as `param.<name>`). The filters read are those whose leaves compare the state
-    /// with a state (`state == <State>` and `!=`, `in` and `none_of` over states), compare a
-    /// parameter by `==` or `!=` with the state, the identity or a field, or ask whether a
-    /// parameter is `defined`, combined by `any`, `all` and `not`. A filter unknown for a row, such
-    /// as `==` with an `Optional` parameter left out, refuses the read, as ESS's interpreter
-    /// refuses it. Read from the same store as [`Host::view`], for either consistency.
+    /// (each read as `param.<name>`). The filters read are those whose every leaf is one of:
+    ///
+    /// - an observable field of the source (the state and the identity among them) compared with
+    ///   a literal of its type by `==` or `!=`, or by `<`, `<=`, `>` or `>=` where ESS orders the
+    ///   type (a number, or text other than a `Duration`): `archived == false`, `priority >= 3`,
+    ///   `state == Open`; a `Timestamp` field ordered against `now`, `now - 1h` or `now + 5m`
+    ///   (`issued_at < now`), read against this host's clock, taken once per read and only for
+    ///   such a filter;
+    /// - such a field listed `in:` or `none_of:` literals of its type;
+    /// - a parameter compared with `==` or `!=` to such a field (`book_id == param.id`);
+    /// - `defined(param.<name>)` or `defined(<field>)`;
+    ///
+    /// leaves combined by `any`, `all` and `not`, or under `exists` or `forall` over a list
+    /// parameter or a list field of the row, a list field's element read as a field is and also
+    /// compared with `==` or `!=` to an outer binder. A filter unknown for a row, such as `==`
+    /// with an `Optional` parameter left out, refuses the read, as ESS's interpreter refuses it.
+    /// Read from the same store as [`Host::view`], for either consistency.
     ///
     /// # Errors
     /// [`HostError::NoView`]; [`HostError::Unsupported`], naming the construct, for a view that
@@ -1250,6 +1268,7 @@ impl Host {
                 }
             })?;
         let entity = self.ir.entity(&declared.source).name.to_string();
+        let now = read_instant(declared, self.clock.as_ref());
         let mut rows = Vec::new();
         for (identity, stored) in store_of(&mut self.components, &owner)?.scan(&entity)? {
             if held(
@@ -1259,6 +1278,7 @@ impl Host {
                 &identity,
                 &stored.row,
                 &parameters,
+                now,
             )? {
                 let row = crate::view::project(&self.ir, declared, &identity, &stored.row);
                 rows.push((identity, row));
@@ -1695,9 +1715,24 @@ fn held(
     identity: &Value,
     row: &Row,
     parameters: &ess_primitives::FactStore,
+    now: Option<ess_primitives::Rfc3339Instant>,
 ) -> Result<bool, HostError> {
-    crate::view::holds(ir, declared, identity, row, parameters)
+    crate::view::holds(ir, declared, identity, row, parameters, now)
         .map_err(|detail| HostError::Unsupported(format!("view {view}: {detail}")))
+}
+
+/// The instant a read of `declared` holds its rows against: the clock's civil time, read once,
+/// where the view's filter orders a field against `now` ([`crate::view::reads_now`]), and `None`
+/// for any other view, so a read reads the clock only where its filter names the current time.
+fn read_instant(
+    declared: &ResolvedView,
+    clock: &dyn Clock,
+) -> Option<ess_primitives::Rfc3339Instant> {
+    declared
+        .filter
+        .as_ref()
+        .filter(|filter| crate::view::reads_now(filter))
+        .and_then(|_| crate::view::instant(clock.wall()))
 }
 
 /// The store of the running component `owner`.

@@ -1,0 +1,5 @@
+format: ess/34
+system: ledger
+version: v1
+domains:
+  - ledger.slips
