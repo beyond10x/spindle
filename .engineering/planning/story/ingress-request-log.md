@@ -34,7 +34,7 @@ scope:
   path: crates/spindle-ingress/tests/observe.rs
 - confidence: cited
   path: website
-revision: 15
+revision: 16
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-06T14:45:46Z", actor: "human:timo", revision: 14, decided_on: {"recorded":{"review_outcome":3}}}
 - {from: "proposed", to: "active", at: "2026-11-06T14:45:46Z", actor: "human:timo", revision: 15, decided_on: {"recorded":{"review_outcome":3}}}
@@ -81,7 +81,7 @@ The record's `externals` stays empty here; `story:external-answers-observed` fil
   command at `/__spindle/x` exits 1 before listening, naming the operation, method, path and
   `/__spindle/`, both with and without `--observe`.
 - `a_variable_only_route_never_answers_under_the_reserved_prefix`: with a binding routing a view
-  at `GET /{a}/{b}` and the flag off, `GET /__spindle/metrics` answers `404` and records nothing,
+  at `GET /{a}/metrics/{b}` and the flag off, `GET /__spindle/metrics` answers `404` and records nothing,
   while `GET /x/y` reaches the view. With the flag on, `GET /__spindle/requests` answers the
   request log.
 - `the_request_log_lists_a_scripted_sequence_newest_first`: on the `ingress` test specification,
