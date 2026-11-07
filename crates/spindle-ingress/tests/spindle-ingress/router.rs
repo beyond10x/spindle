@@ -127,6 +127,7 @@ fn send(
     Response {
         status,
         allow: header("allow"),
+        panel: false,
         body: body.to_owned(),
     }
 }

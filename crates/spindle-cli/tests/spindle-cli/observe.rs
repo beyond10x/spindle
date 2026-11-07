@@ -514,7 +514,8 @@ fn the_ring_capacity_is_bounded() {
 fn reserved_requests_are_neither_recorded_nor_counted() {
     let served = serve(INGRESS, &["--observe"]);
     for path in RESERVED_ROUTES {
-        exchange(served.address, "GET", path, None);
+        // `/__spindle/ui` answers an HTML page under `--observe`: read without parsing it as JSON.
+        crate::observe_panel::get(served.address, path);
     }
     exchange(served.address, "GET", "/__spindle/elsewhere", None);
     let (status, body) = exchange(served.address, "POST", "/__spindle/requests", None);

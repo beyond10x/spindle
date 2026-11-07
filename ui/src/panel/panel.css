@@ -1,0 +1,72 @@
+:root {
+  --bg: #111418;
+  --fg: #d8dde3;
+  --muted: #7d8794;
+  --border: #2c333c;
+  --good: #5fd38d;
+  --bad: #ff7b72;
+  color-scheme: dark;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+body {
+  margin: 0;
+}
+
+.panel {
+  padding: 8px 12px;
+}
+
+.panel header {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.banner {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.banner .served b {
+  color: var(--good);
+}
+
+.banner .not-served b {
+  color: var(--bad);
+}
+
+.error {
+  color: var(--bad);
+}
+
+table {
+  border-collapse: collapse;
+  margin-top: 8px;
+  width: 100%;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--border);
+  padding: 2px 8px;
+  text-align: left;
+}
+
+th {
+  color: var(--muted);
+  font-weight: normal;
+}
+
+td.number {
+  text-align: right;
+}
+
+tr.not-served td,
+tr.failed td {
+  color: var(--bad);
+}

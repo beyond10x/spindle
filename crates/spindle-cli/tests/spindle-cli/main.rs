@@ -34,6 +34,7 @@ mod ingress;
 mod metrics;
 mod mint;
 mod observe;
+mod observe_panel;
 mod outcome_bodies;
 mod outcome_scoped_refusal;
 mod play;

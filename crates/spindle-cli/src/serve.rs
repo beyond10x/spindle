@@ -93,9 +93,14 @@ pub(crate) struct Serving<'a> {
     /// not authentication; with none, as no caller.
     pub callers: Vec<Caller>,
     /// `--observe`, with how many request records to keep: the surface records every request
-    /// outside `/__spindle/` and answers `GET /__spindle/requests` ([`Surface::observing`]).
+    /// outside `/__spindle/` and answers `GET /__spindle/requests` ([`Surface::observing`]), and
+    /// `GET /__spindle/ui` with the panel this build embeds ([`PANEL`]).
     pub observe: Option<usize>,
 }
+
+// `PANEL`: the observe panel, `ui/dist-panel/panel.html`, where it was built before this crate
+// (`build.rs`).
+include!(concat!(env!("OUT_DIR"), "/panel.rs"));
 
 /// The fixed callers `run` was given: the n-th `--fixed-caller` is the n-th `--fixed-actor`'s.
 /// One actor may leave its caller out (the empty caller, which [`fixed`] then binds); with several
@@ -234,9 +239,10 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         &serving.callers,
     )?
     .with_console(serving.ingress)?;
-    let surface = match serving.observe {
-        Some(capacity) => surface.observing(capacity),
-        None => surface,
+    let surface = match (serving.observe, PANEL) {
+        (Some(capacity), Some(page)) => surface.observing(capacity).with_panel(page),
+        (Some(capacity), None) => surface.observing(capacity),
+        (None, _) => surface,
     };
     let unserved = surface.unserved();
     for route in &unserved {
