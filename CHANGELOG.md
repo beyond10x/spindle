@@ -6,6 +6,13 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- `adversary_links::a_second_hello_before_the_link_opens_is_refused` writes both `hello` frames in
+  one `write_all`, so it always meets the pending link's refusal; it had written them in two
+  writes, which a runner could split around an accept and so land on the open-link case that
+  `a_second_hello_on_an_open_link_is_refused_naming_the_peer` asserts. No host code changes.
+
 ## [0.6.0] - 2026-11-07
 
 ### Added
