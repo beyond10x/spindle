@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-07T06:21:23Z",
+  "actor": "human:timo",
+  "artifact": "story:service-worker-serves-a-specification",
+  "kind": "story",
+  "revision": 4,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "browser lane, wave 13 U3",
+    "reference": "unit fix 52a8e57: 6 passed (adversary tests 4aea8ce)"
+  }
+}

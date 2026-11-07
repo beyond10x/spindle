@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-07T06:21:23Z",
+  "actor": "human:timo",
+  "artifact": "story:ingress-request-log",
+  "kind": "story",
+  "revision": 16,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "cargo test observe:: (spindle-ingress), wave 13 U1",
+    "reference": "unit fix 212b090: 15 of 15 pass (adversary tests c5ac089)"
+  }
+}
