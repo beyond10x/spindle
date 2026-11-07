@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.OperationKind.schema.json",
+  "$ref": "#/$defs/spindle.observe.OperationKind",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "6a4be08c7a65279ae08fc592c5295d97cd8f05986df01fee7d6d1254a311a433",
+    "contract_digest": "slice-sha256/2:2fd0730b8b73e5b5ae007e948280ccbfd1a7f3fe0a6a81015e5ee92466d46336",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.OperationKind": {
+      "title": "OperationKind",
+      "description": "What a routed request was for.",
+      "x-ess-name": "spindle.observe.OperationKind",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "command",
+        "view",
+        "console"
+      ]
+    }
+  }
+}

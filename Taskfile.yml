@@ -1,7 +1,7 @@
 version: '3'
 
 vars:
-  OBSERVE_ROOTS: --root spindle.observe.Deployment --root spindle.observe.Catalogue --root spindle.observe.Sample --root spindle.observe.StateChange
+  OBSERVE_ROOTS: --root spindle.observe.Deployment --root spindle.observe.Catalogue --root spindle.observe.Sample --root spindle.observe.StateChange --root spindle.observe.RequestLog --root spindle.observe.MetricFamilies --root spindle.observe.Topology
   OBSERVE_SCHEMAS: ess/generated/jsonschema/schema/types
 
 tasks:
@@ -125,9 +125,12 @@ tasks:
         sh: mktemp -d
     cmds:
       - defer: rm -rf {{.BUNDLES}}
-      - for: [Deployment, Catalogue, Sample, StateChange]
+      - for: [Deployment, Catalogue, Sample, StateChange, RequestLog, MetricFamilies, Topology]
         cmd: ess generate schema import-document --path {{.OBSERVE_SCHEMAS}}/spindle.observe.{{.ITEM}}.schema.json --root spindle.observe.{{.ITEM}}.document --dialect draft-2020-12 --out {{.BUNDLES}}/{{.ITEM}}.json
       - ess generate schema validate-bundle --bundle {{.BUNDLES}}/Deployment.json --root spindle.observe.Deployment.document ess/fixtures/observe/deployment.json
       - ess generate schema validate-bundle --bundle {{.BUNDLES}}/Catalogue.json --root spindle.observe.Catalogue.document ess/fixtures/observe/catalogue/*.json
       - ess generate schema validate-bundle --bundle {{.BUNDLES}}/Sample.json --root spindle.observe.Sample.document ess/fixtures/observe/samples/*/*.json
       - ess generate schema validate-bundle --bundle {{.BUNDLES}}/StateChange.json --root spindle.observe.StateChange.document ess/fixtures/observe/state/*.json
+      - ess generate schema validate-bundle --bundle {{.BUNDLES}}/RequestLog.json --root spindle.observe.RequestLog.document ess/fixtures/observe/requests/*.json
+      - ess generate schema validate-bundle --bundle {{.BUNDLES}}/MetricFamilies.json --root spindle.observe.MetricFamilies.document ess/fixtures/observe/metrics/families.json
+      - ess generate schema validate-bundle --bundle {{.BUNDLES}}/Topology.json --root spindle.observe.Topology.document ess/fixtures/observe/topology/*.json

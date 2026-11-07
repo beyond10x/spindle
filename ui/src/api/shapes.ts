@@ -4,15 +4,24 @@
 
 import type { Shape } from '../lib/conform';
 import {
+  AnswerSource,
   BindingKind,
   CounterKind,
   CounterSource,
+  EdgeKind,
+  MetricKind,
+  NodeKind,
+  OperationKind,
+  RequestClass,
   State,
   TargetKind,
   type Catalogue,
   type Deployment,
+  type MetricFamilies,
+  type RequestLog,
   type Sample,
   type StateChange,
+  type Topology,
 } from './types';
 
 const text = { type: 'string' } as const;
@@ -122,4 +131,108 @@ export const stateChangeShape: Shape<StateChange> = {
   from: state,
   to: state,
   at: text,
+};
+
+export const requestLogShape: Shape<RequestLog> = {
+  format: text,
+  capacity: number,
+  recorded: number,
+  totals: {
+    type: 'object',
+    fields: {
+      served: number,
+      refused: number,
+      not_granted: number,
+      not_served: number,
+      failed: number,
+      unrouted: number,
+    },
+  },
+  requests: {
+    type: 'array',
+    of: {
+      type: 'object',
+      fields: {
+        sequence: number,
+        at: text,
+        method: text,
+        path: text,
+        route: { ...text, optional: true },
+        operation: { ...text, optional: true },
+        kind: { ...oneOf(OperationKind), optional: true },
+        status: number,
+        class: oneOf(RequestClass),
+        outcome: { ...text, optional: true },
+        reason: { ...text, optional: true },
+        duration_us: number,
+        events: texts,
+        externals: {
+          type: 'array',
+          of: {
+            type: 'object',
+            fields: {
+              outcome: text,
+              holds: { type: 'boolean', optional: true },
+              source: oneOf(AnswerSource),
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
+export const metricFamiliesShape: Shape<MetricFamilies> = {
+  families: {
+    type: 'array',
+    of: {
+      type: 'object',
+      fields: { name: text, kind: oneOf(MetricKind), labels: texts, summary: text },
+    },
+  },
+};
+
+export const topologyShape: Shape<Topology> = {
+  format: text,
+  at: text,
+  specifications: texts,
+  nodes: {
+    type: 'array',
+    of: {
+      type: 'object',
+      fields: {
+        id: text,
+        kind: oneOf(NodeKind),
+        name: text,
+        specification: { ...text, optional: true },
+      },
+    },
+  },
+  edges: {
+    type: 'array',
+    of: {
+      type: 'object',
+      fields: {
+        from: text,
+        to: text,
+        kind: oneOf(EdgeKind),
+        traffic: {
+          type: 'object',
+          optional: true,
+          fields: {
+            count: number,
+            statuses: {
+              type: 'array',
+              of: { type: 'object', fields: { status_class: text, count: number } },
+            },
+            sources: {
+              type: 'array',
+              of: { type: 'object', fields: { source: oneOf(AnswerSource), count: number } },
+            },
+            latest: { type: 'array', of: number },
+          },
+        },
+      },
+    },
+  },
 };

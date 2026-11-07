@@ -1,0 +1,113 @@
+{
+  "format": "spindle-requests/1",
+  "capacity": 256,
+  "recorded": 7,
+  "totals": {
+    "served": 4,
+    "refused": 1,
+    "not_granted": 0,
+    "not_served": 0,
+    "failed": 0,
+    "unrouted": 2
+  },
+  "requests": [
+    {
+      "sequence": 6,
+      "at": "2026-11-07T09:00:00.612Z",
+      "method": "DELETE",
+      "path": "/tasks",
+      "status": 405,
+      "class": "unrouted",
+      "reason": "this path answers GET",
+      "duration_us": 74,
+      "events": [],
+      "externals": []
+    },
+    {
+      "sequence": 5,
+      "at": "2026-11-07T09:00:00.511Z",
+      "method": "GET",
+      "path": "/nowhere",
+      "status": 404,
+      "class": "unrouted",
+      "reason": "no route serves /nowhere",
+      "duration_us": 61,
+      "events": [],
+      "externals": []
+    },
+    {
+      "sequence": 4,
+      "at": "2026-11-07T09:00:00.410Z",
+      "method": "PUT",
+      "path": "/tasks/t2",
+      "route": "/tasks/{task_id}",
+      "operation": "tasks.board.OpenTask",
+      "kind": "command",
+      "status": 400,
+      "class": "refused",
+      "reason": "tasks.board.OpenTask declares no input field priority",
+      "duration_us": 412,
+      "events": [],
+      "externals": []
+    },
+    {
+      "sequence": 3,
+      "at": "2026-11-07T09:00:00.309Z",
+      "method": "GET",
+      "path": "/tasks",
+      "route": "/tasks",
+      "operation": "tasks.board.AllTasks",
+      "kind": "view",
+      "status": 200,
+      "class": "served",
+      "duration_us": 538,
+      "events": [],
+      "externals": []
+    },
+    {
+      "sequence": 2,
+      "at": "2026-11-07T09:00:00.208Z",
+      "method": "POST",
+      "path": "/tasks/t1/close",
+      "route": "/tasks/{task_id}/close",
+      "operation": "tasks.board.CloseTask",
+      "kind": "command",
+      "status": 410,
+      "class": "served",
+      "outcome": "already-done",
+      "duration_us": 701,
+      "events": [],
+      "externals": []
+    },
+    {
+      "sequence": 1,
+      "at": "2026-11-07T09:00:00.107Z",
+      "method": "POST",
+      "path": "/tasks/t1/close",
+      "route": "/tasks/{task_id}/close",
+      "operation": "tasks.board.CloseTask",
+      "kind": "command",
+      "status": 200,
+      "class": "served",
+      "outcome": "closed",
+      "duration_us": 1243,
+      "events": ["tasks.board.TaskClosed"],
+      "externals": []
+    },
+    {
+      "sequence": 0,
+      "at": "2026-11-07T09:00:00.006Z",
+      "method": "PUT",
+      "path": "/tasks/t1",
+      "route": "/tasks/{task_id}",
+      "operation": "tasks.board.OpenTask",
+      "kind": "command",
+      "status": 201,
+      "class": "served",
+      "outcome": "opened",
+      "duration_us": 1587,
+      "events": ["tasks.board.TaskOpened"],
+      "externals": []
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.MetricKind.schema.json",
+  "$ref": "#/$defs/spindle.observe.MetricKind",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "6a4be08c7a65279ae08fc592c5295d97cd8f05986df01fee7d6d1254a311a433",
+    "contract_digest": "slice-sha256/2:b787385e05d99ffbba1baaca2d7e1b56d8d2bbb1bef6ac735ca9a1a44b459dda",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.MetricKind": {
+      "title": "MetricKind",
+      "description": "The Prometheus type of a metric family.",
+      "x-ess-name": "spindle.observe.MetricKind",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "counter",
+        "gauge",
+        "histogram"
+      ]
+    }
+  }
+}

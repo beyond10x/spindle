@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.EdgeKind.schema.json",
+  "$ref": "#/$defs/spindle.observe.EdgeKind",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "6a4be08c7a65279ae08fc592c5295d97cd8f05986df01fee7d6d1254a311a433",
+    "contract_digest": "slice-sha256/2:b9447f1fe1929ca8f1cc42d41771193380d05bedf8bb6d6044fcad9a4e715113",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.EdgeKind": {
+      "title": "EdgeKind",
+      "description": "What one edge of the topology carries. `routes`: the ingress hands a request to a command or view. `contains`: a specification holds a domain, a domain a command, view or event. `asks`: a command asks an external cause. `emits`: a command's outcome emits an event. `carries`: an event travels a binding. `invokes`: a binding invokes a command, also one of another specification behind the same ingress.",
+      "x-ess-name": "spindle.observe.EdgeKind",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "routes",
+        "contains",
+        "asks",
+        "emits",
+        "carries",
+        "invokes"
+      ]
+    }
+  }
+}

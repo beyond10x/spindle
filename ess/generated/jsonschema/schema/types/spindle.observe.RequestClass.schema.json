@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.RequestClass.schema.json",
+  "$ref": "#/$defs/spindle.observe.RequestClass",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "6a4be08c7a65279ae08fc592c5295d97cd8f05986df01fee7d6d1254a311a433",
+    "contract_digest": "slice-sha256/2:e3a0177a2c24862f8ecfdaeb7a59a9d11ee9e08c953b22676c8c78b5c0d77972",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.RequestClass": {
+      "title": "RequestClass",
+      "description": "How a served run answered one request. `served`: the model answered it, with any outcome the command declares, or the view's rows. `refused`: the ingress or ESS's standard refusal answered it `4xx` before the model did, other than `not-granted`. `not-granted`: `403` \"not granted\", no grant admits the actor. `not-served`: `501`, the operation is one this ingress cannot route, the kernel does not run or the host does not read, or an external cause nothing answered. `failed`: any other `5xx`. `unrouted`: no route has the path, or not under that method.",
+      "x-ess-name": "spindle.observe.RequestClass",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "served",
+        "refused",
+        "not-granted",
+        "not-served",
+        "failed",
+        "unrouted"
+      ]
+    }
+  }
+}

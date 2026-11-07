@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.TopologyEdge.schema.json",
+  "$ref": "#/$defs/spindle.observe.TopologyEdge",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "6a4be08c7a65279ae08fc592c5295d97cd8f05986df01fee7d6d1254a311a433",
+    "contract_digest": "slice-sha256/2:bb39c64669edc2f802a2083c2ab9a56d2cbb774eb601b7f8976c9a663a98a444",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.AnswerSource": {
+      "title": "AnswerSource",
+      "description": "What answered one external cause of a served command. `world`: the decision table of the last reset's world. `file`: the decisions file. `default`: the default branch `--answer-default` takes. `unanswered`: nothing did, and the command answered `501`.",
+      "x-ess-name": "spindle.observe.AnswerSource",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "world",
+        "file",
+        "default",
+        "unanswered"
+      ]
+    },
+    "spindle.observe.EdgeKind": {
+      "title": "EdgeKind",
+      "description": "What one edge of the topology carries. `routes`: the ingress hands a request to a command or view. `contains`: a specification holds a domain, a domain a command, view or event. `asks`: a command asks an external cause. `emits`: a command's outcome emits an event. `carries`: an event travels a binding. `invokes`: a binding invokes a command, also one of another specification behind the same ingress.",
+      "x-ess-name": "spindle.observe.EdgeKind",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "routes",
+        "contains",
+        "asks",
+        "emits",
+        "carries",
+        "invokes"
+      ]
+    },
+    "spindle.observe.EdgeTraffic": {
+      "title": "EdgeTraffic",
+      "description": "The live numbers of one edge since the run started, read from the counters `GET /__spindle/metrics` exposes and the ring `GET /__spindle/requests` holds.",
+      "x-ess-name": "spindle.observe.EdgeTraffic",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "count": {
+          "description": "Requests a `routes` edge handed on, events an `emits` edge emitted, envelopes a `carries` edge sent, commands an `invokes` edge invoked, questions an `asks` edge asked.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "statuses": {
+          "description": "For a `routes` edge, the count per status class; empty for every other kind.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/spindle.observe.StatusCount"
+          }
+        },
+        "sources": {
+          "description": "For an `asks` edge, the count per answer source; empty for every other kind.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/spindle.observe.SourceCount"
+          }
+        },
+        "latest": {
+          "description": "For a `routes` edge, the sequences of its latest requests still in the ring, newest first, at most 5; each names a record of `GET /__spindle/requests`.",
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        }
+      },
+      "required": [
+        "count",
+        "statuses",
+        "sources",
+        "latest"
+      ],
+      "additionalProperties": false,
+      "x-ess-invariants": [
+        "count >= 0"
+      ]
+    },
+    "spindle.observe.SourceCount": {
+      "title": "SourceCount",
+      "description": "How many times one source answered the external cause an `asks` edge leads to.",
+      "x-ess-name": "spindle.observe.SourceCount",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/spindle.observe.AnswerSource"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "source",
+        "count"
+      ],
+      "additionalProperties": false,
+      "x-ess-invariants": [
+        "count >= 0"
+      ]
+    },
+    "spindle.observe.StatusCount": {
+      "title": "StatusCount",
+      "description": "How many requests of one status class an edge carried since the run started.",
+      "x-ess-name": "spindle.observe.StatusCount",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "status_class": {
+          "description": "`2xx`, `3xx`, `4xx` or `5xx`.",
+          "type": "string"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "status_class",
+        "count"
+      ],
+      "additionalProperties": false,
+      "x-ess-invariants": [
+        "count >= 0"
+      ]
+    },
+    "spindle.observe.TopologyEdge": {
+      "title": "TopologyEdge",
+      "description": "One edge of the topology, from one node to another, with its live numbers.",
+      "x-ess-name": "spindle.observe.TopologyEdge",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "from": {
+          "description": "The `id` of the node it leaves.",
+          "type": "string"
+        },
+        "to": {
+          "description": "The `id` of the node it reaches.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/spindle.observe.EdgeKind"
+        },
+        "traffic": {
+          "$ref": "#/$defs/spindle.observe.EdgeTraffic",
+          "description": "Absent for a `contains` edge, which carries nothing."
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "kind"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

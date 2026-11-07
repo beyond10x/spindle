@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.ExternalAnswer.schema.json",
+  "$ref": "#/$defs/spindle.observe.ExternalAnswer",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "6a4be08c7a65279ae08fc592c5295d97cd8f05986df01fee7d6d1254a311a433",
+    "contract_digest": "slice-sha256/2:06c786ec2366ffc7ff8aa4ed6de9f4d3117b2669a6f4ab607b2cc7d2b1574106",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.AnswerSource": {
+      "title": "AnswerSource",
+      "description": "What answered one external cause of a served command. `world`: the decision table of the last reset's world. `file`: the decisions file. `default`: the default branch `--answer-default` takes. `unanswered`: nothing did, and the command answered `501`.",
+      "x-ess-name": "spindle.observe.AnswerSource",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "world",
+        "file",
+        "default",
+        "unanswered"
+      ]
+    },
+    "spindle.observe.ExternalAnswer": {
+      "title": "ExternalAnswer",
+      "description": "One external cause a served command asked about, and what answered it.",
+      "x-ess-name": "spindle.observe.ExternalAnswer",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "description": "The outcome whose cause was asked about, as the command declares it.",
+          "type": "string"
+        },
+        "holds": {
+          "description": "Whether the cause holds; absent when nothing answered it.",
+          "type": "boolean"
+        },
+        "source": {
+          "$ref": "#/$defs/spindle.observe.AnswerSource"
+        }
+      },
+      "required": [
+        "outcome",
+        "source"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
