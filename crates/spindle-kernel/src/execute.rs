@@ -250,6 +250,7 @@ pub fn execute_refusing(
             let stored = store.load(&entity.name.to_string(), &identity)?;
             Some(Addressed {
                 entity,
+                field,
                 identity,
                 stored,
             })
@@ -318,6 +319,8 @@ fn none_runs(
 /// The instance the command addresses, as read before deciding.
 struct Addressed<'ir> {
     entity: &'ir ResolvedEntity,
+    /// The input field naming the instance.
+    field: &'ir ResolvedField,
     identity: Value,
     stored: Option<Stored>,
 }
@@ -444,6 +447,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 Phase::Existence => {
                     if let Some(addressed) = &self.held
                         && addressed.stored.is_none()
+                        && (stored || !self.creation_takes_absent(addressed))
                     {
                         if let Some(outcome) = planned
                             .branches
@@ -582,6 +586,10 @@ impl<'a, 'ir> Run<'a, 'ir> {
             // A marker, never selected by reading: the wrong-state answer comes from the branch that
             // is selected, when its move does not start from the state held (ESS `act`).
             ResolvedCondition::WrongState => Truth::False,
+            // A marker too: on a row-set upsert the plan reads it after the row sets, and the
+            // branch selected after them answers a row nobody holds with it
+            // ([`Self::unknown_instance`]).
+            ResolvedCondition::UnknownInstance => Truth::False,
             ResolvedCondition::Related {
                 via,
                 entity,
@@ -685,6 +693,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 entity,
                 identity,
                 stored: Some(stored),
+                ..
             }) => Some(Facts::row(ir, entity, identity, &stored.row, None)),
             _ => None,
         };
@@ -720,6 +729,54 @@ impl<'a, 'ir> Run<'a, 'ir> {
             });
         }
         Ok(test.decide(&members))
+    }
+
+    /// Whether the absent `addressed` row is a creation's to take rather than an unknown instance,
+    /// on a command guarded by a row set: no branch is guarded by the row's held state, which
+    /// answers a missing row first (ESS `held_rows`), and a creation branch of the same entity
+    /// takes its identity from the input field that names the row (ESS `addressed_row`,
+    /// `creation_takes_absent`). The row sets then answer first, then the creation: an upsert
+    /// (beyond10x/ess#462). A stored reference answers a missing row before either (ESS
+    /// `stored_reference`), so its caller asks only without one.
+    fn creation_takes_absent(&self, addressed: &Addressed<'ir>) -> bool {
+        let ir = self.ir;
+        uses_row_sets(self.spec)
+            && !self.spec.outcomes.iter().any(|outcome| {
+                matches!(
+                    outcome.condition,
+                    ResolvedCondition::SubjectState { .. }
+                        | ResolvedCondition::StateChange { .. }
+                        | ResolvedCondition::SubjectField { .. }
+                        | ResolvedCondition::SubjectPredicate { .. }
+                        | ResolvedCondition::ExternalSubject { .. }
+                )
+            })
+            && self.spec.outcomes.iter().any(|outcome| {
+                let Some(subject) = outcome.subject.as_ref().filter(|_| outcome.error.is_none())
+                else {
+                    return false;
+                };
+                let (ResolvedEffect::Creates, ResolvedInstance::Observed { event, field }) =
+                    (&subject.effect, &subject.instance)
+                else {
+                    return false;
+                };
+                ir.entity(&subject.entity).name == addressed.entity.name
+                    && outcome
+                        .payload
+                        .iter()
+                        .filter(|payload| payload.event == *event)
+                        .flat_map(|payload| &payload.fields)
+                        .find(|source| source.target == field.name)
+                        .is_some_and(|source| {
+                            matches!(
+                                &source.value,
+                                ResolvedPayloadValue::InputField { field: taken, .. }
+                                | ResolvedPayloadValue::InputOrGenerated { field: taken, .. }
+                                    if *taken == addressed.field.name
+                            )
+                        })
+            })
     }
 
     /// Whether some branch of the command that acts on the addressed row may act on it in the
@@ -881,6 +938,12 @@ impl<'a, 'ir> Run<'a, 'ir> {
         plan: &PrecedencePlan<'ir>,
         subjects: bool,
     ) -> Result<Option<Executed>, ExecuteError> {
+        // An absent addressed row reaches here only where a creation takes it
+        // ([`Self::creation_takes_absent`]): no branch the request selects answers for it before
+        // the row sets (ESS `selected_subject_refusal`), so no decider is asked ahead of them; an
+        // external branch stays one possible answer and reading goes on, as under an open
+        // provider.
+        let absent = self.held.as_ref().is_some_and(|held| held.stored.is_none());
         let mut selected = None;
         'phases: for planned in plan.phases() {
             match planned.phase {
@@ -907,6 +970,13 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 match self.truth(outcome, true)? {
                     Truth::True => {
                         let taken = match &outcome.condition {
+                            ResolvedCondition::External { .. }
+                            | ResolvedCondition::ExternalWhen { .. }
+                            | ResolvedCondition::ExternalSubject { .. }
+                                if absent =>
+                            {
+                                false
+                            }
                             ResolvedCondition::External { cause }
                             | ResolvedCondition::ExternalWhen { cause, .. }
                             | ResolvedCondition::ExternalSubject { cause, .. } => {
@@ -1010,6 +1080,23 @@ impl<'a, 'ir> Run<'a, 'ir> {
             .map_err(|reason| ExecuteError::Undecided { capability, reason })
     }
 
+    /// The answer for the addressed row no store holds, where `taken`, the branch selection took,
+    /// acts on it: the command's `unknown_instance:` branch, taken as selection would take it,
+    /// else the wrong-state answer (ESS `take`, `unknown_instance`). Selection leaves such a row to
+    /// the branch it selects only on a row-set upsert ([`Self::creation_takes_absent`]); `taken`
+    /// being that branch itself is the wrong-state answer.
+    fn unknown_instance(&mut self, taken: &ResolvedOutcome) -> Result<Executed, ExecuteError> {
+        match self
+            .spec
+            .outcomes
+            .iter()
+            .find(|outcome| outcome.condition == ResolvedCondition::UnknownInstance)
+        {
+            Some(outcome) if outcome.name != taken.name => self.take(outcome),
+            _ => self.wrong_state(),
+        }
+    }
+
     /// The command's `wrong_state:` outcome, answered for the addressed instance: its error, or
     /// with `refuses: false` an accepted request that changes nothing.
     fn wrong_state(&self) -> Result<Executed, ExecuteError> {
@@ -1024,6 +1111,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     entity,
                     identity,
                     stored: None,
+                    ..
                 }) => format!(
                     "no `{}` has the identity {identity}, and the command declares neither \
                      `unknown_instance:` nor `wrong_state:`",
@@ -1145,7 +1233,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     ..
                 }) = &self.held
                 else {
-                    return self.wrong_state();
+                    return self.unknown_instance(outcome);
                 };
                 let mut after = stored.row.clone();
                 if let ResolvedEffect::Moves { transition } = effect {

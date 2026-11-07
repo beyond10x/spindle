@@ -418,3 +418,118 @@ fn a_rows_quantifier_in_a_selector_is_refused() {
     assert_eq!(row(&mut store, RESERVATION, FIRST), None);
     assert_eq!(store.events().len(), events, "nothing is written");
 }
+
+/// ESS's upsert fixture (`tests/fixtures/shelf`) as ESS's own adversary pass varies it
+/// (`adversary_row_set_upsert_462.rs`, `input_guarded_creation`): `Shelve` declares
+/// `unknown_instance:` and creates a book only where the input asks for a new one.
+fn shelf_by_mode(dir: &std::path::Path) -> spindle_spec::EssIr {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/shelf");
+    std::fs::create_dir(dir.join("domains")).expect("the domains directory");
+    std::fs::copy(fixture.join("system.yaml"), dir.join("system.yaml")).expect("the system copies");
+    let text = std::fs::read_to_string(fixture.join("domains/shelf.yaml")).expect("the domain");
+    let (head, tail) = text
+        .split_once("  - name: demo.shelf.Shelve\n")
+        .expect("the Shelve command");
+    let (shelve, rest) = tail
+        .split_once("  - name: demo.shelf.Restock\n")
+        .expect("the next command");
+    let changed = [
+        (
+            "      - {name: curator, type: String}\n",
+            "      - {name: curator, type: String}\n      - {name: mode, type: String}\n",
+        ),
+        (
+            "    outcomes:\n",
+            "    outcomes:\n      - name: unknown-book\n        unknown_instance: true\n        \
+             error: demo.shelf.UnknownBook\n",
+        ),
+        (
+            "external: the book is not yet shelved",
+            "when: mode == \"new\"",
+        ),
+    ]
+    .into_iter()
+    .fold(shelve.to_owned(), |shelve, (from, to)| {
+        assert!(shelve.contains(from), "`{from}` is in Shelve");
+        shelve.replacen(from, to, 1)
+    });
+    std::fs::write(
+        dir.join("domains/shelf.yaml"),
+        format!("{head}  - name: demo.shelf.Shelve\n{changed}  - name: demo.shelf.Restock\n{rest}"),
+    )
+    .expect("the variant writes");
+    spindle_spec::load(dir)
+        .unwrap_or_else(|error| panic!("the shelf by mode compiles: {error}"))
+        .ir
+}
+
+/// On a row-set upsert (beyond10x/ess#462) an absent book the creation takes from the same input
+/// field is left to the row sets, then to the branch selected after them: refused while a library
+/// of the curator is open, created where the input asks for a new book, and the declared unknown
+/// instance where the selected branch updates a book nobody holds (ESS `addressed_row`,
+/// `creation_takes_absent`, `take`). `Restock`, with no creation, answers the absent book first.
+#[test]
+fn an_upsert_leaves_an_absent_row_to_the_row_sets_as_the_interpreter_does() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a scratch directory");
+    let ir = shelf_by_mode(dir.path());
+    let shelve = |book: &str, mode: &str| {
+        (
+            "demo.shelf.Shelve",
+            json!({"book": book, "curator": "ann", "mode": mode}),
+        )
+    };
+    let steps: Vec<(&str, Value)> = vec![
+        (
+            "demo.shelf.OpenLibrary",
+            json!({"library": "decoy", "curator": "bob"}),
+        ),
+        shelve("b1", "old"),
+        shelve("b1", "new"),
+        shelve("b1", "old"),
+        (
+            "demo.shelf.Restock",
+            json!({"book": "b9", "curator": "ann"}),
+        ),
+        (
+            "demo.shelf.OpenLibrary",
+            json!({"library": "mine", "curator": "ann"}),
+        ),
+        shelve("b2", "new"),
+        shelve("b2", "old"),
+        shelve("b1", "old"),
+    ];
+    let views = [("demo.shelf.Books", "demo.shelf.Book", "book")];
+    let (ess_answers, ess_rows) =
+        interpreted_on(Interpreted::for_model(ir.clone()), &views, &steps);
+    let outcomes: Vec<&str> = ess_answers
+        .iter()
+        .map(|(outcome, _, _)| outcome.as_str())
+        .collect();
+    assert_eq!(
+        outcomes,
+        [
+            "opened",
+            "unknown-book",
+            "added",
+            "replaced",
+            "unknown-book",
+            "opened",
+            "refused",
+            "refused",
+            "refused",
+        ],
+        "the steps reach the unknown instance after the row sets, the creation, the update and \
+         the row set over an absent and a held book"
+    );
+    let (answers, rows) = spindled_with(&views, &steps, &mut |store, command, input| {
+        run(&ir, store, command, input)
+    });
+    assert_eq!(
+        answers, ess_answers,
+        "outcomes, errors and published payloads agree"
+    );
+    assert_eq!(
+        rows, ess_rows,
+        "the stored books agree with ESS's view rows"
+    );
+}
