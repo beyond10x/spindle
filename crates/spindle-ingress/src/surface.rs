@@ -903,6 +903,9 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
                 {
                     continue;
                 }
+                // ESS 0.88.0: `ess_gen::http::flat` reads no `Optional<List<T>>`, which
+                // `openapi::view_parameters` publishes as a list (`is_list`); the `Optional` is
+                // stripped first, and the host checks presence against the declared type.
                 let (list, flat) = match ess_gen::http::flat(ir, param.type_ref.required()) {
                     Some((Shape::List, flat)) => (true, flat),
                     Some((Shape::One | Shape::Optional, flat)) => (false, flat),
