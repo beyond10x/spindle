@@ -68,6 +68,8 @@ pub struct Route {
     /// The outcomes answered with the command's response beside the envelope.
     responding: Vec<String>,
     unserved: Option<Unserved>,
+    /// The command's outcomes not run, in declaration order, each with why.
+    refused: Vec<(String, Unserved)>,
     caller: Option<Caller>,
     not_granted: bool,
 }
@@ -89,9 +91,11 @@ pub enum Unserved {
     /// The command's or view's route uses what this ingress does not serve, named. A request for
     /// it is answered `501` before anything is read or written.
     Ingress(String),
-    /// The kernel's [`runs`](spindle_kernel::runs) refuses the command, as its text. A request
-    /// for it is answered as before this was known: the host refuses it before anything is read
-    /// or written, `501` naming the construct.
+    /// The kernel does not run the command or the outcome, as its text: for a command, one it
+    /// cannot select among the outcomes of ([`selects`](spindle_kernel::selects)) or none of whose
+    /// outcomes it takes ([`takes`](spindle_kernel::takes)); a request for it is answered as
+    /// before this was known: the host refuses it before anything is read or written, `501`
+    /// naming the construct. For an outcome ([`Route::refused`]), one it does not take.
     Kernel(String),
     /// The host's [`reads`](spindle_host::reads) refuses the view, as its text. A request for it
     /// is answered as before this was known: the host refuses it before reading anything, `501`
@@ -112,6 +116,27 @@ impl Route {
     /// Why the operation is not served; `None` for one that is.
     pub fn unserved(&self) -> Option<&Unserved> {
         self.unserved.as_ref()
+    }
+
+    /// The command's outcomes the route does not run, in declaration order, each with why:
+    /// [`Unserved::Ingress`] for one this ingress does not answer as the binding lists it,
+    /// [`Unserved::Kernel`] for one the kernel does not take ([`spindle_kernel::takes`]). The
+    /// route is served: a request whose selected outcome is one of these answers `501` naming it,
+    /// and nothing is written; every other outcome answers as declared. Empty for a view and for
+    /// an operation not served at all ([`Route::unserved`]).
+    pub fn refused(&self) -> &[(String, Unserved)] {
+        &self.refused
+    }
+
+    /// What this ingress does not serve of each outcome it refuses, by outcome name: the kernel
+    /// refuses one where it is selected, before anything is written
+    /// ([`spindle_kernel::execute_refusing`]).
+    pub(crate) fn refusing(&self) -> BTreeMap<String, String> {
+        self.refused
+            .iter()
+            .filter(|(_, why)| matches!(why, Unserved::Ingress(_)))
+            .map(|(outcome, why)| (outcome.clone(), why.to_string()))
+            .collect()
     }
 
     /// The status the command's outcome `outcome` answers: the binding's where it lists one, ESS's
@@ -468,14 +493,16 @@ impl Surface {
     /// outcome ([`ess_gen::http::listed`]).
     ///
     /// A command or view this ingress cannot route keeps its route and is marked
-    /// [`Unserved::Ingress`]: for a command, an outcome answered other than with the envelope (a
-    /// body, headers, a redirect or text), an outcome that answers with the command's retained
+    /// [`Unserved::Ingress`]: for a command, an outcome that answers with the command's retained
     /// result, or the caller attributes it reads where no caller is fixed; for a view, one
     /// answered other than as `rows`, or a parameter in the query string that no single scalar
     /// value carries; for either, a standard refusal the binding answers its own way or a path
-    /// variable that is not a scalar. A command the kernel's [`runs`](spindle_kernel::runs)
-    /// refuses is marked [`Unserved::Kernel`], and a view the host's
-    /// [`reads`](spindle_host::reads) refuses [`Unserved::Host`].
+    /// variable that is not a scalar. A command the kernel cannot select among the outcomes of
+    /// ([`selects`](spindle_kernel::selects)) is marked [`Unserved::Kernel`], and a view the
+    /// host's [`reads`](spindle_host::reads) refuses [`Unserved::Host`]. A command's outcome
+    /// answered other than with the envelope (a body, headers, a redirect or text) or one the
+    /// kernel does not take ([`takes`](spindle_kernel::takes)) refuses that outcome alone
+    /// ([`Route::refused`]); a command none of whose outcomes is left is marked as a whole.
     ///
     /// # Errors
     /// [`SurfaceError::NoComponent`] for a name `ir` does not declare,
@@ -690,6 +717,7 @@ fn route(
         parameters: Vec::new(),
         responding: Vec::new(),
         unserved: None,
+        refused: Vec::new(),
         caller: caller.cloned(),
         not_granted: false,
     };
@@ -699,13 +727,12 @@ fn route(
             route.queried.clear();
             route.statuses.clear();
             route.responding.clear();
+            route.refused.clear();
             route.unserved = Some(Unserved::Ingress(what));
         }
         (Ok(()), Operation::Command(_)) => {
-            if let ess_gen::http::Served::Command(handle) = bound.serves
-                && let Err(refused) = spindle_kernel::runs(ir, ir.command(handle))
-            {
-                route.unserved = Some(Unserved::Kernel(refused.to_string()));
+            if let ess_gen::http::Served::Command(handle) = bound.serves {
+                refuse(ir, ir.command(handle), &mut route);
             }
         }
         (Ok(()), Operation::View(view)) => {
@@ -761,9 +788,48 @@ fn may_read(ir: &EssIr, actor: &str, view: &str) -> bool {
         .any(|(name, declared)| name.to_string() == actor && names(declared))
 }
 
-/// Fills `route`'s variables, input, request and statuses; `Err` names what it uses that this
-/// ingress does not serve: an outcome answered other than with the envelope (a body, headers, a
-/// redirect or text), a view answered other than as `rows`, a standard
+/// Marks what the route of `command`, once [`served`] filled it, does not run. Each outcome the
+/// kernel does not take ([`spindle_kernel::takes`]) is refused beside those this ingress does not
+/// answer, in declaration order. Where the kernel cannot select among the outcomes
+/// ([`spindle_kernel::selects`]) or none is left to serve, the whole route is marked instead: by
+/// what this ingress does not serve, first, which is answered before the request is read, else
+/// by what the kernel does not run.
+fn refuse(ir: &EssIr, command: &ess_compiler::ir::ResolvedCommand, route: &mut Route) {
+    let mut refused = Vec::new();
+    for outcome in &command.outcomes {
+        let name = outcome.name.to_string();
+        if let Some(at) = route.refused.iter().position(|(listed, _)| *listed == name) {
+            refused.push(route.refused.remove(at));
+        } else if let Err(why) = spindle_kernel::takes(ir, command, outcome) {
+            refused.push((name, Unserved::Kernel(why.to_string())));
+        }
+    }
+    let selection = spindle_kernel::selects(command).err();
+    let none_left = !command.outcomes.is_empty() && refused.len() == command.outcomes.len();
+    if selection.is_none() && !none_left {
+        route.refused = refused;
+        return;
+    }
+    let ingress = refused
+        .iter()
+        .find(|(_, why)| matches!(why, Unserved::Ingress(_)))
+        .map(|(_, why)| why.clone());
+    if let Some(why) = ingress {
+        route.variables.clear();
+        route.statuses.clear();
+        route.responding.clear();
+        route.unserved = Some(why);
+    } else {
+        route.unserved = selection
+            .map(|refused| Unserved::Kernel(refused.to_string()))
+            .or_else(|| refused.into_iter().next().map(|(_, why)| why));
+    }
+}
+
+/// Fills `route`'s variables, input, request and statuses, and lists among its refused outcomes
+/// each one answered other than with the envelope (a body, headers, a redirect or text) or
+/// without a status; `Err` names what it uses that this ingress does not serve: a view answered
+/// other than as `rows`, a standard
 /// refusal the binding answers its own way, a command whose outcome answers with its retained
 /// result, a path variable or a view parameter in the query string that is not a scalar, or a
 /// command that reads its caller where the
@@ -840,24 +906,30 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
                     route.responding.push(outcome.name.to_string());
                 }
                 let status = match ess_gen::http::listed(bound, outcome) {
-                    Some(listed) => {
+                    Some(listed)
                         if listed.body != Body::Envelope
                             || listed.encoding != ResponseEncoding::default()
                             || !listed.headers.is_empty()
-                            || listed.redirect.is_some()
-                        {
-                            return Err(format!(
-                                "{} answered other than with its status and the envelope",
-                                outcome.name
-                            ));
-                        }
-                        listed.status
+                            || listed.redirect.is_some() =>
+                    {
+                        Err(format!(
+                            "{} answered other than with its status and the envelope",
+                            outcome.name
+                        ))
                     }
+                    Some(listed) => Ok(listed.status),
                     None => ess_http::status::outcome_status(ir, outcome)
                         .parse()
-                        .map_err(|_| "an outcome without a status".to_owned())?,
+                        .map_err(|_| format!("{} without a status", outcome.name)),
                 };
-                route.statuses.insert(outcome.name.to_string(), status);
+                match status {
+                    Ok(status) => {
+                        route.statuses.insert(outcome.name.to_string(), status);
+                    }
+                    Err(what) => route
+                        .refused
+                        .push((outcome.name.to_string(), Unserved::Ingress(what))),
+                }
             }
         }
         ess_gen::http::Served::View(handle) => {

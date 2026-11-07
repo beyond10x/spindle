@@ -55,7 +55,9 @@ pub enum Command {
     },
     /// Admit a specification against an environment: bind every capability or name what is missing.
     ///
-    /// Exits 0 when admitted and 3 when refused.
+    /// Prints on stderr one line per outcome the kernel does not run, naming the outcome and what
+    /// it lacks: a request that selects it is refused, and every other outcome of its command
+    /// runs. Exits 0 when admitted and 3 when refused.
     Admit {
         /// The specification directory.
         spec: PathBuf,
@@ -115,6 +117,14 @@ pub enum Command {
     /// qualified name. A run that would serve no operation, one of them an operation this ingress
     /// cannot route, exits 1 before listening; one whose operations only the kernel or the host
     /// does not run is served as before, each answering `501`.
+    ///
+    /// An outcome the kernel does not run (such as one that generates a value of a type the
+    /// runtime does not mint), or one this ingress does not answer as the binding lists it (a
+    /// body, headers, a redirect or text), refuses only the request that selects it: its command
+    /// keeps its route and answers every other outcome as declared, and that request answers
+    /// `501` naming the outcome and what it lacks, with nothing written. Before listening, `run`
+    /// prints one line on stderr per such outcome. A command none of whose outcomes runs is not
+    /// served, as above.
     ///
     /// A served request carries no `external` object: its external causes are answered by
     /// `--decisions`, then by `--answer-default`, each answer per command and outcome, never per

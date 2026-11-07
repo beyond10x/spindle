@@ -1,0 +1,16 @@
+type: ess-http/1
+specification:
+  system: shelf
+  version: v1
+  source_digest: sha256:683a0728688f46314d8499dbe79d9092c1142be8bb00a9ab2560176b4b9c3509
+routes:
+  - command: shelf.box.LabelBox
+    method: put
+    path: /boxes/{box_id}/label
+    parameters: {box_id: input.box_id}
+    outcomes:
+      announced:
+        status: 200
+        headers:
+          X-Announced: {literal: "yes"}
+      labelled: {status: 200}
