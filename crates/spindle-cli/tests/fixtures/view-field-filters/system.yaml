@@ -1,0 +1,19 @@
+format: ess/34
+system: cards
+version: v1
+summary: Cards filed over the network and read by views that filter on their own fields.
+domains:
+  - cards.tray
+components:
+  - component: tray
+    summary: Files cards for callers outside the process and answers their views.
+    owns:
+      domains:
+        - cards.tray
+    accepts:
+      commands:
+        - cards.tray.FileCard
+    publishes:
+      events:
+        - cards.tray.CardFiled
+    reached_by: network
