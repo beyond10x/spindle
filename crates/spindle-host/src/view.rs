@@ -11,7 +11,7 @@ use ess_domain::types::{MAX_TYPE_DEPTH, Presence, Primitive};
 use ess_domain::view::{Direction, ViewSpec};
 use ess_primitives::facts::FactSource;
 use ess_primitives::node::Node;
-use ess_primitives::predicate::{CompareOp, Operand, Predicate, Truth};
+use ess_primitives::predicate::{Collection, CompareOp, Operand, Predicate, Truth};
 use ess_primitives::{FactPath, FactStore, FactValue, Rfc3339Instant};
 use serde_json::{Map, Value};
 use spindle_kernel::Row;
@@ -25,8 +25,10 @@ const STATE: &str = "state";
 /// A filter is read only where each leaf, as the compiler parsed it, is one of: `state == <State>`,
 /// `state != <State>`, `state: {in: [..]}` or `{none_of: [..]}`; a parameter compared with `==`
 /// or `!=` to the state, the identity or a field of the source (`book_id == param.id`); or
-/// `defined(param.<name>)`; leaves combined by `any`, `all` and `not`. Any other filter is named
-/// with its text and refused whole, since evaluating part of it would answer a subset of its rows.
+/// `defined(param.<name>)`; leaves combined by `any`, `all` and `not`, or under `exists` or
+/// `forall` over a list parameter, its element compared as a parameter is. Any other filter is
+/// named with its text and refused whole, since evaluating part of it would answer a subset of its
+/// rows.
 pub(crate) fn unsupported(ir: &EssIr, view: &ResolvedView) -> Option<String> {
     if !view.computed.is_empty() {
         Some("computed fields".to_owned())
@@ -43,7 +45,8 @@ pub(crate) fn unsupported(ir: &EssIr, view: &ResolvedView) -> Option<String> {
             Some(filter) if !reads(ir.entity(&view.source), view, filter) => Some(format!(
                 "the filter `{filter}`; only comparisons of `state` with a state, and of a \
                  parameter with the state, the identity or a field by `==` or `!=`, \
-                 combined by `any`, `all` and `not`, are read"
+                 combined by `any`, `all` and `not` or quantified over a list parameter by \
+                 `exists` or `forall`, are read"
             )),
             _ => None,
         }
@@ -53,23 +56,43 @@ pub(crate) fn unsupported(ir: &EssIr, view: &ResolvedView) -> Option<String> {
 /// Whether every leaf of `filter` is one [`unsupported`] admits: the state compared for equality
 /// or inequality with a text literal, or listed among states it is or is not in; a declared
 /// parameter compared by `==` or `!=` with the state, the identity or a field of `entity`; or a
-/// parameter's `defined`. Every inner node is `any`, `all` or `not`. The parser bounds the nesting
-/// at `MAX_PREDICATE_DEPTH`.
+/// parameter's `defined`. Every inner node is `any`, `all` or `not`, or `exists` or `forall`
+/// over a declared parameter (a list, `in: param.<name>`) whose body admits its element, read
+/// under the quantifier's binder, where it admits a parameter (`story:view-list-query-parameters`):
+/// `{exists: {in: param.tags, as: wanted, that: tag == wanted}}`. ESS evaluates the quantifier
+/// over the elements the parameters publish (`<name>.count`, `<name>.<index>`). The parser bounds
+/// the nesting at `MAX_PREDICATE_DEPTH`.
 fn reads(entity: &ResolvedEntity, view: &ResolvedView, filter: &Predicate) -> bool {
+    admitted(entity, view, filter, &[])
+}
+
+/// [`reads`], with `binders` the names of the quantifiers `filter` is inside, innermost last, each
+/// an element of a declared parameter.
+fn admitted(
+    entity: &ResolvedEntity,
+    view: &ResolvedView,
+    filter: &Predicate,
+    binders: &[&str],
+) -> bool {
     let is_state = |path: &FactPath| path.segments() == [STATE];
     let all_text = |values: &[FactValue]| {
         values
             .iter()
             .all(|value| matches!(value, FactValue::Text(_)))
     };
-    let param = |path: &FactPath| match path.segments() {
+    let declared = |path: &FactPath| match path.segments() {
         [namespace, name] => {
             namespace == ViewSpec::PARAM && view.params.iter().any(|param| &param.name == name)
         }
         _ => false,
     };
+    let bound = |path: &FactPath| match path.segments() {
+        [name] => binders.contains(&name.as_str()),
+        _ => false,
+    };
+    let param = |path: &FactPath| declared(path) || bound(path);
     let row = |path: &FactPath| match path.segments() {
-        [name] => entity.observable_field(name).is_some(),
+        [name] => !bound(path) && entity.observable_field(name).is_some(),
         _ => false,
     };
     match filter {
@@ -79,7 +102,15 @@ fn reads(entity: &ResolvedEntity, view: &ResolvedView, filter: &Predicate) -> bo
             right: Operand::Fact(right),
             ..
         } => (param(left) && row(right)) || (row(left) && param(right)),
-        Predicate::Defined(path) => param(path),
+        Predicate::Defined(path) => declared(path),
+        Predicate::Exists(quantified) | Predicate::Forall(quantified) => match &quantified.over {
+            Collection::Fact(over) if declared(over) => {
+                let mut inner = binders.to_vec();
+                inner.push(quantified.bind.as_str());
+                admitted(entity, view, &quantified.body, &inner)
+            }
+            _ => false,
+        },
         Predicate::Compare {
             left: Operand::Fact(path),
             op: CompareOp::Eq | CompareOp::Ne,
@@ -89,10 +120,10 @@ fn reads(entity: &ResolvedEntity, view: &ResolvedView, filter: &Predicate) -> bo
         Predicate::AnyOf { path, values } | Predicate::NoneOf { path, values } => {
             is_state(path) && all_text(values)
         }
-        Predicate::Any(children) | Predicate::All(children) => {
-            children.iter().all(|child| reads(entity, view, child))
-        }
-        Predicate::Not(child) => reads(entity, view, child),
+        Predicate::Any(children) | Predicate::All(children) => children
+            .iter()
+            .all(|child| admitted(entity, view, child, binders)),
+        Predicate::Not(child) => admitted(entity, view, child, binders),
         _ => false,
     }
 }
