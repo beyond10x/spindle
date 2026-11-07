@@ -123,12 +123,10 @@ async fn events_read_without_a_flush_include_the_writes_made_so_far() {
     assert_eq!(store.events().await.expect("reads"), memory.events());
 }
 
-/// Two handles on one database, as two tabs of one origin hold it: the crate documentation
-/// declares this unsupported, and the second creation of one identity commits where the `Store`
-/// contract (`a_second_creation_of_one_identity_is_a_conflict`) answers a conflict; after a
-/// reopen the first creation's row is gone.
+/// Two handles on one database: the second creation of one identity is a conflict, as the
+/// `Store` contract (`a_second_creation_of_one_identity_is_a_conflict`) answers it on one handle.
+/// Ignored until story:browser-store-several-tabs, which made the two handles answer as one store.
 #[wasm_bindgen_test]
-#[ignore = "one BrowserStore handle per database; two tabs need story:browser-store-several-tabs"]
 async fn a_second_handle_creating_a_held_identity_is_a_conflict() {
     let name = crate::fresh("adversary-two-handles");
     let mut first = BrowserStore::open(&name).await.expect("IndexedDB opens");
