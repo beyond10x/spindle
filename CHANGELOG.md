@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-07
+
 ### Added
 
 - `run --observe` answers `GET /__spindle/ui` with the observe panel: one HTML page holding its
