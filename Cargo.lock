@@ -1595,6 +1595,7 @@ dependencies = [
  "spindle-host",
  "spindle-ingress",
  "spindle-kernel",
+ "spindle-observe-api",
  "spindle-spec",
  "spindle-target",
  "spindle-telemetry",
@@ -1710,6 +1711,7 @@ dependencies = [
  "spindle-host",
  "spindle-kernel",
  "spindle-spec",
+ "spindle-telemetry",
  "tempfile",
  "tokio",
 ]
@@ -1734,6 +1736,15 @@ dependencies = [
  "tokio",
  "uuid",
  "web-time",
+]
+
+[[package]]
+name = "spindle-observe-api"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "time",
 ]
 
 [[package]]

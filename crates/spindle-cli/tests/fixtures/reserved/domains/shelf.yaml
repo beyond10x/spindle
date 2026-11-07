@@ -1,0 +1,61 @@
+domain: notes.shelf
+summary: Notes pinned to a shelf under a title, and read by shelf and title.
+types:
+  - name: notes.shelf.NoteId
+    kind: newtype
+    of: String
+entities:
+  - name: notes.shelf.Note
+    identity:
+      name: note_id
+      type: notes.shelf.NoteId
+    fields:
+      - name: shelf
+        type: String
+      - name: title
+        type: String
+    lifecycle:
+      initial: Pinned
+      states: [Pinned]
+      terminal: [Pinned]
+      transitions: []
+commands:
+  - name: notes.shelf.PinNote
+    input:
+      - name: note_id
+        type: notes.shelf.NoteId
+      - name: shelf
+        type: String
+      - name: title
+        type: String
+    outcomes:
+      - name: pinned
+        creates: notes.shelf.Note
+        instance: note_id
+        sets:
+          shelf: input.shelf
+          title: input.title
+        emits: [notes.shelf.NotePinned]
+        payload:
+          notes.shelf.NotePinned: {note_id: input.note_id}
+        summary: The note is pinned.
+events:
+  - name: notes.shelf.NotePinned
+    fields:
+      - name: note_id
+        type: notes.shelf.NoteId
+views:
+  - name: notes.shelf.NotesOn
+    source: notes.shelf.Note
+    consistency: read_your_writes
+    params:
+      - name: a
+        type: String
+      - name: b
+        type: String
+    filter: {all: [shelf == param.a, title == param.b]}
+    fields:
+      - name: note_id
+        type: notes.shelf.NoteId
+      - name: title
+        type: String

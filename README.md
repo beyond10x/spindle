@@ -46,6 +46,12 @@ binary built without `ui/dist` answers `GET /` with 503. `b10x-spindle deploy ex
 examples/placements/rally-processes.toml` launches the three rally components as processes and
 prints the URL of the observe UI, `http://127.0.0.1:7341/?t=<token>`.
 
+Where `run` serves HTTP, `--observe` records every request it answers and lists the last 256
+(`--observe-requests <N>`, 1 to 10000) at `GET /__spindle/requests`, newest first, with totals
+per class since start; `?class=not-served` keeps only the requests answered `501`. Paths under
+`/__spindle/` belong to the run: a binding route there is refused at start, and without
+`--observe` they answer `404`.
+
 `b10x-spindle conform ess --environment examples/environments/laptop.toml` runs the suite ESS
 synthesises from Spindle's own specification against Spindle itself; `task check:conformance`
 holds its counts against `conformance.toml`, with the scenarios known to fail declared in

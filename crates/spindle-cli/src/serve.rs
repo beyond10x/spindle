@@ -92,6 +92,9 @@ pub(crate) struct Serving<'a> {
     /// or read as the first its grant names ([`Surface::fixing_callers`]), a test-backend switch,
     /// not authentication; with none, as no caller.
     pub callers: Vec<Caller>,
+    /// `--observe`, with how many request records to keep: the surface records every request
+    /// outside `/__spindle/` and answers `GET /__spindle/requests` ([`Surface::observing`]).
+    pub observe: Option<usize>,
 }
 
 /// The fixed callers `run` was given: the n-th `--fixed-caller` is the n-th `--fixed-actor`'s.
@@ -231,6 +234,10 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         &serving.callers,
     )?
     .with_console(serving.ingress)?;
+    let surface = match serving.observe {
+        Some(capacity) => surface.observing(capacity),
+        None => surface,
+    };
     let unserved = surface.unserved();
     for route in &unserved {
         eprintln!(

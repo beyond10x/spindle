@@ -185,6 +185,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
             drop_retries,
             fixed_actor,
             fixed_caller,
+            observe,
+            observe_requests,
             scenario: None,
         } => execute(&Execute {
             spec: &spec,
@@ -196,6 +198,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             port,
             drop_retries,
             callers: serve::callers(fixed_actor, fixed_caller)?,
+            observe: observe.then_some(usize::from(observe_requests)),
         }),
         Command::Play {
             spec,
@@ -397,6 +400,8 @@ struct Execute<'a> {
     port: Option<u16>,
     drop_retries: bool,
     callers: Vec<spindle_ingress::Caller>,
+    /// With `--observe`, how many request records to keep.
+    observe: Option<usize>,
 }
 
 fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
@@ -410,6 +415,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         port,
         drop_retries,
         ref callers,
+        observe,
     } = *arguments;
     let loaded = spindle_spec::load(spec)?;
     let answers = Answers::load(&loaded.ir, decisions, answer_default)?;
@@ -474,7 +480,14 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 decider,
                 answers,
                 callers: callers.clone(),
+                observe,
             },
+        );
+    }
+    if observe.is_some() {
+        bail!(
+            "nothing in {} requires ingress.network, so --observe would be ignored",
+            spec.display()
         );
     }
     if let Some(caller) = callers.first() {
