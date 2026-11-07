@@ -5,8 +5,8 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "source_digest": "6a4be08c7a65279ae08fc592c5295d97cd8f05986df01fee7d6d1254a311a433",
-    "contract_digest": "slice-sha256/2:fdcc39ddc76f635a89e2a1bfab59e5e40a9f00ca3b9a3fc72c694b2abb61cc95",
+    "source_digest": "70563d91ca383baeb86c944716b5ed0a7a852e1705431a1bae003de587369072",
+    "contract_digest": "slice-sha256/2:f04e3c14078707c7711d504ed815a9d2f96ec8b65e20f495460f1a7ff482cb99",
     "regenerate": "ess generate"
   },
   "$defs": {
@@ -124,6 +124,19 @@
         "count >= 0"
       ]
     },
+    "spindle.observe.StatusClass": {
+      "title": "StatusClass",
+      "description": "The class of an HTTP status by its first digit, as the `status_class` label of `spindle_http_requests_total` writes it.",
+      "x-ess-name": "spindle.observe.StatusClass",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "2xx",
+        "3xx",
+        "4xx",
+        "5xx"
+      ]
+    },
     "spindle.observe.StatusCount": {
       "title": "StatusCount",
       "description": "How many requests of one status class an edge carried since the run started.",
@@ -132,8 +145,7 @@
       "type": "object",
       "properties": {
         "status_class": {
-          "description": "`2xx`, `3xx`, `4xx` or `5xx`.",
-          "type": "string"
+          "$ref": "#/$defs/spindle.observe.StatusClass"
         },
         "count": {
           "type": "integer",
@@ -157,8 +169,7 @@
       "type": "object",
       "properties": {
         "format": {
-          "description": "Always `spindle-topology/1`; a reader refuses any other.",
-          "type": "string"
+          "$ref": "#/$defs/spindle.observe.TopologyFormat"
         },
         "at": {
           "description": "When the live numbers were read.",
@@ -224,6 +235,16 @@
       ],
       "additionalProperties": false
     },
+    "spindle.observe.TopologyFormat": {
+      "title": "TopologyFormat",
+      "description": "The format of a topology, `spindle-topology/1`; a reader refuses any other, and the schema refuses any other value.",
+      "x-ess-name": "spindle.observe.TopologyFormat",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "spindle-topology/1"
+      ]
+    },
     "spindle.observe.TopologyNode": {
       "title": "TopologyNode",
       "description": "One node of the topology, derived from the loaded specifications, never authored.",
@@ -232,7 +253,7 @@
       "type": "object",
       "properties": {
         "id": {
-          "description": "Unique in the answer: `ingress`, the specification's system identifier, or the qualified name, prefixed by the kind and, for an external cause, the command and outcome, such as `external:tasks.ledger.Settle/settled`.",
+          "description": "Unique within one specification's topology: `ingress`; the specification's system identifier; a domain, command, view or event by its qualified name prefixed by its kind, such as `command:tasks.board.OpenTask`; an external cause by its command and outcome, such as `external:tasks.ledger.Settle/settled`; a binding by its binding id, not a qualified name, as `binding:<binding id>`, such as `binding:record-closure`. A binding id is unique only within its specification; how ids stay unique across several specifications behind one ingress is for `story:one-ingress-several-specifications` to settle.",
           "type": "string"
         },
         "kind": {

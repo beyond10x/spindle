@@ -5,8 +5,8 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "source_digest": "6a4be08c7a65279ae08fc592c5295d97cd8f05986df01fee7d6d1254a311a433",
-    "contract_digest": "slice-sha256/2:f35f779f8148c444813736aa9fef8b17cb764461a44fcee31742c99d628f5261",
+    "source_digest": "70563d91ca383baeb86c944716b5ed0a7a852e1705431a1bae003de587369072",
+    "contract_digest": "slice-sha256/2:e1d2f2c9725e2ca8ef68b799e47e86e908d5c4129a74cb114ff4c40865e7030d",
     "regenerate": "ess generate"
   },
   "$defs": {
@@ -35,7 +35,7 @@
       "type": "object",
       "properties": {
         "id": {
-          "description": "Unique in the answer: `ingress`, the specification's system identifier, or the qualified name, prefixed by the kind and, for an external cause, the command and outcome, such as `external:tasks.ledger.Settle/settled`.",
+          "description": "Unique within one specification's topology: `ingress`; the specification's system identifier; a domain, command, view or event by its qualified name prefixed by its kind, such as `command:tasks.board.OpenTask`; an external cause by its command and outcome, such as `external:tasks.ledger.Settle/settled`; a binding by its binding id, not a qualified name, as `binding:<binding id>`, such as `binding:record-closure`. A binding id is unique only within its specification; how ids stay unique across several specifications behind one ingress is for `story:one-ingress-several-specifications` to settle.",
           "type": "string"
         },
         "kind": {

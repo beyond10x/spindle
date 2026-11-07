@@ -5,8 +5,8 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "source_digest": "6a4be08c7a65279ae08fc592c5295d97cd8f05986df01fee7d6d1254a311a433",
-    "contract_digest": "slice-sha256/2:ef8717da14fb6d5680d5b341d983a5ca99d4a58e153f99572c7174392fee2205",
+    "source_digest": "70563d91ca383baeb86c944716b5ed0a7a852e1705431a1bae003de587369072",
+    "contract_digest": "slice-sha256/2:fe52c30c2a4246d9e8f0186ff3fe77e47e5f6993c075df122066f4b6cd6a5eb3",
     "regenerate": "ess generate"
   },
   "$defs": {
@@ -92,6 +92,19 @@
         "count >= 0"
       ]
     },
+    "spindle.observe.StatusClass": {
+      "title": "StatusClass",
+      "description": "The class of an HTTP status by its first digit, as the `status_class` label of `spindle_http_requests_total` writes it.",
+      "x-ess-name": "spindle.observe.StatusClass",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "2xx",
+        "3xx",
+        "4xx",
+        "5xx"
+      ]
+    },
     "spindle.observe.StatusCount": {
       "title": "StatusCount",
       "description": "How many requests of one status class an edge carried since the run started.",
@@ -100,8 +113,7 @@
       "type": "object",
       "properties": {
         "status_class": {
-          "description": "`2xx`, `3xx`, `4xx` or `5xx`.",
-          "type": "string"
+          "$ref": "#/$defs/spindle.observe.StatusClass"
         },
         "count": {
           "type": "integer",

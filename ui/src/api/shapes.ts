@@ -13,14 +13,17 @@ import {
   NodeKind,
   OperationKind,
   RequestClass,
+  RequestLogFormat,
   State,
   TargetKind,
+  TopologyFormat,
   type Catalogue,
   type Deployment,
   type MetricFamilies,
   type RequestLog,
   type Sample,
   type StateChange,
+  type StatusClass,
   type Topology,
 } from './types';
 
@@ -30,6 +33,19 @@ const texts = { type: 'array', of: text } as const;
 const oneOf = <T extends string>(values: Record<string, T>) =>
   ({ type: 'string', values: Object.values(values) }) as const;
 const state = oneOf(State);
+
+// ess 0.88.0 generates no value object for an enum whose variants start with a digit, so the
+// status classes are keyed here; `satisfies` makes `vue-tsc` refuse a missing or extra class.
+const statusClasses = {
+  '2xx': true,
+  '3xx': true,
+  '4xx': true,
+  '5xx': true,
+} as const satisfies Record<StatusClass, true>;
+const statusClass = {
+  type: 'string',
+  values: Object.keys(statusClasses) as StatusClass[],
+} as const;
 
 export const deploymentShape: Shape<Deployment> = {
   system: text,
@@ -134,7 +150,7 @@ export const stateChangeShape: Shape<StateChange> = {
 };
 
 export const requestLogShape: Shape<RequestLog> = {
-  format: text,
+  format: oneOf(RequestLogFormat),
   capacity: number,
   recorded: number,
   totals: {
@@ -193,7 +209,7 @@ export const metricFamiliesShape: Shape<MetricFamilies> = {
 };
 
 export const topologyShape: Shape<Topology> = {
-  format: text,
+  format: oneOf(TopologyFormat),
   at: text,
   specifications: texts,
   nodes: {
@@ -223,7 +239,7 @@ export const topologyShape: Shape<Topology> = {
             count: number,
             statuses: {
               type: 'array',
-              of: { type: 'object', fields: { status_class: text, count: number } },
+              of: { type: 'object', fields: { status_class: statusClass, count: number } },
             },
             sources: {
               type: 'array',

@@ -1,12 +1,12 @@
 {
   "format": "ess-types-report/3",
-  "source_digest": "6a4be08c7a65279ae08fc592c5295d97cd8f05986df01fee7d6d1254a311a433",
+  "source_digest": "70563d91ca383baeb86c944716b5ed0a7a852e1705431a1bae003de587369072",
   "input": {
     "kind": "model",
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:016425011d23ca31fa120df9883092b0b84647b91fc4ff8a4e7b99a025b01c33",
-    "projection_digest": "bc7af851820787da346d3d510e8deba75c5b3e533ca1156c7d3905e9e8fdd8cd"
+    "contract_digest": "slice-sha256/2:85c2e43ed76a06ad4f871930597f079233f2d701e8c12d2fa9f4a6383a06bae3",
+    "projection_digest": "421d257c7065183016d0a22c54a9c491c9975acb8e7908cb21d275e4e614a357"
   },
   "generator_version": "0.88.0",
   "target": "rust",
@@ -48,15 +48,18 @@
     "spindle.observe.RecentAnswer": "RecentAnswer",
     "spindle.observe.RequestClass": "RequestClass",
     "spindle.observe.RequestLog": "RequestLog",
+    "spindle.observe.RequestLogFormat": "RequestLogFormat",
     "spindle.observe.RequestRecord": "RequestRecord",
     "spindle.observe.RequestTotals": "RequestTotals",
     "spindle.observe.ResourceReading": "ResourceReading",
     "spindle.observe.Sample": "Sample",
     "spindle.observe.SourceCount": "SourceCount",
     "spindle.observe.StateChange": "StateChange",
+    "spindle.observe.StatusClass": "StatusClass",
     "spindle.observe.StatusCount": "StatusCount",
     "spindle.observe.Topology": "Topology",
     "spindle.observe.TopologyEdge": "TopologyEdge",
+    "spindle.observe.TopologyFormat": "TopologyFormat",
     "spindle.observe.TopologyNode": "TopologyNode",
     "spindle.placement.Instance.State": "State",
     "spindle.placement.InstanceId": "InstanceId",
@@ -616,11 +619,6 @@
       "detail": "retained in source.schema.json; no decoder behavior inferred"
     },
     {
-      "pointer": "/$defs/spindle.observe.RequestLog/properties/format/description",
-      "rule": "description",
-      "detail": "retained in source.schema.json; no decoder behavior inferred"
-    },
-    {
       "pointer": "/$defs/spindle.observe.RequestLog/properties/recorded/description",
       "rule": "description",
       "detail": "retained in source.schema.json; no decoder behavior inferred"
@@ -637,6 +635,26 @@
     },
     {
       "pointer": "/$defs/spindle.observe.RequestLog/x-ess-name",
+      "rule": "x-ess-name",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.RequestLogFormat/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.RequestLogFormat/title",
+      "rule": "title",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.RequestLogFormat/x-ess-kind",
+      "rule": "x-ess-kind",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.RequestLogFormat/x-ess-name",
       "rule": "x-ess-name",
       "detail": "model identity and wire mapping retained in source.schema.json"
     },
@@ -856,12 +874,27 @@
       "detail": "model identity and wire mapping retained in source.schema.json"
     },
     {
-      "pointer": "/$defs/spindle.observe.StatusCount/description",
+      "pointer": "/$defs/spindle.observe.StatusClass/description",
       "rule": "description",
       "detail": "retained in source.schema.json; no decoder behavior inferred"
     },
     {
-      "pointer": "/$defs/spindle.observe.StatusCount/properties/status_class/description",
+      "pointer": "/$defs/spindle.observe.StatusClass/title",
+      "rule": "title",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.StatusClass/x-ess-kind",
+      "rule": "x-ess-kind",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.StatusClass/x-ess-name",
+      "rule": "x-ess-name",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.StatusCount/description",
       "rule": "description",
       "detail": "retained in source.schema.json; no decoder behavior inferred"
     },
@@ -893,11 +926,6 @@
     {
       "pointer": "/$defs/spindle.observe.Topology/properties/at/format",
       "rule": "format",
-      "detail": "retained in source.schema.json; no decoder behavior inferred"
-    },
-    {
-      "pointer": "/$defs/spindle.observe.Topology/properties/format/description",
-      "rule": "description",
       "detail": "retained in source.schema.json; no decoder behavior inferred"
     },
     {
@@ -952,6 +980,26 @@
     },
     {
       "pointer": "/$defs/spindle.observe.TopologyEdge/x-ess-name",
+      "rule": "x-ess-name",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.TopologyFormat/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.TopologyFormat/title",
+      "rule": "title",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.TopologyFormat/x-ess-kind",
+      "rule": "x-ess-kind",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.TopologyFormat/x-ess-name",
       "rule": "x-ess-name",
       "detail": "model identity and wire mapping retained in source.schema.json"
     },
@@ -1143,14 +1191,9 @@
       "detail": "enforce the retained model invariant statements; structural codecs do not evaluate predicates"
     },
     {
-      "pointer": "/$defs/spindle.observe.RequestLog/properties/capacity",
-      "rule": "integer",
-      "detail": "serde_json::Number holds exact JSON numbers with the default `exact-numbers` feature and binary64 without it, and does not enforce integrality; validate the source constraint"
-    },
-    {
-      "pointer": "/$defs/spindle.observe.RequestLog/properties/capacity",
-      "rule": "rust_exact_numbers",
-      "detail": "this value holds JSON numbers in serde_json; the generated crate's default-on `exact-numbers` feature enables serde_json/arbitrary_precision, and a consumer that turns default features off gets these numbers as binary64"
+      "pointer": "/$defs/spindle.observe.RequestLog/properties/capacity/maximum",
+      "rule": "maximum",
+      "detail": "validate this constraint against the source schema at runtime"
     },
     {
       "pointer": "/$defs/spindle.observe.RequestLog/properties/capacity/minimum",

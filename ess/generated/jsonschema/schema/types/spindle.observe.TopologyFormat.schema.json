@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.TopologyFormat.schema.json",
+  "$ref": "#/$defs/spindle.observe.TopologyFormat",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "70563d91ca383baeb86c944716b5ed0a7a852e1705431a1bae003de587369072",
+    "contract_digest": "slice-sha256/2:950206bd8b565a84cfbe3be563be2c045ba55c322c04b6e2050b3e2cf9069f6d",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.TopologyFormat": {
+      "title": "TopologyFormat",
+      "description": "The format of a topology, `spindle-topology/1`; a reader refuses any other, and the schema refuses any other value.",
+      "x-ess-name": "spindle.observe.TopologyFormat",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "spindle-topology/1"
+      ]
+    }
+  }
+}

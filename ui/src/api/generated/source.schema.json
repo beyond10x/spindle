@@ -530,7 +530,7 @@
       "x-ess-name": "spindle.observe.RecentAnswer"
     },
     "spindle.observe.RequestClass": {
-      "description": "How a served run answered one request. `served`: the model answered it, with any outcome the command declares, or the view's rows. `refused`: the ingress or ESS's standard refusal answered it `4xx` before the model did, other than `not-granted`. `not-granted`: `403` \"not granted\", no grant admits the actor. `not-served`: `501`, the operation is one this ingress cannot route, the kernel does not run or the host does not read, or an external cause nothing answered. `failed`: any other `5xx`. `unrouted`: no route has the path, or not under that method.",
+      "description": "How a served run answered one request; the class follows who answered, not the status. `served`: the model answered it, with an outcome the command declares or the view's rows, whatever status the binding gives that outcome, `501` and `503` included. `refused`: the ingress or ESS's standard refusal answered it `4xx` before the model did, other than `not-granted`. `not-granted`: `403` \"not granted\", no grant admits the actor. `not-served`: spindle's own `501`, for an operation this ingress cannot route, the kernel does not run or the host does not read, or for an external cause nothing answered. `failed`: a `5xx` spindle itself answered, other than that `501`. `unrouted`: no route has the path, or not under that method.",
       "enum": [
         "served",
         "refused",
@@ -549,13 +549,13 @@
       "description": "The answer of `GET /__spindle/requests`: the totals since the run started and the last requests the ring holds, newest first, those of the classes `?class=` names where it is given.",
       "properties": {
         "capacity": {
-          "description": "How many requests the ring holds at most.",
+          "description": "How many requests the ring holds at most, from 1 to 10 000.",
+          "maximum": 10000,
           "minimum": 1,
           "type": "integer"
         },
         "format": {
-          "description": "Always `spindle-requests/1`; a reader refuses any other.",
-          "type": "string"
+          "$ref": "#/$defs/spindle.observe.RequestLogFormat"
         },
         "recorded": {
           "description": "Every request recorded since the run started, kept or dropped by the ring.",
@@ -583,10 +583,21 @@
       "type": "object",
       "x-ess-invariants": [
         "capacity > 0",
+        "capacity <= 10000",
         "recorded >= 0"
       ],
       "x-ess-kind": "struct",
       "x-ess-name": "spindle.observe.RequestLog"
+    },
+    "spindle.observe.RequestLogFormat": {
+      "description": "The format of a request log, `spindle-requests/1`; a reader refuses any other, and the schema refuses any other value.",
+      "enum": [
+        "spindle-requests/1"
+      ],
+      "title": "RequestLogFormat",
+      "type": "string",
+      "x-ess-kind": "enum",
+      "x-ess-name": "spindle.observe.RequestLogFormat"
     },
     "spindle.observe.RequestRecord": {
       "additionalProperties": false,
@@ -885,6 +896,19 @@
       "x-ess-kind": "struct",
       "x-ess-name": "spindle.observe.StateChange"
     },
+    "spindle.observe.StatusClass": {
+      "description": "The class of an HTTP status by its first digit, as the `status_class` label of `spindle_http_requests_total` writes it.",
+      "enum": [
+        "2xx",
+        "3xx",
+        "4xx",
+        "5xx"
+      ],
+      "title": "StatusClass",
+      "type": "string",
+      "x-ess-kind": "enum",
+      "x-ess-name": "spindle.observe.StatusClass"
+    },
     "spindle.observe.StatusCount": {
       "additionalProperties": false,
       "description": "How many requests of one status class an edge carried since the run started.",
@@ -894,8 +918,7 @@
           "type": "integer"
         },
         "status_class": {
-          "description": "`2xx`, `3xx`, `4xx` or `5xx`.",
-          "type": "string"
+          "$ref": "#/$defs/spindle.observe.StatusClass"
         }
       },
       "required": [
@@ -926,8 +949,7 @@
           "type": "array"
         },
         "format": {
-          "description": "Always `spindle-topology/1`; a reader refuses any other.",
-          "type": "string"
+          "$ref": "#/$defs/spindle.observe.TopologyFormat"
         },
         "nodes": {
           "items": {
@@ -985,12 +1007,22 @@
       "x-ess-kind": "struct",
       "x-ess-name": "spindle.observe.TopologyEdge"
     },
+    "spindle.observe.TopologyFormat": {
+      "description": "The format of a topology, `spindle-topology/1`; a reader refuses any other, and the schema refuses any other value.",
+      "enum": [
+        "spindle-topology/1"
+      ],
+      "title": "TopologyFormat",
+      "type": "string",
+      "x-ess-kind": "enum",
+      "x-ess-name": "spindle.observe.TopologyFormat"
+    },
     "spindle.observe.TopologyNode": {
       "additionalProperties": false,
       "description": "One node of the topology, derived from the loaded specifications, never authored.",
       "properties": {
         "id": {
-          "description": "Unique in the answer: `ingress`, the specification's system identifier, or the qualified name, prefixed by the kind and, for an external cause, the command and outcome, such as `external:tasks.ledger.Settle/settled`.",
+          "description": "Unique within one specification's topology: `ingress`; the specification's system identifier; a domain, command, view or event by its qualified name prefixed by its kind, such as `command:tasks.board.OpenTask`; an external cause by its command and outcome, such as `external:tasks.ledger.Settle/settled`; a binding by its binding id, not a qualified name, as `binding:<binding id>`, such as `binding:record-closure`. A binding id is unique only within its specification; how ids stay unique across several specifications behind one ingress is for `story:one-ingress-several-specifications` to settle.",
           "type": "string"
         },
         "kind": {
@@ -1081,8 +1113,8 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-ess-provenance": {
-    "contract_digest": "slice-sha256/2:016425011d23ca31fa120df9883092b0b84647b91fc4ff8a4e7b99a025b01c33",
-    "source_digest": "6a4be08c7a65279ae08fc592c5295d97cd8f05986df01fee7d6d1254a311a433",
+    "contract_digest": "slice-sha256/2:85c2e43ed76a06ad4f871930597f079233f2d701e8c12d2fa9f4a6383a06bae3",
+    "source_digest": "70563d91ca383baeb86c944716b5ed0a7a852e1705431a1bae003de587369072",
     "specification_version": "v1",
     "system": "spindle"
   }
