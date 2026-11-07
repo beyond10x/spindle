@@ -1,0 +1,27 @@
+format: ess/34
+system: depot
+version: v1
+summary: The warehouse of shelves and items, where a pick copies the aisle and the state of the shelf it is made from.
+domains:
+  - depot.warehouse
+components:
+  - component: floor
+    summary: Opens, moves and closes shelves, stocks items and records picks.
+    owns:
+      domains:
+        - depot.warehouse
+    accepts:
+      commands:
+        - depot.warehouse.OpenShelf
+        - depot.warehouse.MoveShelf
+        - depot.warehouse.CloseShelf
+        - depot.warehouse.StockItem
+        - depot.warehouse.PickItem
+    publishes:
+      events:
+        - depot.warehouse.ShelfOpened
+        - depot.warehouse.ShelfMoved
+        - depot.warehouse.ShelfClosed
+        - depot.warehouse.ItemStocked
+        - depot.warehouse.ItemPicked
+    reached_by: in_process

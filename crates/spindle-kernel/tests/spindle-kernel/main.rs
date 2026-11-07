@@ -29,6 +29,7 @@ mod mint;
 mod placement;
 mod rally;
 mod related_guards;
+mod related_values;
 mod responses;
 mod scan;
 mod store_contract;

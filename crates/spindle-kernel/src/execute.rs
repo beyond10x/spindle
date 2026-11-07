@@ -254,6 +254,7 @@ pub fn execute_refusing(
         }
         None => None,
     };
+    let related = crate::values::related(ir, spec, input, store)?;
     let mut run = Run {
         ir,
         spec,
@@ -264,6 +265,7 @@ pub fn execute_refusing(
         store,
         decider,
         held,
+        related,
         generator: Generator::new(mint, now, command),
         minted: None,
         answered: BTreeMap::new(),
@@ -373,6 +375,8 @@ struct Run<'a, 'ir> {
     store: &'a mut dyn Store,
     decider: &'a mut dyn Decider,
     held: Option<Addressed<'ir>>,
+    /// The rows the command's related values name, read before anything else ([`crate::values::related`]).
+    related: crate::values::Related,
     generator: Generator<'a>,
     /// The identity this run minted: the creating event that publishes it, and the identity
     /// field's name.
@@ -1214,6 +1218,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
             input: self.input,
             caller: self.caller,
             before,
+            related: &self.related,
             error: false,
             minted: self
                 .minted

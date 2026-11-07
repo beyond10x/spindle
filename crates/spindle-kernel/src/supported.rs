@@ -1,7 +1,7 @@
 //! What the kernel runs, checked before a command runs.
 //!
 //! The kernel runs the conditions, effects and value sources Spindle's own specification and the
-//! `rally` example use. Every other construct is refused by name, as
+//! `rally` example use, and a value read from the row an input field names. Every other construct is refused by name, as
 //! [`ExecuteError::Unsupported`], before anything is written; what it refuses depends on what
 //! reads the construct.
 //!
@@ -344,6 +344,24 @@ fn value(ir: &EssIr, field: &ResolvedPayloadField) -> Option<String> {
         } => mintable(false),
         ResolvedPayloadValue::Struct { fields } => {
             fields.iter().find_map(|member| value(ir, member))
+        }
+        // The field or the held state of the row an input field names (ess/16, ess/28), read as
+        // the store held it before the outcome ([`crate::values::related`]). A reference stored on
+        // the subject, a chain through a further reference, and a list of references stay
+        // refused.
+        ResolvedPayloadValue::RelatedField {
+            via: via @ ResolvedRelatedVia::Input { .. },
+            through,
+            ..
+        }
+        | ResolvedPayloadValue::RelatedState {
+            via: via @ ResolvedRelatedVia::Input { .. },
+            through,
+            ..
+        } if through.is_empty()
+            && !matches!(via.type_ref().required(), ResolvedTypeRef::List { .. }) =>
+        {
+            None
         }
         other => Some(format!("the value source {}", other.describe())),
     }
