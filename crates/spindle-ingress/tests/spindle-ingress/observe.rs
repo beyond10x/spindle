@@ -126,3 +126,58 @@ fn a_request_held_on_the_host_thread_is_timed_with_its_wait() {
         "a 404 answered on the listener thread is timed there: {log}"
     );
 }
+
+/// An `Exchange` answered with `respond` is classed by the answer it was given: a refusal is
+/// `refused` with its text as the reason, rows are `served`. No other test calls `respond`, so
+/// `Answered::of` answering "the model" for every answer goes unnoticed without this case.
+#[test]
+fn a_responded_exchange_is_classed_by_its_answer() {
+    let ir = spindle_spec::load(&fixtures().join("desk"))
+        .expect("the desk fixture compiles")
+        .ir;
+    let surface = Surface::new(&ir, &[COMPONENT.to_owned()], None)
+        .expect("the desk surface is served")
+        .observing(16);
+    let view = surface
+        .routes()
+        .iter()
+        .find(|route| route.operation.name() == "study.desk.AllDesks")
+        .expect("the surface serves the view")
+        .path
+        .clone();
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+
+    let refused_view = view.clone();
+    let asked = thread::spawn(move || send(address, "GET", &refused_view));
+    listener
+        .next(ARRIVAL)
+        .expect("the request arrives as an exchange")
+        .respond(spindle_ingress::Answer::refusal(
+            400,
+            "held back by the test",
+        ));
+    let (status, body) = asked.join().expect("the request thread ends");
+    assert_eq!(status, 400, "{body}");
+
+    let asked = thread::spawn(move || send(address, "GET", &view));
+    listener
+        .next(ARRIVAL)
+        .expect("the request arrives as an exchange")
+        .respond(spindle_ingress::Answer {
+            status: 200,
+            body: Some(serde_json::json!({"rows": []})),
+        });
+    let (status, body) = asked.join().expect("the request thread ends");
+    assert_eq!(status, 200, "{body}");
+
+    let (status, log) = send(address, "GET", "/__spindle/requests");
+    assert_eq!(status, 200, "{log}");
+    assert_eq!(log["requests"][0]["class"], "served", "{log}");
+    assert_eq!(log["requests"][1]["class"], "refused", "{log}");
+    assert_eq!(
+        log["requests"][1]["reason"], "held back by the test",
+        "{log}"
+    );
+    assert_eq!(log["totals"]["refused"], 1, "{log}");
+}

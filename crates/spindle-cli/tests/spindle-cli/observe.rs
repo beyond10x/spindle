@@ -566,3 +566,43 @@ fn observe_where_run_serves_no_http_is_refused() {
     assert_eq!(code, Some(1), "{stdout}{stderr}");
     assert!(stderr.contains("--observe"), "{stderr}");
 }
+
+// Adversary cases for `story:ingress-request-log`.
+
+/// A binding routing the reserved fixture's view at `GET /{a}/{b}/x`: a route led by variables.
+const RESERVED_LEADING_HTTP: &str = "crates/spindle-cli/tests/fixtures/reserved-leading-http.yaml";
+
+/// A path variable that does not decode is refused `400` after the path matched a route; the
+/// model keeps `route` absent only for an unrouted request, so the record names the route and the
+/// command it was bound to, as the scripted `400` does.
+#[test]
+fn a_malformed_path_variable_is_recorded_with_its_route() {
+    let served = serve(INGRESS, &["--http", INGRESS_HTTP, "--observe"]);
+    let (status, body) = exchange(
+        served.address,
+        "PUT",
+        "/tasks/%FF",
+        Some(&json!({"title": "Water the plants"})),
+    );
+    assert_eq!(status, 400, "{body}");
+    let answered = log(&served, "");
+    let record = &answered["requests"][0];
+    assert_eq!(record["class"], "refused", "{answered}");
+    assert_eq!(record["reason"], body["refused"], "{answered}");
+    assert_eq!(record["route"], "/tasks/{task_id}", "{answered}");
+    assert_eq!(record["operation"], "tasks.board.OpenTask", "{answered}");
+    assert_eq!(record["kind"], "command", "{answered}");
+}
+
+/// `//__spindle/x` is not matched as reserved (its first segment is empty), yet the route
+/// `/{a}/{b}/x` matches it carrying `a = "__spindle"`: the reserved segment reaches a
+/// specification route through a variable.
+#[test]
+fn a_double_slash_never_carries_the_reserved_segment_into_a_route() {
+    let plain = serve(RESERVED, &["--http", RESERVED_LEADING_HTTP]);
+    let (status, body) = exchange(plain.address, "GET", "/y/z/x", None);
+    assert_eq!(status, 200, "the route answers an ordinary path: {body}");
+    let (status, body) = exchange(plain.address, "GET", "//__spindle/x", None);
+    assert_eq!(status, 404, "//__spindle/x reaches no view: {body}");
+    assert!(body.get("rows").is_none(), "{body}");
+}
