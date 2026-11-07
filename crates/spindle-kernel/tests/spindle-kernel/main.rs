@@ -15,6 +15,7 @@ mod adversary_mint_text;
 mod adversary_placement;
 mod adversary_rally;
 mod adversary_related_guards;
+mod adversary_related_values;
 mod adversary_responses;
 mod adversary_store_contract;
 mod adversary_structured_responses;

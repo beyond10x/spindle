@@ -1,0 +1,26 @@
+format: ess/34
+system: depot
+version: v1
+summary: Shelves in aisles, and the notes, transfers and refusals that read a shelf's aisle and state through an input.
+domains:
+  - depot.racks
+components:
+  - component: floor
+    summary: Opens and closes shelves, and records notes and transfers that read them.
+    owns:
+      domains:
+        - depot.racks
+    accepts:
+      commands:
+        - depot.racks.OpenShelf
+        - depot.racks.CloseShelf
+        - depot.racks.NoteShelf
+        - depot.racks.Transfer
+        - depot.racks.PickFrom
+    publishes:
+      events:
+        - depot.racks.ShelfOpened
+        - depot.racks.ShelfClosed
+        - depot.racks.ShelfNoted
+        - depot.racks.Transferred
+    reached_by: in_process
