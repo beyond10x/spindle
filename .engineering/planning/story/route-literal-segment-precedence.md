@@ -15,7 +15,7 @@ scope:
   path: crates/spindle-cli/tests/spindle-cli/route_precedence.rs
 - confidence: cited
   path: crates/spindle-ingress/src/surface.rs
-revision: 7
+revision: 8
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-07T18:59:08Z", actor: "human:timo", revision: 6}
 - {from: "proposed", to: "active", at: "2026-11-07T18:59:08Z", actor: "human:timo", revision: 7}
@@ -74,3 +74,21 @@ and no other route whose template carries `/things/modules`.
 
 Reported 2026-11-07 by a consumer serving its specification on spindle: two literal routes under a
 collection are answered by the collection's by-id route.
+
+## Correction
+
+Found while implementing: ESS 0.90.0 already orders bound routes by path text
+(`ess_gen::http::bound_routes`, `crates/generate/ess-gen/src/http.rs:538`), and `{` sorts after
+every letter and digit. So `/things/modules` came before `/things/{id}` in either declaration order,
+and the three precedence tests above pass on the code before this story. The shadowing is real for a
+literal that sorts after `{`: `~` is allowed in a path segment (RFC 3986) and `ess specify http
+validate` accepts `/things/~modules`.
+
+Added acceptance, which fails on the code before this story:
+
+- `a_literal_sorting_after_a_variable_still_wins`
+  (`crates/spindle-cli/tests/spindle-cli/route_precedence.rs`, fixture `tilde-http.yaml`):
+  `GET /things/~modules` answers the route bound to `/things/~modules`, not `/things/{id}`.
+
+The fix ranks the routes of one method that match a path by `ess_gen::http::dispatch_order`, ESS's
+own published order.
