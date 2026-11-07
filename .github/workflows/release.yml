@@ -132,12 +132,21 @@ jobs:
           set -euo pipefail
           pnpm install --frozen-lockfile
           pnpm build
+          pnpm build:panel
           test -s dist/index.html
+          test -s dist-panel/panel.html
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ui-dist
           path: ui/dist
+          if-no-files-found: error
+          retention-days: 7
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ui-dist-panel
+          path: ui/dist-panel
           if-no-files-found: error
           retention-days: 7
 
@@ -177,14 +186,24 @@ jobs:
           name: ui-dist
           path: ui/dist
 
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ui-dist-panel
+          path: ui/dist-panel
+
       - name: Build b10x-spindle with the UI embedded
         shell: bash
         run: |
           set -euo pipefail
           test -s ui/dist/index.html
+          test -s ui/dist-panel/panel.html
           cargo build --locked --release -p spindle-cli --target "$TARGET" 2>&1 | tee "$RUNNER_TEMP/build.log"
           if grep -Fq "ui/dist is missing" "$RUNNER_TEMP/build.log"; then
             echo "The build embedded no UI." >&2
+            exit 1
+          fi
+          if grep -Fq "ui/dist-panel/panel.html is missing" "$RUNNER_TEMP/build.log"; then
+            echo "The build embedded no observe panel." >&2
             exit 1
           fi
 
