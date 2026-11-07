@@ -6,6 +6,16 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- A view's `List<T>` parameter that the path does not carry is read from the query string as ESS
+  publishes it: the key repeated once per element (`tags=a&tags=b`), each element read as `T`,
+  required unless the parameter is `Optional`. `tags=a,b` is the one element `a,b`. An empty
+  element, an element of the wrong type and a required list left out answer `400` naming the
+  parameter. The host reads a filter that quantifies over a list parameter with `exists` or
+  `forall`, its element compared by `==` or `!=` with the state, the identity or a field.
+  Before, such a view answered `501`.
+
 ## [0.3.0] - 2026-11-06
 
 ### Added
