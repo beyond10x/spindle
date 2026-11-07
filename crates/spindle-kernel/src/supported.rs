@@ -1,7 +1,8 @@
 //! What the kernel runs, checked before a command runs.
 //!
 //! The kernel runs the conditions, effects and value sources Spindle's own specification and the
-//! `rally` example use, and a value read from the row an input field names. Every other construct is refused by name, as
+//! `rally` example use, a value read from the row an input field names, and a guard over a row
+//! set. Every other construct is refused by name, as
 //! [`ExecuteError::Unsupported`], before anything is written; what it refuses depends on what
 //! reads the construct.
 //!
@@ -202,7 +203,18 @@ fn condition(condition: &ResolvedCondition) -> Option<&'static str> {
             Some("`when_related:` over a list of references")
         }
         ResolvedCondition::Related { .. } => None,
-        ResolvedCondition::RelatedSet { .. } => Some("`when_related:` over a row set"),
+        // A row set is read from the store before selection ([`crate::execute`]); a selector or a
+        // `forall:` that walks the rows of an entity (`exists: {in: {entity: …}, …}`, ess/27)
+        // stays refused.
+        ResolvedCondition::RelatedSet {
+            selection, test, ..
+        } if std::iter::once(&selection.filter)
+            .chain(test.predicate())
+            .any(|predicate| !ess_domain::command::related_rows::walked(predicate).is_empty()) =>
+        {
+            Some("a rows quantifier in a `when_related:` row-set selector")
+        }
+        ResolvedCondition::RelatedSet { .. } => None,
         ResolvedCondition::StateChange { .. } => Some("`when_state_changes:`"),
         ResolvedCondition::InputAbsent => Some("`input_absent:`"),
         ResolvedCondition::ExistingInstance => Some("`existing_instance:`"),

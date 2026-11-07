@@ -32,6 +32,7 @@ mod rally;
 mod related_guards;
 mod related_values;
 mod responses;
+mod row_set_guards;
 mod scan;
 mod store_contract;
 mod structured_responses;

@@ -1,0 +1,25 @@
+format: ess/34
+system: stacks
+version: v1
+summary: A library whose catalogue lists books by shelfmark, and whose readers reserve, borrow and cancel them.
+domains:
+  - stacks.library
+components:
+  - component: desk
+    summary: Lists catalogue entries and takes, lends and cancels reservations.
+    owns:
+      domains:
+        - stacks.library
+    accepts:
+      commands:
+        - stacks.library.ListEntry
+        - stacks.library.Reserve
+        - stacks.library.Lend
+        - stacks.library.Cancel
+    publishes:
+      events:
+        - stacks.library.EntryListed
+        - stacks.library.Reserved
+        - stacks.library.Lent
+        - stacks.library.Cancelled
+    reached_by: in_process
