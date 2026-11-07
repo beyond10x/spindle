@@ -13,7 +13,9 @@ components:
     accepts:
       commands:
         - intake.form.SubmitForm
+        - intake.form.ReviewForm
     publishes:
       events:
         - intake.form.FormReceived
+        - intake.form.FormReviewed
     reached_by: network

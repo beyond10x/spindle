@@ -1,7 +1,7 @@
 //! One request's answer, from the host that runs the command or reads the view.
 
 use ess_compiler::EssIr;
-use ess_compiler::ir::{ResolvedCommand, ResolvedField};
+use ess_compiler::ir::{ResolvedCommand, ResolvedError, ResolvedField};
 use ess_gen::http::{FORBIDDEN, NOT_GRANTED};
 use ess_http::{Body, Encoding, Operation};
 use serde_json::{Map, Value, json};
@@ -365,7 +365,10 @@ fn envelope(
     if let Some(refusal) = refusal {
         body.insert("error".to_owned(), Value::String(refusal.name.clone()));
         if !refusal.fields.is_empty() && !refusal.unknown_instance {
-            body.insert("payload".to_owned(), Value::Object(refusal.fields.clone()));
+            body.insert(
+                "payload".to_owned(),
+                Value::Object(written.error_fields(outcome, refusal)),
+            );
         }
     }
     if let Some(response) = response.filter(|_| route.responds(outcome)) {
@@ -433,15 +436,9 @@ impl<'ir> Written<'ir> {
         }
     }
 
-    /// The error object a binding's `{<member>: error}` answers `outcome` with, as ESS's served
-    /// application writes it (`ess-synth` `http::error_object`, `ess-gen`
-    /// `openapi::error_object`): `<member>` the wire name of the error the outcome reports
-    /// (`naming.wire`, else its local name), beside the fields `refusal` carries, each under its
-    /// wire name and written as ESS publishes it. No fields for the `wrong_state:` answer to an
-    /// identity no record carries, which ESS answers without a payload.
-    fn error_object(&self, outcome: &str, member: &str, refusal: Option<&DeclaredError>) -> Value {
-        let declared = self
-            .command
+    /// The error that `outcome` of the command declares, where it names one.
+    fn declared_error(&self, outcome: &str) -> Option<&'ir ResolvedError> {
+        self.command
             .and_then(|command| {
                 command
                     .outcomes
@@ -449,7 +446,26 @@ impl<'ir> Written<'ir> {
                     .find(|declared| declared.name.to_string() == outcome)
             })
             .and_then(|outcome| outcome.error.as_ref())
-            .map(|error| self.ir.error(error));
+            .map(|error| self.ir.error(error))
+    }
+
+    /// The fields `refusal` carries, each under its wire name and written as ESS publishes it:
+    /// the envelope's `payload`, whose schema keys them as the error object's are keyed.
+    fn error_fields(&self, outcome: &str, refusal: &DeclaredError) -> Map<String, Value> {
+        let fields = self
+            .declared_error(outcome)
+            .map_or(&[][..], |error| error.fields.as_slice());
+        crate::wire::fields(self.ir, fields, &refusal.fields)
+    }
+
+    /// The error object a binding's `{<member>: error}` answers `outcome` with, as ESS's served
+    /// application writes it (`ess-synth` `http::error_object`, `ess-gen`
+    /// `openapi::error_object`): `<member>` the wire name of the error the outcome reports
+    /// (`naming.wire`, else its local name), beside the fields `refusal` carries, each under its
+    /// wire name and written as ESS publishes it. No fields for the `wrong_state:` answer to an
+    /// identity no record carries, which ESS answers without a payload.
+    fn error_object(&self, outcome: &str, member: &str, refusal: Option<&DeclaredError>) -> Value {
+        let declared = self.declared_error(outcome);
         let wire = declared.map_or_else(
             || {
                 refusal.map_or_else(String::new, |refusal| {

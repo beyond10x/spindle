@@ -26,6 +26,7 @@ const COMPONENT: &str = "intake";
 
 const SUBMIT: &str = "intake.form.SubmitForm";
 const ALL_FORMS: &str = "intake.form.AllForms";
+const REVIEW: &str = "intake.form.ReviewForm";
 
 /// How long `run` may take to admit, open its state and print where it listens.
 const STARTUP: Duration = Duration::from_secs(60);
@@ -281,4 +282,29 @@ fn a_bound_error_outcome_answers_its_status_and_error_object() {
         json!({"rows": [{"form_id": "f2", "contact": "someone"}]}),
         "the route still takes in a complete form"
     );
+}
+
+#[test]
+fn a_refusal_envelope_keys_its_payload_by_wire_name() {
+    let contract = Contract::load();
+    let served = serve();
+
+    let reply = served.send(
+        &contract,
+        REVIEW,
+        &json!({"contact": "someone", "complete": false}),
+    );
+    assert_eq!(reply.status, 422, "the bound status: {reply:?}");
+    let body = reply.json();
+    assert_eq!(body["error"], "intake.form.InvalidField", "{body}");
+    assert_eq!(
+        body["payload"],
+        json!({
+            "fieldName": "Contact",
+            "reason": "is not complete",
+            "given": "someone",
+        }),
+        "the envelope's payload keys each error field by its wire name"
+    );
+    contract.validate(REVIEW, reply.status, &body);
 }

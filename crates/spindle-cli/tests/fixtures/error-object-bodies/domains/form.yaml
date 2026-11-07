@@ -56,7 +56,32 @@ commands:
         payload:
           intake.form.FormReceived: {form_id: input.form_id}
         summary: A complete form is taken in.
+  - name: intake.form.ReviewForm
+    input:
+      - name: contact
+        type: String
+      - name: complete
+        type: Boolean
+    outcomes:
+      - name: rejected
+        when: complete == false
+        error: intake.form.InvalidField
+        payload:
+          intake.form.InvalidField:
+            field: Contact
+            reason: is not complete
+            given: input.contact
+        summary: An incomplete form is refused in the default answer, naming the field.
+      - name: reviewed
+        emits: [intake.form.FormReviewed]
+        payload:
+          intake.form.FormReviewed: {contact: input.contact}
+        summary: A complete form is passed.
 events:
+  - name: intake.form.FormReviewed
+    fields:
+      - name: contact
+        type: String
   - name: intake.form.FormReceived
     fields:
       - name: form_id
