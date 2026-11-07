@@ -12,11 +12,20 @@
 //! `wrong-state` with a header this ingress does not write.
 //! `tests/fixtures/adversary-outcome-scoped-refusal-bound` takes parcels over the network and
 //! records each through a retrying binding, weighed there only where the sender opts in.
+//!
+//! Whether `admit`, `run` over HTTP and `run` reading stdin say the same thing about an
+//! outcome the runtime does not run, and whether a compensating refusal, which selection never
+//! reads, refuses only the request that selects it.
+//! `tests/fixtures/adversary-outcome-scoped-refusal-stdin` is the model above with its component
+//! reached in process, so `run` reads stdin.
+//! `tests/fixtures/adversary-outcome-scoped-refusal-compensates` declares `JoinOrder`, whose
+//! `failed` is an external compensating refusal, as ESS's own `refusal-with-effect` fixture
+//! declares it.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
@@ -415,5 +424,164 @@ fn an_outcome_a_binding_selects_is_refused_without_writing_half() {
     assert_eq!(
         published[2]["payload"]["parcel_id"], "p2",
         "only the parcel whose binding selected the supported outcome is recorded: {published:?}"
+    );
+}
+
+const STDIN_FIXTURE: &str =
+    "crates/spindle-cli/tests/fixtures/adversary-outcome-scoped-refusal-stdin";
+const WEIGH: &str = "yard.crate.WeighCrate";
+
+fn admit_stderr() -> Vec<String> {
+    let admitted = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+        .current_dir(root())
+        .args(["admit", FIXTURE, "--environment", LAPTOP])
+        .output()
+        .expect("b10x-spindle runs");
+    assert_eq!(admitted.status.code(), Some(0), "{admitted:?}");
+    String::from_utf8_lossy(&admitted.stderr)
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// `WeighCrate` has no outcome the runtime runs, so it is refused whatever the request: `run`
+/// names the command as not served, and a request whose input is not even valid answers `501`,
+/// not the `400` an outcome-scoped refusal leaves it. `admit` must not tell the operator the
+/// opposite, that the outcome is refused only where a request selects it.
+#[test]
+fn admit_and_run_agree_on_a_command_none_of_whose_outcomes_runs() {
+    let served = serve(None, &[]);
+    let lines = served.stderr.lines();
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("not served") && line.contains(WEIGH)),
+        "run names the command as not served: {lines:#?}"
+    );
+    let (status, answer) = served.call(WEIGH, &json!({"crate_id": "not-a-uuid"}));
+    assert_eq!(
+        status, 501,
+        "the whole command is refused before its input is read: {answer}"
+    );
+    let (status, answer) = served.call(SEAL, &json!({"crate_id": "not-a-uuid", "weigh": true}));
+    assert_eq!(
+        status, 400,
+        "an outcome-scoped refusal reads the input first: {answer}"
+    );
+
+    let admitted = admit_stderr();
+    let scoped = admitted
+        .iter()
+        .filter(|line| {
+            line.contains(&format!("`{WEIGH}/weighed`"))
+                && line.contains("refused where a request selects it")
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        scoped.is_empty(),
+        "admit says a request selecting {WEIGH}/weighed is refused and the command's other \
+         outcomes run, while run refuses every request of {WEIGH} as not served: {scoped:#?}"
+    );
+}
+
+fn run_stdin(lines: &str) -> Output {
+    run_stdin_spec(STDIN_FIXTURE, lines)
+}
+
+/// `b10x-spindle run <spec> --environment laptop`, `lines` on stdin.
+fn run_stdin_spec(spec: &str, lines: &str) -> Output {
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+        .current_dir(root())
+        .env("TMPDIR", state.path())
+        .args(["run", spec, "--environment", LAPTOP])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("b10x-spindle starts");
+    child
+        .stdin
+        .take()
+        .expect("stdin is piped")
+        .write_all(lines.as_bytes())
+        .expect("the commands are written");
+    child.wait_with_output().expect("b10x-spindle runs")
+}
+
+/// `run` reading stdin refuses the request that selects the unsupported outcome, naming it, and
+/// runs the command's other outcome. The story's acceptance has `run`'s startup name each such
+/// outcome, as `admit` and `run` over HTTP do.
+#[test]
+fn run_reading_stdin_names_each_unsupported_outcome_at_startup() {
+    let output = run_stdin(concat!(
+        r#"{"command": "yard.crate.PackCrate", "input": {"label": "heavy", "weigh": true}}"#,
+        "\n",
+        r#"{"command": "yard.crate.PackCrate", "input": {"label": "light", "weigh": false}}"#,
+        "\n",
+    ));
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let results = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("one JSON line per request"))
+        .collect::<Vec<_>>();
+    assert_eq!(results.len(), 2, "{results:?}");
+    assert_eq!(results[0]["failure"]["kind"], "unsupported", "{results:?}");
+    assert!(
+        results[0]["failure"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains(&format!("{PACK}/weighed"))),
+        "{results:?}"
+    );
+    assert_eq!(results[1]["outcome"], "packed", "{results:?}");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr
+            .lines()
+            .any(|line| line.contains("unsupported outcome")
+                && line.contains(&format!("`{PACK}/weighed`"))),
+        "run reading stdin names no unsupported outcome at startup \
+         (story:outcome-scoped-refusal acceptance: `run` startup names the outcome): {stderr}"
+    );
+}
+
+const COMPENSATES: &str =
+    "crates/spindle-cli/tests/fixtures/adversary-outcome-scoped-refusal-compensates";
+
+/// `JoinOrder`'s `failed` is a compensating refusal (`compensates: true`), the shape of ESS's own
+/// `refusal-with-effect` fixture, which the kernel does not run. Selection never reads
+/// `compensates` (neither the kernel's `select` nor ESS's precedence plan), so it is a construct
+/// only the taken outcome reads: a request the upstream does not refuse selects `joined`, which
+/// the kernel runs, and answers as a command without `failed` would.
+#[test]
+fn a_compensating_refusal_refuses_only_the_request_that_selects_it() {
+    const ORDER: &str = "6f1c0a52-3d4e-4b7a-9c1d-2e5f8a9b0c7d";
+    let output = run_stdin_spec(
+        COMPENSATES,
+        &[
+            json!({"command": "shop.order.PlaceOrder", "input": {"order_id": ORDER}}),
+            json!({
+                "command": "shop.order.JoinOrder",
+                "input": {"order_id": ORDER, "reason": "upstream down"},
+                "external": {"failed": false},
+            }),
+        ]
+        .iter()
+        .map(|line| format!("{line}\n"))
+        .collect::<String>(),
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let results = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("one JSON line per request"))
+        .collect::<Vec<_>>();
+    assert_eq!(results.len(), 2, "{results:?}");
+    assert_eq!(results[0]["outcome"], "placed", "{results:?}");
+    assert_eq!(
+        results[1]["outcome"], "joined",
+        "a request that selects the supported outcome runs; only `failed` is one the kernel \
+         does not run (story:outcome-scoped-refusal): {:?}",
+        results[1]
     );
 }

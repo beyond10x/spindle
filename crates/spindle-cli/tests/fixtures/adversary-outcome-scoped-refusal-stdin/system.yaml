@@ -1,0 +1,23 @@
+format: ess/34
+system: yard
+version: v1
+summary: Crates packed, sealed and weighed in one process, where some outcomes are ones this runtime does not run.
+domains:
+  - yard.crate
+components:
+  - component: yard
+    summary: Packs, seals and weighs crates for the process that runs it.
+    owns:
+      domains:
+        - yard.crate
+    accepts:
+      commands:
+        - yard.crate.PackCrate
+        - yard.crate.SealCrate
+        - yard.crate.WeighCrate
+    publishes:
+      events:
+        - yard.crate.CratePacked
+        - yard.crate.CrateSealed
+        - yard.crate.CrateWeighed
+    reached_by: in_process
