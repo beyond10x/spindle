@@ -17,6 +17,7 @@ mod adversary_responses;
 mod adversary_served_decisions;
 mod adversary_unserved;
 mod adversary_unserved_base;
+mod adversary_view_list_parameter;
 mod adversary_world;
 mod caller;
 mod conform;
