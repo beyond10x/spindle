@@ -10,6 +10,7 @@ mod adversary_delete;
 mod adversary_fixed_caller;
 mod adversary_form_query;
 mod adversary_ingress;
+mod adversary_outcome_scoped_refusal;
 mod adversary_processes;
 mod adversary_processes2;
 mod adversary_replay;
