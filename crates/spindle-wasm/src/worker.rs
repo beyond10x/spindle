@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use ess_compiler::EssIr;
 use ess_gen::http::Binding;
-use js_sys::{Promise, Uint8Array};
+use js_sys::{Promise, Reflect, Uint8Array};
 use serde_json::Value;
 use spindle_capability::{Capability, Environment};
 use spindle_host::{Answers, Host, Stores, SystemClock};
@@ -29,6 +29,8 @@ pub struct Spindle {
 
 struct Inner {
     surface: Surface,
+    /// The origin of the global scope the host runs in: the only one it answers.
+    origin: String,
     base: String,
     host: RefCell<Host>,
     /// Every IndexedDB store the host writes to, flushed before each answer.
@@ -47,20 +49,22 @@ impl Spindle {
     /// The configuration is not JSON of that shape; the specification does not compile; the
     /// environment does not parse or does not admit every component; the decisions file or the
     /// binding is refused; `ingress.network` is bound to something other than
-    /// [`SERVICE_WORKER`]; or a database cannot be opened. The error names which.
+    /// [`SERVICE_WORKER`]; a database cannot be opened; or the global scope has no
+    /// `location.origin`. The error names which.
     pub async fn open(config: String) -> Result<Spindle, JsError> {
         opened(&config).await.map_err(|why| JsError::new(&why))
     }
 
-    /// Whether this host answers `request`: its path, under the configured base, is a route of
-    /// the specification or a console route, under any method. A Service Worker leaves every
-    /// other request to the network.
-    pub fn serves(&self, request: &Request) -> bool {
-        let Some((path, _)) = self.inner.target(&request.url()) else {
+    /// Whether this host answers a request for `url` with `method`: `url` is of the origin the
+    /// host runs in, and its path, under the configured base, is a route of the specification or
+    /// a console route, under any method. The Service Worker shell asks this of every fetch and
+    /// leaves every other request to the network.
+    pub fn serves(&self, url: &str, method: &str) -> bool {
+        let Some((path, _)) = self.inner.target(url) else {
             return false;
         };
         !matches!(
-            self.inner.surface.resolve(&request.method(), &path),
+            self.inner.surface.resolve(method, &path),
             Resolved::NotFound
         )
     }
@@ -84,9 +88,13 @@ impl Spindle {
 }
 
 impl Inner {
-    /// The path, under the base, and the query of `url`; `None` for a URL outside the base.
+    /// The path, under the base, and the query of `url`; `None` for a URL of another origin or
+    /// outside the base.
     fn target(&self, url: &str) -> Option<(String, String)> {
         let url = Url::new(url).ok()?;
+        if url.origin() != self.origin {
+            return None;
+        }
         let path = url.pathname();
         let under = path.strip_prefix(self.base.trim_end_matches('/'))?;
         let path = if under.starts_with('/') {
@@ -137,11 +145,17 @@ impl Inner {
     }
 }
 
+/// The statuses the Fetch standard gives a null body: a `Response` built with one and a body is
+/// refused (`TypeError`), so the fetch it answers would reject.
+const NULL_BODY: [u16; 5] = [101, 103, 204, 205, 304];
+
 /// `response` as a `Response`: its status, its body as [`spindle_ingress::CONTENT_TYPE`] where
-/// it has one, and `Allow` where it carries it.
+/// it has one and the status may carry one ([`NULL_BODY`]), and `Allow` where it carries it.
 fn respond(response: &spindle_ingress::Response) -> Result<Response, JsValue> {
     let headers = Headers::new()?;
-    if !response.body.is_empty() {
+    let body = (!response.body.is_empty() && !NULL_BODY.contains(&response.status))
+        .then_some(response.body.as_str());
+    if body.is_some() {
         headers.set("content-type", spindle_ingress::CONTENT_TYPE)?;
     }
     if let Some(allow) = &response.allow {
@@ -150,7 +164,6 @@ fn respond(response: &spindle_ingress::Response) -> Result<Response, JsValue> {
     let init = ResponseInit::new();
     init.set_status(response.status);
     init.set_headers(&headers);
-    let body = (!response.body.is_empty()).then_some(response.body.as_str());
     Response::new_with_opt_str_and_init(body, &init)
 }
 
@@ -209,15 +222,23 @@ async fn opened(config: &str) -> Result<Spindle, String> {
         .map_err(|refused| format!("the routes: {refused}"))?;
     let host = Host::supplied(ir, &environment, Arc::new(SystemClock), decider, stores)
         .map_err(|error| error.to_string())?;
+    let origin = origin().ok_or("the global scope has no location.origin")?;
     Ok(Spindle {
         inner: Rc::new(Inner {
             surface,
+            origin,
             base: config.base,
             host: RefCell::new(host),
             stores: browser,
             tail: RefCell::new(Promise::resolve(&JsValue::UNDEFINED)),
         }),
     })
+}
+
+/// The origin of the global scope (`self.location.origin`, a Service Worker's or a page's).
+fn origin() -> Option<String> {
+    let location = Reflect::get(&js_sys::global(), &"location".into()).ok()?;
+    Reflect::get(&location, &"origin".into()).ok()?.as_string()
 }
 
 /// An `ess-http/1` binding's text, YAML or JSON, compiled by ESS against `ir`.

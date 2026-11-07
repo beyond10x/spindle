@@ -1,9 +1,10 @@
 /// <reference lib="webworker" />
 
 // The Service Worker: opens the wasm host once, with the specification, environment and
-// decisions file `spindle.json` carries, and answers every request whose path is one of the
-// specification's routes or a console route. Every other request goes to the network as it would
-// without a worker.
+// decisions file `spindle.json` carries, and answers every request the host says it serves
+// (`Spindle.serves`: the worker's own origin, a route of the specification or a console route).
+// Every other request goes to the network as it would without a worker. This file decides
+// nothing itself: it only hands requests to the host and its answers to `respondWith`.
 
 import init, { Spindle } from './wasm/spindle_wasm.js';
 import wasmUrl from './wasm/spindle_wasm_bg.wasm?url';
@@ -20,6 +21,8 @@ interface Bundle {
 let opened: Spindle | undefined;
 let opening: Promise<Spindle> | undefined;
 
+// The host, opened on the first call; an open that fails is forgotten, so the next call tries
+// again rather than answering every later request with the same failure.
 function spindle(): Promise<Spindle> {
   opening ??= (async () => {
     await init({ module_or_path: wasmUrl });
@@ -33,7 +36,10 @@ function spindle(): Promise<Spindle> {
       JSON.stringify({ ...bundle, database: `spindle:${scope.pathname}`, base: scope.pathname }),
     );
     return opened;
-  })();
+  })().catch((error: unknown) => {
+    opening = undefined;
+    throw error;
+  });
   return opening;
 }
 
@@ -51,16 +57,19 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const request = event.request;
-  if (new URL(request.url).origin !== self.location.origin) {
-    return;
+  if (opened === undefined) {
+    // A restarted worker has not opened the host yet: the host decides once it is open, and a
+    // request it does not serve, or one that arrives while the open fails, goes to the network.
+    event.respondWith(
+      spindle().then(
+        (host) => (host.serves(request.url, request.method) ? answer(host, request) : fetch(request)),
+        (error: unknown) => {
+          console.error('the Spindle host did not open', error);
+          return fetch(request);
+        },
+      ),
+    );
+  } else if (opened.serves(request.url, request.method)) {
+    event.respondWith(answer(opened, request));
   }
-  if (opened !== undefined) {
-    if (opened.serves(request)) {
-      event.respondWith(answer(opened, request));
-    }
-    return;
-  }
-  event.respondWith(
-    spindle().then((host) => (host.serves(request) ? answer(host, request) : fetch(request))),
-  );
 });

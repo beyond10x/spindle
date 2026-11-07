@@ -15,8 +15,12 @@
 //! A component reached over the network must have `ingress.network` bound to [`SERVICE_WORKER`].
 //! The console routes (`GET /api/model`, `GET /api/events`, `POST /api/reset`) are served beside
 //! the specification's routes, as on a loopback listener: a Service Worker is reached only by the
-//! pages of its own origin, which is the reach the loopback address gives the listener. A reset
-//! that carries a world is refused; a reset without one empties every store.
+//! pages of its own origin, which is the reach the loopback address gives the listener. A URL of
+//! another origin is never answered: `Spindle::serves` says no and `Spindle::fetch` answers it
+//! `404`. A reset that carries a world is refused; a reset without one empties every store.
+//!
+//! A status the Fetch standard gives a null body (`204`, `205`, `304`) is answered without one,
+//! whatever the router wrote: the browser refuses to build such a `Response` with a body.
 //!
 //! A Service Worker is one instance per origin and scope, so this crate holds one `BrowserStore`
 //! handle per database, as `spindle-store-browser` requires: two hosts open on the same

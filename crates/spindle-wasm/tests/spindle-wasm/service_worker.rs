@@ -183,7 +183,7 @@ async fn a_fetch_to_a_bound_route_is_answered_in_the_browser() {
     for exchange in &recorded {
         let asked = request(&exchange.method, &exchange.target, None, "");
         assert_eq!(
-            spindle.serves(&asked),
+            spindle.serves(&asked.url(), &asked.method()),
             exchange.status != 404,
             "{} {}: the Service Worker answers a request the surface routes and leaves the rest \
              to the network",
@@ -247,5 +247,35 @@ async fn an_external_outcome_is_answered_from_the_decisions_file() {
     assert!(
         refused.contains("escalated"),
         "the refusal names the unanswered outcome: {refused}"
+    );
+}
+
+#[wasm_bindgen_test]
+async fn the_worker_answers_its_own_origins_routes_and_nothing_else() {
+    let spindle = open(&fresh("reach"), crate::DECISIONS).await;
+    let own = |target: &str| request("GET", target, None, "").url();
+
+    assert!(
+        spindle.serves(&own("/review/views/Submissions"), "GET"),
+        "a bound route of the worker's own origin is answered"
+    );
+    assert!(
+        spindle.serves(&own("/api/model"), "GET"),
+        "a console route of the worker's own origin is answered"
+    );
+    assert!(
+        !spindle.serves(&own("/elsewhere/index.html"), "GET"),
+        "a path outside the routes goes to the network"
+    );
+    let foreign = "https://foreign.invalid/review/views/Submissions";
+    assert!(
+        !spindle.serves(foreign, "GET"),
+        "a URL of another origin goes to the network, whatever its path"
+    );
+
+    let (status, _, refused) = answer(&spindle, request("GET", foreign, None, "")).await;
+    assert_eq!(
+        status, 404,
+        "a URL of another origin is not routed even when asked directly: {refused}"
     );
 }
