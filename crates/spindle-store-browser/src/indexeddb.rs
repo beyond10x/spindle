@@ -152,8 +152,9 @@ impl BrowserStore {
             shared.healthy()?;
             shared.database.clone()
         };
-        read_all(&database, EVENTS)
-            .await?
+        let texts = read_all(&database, EVENTS).await?;
+        self.shared.borrow().healthy()?;
+        texts
             .iter()
             .map(|text| {
                 parse::<Recorded>(text, "an event").map(|recorded| Event {
@@ -167,7 +168,12 @@ impl BrowserStore {
 
 /// The database a handle of this global scope holds open under `name`.
 fn held(name: &str) -> Option<Rc<RefCell<Shared>>> {
-    OPEN.with(|open| open.borrow().get(name).and_then(Weak::upgrade))
+    OPEN.with(|open| {
+        open.borrow()
+            .get(name)
+            .and_then(Weak::upgrade)
+            .filter(|shared| shared.borrow().healthy().is_ok())
+    })
 }
 
 impl Shared {
