@@ -6,8 +6,20 @@ import type { Plugin, Rolldown } from 'vite';
 type OutputAsset = Rolldown.OutputAsset;
 type OutputChunk = Rolldown.OutputChunk;
 
-/** `</script` inside the inlined script would end its element early. */
-const scriptText = (code: string): string => code.replace(/<\/(script)/gi, '<\\/$1');
+/**
+ * What the HTML tokenizer's script data states read inside the inlined script: `</script` ends the
+ * element, and `<!--` followed by `<script` hides the next `</script` from it. The script is a
+ * module, where `<!--` is no comment and `<script` is no code, so both occur only inside a string,
+ * a template, a regular expression or a comment. There `<` is written `\x3C`, which each of those
+ * reads as the same character (a comment does not read it at all). After an odd run of backslashes
+ * the `<` is already escaped, and only `x3C` is put in its place.
+ */
+const scriptText = (code: string): string =>
+  code
+    .replace(/<\/(script)/gi, '<\\/$1')
+    .replace(/(\\*)<(?=!--|script)/gi, (_run, slashes: string) =>
+      slashes.length % 2 === 1 ? `${slashes}x3C` : `${slashes}\\x3C`,
+    );
 
 /** `</style` inside the inlined stylesheet would end its element early. */
 const styleText = (code: string): string => code.replace(/<\/(style)/gi, '<\\/$1');

@@ -15,16 +15,23 @@ const notServedOnly = ref(false);
 const error = ref<string | null>(null);
 let polling: ReturnType<typeof setInterval> | undefined;
 
+let asked = 0;
+
+/** Only the answer of the newest call is kept; an older one, however late, is dropped. */
 async function load() {
+  const mine = ++asked;
   try {
     const response = await fetcher(requestsUrl(notServedOnly.value), {
       headers: { accept: 'application/json' },
       cache: 'no-store',
     });
     if (!response.ok) throw new Error(`the request log answered ${response.status}`);
-    log.value = (await response.json()) as RequestLog;
+    const answer = (await response.json()) as RequestLog;
+    if (mine !== asked) return;
+    log.value = answer;
     error.value = null;
   } catch (cause) {
+    if (mine !== asked) return;
     error.value = cause instanceof Error ? cause.message : String(cause);
   }
 }
