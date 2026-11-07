@@ -1,0 +1,83 @@
+[
+  {
+    "method": "POST",
+    "target": "/review/commands/Submit",
+    "content_type": "application/json",
+    "body": "{\"submission_id\": \"s1\", \"amount\": 12}",
+    "status": 202,
+    "allow": null,
+    "answer": "{\"outcome\":\"submitted\",\"published\":[{\"event\":\"probe.review.Submitted\",\"payload\":{\"submission_id\":\"s1\"}}]}"
+  },
+  {
+    "method": "POST",
+    "target": "/review/commands/Submit",
+    "content_type": "application/json",
+    "body": "{\"submission_id\": \"s1\", \"amount\": 13}",
+    "status": 501,
+    "allow": null,
+    "answer": "{\"committed\":false,\"refused\":\"probe.review.Submit: a `probe.review.Submission` already has the identity \\\"s1\\\", and `creates:` never replaces an instance\"}"
+  },
+  {
+    "method": "POST",
+    "target": "/review/commands/Decide",
+    "content_type": "application/json",
+    "body": "{\"decision_id\": \"d1\", \"approve\": true}",
+    "status": 502,
+    "allow": null,
+    "answer": "{\"error\":\"probe.review.Vetoed\",\"outcome\":\"vetoed\",\"published\":[]}"
+  },
+  {
+    "method": "GET",
+    "target": "/review/views/Submissions",
+    "content_type": null,
+    "body": "",
+    "status": 200,
+    "allow": null,
+    "answer": "{\"rows\":[{\"amount\":12,\"submission_id\":\"s1\"}]}"
+  },
+  {
+    "method": "GET",
+    "target": "/api/events",
+    "content_type": null,
+    "body": "",
+    "status": 200,
+    "allow": null,
+    "answer": "{\"events\":[{\"command\":\"probe.review.Submit\",\"component\":\"probe\",\"event\":\"probe.review.Submitted\",\"payload\":{\"submission_id\":\"s1\"}}]}"
+  },
+  {
+    "method": "GET",
+    "target": "/review/commands/Submit",
+    "content_type": null,
+    "body": "",
+    "status": 405,
+    "allow": "POST",
+    "answer": "{\"refused\":\"this path answers POST\"}"
+  },
+  {
+    "method": "GET",
+    "target": "/review/no/such/route",
+    "content_type": null,
+    "body": "",
+    "status": 404,
+    "allow": null,
+    "answer": "{\"refused\":\"no route serves /review/no/such/route\"}"
+  },
+  {
+    "method": "POST",
+    "target": "/api/reset",
+    "content_type": "application/json",
+    "body": "",
+    "status": 200,
+    "allow": null,
+    "answer": "{\"emptied\":[\"probe\"]}"
+  },
+  {
+    "method": "GET",
+    "target": "/review/views/Submissions",
+    "content_type": null,
+    "body": "",
+    "status": 200,
+    "allow": null,
+    "answer": "{\"rows\":[]}"
+  }
+]

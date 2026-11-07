@@ -121,9 +121,16 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "Browser store",
-        "spindle-store-browser keeps instances in the browser's IndexedDB (store.durable bound to indexeddb in examples/environments/browser.toml): it passes the store contract the memory and SQLite stores pass, and a command's effect is read back after the database is reopened. The host does not open it yet.",
+        "spindle-store-browser keeps instances in the browser's IndexedDB (store.durable bound to indexeddb in examples/environments/browser.toml): it passes the store contract the memory and SQLite stores pass, and a command's effect is read back after the database is reopened. The Service Worker host opens one per component whose state is bound to indexeddb.",
         "/docs/concepts/environment-and-admission",
         "crates/spindle-store-browser/tests/spindle-store-browser/reload.rs::state_survives_a_reload",
+    ),
+    shipped(
+        "Execution",
+        "Service Worker host",
+        "spindle-wasm compiles a specification in the browser, admits it on a browser environment (ingress.network bound to service-worker) and answers its routes and the console routes from a Service Worker through the same router the loopback listener calls, state in IndexedDB and external outcomes answered from a decisions file; web/ is the Vue shell that registers the worker.",
+        "/docs/concepts/environment-and-admission",
+        "crates/spindle-wasm/tests/spindle-wasm/service_worker.rs::a_fetch_to_a_bound_route_is_answered_in_the_browser",
     ),
     shipped(
         "Bindings",

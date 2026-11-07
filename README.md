@@ -100,11 +100,13 @@ prefix; an exact key wins over it.
 - `crates/spindle-telemetry` — counters and histograms per instance, their catalogue derived from the specification, and the sender that reports them as `spindle-telemetry/1` frames over a Unix socket or vsock.
 - `crates/spindle-host` — runs every component of a system in one process.
 - `crates/spindle-store-browser` — the store on the browser's IndexedDB, for a run in a page or a Service Worker.
+- `crates/spindle-wasm` — the wasm-bindgen entry a Service Worker opens: a specification compiled in the browser, its routes and the console routes answered by the same router the loopback listener calls, state in IndexedDB, external outcomes from a decisions file.
 - `crates/spindle-conformance` — runs an ESS conformance suite against every component in one process.
 - `crates/spindle-control` — the control process `deploy` runs: launch, collect, and the observe API and UI on 127.0.0.1.
 - `crates/spindle-cli` — the `b10x-spindle` binary.
 - `crates/spindle-docs` — generates the site's CLI reference and status page.
 - `examples/` — environments and the `rally` example system.
+- `web/` — the static site: a Vue shell that registers the Service Worker (`task web` builds `web/dist`).
 - `website/` — the documentation site (Docusaurus).
 - `docs/design/spindle.md` — the design.
 

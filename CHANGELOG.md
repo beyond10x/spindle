@@ -6,6 +6,21 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- A Service Worker serves a specification: `spindle-wasm` compiles it in the browser, admits it on
+  a browser environment and answers its routes and the console routes (`GET /api/model`,
+  `GET /api/events`, `POST /api/reset`) through the router the loopback listener calls, so the
+  answers are the listener's and no request leaves the browser. A component whose state is bound
+  to `indexeddb` keeps it in a `BrowserStore` of its own, every write landed before the answer;
+  external outcomes are answered from a decisions file. `examples/environments/browser.toml` binds
+  `ingress.network` to `service-worker` and `external.*` to `decisions-file`. `web/` is the static
+  site, a Vue shell that registers the worker; `task web` builds it, and `task check` builds it
+  and runs the Service Worker in a headless browser.
+- `Host::supplied` opens a host on stores it is given, by component, for state bound to an
+  implementation the host has no store of its own for; a reset removes every instance they hold.
+  The decisions file is read by `spindle_host::Answers`, which `run` now uses too.
+
 ## [0.4.0] - 2026-11-07
 
 ### Added

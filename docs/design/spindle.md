@@ -400,6 +400,7 @@ Open:
 | arithmetic beyond `increment:` | none in M0; the `rally` example is written on an integer grid with `increment: 1` / `-1` |
 | AppSpec above ESS | deferred: the measured gaps are below ESS, not above |
 | how an HTTP caller proves its actor and attributes (authentication) | undecided; a command that reads its caller answers `501` unless the test-backend switch fixes one caller for the run |
+| whether a Service Worker serves the console routes (`ingress.network` bound to `service-worker`, `spindle-wasm`) | served, as on `http-loopback`: a Service Worker is reached only by the pages of its own origin, the reach the loopback address gives the listener; a reset that carries a world is refused there, and a reset removes every instance of each IndexedDB store rather than replacing it |
 | substrate gaps (ingress, workload/endpoint, Firecracker) | M0–M2 run as host processes; microVMs once substrate's Firecracker driver exists or with a local Firecracker launcher |
 
 ## 12. Milestones (simplest path first)
