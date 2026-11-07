@@ -1,0 +1,202 @@
+domain: vault.locker
+summary: Lockers opened by one of five commands and closed by one, each answered with its own bare body.
+types:
+  - name: vault.locker.LockerId
+    kind: newtype
+    of: String
+  - name: vault.locker.Ticket
+    kind: struct
+    fields:
+      - name: ticket_code
+        type: String
+        naming: {wire: ticketCode}
+      - name: row
+        type: Integer
+  - name: vault.locker.Fee
+    kind: struct
+    fields:
+      - name: cents
+        type: Integer
+    invariants:
+      - cents >= 0
+entities:
+  - name: vault.locker.Locker
+    identity:
+      name: locker_id
+      type: vault.locker.LockerId
+    fields:
+      - name: label
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open, Closed]
+      terminal: [Closed]
+      transitions:
+        - name: close
+          from: [Open]
+          to: Closed
+errors:
+  - name: vault.locker.LockerNotFound
+    summary: No locker carries the id.
+    fields: []
+  - name: vault.locker.AlreadyClosed
+    summary: The locker is already closed.
+    fields: []
+commands:
+  - name: vault.locker.OpenLocker
+    input:
+      - name: locker_id
+        type: vault.locker.LockerId
+      - name: label
+        type: String
+    response:
+      - name: receipt_code
+        type: String
+        naming: {wire: receiptCode}
+      - name: slot
+        type: Integer
+    outcomes:
+      - name: opened
+        creates: vault.locker.Locker
+        instance: locker_id
+        sets:
+          label: input.label
+        emits: [vault.locker.LockerOpened]
+        payload:
+          vault.locker.LockerOpened: {locker_id: input.locker_id}
+        returns: true
+        summary: The locker is opened; the binding answers the whole response, one field renamed on the wire.
+  - name: vault.locker.RentLocker
+    input:
+      - name: locker_id
+        type: vault.locker.LockerId
+      - name: label
+        type: String
+    response:
+      - name: receipt_code
+        type: String
+        naming: {wire: receiptCode}
+      - name: slot
+        type: Integer
+    outcomes:
+      - name: rented
+        creates: vault.locker.Locker
+        instance: locker_id
+        sets:
+          label: input.label
+        emits: [vault.locker.LockerOpened]
+        payload:
+          vault.locker.LockerOpened: {locker_id: input.locker_id}
+        returns: true
+        summary: The locker is opened; the binding answers the renamed field alone.
+  - name: vault.locker.TicketLocker
+    input:
+      - name: locker_id
+        type: vault.locker.LockerId
+      - name: label
+        type: String
+    response:
+      - name: ticket
+        type: vault.locker.Ticket
+    outcomes:
+      - name: ticketed
+        creates: vault.locker.Locker
+        instance: locker_id
+        sets:
+          label: input.label
+        emits: [vault.locker.LockerOpened]
+        payload:
+          vault.locker.LockerOpened: {locker_id: input.locker_id}
+        returns: true
+        summary: The locker is opened; the binding answers a struct field whose member is renamed on the wire.
+  - name: vault.locker.NumberLocker
+    input:
+      - name: locker_id
+        type: vault.locker.LockerId
+      - name: label
+        type: String
+    response:
+      - name: slot
+        type: Integer
+    outcomes:
+      - name: numbered
+        creates: vault.locker.Locker
+        instance: locker_id
+        sets:
+          label: input.label
+        emits: [vault.locker.LockerOpened]
+        payload:
+          vault.locker.LockerOpened: {locker_id: input.locker_id}
+        returns: true
+        summary: The locker is opened; the binding answers an integer field alone.
+  - name: vault.locker.CloseLocker
+    input:
+      - name: locker_id
+        type: vault.locker.LockerId
+    outcomes:
+      - name: no-such-locker
+        unknown_instance: true
+        error: vault.locker.LockerNotFound
+        summary: No locker carries the id.
+      - name: already-closed
+        when_subject: {predicate: state == Closed}
+        error: vault.locker.AlreadyClosed
+        summary: A closed locker stays closed.
+      - name: closed
+        moves: vault.locker.Locker.close
+        instance: locker_id
+        emits: [vault.locker.LockerClosed]
+        payload:
+          vault.locker.LockerClosed: {locker_id: input.locker_id}
+        summary: The locker is closed.
+  - name: vault.locker.PriceLocker
+    input:
+      - name: locker_id
+        type: vault.locker.LockerId
+      - name: label
+        type: String
+      - name: price
+        type: Boolean
+    response:
+      - name: fee
+        type: vault.locker.Fee
+    outcomes:
+      - name: priced
+        when: price == true
+        creates: vault.locker.Locker
+        instance: locker_id
+        sets:
+          label: input.label
+        emits: [vault.locker.LockerOpened]
+        payload:
+          vault.locker.LockerOpened: {locker_id: input.locker_id}
+        returns: true
+        summary: The locker is opened and priced; its fee is a struct with an invariant the runtime does not mint.
+      - name: noted
+        creates: vault.locker.Locker
+        instance: locker_id
+        sets:
+          label: input.label
+        emits: [vault.locker.LockerOpened]
+        payload:
+          vault.locker.LockerOpened: {locker_id: input.locker_id}
+        summary: The locker is opened unpriced.
+events:
+  - name: vault.locker.LockerOpened
+    fields:
+      - name: locker_id
+        type: vault.locker.LockerId
+  - name: vault.locker.LockerClosed
+    fields:
+      - name: locker_id
+        type: vault.locker.LockerId
+views:
+  - name: vault.locker.OpenLockers
+    source: vault.locker.Locker
+    consistency: read_your_writes
+    filter: state == Open
+    fields:
+      - name: locker_id
+        type: vault.locker.LockerId
+      - name: label
+        type: String

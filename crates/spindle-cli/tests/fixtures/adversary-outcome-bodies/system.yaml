@@ -1,0 +1,25 @@
+format: ess/34
+system: vault
+version: v1
+summary: Lockers opened, rented and closed over the network, each command answered with the bare body its HTTP binding declares.
+domains:
+  - vault.locker
+components:
+  - component: vault
+    summary: Keeps lockers for callers outside the process.
+    owns:
+      domains:
+        - vault.locker
+    accepts:
+      commands:
+        - vault.locker.OpenLocker
+        - vault.locker.RentLocker
+        - vault.locker.TicketLocker
+        - vault.locker.NumberLocker
+        - vault.locker.CloseLocker
+        - vault.locker.PriceLocker
+    publishes:
+      events:
+        - vault.locker.LockerOpened
+        - vault.locker.LockerClosed
+    reached_by: network

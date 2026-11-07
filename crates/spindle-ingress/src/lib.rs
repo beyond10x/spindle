@@ -45,6 +45,7 @@ pub mod console;
 mod listener;
 mod router;
 mod surface;
+mod wire;
 
 pub use answer::{Answer, answer, answered};
 pub use console::Console;
