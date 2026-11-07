@@ -131,6 +131,35 @@ describe('the_ingress_answers_match_the_api', () => {
     ]);
   });
 
+  // The class follows who answered: a declared outcome is `served` whatever status its binding
+  // gives it. The fixture binds `closed` to 501 and `already-done` to 503.
+  test('a declared outcome bound to a 5xx status is served', () => {
+    const log = raw('requests', 'declared-5xx.json') as RequestLog;
+    const fivexx = log.requests.filter((r) => r.status >= 500);
+    expect(fivexx.map((r) => r.status).sort()).toEqual([501, 503]);
+    for (const record of fivexx) {
+      expect(record.outcome, `#${record.sequence}`).toBeDefined();
+      expect(record.class, `#${record.sequence}`).toBe('served');
+      expect(record.reason, `#${record.sequence}`).toBeUndefined();
+    }
+    expect(log.totals.not_served + log.totals.failed).toBe(0);
+  });
+
+  test('a request log or topology of another format is refused', () => {
+    const log = structuredClone(raw('requests', 'scripted.json')) as Record<string, unknown>;
+    expect(conform({ ...log, format: 'spindle-requests/2' }, requestLogShape)).toEqual([
+      '$.format: "spindle-requests/2" is not one of spindle-requests/1',
+    ]);
+    const topology = structuredClone(raw('topology', 'tasks.json')) as Topology;
+    expect(conform({ ...topology, format: 'spindle-topology/2' }, topologyShape)).toEqual([
+      '$.format: "spindle-topology/2" is not one of spindle-topology/1',
+    ]);
+    (topology.edges[0]!.traffic!.statuses[0] as { status_class: string }).status_class = '6xx';
+    expect(conform(topology, topologyShape)).toEqual([
+      '$.edges[0].traffic.statuses[0].status_class: "6xx" is not one of 2xx, 3xx, 4xx, 5xx',
+    ]);
+  });
+
   test('the metric families fixture reads as MetricFamilies', () => {
     expect(conform(raw('metrics', 'families.json'), metricFamiliesShape)).toEqual([]);
     const { families } = raw('metrics', 'families.json') as MetricFamilies;

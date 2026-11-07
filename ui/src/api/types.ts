@@ -15,8 +15,10 @@ export {
   NodeKind,
   OperationKind,
   RequestClass,
+  RequestLogFormat,
   State,
   TargetKind,
+  TopologyFormat,
 } from './generated/types';
 
 export type {
@@ -42,6 +44,7 @@ export type {
   Resources,
   Sample,
   SourceCount,
+  StatusClass,
   StateChange,
   StatusCount,
   TargetId,

@@ -5,8 +5,8 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "source_digest": "6a4be08c7a65279ae08fc592c5295d97cd8f05986df01fee7d6d1254a311a433",
-    "contract_digest": "slice-sha256/2:04d053f4730c62a4e622ed7799989095ce2de4894615a1d08fec71897256cde6",
+    "source_digest": "70563d91ca383baeb86c944716b5ed0a7a852e1705431a1bae003de587369072",
+    "contract_digest": "slice-sha256/2:176513235ac28bda0b9e3caae787328289b4c4ed0939036a7840a1a19a1b40e4",
     "regenerate": "ess generate"
   },
   "$defs": {
@@ -62,7 +62,7 @@
     },
     "spindle.observe.RequestClass": {
       "title": "RequestClass",
-      "description": "How a served run answered one request. `served`: the model answered it, with any outcome the command declares, or the view's rows. `refused`: the ingress or ESS's standard refusal answered it `4xx` before the model did, other than `not-granted`. `not-granted`: `403` \"not granted\", no grant admits the actor. `not-served`: `501`, the operation is one this ingress cannot route, the kernel does not run or the host does not read, or an external cause nothing answered. `failed`: any other `5xx`. `unrouted`: no route has the path, or not under that method.",
+      "description": "How a served run answered one request; the class follows who answered, not the status. `served`: the model answered it, with an outcome the command declares or the view's rows, whatever status the binding gives that outcome, `501` and `503` included. `refused`: the ingress or ESS's standard refusal answered it `4xx` before the model did, other than `not-granted`. `not-granted`: `403` \"not granted\", no grant admits the actor. `not-served`: spindle's own `501`, for an operation this ingress cannot route, the kernel does not run or the host does not read, or for an external cause nothing answered. `failed`: a `5xx` spindle itself answered, other than that `501`. `unrouted`: no route has the path, or not under that method.",
       "x-ess-name": "spindle.observe.RequestClass",
       "x-ess-kind": "enum",
       "type": "string",

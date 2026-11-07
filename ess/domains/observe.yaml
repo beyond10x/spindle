@@ -250,13 +250,15 @@ types:
     kind: enum
     naming:
       summary: >-
-        How a served run answered one request. `served`: the model answered it, with any outcome
-        the command declares, or the view's rows. `refused`: the ingress or ESS's standard refusal
-        answered it `4xx` before the model did, other than `not-granted`. `not-granted`: `403`
-        "not granted", no grant admits the actor. `not-served`: `501`, the operation is one this
-        ingress cannot route, the kernel does not run or the host does not read, or an external
-        cause nothing answered. `failed`: any other `5xx`. `unrouted`: no route has the path, or
-        not under that method.
+        How a served run answered one request; the class follows who answered, not the status.
+        `served`: the model answered it, with an outcome the command declares or the view's rows,
+        whatever status the binding gives that outcome, `501` and `503` included. `refused`: the
+        ingress or ESS's standard refusal answered it `4xx` before the model did, other than
+        `not-granted`. `not-granted`: `403` "not granted", no grant admits the actor.
+        `not-served`: spindle's own `501`, for an operation this ingress cannot route, the kernel
+        does not run or the host does not read, or for an external cause nothing answered.
+        `failed`: a `5xx` spindle itself answered, other than that `501`. `unrouted`: no route
+        has the path, or not under that method.
     variants: [served, refused, not-granted, not-served, failed, unrouted]
 
   - name: spindle.observe.OperationKind
@@ -372,6 +374,14 @@ types:
       - failed >= 0
       - unrouted >= 0
 
+  - name: spindle.observe.RequestLogFormat
+    kind: enum
+    naming:
+      summary: >-
+        The format of a request log, `spindle-requests/1`; a reader refuses any other, and the
+        schema refuses any other value.
+    variants: [spindle-requests/1]
+
   - name: spindle.observe.RequestLog
     kind: struct
     naming:
@@ -381,11 +391,10 @@ types:
         given.
     fields:
       - name: format
-        type: String
-        summary: Always `spindle-requests/1`; a reader refuses any other.
+        type: spindle.observe.RequestLogFormat
       - name: capacity
         type: Integer
-        summary: How many requests the ring holds at most.
+        summary: How many requests the ring holds at most, from 1 to 10 000.
       - name: recorded
         type: Integer
         summary: Every request recorded since the run started, kept or dropped by the ring.
@@ -395,6 +404,7 @@ types:
         type: List<spindle.observe.RequestRecord>
     invariants:
       - capacity > 0
+      - capacity <= 10000
       - recorded >= 0
 
   - name: spindle.observe.MetricKind
@@ -457,9 +467,14 @@ types:
       - name: id
         type: String
         summary: >-
-          Unique in the answer: `ingress`, the specification's system identifier, or the
-          qualified name, prefixed by the kind and, for an external cause, the command and
-          outcome, such as `external:tasks.ledger.Settle/settled`.
+          Unique within one specification's topology: `ingress`; the specification's system
+          identifier; a domain, command, view or event by its qualified name prefixed by its
+          kind, such as `command:tasks.board.OpenTask`; an external cause by its command and
+          outcome, such as `external:tasks.ledger.Settle/settled`; a binding by its binding id,
+          not a qualified name, as `binding:<binding id>`, such as `binding:record-closure`. A
+          binding id is unique only within its specification; how ids stay unique across
+          several specifications behind one ingress is for
+          `story:one-ingress-several-specifications` to settle.
       - name: kind
         type: spindle.observe.NodeKind
       - name: name
@@ -469,14 +484,21 @@ types:
         type: Optional<String>
         summary: The system identifier of the specification it belongs to; absent for the ingress.
 
+  - name: spindle.observe.StatusClass
+    kind: enum
+    naming:
+      summary: >-
+        The class of an HTTP status by its first digit, as the `status_class` label of
+        `spindle_http_requests_total` writes it.
+    variants: [2xx, 3xx, 4xx, 5xx]
+
   - name: spindle.observe.StatusCount
     kind: struct
     naming:
       summary: How many requests of one status class an edge carried since the run started.
     fields:
       - name: status_class
-        type: String
-        summary: '`2xx`, `3xx`, `4xx` or `5xx`.'
+        type: spindle.observe.StatusClass
       - name: count
         type: Integer
     invariants:
@@ -537,6 +559,14 @@ types:
         type: Optional<spindle.observe.EdgeTraffic>
         summary: Absent for a `contains` edge, which carries nothing.
 
+  - name: spindle.observe.TopologyFormat
+    kind: enum
+    naming:
+      summary: >-
+        The format of a topology, `spindle-topology/1`; a reader refuses any other, and the
+        schema refuses any other value.
+    variants: [spindle-topology/1]
+
   - name: spindle.observe.Topology
     kind: struct
     naming:
@@ -545,8 +575,7 @@ types:
         serves, from the ingress down to the bindings, with the live numbers of each edge.
     fields:
       - name: format
-        type: String
-        summary: Always `spindle-topology/1`; a reader refuses any other.
+        type: spindle.observe.TopologyFormat
       - name: at
         type: Timestamp
         summary: When the live numbers were read.
