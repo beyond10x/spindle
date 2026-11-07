@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.MetricFamilies.schema.json",
+  "$ref": "#/$defs/spindle.observe.MetricFamilies",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "6a4be08c7a65279ae08fc592c5295d97cd8f05986df01fee7d6d1254a311a433",
+    "contract_digest": "slice-sha256/2:fdf2c6d5d02889b7d3d640d2325df8b0f94261eb0e4b439daf367e1248b88213",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.MetricFamilies": {
+      "title": "MetricFamilies",
+      "description": "Every metric family a served run exposes when it observes its ingress.",
+      "x-ess-name": "spindle.observe.MetricFamilies",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "families": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/spindle.observe.MetricFamily"
+          }
+        }
+      },
+      "required": [
+        "families"
+      ],
+      "additionalProperties": false
+    },
+    "spindle.observe.MetricFamily": {
+      "title": "MetricFamily",
+      "description": "One metric family `GET /__spindle/metrics` exposes in the Prometheus text format, by its name, type and label names. The exposition's `# HELP` line is `summary`.",
+      "x-ess-name": "spindle.observe.MetricFamily",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/spindle.observe.MetricKind"
+        },
+        "labels": {
+          "description": "The label names every sample of the family carries, in order.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "labels",
+        "summary"
+      ],
+      "additionalProperties": false
+    },
+    "spindle.observe.MetricKind": {
+      "title": "MetricKind",
+      "description": "The Prometheus type of a metric family.",
+      "x-ess-name": "spindle.observe.MetricKind",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "counter",
+        "gauge",
+        "histogram"
+      ]
+    }
+  }
+}

@@ -1,10 +1,23 @@
-// The answers of the observe API (docs/design/observe.md § 5), domain `spindle.observe`. The types
-// are generated from the specification into `./generated/` and drift-checked by `task check`;
-// every import of an API type goes through this file.
+// The answers of the observe API (docs/design/observe.md § 5) and of a served run's reserved routes
+// (§ 10), domain `spindle.observe`. The types are generated from the specification into
+// `./generated/` and drift-checked by `task check`; every import of an API type goes through this
+// file.
 
 import type { DeployedInstance } from './generated/types';
 
-export { BindingKind, CounterKind, CounterSource, State, TargetKind } from './generated/types';
+export {
+  AnswerSource,
+  BindingKind,
+  CounterKind,
+  CounterSource,
+  EdgeKind,
+  MetricKind,
+  NodeKind,
+  OperationKind,
+  RequestClass,
+  State,
+  TargetKind,
+} from './generated/types';
 
 export type {
   Binding,
@@ -14,15 +27,27 @@ export type {
   CounterValue,
   DeployedInstance,
   Deployment,
+  EdgeTraffic,
+  ExternalAnswer,
   Histogram,
   InstanceId,
+  MetricFamilies,
+  MetricFamily,
   Payload,
   RecentAnswer,
+  RequestLog,
+  RequestRecord,
+  RequestTotals,
   ResourceReading,
   Resources,
   Sample,
+  SourceCount,
   StateChange,
+  StatusCount,
   TargetId,
+  Topology,
+  TopologyEdge,
+  TopologyNode,
 } from './generated/types';
 
 /** One placed instance, as the deployment answer lists it. */

@@ -1,9 +1,17 @@
 // @vitest-environment node
 import { describe, expect, test } from 'vitest';
-import { catalogueShape, deploymentShape, sampleShape, stateChangeShape } from './shapes';
+import {
+  catalogueShape,
+  deploymentShape,
+  metricFamiliesShape,
+  requestLogShape,
+  sampleShape,
+  stateChangeShape,
+  topologyShape,
+} from './shapes';
 import { conform } from '../lib/conform';
 import { files, raw, root } from '../../dev/observe-fixtures';
-import type { Catalogue, Deployment, Sample } from './types';
+import type { Catalogue, Deployment, MetricFamilies, RequestLog, Sample, Topology } from './types';
 
 const instanceDirs = () => {
   const deployment = raw('deployment.json') as Deployment;
@@ -91,6 +99,62 @@ describe('the_ui_types_match_the_api', () => {
         (c) => c.value > (first.counters.find((f) => f.name === c.name)?.value ?? 0),
       );
       expect(rose.length, instance.instance_id).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('the_ingress_answers_match_the_api', () => {
+  test('a request log fixture reads as RequestLog', () => {
+    const logs = files('requests');
+    expect(logs.length).toBeGreaterThan(0);
+    for (const file of logs) {
+      expect(conform(raw(file), requestLogShape), file).toEqual([]);
+      const log = raw(file) as RequestLog;
+      expect(log.format, file).toBe('spindle-requests/1');
+      expect(log.requests.length, file).toBeLessThanOrEqual(log.capacity);
+      const { served, refused, not_granted, not_served, failed, unrouted } = log.totals;
+      expect(served + refused + not_granted + not_served + failed + unrouted, file).toBe(log.recorded);
+      const sequences = log.requests.map((r) => r.sequence);
+      expect(sequences, file).toEqual([...sequences].sort((a, b) => b - a));
+      for (const record of log.requests) {
+        expect(record.reason === undefined, `${file} #${record.sequence}`).toBe(record.class === 'served');
+        expect(record.route === undefined, `${file} #${record.sequence}`).toBe(record.class === 'unrouted');
+      }
+    }
+  });
+
+  test('a request with a class the type does not declare is refused', () => {
+    const log = structuredClone(raw('requests', 'scripted.json')) as RequestLog;
+    (log.requests[0] as { class: string }).class = 'lost';
+    expect(conform(log, requestLogShape)).toEqual([
+      '$.requests[0].class: "lost" is not one of failed, not-granted, not-served, refused, served, unrouted',
+    ]);
+  });
+
+  test('the metric families fixture reads as MetricFamilies', () => {
+    expect(conform(raw('metrics', 'families.json'), metricFamiliesShape)).toEqual([]);
+    const { families } = raw('metrics', 'families.json') as MetricFamilies;
+    const names = families.map((f) => f.name);
+    expect(new Set(names).size).toBe(names.length);
+    for (const name of names) expect(name).toMatch(/^spindle_[a-z_]+$/);
+  });
+
+  test('a topology fixture reads as Topology', () => {
+    const graphs = files('topology');
+    expect(graphs.length).toBeGreaterThan(0);
+    for (const file of graphs) {
+      expect(conform(raw(file), topologyShape), file).toEqual([]);
+      const topology = raw(file) as Topology;
+      expect(topology.format, file).toBe('spindle-topology/1');
+      const ids = topology.nodes.map((n) => n.id);
+      expect(new Set(ids).size, file).toBe(ids.length);
+      expect(topology.nodes.filter((n) => n.kind === 'ingress'), file).toHaveLength(1);
+      for (const edge of topology.edges) {
+        const name = `${file} ${edge.from} -${edge.kind}-> ${edge.to}`;
+        expect(ids, name).toContain(edge.from);
+        expect(ids, name).toContain(edge.to);
+        expect(edge.traffic === undefined, name).toBe(edge.kind === 'contains');
+      }
     }
   });
 });

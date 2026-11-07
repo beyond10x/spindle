@@ -1,0 +1,88 @@
+{
+  "families": [
+    {
+      "name": "spindle_http_requests_total",
+      "kind": "counter",
+      "labels": ["method", "route", "operation", "kind", "class", "status_class"],
+      "summary": "Requests the run answered outside /__spindle/, by method, route template, operation, kind, class and status class; an unrouted request has an empty route, operation and kind."
+    },
+    {
+      "name": "spindle_http_request_duration_seconds",
+      "kind": "histogram",
+      "labels": [],
+      "summary": "From a request's head read to its answer handed back, on the listener thread, for every request counted by spindle_http_requests_total."
+    },
+    {
+      "name": "spindle_commands_total",
+      "kind": "counter",
+      "labels": ["command", "outcome"],
+      "summary": "Commands executed, by the declared outcome the model selected."
+    },
+    {
+      "name": "spindle_command_failures_total",
+      "kind": "counter",
+      "labels": ["command", "failure"],
+      "summary": "Commands the kernel did not execute, by why."
+    },
+    {
+      "name": "spindle_command_duration_seconds",
+      "kind": "histogram",
+      "labels": ["command"],
+      "summary": "How long the kernel took to execute a command."
+    },
+    {
+      "name": "spindle_events_appended_total",
+      "kind": "counter",
+      "labels": ["event"],
+      "summary": "Events appended to a store."
+    },
+    {
+      "name": "spindle_bindings_total",
+      "kind": "counter",
+      "labels": ["component", "binding", "carried"],
+      "summary": "Envelopes of an event binding, by what happened to each: sent, delivered, redelivered or dropped, at the component that measured it."
+    },
+    {
+      "name": "spindle_binding_retries_total",
+      "kind": "counter",
+      "labels": ["binding", "retried"],
+      "summary": "Invocations of a retrying binding's command, attempted or exhausted."
+    },
+    {
+      "name": "spindle_timer_ticks_total",
+      "kind": "counter",
+      "labels": ["binding", "timed"],
+      "summary": "Ticks of a periodic binding, fired, late or dropped."
+    },
+    {
+      "name": "spindle_store_rows_written_total",
+      "kind": "counter",
+      "labels": ["component"],
+      "summary": "Rows a component's store wrote."
+    },
+    {
+      "name": "spindle_store_bytes_written_total",
+      "kind": "counter",
+      "labels": ["component"],
+      "summary": "Bytes a component's store wrote."
+    },
+    {
+      "name": "spindle_entity_rows",
+      "kind": "gauge",
+      "labels": ["entity"],
+      "summary": "Rows each entity holds now, read from its store when scraped; falls on a reset."
+    },
+    {
+      "name": "spindle_resets_total",
+      "kind": "counter",
+      "labels": [],
+      "summary": "Resets of the run's stores through POST /api/reset."
+    },
+    {
+      "name": "spindle_external_causes_total",
+      "kind": "counter",
+      "labels": ["command", "outcome", "source"],
+      "summary": "External causes a served command asked about, by what answered each: world, file, default or unanswered."
+    }
+  ]
+}

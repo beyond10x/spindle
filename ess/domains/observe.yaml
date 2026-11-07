@@ -3,8 +3,10 @@ domain: spindle.observe
 summary: >-
   What the control process answers about a running deployment: the components and bindings of the
   system, the instances with their target, request and state, the counters the runtime derives for
-  each component, and the samples each instance sends. Every noun here is an answer, read only; no
-  command changes it.
+  each component, and the samples each instance sends; and what a served run answers under its
+  reserved prefix `/__spindle/` when it observes its ingress: the requests it answered, how each
+  was classed, the metric families it exposes, and the topology of what it serves with live
+  numbers per edge. Every noun here is an answer, read only; no command changes it.
 
 naming:
   wire: observe
@@ -243,3 +245,315 @@ types:
         type: spindle.placement.Instance.State
       - name: at
         type: Timestamp
+
+  - name: spindle.observe.RequestClass
+    kind: enum
+    naming:
+      summary: >-
+        How a served run answered one request. `served`: the model answered it, with any outcome
+        the command declares, or the view's rows. `refused`: the ingress or ESS's standard refusal
+        answered it `4xx` before the model did, other than `not-granted`. `not-granted`: `403`
+        "not granted", no grant admits the actor. `not-served`: `501`, the operation is one this
+        ingress cannot route, the kernel does not run or the host does not read, or an external
+        cause nothing answered. `failed`: any other `5xx`. `unrouted`: no route has the path, or
+        not under that method.
+    variants: [served, refused, not-granted, not-served, failed, unrouted]
+
+  - name: spindle.observe.OperationKind
+    kind: enum
+    naming:
+      summary: What a routed request was for.
+    variants: [command, view, console]
+
+  - name: spindle.observe.AnswerSource
+    kind: enum
+    naming:
+      summary: >-
+        What answered one external cause of a served command. `world`: the decision table of the
+        last reset's world. `file`: the decisions file. `default`: the default branch
+        `--answer-default` takes. `unanswered`: nothing did, and the command answered `501`.
+    variants: [world, file, default, unanswered]
+
+  - name: spindle.observe.ExternalAnswer
+    kind: struct
+    naming:
+      summary: One external cause a served command asked about, and what answered it.
+    fields:
+      - name: outcome
+        type: String
+        summary: The outcome whose cause was asked about, as the command declares it.
+      - name: holds
+        type: Optional<Boolean>
+        summary: Whether the cause holds; absent when nothing answered it.
+      - name: source
+        type: spindle.observe.AnswerSource
+
+  - name: spindle.observe.RequestRecord
+    kind: struct
+    naming:
+      summary: >-
+        One request a served run answered, as `GET /__spindle/requests` lists it. Requests under
+        `/__spindle/` are not recorded.
+    fields:
+      - name: sequence
+        type: Integer
+        summary: Monotonic per run, starting at 0; a gap in a list is a request the ring dropped.
+      - name: at
+        type: Timestamp
+        summary: When the request's head was read.
+      - name: method
+        type: String
+        summary: The request's method, upper case.
+      - name: path
+        type: String
+        summary: The request's path, without the query string.
+      - name: route
+        type: Optional<String>
+        summary: The route template the path resolved to; absent for an unrouted request.
+      - name: operation
+        type: Optional<String>
+        summary: >-
+          The qualified command or view the route is bound to, or the console route as `GET
+          /api/model`; absent for an unrouted request.
+      - name: kind
+        type: Optional<spindle.observe.OperationKind>
+      - name: status
+        type: Integer
+        summary: The HTTP status answered.
+      - name: class
+        type: spindle.observe.RequestClass
+      - name: outcome
+        type: Optional<String>
+        summary: The outcome the model selected, for a command it answered.
+      - name: reason
+        type: Optional<String>
+        summary: >-
+          The `refused` text of the answer, as the caller received it, for every class but
+          `served`.
+      - name: duration_us
+        type: Integer
+        summary: From the request's head read to its answer handed back, in microseconds.
+      - name: events
+        type: List<String>
+        summary: The qualified names of the events the command published, in order.
+      - name: externals
+        type: List<spindle.observe.ExternalAnswer>
+        summary: The external causes the command asked about, in the order asked.
+    invariants:
+      - sequence >= 0
+      - status >= 100
+      - status <= 599
+      - duration_us >= 0
+
+  - name: spindle.observe.RequestTotals
+    kind: struct
+    naming:
+      summary: >-
+        The requests a served run answered since it started, per class; requests under
+        `/__spindle/` are not counted. Enough for a one-line banner.
+    fields:
+      - name: served
+        type: Integer
+      - name: refused
+        type: Integer
+      - name: not_granted
+        type: Integer
+      - name: not_served
+        type: Integer
+      - name: failed
+        type: Integer
+      - name: unrouted
+        type: Integer
+    invariants:
+      - served >= 0
+      - refused >= 0
+      - not_granted >= 0
+      - not_served >= 0
+      - failed >= 0
+      - unrouted >= 0
+
+  - name: spindle.observe.RequestLog
+    kind: struct
+    naming:
+      summary: >-
+        The answer of `GET /__spindle/requests`: the totals since the run started and the last
+        requests the ring holds, newest first, those of the classes `?class=` names where it is
+        given.
+    fields:
+      - name: format
+        type: String
+        summary: Always `spindle-requests/1`; a reader refuses any other.
+      - name: capacity
+        type: Integer
+        summary: How many requests the ring holds at most.
+      - name: recorded
+        type: Integer
+        summary: Every request recorded since the run started, kept or dropped by the ring.
+      - name: totals
+        type: spindle.observe.RequestTotals
+      - name: requests
+        type: List<spindle.observe.RequestRecord>
+    invariants:
+      - capacity > 0
+      - recorded >= 0
+
+  - name: spindle.observe.MetricKind
+    kind: enum
+    naming:
+      summary: The Prometheus type of a metric family.
+    variants: [counter, gauge, histogram]
+
+  - name: spindle.observe.MetricFamily
+    kind: struct
+    naming:
+      summary: >-
+        One metric family `GET /__spindle/metrics` exposes in the Prometheus text format, by its
+        name, type and label names. The exposition's `# HELP` line is `summary`.
+    fields:
+      - name: name
+        type: String
+      - name: kind
+        type: spindle.observe.MetricKind
+      - name: labels
+        type: List<String>
+        summary: The label names every sample of the family carries, in order.
+      - name: summary
+        type: String
+
+  - name: spindle.observe.MetricFamilies
+    kind: struct
+    naming:
+      summary: Every metric family a served run exposes when it observes its ingress.
+    fields:
+      - name: families
+        type: List<spindle.observe.MetricFamily>
+
+  - name: spindle.observe.NodeKind
+    kind: enum
+    naming:
+      summary: >-
+        What one node of the topology stands for. `ingress`: the run's router, one per listener.
+        `specification`: one loaded specification. `domain`: a domain of a specification.
+        `command`, `view`, `event`: one declared in a domain. `external`: one external cause of a
+        command's outcome. `binding`: one event or periodic binding, the channel an event travels.
+    variants: [ingress, specification, domain, command, view, event, external, binding]
+
+  - name: spindle.observe.EdgeKind
+    kind: enum
+    naming:
+      summary: >-
+        What one edge of the topology carries. `routes`: the ingress hands a request to a command
+        or view. `contains`: a specification holds a domain, a domain a command, view or event.
+        `asks`: a command asks an external cause. `emits`: a command's outcome emits an event.
+        `carries`: an event travels a binding. `invokes`: a binding invokes a command, also one of
+        another specification behind the same ingress.
+    variants: [routes, contains, asks, emits, carries, invokes]
+
+  - name: spindle.observe.TopologyNode
+    kind: struct
+    naming:
+      summary: One node of the topology, derived from the loaded specifications, never authored.
+    fields:
+      - name: id
+        type: String
+        summary: >-
+          Unique in the answer: `ingress`, the specification's system identifier, or the
+          qualified name, prefixed by the kind and, for an external cause, the command and
+          outcome, such as `external:tasks.ledger.Settle/settled`.
+      - name: kind
+        type: spindle.observe.NodeKind
+      - name: name
+        type: String
+        summary: The name as the specification writes it.
+      - name: specification
+        type: Optional<String>
+        summary: The system identifier of the specification it belongs to; absent for the ingress.
+
+  - name: spindle.observe.StatusCount
+    kind: struct
+    naming:
+      summary: How many requests of one status class an edge carried since the run started.
+    fields:
+      - name: status_class
+        type: String
+        summary: '`2xx`, `3xx`, `4xx` or `5xx`.'
+      - name: count
+        type: Integer
+    invariants:
+      - count >= 0
+
+  - name: spindle.observe.SourceCount
+    kind: struct
+    naming:
+      summary: How many times one source answered the external cause an `asks` edge leads to.
+    fields:
+      - name: source
+        type: spindle.observe.AnswerSource
+      - name: count
+        type: Integer
+    invariants:
+      - count >= 0
+
+  - name: spindle.observe.EdgeTraffic
+    kind: struct
+    naming:
+      summary: >-
+        The live numbers of one edge since the run started, read from the counters
+        `GET /__spindle/metrics` exposes and the ring `GET /__spindle/requests` holds.
+    fields:
+      - name: count
+        type: Integer
+        summary: >-
+          Requests a `routes` edge handed on, events an `emits` edge emitted, envelopes a
+          `carries` edge sent, commands an `invokes` edge invoked, questions an `asks` edge asked.
+      - name: statuses
+        type: List<spindle.observe.StatusCount>
+        summary: For a `routes` edge, the count per status class; empty for every other kind.
+      - name: sources
+        type: List<spindle.observe.SourceCount>
+        summary: For an `asks` edge, the count per answer source; empty for every other kind.
+      - name: latest
+        type: List<Integer>
+        summary: >-
+          For a `routes` edge, the sequences of its latest requests still in the ring, newest
+          first, at most 5; each names a record of `GET /__spindle/requests`.
+    invariants:
+      - count >= 0
+
+  - name: spindle.observe.TopologyEdge
+    kind: struct
+    naming:
+      summary: One edge of the topology, from one node to another, with its live numbers.
+    fields:
+      - name: from
+        type: String
+        summary: The `id` of the node it leaves.
+      - name: to
+        type: String
+        summary: The `id` of the node it reaches.
+      - name: kind
+        type: spindle.observe.EdgeKind
+      - name: traffic
+        type: Optional<spindle.observe.EdgeTraffic>
+        summary: Absent for a `contains` edge, which carries nothing.
+
+  - name: spindle.observe.Topology
+    kind: struct
+    naming:
+      summary: >-
+        The answer of `GET /__spindle/topology`: the graph of every specification the ingress
+        serves, from the ingress down to the bindings, with the live numbers of each edge.
+    fields:
+      - name: format
+        type: String
+        summary: Always `spindle-topology/1`; a reader refuses any other.
+      - name: at
+        type: Timestamp
+        summary: When the live numbers were read.
+      - name: specifications
+        type: List<String>
+        summary: The system identifiers of the specifications served, in the order loaded.
+      - name: nodes
+        type: List<spindle.observe.TopologyNode>
+      - name: edges
+        type: List<spindle.observe.TopologyEdge>

@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.RequestTotals.schema.json",
+  "$ref": "#/$defs/spindle.observe.RequestTotals",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "6a4be08c7a65279ae08fc592c5295d97cd8f05986df01fee7d6d1254a311a433",
+    "contract_digest": "slice-sha256/2:2a7a918f8c8b8bdee5a420b9c102e22549e5e9389c48bb409d83cb75604c8d4a",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.RequestTotals": {
+      "title": "RequestTotals",
+      "description": "The requests a served run answered since it started, per class; requests under `/__spindle/` are not counted. Enough for a one-line banner.",
+      "x-ess-name": "spindle.observe.RequestTotals",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "served": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "refused": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "not_granted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "not_served": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unrouted": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "served",
+        "refused",
+        "not_granted",
+        "not_served",
+        "failed",
+        "unrouted"
+      ],
+      "additionalProperties": false,
+      "x-ess-invariants": [
+        "served >= 0",
+        "refused >= 0",
+        "not_granted >= 0",
+        "not_served >= 0",
+        "failed >= 0",
+        "unrouted >= 0"
+      ]
+    }
+  }
+}
