@@ -1,0 +1,255 @@
+domain: yard.stack
+summary: Crates filed once with a tag, a label, a number, an amount, a seal, a colour and an instant.
+types:
+  - name: yard.stack.CrateId
+    kind: newtype
+    of: String
+    prefix: "C-"
+  - name: yard.stack.Colour
+    kind: enum
+    variants: [Red, Blue]
+  - name: yard.stack.Spot
+    kind: struct
+    fields:
+      - name: row
+        type: Integer
+      - name: column
+        type: Integer
+entities:
+  - name: yard.stack.Crate
+    identity:
+      name: crate_id
+      type: yard.stack.CrateId
+    fields:
+      - name: tag
+        type: String
+      - name: label
+        type: String
+      - name: number
+        type: Integer
+      - name: amount
+        type: Decimal
+      - name: sealed
+        type: Boolean
+      - name: colour
+        type: yard.stack.Colour
+      - name: packed_at
+        type: Timestamp
+    lifecycle:
+      initial: Filed
+      states: [Filed]
+      terminal: [Filed]
+commands:
+  - name: yard.stack.FileCrate
+    input:
+      - name: crate_id
+        type: yard.stack.CrateId
+      - name: tag
+        type: String
+      - name: label
+        type: String
+      - name: number
+        type: Integer
+      - name: amount
+        type: Decimal
+      - name: sealed
+        type: Boolean
+      - name: colour
+        type: yard.stack.Colour
+      - name: packed_at
+        type: Timestamp
+    outcomes:
+      - name: filed
+        creates: yard.stack.Crate
+        instance: crate_id
+        sets:
+          tag: input.tag
+          label: input.label
+          number: input.number
+          amount: input.amount
+          sealed: input.sealed
+          colour: input.colour
+          packed_at: input.packed_at
+        emits: [yard.stack.CrateFiled]
+        payload:
+          yard.stack.CrateFiled: {crate_id: input.crate_id}
+        summary: The crate is filed.
+events:
+  - name: yard.stack.CrateFiled
+    fields:
+      - name: crate_id
+        type: yard.stack.CrateId
+views:
+  - name: yard.stack.ByTags
+    source: yard.stack.Crate
+    consistency: read_your_writes
+    params:
+      - name: tags
+        type: List<String>
+    filter: {exists: {in: param.tags, as: wanted, that: tag == wanted}}
+    fields:
+      - name: crate_id
+        type: yard.stack.CrateId
+  - name: yard.stack.ByNumbers
+    source: yard.stack.Crate
+    consistency: read_your_writes
+    params:
+      - name: numbers
+        type: List<Integer>
+    filter: {exists: {in: param.numbers, as: wanted, that: number == wanted}}
+    fields:
+      - name: crate_id
+        type: yard.stack.CrateId
+  - name: yard.stack.ByIds
+    source: yard.stack.Crate
+    consistency: read_your_writes
+    params:
+      - name: ids
+        type: List<yard.stack.CrateId>
+    filter: {exists: {in: param.ids, as: wanted, that: crate_id == wanted}}
+    fields:
+      - name: crate_id
+        type: yard.stack.CrateId
+  - name: yard.stack.BySeal
+    source: yard.stack.Crate
+    consistency: read_your_writes
+    params:
+      - name: seals
+        type: List<Boolean>
+    filter: {exists: {in: param.seals, as: wanted, that: sealed == wanted}}
+    fields:
+      - name: crate_id
+        type: yard.stack.CrateId
+  - name: yard.stack.ByAmounts
+    source: yard.stack.Crate
+    consistency: read_your_writes
+    params:
+      - name: amounts
+        type: List<Decimal>
+    filter: {exists: {in: param.amounts, as: wanted, that: amount == wanted}}
+    fields:
+      - name: crate_id
+        type: yard.stack.CrateId
+  - name: yard.stack.ByColours
+    source: yard.stack.Crate
+    consistency: read_your_writes
+    params:
+      - name: colours
+        type: List<yard.stack.Colour>
+    filter: {exists: {in: param.colours, as: wanted, that: colour == wanted}}
+    fields:
+      - name: crate_id
+        type: yard.stack.CrateId
+  - name: yard.stack.PackedAtAny
+    source: yard.stack.Crate
+    consistency: read_your_writes
+    params:
+      - name: ats
+        type: List<Timestamp>
+    filter: {exists: {in: param.ats, as: wanted, that: packed_at == wanted}}
+    fields:
+      - name: crate_id
+        type: yard.stack.CrateId
+  - name: yard.stack.PackedAt
+    source: yard.stack.Crate
+    consistency: read_your_writes
+    params:
+      - name: at
+        type: Timestamp
+    filter: packed_at == param.at
+    fields:
+      - name: crate_id
+        type: yard.stack.CrateId
+  - name: yard.stack.Excluding
+    source: yard.stack.Crate
+    consistency: read_your_writes
+    params:
+      - name: tags
+        type: List<String>
+    filter: {forall: {in: param.tags, as: unwanted, that: tag != unwanted}}
+    fields:
+      - name: crate_id
+        type: yard.stack.CrateId
+  - name: yard.stack.MaybeExcluding
+    source: yard.stack.Crate
+    consistency: read_your_writes
+    params:
+      - name: tags
+        type: Optional<List<String>>
+    filter: {forall: {in: param.tags, as: unwanted, that: tag != unwanted}}
+    fields:
+      - name: crate_id
+        type: yard.stack.CrateId
+  - name: yard.stack.Shadowed
+    source: yard.stack.Crate
+    consistency: read_your_writes
+    params:
+      - name: tags
+        type: List<String>
+    filter: {exists: {in: param.tags, as: label, that: label == tag}}
+    fields:
+      - name: crate_id
+        type: yard.stack.CrateId
+  - name: yard.stack.Paired
+    source: yard.stack.Crate
+    consistency: read_your_writes
+    params:
+      - name: tags
+        type: List<String>
+      - name: numbers
+        type: List<Integer>
+    filter:
+      exists:
+        in: param.tags
+        as: t
+        that:
+          exists:
+            in: param.numbers
+            as: m
+            that:
+              all:
+                - tag == t
+                - number == m
+    fields:
+      - name: crate_id
+        type: yard.stack.CrateId
+  - name: yard.stack.AtSpots
+    source: yard.stack.Crate
+    consistency: read_your_writes
+    params:
+      - name: spots
+        type: List<yard.stack.Spot>
+    filter: {exists: {in: param.spots, as: spot, that: number == spot.row}}
+    fields:
+      - name: crate_id
+        type: yard.stack.CrateId
+  - name: yard.stack.WithTag
+    source: yard.stack.Crate
+    consistency: read_your_writes
+    params:
+      - name: tag
+        type: String
+    filter: tag == param.tag
+    fields:
+      - name: crate_id
+        type: yard.stack.CrateId
+  - name: yard.stack.WithNumber
+    source: yard.stack.Crate
+    consistency: read_your_writes
+    params:
+      - name: number
+        type: Integer
+    filter: number == param.number
+    fields:
+      - name: crate_id
+        type: yard.stack.CrateId
+  - name: yard.stack.WithAmount
+    source: yard.stack.Crate
+    consistency: read_your_writes
+    params:
+      - name: amount
+        type: Decimal
+    filter: amount == param.amount
+    fields:
+      - name: crate_id
+        type: yard.stack.CrateId

@@ -1,0 +1,19 @@
+format: ess/34
+system: yard
+version: v1
+summary: Crates filed over the network and read by lists of every scalar kind a parameter element can be.
+domains:
+  - yard.stack
+components:
+  - component: stack
+    summary: Files crates for callers outside the process and answers their views.
+    owns:
+      domains:
+        - yard.stack
+    accepts:
+      commands:
+        - yard.stack.FileCrate
+    publishes:
+      events:
+        - yard.stack.CrateFiled
+    reached_by: network
