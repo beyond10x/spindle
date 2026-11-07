@@ -5,6 +5,7 @@
 mod adversary_refusal_payload;
 mod adversary_router;
 mod adversary_view_parameters;
+mod observe;
 mod refusal_payload;
 mod router;
 mod view_parameters;

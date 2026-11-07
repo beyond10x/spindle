@@ -49,7 +49,7 @@ fn ir() -> spindle_spec::EssIr {
         .ir
 }
 
-fn object(value: Value) -> Map<String, Value> {
+pub(crate) fn object(value: Value) -> Map<String, Value> {
     let Value::Object(object) = value else {
         panic!("an object, not {value}")
     };
@@ -65,7 +65,12 @@ fn send(
     execute(ir, store, &mut NoExternals, command, &object(input))
 }
 
-fn run(ir: &spindle_spec::EssIr, store: &mut MemoryStore, command: &str, input: Value) -> Executed {
+pub(crate) fn run(
+    ir: &spindle_spec::EssIr,
+    store: &mut MemoryStore,
+    command: &str,
+    input: Value,
+) -> Executed {
     send(ir, store, command, input.clone())
         .unwrap_or_else(|error| panic!("{command} {input} runs: {error}"))
 }
@@ -304,10 +309,10 @@ fn a_reference_stored_on_the_subject_is_followed() {
 }
 
 /// What one step answered: the outcome, the declared error, and the events by name and payload.
-type Answer = (String, Option<String>, Vec<(String, Map<String, Value>)>);
+pub(crate) type Answer = (String, Option<String>, Vec<(String, Map<String, Value>)>);
 
-/// The rows of both views after the last step, `null` members left out.
-type Rows = Vec<Vec<Map<String, Value>>>;
+/// The rows of each view after the last step, `null` members left out.
+pub(crate) type Rows = Vec<Vec<Map<String, Value>>>;
 
 const VIEWS: [(&str, &str, &str); 2] = [
     ("depot.warehouse.ShelfCard", SHELF, "shelf_id"),
@@ -328,8 +333,13 @@ fn present(row: Map<String, Value>) -> Map<String, Value> {
         .collect()
 }
 
-/// What ESS's interpreter answers for each step, and both views' rows after the last.
-fn interpreted(ir: &spindle_spec::EssIr, steps: &[(&str, Value)]) -> (Vec<Answer>, Rows) {
+/// What ESS's interpreter answers for each step, and the rows of each of `views` (view, entity,
+/// identity field) after the last.
+pub(crate) fn interpreted(
+    ir: &spindle_spec::EssIr,
+    views: &[(&str, &str, &str)],
+    steps: &[(&str, Value)],
+) -> (Vec<Answer>, Rows) {
     let target = Interpreted::for_model(ir.clone());
     let context = ScenarioContext::new(
         "depot.warehouse/authored/related"
@@ -375,7 +385,7 @@ fn interpreted(ir: &spindle_spec::EssIr, steps: &[(&str, Value)]) -> (Vec<Answer
                 .collect(),
         ));
     }
-    let rows = VIEWS
+    let rows = views
         .iter()
         .map(|(view, _, _)| {
             target
@@ -402,8 +412,13 @@ fn interpreted(ir: &spindle_spec::EssIr, steps: &[(&str, Value)]) -> (Vec<Answer
     (answers, rows)
 }
 
-/// What the kernel answers for each step, and each stored row as its view projects it.
-fn spindled(ir: &spindle_spec::EssIr, steps: &[(&str, Value)]) -> (Vec<Answer>, Rows) {
+/// What the kernel answers for each step, and each stored row of every entity of `views` as its
+/// view projects it.
+pub(crate) fn spindled(
+    ir: &spindle_spec::EssIr,
+    views: &[(&str, &str, &str)],
+    steps: &[(&str, Value)],
+) -> (Vec<Answer>, Rows) {
     let mut store = MemoryStore::default();
     let mut answers = Vec::new();
     for (command, input) in steps {
@@ -418,7 +433,7 @@ fn spindled(ir: &spindle_spec::EssIr, steps: &[(&str, Value)]) -> (Vec<Answer>, 
                 .collect(),
         ));
     }
-    let rows = VIEWS
+    let rows = views
         .iter()
         .map(|(_, entity, identity_field)| {
             store
@@ -529,7 +544,7 @@ fn related_row_guards_agree_with_the_interpreter() {
         ("ess/34", ir(), &steps[..], &expected[..]),
         ("ess/26", older, &steps[..known], &expected[..known]),
     ] {
-        let (ess_answers, ess_rows) = interpreted(&ir, steps);
+        let (ess_answers, ess_rows) = interpreted(&ir, &VIEWS, steps);
         let outcomes: Vec<&str> = ess_answers
             .iter()
             .map(|(outcome, _, _)| outcome.as_str())
@@ -538,7 +553,7 @@ fn related_row_guards_agree_with_the_interpreter() {
             outcomes, expected,
             "at {format} the steps reach every branch the related row decides"
         );
-        let (answers, rows) = spindled(&ir, steps);
+        let (answers, rows) = spindled(&ir, &VIEWS, steps);
         assert_eq!(
             answers, ess_answers,
             "at {format} outcomes, errors and events agree"

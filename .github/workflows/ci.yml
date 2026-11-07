@@ -31,7 +31,7 @@ jobs:
           components: rustfmt,clippy
           targets: wasm32-unknown-unknown
 
-      - name: Install wasm-bindgen-test-runner
+      - name: Install wasm-bindgen and wasm-bindgen-test-runner
         env:
           WASM_BINDGEN_VERSION: '0.2.130'
           WASM_BINDGEN_SHA256: 9687f3bb551b9f66f37ed32a40d7913a00f7962db653054e56857bc306c3227f
@@ -43,6 +43,7 @@ jobs:
           echo "$WASM_BINDGEN_SHA256  $RUNNER_TEMP/$archive.tar.gz" | sha256sum --check --strict
           tar -xzf "$RUNNER_TEMP/$archive.tar.gz" -C "$RUNNER_TEMP"
           install -D -m 755 "$RUNNER_TEMP/$archive/wasm-bindgen-test-runner" "$RUNNER_TEMP/bin/wasm-bindgen-test-runner"
+          install -D -m 755 "$RUNNER_TEMP/$archive/wasm-bindgen" "$RUNNER_TEMP/bin/wasm-bindgen"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       - name: Install go-task
@@ -74,8 +75,8 @@ jobs:
 
       - name: Install ess
         env:
-          ESS_VERSION: '0.88.0'
-          ESS_SHA256: 56a60cce1ddd69d8ba974722380735eb1cc441969927fa162c5ca144bc65f5b0
+          ESS_VERSION: '0.89.0'
+          ESS_SHA256: 6c378310729e57fec46497046aed2d15820a75c856853122b3b92e55a084df31
         run: |
           set -o pipefail
           archive="ess-$ESS_VERSION-x86_64-unknown-linux-gnu"

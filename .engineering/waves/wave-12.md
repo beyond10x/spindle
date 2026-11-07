@@ -5,6 +5,8 @@ the orchestrator, 2026-11-06). Skill `aep:implementing` 0.26.0, wave mode. All f
 `vision:spindle`. The wave plan page of record is [plan-1.md](plan-1.md); waves 2 to 11 ran from
 orchestrator relays without a plan page, and so does this one.
 
+**Delivered.** PR https://github.com/beyond10x/spindle/pull/26 (head 058292b) merged as 2c211a9; released as 0.4.0. All four stories moved to `implemented` on CI run 42325727934 (Gate and macOS).
+
 Integration branch `wave/12`, forked from `origin/main` 0c6e896, managed tree `spindle-wave12`.
 ESS pin 0.88.0, the newest ESS release: no move this wave.
 

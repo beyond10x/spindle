@@ -1,0 +1,291 @@
+domain: depot.racks
+summary: A shelf stands in an aisle and is open or closed; a note and a transfer record the aisle and the state of the shelves their input names, as the shelves held them.
+types:
+  - name: depot.racks.ShelfId
+    kind: newtype
+    of: Uuid
+  - name: depot.racks.NoteId
+    kind: newtype
+    of: Uuid
+  - name: depot.racks.MoveId
+    kind: newtype
+    of: Uuid
+  - name: depot.racks.Spot
+    kind: struct
+    fields:
+      - {name: aisle, type: String}
+      - {name: state, type: depot.racks.Shelf.State}
+entities:
+  - name: depot.racks.Shelf
+    identity:
+      name: shelf_id
+      type: depot.racks.ShelfId
+    fields:
+      - name: label
+        type: String
+      - name: aisle
+        type: String
+      - name: previous_aisle
+        type: Optional<String>
+    lifecycle:
+      initial: Open
+      states: [Open, Closed]
+      terminal: [Closed]
+      transitions:
+        - {name: close, from: [Open], to: Closed}
+  - name: depot.racks.Note
+    identity:
+      name: note_id
+      type: depot.racks.NoteId
+    fields:
+      - name: shelf_id
+        type: depot.racks.ShelfId
+      - name: aisle
+        type: String
+    relations:
+      - {name: shelf, kind: references, target: depot.racks.Shelf, cardinality: one, via: shelf_id}
+    lifecycle:
+      initial: Made
+      states: [Made]
+      terminal: [Made]
+  - name: depot.racks.Move
+    identity:
+      name: move_id
+      type: depot.racks.MoveId
+    fields:
+      - name: from_shelf
+        type: depot.racks.ShelfId
+      - name: to_shelf
+        type: depot.racks.ShelfId
+      - name: from_aisle
+        type: String
+      - name: to_aisle
+        type: String
+    relations:
+      - {name: source, kind: references, target: depot.racks.Shelf, cardinality: one, via: from_shelf}
+      - {name: target, kind: references, target: depot.racks.Shelf, cardinality: one, via: to_shelf}
+    lifecycle:
+      initial: Made
+      states: [Made]
+      terminal: [Made]
+errors:
+  - name: depot.racks.NoShelf
+    summary: No shelf carries the id.
+    fields: []
+  - name: depot.racks.ShelfShut
+    summary: The shelf is closed.
+    fields:
+      - name: aisle
+        type: String
+      - name: seen
+        type: depot.racks.Shelf.State
+commands:
+  - name: depot.racks.OpenShelf
+    input:
+      - name: shelf_id
+        type: depot.racks.ShelfId
+      - name: label
+        type: String
+      - name: aisle
+        type: String
+    outcomes:
+      - name: opened
+        creates: depot.racks.Shelf
+        instance: shelf_id
+        sets:
+          label: input.label
+          aisle: input.aisle
+        emits: [depot.racks.ShelfOpened]
+        payload:
+          depot.racks.ShelfOpened:
+            shelf_id: input.shelf_id
+        summary: The shelf opens in the aisle.
+  - name: depot.racks.CloseShelf
+    input:
+      - name: shelf_id
+        type: depot.racks.ShelfId
+    outcomes:
+      - name: closed
+        moves: depot.racks.Shelf.close
+        instance: shelf_id
+        emits: [depot.racks.ShelfClosed]
+        payload:
+          depot.racks.ShelfClosed:
+            shelf_id: input.shelf_id
+        summary: The shelf closes.
+      - name: wrong-state
+        wrong_state: true
+        error: depot.racks.ShelfShut
+        payload:
+          depot.racks.ShelfShut:
+            aisle: {related: {via: input.shelf_id, field: aisle}}
+            seen: {related: {via: input.shelf_id, field: state}}
+        summary: The shelf is already closed, and the refusal says where it stands and what it holds.
+  - name: depot.racks.NoteShelf
+    input:
+      - name: note_id
+        type: depot.racks.NoteId
+      - name: shelf_id
+        type: depot.racks.ShelfId
+    outcomes:
+      - name: noted
+        creates: depot.racks.Note
+        instance: note_id
+        sets:
+          shelf_id: input.shelf_id
+          aisle: {related: {via: input.shelf_id, field: aisle}}
+        emits: [depot.racks.ShelfNoted]
+        payload:
+          depot.racks.ShelfNoted:
+            note_id: input.note_id
+            shelf: {related: {via: input.shelf_id, field: shelf_id}}
+            previous: {related: {via: input.shelf_id, field: previous_aisle}}
+            spot:
+              aisle: {related: {via: input.shelf_id, field: aisle}}
+              state: {related: {via: input.shelf_id, field: state}}
+        summary: A note records the shelf the input names, with no guard on its existence.
+  - name: depot.racks.Transfer
+    input:
+      - name: move_id
+        type: depot.racks.MoveId
+      - name: from_shelf
+        type: depot.racks.ShelfId
+      - name: to_shelf
+        type: depot.racks.ShelfId
+    outcomes:
+      - name: from-missing
+        when_related:
+          via: input.from_shelf
+          exists: false
+        error: depot.racks.NoShelf
+        summary: The source shelf does not exist.
+      - name: to-missing
+        when_related:
+          via: input.to_shelf
+          exists: false
+        error: depot.racks.NoShelf
+        summary: The target shelf does not exist.
+      - name: transferred
+        creates: depot.racks.Move
+        instance: move_id
+        sets:
+          from_shelf: input.from_shelf
+          to_shelf: input.to_shelf
+          from_aisle: {related: {via: input.from_shelf, field: aisle}}
+          to_aisle: {related: {via: input.to_shelf, field: aisle}}
+        emits: [depot.racks.Transferred]
+        payload:
+          depot.racks.Transferred:
+            move_id: input.move_id
+            from: {related: {via: input.from_shelf, field: aisle}}
+            to: {related: {via: input.to_shelf, field: aisle}}
+        summary: A move records the aisles of both shelves, which may be one shelf.
+  - name: depot.racks.PickFrom
+    input:
+      - name: note_id
+        type: depot.racks.NoteId
+      - name: shelf_id
+        type: depot.racks.ShelfId
+    outcomes:
+      - name: no-shelf
+        when_related:
+          via: input.shelf_id
+          exists: false
+        error: depot.racks.NoShelf
+        summary: The named shelf does not exist.
+      - name: shut
+        when_related:
+          via: input.shelf_id
+          predicate: state == Closed
+        error: depot.racks.ShelfShut
+        payload:
+          depot.racks.ShelfShut:
+            aisle: {related: {via: input.shelf_id, field: aisle}}
+            seen: {related: {via: input.shelf_id, field: state}}
+        summary: The named shelf is closed, and the refusal says where it stands.
+      - name: noted
+        creates: depot.racks.Note
+        instance: note_id
+        sets:
+          shelf_id: input.shelf_id
+          aisle: {related: {via: input.shelf_id, field: aisle}}
+        emits: [depot.racks.ShelfNoted]
+        payload:
+          depot.racks.ShelfNoted:
+            note_id: input.note_id
+            shelf: input.shelf_id
+            previous: {related: {via: input.shelf_id, field: previous_aisle}}
+            spot:
+              aisle: {related: {via: input.shelf_id, field: aisle}}
+              state: {related: {via: input.shelf_id, field: state}}
+        summary: A note is made from an open shelf.
+events:
+  - name: depot.racks.ShelfOpened
+    fields:
+      - name: shelf_id
+        type: depot.racks.ShelfId
+  - name: depot.racks.ShelfClosed
+    fields:
+      - name: shelf_id
+        type: depot.racks.ShelfId
+  - name: depot.racks.ShelfNoted
+    fields:
+      - name: note_id
+        type: depot.racks.NoteId
+      - name: shelf
+        type: depot.racks.ShelfId
+      - name: previous
+        type: Optional<String>
+      - name: spot
+        type: depot.racks.Spot
+  - name: depot.racks.Transferred
+    fields:
+      - name: move_id
+        type: depot.racks.MoveId
+      - name: from
+        type: String
+      - name: to
+        type: String
+views:
+  - name: depot.racks.ShelfCard
+    source: depot.racks.Shelf
+    consistency: read_your_writes
+    fields:
+      - name: shelf_id
+        type: depot.racks.ShelfId
+      - name: label
+        type: String
+      - name: aisle
+        type: String
+      - name: previous_aisle
+        type: Optional<String>
+      - name: state
+        type: depot.racks.Shelf.State
+  - name: depot.racks.NoteCard
+    source: depot.racks.Note
+    consistency: read_your_writes
+    fields:
+      - name: note_id
+        type: depot.racks.NoteId
+      - name: shelf_id
+        type: depot.racks.ShelfId
+      - name: aisle
+        type: String
+      - name: state
+        type: depot.racks.Note.State
+  - name: depot.racks.MoveCard
+    source: depot.racks.Move
+    consistency: read_your_writes
+    fields:
+      - name: move_id
+        type: depot.racks.MoveId
+      - name: from_shelf
+        type: depot.racks.ShelfId
+      - name: to_shelf
+        type: depot.racks.ShelfId
+      - name: from_aisle
+        type: String
+      - name: to_aisle
+        type: String
+      - name: state
+        type: depot.racks.Move.State

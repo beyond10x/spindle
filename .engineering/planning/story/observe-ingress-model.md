@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:observe-ingress-model
 kind: story
-status: active
+status: implemented
 title: The request log, metric families and topology are specified in spindle.observe
 relations:
 - serves: vision:spindle
@@ -28,10 +28,11 @@ scope:
   path: ui/src/api/types.test.ts
 - confidence: cited
   path: ui/src/api/types.ts
-revision: 14
+revision: 15
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-06T14:45:46Z", actor: "human:timo", revision: 11}
 - {from: "proposed", to: "active", at: "2026-11-06T14:45:46Z", actor: "human:timo", revision: 12}
+- {from: "active", to: "implemented", at: "2026-11-07T01:57:24Z", actor: "human:timo", revision: 15, decided_on: {"recorded":{"test_result":1,"review_outcome":2,"verification":1}}}
 ---
 # The request log, metric families and topology are specified in spindle.observe
 

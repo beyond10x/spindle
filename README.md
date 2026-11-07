@@ -46,6 +46,12 @@ binary built without `ui/dist` answers `GET /` with 503. `b10x-spindle deploy ex
 examples/placements/rally-processes.toml` launches the three rally components as processes and
 prints the URL of the observe UI, `http://127.0.0.1:7341/?t=<token>`.
 
+Where `run` serves HTTP, `--observe` records every request it answers and lists the last 256
+(`--observe-requests <N>`, 1 to 10000) at `GET /__spindle/requests`, newest first, with totals
+per class since start; `?class=not-served` keeps only the requests answered `501`. Paths under
+`/__spindle/` belong to the run: a binding route there is refused at start, and without
+`--observe` they answer `404`.
+
 `b10x-spindle conform ess --environment examples/environments/laptop.toml` runs the suite ESS
 synthesises from Spindle's own specification against Spindle itself; `task check:conformance`
 holds its counts against `conformance.toml`, with the scenarios known to fail declared in
@@ -94,11 +100,13 @@ prefix; an exact key wins over it.
 - `crates/spindle-telemetry` — counters and histograms per instance, their catalogue derived from the specification, and the sender that reports them as `spindle-telemetry/1` frames over a Unix socket or vsock.
 - `crates/spindle-host` — runs every component of a system in one process.
 - `crates/spindle-store-browser` — the store on the browser's IndexedDB, for a run in a page or a Service Worker.
+- `crates/spindle-wasm` — the wasm-bindgen entry a Service Worker opens: a specification compiled in the browser, its routes and the console routes answered by the same router the loopback listener calls, state in IndexedDB, external outcomes from a decisions file.
 - `crates/spindle-conformance` — runs an ESS conformance suite against every component in one process.
 - `crates/spindle-control` — the control process `deploy` runs: launch, collect, and the observe API and UI on 127.0.0.1.
 - `crates/spindle-cli` — the `b10x-spindle` binary.
 - `crates/spindle-docs` — generates the site's CLI reference and status page.
 - `examples/` — environments and the `rally` example system.
+- `web/` — the static site: a Vue shell that registers the Service Worker (`task web` builds `web/dist`).
 - `website/` — the documentation site (Docusaurus).
 - `docs/design/spindle.md` — the design.
 

@@ -61,7 +61,11 @@ pub fn read(ir: &EssIr, body: &Value, run: &Answers) -> Result<World> {
         .collect::<Result<Vec<_>>>()?;
     let answers = body
         .decisions
-        .map(|table| Answers::from_json(ir, &table).context("in the decision table"))
+        .map(|table| {
+            Answers::from_json(ir, &table)
+                .map_err(|error| anyhow!(error))
+                .context("in the decision table")
+        })
         .transpose()?
         .map(|table| table.over(run.clone()));
     Ok(World {

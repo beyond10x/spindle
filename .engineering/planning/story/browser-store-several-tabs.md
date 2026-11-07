@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:browser-store-several-tabs
 kind: story
-status: draft
+status: active
 title: Several browser handles on one store see each other's writes
 relations:
 - depends_on: story:browser-store
@@ -11,7 +11,10 @@ relations:
 scope:
 - confidence: inferred
   path: crates/spindle-store-browser/src
-revision: 2
+revision: 4
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-07T04:21:45Z", actor: "human:timo", revision: 3}
+- {from: "proposed", to: "active", at: "2026-11-07T04:21:45Z", actor: "human:timo", revision: 4}
 ---
 # Several browser handles on one store see each other's writes
 

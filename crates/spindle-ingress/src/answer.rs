@@ -8,6 +8,7 @@ use serde_json::{Map, Value, json};
 use spindle_host::{Failed, Host, HostError};
 use spindle_kernel::{DeclaredError, Event, ExecuteError};
 
+use crate::observe::Answered;
 use crate::surface::{Route, Unserved};
 
 /// A status and the JSON body written under it, where it has one.
@@ -117,10 +118,26 @@ pub fn answered(
     content_type: Option<&str>,
     body: &[u8],
 ) -> (Answer, Vec<Failed>) {
+    let (answer, failed, _) = answering(host, route, carried, query, content_type, body);
+    (answer, failed)
+}
+
+/// [`answered`], and who answered: the model where the command's envelope found a status for the
+/// outcome it selected, with that outcome and the events it published, or where the view gave
+/// its rows; the ingress for every other answer.
+pub(crate) fn answering(
+    host: &mut Host,
+    route: &Route,
+    carried: &Map<String, Value>,
+    query: &str,
+    content_type: Option<&str>,
+    body: &[u8],
+) -> (Answer, Vec<Failed>, Answered) {
     if let Some(unserved @ Unserved::Ingress(_)) = route.unserved() {
         return (
             Answer::unfinished(format!("{}: {unserved}", route.operation), false),
             Vec::new(),
+            Answered::ingress(),
         );
     }
     match &route.operation {
@@ -134,18 +151,19 @@ pub fn answered(
             };
             match input {
                 Ok(input) => run(host, route, command, carried, input),
-                Err(refusal) => (refusal, Vec::new()),
+                Err(refusal) => (refusal, Vec::new(), Answered::ingress()),
             }
         }
         Operation::View(_) if route.not_granted() => (
             Answer::not_granted(route.caller().map_or("", |caller| caller.actor.as_str())),
             Vec::new(),
+            Answered::ingress(),
         ),
         Operation::View(view) => {
             let mut given = carried.clone();
             match route.parameters(query) {
                 Ok(queried) => given.extend(queried),
-                Err(why) => return (Answer::refusal(400, why), Vec::new()),
+                Err(why) => return (Answer::refusal(400, why), Vec::new(), Answered::ingress()),
             }
             match host.list_with(view, &given) {
                 Ok(rows) => (
@@ -154,11 +172,18 @@ pub fn answered(
                         body: Some(json!({"rows": rows})),
                     },
                     Vec::new(),
+                    Answered::model(None, Vec::new()),
                 ),
-                Err(error @ HostError::Parameters { .. }) => {
-                    (Answer::refusal(400, error.to_string()), Vec::new())
-                }
-                Err(error) => (Answer::refusal(501, error.to_string()), Vec::new()),
+                Err(error @ HostError::Parameters { .. }) => (
+                    Answer::refusal(400, error.to_string()),
+                    Vec::new(),
+                    Answered::ingress(),
+                ),
+                Err(error) => (
+                    Answer::refusal(501, error.to_string()),
+                    Vec::new(),
+                    Answered::ingress(),
+                ),
             }
         }
     }
@@ -170,7 +195,7 @@ fn run(
     command: &str,
     carried: &Map<String, Value>,
     mut input: Map<String, Value>,
-) -> (Answer, Vec<Failed>) {
+) -> (Answer, Vec<Failed>, Answered) {
     if let Some(field) = input
         .keys()
         .find(|field| !route.input().iter().any(|declared| declared == *field))
@@ -178,6 +203,7 @@ fn run(
         return (
             Answer::refusal(400, format!("{command} declares no input field {field}")),
             Vec::new(),
+            Answered::ingress(),
         );
     }
     for (field, value) in carried {
@@ -188,6 +214,7 @@ fn run(
                     format!("{field} is carried in the path, and the body carries it too"),
                 ),
                 Vec::new(),
+                Answered::ingress(),
             );
         }
         input.insert(field.clone(), value.clone());
@@ -201,22 +228,30 @@ fn run(
         &route.refusing(),
     ) {
         Ok(report) => {
-            let answer = match report.ran.first() {
-                Some(ran) => envelope(
-                    host.ir(),
-                    route,
-                    command,
-                    &ran.executed.outcome,
-                    &ran.executed.events,
-                    None,
-                    ran.executed.response.as_ref(),
+            let (answer, answered) = match report.ran.first() {
+                Some(ran) => (
+                    envelope(
+                        host.ir(),
+                        route,
+                        command,
+                        &ran.executed.outcome,
+                        &ran.executed.events,
+                        None,
+                        ran.executed.response.as_ref(),
+                    ),
+                    selected(route, &ran.executed.outcome, &ran.executed.events),
                 ),
-                None => Answer::unfinished(format!("{command} ran and reported nothing"), true),
+                None => (
+                    Answer::unfinished(format!("{command} ran and reported nothing"), true),
+                    Answered::ingress(),
+                ),
             };
-            return (answer, report.failed);
+            return (answer, report.failed, answered);
         }
         Err(HostError::CommandRefused { outcome, error, .. }) => {
-            envelope(host.ir(), route, command, &outcome, &[], Some(&error), None)
+            let answered = selected(route, &outcome, &[]);
+            let answer = envelope(host.ir(), route, command, &outcome, &[], Some(&error), None);
+            return (answer, Vec::new(), answered);
         }
         Err(HostError::Execute { error, .. }) => match *error {
             ExecuteError::InvalidInput(detail) => {
@@ -228,7 +263,20 @@ fn run(
         Err(error @ HostError::NotAccepted(_)) => Answer::unfinished(error.to_string(), false),
         Err(error) => Answer::unfinished(error.to_string(), true),
     };
-    (answer, Vec::new())
+    (answer, Vec::new(), Answered::ingress())
+}
+
+/// Who answered a command that selected `outcome`, publishing `events`: the model, where the
+/// route gives the outcome a status and so answers its envelope; the ingress, where it does not.
+fn selected(route: &Route, outcome: &str, events: &[Event]) -> Answered {
+    if route.status(outcome).is_some() {
+        Answered::model(
+            Some(outcome.to_owned()),
+            events.iter().map(|event| event.name.clone()).collect(),
+        )
+    } else {
+        Answered::ingress()
+    }
 }
 
 /// The command's input: the body as a JSON object, the empty object for an empty body.

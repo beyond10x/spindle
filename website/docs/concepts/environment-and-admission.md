@@ -63,16 +63,16 @@ Admission binds names. The parts that run today act on these bindings:
 
 | Capability | Implementations the runtime runs today |
 |---|---|
-| `store.durable` | `memory`, `sqlite` (one SQLite file per component; `run --state` names it) |
-| `channel` | `in-process` in the one-process host (`play`); the `tcp` channel exists as a library |
+| `store.durable` | `memory`, `sqlite` (one SQLite file per component; `run --state` names it), `indexeddb` (one IndexedDB database per component, in the Service Worker host) |
+| `channel` | `in-process` in the one-process host (`play`, `run`); `tcp` between processes, one component each (`play --component`) |
 | `timer` | `tokio`, the name the shipped environments give `spindle-timer`'s schedule |
 | `clock` | `system` |
 | `identity.mint` | `uuid-v4` |
+| `ingress.network` | `http-loopback`: `run` serves the routes and the console routes over HTTP on 127.0.0.1; `service-worker`: the Service Worker host (`spindle-wasm`, the site in `web/`) answers the specification's routes and the console routes in the browser, through the router the loopback listener calls |
+| `external.*` | answered by `run` from the line, `--decisions` or `--answer-default`, whatever the binding names; `decisions-file` in the Service Worker host: each external outcome answered from the decisions file it is opened with, as `run --decisions` answers it |
 
-The one-process host refuses, as unsupported, a binding it cannot run, such as a `tcp` channel or
-any `external.*` outcome. `ingress.network` is admitted but not served yet.
-
-:::caution[Planned]
-HTTP ingress for `ingress.network` and the `tcp` channel between separate processes are planned;
-see [status](/docs/status).
-:::
+A host refuses, as unsupported, a binding it cannot run: the one-process host refuses a `tcp`
+channel, and a host opened with nothing to answer external causes refuses every `external.*`
+outcome. `run` serves `ingress.network` only where it is bound to `http-loopback`, and the Service
+Worker host only where it is bound to `service-worker`; any other binding of it is refused before
+anything is served.

@@ -23,6 +23,7 @@ hyper-util = { version = "0.1", features = ["tokio"], optional = true }
 serde_json.workspace = true
 spindle-host = { path = "../spindle-host", default-features = false }
 spindle-kernel = { path = "../spindle-kernel", default-features = false }
+spindle-telemetry = { path = "../spindle-telemetry", default-features = false }
 tokio = { version = "1", default-features = false, features = ["macros", "net", "rt", "sync", "time"], optional = true }
 
 [dev-dependencies]

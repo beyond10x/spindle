@@ -6,6 +6,45 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-07
+
+### Added
+
+- A Service Worker serves a specification: `spindle-wasm` compiles it in the browser, admits it on
+  a browser environment and answers its routes and the console routes (`GET /api/model`,
+  `GET /api/events`, `POST /api/reset`) through the router the loopback listener calls, so the
+  answers are the listener's and no request leaves the browser. A component whose state is bound
+  to `indexeddb` keeps it in a `BrowserStore` of its own, every write landed before the answer;
+  external outcomes are answered from a decisions file. `examples/environments/browser.toml` binds
+  `ingress.network` to `service-worker` and `external.*` to `decisions-file`. `web/` is the static
+  site, a Vue shell that registers the worker; `task web` builds it, and `task check` builds it
+  and runs the Service Worker in a headless browser.
+- `Host::supplied` opens a host on stores it is given, by component, for state bound to an
+  implementation the host has no store of its own for; a reset removes every instance they hold.
+  The decisions file is read by `spindle_host::Answers`, which `run` now uses too.
+- `run --observe [--observe-requests <N>]` records every request its listener answers outside
+  `/__spindle/`, `404`, `405` and `400` included, and answers `GET /__spindle/requests` with the
+  totals per class and the last N records, newest first; `?class=` filters them. The reserved
+  prefix is matched before any specification route, and a specification route whose first literal
+  segment is `__spindle` is refused at start.
+- The kernel evaluates sets, payload and error values read from the row an input field names, read
+  once per command before the outcome. References stored on the subject, chains and lists stay
+  refused by name.
+- Several `BrowserStore` handles on one database, in one page or across tabs and workers: handles
+  in one scope share one copy, every write re-reads its record inside its IndexedDB transaction
+  and aborts on a mismatch, and landed writes reach handles in other scopes over a
+  `BroadcastChannel`. Across real tabs a stale write is refused on the next flush or call, not on
+  the write itself.
+
+### Changed
+
+- ESS 0.89.0: every ESS crate, `schema-contract` included, and CI's `ess` CLI move to tag 0.89.0.
+
+### Fixed
+
+- The link refusal tests wait for the refusals they assert, bounded by 10 s, instead of a fixed
+  300 ms.
+
 ## [0.4.0] - 2026-11-07
 
 ### Added

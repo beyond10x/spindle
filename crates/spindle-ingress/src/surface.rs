@@ -10,6 +10,7 @@ use ess_http::{Body, Encoding, Method, Operation, ResponseEncoding, Segment, Unk
 use serde_json::{Map, Value};
 
 use crate::console::Console;
+use crate::observe::{Recorder, Reserved};
 
 /// One path variable of a route: the input field it carries and how its text is read.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -372,7 +373,7 @@ impl Route {
         if !ess_gen::http::template_matches(&self.segments, path) {
             return None;
         }
-        let given: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+        let given: Vec<&str> = path.strip_prefix('/').unwrap_or(path).split('/').collect();
         if self.variables.iter().any(|variable| {
             given
                 .get(variable.position)
@@ -402,7 +403,7 @@ impl Route {
 
 /// A path segment with every `%XX` decoded, as ESS's served application decodes it; `None` where
 /// an escape is not two hexadecimal digits or the bytes are not UTF-8. A `+` stays a `+`.
-fn decoded(text: &str) -> Option<String> {
+pub(crate) fn decoded(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut index = 0;
@@ -423,7 +424,7 @@ fn decoded(text: &str) -> Option<String> {
 /// A `form` or query key or value with every `+` a space and every `%XX` decoded, as ESS's
 /// served application decodes one; `None` where an escape is not two hexadecimal digits or the
 /// bytes are not UTF-8.
-fn form_decoded(text: &str) -> Option<String> {
+pub(crate) fn form_decoded(text: &str) -> Option<String> {
     decoded(&text.replace('+', " "))
 }
 
@@ -475,9 +476,12 @@ pub enum Resolved<'a> {
     /// The route the request is for, and the input its path carries.
     Found(&'a Route, Map<String, Value>),
     /// The path matches a route whose variable it holds malformed.
-    Malformed(String),
+    Malformed(&'a Route, String),
     /// A console route ([`Surface::with_console`]).
     Console(Console),
+    /// A path under the reserved prefix `/__spindle/`, matched before any other route, with the
+    /// recorder on or off ([`Surface::observing`]).
+    Reserved(Reserved),
     /// The path is served, under these methods only.
     WrongMethod(Vec<Method>),
     /// No route has the path.
@@ -507,6 +511,16 @@ pub enum SurfaceError {
         /// That route's method.
         method: Method,
         /// That route's path template.
+        path: String,
+    },
+    /// A route the binding or ESS publishes lies under the reserved prefix `/__spindle/`, which
+    /// the run's own routes hold.
+    Reserved {
+        /// The command or view.
+        operation: String,
+        /// Its method.
+        method: Method,
+        /// Its path template.
         path: String,
     },
     /// The route of an operation uses what this ingress does not serve, named.
@@ -541,6 +555,16 @@ impl fmt::Display for SurfaceError {
                 "the console route {console} would shadow {operation}, which is served at {} {path}; the console's paths are fixed, so the binding must serve it at another path",
                 method.as_str().to_uppercase()
             ),
+            Self::Reserved {
+                operation,
+                method,
+                path,
+            } => write!(
+                formatter,
+                "{operation} is served at {} {path}, under /{}/, which this run reserves for its own routes; the binding must serve it at another path",
+                method.as_str().to_uppercase(),
+                crate::observe::RESERVED_SEGMENT
+            ),
             Self::Unsupported { operation, what } => {
                 write!(formatter, "{operation}: this ingress does not serve {what}")
             }
@@ -555,6 +579,7 @@ impl std::error::Error for SurfaceError {}
 pub struct Surface {
     routes: Vec<Route>,
     console: bool,
+    recorder: Option<Recorder>,
 }
 
 impl Surface {
@@ -582,7 +607,8 @@ impl Surface {
     ///
     /// # Errors
     /// [`SurfaceError::NoComponent`] for a name `ir` does not declare,
-    /// [`SurfaceError::Collision`] when two components claim one route, and
+    /// [`SurfaceError::Collision`] when two components claim one route,
+    /// [`SurfaceError::Reserved`] for a route whose first segment is `__spindle`, and
     /// [`SurfaceError::Unsupported`] for a binding that answers a standard refusal its own way
     /// for every operation, or a path that is not a template.
     pub fn new(
@@ -649,6 +675,13 @@ impl Surface {
                 .ok_or_else(|| SurfaceError::NoComponent(name.clone()))?;
             for bound in ess_gen::http::bound_routes(ir, component, binding) {
                 let route = route(ir, name, &bound, callers)?;
+                if Reserved::of(&route.path).is_some() {
+                    return Err(SurfaceError::Reserved {
+                        operation: route.operation.to_string(),
+                        method: route.method,
+                        path: route.path,
+                    });
+                }
                 if let Some(taken) = routes
                     .iter()
                     .find(|taken| taken.method == route.method && taken.path == route.path)
@@ -665,7 +698,23 @@ impl Surface {
         Ok(Self {
             routes,
             console: false,
+            recorder: None,
         })
+    }
+
+    /// This surface recording the requests its listener answers, the last `capacity` of them
+    /// (held to 1 through [`REQUESTS_MOST`](crate::REQUESTS_MOST)) and the totals per
+    /// [`Class`](crate::Class), and answering `GET /__spindle/requests` with them. Clones share
+    /// the one recorder.
+    #[must_use]
+    pub fn observing(mut self, capacity: usize) -> Self {
+        self.recorder = Some(Recorder::new(capacity));
+        self
+    }
+
+    /// The recorder, where the surface was made [`Surface::observing`]; `None` otherwise.
+    pub fn recorder(&self) -> Option<&Recorder> {
+        self.recorder.as_ref()
     }
 
     /// This surface with the [`Console`] routes added where `implementation`, what
@@ -724,8 +773,13 @@ impl Surface {
     /// Compiling the binding
     /// refused two templates a request path can both match (`ESS-HTTP-010`, `ESS-HTTP-011`), so
     /// at most one route of a method matches. A console route, where the surface has them, is
-    /// matched exactly; no other route shares its path ([`Surface::with_console`]).
+    /// matched exactly; no other route shares its path ([`Surface::with_console`]). A path under
+    /// the reserved prefix `/__spindle/` is matched before either, with or without a recorder,
+    /// so that it never reaches a route of the specification.
     pub fn resolve(&self, method: &str, path: &str) -> Resolved<'_> {
+        if let Some(reserved) = Reserved::of(path) {
+            return Resolved::Reserved(reserved);
+        }
         if self.console
             && let Some(console) = Console::ALL
                 .into_iter()
@@ -748,7 +802,7 @@ impl Surface {
             }
             return match carried {
                 Ok(carried) => Resolved::Found(route, carried),
-                Err(why) => Resolved::Malformed(why),
+                Err(why) => Resolved::Malformed(route, why),
             };
         }
         if served.is_empty() {
@@ -1098,8 +1152,26 @@ fn unwritten(listed: &ess_http::Outcome) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Flat, Queried};
+    use super::{Flat, Queried, Surface};
     use serde_json::{Value, json};
+
+    #[test]
+    fn a_surface_without_observe_holds_no_recorder() {
+        let ir = spindle_spec::load(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/desk"),
+        )
+        .expect("the desk fixture compiles")
+        .ir;
+        let surface = Surface::new(&ir, &["desk".to_owned()], None).expect("the desk is served");
+        assert!(surface.recorder().is_none());
+        let console = surface
+            .clone()
+            .with_console(crate::HTTP_LOOPBACK)
+            .expect("the console is added");
+        assert!(console.recorder().is_none(), "the console adds no recorder");
+        let observed = surface.observing(3);
+        assert_eq!(observed.recorder().map(crate::Recorder::capacity), Some(3));
+    }
 
     fn queried(decimal: bool) -> Queried {
         Queried {

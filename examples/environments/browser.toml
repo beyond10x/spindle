@@ -10,3 +10,5 @@ arch = "wasm32"
 clock = ["system"]
 channel = ["in-process"]
 projection = ["in-process"]
+"ingress.network" = ["service-worker"]
+"external.*" = ["decisions-file"]
