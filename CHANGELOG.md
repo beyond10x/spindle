@@ -12,7 +12,12 @@ are Spindle's releases.
   request path, the one with a literal where the other has a variable answers, as ESS's dispatch
   order (`ess_gen::http::dispatch_order`, `ESS-HTTP-011`) defines, whatever order the routes are
   declared in. Before, the first route in path-text order answered, so a literal that sorts after
-  `{`, such as `/things/~modules`, was shadowed by `/things/{id}`. The 405 answer is unchanged.
+  `{`, such as `/things/~modules`, was shadowed by `/things/{id}`. A request segment is compared
+  with a literal of a route an `ess-http/1` binding declares after decoding percent-encoded
+  unreserved characters (RFC 3986 §6.2.2.2), as ESS's served application compares it, so
+  `/things/%7Emodules` reaches `/things/~modules`; a variable's value is decoded as before. A 405
+  names each method once, sorted, in its body and in `Allow`; before, a method two matching routes
+  share was named twice.
 
 ## [0.6.0] - 2026-11-07
 
