@@ -57,7 +57,8 @@ outcomes runs once, as not served.
 A view is answered from the store of the component that owns its source: one row by identity, or a
 list over every instance of the entity, ranked by `order_by: [<field> asc|desc]`. A filter is read
 where each leaf compares a field with a literal of its type (`archived == false`, `priority >= 3`,
-the ordered operators only where ESS orders the type), lists a field `in:` or `none_of:` literals,
+the ordered operators only where ESS orders the type, a timestamp also against `now` read on the
+host's clock), lists a field `in:` or `none_of:` literals,
 compares a parameter with a field by `==` or `!=`, or asks `defined`, the leaves combined by `any`,
 `all` and `not`, or quantified by `exists` or `forall` over a list parameter or a list field of the
 row. Each is evaluated as ESS evaluates it; a filter ESS leaves unknown for a row, such as a

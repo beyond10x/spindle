@@ -3,6 +3,7 @@
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+use std::time::SystemTime;
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::{
@@ -15,6 +16,7 @@ use ess_domain::view::{Direction, ViewSpec};
 use ess_primitives::facts::FactSource;
 use ess_primitives::node::Node;
 use ess_primitives::predicate::{Collection, CompareOp, Operand, Predicate, Truth};
+use ess_primitives::time::CurrentTime;
 use ess_primitives::{FactPath, FactStore, FactValue, Rfc3339Instant};
 use serde_json::{Map, Value};
 use spindle_kernel::Row;
@@ -31,7 +33,9 @@ const STATE: &str = "state";
 /// - an observable field of the source (the state and the identity among them) compared with a
 ///   literal of its type by `==` or `!=`, or by `<`, `<=`, `>` or `>=` where ESS orders the type
 ///   (a number, or text other than a `Duration`): `archived == false`, `priority >= 3`,
-///   `state == Open`;
+///   `state == Open`; a `Timestamp` field ordered against `now`, `now - 1h` or `now + 5m`
+///   (`issued_at < now`), the current-time operand ESS reads against the clock of the read
+///   ([`reads_now`]);
 /// - such a field listed `in:` or `none_of:` literals of its type;
 /// - a parameter compared with `==` or `!=` to such a field (`book_id == param.id`);
 /// - `defined(param.<name>)` or `defined(<field>)`;
@@ -55,8 +59,8 @@ pub(crate) fn unsupported(ir: &EssIr, view: &ResolvedView) -> Option<String> {
     } else {
         match &view.filter {
             Some(filter) if !reads(ir, view, filter) => Some(format!(
-                "the filter `{filter}`; only a field compared with a literal of its type, or \
-                 listed `in:` or `none_of:` literals, a parameter compared with a field by `==` \
+                "the filter `{filter}`; only a field compared with a literal of its type or \
+                 ordered against `now`, or listed `in:` or `none_of:` literals, a parameter compared with a field by `==` \
                  or `!=`, and `defined`, combined by `any`, `all` and `not` or quantified over a \
                  list parameter or a list field by `exists` or `forall`, are read"
             )),
@@ -320,13 +324,15 @@ pub(crate) fn parameters(
 /// What a filter reads: the row's facts at their own paths, typed by the source's observable
 /// fields, and the parameters under `param.`, typed by the view's, as ESS's interpreter reads a
 /// view's filter (`ess-conformance` `src/interpret/views.rs`, `ViewFacts` over `TypedFacts`): a
-/// `Timestamp` is ordered by the instant it names, and any text but a `Duration` by its bytes.
+/// `Timestamp` is ordered by the instant it names, any text but a `Duration` by its bytes, and a
+/// `now` operand against `now`, the instant of the read (`ViewFacts::now`).
 struct Read<'a> {
     ir: &'a EssIr,
     fields: &'a [ResolvedField],
     params: &'a [ResolvedField],
     row: &'a FactStore,
     parameters: &'a FactStore,
+    now: Option<Rfc3339Instant>,
 }
 
 impl Read<'_> {
@@ -376,6 +382,52 @@ impl FactSource for Read<'_> {
     fn orders_text_by_bytes(&self, path: &FactPath) -> bool {
         self.declared(path) != Some(Primitive::Duration)
     }
+
+    fn now(&self) -> Option<Rfc3339Instant> {
+        self.now
+    }
+}
+
+/// Whether `filter` orders a fact against the current time: a comparison by `<`, `<=`, `>` or
+/// `>=` of a fact with a literal that is ESS's current-time operand (`now`, `now - 60s`,
+/// [`CurrentTime`]), under any `any`, `all`, `not`, `exists` or `forall`. Where it does, a read
+/// takes the clock's instant once, before its first row, as ESS's interpreter reads its clock for
+/// such a filter and for no other (`Interpreted::query_view`, `now_offset::now_compared` at ESS
+/// 0.89.0), so every row of one read is held against one instant.
+pub(crate) fn reads_now(filter: &Predicate) -> bool {
+    match filter {
+        Predicate::All(children) | Predicate::Any(children) => children.iter().any(reads_now),
+        Predicate::Not(inner) => reads_now(inner),
+        Predicate::Forall(quantified) | Predicate::Exists(quantified) => {
+            reads_now(&quantified.body)
+        }
+        Predicate::Compare {
+            left, op, right, ..
+        } if op.needs_ordering() => [(left, right), (right, left)].iter().any(|pair| {
+            matches!(
+                pair,
+                (Operand::Fact(_), Operand::Literal(FactValue::Text(text)))
+                    if CurrentTime::parse(text).is_some()
+            )
+        }),
+        _ => false,
+    }
+}
+
+/// The instant the civil time `at` names, the millisecond it falls in, as ESS turns a clock's
+/// reading into one ([`Rfc3339Instant::from_epoch_millis`]); `None` past the years RFC 3339
+/// spells.
+pub(crate) fn instant(at: SystemTime) -> Option<Rfc3339Instant> {
+    let millis = match at.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(since) => i64::try_from(since.as_millis()).ok()?,
+        Err(before) => {
+            let before = before.duration();
+            let whole = i64::try_from(before.as_millis()).ok()?;
+            let partial = i64::from(before.subsec_nanos() % 1_000_000 != 0);
+            whole.checked_add(partial)?.checked_neg()?
+        }
+    };
+    Rfc3339Instant::from_epoch_millis(millis)
 }
 
 /// Whether the view holds `row`, the instance `identity` names: always without a filter; with
@@ -386,6 +438,8 @@ impl FactSource for Read<'_> {
 /// any other binds the state, the identity and every stored field, as ESS binds a source row
 /// ([`ess_conformance::input::bind`] over the entity's observable fields). A field the row holds
 /// no value for is absent, as ESS reads it: a comparison with it is unknown, `defined` false.
+/// A `now` operand is read as `now`, the instant of the read the caller took ([`reads_now`]); with
+/// none it is unknown, as ESS reads it without a clock.
 ///
 /// A filter unknown for the row is refused, as ESS's interpreter refuses the read
 /// (`ess-conformance` `src/interpret/views.rs:214` at ESS 0.89.0, `select`,
@@ -404,6 +458,7 @@ pub(crate) fn holds(
     identity: &Value,
     row: &Row,
     parameters: &FactStore,
+    now: Option<Rfc3339Instant>,
 ) -> Result<bool, String> {
     let Some(filter) = &view.filter else {
         return Ok(true);
@@ -441,6 +496,7 @@ pub(crate) fn holds(
         params: &view.params,
         row: &facts,
         parameters,
+        now,
     };
     match filter.evaluate(&read) {
         Truth::True => Ok(true),
