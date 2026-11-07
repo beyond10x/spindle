@@ -8,10 +8,15 @@ of future waves). Skill `aep:implementing` 0.26.0, wave mode. All stories serve 
 Integration branch `wave/15`, forked from `main` at 61e946c, managed tree `spindle-wave15`. The ESS
 pin 0.90.0 is the newest ESS release; no dependency move.
 
-Width: 2 units. Wave 1 of the derived plan holds two stories with no collision between them; every
-other active story collides with one of them on `crates/spindle-kernel/src/{execute,store,supported}.rs`
-or `crates/spindle-ingress/src/observe.rs` (verb lines below). Free disk on the host was 146G at
-start (`df -h /`); builds are admitted one by one through the host's build queue.
+Width: 5 units. U1 and U2 started as wave 1 of the derived plan. Five drafts then passed the
+plan-critic panel (`approval-record:drafts-panel-w15`): U4 and U5 share no file with U1 or U2 and
+joined at once; U3 is the operator's accepted `story:kernel-row-set-commit-conflict`, which depends
+on U2 and starts on `wave/15` after U2 merges. `story:kernel-creation-takes-unknown-row` and
+`story:kernel-guard-reads-now` share `crates/spindle-kernel/src/execute.rs` with U2 and U3, so they
+wait for the next wave; every other active story collides with a unit on
+`crates/spindle-kernel/src/{execute,store,supported}.rs` or `crates/spindle-ingress/src/observe.rs`.
+Free disk on the host was 146G at start (`df -h /`); builds are admitted one by one through the
+host's build queue.
 
 ## Units
 
@@ -19,6 +24,9 @@ start (`df -h /`); builds are admitted one by one through the host's build queue
 |---|---|---|---|---|---|
 | U1 | `story:ingress-prometheus-metrics` | `unit/w15-prom` | `spindle-w15-prom` | `aep:implementor` | dispatched |
 | U2 | `story:kernel-set-outcomes` | `unit/w15-setout` | `spindle-w15-setout` | `aep:implementor` | dispatched |
+| U3 | `story:kernel-row-set-commit-conflict` | `unit/w15-rowset` | `spindle-w15-rowset` | `aep:implementor` | after U2 |
+| U4 | `story:links-second-hello-race` | `unit/w15-hello` | `spindle-w15-hello` | `aep:implementor` | dispatched |
+| U5 | `story:route-literal-segment-precedence` | `unit/w15-route` | `spindle-w15-route` | `aep:implementor` | dispatched |
 
 Trees live under the worktree manager's `trees/b10x/spindle/`; each builds into its own `target/`.
 Each unit gets one `aep:adversary` pass when its implementor reports green.
@@ -31,7 +39,15 @@ Each unit gets one `aep:adversary` pass when its implementor reports green.
 - U2: `crates/spindle-kernel` (`supported.rs`, `execute.rs`, `store.rs`, `values.rs`, a new test
   module).
 
-U1 touches `Cargo.lock` through its dev-dependency; U2 does not.
+- U3: `crates/spindle-kernel` (`store.rs`, `execute.rs`, `sqlite.rs`, `contract.rs`, tests),
+  `crates/spindle-host/src/host.rs` and `crates/spindle-store-browser` (every `impl Store` and
+  `Change` site). Starts from `wave/15` after U2; merged after U1 (shared `host.rs`).
+- U4: `crates/spindle-host/tests/spindle-host/adversary_links.rs` (one test); no host code.
+- U5: `crates/spindle-ingress/src/surface.rs` (`Surface::resolve`), a new spindle-cli test module
+  and fixture.
+
+U1 touches `Cargo.lock` through its dev-dependency; the others do not. U1 and U5 may both add a
+`mod` line to `crates/spindle-cli/tests/spindle-cli/main.rs`; the merge resolves it.
 
 ## Exit
 

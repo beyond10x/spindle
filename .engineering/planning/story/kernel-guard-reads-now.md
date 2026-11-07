@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:kernel-guard-reads-now
 kind: story
-status: draft
+status: active
 title: A command guard ordering against now is decided on the kernel's clock
 relations:
 - serves: vision:spindle
@@ -15,7 +15,10 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/guard_reads_now.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/spindle-kernel/main.rs
-revision: 5
+revision: 7
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-07T18:59:09Z", actor: "human:timo", revision: 6}
+- {from: "proposed", to: "active", at: "2026-11-07T18:59:09Z", actor: "human:timo", revision: 7}
 ---
 # A command guard ordering against `now` is decided on the kernel's clock
 

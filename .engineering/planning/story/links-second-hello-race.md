@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:links-second-hello-race
 kind: story
-status: draft
+status: active
 title: Two hellos in one burst are refused however they arrive
 relations:
 - serves: vision:spindle
@@ -12,7 +12,10 @@ scope:
   path: crates/spindle-host/src/host/component.rs
 - confidence: cited
   path: crates/spindle-host/tests/spindle-host/adversary_links.rs
-revision: 3
+revision: 5
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-07T18:59:09Z", actor: "human:timo", revision: 4}
+- {from: "proposed", to: "active", at: "2026-11-07T18:59:09Z", actor: "human:timo", revision: 5}
 ---
 # Two hellos in one burst are refused however they arrive
 

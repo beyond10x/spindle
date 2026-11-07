@@ -7,6 +7,7 @@ title: Wave 15 runs on the operator's standing acceptance of future waves
 relations:
 - decides: story:ingress-prometheus-metrics
 - decides: story:kernel-set-outcomes
+- decides: story:kernel-row-set-commit-conflict
 revision: 2
 transitions:
 - {from: "draft", to: "accepted", at: "2026-11-07T18:35:29Z", actor: "human:timo", revision: 2}

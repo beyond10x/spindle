@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:route-literal-segment-precedence
 kind: story
-status: draft
+status: active
 title: A literal path segment wins over a path variable
 relations:
 - serves: vision:spindle
@@ -15,7 +15,10 @@ scope:
   path: crates/spindle-cli/tests/spindle-cli/route_precedence.rs
 - confidence: cited
   path: crates/spindle-ingress/src/surface.rs
-revision: 5
+revision: 7
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-07T18:59:08Z", actor: "human:timo", revision: 6}
+- {from: "proposed", to: "active", at: "2026-11-07T18:59:08Z", actor: "human:timo", revision: 7}
 ---
 # A literal path segment wins over a path variable
 

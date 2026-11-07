@@ -2,13 +2,17 @@
 format: aep.planning-md/3
 id: story:kernel-row-set-commit-conflict
 kind: story
-status: draft
+status: active
 title: A row-set guard holds against a second writer
 relations:
 - serves: vision:spindle
 - depends_on: story:kernel-set-outcomes
 - informed_by: story:browser-store-stale-write-conflict
 scope:
+- confidence: cited
+  path: crates/spindle-host/src/host.rs
+- confidence: cited
+  path: crates/spindle-host/tests/spindle-host/supplied.rs
 - confidence: cited
   path: crates/spindle-kernel/src/contract.rs
 - confidence: cited
@@ -18,7 +22,21 @@ scope:
 - confidence: cited
   path: crates/spindle-kernel/src/store.rs
 - confidence: cited
+  path: crates/spindle-kernel/tests/spindle-kernel/adversary.rs
+- confidence: cited
+  path: crates/spindle-kernel/tests/spindle-kernel/adversary_append.rs
+- confidence: cited
+  path: crates/spindle-kernel/tests/spindle-kernel/adversary_deletes.rs
+- confidence: cited
   path: crates/spindle-kernel/tests/spindle-kernel/adversary_row_set.rs
+- confidence: cited
+  path: crates/spindle-kernel/tests/spindle-kernel/adversary_store_contract.rs
+- confidence: cited
+  path: crates/spindle-kernel/tests/spindle-kernel/rally_cases/mod.rs
+- confidence: cited
+  path: crates/spindle-kernel/tests/spindle-kernel/related_guards.rs
+- confidence: cited
+  path: crates/spindle-kernel/tests/spindle-kernel/scan.rs
 - confidence: cited
   path: crates/spindle-kernel/tests/spindle-kernel/store_contract.rs
 - confidence: inferred
@@ -26,8 +44,13 @@ scope:
 - confidence: inferred
   path: crates/spindle-store-browser/src/lib.rs
 - confidence: cited
+  path: crates/spindle-store-browser/tests/spindle-store-browser/adversary.rs
+- confidence: cited
   path: crates/spindle-store-browser/tests/spindle-store-browser/contract.rs
-revision: 8
+revision: 23
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-07T18:59:08Z", actor: "human:timo", revision: 22}
+- {from: "proposed", to: "active", at: "2026-11-07T18:59:08Z", actor: "human:timo", revision: 23}
 ---
 # A row-set guard holds against a second writer
 
@@ -48,8 +71,10 @@ already reports on a stale commit (`crates/spindle-store-browser/src/indexeddb.r
 line 405, `remove` at line 438). Across tabs the refusal is
 `story:browser-store-stale-write-conflict`'s.
 
-Selections of a set outcome and `affects:` selections are not conditioned by this story:
-`story:kernel-secondary-effects` covers them when it rewrites the multi-row commit.
+Selections of a set outcome and `affects:` selections are not conditioned by this story. No story
+covers them yet: neither `story:kernel-set-outcomes` nor `story:kernel-secondary-effects` conditions
+a multi-row commit on a scanned version. That is an open gap, to be filed as its own story when
+either of those is implemented.
 
 ## Acceptance
 
@@ -83,9 +108,21 @@ Selections of a set outcome and `affects:` selections are not conditioned by thi
 - `crates/spindle-kernel/tests/spindle-kernel/store_contract.rs` and
   `crates/spindle-store-browser/tests/spindle-store-browser/contract.rs`: cited.
 - `crates/spindle-kernel/tests/spindle-kernel/adversary_row_set.rs`: cited. The `#[ignore]` at
-  line 241.
+  line 241, and the `Racing` store at line 199.
 - `crates/spindle-store-browser/src/indexeddb.rs` and `crates/spindle-store-browser/src/lib.rs`:
   inferred.
+- Every other `impl Store` and `Change` construction follows the changed shape:
+  - `crates/spindle-host/src/host.rs`: cited. `impl Store for Supplied` (line 369) and
+    `impl Store for Lost` (line 1577), their `scan` forwarders (lines 386, 1590), and `Change`
+    built at lines 801 and 919.
+  - `crates/spindle-host/tests/spindle-host/supplied.rs`: cited. `impl Store for Shared` (line 53).
+  - `crates/spindle-kernel/tests/spindle-kernel/adversary_store_contract.rs`: cited.
+    `impl Store for MisnamesTheHeldVersion` (line 213), `Change` at lines 83 and 95.
+  - `crates/spindle-kernel/tests/spindle-kernel/`: cited. `Change` literals in `adversary.rs`
+    (line 216), `adversary_append.rs` (line 248), `adversary_deletes.rs` (lines 20, 76),
+    `rally_cases/mod.rs` (line 82), `related_guards.rs` (line 292) and `scan.rs` (line 17).
+  - `crates/spindle-store-browser/tests/spindle-store-browser/adversary.rs`: cited. `Change` at
+    lines 53 and 60.
 
 No new test module is added, so no `mod` line changes.
 
@@ -104,7 +141,10 @@ No new test module is added, so no `mod` line changes.
   `story:kernel-secondary-effects`, `story:state-change-conditions`,
   `story:response-field-value-source`, `story:kernel-creation-takes-unknown-row`,
   `story:kernel-guard-reads-now` and `story:error-payload-generated-fields`.
-- This story runs after `story:kernel-set-outcomes`.
+- `crates/spindle-host/src/host.rs` is shared with `story:ingress-prometheus-metrics` and
+  `story:live-topology`.
+- This story runs after `story:kernel-set-outcomes`, and is merged after
+  `story:ingress-prometheus-metrics` where both are in one wave.
 - `story:browser-store-stale-write-conflict` records no scope. Its fix would land in
   `crates/spindle-store-browser/src/indexeddb.rs` too.
 
