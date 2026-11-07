@@ -1,0 +1,23 @@
+format: ess/34
+system: yard
+version: v1
+summary: A yard whose owners add tasks, finish the heaviest first and sweep their open tasks.
+domains:
+  - yard.tasks
+components:
+  - component: board
+    summary: Adds, finishes and sweeps tasks.
+    owns:
+      domains:
+        - yard.tasks
+    accepts:
+      commands:
+        - yard.tasks.AddTask
+        - yard.tasks.Finish
+        - yard.tasks.Sweep
+    publishes:
+      events:
+        - yard.tasks.TaskAdded
+        - yard.tasks.Finished
+        - yard.tasks.Swept
+    reached_by: in_process

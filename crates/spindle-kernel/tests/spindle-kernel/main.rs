@@ -17,6 +17,7 @@ mod adversary_rally;
 mod adversary_related_guards;
 mod adversary_related_values;
 mod adversary_responses;
+mod adversary_row_set;
 mod adversary_store_contract;
 mod adversary_structured_responses;
 mod caller;

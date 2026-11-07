@@ -1,0 +1,25 @@
+format: ess/34
+system: demo
+version: v1
+summary: Books shelved, restocked and removed behind a row-set guard whose selector reads only the input.
+domains:
+  - demo.shelf
+components:
+  - component: desk
+    summary: Opens libraries and shelves, restocks and removes books.
+    owns:
+      domains:
+        - demo.shelf
+    accepts:
+      commands:
+        - demo.shelf.OpenLibrary
+        - demo.shelf.Shelve
+        - demo.shelf.Restock
+        - demo.shelf.Unshelve
+    publishes:
+      events:
+        - demo.shelf.LibraryOpened
+        - demo.shelf.BookShelved
+        - demo.shelf.BookRestocked
+        - demo.shelf.BookRemoved
+    reached_by: in_process

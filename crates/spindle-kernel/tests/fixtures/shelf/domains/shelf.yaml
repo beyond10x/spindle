@@ -1,0 +1,121 @@
+domain: demo.shelf
+summary: Books shelved, restocked and removed while no library of the curator is open; shelving adds a book or replaces it.
+entities:
+  - name: demo.shelf.Library
+    identity: {name: library, type: String}
+    fields:
+      - {name: curator, type: String}
+    lifecycle: {initial: Open, states: [Open], terminal: [Open]}
+  - name: demo.shelf.Book
+    identity: {name: book, type: String}
+    fields: []
+    lifecycle: {initial: Shelved, states: [Shelved], terminal: [Shelved]}
+errors:
+  - {name: demo.shelf.Refused, summary: A library of the curator is open., fields: []}
+  - {name: demo.shelf.UnknownBook, summary: No book carries the identity., fields: []}
+events:
+  - name: demo.shelf.LibraryOpened
+    fields: [{name: library, type: String}]
+  - name: demo.shelf.BookShelved
+    fields: [{name: book, type: String}]
+  - name: demo.shelf.BookRestocked
+    fields: [{name: book, type: String}]
+  - name: demo.shelf.BookRemoved
+    fields: [{name: book, type: String}]
+commands:
+  - name: demo.shelf.OpenLibrary
+    input:
+      - {name: library, type: String}
+      - {name: curator, type: String}
+    outcomes:
+      - name: opened
+        creates: demo.shelf.Library
+        instance: library
+        sets: {curator: input.curator}
+        emits: [demo.shelf.LibraryOpened]
+        payload:
+          demo.shelf.LibraryOpened: {library: input.library}
+        summary: The library is opened.
+  - name: demo.shelf.Shelve
+    input:
+      - {name: book, type: String}
+      - {name: curator, type: String}
+    outcomes:
+      - name: refused
+        when_related:
+          entity: demo.shelf.Library
+          where: curator == input.curator
+          exists: true
+        error: demo.shelf.Refused
+        summary: A library of the curator is open.
+      - name: added
+        external: the book is not yet shelved
+        creates: demo.shelf.Book
+        instance: book
+        emits: [demo.shelf.BookShelved]
+        payload:
+          demo.shelf.BookShelved: {book: input.book}
+        summary: The book is added.
+      - name: replaced
+        updates: demo.shelf.Book
+        instance: book
+        emits: [demo.shelf.BookShelved]
+        payload:
+          demo.shelf.BookShelved: {book: input.book}
+        summary: The book is replaced.
+  - name: demo.shelf.Restock
+    input:
+      - {name: book, type: String}
+      - {name: curator, type: String}
+    outcomes:
+      - name: unknown-book
+        unknown_instance: true
+        error: demo.shelf.UnknownBook
+        summary: No book carries the identity.
+      - name: refused
+        when_related:
+          entity: demo.shelf.Library
+          where: curator == input.curator
+          exists: true
+        error: demo.shelf.Refused
+        summary: A library of the curator is open.
+      - name: restocked
+        updates: demo.shelf.Book
+        instance: book
+        emits: [demo.shelf.BookRestocked]
+        payload:
+          demo.shelf.BookRestocked: {book: input.book}
+        summary: The book is restocked.
+  - name: demo.shelf.Unshelve
+    input:
+      - {name: book, type: String}
+      - {name: curator, type: String}
+    outcomes:
+      - name: refused
+        when_related:
+          entity: demo.shelf.Library
+          where: curator == input.curator
+          exists: true
+        error: demo.shelf.Refused
+        summary: A library of the curator is open.
+      - name: removed
+        deletes: demo.shelf.Book
+        instance: book
+        emits: [demo.shelf.BookRemoved]
+        payload:
+          demo.shelf.BookRemoved: {book: input.book}
+        summary: The book is removed.
+views:
+  - name: demo.shelf.Libraries
+    source: demo.shelf.Library
+    consistency: read_your_writes
+    fields:
+      - {name: library, type: String}
+      - {name: curator, type: String}
+      - {name: state, type: demo.shelf.Library.State}
+  - name: demo.shelf.Books
+    source: demo.shelf.Book
+    consistency: read_your_writes
+    fields:
+      - {name: book, type: String}
+      - {name: state, type: demo.shelf.Book.State}
