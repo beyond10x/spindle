@@ -6,6 +6,18 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- The kernel runs a set outcome (`instances:`): it selects every row of the named entity whose
+  filter holds, read from the store as it was before the outcome, and moves, updates or removes
+  each in ascending order of identity, as ESS's interpreter does. A move skips a row resting
+  outside its `from` states, and zero rows selected is a successful outcome. `{count: changed}`
+  reads how many rows changed, and an event declared once per changed row (`each: changed`, with
+  its `when_state:`) is published once for each, its `{changed: …}` fields read from that row as
+  it was before. Each row is written in its own store write, the outcome's events with the last;
+  a filter that walks the rows of an entity stays refused. Before, every such outcome was refused
+  as unsupported.
+
 ## [0.6.0] - 2026-11-07
 
 ### Added

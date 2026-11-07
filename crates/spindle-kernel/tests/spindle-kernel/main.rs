@@ -35,6 +35,7 @@ mod related_values;
 mod responses;
 mod row_set_guards;
 mod scan;
+mod set_outcomes;
 mod store_contract;
 mod structured_responses;
 mod unsupported;

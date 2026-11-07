@@ -1,0 +1,29 @@
+format: ess/34
+system: lending
+version: v1
+summary: A library desk that lends books, takes them back, renews loans, marks the overdue ones and purges returned ones.
+domains:
+  - lending.loans
+components:
+  - component: desk
+    summary: Lends, returns, renews, marks and purges loans.
+    owns:
+      domains:
+        - lending.loans
+    accepts:
+      commands:
+        - lending.loans.Lend
+        - lending.loans.Return
+        - lending.loans.MarkOverdue
+        - lending.loans.Renew
+        - lending.loans.Purge
+    publishes:
+      events:
+        - lending.loans.Lent
+        - lending.loans.Returned
+        - lending.loans.LoansMarked
+        - lending.loans.LoanMarked
+        - lending.loans.Renewed
+        - lending.loans.LoansPurged
+        - lending.loans.LoanPurged
+    reached_by: in_process
