@@ -1,14 +1,18 @@
 //! The value one determined field takes: an event's payload field, an error's field, or a field
 //! `sets:` writes.
 //!
-//! Only the sources Spindle's own specification and the `rally` example use, and
-//! `{append: input.<path>}`, are read here; the rest are refused by [`crate::supported`] before a
-//! command runs. Numbers are ESS's own [`Number`], so `{increment: N}` adds exactly as ESS adds, and a literal is typed by
+//! Only the sources Spindle's own specification and the `rally` example use,
+//! `{append: input.<path>}`, and a field or the state of the row an input field names
+//! (`{related: {via: input.<field>, field: …}}`), are read here; the rest are refused by
+//! [`crate::supported`] before a command runs. Numbers are ESS's own [`Number`], so `{increment: N}` adds exactly as ESS adds, and a literal is typed by
 //! [`EssIr::literal_primitive`], the one question every ESS consumer asks of a literal.
+
+use std::collections::BTreeMap;
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::{
-    EventHandle, ResolvedOutcome, ResolvedPayloadField, ResolvedPayloadValue, ResolvedTypeRef,
+    EntityHandle, EventHandle, ResolvedCommand, ResolvedOutcome, ResolvedPayloadField,
+    ResolvedPayloadValue, ResolvedRelatedVia, ResolvedTypeRef,
 };
 use ess_domain::QualifiedName;
 use ess_domain::types::Primitive;
@@ -17,10 +21,78 @@ use serde_json::{Map, Value};
 
 use crate::ExecuteError;
 use crate::mint::Generator;
-use crate::store::Row;
+use crate::store::{Row, Store};
 
-/// What a determined field may read: the command's input and the addressed instance as it was
-/// immediately before the outcome.
+/// The rows the command's related values read, as the store held them before the command ran:
+/// by the entity's name and the identity's JSON text, `None` where no row carries the identity.
+pub(crate) type Related = BTreeMap<(String, String), Option<Row>>;
+
+/// Reads, before anything is selected or written, every row a `{related: {via: input.<field>,
+/// …}}` value of `command` names, in any outcome, struct members included: what those values read
+/// is the store as it was before the outcome (ESS `interpret::execute::determined::Reads`, whose
+/// read authority is the original store). An input that names no row, being absent or `null`,
+/// reads nothing.
+///
+/// # Errors
+/// [`ExecuteError::Store`] where the store does not read.
+pub(crate) fn related(
+    ir: &EssIr,
+    command: &ResolvedCommand,
+    input: &Map<String, Value>,
+    store: &mut dyn Store,
+) -> Result<Related, ExecuteError> {
+    fn reads<'f>(
+        fields: impl IntoIterator<Item = &'f ResolvedPayloadField>,
+        found: &mut Vec<(&'f str, &'f EntityHandle)>,
+    ) {
+        for field in fields {
+            match &field.value {
+                ResolvedPayloadValue::RelatedField {
+                    via: ResolvedRelatedVia::Input { field, .. },
+                    through,
+                    entity,
+                    ..
+                }
+                | ResolvedPayloadValue::RelatedState {
+                    via: ResolvedRelatedVia::Input { field, .. },
+                    through,
+                    entity,
+                    ..
+                } if through.is_empty() => found.push((field, entity)),
+                ResolvedPayloadValue::Struct { fields } => reads(fields, found),
+                _ => {}
+            }
+        }
+    }
+    let mut found = Vec::new();
+    for outcome in &command.outcomes {
+        reads(
+            outcome
+                .sets
+                .iter()
+                .chain(outcome.payload.iter().flat_map(|payload| &payload.fields))
+                .chain(&outcome.error_payload),
+            &mut found,
+        );
+    }
+    let mut related = Related::new();
+    for (field, entity) in found {
+        let Some(identity) = read_input(input, field) else {
+            continue;
+        };
+        let entity = ir.entity(entity).name.to_string();
+        let key = (entity, identity.to_string());
+        if related.contains_key(&key) {
+            continue;
+        }
+        let row = store.load(&key.0, &identity)?.map(|stored| stored.row);
+        related.insert(key, row);
+    }
+    Ok(related)
+}
+
+/// What a determined field may read: the command's input, the addressed instance as it was
+/// immediately before the outcome, and the rows its related values name, as they were then.
 #[derive(Clone, Copy)]
 pub(crate) struct Sources<'a, 'm> {
     pub(crate) ir: &'a EssIr,
@@ -28,6 +100,8 @@ pub(crate) struct Sources<'a, 'm> {
     /// The attributes of the caller the command is sent as; `None` for no caller.
     pub(crate) caller: Option<&'a Map<String, Value>>,
     pub(crate) before: Option<&'a Row>,
+    /// The rows the command's related values name, read before the command ran ([`related`]).
+    pub(crate) related: &'a Related,
     /// Whether the fields are a declared error's: there, a field read from the instance is absent
     /// where no instance is held (the unknown-instance arm of a `wrong_state:` refusal, ESS
     /// `error_value`, beyond10x/ess#458) rather than a value nothing determines.
@@ -125,6 +199,19 @@ impl<'a> Sources<'a, '_> {
                 attribute,
                 type_ref,
             } => self.caller_value(attribute, type_ref),
+            ResolvedPayloadValue::RelatedField {
+                via: ResolvedRelatedVia::Input { field: via, .. },
+                through,
+                entity,
+                field: read,
+                ..
+            } if through.is_empty() => self.related(field, via, entity, Some(read)),
+            ResolvedPayloadValue::RelatedState {
+                via: ResolvedRelatedVia::Input { field: via, .. },
+                through,
+                entity,
+                ..
+            } if through.is_empty() => self.related(field, via, entity, None),
             ResolvedPayloadValue::EmptyList => Ok(Some(Value::Array(Vec::new()))),
             ResolvedPayloadValue::Cleared => Ok(None),
             ResolvedPayloadValue::Struct { fields } => {
@@ -203,6 +290,43 @@ impl<'a> Sources<'a, '_> {
                  caller that carries it"
             ))),
         }
+    }
+
+    /// `{related: {via: input.<via>, field: <read>}}` (ess/16), or the held state where `read` is
+    /// `None` (ess/28), as ESS reads it (`interpret::execute::determined::Reads::related`): the
+    /// field of the `entity` row the input names, as the store held it before the command ran.
+    /// An `Optional` input left absent names no row and the value is absent; an identity no row
+    /// carries determines nothing. The identity field reads the identity itself.
+    fn related(
+        &self,
+        field: &ResolvedPayloadField,
+        via: &str,
+        entity: &EntityHandle,
+        read: Option<&str>,
+    ) -> Result<Option<Value>, ExecuteError> {
+        let Some(identity) = read_input(self.input, via) else {
+            return Ok(None);
+        };
+        let entity = self.ir.entity(entity);
+        let row = self
+            .related
+            .get(&(entity.name.to_string(), identity.to_string()))
+            .and_then(Option::as_ref)
+            .ok_or_else(|| ExecuteError::NoValue {
+                what: format!(
+                    "`{}`, which reads the `{}` row input.{via} names, and none carries {identity}",
+                    field.target, entity.name
+                ),
+            })?;
+        Ok(match read {
+            None => Some(Value::String(row.state.clone())),
+            Some(read) if read == entity.identity.name => Some(identity),
+            Some(read) => row
+                .fields
+                .get(read)
+                .filter(|value| !value.is_null())
+                .cloned(),
+        })
     }
 
     fn before(&self, field: &ResolvedPayloadField) -> Result<&'a Row, ExecuteError> {
