@@ -57,7 +57,9 @@ pub enum Command {
     ///
     /// Prints on stderr one line per outcome the kernel does not run, naming the outcome and what
     /// it lacks: a request that selects it is refused, and every other outcome of its command
-    /// runs. Exits 0 when admitted and 3 when refused.
+    /// runs. A command the kernel refuses whole (one it cannot select among, or none of whose
+    /// outcomes runs) is named once instead, as not served. Exits 0 when admitted and 3 when
+    /// refused.
     Admit {
         /// The specification directory.
         spec: PathBuf,
@@ -79,7 +81,8 @@ pub enum Command {
     /// command is sent as and its caller's attributes, every required one of that actor's, which
     /// the command reads as `{caller: <attribute>}` and `caller.<attribute>`. Each line prints
     /// one JSON result: the outcome with its events and declared error, or a failure.
-    /// Exits 3, running nothing, when admission is refused.
+    /// Exits 3, running nothing, when admission is refused. At startup it prints on stderr the
+    /// same lines `admit` prints for outcomes and commands the kernel does not run.
     ///
     /// An external cause the line does not answer is answered by `--decisions`, then by
     /// `--answer-default`; one nothing answers fails that line, naming the outcome, and the run

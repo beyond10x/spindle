@@ -25,6 +25,10 @@ are Spindle's releases.
   `ess generate --kind openapi --http <file>` publishes it. Before, such an outcome answered `501`.
   An outcome bound with headers, a redirect, the `text` encoding or an error object still answers
   `501` when a request selects it, now naming which of those it is.
+- `spindle.observe` specifies the request log (`RequestLog`, format `spindle-requests/1`), the
+  metric families (`MetricFamilies`) and the topology (`Topology`, format `spindle-topology/1`) a
+  served run will answer under `/__spindle/`, projected to JSON Schema, `spindle-observe-api` and
+  the UI's TypeScript types, with fixtures checked against their schemas. No route serves them yet.
 
 ### Changed
 
@@ -35,13 +39,16 @@ are Spindle's releases.
   envelope's `response` keyed each field by its declared name.
 - An outcome the runtime does not run refuses only the request that selects it. A command with
   one such outcome (a value it would generate of a type the runtime does not mint, an identity it
-  cannot mint, a response field it does not choose, an error field nothing fills) keeps its HTTP
-  route and answers every other outcome as declared; the request that selects that outcome
-  answers `501` naming the outcome and what it lacks, and nothing is minted or written. An outcome
-  an `ess-http/1` binding answers other than with its status and the envelope is refused the same
-  way. `admit` and `run`'s startup name each such outcome on stderr. A construct selection reads
+  cannot mint, a response field it does not choose, an error field nothing fills, a refusal that
+  changes its row (`compensates: true`), secondary effects (`affects:`)) keeps its HTTP route and
+  answers every other outcome as declared; the request that selects that outcome answers `501`
+  naming the outcome and what it lacks, and nothing is minted or written. `run` reading stdin
+  refuses it the same way, as an `unsupported` failure line. An outcome an `ess-http/1` binding
+  answers other than with its status and the envelope is refused the same way. `admit`, `run`'s
+  startup and `run` reading stdin name each such outcome on stderr. A construct selection reads
   (a condition, an outcome's shape) still refuses the whole command, and so does a command none of
-  whose outcomes runs. New: `spindle_kernel::selects`, `spindle_kernel::takes`,
+  whose outcomes runs; `admit` and `run` reading stdin name such a command once on stderr as not
+  served, as `run` over HTTP does. New: `spindle_kernel::selects`, `spindle_kernel::takes`,
   `spindle_kernel::execute_refusing`, `spindle_host::Host::submit_refusing`,
   `spindle_ingress::Route::refused`.
 
