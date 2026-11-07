@@ -15,11 +15,21 @@ are Spindle's releases.
   and style and `connect-src 'self'` only. `ui/vite.panel.config.ts` builds it into
   `ui/dist-panel/panel.html` (`pnpm build:panel`, run by `task ui` and `task check:ui`), and
   `b10x-spindle` embeds it; without it the route answers `503`.
+- A refusing outcome an `ess-http/1` binding answers with an error object, `body: {<member>:
+  error}`, is served: at the bound status, an object whose `<member>` is the error's wire name,
+  beside the error's fields under their wire names, as `ess generate --kind openapi --http <file>`
+  publishes it, and nothing is written. Before, such an outcome answered `501`.
 
 ### Changed
 
 - ESS 0.90.0: every ESS crate, `schema-contract` included, and CI's `ess` CLI move to tag 0.90.0; the
   specification requires ess 0.90 and the generated output is restamped.
+
+### Fixed
+
+- A refusal answered with the default envelope keys its `payload` by the error fields' wire names,
+  as the bound OpenAPI document publishes it; before, a field renamed on the wire was written under
+  its declared name.
 
 ## [0.5.0] - 2026-11-07
 

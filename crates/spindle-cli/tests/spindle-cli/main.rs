@@ -27,6 +27,7 @@ mod console;
 mod decisions;
 mod deletes;
 mod deploy;
+mod error_object_bodies;
 mod fixed_caller;
 mod fixed_callers;
 mod form_query;
