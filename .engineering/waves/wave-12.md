@@ -13,9 +13,9 @@ ESS pin 0.88.0, the newest ESS release: no move this wave.
 | unit | story | branch | tree (managed id) | build dir | scratch | starts | stage |
 |---|---|---|---|---|---|---|---|
 | U1 | `story:outcome-scoped-refusal` | `unit/w12-refusal` | `spindle-w12-refusal` | `<tree>/target` | `<scratch>/u1` | at open | dispatched |
-| U2 | `story:view-list-query-parameters` | `unit/w12-listparam` | `spindle-w12-listparam` | `<tree>/target` | `<scratch>/u2` | at open | dispatched |
+| U2 | `story:view-list-query-parameters` | `unit/w12-listparam` | `spindle-w12-listparam` | `<tree>/target` | `<scratch>/u2` | at open | ba7aa2b green, merged 0f55ecc; adversary pass 1 running |
 | U3 | `story:http-outcome-bodies` | `unit/w12-bodies` | `spindle-w12-bodies` | `<tree>/target` | `<scratch>/u3` | after U1 merges (`depends_on`) | waiting |
-| U4 | `story:observe-ingress-model` | `unit/w12-observe` | `spindle-w12-observe` | `<tree>/target` | `<scratch>/u4` | at open | dispatched |
+| U4 | `story:observe-ingress-model` | `unit/w12-observe` | `spindle-w12-observe` | `<tree>/target` | `<scratch>/u4` | at open | fe12f30 green, merged d91fc3a; adversary pass 1 running |
 
 Trees live under the worktree manager's `trees/b10x/spindle/`; `<scratch>` is the coordinator's
 session scratch directory for this wave, outside every repository.

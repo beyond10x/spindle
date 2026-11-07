@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-07T00:34:54Z",
+  "actor": "human:timo",
+  "artifact": "story:view-list-query-parameters",
+  "kind": "story",
+  "revision": 7,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "cargo test -p spindle-cli --test spindle-cli view_list_parameter",
+    "reference": "base c6530ac: 7 failed of 8, 501 naming tags; unit 7598eba: 8 passed (implementor's run logs, wave 12 u2)"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-07T00:28:44Z",
+  "actor": "human:timo",
+  "artifact": "story:observe-ingress-model",
+  "kind": "story",
+  "revision": 12,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "task check:the_observe_domain_validates, check:every_fixture_answer_validates_against_its_schema, check:ui",
+    "reference": "base c6530ac: exit 201, 201, vitest 4 failed of 38; unit fe12f30: exit 0, 0, vitest 38 passed (implementor's run logs, wave 12 u4)"
+  }
+}
