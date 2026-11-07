@@ -357,8 +357,20 @@ name = "ess-compiler"
 version = "0.88.0"
 source = "git+https://github.com/beyond10x/ess?tag=0.88.0#bd6ecb330d7747a98418b35fc13c80771303484f"
 dependencies = [
- "ess-domain",
- "ess-primitives",
+ "ess-domain 0.88.0",
+ "ess-primitives 0.88.0",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+]
+
+[[package]]
+name = "ess-compiler"
+version = "0.89.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.89.0#ec2cb77cad2f0def5800e8934e8540f01b48f8c2"
+dependencies = [
+ "ess-domain 0.89.0",
+ "ess-primitives 0.89.0",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -366,14 +378,14 @@ dependencies = [
 
 [[package]]
 name = "ess-conformance"
-version = "0.88.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.88.0#bd6ecb330d7747a98418b35fc13c80771303484f"
+version = "0.89.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.89.0#ec2cb77cad2f0def5800e8934e8540f01b48f8c2"
 dependencies = [
- "ess-compiler",
- "ess-domain",
- "ess-gen",
- "ess-primitives",
- "ess-yaml",
+ "ess-compiler 0.89.0",
+ "ess-domain 0.89.0",
+ "ess-gen 0.89.0",
+ "ess-primitives 0.89.0",
+ "ess-yaml 0.89.0",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -384,8 +396,21 @@ name = "ess-domain"
 version = "0.88.0"
 source = "git+https://github.com/beyond10x/ess?tag=0.88.0#bd6ecb330d7747a98418b35fc13c80771303484f"
 dependencies = [
- "ess-primitives",
- "ess-yaml",
+ "ess-primitives 0.88.0",
+ "ess-yaml 0.88.0",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "ess-domain"
+version = "0.89.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.89.0#ec2cb77cad2f0def5800e8934e8540f01b48f8c2"
+dependencies = [
+ "ess-primitives 0.89.0",
+ "ess-yaml 0.89.0",
  "schemars",
  "serde",
  "serde_json",
@@ -397,12 +422,29 @@ name = "ess-gen"
 version = "0.88.0"
 source = "git+https://github.com/beyond10x/ess?tag=0.88.0#bd6ecb330d7747a98418b35fc13c80771303484f"
 dependencies = [
- "ess-compiler",
- "ess-domain",
- "ess-http",
- "ess-primitives",
- "ess-transport",
- "ess-yaml",
+ "ess-compiler 0.88.0",
+ "ess-domain 0.88.0",
+ "ess-http 0.88.0",
+ "ess-primitives 0.88.0",
+ "ess-transport 0.88.0",
+ "ess-yaml 0.88.0",
+ "pulldown-cmark",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+]
+
+[[package]]
+name = "ess-gen"
+version = "0.89.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.89.0#ec2cb77cad2f0def5800e8934e8540f01b48f8c2"
+dependencies = [
+ "ess-compiler 0.89.0",
+ "ess-domain 0.89.0",
+ "ess-http 0.89.0",
+ "ess-primitives 0.89.0",
+ "ess-transport 0.89.0",
+ "ess-yaml 0.89.0",
  "pulldown-cmark",
  "serde",
  "serde_json",
@@ -414,10 +456,24 @@ name = "ess-http"
 version = "0.88.0"
 source = "git+https://github.com/beyond10x/ess?tag=0.88.0#bd6ecb330d7747a98418b35fc13c80771303484f"
 dependencies = [
- "ess-compiler",
- "ess-domain",
- "ess-primitives",
- "ess-yaml",
+ "ess-compiler 0.88.0",
+ "ess-domain 0.88.0",
+ "ess-primitives 0.88.0",
+ "ess-yaml 0.88.0",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+]
+
+[[package]]
+name = "ess-http"
+version = "0.89.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.89.0#ec2cb77cad2f0def5800e8934e8540f01b48f8c2"
+dependencies = [
+ "ess-compiler 0.89.0",
+ "ess-domain 0.89.0",
+ "ess-primitives 0.89.0",
+ "ess-yaml 0.89.0",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -428,7 +484,19 @@ name = "ess-primitives"
 version = "0.88.0"
 source = "git+https://github.com/beyond10x/ess?tag=0.88.0#bd6ecb330d7747a98418b35fc13c80771303484f"
 dependencies = [
- "ess-yaml",
+ "ess-yaml 0.88.0",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "ess-primitives"
+version = "0.89.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.89.0#ec2cb77cad2f0def5800e8934e8540f01b48f8c2"
+dependencies = [
+ "ess-yaml 0.89.0",
  "schemars",
  "serde",
  "serde_json",
@@ -440,9 +508,21 @@ name = "ess-transport"
 version = "0.88.0"
 source = "git+https://github.com/beyond10x/ess?tag=0.88.0#bd6ecb330d7747a98418b35fc13c80771303484f"
 dependencies = [
- "ess-compiler",
- "ess-domain",
- "ess-yaml",
+ "ess-compiler 0.88.0",
+ "ess-domain 0.88.0",
+ "ess-yaml 0.88.0",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "ess-transport"
+version = "0.89.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.89.0#ec2cb77cad2f0def5800e8934e8540f01b48f8c2"
+dependencies = [
+ "ess-compiler 0.89.0",
+ "ess-domain 0.89.0",
+ "ess-yaml 0.89.0",
  "serde",
  "serde_json",
 ]
@@ -451,6 +531,15 @@ dependencies = [
 name = "ess-yaml"
 version = "0.88.0"
 source = "git+https://github.com/beyond10x/ess?tag=0.88.0#bd6ecb330d7747a98418b35fc13c80771303484f"
+dependencies = [
+ "serde",
+ "serde_norway",
+]
+
+[[package]]
+name = "ess-yaml"
+version = "0.89.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.89.0#ec2cb77cad2f0def5800e8934e8540f01b48f8c2"
 dependencies = [
  "serde",
  "serde_norway",
@@ -1268,8 +1357,8 @@ version = "0.88.0"
 source = "git+https://github.com/beyond10x/ess?tag=0.88.0#bd6ecb330d7747a98418b35fc13c80771303484f"
 dependencies = [
  "base64",
- "ess-gen",
- "ess-primitives",
+ "ess-gen 0.88.0",
+ "ess-primitives 0.88.0",
  "fluent-uri",
  "jsonschema",
  "serde",
@@ -1458,9 +1547,9 @@ dependencies = [
 name = "spindle-capability"
 version = "0.4.0"
 dependencies = [
- "ess-compiler",
- "ess-domain",
- "ess-primitives",
+ "ess-compiler 0.89.0",
+ "ess-domain 0.89.0",
+ "ess-primitives 0.89.0",
  "serde",
  "spindle-spec",
  "thiserror",
@@ -1471,8 +1560,8 @@ dependencies = [
 name = "spindle-channel"
 version = "0.4.0"
 dependencies = [
- "ess-compiler",
- "ess-domain",
+ "ess-compiler 0.89.0",
+ "ess-domain 0.89.0",
  "serde",
  "serde_json",
  "spindle-kernel",
@@ -1488,12 +1577,12 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
- "ess-compiler",
+ "ess-compiler 0.89.0",
  "ess-conformance",
- "ess-domain",
- "ess-gen",
- "ess-http",
- "ess-primitives",
+ "ess-domain 0.89.0",
+ "ess-gen 0.89.0",
+ "ess-http 0.89.0",
+ "ess-primitives 0.89.0",
  "jsonschema",
  "rustix",
  "serde",
@@ -1517,10 +1606,10 @@ dependencies = [
 name = "spindle-conformance"
 version = "0.4.0"
 dependencies = [
- "ess-compiler",
+ "ess-compiler 0.89.0",
  "ess-conformance",
- "ess-domain",
- "ess-primitives",
+ "ess-domain 0.89.0",
+ "ess-primitives 0.89.0",
  "serde",
  "serde_json",
  "spindle-capability",
@@ -1535,7 +1624,7 @@ dependencies = [
 name = "spindle-control"
 version = "0.4.0"
 dependencies = [
- "ess-compiler",
+ "ess-compiler 0.89.0",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -1587,10 +1676,10 @@ dependencies = [
 name = "spindle-host"
 version = "0.4.0"
 dependencies = [
- "ess-compiler",
+ "ess-compiler 0.89.0",
  "ess-conformance",
- "ess-domain",
- "ess-primitives",
+ "ess-domain 0.89.0",
+ "ess-primitives 0.89.0",
  "serde_json",
  "spindle-capability",
  "spindle-channel",
@@ -1607,11 +1696,11 @@ dependencies = [
 name = "spindle-ingress"
 version = "0.4.0"
 dependencies = [
- "ess-compiler",
+ "ess-compiler 0.89.0",
  "ess-conformance",
- "ess-gen",
- "ess-http",
- "ess-primitives",
+ "ess-gen 0.89.0",
+ "ess-http 0.89.0",
+ "ess-primitives 0.89.0",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -1629,10 +1718,10 @@ dependencies = [
 name = "spindle-kernel"
 version = "0.4.0"
 dependencies = [
- "ess-compiler",
+ "ess-compiler 0.89.0",
  "ess-conformance",
- "ess-domain",
- "ess-primitives",
+ "ess-domain 0.89.0",
+ "ess-primitives 0.89.0",
  "eventlog-core",
  "eventlog-sqlite",
  "serde",
@@ -1668,9 +1757,9 @@ dependencies = [
 name = "spindle-spec"
 version = "0.4.0"
 dependencies = [
- "ess-compiler",
- "ess-domain",
- "ess-yaml",
+ "ess-compiler 0.89.0",
+ "ess-domain 0.89.0",
+ "ess-yaml 0.89.0",
  "serde_json",
  "tempfile",
  "thiserror",
@@ -1696,7 +1785,7 @@ dependencies = [
 name = "spindle-target"
 version = "0.4.0"
 dependencies = [
- "ess-compiler",
+ "ess-compiler 0.89.0",
  "rustix",
  "serde",
  "serde_json",
@@ -1711,7 +1800,7 @@ dependencies = [
 name = "spindle-telemetry"
 version = "0.4.0"
 dependencies = [
- "ess-compiler",
+ "ess-compiler 0.89.0",
  "libc",
  "schema-contract",
  "serde",
@@ -1726,8 +1815,8 @@ dependencies = [
 name = "spindle-timer"
 version = "0.4.0"
 dependencies = [
- "ess-compiler",
- "ess-domain",
+ "ess-compiler 0.89.0",
+ "ess-domain 0.89.0",
  "spindle-spec",
  "spindle-telemetry",
  "thiserror",
