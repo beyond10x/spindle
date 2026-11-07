@@ -19,6 +19,22 @@ are Spindle's releases.
   error}`, is served: at the bound status, an object whose `<member>` is the error's wire name,
   beside the error's fields under their wire names, as `ess generate --kind openapi --http <file>`
   publishes it, and nothing is written. Before, such an outcome answered `501`.
+- A view's filter that reads a field of its source is answered with the rows ESS's interpreter
+  answers: a field compared with a literal of its type by `==` or `!=`, or by `<`, `<=`, `>` or
+  `>=` where ESS orders the type (`archived == false`, `priority >= 3`, `kind != "draft"`), a
+  timestamp also against `now` read once on the host's clock; a field listed `in:` or `none_of:`
+  literals; `defined(<field>)`; and `exists` or `forall` over a list field of the row, its element
+  compared with a literal, a parameter or an outer binder. A filter ESS leaves unknown for a row,
+  such as `note == "keep"` over a row without a note, answers `501` as ESS's interpreter refuses
+  the read. Any other leaf still refuses the filter whole, naming it. Before, such a view answered
+  `501`.
+- The kernel decides an outcome guarded by `when_related:` over a row set: every row of the
+  selection's entity is a candidate, selected where the `where:` predicate holds of it (its fields,
+  identity and held state, `input.`, `subject.` and the decision's `now`), and the `exists`,
+  `count` or `forall` test is decided over the selected rows as ESS's interpreter decides it. On a
+  command that creates its addressed row beside a row set, an absent row is left to the row sets
+  and then the creation, as ESS does. A row committed by a second writer between the read and the
+  commit is not yet detected. Before, such a command was refused as unsupported.
 
 ### Changed
 
