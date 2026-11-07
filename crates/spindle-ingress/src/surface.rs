@@ -92,6 +92,9 @@ pub struct Route {
     parameters: Vec<Parameter>,
     /// The outcomes answered with the command's response beside the envelope.
     responding: Vec<String>,
+    /// The outcomes the binding answers with a body other than the envelope, each with it:
+    /// `response`, `response.<field>` or `none`.
+    bodies: BTreeMap<String, Body>,
     unserved: Option<Unserved>,
     /// The command's outcomes not run, in declaration order, each with why.
     refused: Vec<(String, Unserved)>,
@@ -177,6 +180,13 @@ impl Route {
         self.responding
             .iter()
             .any(|responding| responding == outcome)
+    }
+
+    /// The body the binding answers the command's outcome `outcome` with where it is not the
+    /// envelope: [`Body::Response`], [`Body::ResponseField`] or [`Body::None`]. `None` for an
+    /// outcome answered with the envelope.
+    pub(crate) fn body(&self, outcome: &str) -> Option<&Body> {
+        self.bodies.get(outcome)
     }
 
     /// The path's variables.
@@ -566,7 +576,7 @@ impl Surface {
     /// variable that is not a scalar. A command the kernel cannot select among the outcomes of
     /// ([`selects`](spindle_kernel::selects)) is marked [`Unserved::Kernel`], and a view the
     /// host's [`reads`](spindle_host::reads) refuses [`Unserved::Host`]. A command's outcome
-    /// answered other than with the envelope (a body, headers, a redirect or text) or one the
+    /// answered with headers, a redirect, the `text` encoding or an error object, or one the
     /// kernel does not take ([`takes`](spindle_kernel::takes)) refuses that outcome alone
     /// ([`Route::refused`]); a command none of whose outcomes is left is marked as a whole.
     ///
@@ -782,6 +792,7 @@ fn route(
         unknown: Unknown::Refuse,
         parameters: Vec::new(),
         responding: Vec::new(),
+        bodies: BTreeMap::new(),
         unserved: None,
         refused: Vec::new(),
         caller: caller.cloned(),
@@ -793,6 +804,7 @@ fn route(
             route.queried.clear();
             route.statuses.clear();
             route.responding.clear();
+            route.bodies.clear();
             route.refused.clear();
             route.unserved = Some(Unserved::Ingress(what));
         }
@@ -884,6 +896,7 @@ fn refuse(ir: &EssIr, command: &ess_compiler::ir::ResolvedCommand, route: &mut R
         route.variables.clear();
         route.statuses.clear();
         route.responding.clear();
+        route.bodies.clear();
         route.unserved = Some(why);
     } else {
         route.unserved = selection
@@ -892,8 +905,9 @@ fn refuse(ir: &EssIr, command: &ess_compiler::ir::ResolvedCommand, route: &mut R
     }
 }
 
-/// Fills `route`'s variables, input, request and statuses, and lists among its refused outcomes
-/// each one answered other than with the envelope (a body, headers, a redirect or text) or
+/// Fills `route`'s variables, input, request, statuses and the bodies its outcomes answer other
+/// than with the envelope, and lists among its refused outcomes each one answered with headers, a
+/// redirect, the `text` encoding or an error object ([`unwritten`]), or
 /// without a status; `Err` names what it uses that this ingress does not serve: a view answered
 /// other than as `rows`, a standard
 /// refusal the binding answers its own way, a command whose outcome answers with its retained
@@ -972,18 +986,17 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
                     route.responding.push(outcome.name.to_string());
                 }
                 let status = match ess_gen::http::listed(bound, outcome) {
-                    Some(listed)
-                        if listed.body != Body::Envelope
-                            || listed.encoding != ResponseEncoding::default()
-                            || !listed.headers.is_empty()
-                            || listed.redirect.is_some() =>
-                    {
-                        Err(format!(
-                            "{} answered other than with its status and the envelope",
-                            outcome.name
-                        ))
-                    }
-                    Some(listed) => Ok(listed.status),
+                    Some(listed) => match unwritten(listed) {
+                        Some(what) => Err(format!("{} answered {what}", outcome.name)),
+                        None => {
+                            if listed.body != Body::Envelope {
+                                route
+                                    .bodies
+                                    .insert(outcome.name.to_string(), listed.body.clone());
+                            }
+                            Ok(listed.status)
+                        }
+                    },
                     None => ess_http::status::outcome_status(ir, outcome)
                         .parse()
                         .map_err(|_| format!("{} without a status", outcome.name)),
@@ -1037,6 +1050,50 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
         }
     }
     Ok(())
+}
+
+/// What of `listed`, a command outcome's answer as the binding lists it, this ingress does not
+/// write, in words; `None` where it writes all of it: the status with the envelope,
+/// `response`, `response.<field>` or `none` as `application/json` or no body. Each of bound
+/// headers, a redirect, a response encoding other than `json` and an error object is named.
+///
+/// Every member of the answer is read by name, so a member a later ESS adds fails to compile here
+/// rather than going unwritten unnamed.
+fn unwritten(listed: &ess_http::Outcome) -> Option<String> {
+    let ess_http::Outcome {
+        status: _,
+        body,
+        encoding,
+        headers,
+        redirect,
+    } = listed;
+    let mut what = Vec::new();
+    match body {
+        Body::Error { member } => {
+            what.push(format!("with the error object `{{{member}: error}}`"));
+        }
+        Body::Envelope | Body::Response | Body::ResponseField(_) | Body::None => {}
+    }
+    match encoding {
+        ResponseEncoding::Json => {}
+        ResponseEncoding::Text => what.push(format!("in the `{encoding}` encoding")),
+    }
+    if !headers.is_empty() {
+        let names = headers
+            .keys()
+            .map(|name| format!("`{name}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        what.push(format!("with headers ({names})"));
+    }
+    if redirect.is_some() {
+        what.push("with a redirect".to_owned());
+    }
+    match what.split_last() {
+        None => None,
+        Some((last, [])) => Some(last.clone()),
+        Some((last, rest)) => Some(format!("{} and {last}", rest.join(", "))),
+    }
 }
 
 #[cfg(test)]

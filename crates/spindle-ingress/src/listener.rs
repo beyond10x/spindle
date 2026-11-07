@@ -384,13 +384,16 @@ fn written(answer: Answer) -> Response<Full<Bytes>> {
 }
 
 fn replied(reply: Reply) -> Response<Full<Bytes>> {
+    let bodied = !reply.body.is_empty();
     let mut response = Response::new(Full::new(Bytes::from(reply.body)));
     *response.status_mut() =
         StatusCode::from_u16(reply.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    response.headers_mut().insert(
-        CONTENT_TYPE,
-        HeaderValue::from_static(crate::router::CONTENT_TYPE),
-    );
+    if bodied {
+        response.headers_mut().insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static(crate::router::CONTENT_TYPE),
+        );
+    }
     if let Some(value) = reply
         .allow
         .as_deref()
