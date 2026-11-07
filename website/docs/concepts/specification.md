@@ -47,9 +47,10 @@ The kernel runs the constructs Spindle's own specification and the rally example
 construct is refused by name as unsupported, before anything is written. One that decides which
 outcome a request selects, a condition or an outcome's shape, refuses the whole command before it
 reads anything. One only the selected outcome reads, such as a value it would generate of a type
-the runtime does not mint, refuses that outcome alone: a request that selects it is refused,
-naming the outcome, and every other outcome of the command runs. `admit` and `run` name each such
-outcome on stderr.
+the runtime does not mint or a secondary effect (`affects:`), refuses that outcome alone: a
+request that selects it is refused, naming the outcome, and every other outcome of the command
+runs. `admit` and `run` name each such outcome on stderr, and name a command none of whose
+outcomes runs once, as not served.
 
 ## Views
 

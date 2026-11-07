@@ -1,0 +1,130 @@
+domain: yard.crate
+summary: Crates packed under an identity the runtime mints, weighed only where the caller opts in, and sealed once.
+types:
+  - name: yard.crate.CrateId
+    kind: newtype
+    of: Uuid
+actors:
+  - name: yard.crate.Packer
+    may:
+      - yard.crate.PackCrate
+entities:
+  - name: yard.crate.Crate
+    identity:
+      name: crate_id
+      type: yard.crate.CrateId
+    fields:
+      - name: label
+        type: String
+      - name: weight
+        type: Optional<Decimal>
+    lifecycle:
+      initial: Open
+      states: [Open, Sealed]
+      terminal: [Sealed]
+      transitions:
+        - name: seal
+          from: [Open]
+          to: Sealed
+errors:
+  - name: yard.crate.CrateStateConflict
+    summary: The crate is not open.
+    fields: []
+commands:
+  - name: yard.crate.PackCrate
+    input:
+      - name: label
+        type: String
+      - name: weigh
+        type: Boolean
+    outcomes:
+      - name: weighed
+        when: weigh == true
+        creates: yard.crate.Crate
+        instance: crate_id
+        sets:
+          label: input.label
+          weight: {generated: true, present: true}
+        emits: [yard.crate.CratePacked]
+        payload:
+          yard.crate.CratePacked:
+            crate_id: {generated: true}
+            label: input.label
+        summary: The crate is packed under a minted identity at a weight the runtime would have to mint.
+      - name: packed
+        creates: yard.crate.Crate
+        instance: crate_id
+        sets:
+          label: input.label
+        emits: [yard.crate.CratePacked]
+        payload:
+          yard.crate.CratePacked:
+            crate_id: {generated: true}
+            label: input.label
+        summary: The crate is packed under a minted identity, unweighed.
+  - name: yard.crate.SealCrate
+    input:
+      - name: crate_id
+        type: yard.crate.CrateId
+      - name: weigh
+        type: Boolean
+    outcomes:
+      - name: weighed
+        when: weigh == true
+        moves: yard.crate.Crate.seal
+        instance: crate_id
+        sets:
+          weight: {generated: true, present: true}
+        emits: [yard.crate.CrateSealed]
+        payload:
+          yard.crate.CrateSealed: {crate_id: input.crate_id}
+        summary: The crate is sealed at a weight the runtime would have to mint.
+      - name: sealed
+        moves: yard.crate.Crate.seal
+        instance: crate_id
+        emits: [yard.crate.CrateSealed]
+        payload:
+          yard.crate.CrateSealed: {crate_id: input.crate_id}
+        summary: The crate is sealed unweighed.
+      - name: wrong-state
+        wrong_state: true
+        error: yard.crate.CrateStateConflict
+        summary: Only an open crate is sealed.
+  - name: yard.crate.WeighCrate
+    input:
+      - name: crate_id
+        type: yard.crate.CrateId
+    outcomes:
+      - name: weighed
+        updates: yard.crate.Crate
+        instance: crate_id
+        sets:
+          weight: {generated: true, present: true}
+        emits: [yard.crate.CrateWeighed]
+        payload:
+          yard.crate.CrateWeighed: {crate_id: input.crate_id}
+        summary: The crate is weighed at a weight the runtime would have to mint; it has no other outcome.
+events:
+  - name: yard.crate.CratePacked
+    fields:
+      - name: crate_id
+        type: yard.crate.CrateId
+      - name: label
+        type: String
+  - name: yard.crate.CrateSealed
+    fields:
+      - name: crate_id
+        type: yard.crate.CrateId
+  - name: yard.crate.CrateWeighed
+    fields:
+      - name: crate_id
+        type: yard.crate.CrateId
+views:
+  - name: yard.crate.AllCrates
+    source: yard.crate.Crate
+    consistency: read_your_writes
+    fields:
+      - name: crate_id
+        type: yard.crate.CrateId
+      - name: label
+        type: String

@@ -10,7 +10,8 @@
 //! when its cause is asked, a retained result). Selecting among the outcomes without
 //! understanding one of them would be a guess.
 //!
-//! A construct only the taken outcome reads refuses that outcome alone ([`takes`]): a value it
+//! A construct only the taken outcome reads refuses that outcome alone ([`takes`]): an effect
+//! beyond its subject (a compensating refusal, `affects:`, `sets:` without a subject), a value it
 //! writes, publishes or answers, the identity it mints, or an error field it fills. Selection
 //! never reads one, so a request that selects another outcome of the command runs, and only a
 //! request that selects this one is refused, once it is selected and before anything is minted
@@ -66,6 +67,9 @@ pub fn takes(
     outcome: &ResolvedOutcome,
 ) -> Result<(), ExecuteError> {
     let refuse = |what: &str| Err(unsupported(command, outcome, what));
+    if let Some(what) = effect(outcome) {
+        return refuse(what);
+    }
     if let Some(what) = response(ir, command, outcome) {
         return refuse(&what);
     }
@@ -225,13 +229,29 @@ fn mixed_references(command: &ResolvedCommand) -> Option<&ResolvedOutcome> {
         .find(|outcome| stored && via(outcome) == Some(false))
 }
 
-/// The outcome's shape, named, when the kernel does not run it.
+/// The effect beyond the outcome's subject, named, when the kernel does not run it: the change a
+/// refusal makes to its row, the rows it affects besides its subject, or fields it sets with no
+/// subject to set them on. Neither the kernel's selection nor ESS's precedence plan reads one
+/// (`compensates`, `affects:` and `sets:` are read only when the outcome is taken), so it refuses
+/// the outcome alone.
+fn effect(outcome: &ResolvedOutcome) -> Option<&'static str> {
+    if outcome.compensates {
+        return Some("a refusal that changes its row (`compensates: true`)");
+    }
+    if !outcome.affects.is_empty() {
+        return Some("secondary effects (`affects:`)");
+    }
+    if outcome.subject.is_none() && !outcome.sets.is_empty() {
+        return Some("`sets:` without a subject");
+    }
+    None
+}
+
+/// The outcome's shape, named, when the kernel does not run it: what selection reads of the rows
+/// it acts on.
 fn shape(outcome: &ResolvedOutcome) -> Option<&'static str> {
     if outcome.replays.is_some() || outcome.retains_result {
         return Some("a replayed or retained result");
-    }
-    if outcome.compensates {
-        return Some("a refusal that changes its row (`compensates: true`)");
     }
     if outcome.before_row {
         return Some("an external refusal before the row (`before_row: true`)");
@@ -239,11 +259,7 @@ fn shape(outcome: &ResolvedOutcome) -> Option<&'static str> {
     if outcome.instances.is_some() {
         return Some("a set outcome (`instances:`)");
     }
-    if !outcome.affects.is_empty() {
-        return Some("secondary effects (`affects:`)");
-    }
     match &outcome.subject {
-        None if !outcome.sets.is_empty() => Some("`sets:` without a subject"),
         None => None,
         Some(subject) => match (&subject.effect, &subject.instance) {
             (ResolvedEffect::Creates, ResolvedInstance::Observed { .. })

@@ -8,6 +8,11 @@
 //! (`labelled`), or, where the request sets `announce`, relabels it under a header
 //! (`announced`). `tests/fixtures/outcome-scoped-refusal-http.yaml` binds `LabelBox` and declares
 //! that header for `announced`, which this ingress does not write.
+//!
+//! `tests/fixtures/outcome-scoped-refusal-effects` declares one component reached in process, so
+//! `run` reads stdin. `CloseLot` closes a lot (`closed`), or, where the request sets `sweep`,
+//! closes it and sweeps its tags (`swept`), a secondary effect (`affects:`) the runtime does not
+//! run. ESS refuses `sets:` without a subject (`ESS-COMMAND-003`), so no fixture declares one.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -508,5 +513,91 @@ fn an_outcome_the_ingress_does_not_answer_refuses_only_when_chosen() {
         served.rows(&contract),
         json!({"rows": [{"box_id": "b1", "label": "plain"}]}),
         "nothing was written"
+    );
+}
+
+const EFFECTS: &str = "crates/spindle-cli/tests/fixtures/outcome-scoped-refusal-effects";
+const CLOSE_LOT: &str = "bay.lot.CloseLot";
+/// The outcome of `CloseLot` whose secondary effect (`affects:`) the runtime does not run.
+const SWEPT: &str = "bay.lot.CloseLot/swept";
+
+/// `b10x-spindle run <spec> --environment laptop` with `requests` on stdin, one per line: the
+/// result lines, parsed, and stderr.
+fn run_reading(spec: &str, requests: &[Value]) -> (Vec<Value>, String) {
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+        .current_dir(root())
+        .env("TMPDIR", state.path())
+        .args(["run", spec, "--environment", LAPTOP])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("b10x-spindle starts");
+    let lines = requests
+        .iter()
+        .map(|request| format!("{request}\n"))
+        .collect::<String>();
+    child
+        .stdin
+        .take()
+        .expect("stdin is piped")
+        .write_all(lines.as_bytes())
+        .expect("the requests are written");
+    let output = child.wait_with_output().expect("b10x-spindle runs");
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    let results = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("one JSON line per request"))
+        .collect();
+    (results, stderr)
+}
+
+/// An outcome with a secondary effect (`affects:`) the runtime does not run refuses only the
+/// request that selects it: selection reads no `affects:`, so `CloseLot` stays served, a request
+/// selecting `swept` is refused naming the outcome and its effect with nothing written, and the
+/// same lot then closes through `closed`. `run` reading stdin names the outcome at startup.
+#[test]
+fn an_outcome_with_secondary_effects_refuses_only_the_request_that_selects_it() {
+    let (results, stderr) = run_reading(
+        EFFECTS,
+        &[
+            json!({"command": "bay.lot.OpenLot", "input": {"lot_id": "l1"}}),
+            json!({"command": "bay.lot.TagLot", "input": {"tag_id": "t1", "lot_id": "l1"}}),
+            json!({"command": CLOSE_LOT, "input": {"lot_id": "l1", "sweep": true}}),
+            json!({"command": CLOSE_LOT, "input": {"lot_id": "l1", "sweep": false}}),
+        ],
+    );
+    assert_eq!(results.len(), 4, "{results:#?}");
+    assert_eq!(results[0]["outcome"], "opened", "{results:#?}");
+    assert_eq!(results[1]["outcome"], "tagged", "{results:#?}");
+    assert_eq!(results[2]["failure"]["kind"], "unsupported", "{results:#?}");
+    let message = results[2]["failure"]["message"]
+        .as_str()
+        .expect("a refusal in words");
+    assert!(
+        message.contains(SWEPT) && message.contains("`affects:`"),
+        "the refusal names the outcome and its secondary effect: {message}"
+    );
+    assert_eq!(
+        results[3]["outcome"], "closed",
+        "the refused request wrote nothing, so the lot is still open and closes now; a request \
+         selecting the supported outcome runs: {:?}",
+        results[3]
+    );
+
+    let lines = stderr.lines().map(str::to_owned).collect::<Vec<_>>();
+    let listed = unsupported_outcomes(&lines);
+    assert_eq!(listed.len(), 1, "run lists the one outcome: {stderr}");
+    assert!(
+        listed[0].contains(&format!("`{SWEPT}`")) && listed[0].contains("`affects:`"),
+        "run names the outcome and what it lacks: {listed:#?}"
+    );
+    assert!(
+        !not_served(&lines)
+            .iter()
+            .any(|line| line.contains(CLOSE_LOT)),
+        "run names the outcome, not the command, as unsupported: {stderr}"
     );
 }

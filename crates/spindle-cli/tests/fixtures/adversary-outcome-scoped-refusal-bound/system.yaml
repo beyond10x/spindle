@@ -1,0 +1,43 @@
+format: ess/34
+system: dock
+version: v1
+summary: Parcels taken over the network, each recorded by a binding and weighed there only where the sender opts in.
+domains:
+  - dock.desk
+  - dock.scale
+components:
+  - component: desk
+    summary: Takes parcels for callers outside the process.
+    owns:
+      domains:
+        - dock.desk
+    accepts:
+      commands:
+        - dock.desk.Take
+    publishes:
+      events:
+        - dock.desk.Taken
+    reached_by: network
+  - component: scale
+    summary: Records each taken parcel; only a binding reaches it.
+    owns:
+      domains:
+        - dock.scale
+    accepts:
+      commands:
+        - dock.scale.Record
+    publishes:
+      events:
+        - dock.scale.Recorded
+    reached_by: in_process
+bindings:
+  - id: record-taken
+    when:
+      event: dock.desk.Taken
+    invoke:
+      command: dock.scale.Record
+    mapping:
+      parcel_id: event.parcel_id
+      weigh: event.weigh
+    delivery: at_most_once
+    on_failure: retry
