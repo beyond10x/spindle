@@ -2,11 +2,23 @@
 format: aep.planning-md/3
 id: story:ingress-error-object-bodies
 kind: story
-status: draft
+status: active
 title: HTTP ingress answers bound error outcomes with an error-object body
 relations:
 - serves: vision:spindle
-revision: 1
+scope:
+- confidence: inferred
+  path: crates/spindle-cli/tests/fixtures/error-object-bodies
+- confidence: inferred
+  path: crates/spindle-cli/tests/spindle-cli/error_object_bodies.rs
+- confidence: inferred
+  path: crates/spindle-ingress/src/answer.rs
+- confidence: cited
+  path: crates/spindle-ingress/src/surface.rs
+revision: 5
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-07T12:45:25Z", actor: "human:timo", revision: 4}
+- {from: "proposed", to: "active", at: "2026-11-07T12:45:26Z", actor: "human:timo", revision: 5}
 ---
 # HTTP ingress answers bound error outcomes with an error-object body
 
