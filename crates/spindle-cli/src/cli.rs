@@ -106,7 +106,9 @@ pub enum Command {
     /// keeping its derived route. A command's body is its input; it answers its outcome's status
     /// with the envelope ESS publishes, `{"outcome", "published", "error"?, "payload"?}`, or with
     /// the body the binding lists for the outcome: `response` (the command's response alone),
-    /// `response.<field>` (that field's value alone) or `none` (no body, no `Content-Type`). A view
+    /// `response.<field>` (that field's value alone), `{<member>: error}` on a refusing outcome
+    /// (the error's wire name under `<member>`, beside the error's fields, nothing written) or
+    /// `none` (no body, no `Content-Type`). A view
     /// answers `{"rows": [...]}`. Beside those it serves a model console's routes: `GET
     /// /api/model` (`{"ir", "subjects"}`, the IR as `ess specify compile --format json` prints it
     /// and each outcome's subject), `GET /api/events` (`{"events": [...]}`, every event published
@@ -125,11 +127,11 @@ pub enum Command {
     ///
     /// An outcome the kernel does not run (such as one that generates a value of a type the
     /// runtime does not mint), or one this ingress does not answer as the binding lists it
-    /// (headers, a redirect, the `text` encoding or an error object), refuses only the request
-    /// that selects it: its command keeps its route and answers every other outcome as declared,
-    /// and that request answers `501` naming the outcome and what it lacks, with nothing written.
-    /// Before listening, `run` prints one line on stderr per such outcome. A command none of whose
-    /// outcomes runs is not served, as above.
+    /// (headers, a redirect or the `text` encoding), refuses only the request that selects it: its
+    /// command keeps its route and answers every other outcome as declared, and that request
+    /// answers `501` naming the outcome and what it lacks, with nothing written. Before listening,
+    /// `run` prints one line on stderr per such outcome. A command none of whose outcomes runs is
+    /// not served, as above.
     ///
     /// A served request carries no `external` object: its external causes are answered by
     /// `--decisions`, then by `--answer-default`, each answer per command and outcome, never per

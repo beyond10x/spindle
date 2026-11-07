@@ -48,7 +48,10 @@ prints the URL of the observe UI, `http://127.0.0.1:7341/?t=<token>`.
 
 Where `run` serves HTTP, `--observe` records every request it answers and lists the last 256
 (`--observe-requests <N>`, 1 to 10000) at `GET /__spindle/requests`, newest first, with totals
-per class since start; `?class=not-served` keeps only the requests answered `501`. Paths under
+per class since start; `?class=not-served` keeps only the requests answered `501`.
+`GET /__spindle/ui` answers a panel of them: one HTML page, its script and style inline, that any
+page may frame and that reads `./requests` beside itself (`ui/dist-panel/panel.html`, built by
+`pnpm build:panel` and embedded; a binary built without it answers `503`). Paths under
 `/__spindle/` belong to the run: a binding route there is refused at start, and without
 `--observe` they answer `404`.
 

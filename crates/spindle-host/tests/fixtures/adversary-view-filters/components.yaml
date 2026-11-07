@@ -1,0 +1,9 @@
+components:
+  - component: slips
+    owns:
+      domains: [ledger.slips]
+    accepts:
+      commands: [ledger.slips.IssueSlip]
+    publishes:
+      events: [ledger.slips.SlipIssued]
+    reached_by: in_process

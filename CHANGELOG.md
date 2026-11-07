@@ -6,6 +6,49 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-07
+
+### Added
+
+- `run --observe` answers `GET /__spindle/ui` with the observe panel: one HTML page holding its
+  script and style inline, with a one-line banner of the request totals and the request list
+  (a "not served only" toggle), read from `./requests` beside it. Any page may frame it: no
+  `X-Frame-Options`, no `frame-ancestors`; its `Content-Security-Policy` allows its inline script
+  and style and `connect-src 'self'` only. `ui/vite.panel.config.ts` builds it into
+  `ui/dist-panel/panel.html` (`pnpm build:panel`, run by `task ui` and `task check:ui`), and
+  `b10x-spindle` embeds it; without it the route answers `503`.
+- A refusing outcome an `ess-http/1` binding answers with an error object, `body: {<member>:
+  error}`, is served: at the bound status, an object whose `<member>` is the error's wire name,
+  beside the error's fields under their wire names, as `ess generate --kind openapi --http <file>`
+  publishes it, and nothing is written. Before, such an outcome answered `501`.
+- A view's filter that reads a field of its source is answered with the rows ESS's interpreter
+  answers: a field compared with a literal of its type by `==` or `!=`, or by `<`, `<=`, `>` or
+  `>=` where ESS orders the type (`archived == false`, `priority >= 3`, `kind != "draft"`), a
+  timestamp also against `now` read once on the host's clock; a field listed `in:` or `none_of:`
+  literals; `defined(<field>)`; and `exists` or `forall` over a list field of the row, its element
+  compared with a literal, a parameter or an outer binder. A filter ESS leaves unknown for a row,
+  such as `note == "keep"` over a row without a note, answers `501` as ESS's interpreter refuses
+  the read. Any other leaf still refuses the filter whole, naming it. Before, such a view answered
+  `501`.
+- The kernel decides an outcome guarded by `when_related:` over a row set: every row of the
+  selection's entity is a candidate, selected where the `where:` predicate holds of it (its fields,
+  identity and held state, `input.`, `subject.` and the decision's `now`), and the `exists`,
+  `count` or `forall` test is decided over the selected rows as ESS's interpreter decides it. On a
+  command that creates its addressed row beside a row set, an absent row is left to the row sets
+  and then the creation, as ESS does. A row committed by a second writer between the read and the
+  commit is not yet detected. Before, such a command was refused as unsupported.
+
+### Changed
+
+- ESS 0.90.0: every ESS crate, `schema-contract` included, and CI's `ess` CLI move to tag 0.90.0; the
+  specification requires ess 0.90 and the generated output is restamped.
+
+### Fixed
+
+- A refusal answered with the default envelope keys its `payload` by the error fields' wire names,
+  as the bound OpenAPI document publishes it; before, a field renamed on the wire was written under
+  its declared name.
+
 ## [0.5.0] - 2026-11-07
 
 ### Added

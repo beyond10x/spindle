@@ -187,19 +187,21 @@ fn order_by_desc_on_a_timestamp_orders_newest_first() {
 }
 
 #[test]
-fn a_filter_other_than_a_state_comparison_stays_unsupported_and_named() {
+fn an_unread_filter_stays_unsupported_and_named() {
     on_every_store(|store, host| {
         open(host, "t1", "Chores", "2026-01-01T00:00:00Z");
         match host.list("tasks.board.ChoreTasks") {
             Err(HostError::Unsupported(text)) => assert!(
-                text.contains("tasks.board.ChoreTasks") && text.contains("title == Chores"),
+                text.contains("tasks.board.ChoreTasks") && text.contains("starts_with"),
                 "{store}: the refusal names the view and its filter: {text}"
             ),
-            other => panic!("{store}: `title == Chores` is not refused as unsupported: {other:?}"),
+            other => panic!(
+                "{store}: `title starts_with Chores` is not refused as unsupported: {other:?}"
+            ),
         }
         match host.view("tasks.board.ChoreTasks", &json!("t1")) {
             Err(HostError::Unsupported(text)) => assert!(
-                text.contains("title == Chores"),
+                text.contains("starts_with"),
                 "{store}: a one-row read of it is refused the same way: {text}"
             ),
             other => panic!("{store}: a one-row read is not refused as unsupported: {other:?}"),

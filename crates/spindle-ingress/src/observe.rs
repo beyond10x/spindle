@@ -31,6 +31,19 @@ pub const REQUESTS_MOST: usize = 10_000;
 /// The format of the request log.
 const FORMAT: &str = "spindle-requests/1";
 
+/// The media type of the observe panel's page, `GET /__spindle/ui`.
+pub const PANEL_MEDIA: &str = "text/html; charset=utf-8";
+
+/// The `Content-Security-Policy` of the observe panel's page: its own inline script and style
+/// run, it reads only its own origin, and it loads nothing else. It names no `frame-ancestors`,
+/// and no `X-Frame-Options` is sent, so any page may frame it.
+pub const PANEL_POLICY: &str = "default-src 'none'; script-src 'unsafe-inline'; \
+     style-src 'unsafe-inline'; img-src data:; connect-src 'self'; base-uri 'none'; \
+     form-action 'none'";
+
+/// Where the observe panel's page is built, as a `503` without it names it.
+const PANEL_BUILT: &str = "ui/dist-panel/panel.html";
+
 /// A route under the reserved prefix: the epic lays out four; every other path under it is
 /// [`Reserved::Other`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +52,8 @@ pub enum Reserved {
     Requests,
     /// `/__spindle/metrics`, answered `404` until its story lands.
     Metrics,
-    /// `/__spindle/ui` and every path under it, answered `404` until its story lands.
+    /// `/__spindle/ui`, the observe panel ([`crate::Surface::with_panel`]), and every path under
+    /// it, which answers `404`.
     Ui,
     /// `/__spindle/topology`, answered `404` until its story lands.
     Topology,
@@ -417,10 +431,12 @@ fn refused(body: &str) -> Option<String> {
 /// Answers a request for the reserved route `reserved` with `method`, `path` and `query` (after
 /// the `?`, still percent-encoded): without a recorder every path under the prefix answers `404`;
 /// with one, `GET /__spindle/requests` answers the request log, each `class=<class>` pair of the
-/// query keeping only that class, and any other method `405`. Every other reserved path answers
+/// query keeping only that class, and any other method `405`; `GET /__spindle/ui` answers the
+/// panel's page `panel`, `503` naming it without one. Every other reserved path answers
 /// `404`. A query pair other than a known `class` is refused `400`.
 pub(crate) fn reserved(
     recorder: Option<&Recorder>,
+    panel: Option<&'static str>,
     reserved: Reserved,
     method: &str,
     path: &str,
@@ -435,6 +451,7 @@ pub(crate) fn reserved(
             Ok(classes) => Response {
                 status: 200,
                 allow: None,
+                panel: false,
                 body: recorder.log(&classes).to_string(),
             },
             Err(why) => Answer::refusal(400, why).into(),
@@ -444,8 +461,36 @@ pub(crate) fn reserved(
             response.allow = Some("GET".to_owned());
             response
         }
-        Reserved::Metrics | Reserved::Ui | Reserved::Topology | Reserved::Other => not_found(),
+        Reserved::Ui => self::panel(panel, method, path).unwrap_or_else(not_found),
+        Reserved::Metrics | Reserved::Topology | Reserved::Other => not_found(),
     }
+}
+
+/// The answer to `method` at `path`, a path under `/__spindle/ui`: the page `panel` to `GET` at
+/// `/__spindle/ui` itself, `503` naming the page without one, and `405` to any other method;
+/// `None` for a path below it, which the page never reads.
+fn panel(panel: Option<&'static str>, method: &str, path: &str) -> Option<Response> {
+    if path.split('/').count() != 3 {
+        return None;
+    }
+    Some(match panel {
+        _ if method != "GET" => {
+            let mut response: Response = Answer::refusal(405, "this path answers GET").into();
+            response.allow = Some("GET".to_owned());
+            response
+        }
+        Some(page) => Response {
+            status: 200,
+            allow: None,
+            panel: true,
+            body: page.to_owned(),
+        },
+        None => Answer::refusal(
+            503,
+            format!("this build carries no observe panel: {PANEL_BUILT} was not built before it"),
+        )
+        .into(),
+    })
 }
 
 /// The classes the `class=<class>` pairs of `query` name; the refusal of any other pair.

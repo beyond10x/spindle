@@ -94,7 +94,7 @@ pub struct Route {
     /// The outcomes answered with the command's response beside the envelope.
     responding: Vec<String>,
     /// The outcomes the binding answers with a body other than the envelope, each with it:
-    /// `response`, `response.<field>` or `none`.
+    /// `response`, `response.<field>`, `{<member>: error}` or `none`.
     bodies: BTreeMap<String, Body>,
     unserved: Option<Unserved>,
     /// The command's outcomes not run, in declaration order, each with why.
@@ -184,8 +184,8 @@ impl Route {
     }
 
     /// The body the binding answers the command's outcome `outcome` with where it is not the
-    /// envelope: [`Body::Response`], [`Body::ResponseField`] or [`Body::None`]. `None` for an
-    /// outcome answered with the envelope.
+    /// envelope: [`Body::Response`], [`Body::ResponseField`], [`Body::Error`] or [`Body::None`].
+    /// `None` for an outcome answered with the envelope.
     pub(crate) fn body(&self, outcome: &str) -> Option<&Body> {
         self.bodies.get(outcome)
     }
@@ -580,6 +580,7 @@ pub struct Surface {
     routes: Vec<Route>,
     console: bool,
     recorder: Option<Recorder>,
+    panel: Option<&'static str>,
 }
 
 impl Surface {
@@ -601,9 +602,9 @@ impl Surface {
     /// variable that is not a scalar. A command the kernel cannot select among the outcomes of
     /// ([`selects`](spindle_kernel::selects)) is marked [`Unserved::Kernel`], and a view the
     /// host's [`reads`](spindle_host::reads) refuses [`Unserved::Host`]. A command's outcome
-    /// answered with headers, a redirect, the `text` encoding or an error object, or one the
-    /// kernel does not take ([`takes`](spindle_kernel::takes)) refuses that outcome alone
-    /// ([`Route::refused`]); a command none of whose outcomes is left is marked as a whole.
+    /// answered with headers, a redirect or the `text` encoding, or one the kernel does not take
+    /// ([`takes`](spindle_kernel::takes)) refuses that outcome alone ([`Route::refused`]); a
+    /// command none of whose outcomes is left is marked as a whole.
     ///
     /// # Errors
     /// [`SurfaceError::NoComponent`] for a name `ir` does not declare,
@@ -699,6 +700,7 @@ impl Surface {
             routes,
             console: false,
             recorder: None,
+            panel: None,
         })
     }
 
@@ -715,6 +717,21 @@ impl Surface {
     /// The recorder, where the surface was made [`Surface::observing`]; `None` otherwise.
     pub fn recorder(&self) -> Option<&Recorder> {
         self.recorder.as_ref()
+    }
+
+    /// This surface answering `GET /__spindle/ui`, where it is [`Surface::observing`], with
+    /// `page`: the observe panel, one HTML page that loads nothing beside itself, answered with
+    /// [`PANEL_POLICY`](crate::PANEL_POLICY). Without one an observing surface answers that
+    /// route `503`.
+    #[must_use]
+    pub fn with_panel(mut self, page: &'static str) -> Self {
+        self.panel = Some(page);
+        self
+    }
+
+    /// The panel page, where the surface was given one ([`Surface::with_panel`]).
+    pub fn panel(&self) -> Option<&'static str> {
+        self.panel
     }
 
     /// This surface with the [`Console`] routes added where `implementation`, what
@@ -961,7 +978,7 @@ fn refuse(ir: &EssIr, command: &ess_compiler::ir::ResolvedCommand, route: &mut R
 
 /// Fills `route`'s variables, input, request, statuses and the bodies its outcomes answer other
 /// than with the envelope, and lists among its refused outcomes each one answered with headers, a
-/// redirect, the `text` encoding or an error object ([`unwritten`]), or
+/// redirect or the `text` encoding ([`unwritten`]), or
 /// without a status; `Err` names what it uses that this ingress does not serve: a view answered
 /// other than as `rows`, a standard
 /// refusal the binding answers its own way, a command whose outcome answers with its retained
@@ -1108,8 +1125,9 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
 
 /// What of `listed`, a command outcome's answer as the binding lists it, this ingress does not
 /// write, in words; `None` where it writes all of it: the status with the envelope,
-/// `response`, `response.<field>` or `none` as `application/json` or no body. Each of bound
-/// headers, a redirect, a response encoding other than `json` and an error object is named.
+/// `response`, `response.<field>`, the error object `{<member>: error}` or `none` as
+/// `application/json` or no body. Each of bound headers, a redirect and a response encoding other
+/// than `json` is named.
 ///
 /// Every member of the answer is read by name, so a member a later ESS adds fails to compile here
 /// rather than going unwritten unnamed.
@@ -1123,10 +1141,11 @@ fn unwritten(listed: &ess_http::Outcome) -> Option<String> {
     } = listed;
     let mut what = Vec::new();
     match body {
-        Body::Error { member } => {
-            what.push(format!("with the error object `{{{member}: error}}`"));
-        }
-        Body::Envelope | Body::Response | Body::ResponseField(_) | Body::None => {}
+        Body::Envelope
+        | Body::Response
+        | Body::ResponseField(_)
+        | Body::None
+        | Body::Error { .. } => {}
     }
     match encoding {
         ResponseEncoding::Json => {}

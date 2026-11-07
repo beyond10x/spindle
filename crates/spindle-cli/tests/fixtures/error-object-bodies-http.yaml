@@ -1,0 +1,19 @@
+type: ess-http/1
+specification:
+  system: intake
+  version: v1
+  source_digest: sha256:01cc83d5a7a6bccad70c3fe798a2c5639dd0274609ca914e320b488dcf3387d6
+routes:
+  - command: intake.form.SubmitForm
+    method: post
+    path: /forms
+    outcomes:
+      rejected:
+        status: 400
+        body: {problem: error}
+  - command: intake.form.ReviewForm
+    method: post
+    path: /reviews
+    outcomes:
+      rejected:
+        status: 422

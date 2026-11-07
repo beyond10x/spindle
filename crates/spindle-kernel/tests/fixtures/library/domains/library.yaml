@@ -1,0 +1,210 @@
+domain: stacks.library
+summary: The catalogue lists each book under a shelfmark; a reader reserves a book until a time, borrows it while the reservation is active, or cancels it.
+types:
+  - name: stacks.library.EntryId
+    kind: newtype
+    of: Uuid
+  - name: stacks.library.ReservationId
+    kind: newtype
+    of: Uuid
+  - name: stacks.library.ReaderId
+    kind: newtype
+    of: Uuid
+  - name: stacks.library.BookId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: stacks.library.Entry
+    identity:
+      name: entry_id
+      type: stacks.library.EntryId
+    fields:
+      - name: code
+        type: String
+    lifecycle:
+      initial: Listed
+      states: [Listed]
+      terminal: [Listed]
+  - name: stacks.library.Reservation
+    identity:
+      name: reservation_id
+      type: stacks.library.ReservationId
+    fields:
+      - name: reader_id
+        type: stacks.library.ReaderId
+      - name: book_id
+        type: stacks.library.BookId
+      - name: until
+        type: Timestamp
+    lifecycle:
+      initial: Active
+      states: [Active, Lent, Cancelled]
+      terminal: [Lent, Cancelled]
+      transitions:
+        - {name: lend, from: [Active], to: Lent}
+        - {name: cancel, from: [Active], to: Cancelled}
+errors:
+  - name: stacks.library.AlreadyReserved
+    summary: The reader already holds an active reservation of the book.
+    fields: []
+  - name: stacks.library.UnknownShelfmark
+    summary: No catalogue entry carries any of the shelfmarks.
+    fields: []
+  - name: stacks.library.AlreadyLent
+    summary: The book is out on another reservation.
+    fields: []
+  - name: stacks.library.NotActive
+    summary: The reservation is not active.
+    fields: []
+commands:
+  - name: stacks.library.ListEntry
+    input:
+      - name: entry_id
+        type: stacks.library.EntryId
+      - name: code
+        type: String
+    outcomes:
+      - name: listed
+        creates: stacks.library.Entry
+        instance: entry_id
+        sets:
+          code: input.code
+        emits: [stacks.library.EntryListed]
+        payload:
+          stacks.library.EntryListed:
+            entry_id: input.entry_id
+        summary: The entry is listed under its shelfmark.
+  - name: stacks.library.Reserve
+    input:
+      - name: reservation_id
+        type: stacks.library.ReservationId
+      - name: reader_id
+        type: stacks.library.ReaderId
+      - name: book_id
+        type: stacks.library.BookId
+      - name: until
+        type: Timestamp
+      - name: shelfmarks
+        type: List<String>
+    outcomes:
+      - name: already-reserved
+        when_related:
+          entity: stacks.library.Reservation
+          where:
+            all:
+              - reader_id == input.reader_id
+              - book_id == input.book_id
+              - state == Active
+              - until > now
+          exists: true
+        error: stacks.library.AlreadyReserved
+        summary: The reader already holds an active reservation of the book that has not run out.
+      - name: unknown-shelfmark
+        when_related:
+          entity: stacks.library.Entry
+          where:
+            exists: {in: input.shelfmarks, as: mark, that: code == mark}
+          exists: false
+        error: stacks.library.UnknownShelfmark
+        summary: No catalogue entry carries any of the shelfmarks given.
+      - name: reserved
+        creates: stacks.library.Reservation
+        instance: reservation_id
+        sets:
+          reader_id: input.reader_id
+          book_id: input.book_id
+          until: input.until
+        emits: [stacks.library.Reserved]
+        payload:
+          stacks.library.Reserved:
+            reservation_id: input.reservation_id
+            book_id: input.book_id
+        summary: The book is reserved for the reader until the time given.
+  - name: stacks.library.Lend
+    input:
+      - name: reservation_id
+        type: stacks.library.ReservationId
+    outcomes:
+      - name: already-lent
+        when_related:
+          entity: stacks.library.Reservation
+          where:
+            all:
+              - book_id == subject.book_id
+              - state == Lent
+          exists: true
+        error: stacks.library.AlreadyLent
+        summary: The book is out on another reservation.
+      - name: lent
+        moves: stacks.library.Reservation.lend
+        instance: reservation_id
+        emits: [stacks.library.Lent]
+        payload:
+          stacks.library.Lent:
+            reservation_id: input.reservation_id
+        summary: The reserved book is lent to the reader.
+      - name: wrong-state
+        wrong_state: true
+        error: stacks.library.NotActive
+        summary: The reservation is lent or cancelled.
+  - name: stacks.library.Cancel
+    input:
+      - name: reservation_id
+        type: stacks.library.ReservationId
+    outcomes:
+      - name: cancelled
+        moves: stacks.library.Reservation.cancel
+        instance: reservation_id
+        emits: [stacks.library.Cancelled]
+        payload:
+          stacks.library.Cancelled:
+            reservation_id: input.reservation_id
+        summary: The reservation is cancelled.
+      - name: wrong-state
+        wrong_state: true
+        error: stacks.library.NotActive
+        summary: The reservation is lent or cancelled.
+events:
+  - name: stacks.library.EntryListed
+    fields:
+      - name: entry_id
+        type: stacks.library.EntryId
+  - name: stacks.library.Reserved
+    fields:
+      - name: reservation_id
+        type: stacks.library.ReservationId
+      - name: book_id
+        type: stacks.library.BookId
+  - name: stacks.library.Lent
+    fields:
+      - name: reservation_id
+        type: stacks.library.ReservationId
+  - name: stacks.library.Cancelled
+    fields:
+      - name: reservation_id
+        type: stacks.library.ReservationId
+views:
+  - name: stacks.library.EntryCard
+    source: stacks.library.Entry
+    consistency: read_your_writes
+    fields:
+      - name: entry_id
+        type: stacks.library.EntryId
+      - name: code
+        type: String
+      - name: state
+        type: stacks.library.Entry.State
+  - name: stacks.library.ReservationCard
+    source: stacks.library.Reservation
+    consistency: read_your_writes
+    fields:
+      - name: reservation_id
+        type: stacks.library.ReservationId
+      - name: reader_id
+        type: stacks.library.ReaderId
+      - name: book_id
+        type: stacks.library.BookId
+      - name: until
+        type: Timestamp
+      - name: state
+        type: stacks.library.Reservation.State

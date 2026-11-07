@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
+    "build:panel": "vue-tsc --noEmit && vite build --config vite.panel.config.ts",
     "typecheck": "vue-tsc --noEmit && vue-tsc --noEmit -p tsconfig.node.json",
     "test": "vitest run",
     "check": "pnpm typecheck && pnpm test"

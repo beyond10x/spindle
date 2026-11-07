@@ -12,7 +12,8 @@ use ess_http::Operation;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::{Bytes, Incoming};
 use hyper::header::{
-    ALLOW, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, HOST, HeaderValue, TRANSFER_ENCODING,
+    ALLOW, AUTHORIZATION, CONTENT_LENGTH, CONTENT_SECURITY_POLICY, CONTENT_TYPE, HOST, HeaderValue,
+    TRANSFER_ENCODING,
 };
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
@@ -334,6 +335,7 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         };
         let reply = crate::observe::reserved(
             served.surface.recorder(),
+            served.surface.panel(),
             reserved,
             request.method().as_str(),
             request.uri().path(),
@@ -467,7 +469,16 @@ fn replied(reply: Reply) -> Response<Full<Bytes>> {
     let mut response = Response::new(Full::new(Bytes::from(reply.body)));
     *response.status_mut() =
         StatusCode::from_u16(reply.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    if bodied {
+    if reply.panel {
+        response.headers_mut().insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static(crate::observe::PANEL_MEDIA),
+        );
+        response.headers_mut().insert(
+            CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(crate::observe::PANEL_POLICY),
+        );
+    } else if bodied {
         response.headers_mut().insert(
             CONTENT_TYPE,
             HeaderValue::from_static(crate::router::CONTENT_TYPE),

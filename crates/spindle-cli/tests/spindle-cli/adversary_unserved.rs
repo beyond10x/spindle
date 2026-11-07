@@ -1,8 +1,8 @@
 //! Adversarial cases for `run` serving what runs and answering the rest `501`.
 //!
 //! `tests/fixtures/adversary_unserved` declares one command, `WriteNote`, which runs, and two
-//! views: `AllNotes`, which the host reads, and `KeptNotes`, whose filter reads a field rather
-//! than the state, which the host does not read. `tests/fixtures/adversary_unserved-http.yaml`
+//! views: `AllNotes`, which the host reads, and `KeptNotes`, whose filter reads a field by
+//! `starts_with`, which the host does not read. `tests/fixtures/adversary_unserved-http.yaml`
 //! binds `AllNotes` to `GET /notes` with `body: array`, which this ingress does not serve.
 //! `tests/fixtures/adversary_escalate` binds one event to a command twice: `audit-note` with
 //! `on_failure: escalate` and `index-note` with `on_failure: retry`.

@@ -11,7 +11,7 @@ impl Run<'_, '_> {
     /// interpreter takes a deleting branch (`interpret::execute::take`, `Acted::Removed`): the
     /// published values are read first, the row's `sets:` are not written, its events read the
     /// row as it was before, and no invariant is checked, since nothing rests. An identity no row
-    /// carries was answered in selection; reaching it here is the wrong-state answer.
+    /// carries is answered in selection, or, on a row-set upsert, here ([`Run::unknown_instance`]).
     pub(super) fn delete(
         &mut self,
         outcome: &ResolvedOutcome,
@@ -23,7 +23,7 @@ impl Run<'_, '_> {
             ..
         }) = &self.held
         else {
-            return self.wrong_state();
+            return self.unknown_instance(outcome);
         };
         let identity = identity.clone();
         let stored = stored.clone();

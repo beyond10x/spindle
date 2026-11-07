@@ -1,0 +1,97 @@
+domain: intake.form
+summary: Forms taken in, or refused naming the field that is not filled in as asked.
+types:
+  - name: intake.form.FormId
+    kind: newtype
+    of: String
+entities:
+  - name: intake.form.Form
+    identity:
+      name: form_id
+      type: intake.form.FormId
+    fields:
+      - name: contact
+        type: String
+    lifecycle:
+      initial: Received
+      states: [Received]
+      terminal: [Received]
+errors:
+  - name: intake.form.InvalidField
+    naming: {wire: invalid_field}
+    summary: A field of the form is not filled in as asked.
+    fields:
+      - name: field
+        type: String
+        naming: {wire: fieldName}
+      - name: reason
+        type: String
+      - name: given
+        type: String
+commands:
+  - name: intake.form.SubmitForm
+    input:
+      - name: form_id
+        type: intake.form.FormId
+      - name: contact
+        type: String
+      - name: complete
+        type: Boolean
+    outcomes:
+      - name: rejected
+        when: complete == false
+        error: intake.form.InvalidField
+        payload:
+          intake.form.InvalidField:
+            field: Contact
+            reason: is not complete
+            given: input.contact
+        summary: An incomplete form is refused, naming the field.
+      - name: received
+        creates: intake.form.Form
+        instance: form_id
+        sets:
+          contact: input.contact
+        emits: [intake.form.FormReceived]
+        payload:
+          intake.form.FormReceived: {form_id: input.form_id}
+        summary: A complete form is taken in.
+  - name: intake.form.ReviewForm
+    input:
+      - name: contact
+        type: String
+      - name: complete
+        type: Boolean
+    outcomes:
+      - name: rejected
+        when: complete == false
+        error: intake.form.InvalidField
+        payload:
+          intake.form.InvalidField:
+            field: Contact
+            reason: is not complete
+            given: input.contact
+        summary: An incomplete form is refused in the default answer, naming the field.
+      - name: reviewed
+        emits: [intake.form.FormReviewed]
+        payload:
+          intake.form.FormReviewed: {contact: input.contact}
+        summary: A complete form is passed.
+events:
+  - name: intake.form.FormReviewed
+    fields:
+      - name: contact
+        type: String
+  - name: intake.form.FormReceived
+    fields:
+      - name: form_id
+        type: intake.form.FormId
+views:
+  - name: intake.form.AllForms
+    source: intake.form.Form
+    consistency: read_your_writes
+    fields:
+      - name: form_id
+        type: intake.form.FormId
+      - name: contact
+        type: String

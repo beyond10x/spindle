@@ -221,9 +221,16 @@
     },
     {
       "area": "Execution",
-      "detail": "A command outcome an ess-http/1 binding answers with body: response, body: response.<field> or body: none answers its bound status with the command's response bare, the one field's value bare, or no body and no Content-Type, as ess generate --kind openapi publishes it; one bound with headers, a redirect, the text encoding or an error object answers 501 naming which.",
+      "detail": "A command outcome an ess-http/1 binding answers with body: response, body: response.<field> or body: none answers its bound status with the command's response bare, the one field's value bare, or no body and no Content-Type, as ess generate --kind openapi publishes it; one bound with headers, a redirect or the text encoding answers 501 naming which.",
       "href": "/docs/concepts/capabilities",
       "label": "Outcome bodies",
+      "status": "shipped"
+    },
+    {
+      "area": "Execution",
+      "detail": "A refusing outcome an ess-http/1 binding answers with body: {<member>: error} answers its bound status with an object whose <member> is the error's wire name, beside the error's fields under their wire names, as ess generate --kind openapi publishes it, and writes nothing.",
+      "href": "/docs/concepts/capabilities",
+      "label": "Error object bodies",
       "status": "shipped"
     },
     {

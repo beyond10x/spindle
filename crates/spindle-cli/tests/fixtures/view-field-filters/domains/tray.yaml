@@ -1,0 +1,166 @@
+domain: cards.tray
+summary: Cards filed once with a flag, a priority, a kind, an optional note and a list of tags, read by views that filter on those fields.
+types:
+  - name: cards.tray.CardId
+    kind: newtype
+    of: String
+entities:
+  - name: cards.tray.Card
+    identity:
+      name: card_id
+      type: cards.tray.CardId
+    fields:
+      - name: archived
+        type: Boolean
+      - name: priority
+        type: Integer
+      - name: kind
+        type: String
+      - name: note
+        type: Optional<String>
+      - name: tags
+        type: List<String>
+    lifecycle:
+      initial: Filed
+      states: [Filed]
+      terminal: [Filed]
+commands:
+  - name: cards.tray.FileCard
+    input:
+      - name: card_id
+        type: cards.tray.CardId
+      - name: archived
+        type: Boolean
+      - name: priority
+        type: Integer
+      - name: kind
+        type: String
+      - name: note
+        type: Optional<String>
+      - name: tags
+        type: List<String>
+    outcomes:
+      - name: filed
+        creates: cards.tray.Card
+        instance: card_id
+        sets:
+          archived: input.archived
+          priority: input.priority
+          kind: input.kind
+          note: input.note
+          tags: input.tags
+        emits: [cards.tray.CardFiled]
+        payload:
+          cards.tray.CardFiled: {card_id: input.card_id}
+        summary: The card is filed.
+events:
+  - name: cards.tray.CardFiled
+    fields:
+      - name: card_id
+        type: cards.tray.CardId
+views:
+  - name: cards.tray.Current
+    source: cards.tray.Card
+    consistency: read_your_writes
+    filter: archived == false
+    fields: &fields
+      - name: card_id
+        type: cards.tray.CardId
+      - name: archived
+        type: Boolean
+      - name: priority
+        type: Integer
+      - name: kind
+        type: String
+      - name: note
+        type: Optional<String>
+      - name: tags
+        type: List<String>
+  - name: cards.tray.Final
+    source: cards.tray.Card
+    consistency: read_your_writes
+    filter: kind != "draft"
+    fields: *fields
+  - name: cards.tray.Urgent
+    source: cards.tray.Card
+    consistency: read_your_writes
+    filter: priority >= 3
+    fields: *fields
+  - name: cards.tray.Middling
+    source: cards.tray.Card
+    consistency: read_your_writes
+    filter:
+      all:
+        - priority > 1
+        - priority <= 4
+        - not: priority < 2
+    fields: *fields
+  - name: cards.tray.Unfinished
+    source: cards.tray.Card
+    consistency: read_your_writes
+    filter: {kind: {in: [draft, review]}}
+    fields: *fields
+  - name: cards.tray.Settled
+    source: cards.tray.Card
+    consistency: read_your_writes
+    filter: {kind: {none_of: [draft]}}
+    fields: *fields
+  - name: cards.tray.Kept
+    source: cards.tray.Card
+    consistency: read_your_writes
+    filter:
+      any:
+        - not defined(note)
+        - note == "keep"
+    fields: *fields
+  - name: cards.tray.Noted
+    source: cards.tray.Card
+    consistency: read_your_writes
+    filter:
+      all:
+        - defined(note)
+        - note != "keep"
+    fields: *fields
+  - name: cards.tray.NotedKeep
+    source: cards.tray.Card
+    consistency: read_your_writes
+    filter: note == "keep"
+    fields: *fields
+  - name: cards.tray.Flagged
+    source: cards.tray.Card
+    consistency: read_your_writes
+    filter: {exists: {in: tags, as: tag, that: tag == "urgent"}}
+    fields: *fields
+  - name: cards.tray.Fresh
+    source: cards.tray.Card
+    consistency: read_your_writes
+    filter: {forall: {in: tags, as: tag, that: tag != "stale"}}
+    fields: *fields
+  - name: cards.tray.TaggedWith
+    source: cards.tray.Card
+    consistency: read_your_writes
+    params:
+      - name: wanted
+        type: String
+    filter: {exists: {in: tags, as: tag, that: tag == param.wanted}}
+    fields: *fields
+  - name: cards.tray.TaggedAny
+    source: cards.tray.Card
+    consistency: read_your_writes
+    params:
+      - name: wanted
+        type: List<String>
+    filter:
+      exists:
+        in: param.wanted
+        as: wanted
+        that: {exists: {in: tags, as: tag, that: tag == wanted}}
+    fields: *fields
+  - name: cards.tray.DraftLike
+    source: cards.tray.Card
+    consistency: read_your_writes
+    filter:
+      all:
+        - archived == false
+        - {kind: {starts_with: dr}}
+    fields: *fields

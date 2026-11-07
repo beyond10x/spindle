@@ -167,6 +167,16 @@ impl<'m> Generator<'m> {
         }
     }
 
+    /// The civil time the clock answers now, as the RFC 3339 instant a generated `Timestamp`
+    /// would spell; `None` where it spells none.
+    pub(crate) fn instant(&self) -> Option<ess_primitives::time::Rfc3339Instant> {
+        value(&Minted::Timestamp, Uuid::nil, self.now)
+            .ok()
+            .as_ref()
+            .and_then(Value::as_str)
+            .and_then(ess_primitives::time::Rfc3339Instant::parse_rfc3339)
+    }
+
     /// A fresh UUID for `identity`.
     pub(crate) fn uuid(&self, identity: &Identity<'_>) -> Uuid {
         self.mint.borrow_mut().uuid(identity)
