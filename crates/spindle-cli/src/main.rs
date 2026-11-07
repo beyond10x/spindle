@@ -531,6 +531,9 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         (Some(other), _) => bail!("this build has no `{other}` store for store.durable"),
     };
 
+    for line in unsupported_outcomes(&loaded.ir, None) {
+        eprintln!("b10x-spindle: {line}");
+    }
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     for line in std::io::stdin().lock().lines() {
@@ -607,11 +610,13 @@ fn answer(
     }
 }
 
-/// One line per outcome the kernel does not take ([`spindle_kernel::takes`]), of each command
-/// `component` accepts or, without one, of every command, by command name: the outcome and what
-/// it lacks. A request that selects one is refused, and every other outcome of its command runs.
-/// A command the kernel cannot select among the outcomes of ([`spindle_kernel::selects`]) is not
-/// listed.
+/// One line per command the kernel refuses whole and per other outcome it does not take, of each
+/// command `component` accepts or, without one, of every command, by command name. A command the
+/// kernel cannot select among the outcomes of ([`spindle_kernel::selects`]), or none of whose
+/// outcomes it takes ([`spindle_kernel::takes`]), is named once as not served, with the first
+/// refusal: every request of it is refused, as `run` refuses it. Each outcome the kernel does not
+/// take of any other command is named with what it lacks: a request that selects it is refused,
+/// and every other outcome of its command runs.
 fn unsupported_outcomes(ir: &spindle_spec::EssIr, component: Option<&str>) -> Vec<String> {
     let accepted = |command: &str| {
         component.is_none_or(|component| {
@@ -627,16 +632,34 @@ fn unsupported_outcomes(ir: &spindle_spec::EssIr, component: Option<&str>) -> Ve
     let mut lines = Vec::new();
     for (name, command) in ir.commands() {
         let name = name.to_string();
-        if !accepted(&name) || spindle_kernel::selects(command).is_err() {
+        if !accepted(&name) {
             continue;
         }
-        for outcome in &command.outcomes {
-            if let Err(refused) = spindle_kernel::takes(ir, command, outcome) {
-                lines.push(format!(
-                    "unsupported outcome `{name}/{}`, refused where a request selects it: {refused}",
-                    outcome.name.as_str()
-                ));
-            }
+        if let Err(refused) = spindle_kernel::selects(command) {
+            lines.push(format!(
+                "not served: {name}, refused for every request: {refused}"
+            ));
+            continue;
+        }
+        let refused = command
+            .outcomes
+            .iter()
+            .filter_map(|outcome| {
+                spindle_kernel::takes(ir, command, outcome)
+                    .err()
+                    .map(|refused| (outcome.name.as_str(), refused))
+            })
+            .collect::<Vec<_>>();
+        match refused.first() {
+            Some((_, first)) if refused.len() == command.outcomes.len() => lines.push(format!(
+                "not served: {name}, refused for every request: {first}"
+            )),
+            _ => lines.extend(refused.iter().map(|(outcome, refused)| {
+                format!(
+                    "unsupported outcome `{name}/{outcome}`, refused where a request selects it: \
+                     {refused}"
+                )
+            })),
         }
     }
     lines
