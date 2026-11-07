@@ -20,6 +20,8 @@ tasks:
       - task: check:the_wasm_build_of_the_host_succeeds
       - task: check:a_command_runs_in_wasm_on_the_memory_store
       - task: check:the_browser_store_keeps_state_in_indexeddb
+      - task: check:a_service_worker_serves_a_specification
+      - task: check:the_static_bundle_builds
       - cargo fmt --all -- --check
       - cargo clippy --workspace --all-targets --locked -- -D warnings
       - cargo test --workspace --locked --no-fail-fast
@@ -37,7 +39,7 @@ tasks:
       CLIPPY_CONF_DIR: '{{.ROOT_DIR}}/clippy/wasm32'
     cmds:
       - cargo build --locked --target wasm32-unknown-unknown --no-default-features -p spindle-spec -p spindle-kernel -p spindle-host -p spindle-ingress
-      - cargo clippy --locked --target wasm32-unknown-unknown --no-default-features -p spindle-spec -p spindle-kernel -p spindle-host -p spindle-ingress -p spindle-timer -p spindle-channel -p spindle-telemetry -p spindle-capability -p spindle-store-browser --lib -- -D warnings
+      - cargo clippy --locked --target wasm32-unknown-unknown --no-default-features -p spindle-spec -p spindle-kernel -p spindle-host -p spindle-ingress -p spindle-timer -p spindle-channel -p spindle-telemetry -p spindle-capability -p spindle-store-browser -p spindle-wasm --lib -- -D warnings
 
   check:a_command_runs_in_wasm_on_the_memory_store:
     desc: The wasm host runs a command on the memory store, under wasm-bindgen-test-runner on Node
@@ -52,6 +54,33 @@ tasks:
       CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
     cmds:
       - cargo test --locked --target wasm32-unknown-unknown -p spindle-store-browser --test spindle-store-browser
+
+  check:a_service_worker_serves_a_specification:
+    desc: The wasm host answers a specification's routes and the console routes inside a Service Worker of a headless browser, as the loopback listener answers them, under wasm-bindgen-test-runner
+    env:
+      CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+    cmds:
+      - cargo test --locked --target wasm32-unknown-unknown -p spindle-wasm --test spindle-wasm
+
+  check:the_static_bundle_builds:
+    desc: The Service Worker site in web/ builds, spindle-wasm compiled to wasm32-unknown-unknown and bound by wasm-bindgen into the Vite bundle
+    cmds:
+      - task: web
+
+  web:
+    desc: Build the Service Worker site into web/dist
+    cmds:
+      - cargo build --locked --release --target wasm32-unknown-unknown -p spindle-wasm
+      - wasm-bindgen --target web --out-dir web/src/wasm target/wasm32-unknown-unknown/release/spindle_wasm.wasm
+      - task: web:bundle
+
+  web:bundle:
+    desc: Typecheck and bundle web/ with the bindings web/src/wasm holds
+    dir: web
+    cmds:
+      - pnpm install --frozen-lockfile
+      - pnpm typecheck
+      - pnpm build
 
   check:vm:
     desc: The VM tests, on a host with KVM

@@ -53,9 +53,16 @@
     },
     {
       "area": "Execution",
-      "detail": "spindle-store-browser keeps instances in the browser's IndexedDB (store.durable bound to indexeddb in examples/environments/browser.toml): it passes the store contract the memory and SQLite stores pass, and a command's effect is read back after the database is reopened. The host does not open it yet.",
+      "detail": "spindle-store-browser keeps instances in the browser's IndexedDB (store.durable bound to indexeddb in examples/environments/browser.toml): it passes the store contract the memory and SQLite stores pass, and a command's effect is read back after the database is reopened. The Service Worker host opens one per component whose state is bound to indexeddb.",
       "href": "/docs/concepts/environment-and-admission",
       "label": "Browser store",
+      "status": "shipped"
+    },
+    {
+      "area": "Execution",
+      "detail": "spindle-wasm compiles a specification in the browser, admits it on a browser environment (ingress.network bound to service-worker) and answers its routes and the console routes from a Service Worker through the same router the loopback listener calls, state in IndexedDB and external outcomes answered from a decisions file; web/ is the Vue shell that registers the worker.",
+      "href": "/docs/concepts/environment-and-admission",
+      "label": "Service Worker host",
       "status": "shipped"
     },
     {

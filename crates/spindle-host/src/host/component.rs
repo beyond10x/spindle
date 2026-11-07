@@ -47,7 +47,7 @@ use spindle_channel::{Channel, ChannelError, Frame, Receiver, Router};
 use spindle_telemetry::Counters;
 use spindle_timer::{Clock, Instant};
 
-use super::{DELIVERY_LIMIT, Deliveries, Host, HostError, Report, Retries};
+use super::{DELIVERY_LIMIT, Deliveries, Host, HostError, Opening, Report, Retries, Stores};
 use crate::admission::{Placements, Refusal};
 
 /// The channel implementation a one-component host carries bindings on.
@@ -458,7 +458,18 @@ impl Host {
                 }));
             }
         };
-        let mut host = Self::assemble(ir, clock, state, placements, TCP, None, Retries::Retried)?;
+        let mut host = Self::assemble(
+            ir,
+            clock,
+            state,
+            placements,
+            TCP,
+            Opening {
+                decider: None,
+                retries: Retries::Retried,
+                stores: Stores::new(),
+            },
+        )?;
         let expected = Router::from_shared(&host.ir)?
             .routes()
             .iter()

@@ -19,6 +19,7 @@ ess-domain.workspace = true
 ess-primitives.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+toml.workspace = true
 spindle-capability = { path = "../spindle-capability" }
 spindle-channel = { path = "../spindle-channel" }
 spindle-kernel = { path = "../spindle-kernel", default-features = false }

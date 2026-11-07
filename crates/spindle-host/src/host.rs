@@ -343,10 +343,55 @@ pub fn retried(ir: &EssIr) -> Vec<String> {
         .collect()
 }
 
+/// The stores a host is given rather than opening them itself, by component ([`Host::supplied`]).
+pub type Stores = BTreeMap<String, Box<dyn Store>>;
+
+/// What [`Host::assemble`] opens a host with, besides its placements.
+struct Opening {
+    decider: Option<Box<dyn Decider + Send>>,
+    retries: Retries,
+    stores: Stores,
+}
+
+/// Where a component's store keeps its state.
+enum Kept {
+    /// In memory.
+    Memory,
+    /// In the SQLite file at this path.
+    File(PathBuf),
+    /// In a store the host was given ([`Host::supplied`]).
+    Supplied,
+}
+
+/// A store the host was given, as a [`Store`] of its own.
+struct Supplied(Box<dyn Store>);
+
+impl Store for Supplied {
+    fn load(
+        &mut self,
+        entity: &str,
+        identity: &Value,
+    ) -> Result<Option<spindle_kernel::Stored>, StoreError> {
+        self.0.load(entity, identity)
+    }
+
+    fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
+        self.0.commit(change)
+    }
+
+    fn remove(&mut self, removal: &spindle_kernel::Removal) -> Result<(), StoreError> {
+        self.0.remove(removal)
+    }
+
+    fn scan(&mut self, entity: &str) -> Result<Vec<(Value, spindle_kernel::Stored)>, StoreError> {
+        self.0.scan(entity)
+    }
+}
+
 struct Component {
     store: Box<dyn Store>,
-    /// The SQLite file the store keeps its state in; `None` for a store in memory.
-    file: Option<PathBuf>,
+    /// Where the store keeps its state.
+    kept: Kept,
     sender: Sender,
     position: u64,
     counters: Arc<Counters>,
@@ -477,6 +522,42 @@ impl Host {
         Self::open(ir, environment, clock, state, Some(decider), retries)
     }
 
+    /// [`Host::new`], where a component whose state admission bound to an implementation this
+    /// host has no store of its own for (neither `memory` nor `sqlite`) keeps it in the store
+    /// `stores` holds for it, such as a browser's IndexedDB store; every `external:` cause is
+    /// answered by `decider`, where one is given, as [`Host::deciding`] answers it.
+    ///
+    /// A reset empties a supplied store by removing every instance it holds, each with the version
+    /// it holds; the store stays the one supplied. Where a removal fails, the reset answers
+    /// [`HostError::Reset`] (`restored: false`) and every read and write of that component fails
+    /// from then on, naming why. A store left over in `stores`, of a component
+    /// that does not run here or whose state is bound to `memory` or `sqlite`, is dropped.
+    ///
+    /// # Errors
+    /// As [`Host::new`], and [`HostError::Unsupported`] for a component whose state is bound to
+    /// an implementation `stores` holds no store for.
+    pub fn supplied(
+        ir: EssIr,
+        environment: &Environment,
+        clock: Arc<dyn Clock>,
+        decider: Option<Box<dyn Decider + Send>>,
+        stores: Stores,
+    ) -> Result<Self, HostError> {
+        let placements = admit(&ir, environment).map_err(HostError::Refused)?;
+        Self::assemble(
+            ir,
+            clock,
+            Path::new(""),
+            placements,
+            IN_PROCESS,
+            Opening {
+                decider,
+                retries: Retries::Retried,
+                stores,
+            },
+        )
+    }
+
     fn open(
         ir: EssIr,
         environment: &Environment,
@@ -486,7 +567,18 @@ impl Host {
         retries: Retries,
     ) -> Result<Self, HostError> {
         let placements = admit(&ir, environment).map_err(HostError::Refused)?;
-        Self::assemble(ir, clock, state, placements, IN_PROCESS, decider, retries)
+        Self::assemble(
+            ir,
+            clock,
+            state,
+            placements,
+            IN_PROCESS,
+            Opening {
+                decider,
+                retries,
+                stores: Stores::new(),
+            },
+        )
     }
 
     /// The host of the components in `placements`, their bindings carried on `carried`: every
@@ -497,9 +589,13 @@ impl Host {
         state: &Path,
         placements: Placements,
         carried: &str,
-        decider: Option<Box<dyn Decider + Send>>,
-        retries: Retries,
+        opening: Opening,
     ) -> Result<Self, HostError> {
+        let Opening {
+            decider,
+            retries,
+            mut stores,
+        } = opening;
         let answers = decider.is_some();
         if let Some((binding, failure)) = uncarried(&ir) {
             return Err(HostError::Unsupported(format!(
@@ -560,24 +656,32 @@ impl Host {
                     .ok_or_else(|| HostError::Unsupported(format!("no component {name}")))?,
             ));
             let sink = Sink::new(counters.clone());
-            let file = match bound(Capability::STORE_DURABLE).or_else(|| bound("store.ephemeral")) {
-                None | Some("memory") => None,
-                Some("sqlite") if cfg!(feature = "sqlite") => {
-                    Some(state.join(format!("{name}.sqlite")))
-                }
-                Some(other) => {
-                    return Err(HostError::Unsupported(format!(
-                        "{name} has its state bound to {other}, which this host has no store for"
-                    )));
-                }
-            };
-            let store = opened(file.as_deref(), &sink)?;
+            let (store, kept): (Box<dyn Store>, Kept) =
+                match bound(Capability::STORE_DURABLE).or_else(|| bound("store.ephemeral")) {
+                    None | Some("memory") => (opened(None, &sink)?, Kept::Memory),
+                    Some("sqlite") if cfg!(feature = "sqlite") => {
+                        let file = state.join(format!("{name}.sqlite"));
+                        (opened(Some(&file), &sink)?, Kept::File(file))
+                    }
+                    Some(other) => match stores.remove(name) {
+                        Some(store) => (
+                            Box::new(CountingStore::new(Supplied(store), sink.clone())),
+                            Kept::Supplied,
+                        ),
+                        None => {
+                            return Err(HostError::Unsupported(format!(
+                                "{name} has its state bound to {other}, which this host has no \
+                                 store for"
+                            )));
+                        }
+                    },
+                };
             let sender = Sender::new(name, router.clone())?.with_telemetry(sink.clone());
             components.insert(
                 name.clone(),
                 Component {
                     store,
-                    file,
+                    kept,
                     sender,
                     position: 0,
                     counters,
@@ -831,7 +935,18 @@ impl Host {
     fn empty(&mut self) -> Result<Vec<String>, HostError> {
         let mut emptied = Vec::new();
         for (name, component) in &mut self.components {
-            if let Some(file) = component.file.clone() {
+            if matches!(component.kept, Kept::Supplied) {
+                if let Err(error) = removed_all(&self.ir, component.store.as_mut()) {
+                    component.store =
+                        Box::new(Lost(format!("{name}'s store was lost in a reset: {error}")));
+                    return Err(HostError::Reset {
+                        component: name.clone(),
+                        error,
+                        restored: false,
+                    });
+                }
+            } else if let Kept::File(file) = &component.kept {
+                let file = file.clone();
                 let closed = std::mem::replace(
                     &mut component.store,
                     Box::new(Lost(format!("{name}'s store is being reset"))),
@@ -1392,6 +1507,28 @@ impl Host {
 struct Deliveries {
     count: usize,
     bindings: BTreeSet<String>,
+}
+
+/// Removes every instance `store` holds of every entity `ir` declares, each at the version it
+/// holds, so that the store answers as an empty one does; the reason otherwise.
+fn removed_all(ir: &EssIr, store: &mut dyn Store) -> Result<(), String> {
+    for entity in ir.entities().keys() {
+        let entity = entity.to_string();
+        let held = store
+            .scan(&entity)
+            .map_err(|error| format!("reading {entity}: {error}"))?;
+        for (identity, stored) in held {
+            store
+                .remove(&spindle_kernel::Removal {
+                    entity: entity.clone(),
+                    identity: identity.clone(),
+                    expected: stored.version,
+                    events: Vec::new(),
+                })
+                .map_err(|error| format!("removing {entity} {identity}: {error}"))?;
+        }
+    }
+    Ok(())
 }
 
 /// A component's store, counted into `sink`: in SQLite at `file`, in memory without one.

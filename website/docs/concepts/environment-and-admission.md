@@ -63,11 +63,13 @@ Admission binds names. The parts that run today act on these bindings:
 
 | Capability | Implementations the runtime runs today |
 |---|---|
-| `store.durable` | `memory`, `sqlite` (one SQLite file per component; `run --state` names it) |
+| `store.durable` | `memory`, `sqlite` (one SQLite file per component; `run --state` names it), `indexeddb` (one IndexedDB database per component, in the Service Worker host) |
 | `channel` | `in-process` in the one-process host (`play`); the `tcp` channel exists as a library |
 | `timer` | `tokio`, the name the shipped environments give `spindle-timer`'s schedule |
 | `clock` | `system` |
 | `identity.mint` | `uuid-v4` |
+| `ingress.network` | `service-worker`: the Service Worker host (`spindle-wasm`, the site in `web/`) answers the specification's routes and the console routes in the browser, through the router the loopback listener calls |
+| `external.*` | `decisions-file` in the Service Worker host: each external outcome answered from the decisions file it is opened with, as `run --decisions` answers it |
 
 The one-process host refuses, as unsupported, a binding it cannot run, such as a `tcp` channel or
 any `external.*` outcome. `ingress.network` is admitted but not served yet.

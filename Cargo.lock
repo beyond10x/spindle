@@ -1600,6 +1600,7 @@ dependencies = [
  "spindle-timer",
  "tempfile",
  "thiserror",
+ "toml",
  "wasm-bindgen-test",
 ]
 
@@ -1732,6 +1733,29 @@ dependencies = [
  "spindle-telemetry",
  "thiserror",
  "web-time",
+]
+
+[[package]]
+name = "spindle-wasm"
+version = "0.4.0"
+dependencies = [
+ "ess-compiler",
+ "ess-gen",
+ "ess-http",
+ "js-sys",
+ "serde",
+ "serde_json",
+ "spindle-capability",
+ "spindle-host",
+ "spindle-ingress",
+ "spindle-kernel",
+ "spindle-spec",
+ "spindle-store-browser",
+ "tempfile",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wasm-bindgen-test",
+ "web-sys",
 ]
 
 [[package]]

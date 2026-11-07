@@ -20,13 +20,15 @@
 //! answer.
 
 mod admission;
+mod decisions;
 mod host;
 pub mod rally;
 mod view;
 
 pub use admission::{Placements, Refusal, admit};
+pub use decisions::Answers;
 pub use host::{
     Cause, DELIVERY_LIMIT, Failed, Host, HostError, Published, RETRY_ATTEMPTS, Ran, RefusedCommand,
-    Report, Retries, Seed, World, reads, retried, uncarried,
+    Report, Retries, Seed, Stores, World, reads, retried, uncarried,
 };
 pub use spindle_timer::{Clock, ManualClock, SystemClock};

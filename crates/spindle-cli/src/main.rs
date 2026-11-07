@@ -412,7 +412,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         ref callers,
     } = *arguments;
     let loaded = spindle_spec::load(spec)?;
-    let answers = Answers::load(&loaded.ir, decisions, answer_default)?;
+    let answers = decisions::load(&loaded.ir, decisions, answer_default)?;
     let requirements = spindle_capability::derive(&loaded.ir, None)
         .with_context(|| format!("deriving the capabilities of {}", spec.display()))?;
     let text = std::fs::read_to_string(environment)
