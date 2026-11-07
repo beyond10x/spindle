@@ -31,6 +31,7 @@ mod form_query;
 mod ingress;
 mod metrics;
 mod mint;
+mod outcome_scoped_refusal;
 mod play;
 mod processes;
 mod replay;

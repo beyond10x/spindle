@@ -42,9 +42,11 @@
 //! `when_subject:`), and the caller a command is sent as ([`execute_as`]): `{caller: <attribute>}`
 //! as a value source, `caller.<attribute>` in a guard, and a branch the caller decides. A command
 //! sent as an actor whose `may:` does not name it is [`ExecuteError::NotGranted`]. Any other
-//! construct is [`ExecuteError::Unsupported`], named, before the
-//! command reads or writes anything. [`runs`] makes the same check without running anything, so
-//! a host can name what it will not run before it serves.
+//! construct is [`ExecuteError::Unsupported`], named, before anything is written: one selection
+//! reads refuses the whole command before it reads anything ([`selects`]); one only the taken
+//! outcome reads refuses that outcome alone, once a request selects it ([`takes`]), and every
+//! other outcome of the command runs. [`runs`] makes both checks for every outcome without running
+//! anything, so a host can name what it will not run before it serves.
 
 mod caller;
 pub mod contract;
@@ -65,12 +67,14 @@ use serde_json::{Map, Value};
 
 pub use caller::{binds as caller_binds, reads as caller_reads};
 pub use decider::{Decider, External, NoExternals};
-pub use execute::{Invocation, at_rest, execute, execute_as, execute_at, execute_minting};
+pub use execute::{
+    Invocation, at_rest, execute, execute_as, execute_at, execute_minting, execute_refusing,
+};
 pub use mint::{Identity, Mint, Seeded, Uuid, UuidV4};
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteStore;
 pub use store::{Change, MemoryStore, Removal, Row, Store, StoreError, Stored};
-pub use supported::check as runs;
+pub use supported::{check as runs, selects, takes};
 
 /// Refuses `value` unless it is a value of `kind`, naming what it is not: the check every command
 /// input goes through before the command runs, as ESS's interpreter makes it

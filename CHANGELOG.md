@@ -20,6 +20,20 @@ are Spindle's releases.
   answers; text that is not a decimal literal answers `400` naming the parameter. Before, every
   such read answered `400`.
 
+### Changed
+
+- An outcome the runtime does not run refuses only the request that selects it. A command with
+  one such outcome (a value it would generate of a type the runtime does not mint, an identity it
+  cannot mint, a response field it does not choose, an error field nothing fills) keeps its HTTP
+  route and answers every other outcome as declared; the request that selects that outcome
+  answers `501` naming the outcome and what it lacks, and nothing is minted or written. An outcome
+  an `ess-http/1` binding answers other than with its status and the envelope is refused the same
+  way. `admit` and `run`'s startup name each such outcome on stderr. A construct selection reads
+  (a condition, an outcome's shape) still refuses the whole command, and so does a command none of
+  whose outcomes runs. New: `spindle_kernel::selects`, `spindle_kernel::takes`,
+  `spindle_kernel::execute_refusing`, `spindle_host::Host::submit_refusing`,
+  `spindle_ingress::Route::refused`.
+
 ## [0.3.0] - 2026-11-06
 
 ### Added

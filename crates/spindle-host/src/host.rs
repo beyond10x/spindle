@@ -915,10 +915,29 @@ impl Host {
         actor: Option<&str>,
         caller: Option<&Map<String, Value>>,
     ) -> Result<Report, HostError> {
+        self.submit_refusing(command, input, actor, caller, &BTreeMap::new())
+    }
+
+    /// [`Host::submit_as`], refusing each outcome of `command` that `refused` names, by outcome
+    /// name with what the caller does not serve of it, where the model selects it:
+    /// [`HostError::Execute`] with [`spindle_kernel::ExecuteError::Unsupported`] naming the
+    /// outcome, and nothing is written ([`spindle_kernel::execute_refusing`]). What its events lead
+    /// to is not refused.
+    ///
+    /// # Errors
+    /// As [`Host::submit`].
+    pub fn submit_refusing(
+        &mut self,
+        command: &str,
+        input: Map<String, Value>,
+        actor: Option<&str>,
+        caller: Option<&Map<String, Value>>,
+        refused: &BTreeMap<String, String>,
+    ) -> Result<Report, HostError> {
         let component = accepting(&self.ir, command)
             .ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
         let mut report = Report::default();
-        match self.execute(&component, command, &input, actor, caller)? {
+        match self.execute(&component, command, &input, actor, caller, refused)? {
             Ok(Executed {
                 outcome,
                 error: Some(error),
@@ -1134,7 +1153,8 @@ impl Host {
         Ok(rows.into_iter().map(|(_, row)| row).collect())
     }
 
-    /// Executes one command on `component` and sends the events it emitted.
+    /// Executes one command on `component` and sends the events it emitted, refusing each outcome
+    /// `refused` names ([`spindle_kernel::execute_refusing`]).
     ///
     /// The outer error is the host's own; the inner one is the command's.
     fn execute(
@@ -1144,6 +1164,7 @@ impl Host {
         input: &Map<String, Value>,
         actor: Option<&str>,
         caller: Option<&Map<String, Value>>,
+        refused: &BTreeMap<String, String>,
     ) -> Result<Result<Executed, ExecuteError>, HostError> {
         let held = self
             .components
@@ -1151,7 +1172,7 @@ impl Host {
             .ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
         let started = Instant::now();
         let clock = &self.clock;
-        let result = spindle_kernel::execute_as(
+        let result = spindle_kernel::execute_refusing(
             &self.ir,
             held.store.as_mut(),
             match &mut self.answers {
@@ -1166,6 +1187,7 @@ impl Host {
                 actor,
                 caller,
             },
+            refused,
         );
         held.sink.executed(command, &result, started.elapsed());
         let executed = match result {
@@ -1250,7 +1272,7 @@ impl Host {
             if let Some(route) = retried {
                 sink.retried(&route.binding, Retried::Attempted);
             }
-            let result = self.execute(component, command, input, None, None)?;
+            let result = self.execute(component, command, input, None, None, &BTreeMap::new())?;
             let refusal = match &result {
                 Ok(Executed { error: None, .. }) => None,
                 Ok(Executed { outcome, .. }) => Some(Some(outcome.as_str())),

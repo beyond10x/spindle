@@ -153,8 +153,10 @@ fn fixed(ir: &EssIr, caller: &Caller) -> Result<()> {
 /// `memory` takes none.
 ///
 /// Before listening it prints on stderr one line per operation it does not serve
-/// ([`Surface::unserved`]) and, with `drop_retries`, one per binding whose retries it drops. A
-/// run that would serve no operation, one of them one the ingress cannot route, is refused. Each
+/// ([`Surface::unserved`]), one per outcome of a served command it refuses where a request
+/// selects it ([`spindle_ingress::Route::refused`]) and, with `drop_retries`, one per binding
+/// whose retries it drops. A run that would serve no operation, one of them one the ingress
+/// cannot route, is refused. Each
 /// command a binding invoked that did not execute is printed on stderr as it is dropped, after
 /// its last attempt where the binding retries it ([`spindle_host::RETRY_ATTEMPTS`]).
 ///
@@ -241,6 +243,17 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
                 .map(ToString::to_string)
                 .unwrap_or_default()
         );
+    }
+    for route in surface.routes() {
+        for (outcome, why) in route.refused() {
+            eprintln!(
+                "b10x-spindle: unsupported outcome `{}/{outcome}` at {} {}, answered 501 where a \
+                 request selects it: {why}",
+                route.operation.name(),
+                route.method.as_str().to_uppercase(),
+                route.path
+            );
+        }
     }
     if !unserved.is_empty()
         && unserved.len() == surface.routes().len()

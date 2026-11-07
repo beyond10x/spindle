@@ -1,0 +1,21 @@
+format: ess/34
+system: shelf
+version: v1
+summary: Boxes placed and labelled over the network, where one outcome of each command is one this runtime does not run.
+domains:
+  - shelf.box
+components:
+  - component: shelf
+    summary: Places and labels boxes for callers outside the process.
+    owns:
+      domains:
+        - shelf.box
+    accepts:
+      commands:
+        - shelf.box.PlaceBox
+        - shelf.box.LabelBox
+    publishes:
+      events:
+        - shelf.box.BoxPlaced
+        - shelf.box.BoxLabelled
+    reached_by: network

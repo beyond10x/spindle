@@ -84,7 +84,11 @@ impl Answer {
 /// path variables and query string included, as ESS's served surface checks the reader first.
 ///
 /// An operation the route marks [`Unserved::Ingress`] answers `501` with `committed: false`,
-/// naming the operation and what it uses, before the body is read or the host asked.
+/// naming the operation and what it uses, before the body is read or the host asked. A request
+/// whose selected outcome the route refuses ([`Route::refused`]: one this ingress does not answer
+/// as the binding lists it, or one the kernel does not take) answers `501` with
+/// `committed: false`, naming the outcome and what it lacks, and nothing is minted or written;
+/// every other outcome of the command answers as above.
 pub fn answer(
     host: &mut Host,
     route: &Route,
@@ -182,11 +186,12 @@ fn run(
         input.insert(field.clone(), value.clone());
     }
     let caller = route.caller();
-    let answer = match host.submit_as(
+    let answer = match host.submit_refusing(
         command,
         input,
         caller.map(|caller| caller.actor.as_str()),
         caller.map(|caller| &caller.attributes),
+        &route.refusing(),
     ) {
         Ok(report) => {
             let answer = match report.ran.first() {
