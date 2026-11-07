@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.TopologyNode.schema.json",
+  "$ref": "#/$defs/spindle.observe.TopologyNode",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "70563d91ca383baeb86c944716b5ed0a7a852e1705431a1bae003de587369072",
+    "contract_digest": "slice-sha256/2:e1d2f2c9725e2ca8ef68b799e47e86e908d5c4129a74cb114ff4c40865e7030d",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.NodeKind": {
+      "title": "NodeKind",
+      "description": "What one node of the topology stands for. `ingress`: the run's router, one per listener. `specification`: one loaded specification. `domain`: a domain of a specification. `command`, `view`, `event`: one declared in a domain. `external`: one external cause of a command's outcome. `binding`: one event or periodic binding, the channel an event travels.",
+      "x-ess-name": "spindle.observe.NodeKind",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "ingress",
+        "specification",
+        "domain",
+        "command",
+        "view",
+        "event",
+        "external",
+        "binding"
+      ]
+    },
+    "spindle.observe.TopologyNode": {
+      "title": "TopologyNode",
+      "description": "One node of the topology, derived from the loaded specifications, never authored.",
+      "x-ess-name": "spindle.observe.TopologyNode",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Unique within one specification's topology: `ingress`; the specification's system identifier; a domain, command, view or event by its qualified name prefixed by its kind, such as `command:tasks.board.OpenTask`; an external cause by its command and outcome, such as `external:tasks.ledger.Settle/settled`; a binding by its binding id, not a qualified name, as `binding:<binding id>`, such as `binding:record-closure`. A binding id is unique only within its specification; how ids stay unique across several specifications behind one ingress is for `story:one-ingress-several-specifications` to settle.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/spindle.observe.NodeKind"
+        },
+        "name": {
+          "description": "The name as the specification writes it.",
+          "type": "string"
+        },
+        "specification": {
+          "description": "The system identifier of the specification it belongs to; absent for the ingress.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "name"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.SourceCount.schema.json",
+  "$ref": "#/$defs/spindle.observe.SourceCount",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "70563d91ca383baeb86c944716b5ed0a7a852e1705431a1bae003de587369072",
+    "contract_digest": "slice-sha256/2:55b7bb05b484a1b24c92bb01d807a4109e08d7610b79d08825f6044a87e4f3c2",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.AnswerSource": {
+      "title": "AnswerSource",
+      "description": "What answered one external cause of a served command. `world`: the decision table of the last reset's world. `file`: the decisions file. `default`: the default branch `--answer-default` takes. `unanswered`: nothing did, and the command answered `501`.",
+      "x-ess-name": "spindle.observe.AnswerSource",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "world",
+        "file",
+        "default",
+        "unanswered"
+      ]
+    },
+    "spindle.observe.SourceCount": {
+      "title": "SourceCount",
+      "description": "How many times one source answered the external cause an `asks` edge leads to.",
+      "x-ess-name": "spindle.observe.SourceCount",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/spindle.observe.AnswerSource"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "source",
+        "count"
+      ],
+      "additionalProperties": false,
+      "x-ess-invariants": [
+        "count >= 0"
+      ]
+    }
+  }
+}

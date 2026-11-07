@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-07T01:18:14Z",
+  "actor": "human:timo",
+  "artifact": "story:http-outcome-bodies",
+  "kind": "story",
+  "revision": 8,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "cargo test -p spindle-cli --test spindle-cli outcome_bodies",
+    "reference": "base 920e475: 4 failed of 4 (501 answered other than with its status and the envelope); unit 5315f8f: 4 passed (implementor's run logs, wave 12 u3)"
+  }
+}

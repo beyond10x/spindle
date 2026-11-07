@@ -1,0 +1,23 @@
+format: ess/34
+system: bay
+version: v1
+summary: Lots tagged and closed in process, where one way to close a lot has a secondary effect this runtime does not run.
+domains:
+  - bay.lot
+components:
+  - component: bay
+    summary: Opens, tags and closes lots.
+    owns:
+      domains:
+        - bay.lot
+    accepts:
+      commands:
+        - bay.lot.OpenLot
+        - bay.lot.TagLot
+        - bay.lot.CloseLot
+    publishes:
+      events:
+        - bay.lot.LotOpened
+        - bay.lot.LotTagged
+        - bay.lot.LotClosed
+    reached_by: in_process

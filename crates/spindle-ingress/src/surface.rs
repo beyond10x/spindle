@@ -22,16 +22,41 @@ pub struct Variable {
     pub flat: Flat,
 }
 
-/// One parameter of a view read from the query string: the parameter, its wire name and how its
-/// text is read.
+/// One parameter of a view read from the query string: the parameter, its wire name, how its
+/// text is read and whether the key repeats once per element.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Queried {
     /// The view parameter it carries.
     pub field: String,
     /// The query key it is read under: the parameter's wire name.
     pub wire: String,
-    /// How its text is read ([`ess_gen::http::scalar`]).
+    /// How its text is read ([`ess_gen::http::scalar`]): the value's, or each element's for a
+    /// list.
     pub flat: Flat,
+    /// Whether the parameter is a `List<T>`, `Optional` or not, which ESS publishes as the key
+    /// repeated once per element (`style: form`, `explode: true`, beyond10x/ess#438).
+    pub list: bool,
+    /// Whether the value, or each element, is a `Decimal` (through newtypes): its text is read as
+    /// the exact decimal number it spells ([`Queried::value`]).
+    pub decimal: bool,
+}
+
+impl Queried {
+    /// One value, or one element of a list, read from its decoded `text`: as [`read`] reads it,
+    /// except that decimal text for a `Decimal` is the number it spells
+    /// ([`ess_primitives::facts::Number::decimal_literal`], as the kernel reads a decimal
+    /// literal), the value ESS's interpreter and the host's parameter check take. Text that is not
+    /// a decimal literal stays a string, for the host's check to refuse naming the parameter.
+    /// `None` for empty text.
+    fn value(&self, text: String) -> Option<Value> {
+        if self.decimal
+            && let Some(number) = ess_primitives::facts::Number::decimal_literal(&text)
+                .and_then(|number| serde_json::to_value(number).ok())
+        {
+            return Some(number);
+        }
+        read(self.flat, text)
+    }
 }
 
 /// One input field of a `form` or `query` request: the key it is sent under, the field it fills,
@@ -67,7 +92,12 @@ pub struct Route {
     parameters: Vec<Parameter>,
     /// The outcomes answered with the command's response beside the envelope.
     responding: Vec<String>,
+    /// The outcomes the binding answers with a body other than the envelope, each with it:
+    /// `response`, `response.<field>` or `none`.
+    bodies: BTreeMap<String, Body>,
     unserved: Option<Unserved>,
+    /// The command's outcomes not run, in declaration order, each with why.
+    refused: Vec<(String, Unserved)>,
     caller: Option<Caller>,
     not_granted: bool,
 }
@@ -89,9 +119,11 @@ pub enum Unserved {
     /// The command's or view's route uses what this ingress does not serve, named. A request for
     /// it is answered `501` before anything is read or written.
     Ingress(String),
-    /// The kernel's [`runs`](spindle_kernel::runs) refuses the command, as its text. A request
-    /// for it is answered as before this was known: the host refuses it before anything is read
-    /// or written, `501` naming the construct.
+    /// The kernel does not run the command or the outcome, as its text: for a command, one it
+    /// cannot select among the outcomes of ([`selects`](spindle_kernel::selects)) or none of whose
+    /// outcomes it takes ([`takes`](spindle_kernel::takes)); a request for it is answered as
+    /// before this was known: the host refuses it before anything is read or written, `501`
+    /// naming the construct. For an outcome ([`Route::refused`]), one it does not take.
     Kernel(String),
     /// The host's [`reads`](spindle_host::reads) refuses the view, as its text. A request for it
     /// is answered as before this was known: the host refuses it before reading anything, `501`
@@ -114,6 +146,27 @@ impl Route {
         self.unserved.as_ref()
     }
 
+    /// The command's outcomes the route does not run, in declaration order, each with why:
+    /// [`Unserved::Ingress`] for one this ingress does not answer as the binding lists it,
+    /// [`Unserved::Kernel`] for one the kernel does not take ([`spindle_kernel::takes`]). The
+    /// route is served: a request whose selected outcome is one of these answers `501` naming it,
+    /// and nothing is written; every other outcome answers as declared. Empty for a view and for
+    /// an operation not served at all ([`Route::unserved`]).
+    pub fn refused(&self) -> &[(String, Unserved)] {
+        &self.refused
+    }
+
+    /// What this ingress does not serve of each outcome it refuses, by outcome name: the kernel
+    /// refuses one where it is selected, before anything is written
+    /// ([`spindle_kernel::execute_refusing`]).
+    pub(crate) fn refusing(&self) -> BTreeMap<String, String> {
+        self.refused
+            .iter()
+            .filter(|(_, why)| matches!(why, Unserved::Ingress(_)))
+            .map(|(outcome, why)| (outcome.clone(), why.to_string()))
+            .collect()
+    }
+
     /// The status the command's outcome `outcome` answers: the binding's where it lists one, ESS's
     /// derived status otherwise.
     pub fn status(&self, outcome: &str) -> Option<u16> {
@@ -127,6 +180,13 @@ impl Route {
         self.responding
             .iter()
             .any(|responding| responding == outcome)
+    }
+
+    /// The body the binding answers the command's outcome `outcome` with where it is not the
+    /// envelope: [`Body::Response`], [`Body::ResponseField`] or [`Body::None`]. `None` for an
+    /// outcome answered with the envelope.
+    pub(crate) fn body(&self, outcome: &str) -> Option<&Body> {
+        self.bodies.get(outcome)
     }
 
     /// The path's variables.
@@ -143,12 +203,16 @@ impl Route {
     /// The view parameters `query`, a request's query string, carries, by parameter name, as
     /// ESS's served application reads them (`http::query_object`): each key and value
     /// form-decoded (`+` and `%XX`), a key no parameter has as its wire name ignored, a value read
-    /// as [`ess_gen::http::Flat`] says. A parameter the query leaves out is left out, for the host
-    /// to refuse where it is required.
+    /// as [`ess_gen::http::Flat`] says, a `Decimal`'s decimal text as the number it spells. A
+    /// `List<T>` parameter is read as ESS publishes it, the key
+    /// repeated once per element (`tags=a&tags=b`), each element read as `T` in the order given;
+    /// `tags=a,b` is the one element `a,b`. A parameter the query leaves out is left out, for the
+    /// host to refuse where it is required.
     ///
     /// # Errors
-    /// Naming the parameter, under `query.`: a key given more than once, a value that is not
-    /// percent-encoded UTF-8, or an empty value for a parameter that is not a `String`.
+    /// Naming the parameter, under `query.`: a key that is not a list's given more than once, a
+    /// value that is not percent-encoded UTF-8, an empty value for a parameter that is not a
+    /// `String`, or an empty element of a list of any type.
     pub fn parameters(&self, query: &str) -> Result<Map<String, Value>, String> {
         let mut read = Map::new();
         for queried in &self.queried {
@@ -160,6 +224,30 @@ impl Route {
                 .map(|(_, value)| value)
                 .collect();
             let place = format!("query.{}", queried.wire);
+            let text = |raw: &str| {
+                form_decoded(raw).ok_or_else(|| {
+                    format!("{place}: expected percent-encoded UTF-8 text, found `{raw}`")
+                })
+            };
+            if queried.list {
+                if found.is_empty() {
+                    continue;
+                }
+                let elements = found
+                    .into_iter()
+                    .map(|raw| {
+                        let element = text(raw)?;
+                        if element.is_empty() {
+                            return Err(format!("{place}: expected an element, found empty text"));
+                        }
+                        queried.value(element).ok_or_else(|| {
+                            format!("{place}: expected an element, found empty text")
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                read.insert(queried.field.clone(), Value::Array(elements));
+                continue;
+            }
             let raw = match found.as_slice() {
                 [] => continue,
                 [raw] => *raw,
@@ -170,10 +258,8 @@ impl Route {
                     ));
                 }
             };
-            let text = form_decoded(raw).ok_or_else(|| {
-                format!("{place}: expected percent-encoded UTF-8 text, found `{raw}`")
-            })?;
-            let value = self::read(queried.flat, text)
+            let value = queried
+                .value(text(raw)?)
                 .ok_or_else(|| format!("{place}: expected a value, found empty text"))?;
             read.insert(queried.field.clone(), value);
         }
@@ -362,6 +448,21 @@ fn read(flat: Flat, text: String) -> Option<Value> {
     }
 }
 
+/// Whether `type_ref`, under `Optional`, `List` and newtypes, is the primitive `Decimal`; the
+/// newtype chain is walked as [`ess_gen::http::scalar`] walks it.
+fn decimal(ir: &EssIr, type_ref: &ess_compiler::ir::ResolvedTypeRef) -> bool {
+    use ess_compiler::ir::{ResolvedBody, ResolvedTypeRef};
+    match type_ref {
+        ResolvedTypeRef::Primitive { name } => name.as_str() == "Decimal",
+        ResolvedTypeRef::Optional { of } | ResolvedTypeRef::List { of } => decimal(ir, of),
+        ResolvedTypeRef::Declared { name } => match &ir.named_type(name).body {
+            ResolvedBody::Newtype { of, .. } => decimal(ir, of),
+            _ => false,
+        },
+        ResolvedTypeRef::Map { .. } => false,
+    }
+}
+
 /// Exact decimal text: an optional `-` and one or more ASCII digits.
 fn whole(text: &str) -> bool {
     let digits = text.strip_prefix('-').unwrap_or(text);
@@ -468,14 +569,16 @@ impl Surface {
     /// outcome ([`ess_gen::http::listed`]).
     ///
     /// A command or view this ingress cannot route keeps its route and is marked
-    /// [`Unserved::Ingress`]: for a command, an outcome answered other than with the envelope (a
-    /// body, headers, a redirect or text), an outcome that answers with the command's retained
+    /// [`Unserved::Ingress`]: for a command, an outcome that answers with the command's retained
     /// result, or the caller attributes it reads where no caller is fixed; for a view, one
     /// answered other than as `rows`, or a parameter in the query string that no single scalar
     /// value carries; for either, a standard refusal the binding answers its own way or a path
-    /// variable that is not a scalar. A command the kernel's [`runs`](spindle_kernel::runs)
-    /// refuses is marked [`Unserved::Kernel`], and a view the host's
-    /// [`reads`](spindle_host::reads) refuses [`Unserved::Host`].
+    /// variable that is not a scalar. A command the kernel cannot select among the outcomes of
+    /// ([`selects`](spindle_kernel::selects)) is marked [`Unserved::Kernel`], and a view the
+    /// host's [`reads`](spindle_host::reads) refuses [`Unserved::Host`]. A command's outcome
+    /// answered with headers, a redirect, the `text` encoding or an error object, or one the
+    /// kernel does not take ([`takes`](spindle_kernel::takes)) refuses that outcome alone
+    /// ([`Route::refused`]); a command none of whose outcomes is left is marked as a whole.
     ///
     /// # Errors
     /// [`SurfaceError::NoComponent`] for a name `ir` does not declare,
@@ -689,7 +792,9 @@ fn route(
         unknown: Unknown::Refuse,
         parameters: Vec::new(),
         responding: Vec::new(),
+        bodies: BTreeMap::new(),
         unserved: None,
+        refused: Vec::new(),
         caller: caller.cloned(),
         not_granted: false,
     };
@@ -699,13 +804,13 @@ fn route(
             route.queried.clear();
             route.statuses.clear();
             route.responding.clear();
+            route.bodies.clear();
+            route.refused.clear();
             route.unserved = Some(Unserved::Ingress(what));
         }
         (Ok(()), Operation::Command(_)) => {
-            if let ess_gen::http::Served::Command(handle) = bound.serves
-                && let Err(refused) = spindle_kernel::runs(ir, ir.command(handle))
-            {
-                route.unserved = Some(Unserved::Kernel(refused.to_string()));
+            if let ess_gen::http::Served::Command(handle) = bound.serves {
+                refuse(ir, ir.command(handle), &mut route);
             }
         }
         (Ok(()), Operation::View(view)) => {
@@ -761,9 +866,50 @@ fn may_read(ir: &EssIr, actor: &str, view: &str) -> bool {
         .any(|(name, declared)| name.to_string() == actor && names(declared))
 }
 
-/// Fills `route`'s variables, input, request and statuses; `Err` names what it uses that this
-/// ingress does not serve: an outcome answered other than with the envelope (a body, headers, a
-/// redirect or text), a view answered other than as `rows`, a standard
+/// Marks what the route of `command`, once [`served`] filled it, does not run. Each outcome the
+/// kernel does not take ([`spindle_kernel::takes`]) is refused beside those this ingress does not
+/// answer, in declaration order. Where the kernel cannot select among the outcomes
+/// ([`spindle_kernel::selects`]) or none is left to serve, the whole route is marked instead: by
+/// what this ingress does not serve, first, which is answered before the request is read, else
+/// by what the kernel does not run.
+fn refuse(ir: &EssIr, command: &ess_compiler::ir::ResolvedCommand, route: &mut Route) {
+    let mut refused = Vec::new();
+    for outcome in &command.outcomes {
+        let name = outcome.name.to_string();
+        if let Some(at) = route.refused.iter().position(|(listed, _)| *listed == name) {
+            refused.push(route.refused.remove(at));
+        } else if let Err(why) = spindle_kernel::takes(ir, command, outcome) {
+            refused.push((name, Unserved::Kernel(why.to_string())));
+        }
+    }
+    let selection = spindle_kernel::selects(command).err();
+    let none_left = !command.outcomes.is_empty() && refused.len() == command.outcomes.len();
+    if selection.is_none() && !none_left {
+        route.refused = refused;
+        return;
+    }
+    let ingress = refused
+        .iter()
+        .find(|(_, why)| matches!(why, Unserved::Ingress(_)))
+        .map(|(_, why)| why.clone());
+    if let Some(why) = ingress {
+        route.variables.clear();
+        route.statuses.clear();
+        route.responding.clear();
+        route.bodies.clear();
+        route.unserved = Some(why);
+    } else {
+        route.unserved = selection
+            .map(|refused| Unserved::Kernel(refused.to_string()))
+            .or_else(|| refused.into_iter().next().map(|(_, why)| why));
+    }
+}
+
+/// Fills `route`'s variables, input, request, statuses and the bodies its outcomes answer other
+/// than with the envelope, and lists among its refused outcomes each one answered with headers, a
+/// redirect, the `text` encoding or an error object ([`unwritten`]), or
+/// without a status; `Err` names what it uses that this ingress does not serve: a view answered
+/// other than as `rows`, a standard
 /// refusal the binding answers its own way, a command whose outcome answers with its retained
 /// result, a path variable or a view parameter in the query string that is not a scalar, or a
 /// command that reads its caller where the
@@ -840,24 +986,29 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
                     route.responding.push(outcome.name.to_string());
                 }
                 let status = match ess_gen::http::listed(bound, outcome) {
-                    Some(listed) => {
-                        if listed.body != Body::Envelope
-                            || listed.encoding != ResponseEncoding::default()
-                            || !listed.headers.is_empty()
-                            || listed.redirect.is_some()
-                        {
-                            return Err(format!(
-                                "{} answered other than with its status and the envelope",
-                                outcome.name
-                            ));
+                    Some(listed) => match unwritten(listed) {
+                        Some(what) => Err(format!("{} answered {what}", outcome.name)),
+                        None => {
+                            if listed.body != Body::Envelope {
+                                route
+                                    .bodies
+                                    .insert(outcome.name.to_string(), listed.body.clone());
+                            }
+                            Ok(listed.status)
                         }
-                        listed.status
-                    }
+                    },
                     None => ess_http::status::outcome_status(ir, outcome)
                         .parse()
-                        .map_err(|_| "an outcome without a status".to_owned())?,
+                        .map_err(|_| format!("{} without a status", outcome.name)),
                 };
-                route.statuses.insert(outcome.name.to_string(), status);
+                match status {
+                    Ok(status) => {
+                        route.statuses.insert(outcome.name.to_string(), status);
+                    }
+                    Err(what) => route
+                        .refused
+                        .push((outcome.name.to_string(), Unserved::Ingress(what))),
+                }
             }
         }
         ess_gen::http::Served::View(handle) => {
@@ -875,9 +1026,13 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
                 {
                     continue;
                 }
-                let flat = match ess_gen::http::flat(ir, &param.type_ref) {
-                    Some((Shape::One | Shape::Optional, flat)) => flat,
-                    _ => {
+                // ESS 0.88.0: `ess_gen::http::flat` reads no `Optional<List<T>>`, which
+                // `openapi::view_parameters` publishes as a list (`is_list`); the `Optional` is
+                // stripped first, and the host checks presence against the declared type.
+                let (list, flat) = match ess_gen::http::flat(ir, param.type_ref.required()) {
+                    Some((Shape::List, flat)) => (true, flat),
+                    Some((Shape::One | Shape::Optional, flat)) => (false, flat),
+                    None => {
                         return Err(format!(
                             "the parameter {}, which no single query value carries",
                             param.name
@@ -888,9 +1043,95 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
                     field: param.name.clone(),
                     wire: ess_gen::schema::wire_field_name(param).to_owned(),
                     flat,
+                    list,
+                    decimal: decimal(ir, &param.type_ref),
                 });
             }
         }
     }
     Ok(())
+}
+
+/// What of `listed`, a command outcome's answer as the binding lists it, this ingress does not
+/// write, in words; `None` where it writes all of it: the status with the envelope,
+/// `response`, `response.<field>` or `none` as `application/json` or no body. Each of bound
+/// headers, a redirect, a response encoding other than `json` and an error object is named.
+///
+/// Every member of the answer is read by name, so a member a later ESS adds fails to compile here
+/// rather than going unwritten unnamed.
+fn unwritten(listed: &ess_http::Outcome) -> Option<String> {
+    let ess_http::Outcome {
+        status: _,
+        body,
+        encoding,
+        headers,
+        redirect,
+    } = listed;
+    let mut what = Vec::new();
+    match body {
+        Body::Error { member } => {
+            what.push(format!("with the error object `{{{member}: error}}`"));
+        }
+        Body::Envelope | Body::Response | Body::ResponseField(_) | Body::None => {}
+    }
+    match encoding {
+        ResponseEncoding::Json => {}
+        ResponseEncoding::Text => what.push(format!("in the `{encoding}` encoding")),
+    }
+    if !headers.is_empty() {
+        let names = headers
+            .keys()
+            .map(|name| format!("`{name}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        what.push(format!("with headers ({names})"));
+    }
+    if redirect.is_some() {
+        what.push("with a redirect".to_owned());
+    }
+    match what.split_last() {
+        None => None,
+        Some((last, [])) => Some(last.clone()),
+        Some((last, rest)) => Some(format!("{} and {last}", rest.join(", "))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Flat, Queried};
+    use serde_json::{Value, json};
+
+    fn queried(decimal: bool) -> Queried {
+        Queried {
+            field: "amount".to_owned(),
+            wire: "amount".to_owned(),
+            flat: Flat::Text,
+            list: false,
+            decimal,
+        }
+    }
+
+    #[test]
+    fn decimal_text_is_read_as_the_number_it_spells_and_nothing_else_is() {
+        let amount = queried(true);
+        assert_eq!(amount.value("3.25".to_owned()), Some(json!(3.25)));
+        assert_eq!(
+            amount.value("-2".to_owned()),
+            Some(json!(-2.0)),
+            "ESS's `Number` writes a decimal as binary64, as the kernel writes one"
+        );
+        for text in ["abc", "1e3", ".5", "01", "+1", "3.2.5"] {
+            assert_eq!(
+                amount.value(text.to_owned()),
+                Some(Value::String(text.to_owned())),
+                "`{text}` is no decimal literal, so it stays text for the host to refuse"
+            );
+        }
+        assert_eq!(amount.value(String::new()), None, "empty text is malformed");
+        assert_eq!(
+            queried(false).value("3.25".to_owned()),
+            Some(Value::String("3.25".to_owned())),
+            "only a `Decimal` is read as a number"
+        );
+    }
 }

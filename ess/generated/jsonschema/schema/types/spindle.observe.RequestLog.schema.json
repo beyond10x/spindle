@@ -1,0 +1,276 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.RequestLog.schema.json",
+  "$ref": "#/$defs/spindle.observe.RequestLog",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "70563d91ca383baeb86c944716b5ed0a7a852e1705431a1bae003de587369072",
+    "contract_digest": "slice-sha256/2:e3fdfff97ac54e2824eddcd5b9d97d78a07769d4d39f0df487f064dacfc8d3c6",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.AnswerSource": {
+      "title": "AnswerSource",
+      "description": "What answered one external cause of a served command. `world`: the decision table of the last reset's world. `file`: the decisions file. `default`: the default branch `--answer-default` takes. `unanswered`: nothing did, and the command answered `501`.",
+      "x-ess-name": "spindle.observe.AnswerSource",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "world",
+        "file",
+        "default",
+        "unanswered"
+      ]
+    },
+    "spindle.observe.ExternalAnswer": {
+      "title": "ExternalAnswer",
+      "description": "One external cause a served command asked about, and what answered it.",
+      "x-ess-name": "spindle.observe.ExternalAnswer",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "description": "The outcome whose cause was asked about, as the command declares it.",
+          "type": "string"
+        },
+        "holds": {
+          "description": "Whether the cause holds; absent when nothing answered it.",
+          "type": "boolean"
+        },
+        "source": {
+          "$ref": "#/$defs/spindle.observe.AnswerSource"
+        }
+      },
+      "required": [
+        "outcome",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "spindle.observe.OperationKind": {
+      "title": "OperationKind",
+      "description": "What a routed request was for.",
+      "x-ess-name": "spindle.observe.OperationKind",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "command",
+        "view",
+        "console"
+      ]
+    },
+    "spindle.observe.RequestClass": {
+      "title": "RequestClass",
+      "description": "How a served run answered one request; the class follows who answered, not the status. `served`: the model answered it, with an outcome the command declares or the view's rows, whatever status the binding gives that outcome, `501` and `503` included. `refused`: the ingress or ESS's standard refusal answered it `4xx` before the model did, other than `not-granted`. `not-granted`: `403` \"not granted\", no grant admits the actor. `not-served`: spindle's own `501`, for an operation this ingress cannot route, the kernel does not run or the host does not read, or for an external cause nothing answered. `failed`: a `5xx` spindle itself answered, other than that `501`. `unrouted`: no route has the path, or not under that method.",
+      "x-ess-name": "spindle.observe.RequestClass",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "served",
+        "refused",
+        "not-granted",
+        "not-served",
+        "failed",
+        "unrouted"
+      ]
+    },
+    "spindle.observe.RequestLog": {
+      "title": "RequestLog",
+      "description": "The answer of `GET /__spindle/requests`: the totals since the run started and the last requests the ring holds, newest first, those of the classes `?class=` names where it is given.",
+      "x-ess-name": "spindle.observe.RequestLog",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "format": {
+          "$ref": "#/$defs/spindle.observe.RequestLogFormat"
+        },
+        "capacity": {
+          "description": "How many requests the ring holds at most, from 1 to 10 000.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "recorded": {
+          "description": "Every request recorded since the run started, kept or dropped by the ring.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "totals": {
+          "$ref": "#/$defs/spindle.observe.RequestTotals"
+        },
+        "requests": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/spindle.observe.RequestRecord"
+          }
+        }
+      },
+      "required": [
+        "format",
+        "capacity",
+        "recorded",
+        "totals",
+        "requests"
+      ],
+      "additionalProperties": false,
+      "x-ess-invariants": [
+        "capacity > 0",
+        "capacity <= 10000",
+        "recorded >= 0"
+      ]
+    },
+    "spindle.observe.RequestLogFormat": {
+      "title": "RequestLogFormat",
+      "description": "The format of a request log, `spindle-requests/1`; a reader refuses any other, and the schema refuses any other value.",
+      "x-ess-name": "spindle.observe.RequestLogFormat",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "spindle-requests/1"
+      ]
+    },
+    "spindle.observe.RequestRecord": {
+      "title": "RequestRecord",
+      "description": "One request a served run answered, as `GET /__spindle/requests` lists it. Requests under `/__spindle/` are not recorded.",
+      "x-ess-name": "spindle.observe.RequestRecord",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "sequence": {
+          "description": "Monotonic per run, starting at 0; a gap in a list is a request the ring dropped.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "description": "When the request's head was read.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "method": {
+          "description": "The request's method, upper case.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The request's path, without the query string.",
+          "type": "string"
+        },
+        "route": {
+          "description": "The route template the path resolved to; absent for an unrouted request.",
+          "type": "string"
+        },
+        "operation": {
+          "description": "The qualified command or view the route is bound to, or the console route as `GET /api/model`; absent for an unrouted request.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/spindle.observe.OperationKind"
+        },
+        "status": {
+          "description": "The HTTP status answered.",
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599
+        },
+        "class": {
+          "$ref": "#/$defs/spindle.observe.RequestClass"
+        },
+        "outcome": {
+          "description": "The outcome the model selected, for a command it answered.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "The `refused` text of the answer, as the caller received it, for every class but `served`.",
+          "type": "string"
+        },
+        "duration_us": {
+          "description": "From the request's head read to its answer handed back, in microseconds.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "events": {
+          "description": "The qualified names of the events the command published, in order.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "externals": {
+          "description": "The external causes the command asked about, in the order asked.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/spindle.observe.ExternalAnswer"
+          }
+        }
+      },
+      "required": [
+        "sequence",
+        "at",
+        "method",
+        "path",
+        "status",
+        "class",
+        "duration_us",
+        "events",
+        "externals"
+      ],
+      "additionalProperties": false,
+      "x-ess-invariants": [
+        "sequence >= 0",
+        "status >= 100",
+        "status <= 599",
+        "duration_us >= 0"
+      ]
+    },
+    "spindle.observe.RequestTotals": {
+      "title": "RequestTotals",
+      "description": "The requests a served run answered since it started, per class; requests under `/__spindle/` are not counted. Enough for a one-line banner.",
+      "x-ess-name": "spindle.observe.RequestTotals",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "served": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "refused": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "not_granted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "not_served": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unrouted": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "served",
+        "refused",
+        "not_granted",
+        "not_served",
+        "failed",
+        "unrouted"
+      ],
+      "additionalProperties": false,
+      "x-ess-invariants": [
+        "served >= 0",
+        "refused >= 0",
+        "not_granted >= 0",
+        "not_served >= 0",
+        "failed >= 0",
+        "unrouted >= 0"
+      ]
+    }
+  }
+}

@@ -1,20 +1,23 @@
 //! One request's answer, from the host that runs the command or reads the view.
 
+use ess_compiler::EssIr;
+use ess_compiler::ir::ResolvedField;
 use ess_gen::http::{FORBIDDEN, NOT_GRANTED};
-use ess_http::{Encoding, Operation};
+use ess_http::{Body, Encoding, Operation};
 use serde_json::{Map, Value, json};
 use spindle_host::{Failed, Host, HostError};
 use spindle_kernel::{DeclaredError, Event, ExecuteError};
 
 use crate::surface::{Route, Unserved};
 
-/// A status and the JSON body written under it.
+/// A status and the JSON body written under it, where it has one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Answer {
     /// The HTTP status.
     pub status: u16,
-    /// The body, written as `application/json`.
-    pub body: Value,
+    /// The body, written as `application/json`; `None` for an answer with no body and no
+    /// `Content-Type`, as a binding's `body: none` declares.
+    pub body: Option<Value>,
 }
 
 impl Answer {
@@ -23,7 +26,7 @@ impl Answer {
     pub fn refusal(status: u16, detail: impl Into<String>) -> Self {
         Self {
             status,
-            body: json!({"refused": detail.into()}),
+            body: Some(json!({"refused": detail.into()})),
         }
     }
 
@@ -32,7 +35,7 @@ impl Answer {
     pub fn not_granted(actor: &str) -> Self {
         Self {
             status: FORBIDDEN.parse().unwrap_or(403),
-            body: json!({"refused": NOT_GRANTED, "actor": actor}),
+            body: Some(json!({"refused": NOT_GRANTED, "actor": actor})),
         }
     }
 
@@ -41,7 +44,7 @@ impl Answer {
     pub fn unfinished(detail: impl Into<String>, committed: bool) -> Self {
         Self {
             status: 501,
-            body: json!({"refused": detail.into(), "committed": committed}),
+            body: Some(json!({"refused": detail.into(), "committed": committed})),
         }
     }
 }
@@ -63,7 +66,11 @@ impl Answer {
 /// qualified name, with `payload` where the kernel determined its fields, none for the
 /// `wrong_state:` answer to an identity no record carries, and on an outcome that
 /// returns the command's response (`returns: true`, `200`) `response`, the values the kernel
-/// chose for its declared fields.
+/// chose for its declared fields, each under its wire name and written as ESS publishes it at
+/// every depth. An outcome the binding answers with another body
+/// ([`Route::body`]) answers its status with that body alone, as ESS's served application writes
+/// it: `response` the command's response, `response.<field>` the value of that one field (`null`
+/// where the outcome answers no response), and `none` no body and no `Content-Type`.
 ///
 /// A view answers `200` with the body ESS publishes for it, `{"rows": [...]}`, every row it
 /// holds for its parameters: those `carried` holds from the path, and those `query` holds
@@ -84,7 +91,11 @@ impl Answer {
 /// path variables and query string included, as ESS's served surface checks the reader first.
 ///
 /// An operation the route marks [`Unserved::Ingress`] answers `501` with `committed: false`,
-/// naming the operation and what it uses, before the body is read or the host asked.
+/// naming the operation and what it uses, before the body is read or the host asked. A request
+/// whose selected outcome the route refuses ([`Route::refused`]: one this ingress does not answer
+/// as the binding lists it, or one the kernel does not take) answers `501` with
+/// `committed: false`, naming the outcome and what it lacks, and nothing is minted or written;
+/// every other outcome of the command answers as above.
 pub fn answer(
     host: &mut Host,
     route: &Route,
@@ -140,7 +151,7 @@ pub fn answered(
                 Ok(rows) => (
                     Answer {
                         status: 200,
-                        body: json!({"rows": rows}),
+                        body: Some(json!({"rows": rows})),
                     },
                     Vec::new(),
                 ),
@@ -182,15 +193,17 @@ fn run(
         input.insert(field.clone(), value.clone());
     }
     let caller = route.caller();
-    let answer = match host.submit_as(
+    let answer = match host.submit_refusing(
         command,
         input,
         caller.map(|caller| caller.actor.as_str()),
         caller.map(|caller| &caller.attributes),
+        &route.refusing(),
     ) {
         Ok(report) => {
             let answer = match report.ran.first() {
                 Some(ran) => envelope(
+                    host.ir(),
                     route,
                     command,
                     &ran.executed.outcome,
@@ -203,7 +216,7 @@ fn run(
             return (answer, report.failed);
         }
         Err(HostError::CommandRefused { outcome, error, .. }) => {
-            envelope(route, command, &outcome, &[], Some(&error), None)
+            envelope(host.ir(), route, command, &outcome, &[], Some(&error), None)
         }
         Err(HostError::Execute { error, .. }) => match *error {
             ExecuteError::InvalidInput(detail) => {
@@ -265,8 +278,11 @@ fn form(
 /// The media type of a `form` request body.
 const FORM: &str = "application/x-www-form-urlencoded";
 
-/// The envelope ESS publishes for `outcome` of `command`, at the status `route` gives it.
+/// The envelope ESS publishes for `outcome` of `command`, at the status `route` gives it, or the
+/// body the binding answers in its place ([`bare`]). The command's response, in either, is
+/// written as ESS publishes it ([`Written`]).
 fn envelope(
+    ir: &EssIr,
     route: &Route,
     command: &str,
     outcome: &str,
@@ -280,6 +296,10 @@ fn envelope(
             refusal.is_none(),
         );
     };
+    let written = Written::of(ir, command);
+    if let Some(body) = bare(route, outcome, response, &written) {
+        return Answer { status, body };
+    }
     let mut body = Map::new();
     body.insert("outcome".to_owned(), Value::String(outcome.to_owned()));
     body.insert(
@@ -298,10 +318,75 @@ fn envelope(
         }
     }
     if let Some(response) = response.filter(|_| route.responds(outcome)) {
-        body.insert("response".to_owned(), Value::Object(response.clone()));
+        body.insert(
+            "response".to_owned(),
+            Value::Object(written.response(response)),
+        );
     }
     Answer {
         status,
-        body: Value::Object(body),
+        body: Some(Value::Object(body)),
+    }
+}
+
+/// The body the binding answers `outcome` with in place of the envelope, where it does
+/// ([`Route::body`]): `Some(None)` for `none`; otherwise the response, or the value of the one
+/// field the body names (by its declared name), bare and written as ESS publishes it, `null` where
+/// `response` holds none. `None` for an outcome answered with the envelope.
+fn bare(
+    route: &Route,
+    outcome: &str,
+    response: Option<&Map<String, Value>>,
+    written: &Written<'_>,
+) -> Option<Option<Value>> {
+    match route.body(outcome)? {
+        Body::None => Some(None),
+        Body::Response => Some(Some(response.map_or(Value::Null, |response| {
+            Value::Object(written.response(response))
+        }))),
+        Body::ResponseField(field) => Some(Some(
+            response
+                .and_then(|response| response.get(field))
+                .map_or(Value::Null, |held| written.field(field, held)),
+        )),
+        Body::Envelope | Body::Error { .. } => None,
+    }
+}
+
+/// How the response of one command is written on the wire: each declared field under its wire
+/// name, its value as ESS publishes it at every depth ([`crate::wire`]). The kernel keys its
+/// response by declared name; the mapping is made here, where the answer is written, so the
+/// envelope's `response` and a bare body never disagree.
+struct Written<'ir> {
+    ir: &'ir EssIr,
+    fields: &'ir [ResolvedField],
+}
+
+impl<'ir> Written<'ir> {
+    /// The response fields of `command`, by qualified name; none for a name the IR does not
+    /// declare, whose response is then written as it is.
+    fn of(ir: &'ir EssIr, command: &str) -> Self {
+        let fields = ir
+            .commands()
+            .values()
+            .find(|declared| declared.name.to_string() == command)
+            .map_or(&[][..], |declared| declared.response.as_slice());
+        Self { ir, fields }
+    }
+
+    /// The whole response, keyed by wire name.
+    fn response(&self, response: &Map<String, Value>) -> Map<String, Value> {
+        crate::wire::fields(self.ir, self.fields, response)
+    }
+
+    /// The value `held` of the response field declared `field`, as written on the wire.
+    fn field(&self, field: &str, held: &Value) -> Value {
+        self.fields
+            .iter()
+            .find(|declared| declared.name == field)
+            .map_or_else(
+                || held.clone(),
+                |declared| crate::wire::value(self.ir, &declared.type_ref, held),
+            )
     }
 }

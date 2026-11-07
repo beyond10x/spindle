@@ -1,0 +1,24 @@
+format: ess/34
+system: depot
+version: v1
+summary: Parcels taken in over the network, each command answered with the body, header, redirect or encoding its HTTP binding declares.
+domains:
+  - depot.parcel
+components:
+  - component: depot
+    summary: Takes in parcels for callers outside the process.
+    owns:
+      domains:
+        - depot.parcel
+    accepts:
+      commands:
+        - depot.parcel.RegisterParcel
+        - depot.parcel.TagParcel
+        - depot.parcel.StoreParcel
+        - depot.parcel.AnnounceParcel
+        - depot.parcel.ForwardParcel
+        - depot.parcel.PrintParcel
+    publishes:
+      events:
+        - depot.parcel.ParcelTakenIn
+    reached_by: network

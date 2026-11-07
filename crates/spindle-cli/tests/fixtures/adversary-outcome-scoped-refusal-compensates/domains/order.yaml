@@ -1,0 +1,81 @@
+domain: shop.order
+summary: Orders joined upstream; a join the upstream refuses resets the order and records why.
+types:
+  - name: shop.order.OrderId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: shop.order.Order
+    identity:
+      name: order_id
+      type: shop.order.OrderId
+    fields:
+      - name: failure
+        type: Optional<String>
+    lifecycle:
+      initial: Idle
+      states: [Idle, Joined, Offline]
+      terminal: [Offline]
+      transitions:
+        - name: join
+          from: [Idle]
+          to: Joined
+        - name: reset
+          from: [Idle, Joined]
+          to: Offline
+errors:
+  - name: shop.order.Refused
+    summary: The upstream refused the join.
+    fields: []
+  - name: shop.order.Closed
+    summary: The order rests in a state no join starts from.
+    fields: []
+commands:
+  - name: shop.order.PlaceOrder
+    input:
+      - name: order_id
+        type: shop.order.OrderId
+    outcomes:
+      - name: placed
+        creates: shop.order.Order
+        instance: order_id
+        emits: [shop.order.OrderPlaced]
+        payload:
+          shop.order.OrderPlaced: {order_id: input.order_id}
+        summary: The order is placed.
+  - name: shop.order.JoinOrder
+    input:
+      - name: order_id
+        type: shop.order.OrderId
+      - name: reason
+        type: String
+    outcomes:
+      - name: joined
+        moves: shop.order.Order.join
+        instance: order_id
+        emits: [shop.order.OrderJoined]
+        payload:
+          shop.order.OrderJoined: {order_id: input.order_id}
+        summary: The order is joined.
+      - name: failed
+        external: the upstream refuses the join
+        error: shop.order.Refused
+        compensates: true
+        moves: shop.order.Order.reset
+        instance: order_id
+        sets:
+          failure: input.reason
+        summary: The upstream refuses the join, and the order is reset with the reason.
+      - name: closed
+        wrong_state: true
+        error: shop.order.Closed
+        summary: Only an idle order is joined.
+events:
+  - name: shop.order.OrderPlaced
+    fields:
+      - name: order_id
+        type: shop.order.OrderId
+  - name: shop.order.OrderJoined
+    fields:
+      - name: order_id
+        type: shop.order.OrderId

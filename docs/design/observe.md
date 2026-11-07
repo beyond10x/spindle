@@ -222,6 +222,10 @@ stays a runtime rule outside it (each item names the case in
 `/metrics` in Prometheus text and an OTLP exporter, both fed from the same samples. Not in the
 first stories.
 
+A served run (`b10x-spindle run` over `http-loopback`, not `deploy`) gets its own Prometheus text,
+request log and topology under the reserved prefix `/__spindle/`; § 10 specifies their answers.
+Exposing the deployment's samples as Prometheus text stays a later story.
+
 ## 8. Order
 
 | # | story | needs |
@@ -241,4 +245,56 @@ counters under the board before any of the transport exists.
   per-command tracing; tracing individual envelopes end to end (delivery id across components)
   is a later story.
 - Whether `spindle.observe` is the right home for the API nouns or whether they belong in
-  `spindle.placement` as views.
+  `spindle.placement` as views. Answered for the nouns of § 10: they live in `spindle.observe`.
+  A request record, a metric family and a topology edge are what a served run answered or
+  exposes, not state any command of `spindle.placement` decides, so there is no entity whose view
+  they could be. Still open for the deploy API's nouns.
+
+## 10. The reserved routes of a served run
+
+`epic:runtime-observability`. `b10x-spindle run`, serving a specification over `http-loopback`,
+reserves the prefix `/__spindle/` on its own listener. With `--observe` it answers the routes
+below; without it every path under the prefix answers `404`. A specification route under the
+prefix is refused at start, flag or not. No server code answers them yet: the nouns come first,
+and later stories of the epic serve them.
+
+| route | answer | format | noun in `spindle.observe` |
+|---|---|---|---|
+| `GET /__spindle/requests` | the totals per class since start and the last N requests, newest first; `?class=` keeps only the classes it names | `spindle-requests/1` | `RequestLog` (`RequestTotals`, `RequestRecord`, `RequestClass`, `OperationKind`, `ExternalAnswer`, `AnswerSource`) |
+| `GET /__spindle/metrics` | Prometheus text, `text/plain; version=0.0.4` | the exposition format | `MetricFamilies` (`MetricFamily`, `MetricKind`): the families exposed, by name, type and labels |
+| `GET /__spindle/topology` | the graph of the served specifications, with live numbers per edge | `spindle-topology/1` | `Topology` (`TopologyNode`, `NodeKind`, `TopologyEdge`, `EdgeKind`, `EdgeTraffic`, `StatusCount`, `SourceCount`) |
+
+- **The class follows who answered, not the status.** A declared outcome of a command, or a
+  view's rows, is `served`, whatever status the binding gives it: `410 already-done`, and also a
+  declared outcome bound to `501` or `503`. `not-served` is only spindle's own `501`, for an
+  operation the ingress cannot route, the kernel does not run or the host does not read, or for an
+  external cause nothing answered. `failed` is only a `5xx` spindle itself answered other than
+  that `501`. `403` "not granted" is `not-granted`; any other `4xx` the ingress or ESS's standard
+  refusal answered before the model is `refused`; no route or wrong method is `unrouted`. A
+  record's `reason` is the answer's `refused` text, absent for `served`.
+- **Requests under `/__spindle/` are neither recorded nor counted**, so polling does not move a
+  number. A reset clears no record and no counter.
+- **The metric families are a contract.** The exposition's `# TYPE` lines equal
+  `ess/fixtures/observe/metrics/families.json` in name, kind and order. The counters of
+  `spindle-telemetry`'s catalogue (§ 2) are exposed under these families, with their dotted names
+  split into labels.
+- **The topology is derived, never authored**: from the loaded specifications and the routes the
+  ingress serves. A `contains` edge carries no traffic. Node ids are unique within one
+  specification's topology: `ingress`; the system identifier; a domain, command, view or event by
+  its qualified name prefixed by its kind (`command:tasks.board.OpenTask`); an external cause by
+  its command and outcome (`external:tasks.ledger.Settle/settled`); a binding by its binding id,
+  which is not a qualified name (`binding:record-closure`). A binding id is unique only within its
+  specification, so ids across several specifications behind one ingress are
+  `story:one-ingress-several-specifications`'s to settle.
+- **Formats are enforced.** `format` is a one-value enum in each answer (`spindle-requests/1`,
+  `spindle-topology/1`), so the schema refuses any other; a status class is one of `2xx`, `3xx`,
+  `4xx`, `5xx`; a request log's `capacity` is 1 to 10 000.
+
+The nouns are projected and checked as the deploy API's are (§ 5): `OBSERVE_ROOTS` in
+`Taskfile.yml` names `RequestLog`, `MetricFamilies` and `Topology`, `task generate:observe`
+writes their JSON Schema, Rust (`spindle-observe-api`) and TypeScript (`ui/src/api/generated`),
+and `task check` fails on drift. The fixtures are `ess/fixtures/observe/requests/scripted.json`
+(the epic's scripted sequence on the `ingress` test specification), `requests/declared-5xx.json`
+(declared outcomes bound to `501` and `503`, each `served`), `metrics/families.json` and
+`topology/tasks.json` (the same specification after that sequence); each validates against its
+schema, and `ui/src/api/types.test.ts` reads each through its generated type.

@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.StatusCount.schema.json",
+  "$ref": "#/$defs/spindle.observe.StatusCount",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "70563d91ca383baeb86c944716b5ed0a7a852e1705431a1bae003de587369072",
+    "contract_digest": "slice-sha256/2:2d281986cbde735339700d02f954cc4da76c70ba504c5448f0bcf1111e45297a",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.StatusClass": {
+      "title": "StatusClass",
+      "description": "The class of an HTTP status by its first digit, as the `status_class` label of `spindle_http_requests_total` writes it.",
+      "x-ess-name": "spindle.observe.StatusClass",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "2xx",
+        "3xx",
+        "4xx",
+        "5xx"
+      ]
+    },
+    "spindle.observe.StatusCount": {
+      "title": "StatusCount",
+      "description": "How many requests of one status class an edge carried since the run started.",
+      "x-ess-name": "spindle.observe.StatusCount",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "status_class": {
+          "$ref": "#/$defs/spindle.observe.StatusClass"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "status_class",
+        "count"
+      ],
+      "additionalProperties": false,
+      "x-ess-invariants": [
+        "count >= 0"
+      ]
+    }
+  }
+}

@@ -192,6 +192,31 @@ pub fn execute_as(
     now: &dyn Fn() -> SystemTime,
     invocation: &Invocation<'_>,
 ) -> Result<Executed, ExecuteError> {
+    execute_refusing(ir, store, decider, mint, now, invocation, &BTreeMap::new())
+}
+
+/// [`execute_as`], refusing besides each outcome the kernel does not take those `refused` names,
+/// by outcome name, each with what the caller does not serve of it: an ingress that cannot answer
+/// an outcome as its binding declares.
+///
+/// A construct selection reads and the kernel does not run refuses the command before anything is
+/// read ([`crate::selects`]), and so does a command none of whose outcomes runs, naming its first
+/// refused outcome. Otherwise an outcome the kernel does not take ([`crate::takes`]) or `refused`
+/// names refuses only the request that selects it: [`ExecuteError::Unsupported`] naming the
+/// outcome and what it lacks, once selection took it and before anything is minted or written.
+/// Every other outcome runs.
+///
+/// # Errors
+/// As [`execute`].
+pub fn execute_refusing(
+    ir: &EssIr,
+    store: &mut dyn Store,
+    decider: &mut dyn Decider,
+    mint: &mut dyn Mint,
+    now: &dyn Fn() -> SystemTime,
+    invocation: &Invocation<'_>,
+    refused: &BTreeMap<String, String>,
+) -> Result<Executed, ExecuteError> {
     let Invocation {
         command,
         input,
@@ -204,7 +229,10 @@ pub fn execute_as(
         .iter()
         .find_map(|(name, spec)| (name.to_string() == command).then_some(spec))
         .ok_or_else(|| ExecuteError::UnknownCommand(command.to_owned()))?;
-    crate::supported::check(ir, spec)?;
+    crate::supported::selects(spec)?;
+    if let Some(first) = none_runs(ir, spec, refused) {
+        return Err(first);
+    }
     let attributes = crate::caller::bind(ir, actor, caller)?;
     check_input(ir, spec, input)?;
     let addressed = addressed(ir, spec)?;
@@ -239,11 +267,47 @@ pub fn execute_as(
         generator: Generator::new(mint, now, command),
         minted: None,
         answered: BTreeMap::new(),
+        refused,
     };
     match run.select()? {
         Selected::Outcome(outcome) => run.take(outcome),
         Selected::Answered(executed) => Ok(executed),
     }
+}
+
+/// Refuses `outcome` of `spec` where `refused` names it, with what the caller does not serve of
+/// it, or where the kernel does not take it ([`crate::takes`]).
+fn outcome_runs(
+    ir: &EssIr,
+    spec: &ResolvedCommand,
+    outcome: &ResolvedOutcome,
+    refused: &BTreeMap<String, String>,
+) -> Result<(), ExecuteError> {
+    if let Some(what) = refused.get(outcome.name.as_str()) {
+        return Err(ExecuteError::Unsupported {
+            construct: format!("{what}, in `{}/{}`", spec.name, outcome.name.as_str()),
+        });
+    }
+    crate::supported::takes(ir, spec, outcome)
+}
+
+/// The refusal of the first outcome of `spec`, where none of its outcomes runs
+/// ([`outcome_runs`]); `None` where one does, or the command declares none.
+fn none_runs(
+    ir: &EssIr,
+    spec: &ResolvedCommand,
+    refused: &BTreeMap<String, String>,
+) -> Option<ExecuteError> {
+    let mut first = None;
+    for outcome in &spec.outcomes {
+        match outcome_runs(ir, spec, outcome, refused) {
+            Ok(()) => return None,
+            Err(refusal) => {
+                first.get_or_insert(refusal);
+            }
+        }
+    }
+    first
 }
 
 /// The instance the command addresses, as read before deciding.
@@ -316,6 +380,8 @@ struct Run<'a, 'ir> {
     /// What the decider answered for each external branch it was asked about, by outcome name:
     /// asked once per run, whether the look-ahead or selection reads the branch first.
     answered: BTreeMap<String, bool>,
+    /// The outcomes the caller does not serve, by name, each with why ([`execute_refusing`]).
+    refused: &'a BTreeMap<String, String>,
 }
 
 impl<'a, 'ir> Run<'a, 'ir> {
@@ -851,6 +917,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
     /// An outcome answered for the instance rather than acting on it: it moves, writes and emits
     /// nothing, and reports its error where it refuses.
     fn refusal(&self, outcome: &ResolvedOutcome) -> Result<Executed, ExecuteError> {
+        self.runs(outcome)?;
         Ok(Executed {
             outcome: outcome.name.as_str().to_owned(),
             events: Vec::new(),
@@ -866,9 +933,18 @@ impl<'a, 'ir> Run<'a, 'ir> {
             .map(|stored| &stored.row)
     }
 
-    /// Applies `outcome`'s effect and commits it.
+    /// Refuses the selected `outcome` where it does not run ([`outcome_runs`]), before anything is
+    /// minted or written.
+    fn runs(&self, outcome: &ResolvedOutcome) -> Result<(), ExecuteError> {
+        outcome_runs(self.ir, self.spec, outcome, self.refused)
+    }
+
+    /// Applies `outcome`'s effect and commits it, once it is known to act: an outcome that does not
+    /// run ([`Self::runs`]) is refused there, and a move from a state the row does not hold is
+    /// the wrong-state answer instead.
     fn take(&mut self, outcome: &'ir ResolvedOutcome) -> Result<Executed, ExecuteError> {
         let Some(subject) = &outcome.subject else {
+            self.runs(outcome)?;
             self.publish_reads(outcome, None)?;
             let before = self.before();
             return Ok(Executed {
@@ -882,10 +958,12 @@ impl<'a, 'ir> Run<'a, 'ir> {
         if let (ResolvedEffect::Deletes, ResolvedInstance::Supplied { .. }) =
             (&subject.effect, &subject.instance)
         {
+            self.runs(outcome)?;
             return self.delete(outcome, entity);
         }
         let (change, events) = match (&subject.effect, &subject.instance) {
             (ResolvedEffect::Creates, ResolvedInstance::Observed { event, field }) => {
+                self.runs(outcome)?;
                 self.publish_reads(outcome, None)?;
                 if let Some((created, named)) = crate::mint::slot(self.ir, outcome) {
                     let minted = self.mint_identity(outcome, created, named)?;
@@ -953,6 +1031,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     }
                     after.state = transition.to.to_string();
                 }
+                self.runs(outcome)?;
                 self.publish_reads(outcome, Some(&stored.row))?;
                 let sources = self.sources(outcome, &entity.name, None, Some(&stored.row));
                 write(&sources, outcome, &mut after.fields)?;

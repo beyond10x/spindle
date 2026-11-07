@@ -1,0 +1,19 @@
+format: ess/34
+system: labels
+version: v1
+summary: Items filed over the network with a tag and a number, read by lists of tags or numbers.
+domains:
+  - labels.board
+components:
+  - component: board
+    summary: Files items for callers outside the process and answers their views.
+    owns:
+      domains:
+        - labels.board
+    accepts:
+      commands:
+        - labels.board.FileItem
+    publishes:
+      events:
+        - labels.board.ItemFiled
+    reached_by: network

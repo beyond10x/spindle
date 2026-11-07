@@ -11,8 +11,12 @@ scope:
 - confidence: inferred
   path: crates/spindle-cli/tests/fixtures/view-list-parameter
 - confidence: cited
+  path: crates/spindle-cli/tests/spindle-cli/view_list_parameter.rs
+- confidence: cited
+  path: crates/spindle-host/src/view.rs
+- confidence: cited
   path: crates/spindle-ingress/src/surface.rs
-revision: 7
+revision: 10
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-06T15:43:16Z", actor: "human:timo", revision: 6, decided_on: {"recorded":{"review_outcome":1}}}
 - {from: "proposed", to: "active", at: "2026-11-06T15:43:16Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"review_outcome":1}}}
@@ -61,3 +65,13 @@ this story's.) Before: each route answers 501 naming the parameter.
 A consumer serving a specification as a UI test backend (2026-11-06): 17 views of its
 specification have a list-typed parameter; three routes taking a list of tags carry 64 calls in
 one UI run. Follows `story:ingress-view-parameters`.
+
+## Scope
+
+Delivered in wave 12 (implementor's confirmation table, commits 7598eba, ba7aa2b, 31328a5):
+
+- `crates/spindle-ingress/src/surface.rs` — cited, confirmed: `Queried` (`list`, `decimal`), `Route::parameters`, the View arm of `served`, a `decimal` read beside `read`.
+- `crates/spindle-ingress/Cargo.toml` — `ess-primitives` moved to dependencies.
+- `crates/spindle-host/src/view.rs` — not in the scope, needed: a filter quantifying over a declared parameter with `exists` or `forall`.
+- `crates/spindle-cli/tests/fixtures/view-list-parameter` — inferred, confirmed; plus `adversary-view-list-parameter`.
+- Tests: `crates/spindle-cli/tests/spindle-cli/view_list_parameter.rs`, `adversary_view_list_parameter.rs`; `unserved.rs` rewritten from the 501 to the served answer.

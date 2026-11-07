@@ -1,0 +1,16 @@
+type: ess-http/1
+specification:
+  system: yard
+  version: v1
+  source_digest: sha256:c180315457553be4046b4d4b8084025759e26bb5ae262264fa7b6a14d84920ef
+routes:
+  - command: yard.crate.SealCrate
+    method: put
+    path: /crates/seal
+    outcomes:
+      weighed: {status: 200}
+      sealed: {status: 200}
+      wrong-state:
+        status: 409
+        headers:
+          X-Conflict: {literal: "sealed"}

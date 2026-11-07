@@ -1,0 +1,21 @@
+format: ess/34
+system: shop
+version: v1
+summary: Orders placed and joined upstream in one process, where the upstream may refuse a join and the refusal resets the order.
+domains:
+  - shop.order
+components:
+  - component: orders
+    summary: Places and joins orders for the process that runs it.
+    owns:
+      domains:
+        - shop.order
+    accepts:
+      commands:
+        - shop.order.PlaceOrder
+        - shop.order.JoinOrder
+    publishes:
+      events:
+        - shop.order.OrderPlaced
+        - shop.order.OrderJoined
+    reached_by: in_process

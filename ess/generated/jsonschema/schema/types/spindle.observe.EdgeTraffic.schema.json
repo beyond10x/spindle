@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.EdgeTraffic.schema.json",
+  "$ref": "#/$defs/spindle.observe.EdgeTraffic",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "70563d91ca383baeb86c944716b5ed0a7a852e1705431a1bae003de587369072",
+    "contract_digest": "slice-sha256/2:fe52c30c2a4246d9e8f0186ff3fe77e47e5f6993c075df122066f4b6cd6a5eb3",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.AnswerSource": {
+      "title": "AnswerSource",
+      "description": "What answered one external cause of a served command. `world`: the decision table of the last reset's world. `file`: the decisions file. `default`: the default branch `--answer-default` takes. `unanswered`: nothing did, and the command answered `501`.",
+      "x-ess-name": "spindle.observe.AnswerSource",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "world",
+        "file",
+        "default",
+        "unanswered"
+      ]
+    },
+    "spindle.observe.EdgeTraffic": {
+      "title": "EdgeTraffic",
+      "description": "The live numbers of one edge since the run started, read from the counters `GET /__spindle/metrics` exposes and the ring `GET /__spindle/requests` holds.",
+      "x-ess-name": "spindle.observe.EdgeTraffic",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "count": {
+          "description": "Requests a `routes` edge handed on, events an `emits` edge emitted, envelopes a `carries` edge sent, commands an `invokes` edge invoked, questions an `asks` edge asked.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "statuses": {
+          "description": "For a `routes` edge, the count per status class; empty for every other kind.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/spindle.observe.StatusCount"
+          }
+        },
+        "sources": {
+          "description": "For an `asks` edge, the count per answer source; empty for every other kind.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/spindle.observe.SourceCount"
+          }
+        },
+        "latest": {
+          "description": "For a `routes` edge, the sequences of its latest requests still in the ring, newest first, at most 5; each names a record of `GET /__spindle/requests`.",
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        }
+      },
+      "required": [
+        "count",
+        "statuses",
+        "sources",
+        "latest"
+      ],
+      "additionalProperties": false,
+      "x-ess-invariants": [
+        "count >= 0"
+      ]
+    },
+    "spindle.observe.SourceCount": {
+      "title": "SourceCount",
+      "description": "How many times one source answered the external cause an `asks` edge leads to.",
+      "x-ess-name": "spindle.observe.SourceCount",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/spindle.observe.AnswerSource"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "source",
+        "count"
+      ],
+      "additionalProperties": false,
+      "x-ess-invariants": [
+        "count >= 0"
+      ]
+    },
+    "spindle.observe.StatusClass": {
+      "title": "StatusClass",
+      "description": "The class of an HTTP status by its first digit, as the `status_class` label of `spindle_http_requests_total` writes it.",
+      "x-ess-name": "spindle.observe.StatusClass",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "2xx",
+        "3xx",
+        "4xx",
+        "5xx"
+      ]
+    },
+    "spindle.observe.StatusCount": {
+      "title": "StatusCount",
+      "description": "How many requests of one status class an edge carried since the run started.",
+      "x-ess-name": "spindle.observe.StatusCount",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "status_class": {
+          "$ref": "#/$defs/spindle.observe.StatusClass"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "status_class",
+        "count"
+      ],
+      "additionalProperties": false,
+      "x-ess-invariants": [
+        "count >= 0"
+      ]
+    }
+  }
+}

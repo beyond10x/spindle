@@ -1,0 +1,96 @@
+domain: shelf.box
+summary: Boxes placed on a shelf, weighed only where the caller opts in, and labelled.
+types:
+  - name: shelf.box.BoxId
+    kind: newtype
+    of: String
+entities:
+  - name: shelf.box.Box
+    identity:
+      name: box_id
+      type: shelf.box.BoxId
+    fields:
+      - name: label
+        type: String
+      - name: weight
+        type: Optional<Decimal>
+    lifecycle:
+      initial: Placed
+      states: [Placed]
+      terminal: [Placed]
+commands:
+  - name: shelf.box.PlaceBox
+    input:
+      - name: box_id
+        type: shelf.box.BoxId
+      - name: label
+        type: String
+      - name: weigh
+        type: Boolean
+    outcomes:
+      - name: weighed
+        when: weigh == true
+        creates: shelf.box.Box
+        instance: box_id
+        sets:
+          label: input.label
+          weight: {generated: true, present: true}
+        emits: [shelf.box.BoxPlaced]
+        payload:
+          shelf.box.BoxPlaced: {box_id: input.box_id}
+        summary: The box is placed at a weight the runtime would have to mint.
+      - name: placed
+        creates: shelf.box.Box
+        instance: box_id
+        sets:
+          label: input.label
+        emits: [shelf.box.BoxPlaced]
+        payload:
+          shelf.box.BoxPlaced: {box_id: input.box_id}
+        summary: The box is placed unweighed.
+  - name: shelf.box.LabelBox
+    input:
+      - name: box_id
+        type: shelf.box.BoxId
+      - name: label
+        type: String
+      - name: announce
+        type: Boolean
+    outcomes:
+      - name: announced
+        when: announce == true
+        updates: shelf.box.Box
+        instance: box_id
+        sets:
+          label: input.label
+        emits: [shelf.box.BoxLabelled]
+        payload:
+          shelf.box.BoxLabelled: {box_id: input.box_id}
+        summary: The box takes the label, announced in a header the binding declares.
+      - name: labelled
+        updates: shelf.box.Box
+        instance: box_id
+        sets:
+          label: input.label
+        emits: [shelf.box.BoxLabelled]
+        payload:
+          shelf.box.BoxLabelled: {box_id: input.box_id}
+        summary: The box takes the label.
+events:
+  - name: shelf.box.BoxPlaced
+    fields:
+      - name: box_id
+        type: shelf.box.BoxId
+  - name: shelf.box.BoxLabelled
+    fields:
+      - name: box_id
+        type: shelf.box.BoxId
+views:
+  - name: shelf.box.AllBoxes
+    source: shelf.box.Box
+    consistency: read_your_writes
+    fields:
+      - name: box_id
+        type: shelf.box.BoxId
+      - name: label
+        type: String

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.NodeKind.schema.json",
+  "$ref": "#/$defs/spindle.observe.NodeKind",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "source_digest": "70563d91ca383baeb86c944716b5ed0a7a852e1705431a1bae003de587369072",
+    "contract_digest": "slice-sha256/2:952c8fe1a086dccade6dc9f369d65f513ddce2dd4ac65eac04a6eed74562e972",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.NodeKind": {
+      "title": "NodeKind",
+      "description": "What one node of the topology stands for. `ingress`: the run's router, one per listener. `specification`: one loaded specification. `domain`: a domain of a specification. `command`, `view`, `event`: one declared in a domain. `external`: one external cause of a command's outcome. `binding`: one event or periodic binding, the channel an event travels.",
+      "x-ess-name": "spindle.observe.NodeKind",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "ingress",
+        "specification",
+        "domain",
+        "command",
+        "view",
+        "event",
+        "external",
+        "binding"
+      ]
+    }
+  }
+}

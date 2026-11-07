@@ -1,0 +1,60 @@
+{
+  "format": "spindle-requests/1",
+  "capacity": 256,
+  "recorded": 3,
+  "totals": {
+    "served": 3,
+    "refused": 0,
+    "not_granted": 0,
+    "not_served": 0,
+    "failed": 0,
+    "unrouted": 0
+  },
+  "requests": [
+    {
+      "sequence": 2,
+      "at": "2026-11-07T09:00:00.208Z",
+      "method": "POST",
+      "path": "/tasks/t1/close",
+      "route": "/tasks/{task_id}/close",
+      "operation": "tasks.board.CloseTask",
+      "kind": "command",
+      "status": 503,
+      "class": "served",
+      "outcome": "already-done",
+      "duration_us": 688,
+      "events": [],
+      "externals": []
+    },
+    {
+      "sequence": 1,
+      "at": "2026-11-07T09:00:00.107Z",
+      "method": "POST",
+      "path": "/tasks/t1/close",
+      "route": "/tasks/{task_id}/close",
+      "operation": "tasks.board.CloseTask",
+      "kind": "command",
+      "status": 501,
+      "class": "served",
+      "outcome": "closed",
+      "duration_us": 1190,
+      "events": ["tasks.board.TaskClosed"],
+      "externals": []
+    },
+    {
+      "sequence": 0,
+      "at": "2026-11-07T09:00:00.006Z",
+      "method": "PUT",
+      "path": "/tasks/t1",
+      "route": "/tasks/{task_id}",
+      "operation": "tasks.board.OpenTask",
+      "kind": "command",
+      "status": 201,
+      "class": "served",
+      "outcome": "opened",
+      "duration_us": 1544,
+      "events": ["tasks.board.TaskOpened"],
+      "externals": []
+    }
+  ]
+}

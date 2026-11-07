@@ -1,0 +1,34 @@
+domain: dock.desk
+summary: Parcels taken once, each saying whether it is to be weighed.
+entities:
+  - name: dock.desk.Parcel
+    identity:
+      name: parcel_id
+      type: String
+    fields: []
+    lifecycle:
+      initial: Taken
+      states: [Taken]
+      terminal: [Taken]
+commands:
+  - name: dock.desk.Take
+    input:
+      - name: parcel_id
+        type: String
+      - name: weigh
+        type: Boolean
+    outcomes:
+      - name: taken
+        creates: dock.desk.Parcel
+        instance: parcel_id
+        emits: [dock.desk.Taken]
+        payload:
+          dock.desk.Taken: {parcel_id: input.parcel_id, weigh: input.weigh}
+        summary: The parcel is taken.
+events:
+  - name: dock.desk.Taken
+    fields:
+      - name: parcel_id
+        type: String
+      - name: weigh
+        type: Boolean

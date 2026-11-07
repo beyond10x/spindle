@@ -6,6 +6,54 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-07
+
+### Added
+
+- A view's `List<T>` parameter that the path does not carry is read from the query string as ESS
+  publishes it: the key repeated once per element (`tags=a&tags=b`), each element read as `T`,
+  required unless the parameter is `Optional`. `tags=a,b` is the one element `a,b`. An empty
+  element, an element of the wrong type and a required list left out answer `400` naming the
+  parameter. The host reads a filter that quantifies over a list parameter with `exists` or
+  `forall`, its element compared by `==` or `!=` with the state, the identity or a field.
+  Before, such a view answered `501`.
+- A view's `Decimal` parameter, scalar or list element, is read from the query string as the
+  number its decimal text spells (`amount=3.25`), so the view answers the rows ESS's interpreter
+  answers; text that is not a decimal literal answers `400` naming the parameter. Before, every
+  such read answered `400`.
+- A command outcome an `ess-http/1` binding answers with `body: response`, `body:
+  response.<field>` or `body: none` is served: at the bound status, the command's response bare
+  as `application/json`, the value of the one field bare, or no body and no `Content-Type`, as
+  `ess generate --kind openapi --http <file>` publishes it. Before, such an outcome answered `501`.
+  An outcome bound with headers, a redirect, the `text` encoding or an error object still answers
+  `501` when a request selects it, now naming which of those it is.
+- `spindle.observe` specifies the request log (`RequestLog`, format `spindle-requests/1`), the
+  metric families (`MetricFamilies`) and the topology (`Topology`, format `spindle-topology/1`) a
+  served run will answer under `/__spindle/`, projected to JSON Schema, `spindle-observe-api` and
+  the UI's TypeScript types, with fixtures checked against their schemas. No route serves them yet.
+
+### Changed
+
+- The command's response in an HTTP answer is written as ESS publishes it: each field under its
+  wire name (`naming: {wire: …}`), through struct members, list items, map values, newtypes and a
+  union's payload, and each enum variant in its wire spelling. That holds for the envelope's
+  `response` and for a `body: response` or `body: response.<field>` answer alike. Before, the
+  envelope's `response` keyed each field by its declared name.
+- An outcome the runtime does not run refuses only the request that selects it. A command with
+  one such outcome (a value it would generate of a type the runtime does not mint, an identity it
+  cannot mint, a response field it does not choose, an error field nothing fills, a refusal that
+  changes its row (`compensates: true`), secondary effects (`affects:`)) keeps its HTTP route and
+  answers every other outcome as declared; the request that selects that outcome answers `501`
+  naming the outcome and what it lacks, and nothing is minted or written. `run` reading stdin
+  refuses it the same way, as an `unsupported` failure line. An outcome an `ess-http/1` binding
+  answers other than with its status and the envelope is refused the same way. `admit`, `run`'s
+  startup and `run` reading stdin name each such outcome on stderr. A construct selection reads
+  (a condition, an outcome's shape) still refuses the whole command, and so does a command none of
+  whose outcomes runs; `admit` and `run` reading stdin name such a command once on stderr as not
+  served, as `run` over HTTP does. New: `spindle_kernel::selects`, `spindle_kernel::takes`,
+  `spindle_kernel::execute_refusing`, `spindle_host::Host::submit_refusing`,
+  `spindle_ingress::Route::refused`.
+
 ## [0.3.0] - 2026-11-06
 
 ### Added

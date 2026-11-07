@@ -1,0 +1,53 @@
+type: ess-http/1
+specification:
+  system: vault
+  version: v1
+  source_digest: sha256:ead59abdda42a1341584d18eee61b30ad45c815be21dd4e7a2110bbfd6e11a59
+routes:
+  - command: vault.locker.OpenLocker
+    method: post
+    path: /lockers/opened
+    outcomes:
+      opened:
+        status: 201
+        body: response
+  - command: vault.locker.RentLocker
+    method: post
+    path: /lockers/rented
+    outcomes:
+      rented:
+        status: 201
+        body: response.receipt_code
+  - command: vault.locker.TicketLocker
+    method: post
+    path: /lockers/ticketed
+    outcomes:
+      ticketed:
+        status: 201
+        body: response.ticket
+  - command: vault.locker.NumberLocker
+    method: post
+    path: /lockers/numbered
+    outcomes:
+      numbered:
+        status: 201
+        body: response.slot
+  - command: vault.locker.CloseLocker
+    method: post
+    path: /lockers/closed
+    outcomes:
+      closed:
+        status: 200
+        body: none
+    alike:
+      - [already-closed, no-such-locker]
+    errors:
+      status: 409
+      body: none
+  - command: vault.locker.PriceLocker
+    method: post
+    path: /lockers/priced
+    outcomes:
+      priced:
+        status: 201
+        body: response

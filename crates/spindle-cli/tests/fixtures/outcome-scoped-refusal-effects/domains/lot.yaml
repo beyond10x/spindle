@@ -1,0 +1,113 @@
+domain: bay.lot
+summary: Lots and their tags; closing a lot may sweep its tags.
+types:
+  - name: bay.lot.LotId
+    kind: newtype
+    of: String
+  - name: bay.lot.TagId
+    kind: newtype
+    of: String
+entities:
+  - name: bay.lot.Lot
+    identity:
+      name: lot_id
+      type: bay.lot.LotId
+    lifecycle:
+      initial: Open
+      states: [Open, Closed]
+      terminal: [Closed]
+      transitions:
+        - name: close
+          from: [Open]
+          to: Closed
+  - name: bay.lot.Tag
+    identity:
+      name: tag_id
+      type: bay.lot.TagId
+    fields:
+      - name: lot_id
+        type: bay.lot.LotId
+    lifecycle:
+      initial: Live
+      states: [Live, Swept]
+      terminal: [Swept]
+      transitions:
+        - name: sweep
+          from: [Live]
+          to: Swept
+errors:
+  - name: bay.lot.LotClosedAlready
+    summary: The lot is not open.
+    fields: []
+commands:
+  - name: bay.lot.OpenLot
+    input:
+      - name: lot_id
+        type: bay.lot.LotId
+    outcomes:
+      - name: opened
+        creates: bay.lot.Lot
+        instance: lot_id
+        emits: [bay.lot.LotOpened]
+        payload:
+          bay.lot.LotOpened: {lot_id: input.lot_id}
+        summary: The lot is opened.
+  - name: bay.lot.TagLot
+    input:
+      - name: tag_id
+        type: bay.lot.TagId
+      - name: lot_id
+        type: bay.lot.LotId
+    outcomes:
+      - name: tagged
+        creates: bay.lot.Tag
+        instance: tag_id
+        sets:
+          lot_id: input.lot_id
+        emits: [bay.lot.LotTagged]
+        payload:
+          bay.lot.LotTagged: {tag_id: input.tag_id}
+        summary: The tag is put on the lot.
+  - name: bay.lot.CloseLot
+    input:
+      - name: lot_id
+        type: bay.lot.LotId
+      - name: sweep
+        type: Boolean
+    outcomes:
+      - name: swept
+        when: sweep == true
+        moves: bay.lot.Lot.close
+        instance: lot_id
+        emits: [bay.lot.LotClosed]
+        payload:
+          bay.lot.LotClosed: {lot_id: input.lot_id}
+        affects:
+          - entity: bay.lot.Tag
+            where: lot_id == input.lot_id
+            moves: bay.lot.Tag.sweep
+        summary: The lot is closed and its tags swept, a secondary effect the runtime does not run.
+      - name: closed
+        moves: bay.lot.Lot.close
+        instance: lot_id
+        emits: [bay.lot.LotClosed]
+        payload:
+          bay.lot.LotClosed: {lot_id: input.lot_id}
+        summary: The lot is closed and its tags kept.
+      - name: wrong-state
+        wrong_state: true
+        error: bay.lot.LotClosedAlready
+        summary: Only an open lot is closed.
+events:
+  - name: bay.lot.LotOpened
+    fields:
+      - name: lot_id
+        type: bay.lot.LotId
+  - name: bay.lot.LotTagged
+    fields:
+      - name: tag_id
+        type: bay.lot.TagId
+  - name: bay.lot.LotClosed
+    fields:
+      - name: lot_id
+        type: bay.lot.LotId

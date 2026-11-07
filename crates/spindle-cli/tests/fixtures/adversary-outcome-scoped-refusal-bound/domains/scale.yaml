@@ -1,0 +1,44 @@
+domain: dock.scale
+summary: One entry per taken parcel, at a weight the runtime would have to mint where the sender opted in.
+entities:
+  - name: dock.scale.Entry
+    identity:
+      name: parcel_id
+      type: String
+    fields:
+      - name: weight
+        type: Optional<Decimal>
+    lifecycle:
+      initial: Recorded
+      states: [Recorded]
+      terminal: [Recorded]
+commands:
+  - name: dock.scale.Record
+    input:
+      - name: parcel_id
+        type: String
+      - name: weigh
+        type: Boolean
+    outcomes:
+      - name: weighed
+        when: weigh == true
+        creates: dock.scale.Entry
+        instance: parcel_id
+        sets:
+          weight: {generated: true, present: true}
+        emits: [dock.scale.Recorded]
+        payload:
+          dock.scale.Recorded: {parcel_id: input.parcel_id}
+        summary: The parcel is recorded at a weight the runtime would have to mint.
+      - name: recorded
+        creates: dock.scale.Entry
+        instance: parcel_id
+        emits: [dock.scale.Recorded]
+        payload:
+          dock.scale.Recorded: {parcel_id: input.parcel_id}
+        summary: The parcel is recorded unweighed.
+events:
+  - name: dock.scale.Recorded
+    fields:
+      - name: parcel_id
+        type: String

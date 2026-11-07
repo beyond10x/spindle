@@ -92,20 +92,39 @@ fn an_error_field_the_runtime_cannot_fill_is_refused_by_name_before_the_command_
         .expect("the ledger declares Withdraw");
     named(&runs(&ir, command).expect_err("the shortfall is filled by nothing"));
 
-    let Value::Object(input) = json!({"account": "a1", "amount": 5}) else {
-        unreachable!()
+    let input = |amount: i64| -> Map<String, Value> {
+        let Value::Object(input) = json!({"account": "a1", "amount": amount}) else {
+            unreachable!()
+        };
+        input
     };
-    let input: Map<String, Value> = input;
     named(
         &execute(
             &ir,
             &mut MemoryStore::default(),
             &mut NoExternals,
             WITHDRAW,
-            &input,
+            &input(500),
         )
-        .expect_err("a command the kernel does not run is refused whichever branch it would take"),
+        .expect_err(
+            "the branch whose error field nothing fills is refused where a request selects it \
+             (story:outcome-scoped-refusal)",
+        ),
     );
+    let executed = execute(
+        &ir,
+        &mut MemoryStore::default(),
+        &mut NoExternals,
+        WITHDRAW,
+        &input(5),
+    )
+    .unwrap_or_else(|error| {
+        panic!(
+            "a request that selects another branch runs: only the branch that lacks the field is \
+             refused (story:outcome-scoped-refusal): {error}"
+        )
+    });
+    assert_eq!(executed.outcome, "withdrawn", "{executed:?}");
 }
 
 /// `tests/fixtures/held-refusal`: `LendBook` lends a free book (`when_subject:`), refuses any

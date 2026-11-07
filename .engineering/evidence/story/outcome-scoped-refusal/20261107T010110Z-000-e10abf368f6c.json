@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-07T01:01:10Z",
+  "actor": "human:timo",
+  "artifact": "story:outcome-scoped-refusal",
+  "kind": "story",
+  "revision": 6,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "cargo test -p spindle-cli --test spindle-cli outcome_scoped_refusal",
+    "reference": "base c6530ac: 4 failed of 4 (default outcome answered 501); unit ed97240: 4 passed (implementor's run logs, wave 12 u1)"
+  }
+}

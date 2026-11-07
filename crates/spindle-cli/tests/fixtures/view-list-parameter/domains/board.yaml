@@ -1,0 +1,91 @@
+domain: labels.board
+summary: Items filed once with a tag and a number, read whole or selected by a list of either.
+types:
+  - name: labels.board.ItemId
+    kind: newtype
+    of: String
+entities:
+  - name: labels.board.Item
+    identity:
+      name: item_id
+      type: labels.board.ItemId
+    fields:
+      - name: tag
+        type: String
+      - name: number
+        type: Integer
+    lifecycle:
+      initial: Filed
+      states: [Filed]
+      terminal: [Filed]
+commands:
+  - name: labels.board.FileItem
+    input:
+      - name: item_id
+        type: labels.board.ItemId
+      - name: tag
+        type: String
+      - name: number
+        type: Integer
+    outcomes:
+      - name: filed
+        creates: labels.board.Item
+        instance: item_id
+        sets:
+          tag: input.tag
+          number: input.number
+        emits: [labels.board.ItemFiled]
+        payload:
+          labels.board.ItemFiled: {item_id: input.item_id}
+        summary: The item is filed.
+events:
+  - name: labels.board.ItemFiled
+    fields:
+      - name: item_id
+        type: labels.board.ItemId
+views:
+  - name: labels.board.Tagged
+    source: labels.board.Item
+    consistency: read_your_writes
+    params:
+      - name: tags
+        type: List<String>
+    filter: {exists: {in: param.tags, as: wanted, that: tag == wanted}}
+    fields:
+      - name: item_id
+        type: labels.board.ItemId
+      - name: tag
+        type: String
+      - name: number
+        type: Integer
+  - name: labels.board.Numbered
+    source: labels.board.Item
+    consistency: read_your_writes
+    params:
+      - name: n
+        type: List<Integer>
+    filter: {exists: {in: param.n, as: wanted, that: number == wanted}}
+    fields:
+      - name: item_id
+        type: labels.board.ItemId
+      - name: tag
+        type: String
+      - name: number
+        type: Integer
+  - name: labels.board.MaybeTagged
+    source: labels.board.Item
+    consistency: read_your_writes
+    params:
+      - name: tags
+        type: Optional<List<String>>
+    filter:
+      any:
+        - not defined(param.tags)
+        - exists: {in: param.tags, as: wanted, that: tag == wanted}
+    fields:
+      - name: item_id
+        type: labels.board.ItemId
+      - name: tag
+        type: String
+      - name: number
+        type: Integer
