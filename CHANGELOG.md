@@ -12,6 +12,16 @@ are Spindle's releases.
   one `write_all`, so it always meets the pending link's refusal; it had written them in two
   writes, which a runner could split around an accept and so land on the open-link case that
   `a_second_hello_on_an_open_link_is_refused_naming_the_peer` asserts. No host code changes.
+- A literal path segment wins over a path variable: of two routes of one method that both match a
+  request path, the one with a literal where the other has a variable answers, as ESS's dispatch
+  order (`ess_gen::http::dispatch_order`, `ESS-HTTP-011`) defines, whatever order the routes are
+  declared in. Before, the first route in path-text order answered, so a literal that sorts after
+  `{`, such as `/things/~modules`, was shadowed by `/things/{id}`. A request segment is compared
+  with a literal of a route an `ess-http/1` binding declares after decoding percent-encoded
+  unreserved characters (RFC 3986 §6.2.2.2), as ESS's served application compares it, so
+  `/things/%7Emodules` reaches `/things/~modules`; a variable's value is decoded as before. A 405
+  names each method once, sorted, in its body and in `Allow`; before, a method two matching routes
+  share was named twice.
 
 ## [0.6.0] - 2026-11-07
 

@@ -42,6 +42,7 @@ mod play;
 mod processes;
 mod replay;
 mod responses;
+mod route_precedence;
 mod run;
 mod served_decisions;
 mod served_world;

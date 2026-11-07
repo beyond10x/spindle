@@ -3,6 +3,7 @@
 //! module path.
 
 mod adversary_refusal_payload;
+mod adversary_route_precedence;
 mod adversary_router;
 mod adversary_view_parameters;
 mod observe;
