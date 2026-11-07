@@ -1,23 +1,29 @@
-//! The reserved prefix `/__spindle/` and the request log answered under it
-//! (`GET /__spindle/requests`, a `spindle.observe.RequestLog`).
+//! The reserved prefix `/__spindle/`, the request log answered under it
+//! (`GET /__spindle/requests`, a `spindle.observe.RequestLog`) and the metrics
+//! (`GET /__spindle/metrics`, [`metrics`]).
 //!
 //! A surface records requests only where it was made [`Surface::observing`](crate::Surface::observing):
 //! it then holds a [`Recorder`], a ring of the last requests and the totals per [`Class`] since
-//! the run started. The listener records every request it answers outside the prefix, timed on
-//! its own thread from the head read to the answer handed back; a request under the prefix is
-//! neither recorded nor counted. The transport-free [`route`](crate::route) reads no clock, so it
-//! records nothing; it answers the prefix as the listener does.
+//! the run started, the requests counted by method, route, operation, kind, class and status
+//! class, their durations, and the resets of the run's stores. The listener records every request
+//! it answers outside the prefix, timed on its own thread from the head read to the answer handed
+//! back; a request under the prefix is neither recorded nor counted. The transport-free
+//! [`route`](crate::route) reads no clock, so it records nothing; it answers the prefix as the
+//! listener does.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
 
 use ess_gen::http::NOT_GRANTED;
 use serde_json::{Map, Value, json};
+use spindle_telemetry::DURATION_BOUNDS_US;
 
 use crate::answer::Answer;
 use crate::router::Response;
+
+pub(crate) mod metrics;
 
 /// The first path segment every route of spindle's own is under, and no specification route is.
 pub const RESERVED_SEGMENT: &str = "__spindle";
@@ -50,7 +56,7 @@ const PANEL_BUILT: &str = "ui/dist-panel/panel.html";
 pub enum Reserved {
     /// `/__spindle/requests`: the request log.
     Requests,
-    /// `/__spindle/metrics`, answered `404` until its story lands.
+    /// `/__spindle/metrics`: the metrics, as the Prometheus text format ([`metrics`]).
     Metrics,
     /// `/__spindle/ui`, the observe panel ([`crate::Surface::with_panel`]), and every path under
     /// it, which answers `404`.
@@ -310,6 +316,39 @@ struct Ring {
     recorded: u64,
     totals: [u64; 6],
     records: VecDeque<Record>,
+    /// Every request recorded, by its labels ([`Series`]).
+    requests: BTreeMap<Series, u64>,
+    /// The durations of every request recorded, one count per bucket of [`DURATION_BOUNDS_US`]
+    /// and one above the last.
+    durations: Vec<u64>,
+    /// The sum of those durations, in microseconds.
+    duration_sum_us: u64,
+    /// Resets of the run's stores through `POST /api/reset`.
+    resets: u64,
+}
+
+/// The labels a request is counted by: method, route template, operation, kind, class and status
+/// class (`2xx`), the route, operation and kind empty for an unrouted request.
+pub(crate) type Series = [String; 6];
+
+/// The methods RFC 9110 registers. Any other method is counted as `other`, so a client cannot
+/// add a series by inventing one; every route has one of them.
+const METHODS: [&str; 9] = [
+    "GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH",
+];
+
+/// What a recorder counted since the run started, read for the metrics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Traffic {
+    /// Every request, by its labels, in label order.
+    pub(crate) requests: Vec<(Series, u64)>,
+    /// One count per duration bucket of [`DURATION_BOUNDS_US`] and one above the last, each
+    /// counting only its own bucket.
+    pub(crate) durations: Vec<u64>,
+    /// The sum of every duration, in microseconds.
+    pub(crate) duration_sum_us: u64,
+    /// Resets of the run's stores.
+    pub(crate) resets: u64,
 }
 
 /// The requests a served run answered: the last of them, at most its capacity, and the totals
@@ -327,6 +366,10 @@ impl Recorder {
             recorded: 0,
             totals: [0; 6],
             records: VecDeque::with_capacity(capacity),
+            requests: BTreeMap::new(),
+            durations: vec![0; DURATION_BOUNDS_US.len() + 1],
+            duration_sum_us: 0,
+            resets: 0,
         })))
     }
 
@@ -338,7 +381,8 @@ impl Recorder {
     /// Records one request: `method` and `path` (without the query string), its head read `at`,
     /// answered with `response` after `duration`, for what `note` says. Its class is read from
     /// the answer ([`Class::of`]); its reason is the answer's `refused` text, for every class but
-    /// [`Class::Served`]. The oldest record is dropped beyond the capacity.
+    /// [`Class::Served`]. The oldest record is dropped beyond the capacity; the request stays
+    /// counted by its labels and its duration.
     pub(crate) fn record(
         &self,
         at: SystemTime,
@@ -350,7 +394,28 @@ impl Recorder {
     ) {
         let refused = refused(&response.body);
         let class = Class::of(response.status, refused.as_deref(), note.answered.by);
+        let micros = u64::try_from(duration.as_micros()).unwrap_or(u64::MAX);
+        let series: Series = [
+            if METHODS.contains(&method) {
+                method
+            } else {
+                "other"
+            }
+            .to_owned(),
+            note.route.clone().unwrap_or_default(),
+            note.operation.clone().unwrap_or_default(),
+            note.kind.unwrap_or_default().to_owned(),
+            class.name().to_owned(),
+            format!("{}xx", response.status / 100),
+        ];
         self.ring(|ring| {
+            *ring.requests.entry(series).or_default() += 1;
+            let bucket = DURATION_BOUNDS_US
+                .iter()
+                .position(|bound| micros <= *bound)
+                .unwrap_or(DURATION_BOUNDS_US.len());
+            ring.durations[bucket] += 1;
+            ring.duration_sum_us = ring.duration_sum_us.saturating_add(micros);
             let record = Record {
                 sequence: ring.recorded,
                 at,
@@ -399,6 +464,25 @@ impl Recorder {
         })
     }
 
+    /// Counts one reset of the run's stores; it clears no count and no record.
+    pub(crate) fn count_reset(&self) {
+        self.ring(|ring| ring.resets += 1);
+    }
+
+    /// What it counted since the run started.
+    pub(crate) fn traffic(&self) -> Traffic {
+        self.ring(|ring| Traffic {
+            requests: ring
+                .requests
+                .iter()
+                .map(|(series, count)| (series.clone(), *count))
+                .collect(),
+            durations: ring.durations.clone(),
+            duration_sum_us: ring.duration_sum_us,
+            resets: ring.resets,
+        })
+    }
+
     fn ring<T>(&self, read: impl FnOnce(&mut Ring) -> T) -> T {
         read(&mut self.0.lock().unwrap_or_else(PoisonError::into_inner))
     }
@@ -432,8 +516,10 @@ fn refused(body: &str) -> Option<String> {
 /// the `?`, still percent-encoded): without a recorder every path under the prefix answers `404`;
 /// with one, `GET /__spindle/requests` answers the request log, each `class=<class>` pair of the
 /// query keeping only that class, and any other method `405`; `GET /__spindle/ui` answers the
-/// panel's page `panel`, `503` naming it without one. Every other reserved path answers
-/// `404`. A query pair other than a known `class` is refused `400`.
+/// panel's page `panel`, `503` naming it without one; `GET /__spindle/metrics` is answered on the
+/// host's thread, since it reads the stores ([`metrics::exposition`]), so it answers `None` here,
+/// and any other method `405`. Every other reserved path answers `404`. A query pair other than a
+/// known `class` is refused `400`.
 pub(crate) fn reserved(
     recorder: Option<&Recorder>,
     panel: Option<&'static str>,
@@ -441,28 +527,46 @@ pub(crate) fn reserved(
     method: &str,
     path: &str,
     query: &str,
-) -> Response {
+) -> Option<Response> {
     let not_found = || Answer::refusal(404, format!("no route serves {path}")).into();
     let Some(recorder) = recorder else {
-        return not_found();
+        return Some(not_found());
     };
-    match reserved {
+    let only_get = || {
+        let mut response: Response = Answer::refusal(405, "this path answers GET").into();
+        response.allow = Some("GET".to_owned());
+        response
+    };
+    Some(match reserved {
         Reserved::Requests if method == "GET" => match classes(query) {
             Ok(classes) => Response {
                 status: 200,
                 allow: None,
                 panel: false,
+                metrics: false,
                 body: recorder.log(&classes).to_string(),
             },
             Err(why) => Answer::refusal(400, why).into(),
         },
-        Reserved::Requests => {
-            let mut response: Response = Answer::refusal(405, "this path answers GET").into();
-            response.allow = Some("GET".to_owned());
-            response
-        }
+        Reserved::Requests | Reserved::Metrics if method != "GET" => only_get(),
+        Reserved::Metrics => return None,
         Reserved::Ui => self::panel(panel, method, path).unwrap_or_else(not_found),
-        Reserved::Metrics | Reserved::Topology | Reserved::Other => not_found(),
+        Reserved::Requests | Reserved::Topology | Reserved::Other => not_found(),
+    })
+}
+
+/// The answer to `GET /__spindle/metrics` on `host`, the requests `recorder` counted: `200` with
+/// the text exposition ([`metrics::METRICS_MEDIA`]), `500` naming why a store could not be read.
+pub(crate) fn metrics(recorder: &Recorder, host: &mut spindle_host::Host) -> Response {
+    match metrics::exposition(recorder, host) {
+        Ok(body) => Response {
+            status: 200,
+            allow: None,
+            panel: false,
+            metrics: true,
+            body,
+        },
+        Err(error) => Answer::refusal(500, error.to_string()).into(),
     }
 }
 
@@ -483,6 +587,7 @@ fn panel(panel: Option<&'static str>, method: &str, path: &str) -> Option<Respon
             status: 200,
             allow: None,
             panel: true,
+            metrics: false,
             body: page.to_owned(),
         },
         None => Answer::refusal(

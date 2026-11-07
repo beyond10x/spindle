@@ -6,6 +6,23 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- `run --observe` answers `GET /__spindle/metrics` with the run's metrics in the Prometheus text
+  format (`text/plain; version=0.0.4`), exactly the families of
+  `ess/fixtures/observe/metrics/families.json`, in its order: `spindle_http_requests_total` by
+  method, route template, operation, kind, class and status class (an unrouted request has an
+  empty route, operation and kind; a method RFC 9110 does not register is counted as `other`),
+  `spindle_http_request_duration_seconds`, the counters the host holds per component read at
+  scrape time (commands by outcome and failure, command durations, events appended, bindings,
+  binding retries, timer ticks, store rows and bytes written), `spindle_entity_rows` read from
+  each store, `spindle_resets_total`, and `spindle_external_causes_total`, declared with no sample
+  yet. Duration buckets are `DURATION_BOUNDS_US` in seconds; a command's duration histogram has
+  buckets only, since its counters keep no sum. The scrape is answered on the host's thread and
+  is not recorded. `POST /api/reset` keeps every counter and the request log: only
+  `spindle_entity_rows` falls and `spindle_resets_total` rises. `Host::rows` reads the rows each
+  entity holds; `Exchange::metrics` names a scrape.
+
 ## [0.6.0] - 2026-11-07
 
 ### Added

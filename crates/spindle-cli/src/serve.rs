@@ -93,7 +93,8 @@ pub(crate) struct Serving<'a> {
     /// not authentication; with none, as no caller.
     pub callers: Vec<Caller>,
     /// `--observe`, with how many request records to keep: the surface records every request
-    /// outside `/__spindle/` and answers `GET /__spindle/requests` ([`Surface::observing`]), and
+    /// outside `/__spindle/` and answers `GET /__spindle/requests` ([`Surface::observing`]) and
+    /// `GET /__spindle/metrics`, on this thread as every exchange is, and
     /// `GET /__spindle/ui` with the panel this build embeds ([`PANEL`]).
     pub observe: Option<usize>,
 }

@@ -998,6 +998,31 @@ impl Host {
             .map(|component| component.counters.as_ref())
     }
 
+    /// The rows each entity holds now, by entity name in the IR's order, each read by scanning
+    /// the store of the component that owns its domain; an entity no component here owns is left
+    /// out. A reset leaves the counters as they are and empties these.
+    ///
+    /// # Errors
+    /// [`HostError::Store`] when a store cannot be scanned.
+    pub fn rows(&mut self) -> Result<Vec<(String, usize)>, HostError> {
+        let ir = Arc::clone(&self.ir);
+        let mut rows = Vec::new();
+        for entity in ir.entities().values() {
+            let Some(component) = ir
+                .components()
+                .values()
+                .find(|component| component.owns.contains(&entity.domain))
+                .and_then(|owner| self.components.get_mut(owner.name.as_str()))
+            else {
+                continue;
+            };
+            let name = entity.name.to_string();
+            let held = component.store.scan(&name)?.len();
+            rows.push((name, held));
+        }
+        Ok(rows)
+    }
+
     /// The names of the specification's periodic bindings.
     pub fn periodic(&self) -> Vec<String> {
         self.periodic.keys().cloned().collect()

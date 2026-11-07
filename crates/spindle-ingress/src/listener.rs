@@ -46,20 +46,26 @@ pub struct Exchange {
 }
 
 impl Exchange {
-    /// The route the request is for; `None` for a console route.
+    /// The route the request is for; `None` for a console route or the metrics.
     pub fn route(&self) -> Option<&Route> {
         match &self.pending.asked {
             Asked::Route(route) => Some(route.as_ref()),
-            Asked::Console(_) => None,
+            Asked::Console(_) | Asked::Metrics => None,
         }
     }
 
-    /// The console route the request is for; `None` for a command or view.
+    /// The console route the request is for; `None` for a command, a view or the metrics.
     pub fn console(&self) -> Option<Console> {
         match self.pending.asked {
             Asked::Console(console) => Some(console),
-            Asked::Route(_) => None,
+            Asked::Route(_) | Asked::Metrics => None,
         }
+    }
+
+    /// The request is for the metrics, `GET /__spindle/metrics`, which [`Exchange::serve`] reads
+    /// from the host's counters and stores.
+    pub fn metrics(&self) -> bool {
+        matches!(self.pending.asked, Asked::Metrics)
     }
 
     /// The input the request's path carries in the route's variables and, for a view, the
@@ -341,6 +347,22 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
             request.uri().path(),
             &query,
         );
+        if let Some(reply) = reply {
+            return (reply, None);
+        }
+        // The metrics read the stores, so they are answered on the host's thread.
+        let pending = Pending {
+            asked: Asked::Metrics,
+            carried: Map::new(),
+            query,
+            content_type: None,
+            body: Vec::new(),
+            recorder: served.surface.recorder().cloned(),
+        };
+        let reply = match handed(served, pending).await {
+            Ok((reply, _)) => reply,
+            Err(refusal) => refusal.into(),
+        };
         return (reply, None);
     }
     let (asked, carried) = match crate::router::ask(
@@ -406,24 +428,15 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         }
     };
     let unanswered = noted(&asked, Answered::ingress());
-    let (reply, replying) = oneshot::channel();
-    let exchange = Exchange {
-        pending: Pending {
-            asked,
-            carried,
-            query,
-            content_type,
-            body,
-        },
-        reply,
+    let pending = Pending {
+        asked,
+        carried,
+        query,
+        content_type,
+        body,
+        recorder: served.surface.recorder().cloned(),
     };
-    if served.exchanges.send(exchange).is_err() {
-        return (
-            Answer::refusal(503, "the listener is stopping").into(),
-            Some(unanswered),
-        );
-    }
-    match replying.await {
+    match handed(served, pending).await {
         Ok((reply, answered)) => (
             reply,
             Some(Note {
@@ -431,15 +444,25 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
                 ..unanswered
             }),
         ),
-        Err(_) => (
-            Answer::refusal(503, "the listener stopped before answering").into(),
-            Some(unanswered),
-        ),
+        Err(refusal) => (refusal.into(), Some(unanswered)),
     }
 }
 
+/// Hands `pending` to the host's thread as an [`Exchange`] and waits for its answer; the `503`
+/// refusal where the listener is stopping or stopped before answering.
+async fn handed(served: &Served, pending: Pending) -> Result<(Reply, Answered), Answer> {
+    let (reply, replying) = oneshot::channel();
+    if served.exchanges.send(Exchange { pending, reply }).is_err() {
+        return Err(Answer::refusal(503, "the listener is stopping"));
+    }
+    replying
+        .await
+        .map_err(|_| Answer::refusal(503, "the listener stopped before answering"))
+}
+
 /// What a record notes of a request for `asked`, answered as `answered` says: the route
-/// template, and the qualified command or view, or the console route as `GET /api/model`.
+/// template, and the qualified command or view, or the console route as `GET /api/model`; none
+/// of them for the metrics.
 fn noted(asked: &Asked, answered: Answered) -> Note {
     match asked {
         Asked::Route(route) => Note {
@@ -461,6 +484,13 @@ fn noted(asked: &Asked, answered: Answered) -> Note {
             kind: Some("console"),
             answered,
         },
+        // Under the reserved prefix: the listener notes no request there, so no record holds it.
+        Asked::Metrics => Note {
+            route: None,
+            operation: None,
+            kind: None,
+            answered,
+        },
     }
 }
 
@@ -477,6 +507,11 @@ fn replied(reply: Reply) -> Response<Full<Bytes>> {
         response.headers_mut().insert(
             CONTENT_SECURITY_POLICY,
             HeaderValue::from_static(crate::observe::PANEL_POLICY),
+        );
+    } else if reply.metrics {
+        response.headers_mut().insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static(crate::observe::metrics::METRICS_MEDIA),
         );
     } else if bodied {
         response.headers_mut().insert(
