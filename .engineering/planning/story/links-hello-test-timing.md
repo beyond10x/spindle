@@ -2,14 +2,17 @@
 format: aep.planning-md/3
 id: story:links-hello-test-timing
 kind: story
-status: draft
+status: active
 title: The second-hello link test does not depend on how fast the runner is
 tags:
 - from-finding
 relations:
 - informed_by: approval-record:release-0.4.0-macos-red
 - serves: vision:spindle
-revision: 1
+revision: 3
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-07T04:21:46Z", actor: "human:timo", revision: 2}
+- {from: "proposed", to: "active", at: "2026-11-07T04:21:46Z", actor: "human:timo", revision: 3}
 ---
 # The second-hello link test does not depend on how fast the runner is
 

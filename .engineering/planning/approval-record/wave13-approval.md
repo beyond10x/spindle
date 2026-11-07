@@ -8,7 +8,9 @@ relations:
 - decides: story:ingress-request-log
 - decides: story:kernel-related-row-values
 - decides: story:service-worker-serves-a-specification
-revision: 2
+- decides: story:browser-store-several-tabs
+- decides: story:links-hello-test-timing
+revision: 3
 transitions:
 - {from: "draft", to: "accepted", at: "2026-11-07T04:11:58Z", actor: "human:timo", revision: 2}
 ---
@@ -40,3 +42,10 @@ collision among them. The drafts `story:browser-store-several-tabs` and
 
 The unit commits, the merges into `wave/13`, review fix commits, the closing store commit, one PR
 to `main` through the bot, and a release after the PR merges.
+
+## Two drafts accepted into the wave
+
+The operator, 2026-11-07, on the question whether `story:browser-store-several-tabs` and
+`story:links-hello-test-timing` join wave 13: accept both. Work flowing beats a safety cap; both
+units are small, and accepting both keeps U3 free of a wait on `crates/spindle-store-browser`.
+Both stories moved from draft to active and join the wave as U5 and U6.
