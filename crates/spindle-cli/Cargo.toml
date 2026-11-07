@@ -41,3 +41,4 @@ serde_json = { workspace = true, features = ["raw_value"] }
 jsonschema = { version = "0.52.1", default-features = false }
 rustix = { version = "1", features = ["process"] }
 spindle-channel = { path = "../spindle-channel" }
+spindle-observe-api = { path = "../spindle-observe-api", default-features = false }

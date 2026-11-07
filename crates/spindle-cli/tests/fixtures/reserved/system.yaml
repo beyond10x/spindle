@@ -1,0 +1,19 @@
+format: ess/34
+system: notes
+version: v1
+summary: Notes pinned to a shelf and read by shelf and title over the network.
+domains:
+  - notes.shelf
+components:
+  - component: shelf
+    summary: Pins notes and answers which notes a shelf holds.
+    owns:
+      domains:
+        - notes.shelf
+    accepts:
+      commands:
+        - notes.shelf.PinNote
+    publishes:
+      events:
+        - notes.shelf.NotePinned
+    reached_by: network

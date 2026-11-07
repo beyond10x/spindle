@@ -38,11 +38,22 @@
 //! `ess specify compile --format json` prints it and each outcome's subject; `GET /api/events`,
 //! every event published so far, in order; and `POST /api/reset`, which empties every store of the
 //! run. A route the binding or ESS publishes at one of those paths is refused at startup.
+//!
+//! Paths under `/__spindle/` are the run's own ([`Reserved`]): [`Surface::resolve`] matches them
+//! before any route, and a route the binding or ESS publishes there is refused at startup
+//! ([`SurfaceError::Reserved`]). A surface made [`Surface::observing`] holds a [`Recorder`]: the
+//! listener records every request it answers outside the prefix, classed by its answer
+//! ([`Class`]) and timed from its head read to its answer handed back, and answers
+//! `GET /__spindle/requests` with the request log; without one every path under the prefix
+//! answers `404`.
 
 mod answer;
 pub mod console;
 #[cfg(feature = "listener")]
 mod listener;
+// The recording half (notes, records) is the listener's; without it only the reserved routes answer.
+#[cfg_attr(not(feature = "listener"), allow(dead_code))]
+mod observe;
 mod router;
 mod surface;
 mod wire;
@@ -51,6 +62,9 @@ pub use answer::{Answer, answer, answered};
 pub use console::Console;
 #[cfg(feature = "listener")]
 pub use listener::{BODY_READ, Exchange, HEADER_READ, Listener};
+pub use observe::{
+    By, Class, REQUESTS_DEFAULT, REQUESTS_MOST, RESERVED_SEGMENT, Recorder, Reserved,
+};
 pub use router::{BODY_LIMIT, CONTENT_TYPE, Request, Response, Routed, route, route_with};
 pub use surface::{Caller, Queried, Resolved, Route, Surface, SurfaceError, Unserved, Variable};
 

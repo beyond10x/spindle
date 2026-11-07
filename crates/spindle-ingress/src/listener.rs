@@ -6,8 +6,9 @@ use std::convert::Infallible;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime};
 
+use ess_http::Operation;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::{Bytes, Incoming};
 use hyper::header::{
@@ -22,6 +23,7 @@ use spindle_host::{Failed, Host};
 
 use crate::answer::Answer;
 use crate::console::{Console, Worlds};
+use crate::observe::{Answered, By, Note, Reserved};
 use crate::router::{Asked, BODY_LIMIT, Pending, Response as Reply};
 use crate::surface::{Route, Surface};
 
@@ -39,7 +41,7 @@ const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
 #[derive(Debug)]
 pub struct Exchange {
     pending: Pending,
-    reply: oneshot::Sender<Reply>,
+    reply: oneshot::Sender<(Reply, Answered)>,
 }
 
 impl Exchange {
@@ -83,7 +85,8 @@ impl Exchange {
 
     /// Sends `answer` to the caller; a caller that has gone away is not an error.
     pub fn respond(self, answer: Answer) {
-        let _ = self.reply.send(answer.into());
+        let answered = Answered::of(&answer);
+        let _ = self.reply.send((answer.into(), answered));
     }
 
     /// Answers the request on `host` and sends the answer: a command or view as
@@ -100,8 +103,8 @@ impl Exchange {
     }
 
     fn serve_loading(self, host: &mut Host, worlds: Option<Worlds<'_>>) -> Vec<Failed> {
-        let (reply, failed) = self.pending.serve(host, worlds);
-        let _ = self.reply.send(reply);
+        let (reply, failed, answered) = self.pending.serve(host, worlds);
+        let _ = self.reply.send((reply, answered));
         failed
     }
 }
@@ -297,12 +300,46 @@ async fn handle(
     served: Arc<Served>,
     request: Request<Incoming>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
+    let Some(recorder) = served.surface.recorder().cloned() else {
+        return Ok(replied(answer(&served, request).await.0));
+    };
+    let at = SystemTime::now();
+    let started = Instant::now();
+    let method = request.method().as_str().to_owned();
+    let path = request.uri().path().to_owned();
+    let (reply, note) = answer(&served, request).await;
+    if let Some(note) = note {
+        recorder.record(at, started.elapsed(), &method, &path, &reply, note);
+    }
+    Ok(replied(reply))
+}
+
+/// The answer to `request`, and what a record notes of it; no note for a path under the reserved
+/// prefix, which is neither recorded nor counted.
+async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<Note>) {
+    let reserved = Reserved::of(request.uri().path());
+    let unrouted = |by| reserved.is_none().then(|| Note::unrouted(by));
     if let Some(refusal) = served
         .guard
         .as_ref()
         .and_then(|guard| guard.refuses(&request))
     {
-        return Ok(written(refusal));
+        return (refusal.into(), unrouted(By::Ingress));
+    }
+    if let Some(reserved) = reserved {
+        let query = request.uri().query().unwrap_or_default();
+        let query = match &served.guard {
+            Some(guard) => guard.strip(query),
+            None => query.to_owned(),
+        };
+        let reply = crate::observe::reserved(
+            served.surface.recorder(),
+            reserved,
+            request.method().as_str(),
+            request.uri().path(),
+            &query,
+        );
+        return (reply, None);
     }
     let (asked, carried) = match crate::router::ask(
         &served.surface,
@@ -310,13 +347,16 @@ async fn handle(
         request.uri().path(),
     ) {
         Ok(asked) => asked,
-        Err(refusal) => return Ok(replied(refusal)),
+        Err((refusal, by)) => return (refusal, unrouted(by)),
+    };
+    let refused = |answer: Answer| -> (Reply, Option<Note>) {
+        (answer.into(), Some(noted(&asked, Answered::ingress())))
     };
     if request.headers().contains_key(TRANSFER_ENCODING) {
-        return Ok(written(Answer::refusal(
+        return refused(Answer::refusal(
             411,
             "this surface reads a body announced by `Content-Length`; chunked transfer is not read",
-        )));
+        ));
     }
     let announced = request
         .headers()
@@ -324,7 +364,7 @@ async fn handle(
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok());
     if announced.is_some_and(|length| length > BODY_LIMIT as u64) {
-        return Ok(written(crate::router::oversized()));
+        return refused(crate::router::oversized());
     }
     let query = request.uri().query().unwrap_or_default();
     let query = match &served.guard {
@@ -344,19 +384,20 @@ async fn handle(
     let body = match read {
         Ok(Ok(collected)) => collected.to_bytes().to_vec(),
         Ok(Err(error)) => {
-            return Ok(written(Answer::refusal(
+            return refused(Answer::refusal(
                 400,
                 format!("the body could not be read: {error}"),
-            )));
+            ));
         }
         Err(_) => {
-            return Ok(written(Answer::refusal(
+            return refused(Answer::refusal(
                 408,
                 format!("the body did not arrive within {BODY_READ:?}"),
-            )));
+            ));
         }
     };
-    let (reply, answered) = oneshot::channel();
+    let unanswered = noted(&asked, Answered::ingress());
+    let (reply, replying) = oneshot::channel();
     let exchange = Exchange {
         pending: Pending {
             asked,
@@ -368,19 +409,50 @@ async fn handle(
         reply,
     };
     if served.exchanges.send(exchange).is_err() {
-        return Ok(written(Answer::refusal(503, "the listener is stopping")));
+        return (
+            Answer::refusal(503, "the listener is stopping").into(),
+            Some(unanswered),
+        );
     }
-    Ok(match answered.await {
-        Ok(reply) => replied(reply),
-        Err(_) => written(Answer::refusal(
-            503,
-            "the listener stopped before answering",
-        )),
-    })
+    match replying.await {
+        Ok((reply, answered)) => (
+            reply,
+            Some(Note {
+                answered,
+                ..unanswered
+            }),
+        ),
+        Err(_) => (
+            Answer::refusal(503, "the listener stopped before answering").into(),
+            Some(unanswered),
+        ),
+    }
 }
 
-fn written(answer: Answer) -> Response<Full<Bytes>> {
-    replied(answer.into())
+/// What a record notes of a request for `asked`, answered as `answered` says: the route
+/// template, and the qualified command or view, or the console route as `GET /api/model`.
+fn noted(asked: &Asked, answered: Answered) -> Note {
+    match asked {
+        Asked::Route(route) => Note {
+            route: Some(route.path.clone()),
+            operation: Some(route.operation.name().to_string()),
+            kind: Some(match route.operation {
+                Operation::Command(_) => "command",
+                Operation::View(_) => "view",
+            }),
+            answered,
+        },
+        Asked::Console(console) => Note {
+            route: Some(console.path().to_owned()),
+            operation: Some(format!(
+                "{} {}",
+                console.method().as_str().to_uppercase(),
+                console.path()
+            )),
+            kind: Some("console"),
+            answered,
+        },
+    }
 }
 
 fn replied(reply: Reply) -> Response<Full<Bytes>> {

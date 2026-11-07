@@ -198,6 +198,26 @@ pub enum Command {
         /// own, `{}` for one that declares no attribute.
         #[arg(long, requires = "fixed_actor", value_parser = json_object)]
         fixed_caller: Vec<Map<String, Value>>,
+        /// Record every request the listener answers outside `/__spindle/`, timed from its head
+        /// read to its answer handed back, and answer `GET /__spindle/requests` with a
+        /// `spindle-requests/1` log: the totals per class since start (`served`, `refused`,
+        /// `not-granted`, `not-served`, `failed`, `unrouted`) and the last records, newest first;
+        /// `?class=<class>`, repeatable, keeps only those classes. Without it every path under
+        /// `/__spindle/` answers `404`; with it or without, a binding route under that prefix
+        /// exits 1 before listening. The listening line is the same either way. Only where `run`
+        /// serves HTTP.
+        #[arg(long, conflicts_with = "scenario")]
+        observe: bool,
+        /// How many request records `--observe` keeps, from 1 to 10000; the oldest is dropped
+        /// beyond it, and still counted in the totals.
+        #[arg(
+            long,
+            default_value_t = 256,
+            value_parser = clap::value_parser!(u16).range(1..=10_000),
+            requires = "observe",
+            conflicts_with = "scenario"
+        )]
+        observe_requests: u16,
         /// The `ess-scenario` document to replay.
         #[arg(long, conflicts_with_all = ["state", "decisions", "answer_default"])]
         scenario: Option<PathBuf>,

@@ -8,6 +8,7 @@ use spindle_host::{Failed, Host};
 
 use crate::answer::Answer;
 use crate::console::{Console, Worlds};
+use crate::observe::{Answered, By, Reserved};
 use crate::surface::{Resolved, Route, Surface};
 
 /// The largest request body read, in bytes: [`route`] refuses a larger one `413`, and the
@@ -92,9 +93,21 @@ fn routing(
     request: Request,
     worlds: Option<Worlds<'_>>,
 ) -> Routed {
+    if let Some(reserved) = Reserved::of(&request.path) {
+        return Routed {
+            response: crate::observe::reserved(
+                surface.recorder(),
+                reserved,
+                &request.method,
+                &request.path,
+                &request.query,
+            ),
+            failed: Vec::new(),
+        };
+    }
     let (asked, carried) = match ask(surface, &request.method, &request.path) {
         Ok(asked) => asked,
-        Err(response) => {
+        Err((response, _)) => {
             return Routed {
                 response,
                 failed: Vec::new(),
@@ -107,7 +120,7 @@ fn routing(
             failed: Vec::new(),
         };
     }
-    let (response, failed) = Pending {
+    let (response, failed, _) = Pending {
         asked,
         carried,
         query: request.query,
@@ -135,16 +148,18 @@ pub(crate) enum Asked {
 
 /// What `method` and `path` ask for on `surface`, and the input the path carries; the refusal
 /// otherwise: `400` for a path variable that does not decode, `405` with `Allow` for a served path
-/// under another method, `404` for a path no route has.
+/// under another method, `404` for a path no route has or one under the reserved prefix (which
+/// [`route`] and the listener answer before asking), each with who refused it.
 pub(crate) fn ask(
     surface: &Surface,
     method: &str,
     path: &str,
-) -> Result<(Asked, Map<String, Value>), Response> {
+) -> Result<(Asked, Map<String, Value>), (Response, By)> {
+    let not_found = || Answer::refusal(404, format!("no route serves {path}")).into();
     match surface.resolve(method, path) {
         Resolved::Found(route, carried) => Ok((Asked::Route(Box::new(route.clone())), carried)),
         Resolved::Console(console) => Ok((Asked::Console(console), Map::new())),
-        Resolved::Malformed(why) => Err(Answer::refusal(400, why).into()),
+        Resolved::Malformed(why) => Err((Answer::refusal(400, why).into(), By::Ingress)),
         Resolved::WrongMethod(allowed) => {
             let allowed = allowed
                 .iter()
@@ -154,9 +169,10 @@ pub(crate) fn ask(
             let mut response: Response =
                 Answer::refusal(405, format!("this path answers {allowed}")).into();
             response.allow = Some(allowed);
-            Err(response)
+            Err((response, By::Unrouted))
         }
-        Resolved::NotFound => Err(Answer::refusal(404, format!("no route serves {path}")).into()),
+        Resolved::NotFound => Err((not_found(), By::Unrouted)),
+        Resolved::Reserved(_) => Err((not_found(), By::Unrouted)),
     }
 }
 
@@ -171,15 +187,16 @@ pub(crate) struct Pending {
 }
 
 impl Pending {
-    /// Answers the request on `host`, a reset's world read by `worlds` where given.
+    /// Answers the request on `host`, a reset's world read by `worlds` where given, and says who
+    /// answered it.
     pub(crate) fn serve(
         self,
         host: &mut Host,
         worlds: Option<Worlds<'_>>,
-    ) -> (Response, Vec<Failed>) {
+    ) -> (Response, Vec<Failed>, Answered) {
         match &self.asked {
             Asked::Route(route) => {
-                let (answer, failed) = crate::answered(
+                let (answer, failed, answered) = crate::answer::answering(
                     host,
                     route,
                     &self.carried,
@@ -187,7 +204,7 @@ impl Pending {
                     self.content_type.as_deref(),
                     &self.body,
                 );
-                (answer.into(), failed)
+                (answer.into(), failed, answered)
             }
             Asked::Console(Console::Model) => (
                 Response {
@@ -196,11 +213,17 @@ impl Pending {
                     body: crate::console::model(host.ir()),
                 },
                 Vec::new(),
+                Answered::ingress(),
             ),
-            Asked::Console(Console::Events) => (crate::console::events(host).into(), Vec::new()),
+            Asked::Console(Console::Events) => (
+                crate::console::events(host).into(),
+                Vec::new(),
+                Answered::ingress(),
+            ),
             Asked::Console(Console::Reset) => (
                 crate::console::reset(host, &self.body, worlds).into(),
                 Vec::new(),
+                Answered::ingress(),
             ),
         }
     }

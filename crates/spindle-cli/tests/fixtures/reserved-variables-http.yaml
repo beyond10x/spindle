@@ -1,0 +1,10 @@
+type: ess-http/1
+specification:
+  system: notes
+  version: v1
+  source_digest: sha256:39ed05fa40a367b68e2b9bb8a0baba9ef2afde6445486349ae561e5174c6c473
+routes:
+  - view: notes.shelf.NotesOn
+    method: get
+    path: /{a}/metrics/{b}
+    parameters: {a: param.a, b: param.b}

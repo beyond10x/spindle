@@ -33,6 +33,7 @@ mod form_query;
 mod ingress;
 mod metrics;
 mod mint;
+mod observe;
 mod outcome_bodies;
 mod outcome_scoped_refusal;
 mod play;
