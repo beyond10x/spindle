@@ -1,0 +1,131 @@
+domain: ledger.slips
+summary: Slips issued at an instant with a wait, an amount, a count, a colour, a list of stamps and an optional note, read by views that filter on those fields.
+types:
+  - name: ledger.slips.SlipId
+    kind: newtype
+    of: String
+  - name: ledger.slips.Colour
+    kind: enum
+    variants: [Red, Green, Blue]
+entities:
+  - name: ledger.slips.Slip
+    identity:
+      name: slip_id
+      type: ledger.slips.SlipId
+    fields:
+      - name: issued_at
+        type: Timestamp
+      - name: wait
+        type: Duration
+      - name: amount
+        type: Decimal
+      - name: count
+        type: Integer
+      - name: colour
+        type: ledger.slips.Colour
+      - name: stamps
+        type: List<Timestamp>
+      - name: note
+        type: Optional<String>
+    lifecycle:
+      initial: Issued
+      states: [Issued]
+      terminal: [Issued]
+commands:
+  - name: ledger.slips.IssueSlip
+    input:
+      - name: slip_id
+        type: ledger.slips.SlipId
+      - name: issued_at
+        type: Timestamp
+      - name: wait
+        type: Duration
+      - name: amount
+        type: Decimal
+      - name: count
+        type: Integer
+      - name: colour
+        type: ledger.slips.Colour
+      - name: stamps
+        type: List<Timestamp>
+      - name: note
+        type: Optional<String>
+    outcomes:
+      - name: issued
+        creates: ledger.slips.Slip
+        instance: slip_id
+        sets:
+          issued_at: input.issued_at
+          wait: input.wait
+          amount: input.amount
+          count: input.count
+          colour: input.colour
+          stamps: input.stamps
+          note: input.note
+        emits: [ledger.slips.SlipIssued]
+        payload:
+          ledger.slips.SlipIssued: {slip_id: input.slip_id}
+        summary: The slip is issued.
+events:
+  - name: ledger.slips.SlipIssued
+    fields:
+      - name: slip_id
+        type: ledger.slips.SlipId
+views:
+  - name: ledger.slips.Overdue
+    source: ledger.slips.Slip
+    consistency: read_your_writes
+    filter: issued_at < now
+    fields: &fields
+      - name: slip_id
+        type: ledger.slips.SlipId
+  - name: ledger.slips.StampedBefore
+    source: ledger.slips.Slip
+    consistency: read_your_writes
+    filter: {exists: {in: stamps, as: stamp, that: stamp < now}}
+    fields: *fields
+  - name: ledger.slips.Late
+    source: ledger.slips.Slip
+    consistency: read_your_writes
+    filter: issued_at > "2026-01-01T00:00:00Z"
+    fields: *fields
+  - name: ledger.slips.StampedLate
+    source: ledger.slips.Slip
+    consistency: read_your_writes
+    filter: {exists: {in: stamps, as: stamp, that: stamp >= "2026-01-01T00:00:00Z"}}
+    fields: *fields
+  - name: ledger.slips.Big
+    source: ledger.slips.Slip
+    consistency: read_your_writes
+    filter: amount >= 2.5
+    fields: *fields
+  - name: ledger.slips.Most
+    source: ledger.slips.Slip
+    consistency: read_your_writes
+    filter: count >= 9223372036854775807
+    fields: *fields
+  - name: ledger.slips.Least
+    source: ledger.slips.Slip
+    consistency: read_your_writes
+    filter: count <= -9223372036854775808
+    fields: *fields
+  - name: ledger.slips.Hourly
+    source: ledger.slips.Slip
+    consistency: read_your_writes
+    filter: wait == "PT1H"
+    fields: *fields
+  - name: ledger.slips.Bright
+    source: ledger.slips.Slip
+    consistency: read_your_writes
+    filter: {colour: {none_of: [Red]}}
+    fields: *fields
+  - name: ledger.slips.Unstamped
+    source: ledger.slips.Slip
+    consistency: read_your_writes
+    filter: {forall: {in: stamps, as: stamp, that: stamp < "2000-01-01T00:00:00Z"}}
+    fields: *fields
+  - name: ledger.slips.PastGreen
+    source: ledger.slips.Slip
+    consistency: read_your_writes
+    filter: colour > Green
+    fields: *fields
