@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:view-field-literal-filters
 kind: story
-status: active
+status: implemented
 title: A view's filter reads a field compared with a literal, and a quantifier over a list field
 relations:
 - serves: vision:spindle
@@ -14,10 +14,11 @@ scope:
   path: crates/spindle-cli/tests/spindle-cli/view_field_filters.rs
 - confidence: cited
   path: crates/spindle-host/src/view.rs
-revision: 5
+revision: 6
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-07T12:45:25Z", actor: "human:timo", revision: 4}
 - {from: "proposed", to: "active", at: "2026-11-07T12:45:25Z", actor: "human:timo", revision: 5}
+- {from: "active", to: "implemented", at: "2026-11-07T17:09:21Z", actor: "human:timo", revision: 6, decided_on: {"recorded":{"test_result":1,"review_outcome":1,"verification":1}}}
 ---
 # A view's filter reads a field compared with a literal, and a quantifier over a list field
 

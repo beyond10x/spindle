@@ -1,6 +1,6 @@
 # Wave 14
 
-**Building.**
+**Delivered.** PR https://github.com/beyond10x/spindle/pull/29 (head 64e3d59) merged as 8930f63; released as 0.6.0 (assets uploaded by the backfill run 42398200165 after PR 30 renamed the panel artifact; `verification-report:release-0.6.0`). The four stories (U1 to U4) moved to `implemented` on CI run 42393316015 (Gate and macOS); U5 moved the ESS pin to 0.90.0.
 
 Run by the coordinator under `approval-record:wave14-approval` (the operator's standing acceptance
 of future waves). Skill `aep:implementing`, wave mode. All stories serve `vision:spindle`.
@@ -17,11 +17,11 @@ host's build queue.
 
 | unit | story | branch | tree (managed id) | model | stage |
 |---|---|---|---|---|---|
-| U1 | `story:ingress-error-object-bodies` | `unit/w14-errobj` | `spindle-w14-errobj` | opus | building |
-| U2 | `story:ingress-observe-panel` | `unit/w14-panel` | `spindle-w14-panel` | opus | building |
-| U3 | `story:kernel-row-set-guards` | `unit/w14-rowset` | `spindle-w14-rowset` | opus | building |
-| U4 | `story:view-field-literal-filters` | `unit/w14-viewfilt` | `spindle-w14-viewfilt` | opus | building |
-| U5 | ESS pin 0.89.0 to 0.90.0 | `unit/w14-esspin` | `spindle-w14-esspin` | sonnet | building |
+| U1 | `story:ingress-error-object-bodies` | `unit/w14-errobj` | `spindle-w14-errobj` | opus | merged |
+| U2 | `story:ingress-observe-panel` | `unit/w14-panel` | `spindle-w14-panel` | opus | merged |
+| U3 | `story:kernel-row-set-guards` | `unit/w14-rowset` | `spindle-w14-rowset` | opus | merged |
+| U4 | `story:view-field-literal-filters` | `unit/w14-viewfilt` | `spindle-w14-viewfilt` | opus | merged |
+| U5 | ESS pin 0.89.0 to 0.90.0 | `unit/w14-esspin` | `spindle-w14-esspin` | sonnet | merged |
 
 Trees live under the worktree manager's `trees/b10x/spindle/`.
 

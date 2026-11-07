@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-07T17:09:19Z",
+  "actor": "human:timo",
+  "artifact": "story:kernel-row-set-guards",
+  "kind": "story",
+  "revision": 7,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "wave 14 U3",
+    "reference": "unit merge db79031 into wave/14; full task check on 675704d: 815 passed, 0 failed"
+  }
+}
