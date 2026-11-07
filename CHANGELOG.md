@@ -15,6 +15,10 @@ are Spindle's releases.
   parameter. The host reads a filter that quantifies over a list parameter with `exists` or
   `forall`, its element compared by `==` or `!=` with the state, the identity or a field.
   Before, such a view answered `501`.
+- A view's `Decimal` parameter, scalar or list element, is read from the query string as the
+  number its decimal text spells (`amount=3.25`), so the view answers the rows ESS's interpreter
+  answers; text that is not a decimal literal answers `400` naming the parameter. Before, every
+  such read answered `400`.
 
 ## [0.3.0] - 2026-11-06
 
