@@ -46,6 +46,7 @@ const PAIRED: &str = "yard.stack.Paired";
 const AT_SPOTS: &str = "yard.stack.AtSpots";
 const WITH_TAG: &str = "yard.stack.WithTag";
 const WITH_NUMBER: &str = "yard.stack.WithNumber";
+const WITH_AMOUNT: &str = "yard.stack.WithAmount";
 
 const STARTUP: Duration = Duration::from_secs(60);
 const ANSWER: Duration = Duration::from_secs(30);
@@ -345,6 +346,34 @@ fn every_scalar_element_kind_answers_the_interpreters_rows() {
         "numbers=-0&numbers=1",
         json!({"numbers": [0, 1]}),
         &["C-1", "C-4"],
+    );
+}
+
+/// ESS publishes a `Decimal` as a decimal string (`ess-gen` `types.rs:661`, `format: decimal`),
+/// and its served application reads a query value of one as text (`view_query::query_scalar`).
+/// The element `3.25` is a valid value of the published schema, and the interpreter selects its
+/// rows.
+#[test]
+fn a_decimal_element_answers_the_interpreters_rows() {
+    let yard = Yard::open();
+    yard.agrees(
+        BY_AMOUNTS,
+        "amounts=3.25&amounts=2",
+        json!({"amounts": [3.25, 2]}),
+        &["C-2", "C-3"],
+    );
+}
+
+/// Control for [`a_decimal_element_answers_the_interpreters_rows`]: the scalar path, which this
+/// story did not change, reads a `Decimal` the same way.
+#[test]
+fn a_scalar_decimal_answers_the_interpreters_rows() {
+    let yard = Yard::open();
+    yard.agrees(
+        WITH_AMOUNT,
+        "amount=3.25",
+        json!({"amount": 3.25}),
+        &["C-3"],
     );
 }
 

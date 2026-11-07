@@ -36,6 +36,27 @@ pub struct Queried {
     /// Whether the parameter is a `List<T>`, `Optional` or not, which ESS publishes as the key
     /// repeated once per element (`style: form`, `explode: true`, beyond10x/ess#438).
     pub list: bool,
+    /// Whether the value, or each element, is a `Decimal` (through newtypes): its text is read as
+    /// the exact decimal number it spells ([`Queried::value`]).
+    pub decimal: bool,
+}
+
+impl Queried {
+    /// One value, or one element of a list, read from its decoded `text`: as [`read`] reads it,
+    /// except that decimal text for a `Decimal` is the number it spells
+    /// ([`ess_primitives::facts::Number::decimal_literal`], as the kernel reads a decimal
+    /// literal), the value ESS's interpreter and the host's parameter check take. Text that is not
+    /// a decimal literal stays a string, for the host's check to refuse naming the parameter.
+    /// `None` for empty text.
+    fn value(&self, text: String) -> Option<Value> {
+        if self.decimal
+            && let Some(number) = ess_primitives::facts::Number::decimal_literal(&text)
+                .and_then(|number| serde_json::to_value(number).ok())
+        {
+            return Some(number);
+        }
+        read(self.flat, text)
+    }
 }
 
 /// One input field of a `form` or `query` request: the key it is sent under, the field it fills,
@@ -147,7 +168,8 @@ impl Route {
     /// The view parameters `query`, a request's query string, carries, by parameter name, as
     /// ESS's served application reads them (`http::query_object`): each key and value
     /// form-decoded (`+` and `%XX`), a key no parameter has as its wire name ignored, a value read
-    /// as [`ess_gen::http::Flat`] says. A `List<T>` parameter is read as ESS publishes it, the key
+    /// as [`ess_gen::http::Flat`] says, a `Decimal`'s decimal text as the number it spells. A
+    /// `List<T>` parameter is read as ESS publishes it, the key
     /// repeated once per element (`tags=a&tags=b`), each element read as `T` in the order given;
     /// `tags=a,b` is the one element `a,b`. A parameter the query leaves out is left out, for the
     /// host to refuse where it is required.
@@ -183,7 +205,7 @@ impl Route {
                         if element.is_empty() {
                             return Err(format!("{place}: expected an element, found empty text"));
                         }
-                        self::read(queried.flat, element).ok_or_else(|| {
+                        queried.value(element).ok_or_else(|| {
                             format!("{place}: expected an element, found empty text")
                         })
                     })
@@ -201,7 +223,8 @@ impl Route {
                     ));
                 }
             };
-            let value = self::read(queried.flat, text(raw)?)
+            let value = queried
+                .value(text(raw)?)
                 .ok_or_else(|| format!("{place}: expected a value, found empty text"))?;
             read.insert(queried.field.clone(), value);
         }
@@ -387,6 +410,21 @@ fn read(flat: Flat, text: String) -> Option<Value> {
             _ => Value::String(text),
         }),
         Flat::Text => Some(Value::String(text)),
+    }
+}
+
+/// Whether `type_ref`, under `Optional`, `List` and newtypes, is the primitive `Decimal`; the
+/// newtype chain is walked as [`ess_gen::http::scalar`] walks it.
+fn decimal(ir: &EssIr, type_ref: &ess_compiler::ir::ResolvedTypeRef) -> bool {
+    use ess_compiler::ir::{ResolvedBody, ResolvedTypeRef};
+    match type_ref {
+        ResolvedTypeRef::Primitive { name } => name.as_str() == "Decimal",
+        ResolvedTypeRef::Optional { of } | ResolvedTypeRef::List { of } => decimal(ir, of),
+        ResolvedTypeRef::Declared { name } => match &ir.named_type(name).body {
+            ResolvedBody::Newtype { of, .. } => decimal(ir, of),
+            _ => false,
+        },
+        ResolvedTypeRef::Map { .. } => false,
     }
 }
 
@@ -921,9 +959,50 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
                     wire: ess_gen::schema::wire_field_name(param).to_owned(),
                     flat,
                     list,
+                    decimal: decimal(ir, &param.type_ref),
                 });
             }
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Flat, Queried};
+    use serde_json::{Value, json};
+
+    fn queried(decimal: bool) -> Queried {
+        Queried {
+            field: "amount".to_owned(),
+            wire: "amount".to_owned(),
+            flat: Flat::Text,
+            list: false,
+            decimal,
+        }
+    }
+
+    #[test]
+    fn decimal_text_is_read_as_the_number_it_spells_and_nothing_else_is() {
+        let amount = queried(true);
+        assert_eq!(amount.value("3.25".to_owned()), Some(json!(3.25)));
+        assert_eq!(
+            amount.value("-2".to_owned()),
+            Some(json!(-2.0)),
+            "ESS's `Number` writes a decimal as binary64, as the kernel writes one"
+        );
+        for text in ["abc", "1e3", ".5", "01", "+1", "3.2.5"] {
+            assert_eq!(
+                amount.value(text.to_owned()),
+                Some(Value::String(text.to_owned())),
+                "`{text}` is no decimal literal, so it stays text for the host to refuse"
+            );
+        }
+        assert_eq!(amount.value(String::new()), None, "empty text is malformed");
+        assert_eq!(
+            queried(false).value("3.25".to_owned()),
+            Some(Value::String("3.25".to_owned())),
+            "only a `Decimal` is read as a number"
+        );
+    }
 }
