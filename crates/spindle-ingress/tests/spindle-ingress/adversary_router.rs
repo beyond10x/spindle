@@ -109,9 +109,15 @@ fn announce(address: SocketAddr, method: &str, target: &str, length: usize) -> R
         key.eq_ignore_ascii_case("allow")
             .then(|| value.trim().to_owned())
     });
+    let panel = head.lines().skip(1).any(|line| {
+        line.split_once(':').is_some_and(|(key, value)| {
+            key.eq_ignore_ascii_case("content-type") && value.trim() == spindle_ingress::PANEL_MEDIA
+        })
+    });
     Response {
         status,
         allow,
+        panel,
         body: body.to_owned(),
     }
 }

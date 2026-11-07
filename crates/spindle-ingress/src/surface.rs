@@ -580,6 +580,7 @@ pub struct Surface {
     routes: Vec<Route>,
     console: bool,
     recorder: Option<Recorder>,
+    panel: Option<&'static str>,
 }
 
 impl Surface {
@@ -699,6 +700,7 @@ impl Surface {
             routes,
             console: false,
             recorder: None,
+            panel: None,
         })
     }
 
@@ -715,6 +717,21 @@ impl Surface {
     /// The recorder, where the surface was made [`Surface::observing`]; `None` otherwise.
     pub fn recorder(&self) -> Option<&Recorder> {
         self.recorder.as_ref()
+    }
+
+    /// This surface answering `GET /__spindle/ui`, where it is [`Surface::observing`], with
+    /// `page`: the observe panel, one HTML page that loads nothing beside itself, answered with
+    /// [`PANEL_POLICY`](crate::PANEL_POLICY). Without one an observing surface answers that
+    /// route `503`.
+    #[must_use]
+    pub fn with_panel(mut self, page: &'static str) -> Self {
+        self.panel = Some(page);
+        self
+    }
+
+    /// The panel page, where the surface was given one ([`Surface::with_panel`]).
+    pub fn panel(&self) -> Option<&'static str> {
+        self.panel
     }
 
     /// This surface with the [`Console`] routes added where `implementation`, what

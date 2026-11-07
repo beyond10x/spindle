@@ -17,5 +17,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["vite.config.ts", "dev/**/*.ts", "src/api/types.ts"]
+  "include": ["vite.config.ts", "vite.panel.config.ts", "dev/**/*.ts", "src/api/types.ts"]
 }

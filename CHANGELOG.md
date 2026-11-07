@@ -6,6 +6,16 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- `run --observe` answers `GET /__spindle/ui` with the observe panel: one HTML page holding its
+  script and style inline, with a one-line banner of the request totals and the request list
+  (a "not served only" toggle), read from `./requests` beside it. Any page may frame it: no
+  `X-Frame-Options`, no `frame-ancestors`; its `Content-Security-Policy` allows its inline script
+  and style and `connect-src 'self'` only. `ui/vite.panel.config.ts` builds it into
+  `ui/dist-panel/panel.html` (`pnpm build:panel`, run by `task ui` and `task check:ui`), and
+  `b10x-spindle` embeds it; without it the route answers `503`.
+
 ### Changed
 
 - ESS 0.90.0: every ESS crate, `schema-contract` included, and CI's `ess` CLI move to tag 0.90.0; the

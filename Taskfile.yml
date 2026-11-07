@@ -88,13 +88,14 @@ tasks:
       - cargo test --locked -p spindle-qemu -p spindle-firecracker -- --include-ignored
 
   check:ui:
-    desc: The observe UI's tests, typecheck and build
+    desc: The observe UI's tests, typecheck and build, the UI and the panel
     dir: ui
     cmds:
       - pnpm install --frozen-lockfile
       - pnpm test
       - pnpm typecheck
       - pnpm build
+      - pnpm build:panel
 
   build:
     desc: Release build of b10x-spindle, the observe UI built first and embedded
@@ -103,11 +104,12 @@ tasks:
       - cargo build --locked --release -p spindle-cli
 
   ui:
-    desc: Build the observe UI into ui/dist, which b10x-spindle embeds
+    desc: Build the observe UI into ui/dist and the panel into ui/dist-panel, which b10x-spindle embeds
     dir: ui
     cmds:
       - pnpm install --frozen-lockfile
       - pnpm build
+      - pnpm build:panel
 
   docs-generate:
     desc: Rewrite the generated pages under website/

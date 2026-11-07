@@ -33,14 +33,18 @@ pub struct Request {
     pub body: Vec<u8>,
 }
 
-/// One answer, as a value: its body, where it is not empty, is [`CONTENT_TYPE`]; an empty body
-/// carries no `Content-Type`.
+/// One answer, as a value: its body, where it is not empty, is [`CONTENT_TYPE`], or the observe
+/// panel's page where [`Response::panel`] says so; an empty body carries no `Content-Type`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response {
     /// The status.
     pub status: u16,
     /// The methods the path answers, as the `Allow` header carries them, on a `405`.
     pub allow: Option<String>,
+    /// The body is the observe panel's page ([`crate::Surface::with_panel`]): it is
+    /// [`PANEL_MEDIA`](crate::PANEL_MEDIA), answered with
+    /// [`PANEL_POLICY`](crate::PANEL_POLICY) as its `Content-Security-Policy`.
+    pub panel: bool,
     /// The body.
     pub body: String,
 }
@@ -50,6 +54,7 @@ impl From<Answer> for Response {
         Self {
             status: answer.status,
             allow: None,
+            panel: false,
             body: answer.body.map(|body| body.to_string()).unwrap_or_default(),
         }
     }
@@ -97,6 +102,7 @@ fn routing(
         return Routed {
             response: crate::observe::reserved(
                 surface.recorder(),
+                surface.panel(),
                 reserved,
                 &request.method,
                 &request.path,
@@ -217,6 +223,7 @@ impl Pending {
                 Response {
                     status: 200,
                     allow: None,
+                    panel: false,
                     body: crate::console::model(host.ir()),
                 },
                 Vec::new(),

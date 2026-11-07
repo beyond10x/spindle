@@ -44,7 +44,9 @@
 //! ([`SurfaceError::Reserved`]). A surface made [`Surface::observing`] holds a [`Recorder`]: the
 //! listener records every request it answers outside the prefix, classed by its answer
 //! ([`Class`]) and timed from its head read to its answer handed back, and answers
-//! `GET /__spindle/requests` with the request log; without one every path under the prefix
+//! `GET /__spindle/requests` with the request log, and `GET /__spindle/ui` with the observe
+//! panel's page ([`Surface::with_panel`], [`PANEL_MEDIA`] with [`PANEL_POLICY`]), `503` where it
+//! was given none; without a recorder every path under the prefix
 //! answers `404`.
 
 mod answer;
@@ -63,7 +65,8 @@ pub use console::Console;
 #[cfg(feature = "listener")]
 pub use listener::{BODY_READ, Exchange, HEADER_READ, Listener};
 pub use observe::{
-    By, Class, REQUESTS_DEFAULT, REQUESTS_MOST, RESERVED_SEGMENT, Recorder, Reserved,
+    By, Class, PANEL_MEDIA, PANEL_POLICY, REQUESTS_DEFAULT, REQUESTS_MOST, RESERVED_SEGMENT,
+    Recorder, Reserved,
 };
 pub use router::{BODY_LIMIT, CONTENT_TYPE, Request, Response, Routed, route, route_with};
 pub use surface::{Caller, Queried, Resolved, Route, Surface, SurfaceError, Unserved, Variable};

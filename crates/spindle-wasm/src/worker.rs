@@ -113,6 +113,7 @@ impl Inner {
             return respond(&spindle_ingress::Response {
                 status: 404,
                 allow: None,
+                panel: false,
                 body: serde_json::json!({"refused": format!("{} is outside this host", request.url())})
                     .to_string(),
             });
@@ -155,7 +156,10 @@ fn respond(response: &spindle_ingress::Response) -> Result<Response, JsValue> {
     let headers = Headers::new()?;
     let body = (!response.body.is_empty() && !NULL_BODY.contains(&response.status))
         .then_some(response.body.as_str());
-    if body.is_some() {
+    if response.panel {
+        headers.set("content-type", spindle_ingress::PANEL_MEDIA)?;
+        headers.set("content-security-policy", spindle_ingress::PANEL_POLICY)?;
+    } else if body.is_some() {
         headers.set("content-type", spindle_ingress::CONTENT_TYPE)?;
     }
     if let Some(allow) = &response.allow {
