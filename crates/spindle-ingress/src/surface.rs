@@ -787,12 +787,16 @@ impl Surface {
     }
 
     /// The route a request with `method` (compared exactly, RFC 9110 §9.1) and `path` is for.
-    /// Compiling the binding
-    /// refused two templates a request path can both match (`ESS-HTTP-010`, `ESS-HTTP-011`), so
-    /// at most one route of a method matches. A console route, where the surface has them, is
-    /// matched exactly; no other route shares its path ([`Surface::with_console`]). A path under
-    /// the reserved prefix `/__spindle/` is matched before either, with or without a recorder,
-    /// so that it never reaches a route of the specification.
+    /// Compiling the binding refuses two templates of one method that are the same but for
+    /// variable names (`ESS-HTTP-010`) or that cross (`ESS-HTTP-011`); from ESS 0.89.0 it admits a
+    /// nested pair, where one template holds the literal at every position the two differ. Of the
+    /// routes of `method` that match, the one ESS's dispatch order tries first answers
+    /// ([`ess_gen::http::dispatch_order`]): the more specific of a nested pair, whatever order the
+    /// routes are declared or held in, and otherwise the first. A path no route of `method`
+    /// matches answers the methods of the routes that do. A console route, where the surface has
+    /// them, is matched exactly; no other route shares its path ([`Surface::with_console`]). A
+    /// path under the reserved prefix `/__spindle/` is matched before either, with or without a
+    /// recorder, so that it never reaches a route of the specification.
     pub fn resolve(&self, method: &str, path: &str) -> Resolved<'_> {
         if let Some(reserved) = Reserved::of(path) {
             return Resolved::Reserved(reserved);
@@ -809,14 +813,23 @@ impl Surface {
             };
         }
         let mut served = Vec::new();
+        let mut matched = Vec::new();
         for route in &self.routes {
             let Some(carried) = route.carried(path) else {
                 continue;
             };
-            if route.method.as_str().to_uppercase() != method {
+            if route.method.as_str().to_uppercase() == method {
+                matched.push((route, carried));
+            } else {
                 served.push(route.method);
-                continue;
             }
+        }
+        let rows: Vec<(&str, &str)> = matched
+            .iter()
+            .map(|(route, _)| (route.method.as_str(), route.path.as_str()))
+            .collect();
+        if let Some(&first) = ess_gen::http::dispatch_order(&rows).first() {
+            let (route, carried) = matched.swap_remove(first);
             return match carried {
                 Ok(carried) => Resolved::Found(route, carried),
                 Err(why) => Resolved::Malformed(route, why),

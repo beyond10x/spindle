@@ -6,6 +6,14 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- A literal path segment wins over a path variable: of two routes of one method that both match a
+  request path, the one with a literal where the other has a variable answers, as ESS's dispatch
+  order (`ess_gen::http::dispatch_order`, `ESS-HTTP-011`) defines, whatever order the routes are
+  declared in. Before, the first route in path-text order answered, so a literal that sorts after
+  `{`, such as `/things/~modules`, was shadowed by `/things/{id}`. The 405 answer is unchanged.
+
 ## [0.6.0] - 2026-11-07
 
 ### Added

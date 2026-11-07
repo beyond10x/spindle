@@ -1,0 +1,25 @@
+format: ess/34
+system: catalogue
+version: v1
+summary: Things asked after by id, and the collection's modules and actions asked after by name.
+domains:
+  - catalogue.things
+components:
+  - component: things
+    summary: Answers what is asked of a thing, of the modules and of the actions over the network.
+    owns:
+      domains:
+        - catalogue.things
+    accepts:
+      commands:
+        - catalogue.things.AskThing
+        - catalogue.things.AskModules
+        - catalogue.things.AskActions
+        - catalogue.things.AddModule
+    publishes:
+      events:
+        - catalogue.things.ThingAsked
+        - catalogue.things.ModulesAsked
+        - catalogue.things.ActionsAsked
+        - catalogue.things.ModuleAdded
+    reached_by: network
