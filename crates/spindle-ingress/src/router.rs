@@ -107,7 +107,7 @@ fn routing(
     }
     let (asked, carried) = match ask(surface, &request.method, &request.path) {
         Ok(asked) => asked,
-        Err((response, _)) => {
+        Err((response, ..)) => {
             return Routed {
                 response,
                 failed: Vec::new(),
@@ -146,6 +146,9 @@ pub(crate) enum Asked {
     Console(Console),
 }
 
+/// A refusal, who gave it, and the route it was for where the path matched one.
+pub(crate) type Refusal = (Response, By, Option<Asked>);
+
 /// What `method` and `path` ask for on `surface`, and the input the path carries; the refusal
 /// otherwise: `400` for a path variable that does not decode, `405` with `Allow` for a served path
 /// under another method, `404` for a path no route has or one under the reserved prefix (which
@@ -154,12 +157,16 @@ pub(crate) fn ask(
     surface: &Surface,
     method: &str,
     path: &str,
-) -> Result<(Asked, Map<String, Value>), (Response, By)> {
+) -> Result<(Asked, Map<String, Value>), Refusal> {
     let not_found = || Answer::refusal(404, format!("no route serves {path}")).into();
     match surface.resolve(method, path) {
         Resolved::Found(route, carried) => Ok((Asked::Route(Box::new(route.clone())), carried)),
         Resolved::Console(console) => Ok((Asked::Console(console), Map::new())),
-        Resolved::Malformed(why) => Err((Answer::refusal(400, why).into(), By::Ingress)),
+        Resolved::Malformed(route, why) => Err((
+            Answer::refusal(400, why).into(),
+            By::Ingress,
+            Some(Asked::Route(Box::new(route.clone()))),
+        )),
         Resolved::WrongMethod(allowed) => {
             let allowed = allowed
                 .iter()
@@ -169,10 +176,10 @@ pub(crate) fn ask(
             let mut response: Response =
                 Answer::refusal(405, format!("this path answers {allowed}")).into();
             response.allow = Some(allowed);
-            Err((response, By::Unrouted))
+            Err((response, By::Unrouted, None))
         }
-        Resolved::NotFound => Err((not_found(), By::Unrouted)),
-        Resolved::Reserved(_) => Err((not_found(), By::Unrouted)),
+        Resolved::NotFound => Err((not_found(), By::Unrouted, None)),
+        Resolved::Reserved(_) => Err((not_found(), By::Unrouted, None)),
     }
 }
 

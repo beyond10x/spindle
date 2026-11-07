@@ -373,7 +373,7 @@ impl Route {
         if !ess_gen::http::template_matches(&self.segments, path) {
             return None;
         }
-        let given: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+        let given: Vec<&str> = path.strip_prefix('/').unwrap_or(path).split('/').collect();
         if self.variables.iter().any(|variable| {
             given
                 .get(variable.position)
@@ -476,7 +476,7 @@ pub enum Resolved<'a> {
     /// The route the request is for, and the input its path carries.
     Found(&'a Route, Map<String, Value>),
     /// The path matches a route whose variable it holds malformed.
-    Malformed(String),
+    Malformed(&'a Route, String),
     /// A console route ([`Surface::with_console`]).
     Console(Console),
     /// A path under the reserved prefix `/__spindle/`, matched before any other route, with the
@@ -802,7 +802,7 @@ impl Surface {
             }
             return match carried {
                 Ok(carried) => Resolved::Found(route, carried),
-                Err(why) => Resolved::Malformed(why),
+                Err(why) => Resolved::Malformed(route, why),
             };
         }
         if served.is_empty() {

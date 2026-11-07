@@ -347,7 +347,14 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         request.uri().path(),
     ) {
         Ok(asked) => asked,
-        Err((refusal, by)) => return (refusal, unrouted(by)),
+        Err((refusal, by, Some(asked))) => {
+            let answered = Answered {
+                by,
+                ..Answered::ingress()
+            };
+            return (refusal, Some(noted(&asked, answered)));
+        }
+        Err((refusal, by, None)) => return (refusal, unrouted(by)),
     };
     let refused = |answer: Answer| -> (Reply, Option<Note>) {
         (answer.into(), Some(noted(&asked, Answered::ingress())))
