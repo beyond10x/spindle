@@ -22,16 +22,20 @@ pub struct Variable {
     pub flat: Flat,
 }
 
-/// One parameter of a view read from the query string: the parameter, its wire name and how its
-/// text is read.
+/// One parameter of a view read from the query string: the parameter, its wire name, how its
+/// text is read and whether the key repeats once per element.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Queried {
     /// The view parameter it carries.
     pub field: String,
     /// The query key it is read under: the parameter's wire name.
     pub wire: String,
-    /// How its text is read ([`ess_gen::http::scalar`]).
+    /// How its text is read ([`ess_gen::http::scalar`]): the value's, or each element's for a
+    /// list.
     pub flat: Flat,
+    /// Whether the parameter is a `List<T>`, `Optional` or not, which ESS publishes as the key
+    /// repeated once per element (`style: form`, `explode: true`, beyond10x/ess#438).
+    pub list: bool,
 }
 
 /// One input field of a `form` or `query` request: the key it is sent under, the field it fills,
@@ -143,12 +147,15 @@ impl Route {
     /// The view parameters `query`, a request's query string, carries, by parameter name, as
     /// ESS's served application reads them (`http::query_object`): each key and value
     /// form-decoded (`+` and `%XX`), a key no parameter has as its wire name ignored, a value read
-    /// as [`ess_gen::http::Flat`] says. A parameter the query leaves out is left out, for the host
-    /// to refuse where it is required.
+    /// as [`ess_gen::http::Flat`] says. A `List<T>` parameter is read as ESS publishes it, the key
+    /// repeated once per element (`tags=a&tags=b`), each element read as `T` in the order given;
+    /// `tags=a,b` is the one element `a,b`. A parameter the query leaves out is left out, for the
+    /// host to refuse where it is required.
     ///
     /// # Errors
-    /// Naming the parameter, under `query.`: a key given more than once, a value that is not
-    /// percent-encoded UTF-8, or an empty value for a parameter that is not a `String`.
+    /// Naming the parameter, under `query.`: a key that is not a list's given more than once, a
+    /// value that is not percent-encoded UTF-8, an empty value for a parameter that is not a
+    /// `String`, or an empty element of a list of any type.
     pub fn parameters(&self, query: &str) -> Result<Map<String, Value>, String> {
         let mut read = Map::new();
         for queried in &self.queried {
@@ -160,6 +167,30 @@ impl Route {
                 .map(|(_, value)| value)
                 .collect();
             let place = format!("query.{}", queried.wire);
+            let text = |raw: &str| {
+                form_decoded(raw).ok_or_else(|| {
+                    format!("{place}: expected percent-encoded UTF-8 text, found `{raw}`")
+                })
+            };
+            if queried.list {
+                if found.is_empty() {
+                    continue;
+                }
+                let elements = found
+                    .into_iter()
+                    .map(|raw| {
+                        let element = text(raw)?;
+                        if element.is_empty() {
+                            return Err(format!("{place}: expected an element, found empty text"));
+                        }
+                        self::read(queried.flat, element).ok_or_else(|| {
+                            format!("{place}: expected an element, found empty text")
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                read.insert(queried.field.clone(), Value::Array(elements));
+                continue;
+            }
             let raw = match found.as_slice() {
                 [] => continue,
                 [raw] => *raw,
@@ -170,10 +201,7 @@ impl Route {
                     ));
                 }
             };
-            let text = form_decoded(raw).ok_or_else(|| {
-                format!("{place}: expected percent-encoded UTF-8 text, found `{raw}`")
-            })?;
-            let value = self::read(queried.flat, text)
+            let value = self::read(queried.flat, text(raw)?)
                 .ok_or_else(|| format!("{place}: expected a value, found empty text"))?;
             read.insert(queried.field.clone(), value);
         }
@@ -875,9 +903,10 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
                 {
                     continue;
                 }
-                let flat = match ess_gen::http::flat(ir, &param.type_ref) {
-                    Some((Shape::One | Shape::Optional, flat)) => flat,
-                    _ => {
+                let (list, flat) = match ess_gen::http::flat(ir, param.type_ref.required()) {
+                    Some((Shape::List, flat)) => (true, flat),
+                    Some((Shape::One | Shape::Optional, flat)) => (false, flat),
+                    None => {
                         return Err(format!(
                             "the parameter {}, which no single query value carries",
                             param.name
@@ -888,6 +917,7 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
                     field: param.name.clone(),
                     wire: ess_gen::schema::wire_field_name(param).to_owned(),
                     flat,
+                    list,
                 });
             }
         }
