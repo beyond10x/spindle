@@ -28,6 +28,11 @@ are Spindle's releases.
 
 ### Changed
 
+- The command's response in an HTTP answer is written as ESS publishes it: each field under its
+  wire name (`naming: {wire: …}`), through struct members, list items, map values, newtypes and a
+  union's payload, and each enum variant in its wire spelling. That holds for the envelope's
+  `response` and for a `body: response` or `body: response.<field>` answer alike. Before, the
+  envelope's `response` keyed each field by its declared name.
 - An outcome the runtime does not run refuses only the request that selects it. A command with
   one such outcome (a value it would generate of a type the runtime does not mint, an identity it
   cannot mint, a response field it does not choose, an error field nothing fills) keeps its HTTP

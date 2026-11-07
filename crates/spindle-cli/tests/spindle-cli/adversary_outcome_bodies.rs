@@ -31,7 +31,9 @@ const BINDING: &str = "crates/spindle-cli/tests/fixtures/adversary-outcome-bodie
 const LAPTOP: &str = "examples/environments/laptop.toml";
 const COMPONENT: &str = "vault";
 
+const OPEN: &str = "vault.locker.OpenLocker";
 const RENT: &str = "vault.locker.RentLocker";
+const TICKET: &str = "vault.locker.TicketLocker";
 const NUMBER: &str = "vault.locker.NumberLocker";
 const CLOSE: &str = "vault.locker.CloseLocker";
 const PRICE: &str = "vault.locker.PriceLocker";
@@ -246,6 +248,31 @@ impl Served {
 }
 
 #[test]
+fn a_response_body_keys_a_renamed_response_field_by_its_wire_name() {
+    let contract = Contract::load(true);
+    let served = serve(&["--http", BINDING]);
+    let reply = served.send(
+        &contract,
+        OPEN,
+        &json!({"locker_id": "l1", "label": "coat"}),
+    );
+    assert_eq!(reply.status, 201, "the bound status: {reply:?}");
+    let body = reply.json();
+    assert!(
+        body.get("receiptCode").is_some_and(Value::is_string) && body.get("receipt_code").is_none(),
+        "story:http-outcome-bodies: `body: response` is the response as ESS publishes it and its \
+         served application answers it (`http::bare(response)`), `receipt_code` under its wire \
+         name `receiptCode`: {body}"
+    );
+    let errors = contract.errors(OPEN, reply.status, &body);
+    assert!(
+        errors.is_empty(),
+        "story:http-outcome-bodies: {body} is refused by the schema ESS projects for {OPEN} 201: \
+         {errors:?}"
+    );
+}
+
+#[test]
 fn a_response_field_body_of_a_renamed_field_is_its_value() {
     let contract = Contract::load(true);
     let served = serve(&["--http", BINDING]);
@@ -264,6 +291,30 @@ fn a_response_field_body_of_a_renamed_field_is_its_value() {
     );
     let errors = contract.errors(RENT, reply.status, &body);
     assert!(errors.is_empty(), "{body}: {errors:?}");
+}
+
+#[test]
+fn a_response_field_body_of_a_struct_keys_its_members_by_wire_name() {
+    let contract = Contract::load(true);
+    let served = serve(&["--http", BINDING]);
+    let reply = served.send(
+        &contract,
+        TICKET,
+        &json!({"locker_id": "l3", "label": "bag"}),
+    );
+    assert_eq!(reply.status, 201, "the bound status: {reply:?}");
+    let body = reply.json();
+    assert!(
+        body.get("ticketCode").is_some_and(Value::is_string) && body.get("ticket_code").is_none(),
+        "story:http-outcome-bodies: `response.ticket` is the struct as ESS publishes it, its \
+         member `ticket_code` under its wire name `ticketCode`: {body}"
+    );
+    let errors = contract.errors(TICKET, reply.status, &body);
+    assert!(
+        errors.is_empty(),
+        "story:http-outcome-bodies: {body} is refused by the schema ESS projects for {TICKET} \
+         201: {errors:?}"
+    );
 }
 
 #[test]
@@ -453,4 +504,29 @@ fn the_router_answers_a_none_body_empty() {
     );
     assert_eq!(closed.response.status, 200, "{:?}", closed.response);
     assert_eq!(closed.response.body, "", "{:?}", closed.response);
+}
+
+#[test]
+fn the_envelope_response_keys_a_renamed_field_by_its_wire_name() {
+    let contract = Contract::load(false);
+    let served = serve(&[]);
+    let reply = served.send(
+        &contract,
+        OPEN,
+        &json!({"locker_id": "l10", "label": "key"}),
+    );
+    assert!((200..300).contains(&reply.status), "{reply:?}");
+    let envelope = reply.json();
+    let response = &envelope["response"];
+    assert!(
+        response.get("receiptCode").is_some_and(Value::is_string)
+            && response.get("receipt_code").is_none(),
+        "the envelope's `response` carries `receipt_code` under its wire name `receiptCode`, as \
+         ESS publishes it: {envelope}"
+    );
+    let errors = contract.errors(OPEN, reply.status, &envelope);
+    assert!(
+        errors.is_empty(),
+        "{envelope} is refused by the schema ESS projects for {OPEN}: {errors:?}"
+    );
 }
