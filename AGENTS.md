@@ -95,7 +95,7 @@ Steps (`Taskfile.yml`): `aep plan artifact validate`, `ess specify validate` on 
 `check:ui` (`pnpm` test, typecheck and build in `ui/`), `task docs-check`, the wasm and browser
 lanes (`check:a_service_worker_serves_a_specification` and `check:the_static_bundle_builds` among
 them, which need `wasm-bindgen` and `wasm-bindgen-test-runner` of the locked `wasm-bindgen`
-version and a WebDriver on `PATH`), `cargo fmt --all -- --check`,
+version and a WebDriver on `PATH`), `cargo fmt -- --check` (workspace members only: the generated `spindle-observe-api` is held byte-exact by the drift check instead),
 `cargo clippy --workspace --all-targets --locked -- -D warnings`,
 `cargo test --workspace --locked --no-fail-fast`. The ESS pin is the `tag` of `ess-compiler`,
 `ess-domain` and `ess-primitives` in `Cargo.toml`; CI installs the `ess` CLI of the same version
