@@ -2,7 +2,7 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use js_sys::{Array, Promise, Reflect};
 use serde::{Deserialize, Serialize};
@@ -12,8 +12,8 @@ use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
-    DomException, IdbDatabase, IdbFactory, IdbObjectStoreParameters, IdbOpenDbRequest, IdbRequest,
-    IdbTransaction, IdbTransactionMode,
+    BroadcastChannel, DomException, IdbDatabase, IdbFactory, IdbObjectStoreParameters,
+    IdbOpenDbRequest, IdbRequest, IdbTransaction, IdbTransactionMode, MessageEvent,
 };
 
 /// The schema version of the database: its two object stores.
@@ -23,6 +23,8 @@ const SCHEMA: u32 = 1;
 const ROWS: &str = "rows";
 /// The object store of events, in commit order under an increasing key.
 const EVENTS: &str = "events";
+/// The prefix of the broadcast channel a database's handles announce their landed writes on.
+const CHANNEL: &str = "spindle-store-browser:";
 
 /// An instance as the `rows` object store holds it: its row, or, once removed, only the version
 /// it was removed at, so an instance created again under its identity goes on from it.
@@ -47,9 +49,26 @@ struct Recorded {
 /// An instance's key: its entity and its identity as canonical JSON text.
 type Key = (String, String);
 
+/// Where an instance stands: its version and whether it is removed, or `None` when it was never
+/// written. A later standing orders after an earlier one: versions only grow, and a removal keeps
+/// the version it removed.
+type Standing = Option<(u64, bool)>;
+
+thread_local! {
+    /// The database each open handle of this global scope holds, by name: a second `open` of a
+    /// name shares it.
+    static OPEN: RefCell<BTreeMap<String, Weak<RefCell<Shared>>>> =
+        const { RefCell::new(BTreeMap::new()) };
+}
+
 /// Instances in one IndexedDB database of the browser's origin: `store.durable` bound to
 /// `indexeddb`.
 pub struct BrowserStore {
+    shared: Rc<RefCell<Shared>>,
+}
+
+/// What every handle of one global scope on one database holds together.
+struct Shared {
     name: String,
     database: IdbDatabase,
     rows: BTreeMap<Key, Stored>,
@@ -59,26 +78,108 @@ pub struct BrowserStore {
     written: Option<Promise>,
     /// Why a write did not land, once one did not.
     failed: Rc<RefCell<Option<String>>>,
+    /// The channel landed writes are announced on, and heard from other global scopes, where this
+    /// global scope has one.
+    channel: Option<BroadcastChannel>,
+    listener: Option<Closure<dyn FnMut(MessageEvent)>>,
 }
 
 impl std::fmt::Debug for BrowserStore {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let shared = self.shared.borrow();
         formatter
             .debug_struct("BrowserStore")
-            .field("name", &self.name)
-            .field("instances", &self.rows.len())
+            .field("name", &shared.name)
+            .field("instances", &shared.rows.len())
             .finish_non_exhaustive()
     }
 }
 
 impl BrowserStore {
     /// Opens the database `name` of this origin, creating it when absent, and reads every
-    /// instance it holds.
+    /// instance it holds. A handle of this global scope already open on `name` is shared: the
+    /// new handle answers as that one does.
     ///
     /// # Errors
     /// [`StoreError::Backend`] when this global scope has no IndexedDB, or the database cannot be
     /// opened or read.
     pub async fn open(name: &str) -> Result<Self, StoreError> {
+        if let Some(shared) = held(name) {
+            return Ok(Self { shared });
+        }
+        let opened = Shared::open(name).await?;
+        if let Some(shared) = held(name) {
+            return Ok(Self { shared });
+        }
+        OPEN.with(|open| {
+            open.borrow_mut()
+                .insert(name.to_owned(), Rc::downgrade(&opened));
+        });
+        Ok(Self { shared: opened })
+    }
+
+    /// Opens the database `name` as [`BrowserStore::open`] does, sharing nothing with the other
+    /// handles of this global scope, as a handle in another tab shares nothing with them.
+    ///
+    /// # Errors
+    /// As [`BrowserStore::open`].
+    #[doc(hidden)]
+    pub async fn open_apart(name: &str) -> Result<Self, StoreError> {
+        Ok(Self {
+            shared: Shared::open(name).await?,
+        })
+    }
+
+    /// Waits until every write made so far has landed in the database.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when a write did not land.
+    pub async fn flush(&self) -> Result<(), StoreError> {
+        let written = self.shared.borrow().written.clone();
+        if let Some(written) = written {
+            JsFuture::from(written).await.map_err(js)?;
+        }
+        self.shared.borrow().healthy()
+    }
+
+    /// Every event recorded in the database, in commit order, the writes made so far included.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the database cannot be read or a write did not land.
+    pub async fn events(&self) -> Result<Vec<Event>, StoreError> {
+        let database = {
+            let shared = self.shared.borrow();
+            shared.healthy()?;
+            shared.database.clone()
+        };
+        let texts = read_all(&database, EVENTS).await?;
+        self.shared.borrow().healthy()?;
+        texts
+            .iter()
+            .map(|text| {
+                parse::<Recorded>(text, "an event").map(|recorded| Event {
+                    name: recorded.event,
+                    payload: recorded.payload,
+                })
+            })
+            .collect()
+    }
+}
+
+/// The database a handle of this global scope holds open under `name`.
+fn held(name: &str) -> Option<Rc<RefCell<Shared>>> {
+    OPEN.with(|open| {
+        open.borrow()
+            .get(name)
+            .and_then(Weak::upgrade)
+            .filter(|shared| shared.borrow().healthy().is_ok())
+    })
+}
+
+impl Shared {
+    /// Opens the database `name`, listens for the writes other global scopes announce, then
+    /// reads every instance it holds.
+    async fn open(name: &str) -> Result<Rc<RefCell<Self>>, StoreError> {
         let request = factory()?.open_with_u32(name, SCHEMA).map_err(js)?;
         let target = request.clone();
         let upgrade = Closure::<dyn FnMut(web_sys::Event) -> Result<(), JsValue>>::new(
@@ -92,80 +193,75 @@ impl BrowserStore {
             .dyn_into::<IdbDatabase>()
             .map_err(|_| StoreError::Backend(format!("{name} did not open as a database")))?;
 
-        let mut store = Self {
+        let shared = Rc::new(RefCell::new(Self {
             name: name.to_owned(),
-            database,
+            database: database.clone(),
             rows: BTreeMap::new(),
             removed: BTreeMap::new(),
             written: None,
             failed: Rc::new(RefCell::new(None)),
-        };
-        for record in store.read_all(ROWS).await? {
-            let record: Record = parse(&record, "an instance")?;
-            let key = (record.entity, record.identity);
-            match record.row {
-                Some(row) => {
-                    store.rows.insert(
-                        key,
-                        Stored {
-                            row,
-                            version: record.version,
-                        },
-                    );
+            channel: None,
+            listener: None,
+        }));
+        if let Some(channel) = channel(name) {
+            let hearer = Rc::downgrade(&shared);
+            let listener = Closure::<dyn FnMut(MessageEvent)>::new(move |message: MessageEvent| {
+                let Some(text) = message.data().as_string() else {
+                    return;
+                };
+                let Ok(record) = serde_json::from_str::<Record>(&text) else {
+                    return;
+                };
+                if let Some(shared) = hearer.upgrade()
+                    && let Ok(mut shared) = shared.try_borrow_mut()
+                {
+                    shared.learn(record);
                 }
-                None => {
-                    store.removed.insert(key, record.version);
-                }
+            });
+            channel.set_onmessage(Some(listener.as_ref().unchecked_ref()));
+            let mut held = shared.borrow_mut();
+            held.channel = Some(channel);
+            held.listener = Some(listener);
+        }
+        for text in read_all(&database, ROWS).await? {
+            shared
+                .borrow_mut()
+                .learn(parse::<Record>(&text, "an instance")?);
+        }
+        Ok(shared)
+    }
+
+    /// Takes `record` as where its instance stands, unless what is held stands later.
+    fn learn(&mut self, record: Record) {
+        let key = (record.entity, record.identity);
+        let heard = Some((record.version, record.row.is_none()));
+        if heard <= self.standing(&key) {
+            return;
+        }
+        match record.row {
+            Some(row) => {
+                self.removed.remove(&key);
+                self.rows.insert(
+                    key,
+                    Stored {
+                        row,
+                        version: record.version,
+                    },
+                );
+            }
+            None => {
+                self.rows.remove(&key);
+                self.removed.insert(key, record.version);
             }
         }
-        Ok(store)
     }
 
-    /// Waits until every write made so far has landed in the database.
-    ///
-    /// # Errors
-    /// [`StoreError::Backend`] when a write did not land.
-    pub async fn flush(&self) -> Result<(), StoreError> {
-        if let Some(written) = &self.written {
-            JsFuture::from(written.clone()).await.map_err(js)?;
+    /// Where the instance under `key` stands in what this global scope holds.
+    fn standing(&self, key: &Key) -> Standing {
+        match self.rows.get(key) {
+            Some(stored) => Some((stored.version, false)),
+            None => self.removed.get(key).map(|version| (*version, true)),
         }
-        self.healthy()
-    }
-
-    /// Every event recorded in the database, in commit order, the writes made so far included.
-    ///
-    /// # Errors
-    /// [`StoreError::Backend`] when the database cannot be read or a write did not land.
-    pub async fn events(&self) -> Result<Vec<Event>, StoreError> {
-        self.healthy()?;
-        self.read_all(EVENTS)
-            .await?
-            .iter()
-            .map(|text| {
-                parse::<Recorded>(text, "an event").map(|recorded| Event {
-                    name: recorded.event,
-                    payload: recorded.payload,
-                })
-            })
-            .collect()
-    }
-
-    /// Every value of the object store `name`, each a JSON text, in key order.
-    async fn read_all(&self, name: &str) -> Result<Vec<String>, StoreError> {
-        let transaction = self.database.transaction_with_str(name).map_err(js)?;
-        let request = transaction
-            .object_store(name)
-            .map_err(js)?
-            .get_all()
-            .map_err(js)?;
-        Array::from(&settled(&request).await?)
-            .iter()
-            .map(|value| {
-                value
-                    .as_string()
-                    .ok_or_else(|| StoreError::Backend(format!("a value in {name} is not text")))
-            })
-            .collect()
     }
 
     /// Refuses every read and write once a write has not landed: what the store holds in memory
@@ -180,12 +276,15 @@ impl BrowserStore {
         }
     }
 
-    /// Writes `record` and `events` in one readwrite transaction. The requests are queued before
-    /// this returns; the transaction commits once control returns to the browser, after every
-    /// transaction queued before it.
+    /// Writes `record` and `events` in one readwrite transaction, if the database still holds
+    /// the instance where this global scope believed it stood; otherwise the transaction aborts
+    /// and the write does not land. The requests are queued before this returns; the transaction
+    /// runs once control returns to the browser, after every transaction on the database queued
+    /// before it, whichever global scope queued it.
     fn write(
         &mut self,
         record: &Record,
+        believed: Standing,
         identity: &Value,
         events: &[Event],
     ) -> Result<(), StoreError> {
@@ -207,46 +306,101 @@ impl BrowserStore {
             .database
             .transaction_with_str_sequence_and_mode(&scope, IdbTransactionMode::Readwrite)
             .map_err(js)?;
-        let queued = (|| -> Result<(), JsValue> {
-            let key = Array::of2(
-                &record.entity.as_str().into(),
-                &record.identity.as_str().into(),
-            );
-            transaction
-                .object_store(ROWS)?
-                .put_with_key(&record_text.into(), &key)?;
-            let log = transaction.object_store(EVENTS)?;
-            for text in event_texts {
-                log.add(&text.into())?;
+        let key = Array::of2(
+            &record.entity.as_str().into(),
+            &record.identity.as_str().into(),
+        );
+        let request = transaction
+            .object_store(ROWS)
+            .and_then(|rows| rows.get(&key))
+            .map_err(|error| {
+                let _ = transaction.abort();
+                js(error)
+            })?;
+        let failed = self.failed.clone();
+        let read = request.clone();
+        let writing = transaction.clone();
+        let instance = format!("{} {}", record.entity, record.identity);
+        let announced = record_text.clone();
+        let check = Closure::once_into_js(move |event: web_sys::Event| {
+            if event.type_() != "success" {
+                return;
             }
-            Ok(())
-        })();
-        if let Err(error) = queued {
-            let _ = transaction.abort();
-            return Err(js(error));
-        }
-        self.written = Some(watch(&transaction, &self.failed));
+            let written = (|| -> Result<(), String> {
+                if failed.borrow().is_some() {
+                    return Err("an earlier write did not land".to_owned());
+                }
+                let stored = read.result().map_err(|error| js(error).to_string())?;
+                let found = if stored.is_undefined() {
+                    None
+                } else {
+                    let text = stored
+                        .as_string()
+                        .ok_or_else(|| format!("the record of {instance} is not text"))?;
+                    let found = parse::<Record>(&text, "an instance").map_err(|e| e.to_string())?;
+                    Some((found.version, found.row.is_none()))
+                };
+                if found != believed {
+                    return Err(format!(
+                        "another handle wrote {instance} first: the database holds {}, this \
+                         handle held {}",
+                        describe_standing(found),
+                        describe_standing(believed)
+                    ));
+                }
+                let put = || -> Result<(), JsValue> {
+                    writing
+                        .object_store(ROWS)?
+                        .put_with_key(&record_text.into(), &key)?;
+                    let log = writing.object_store(EVENTS)?;
+                    for text in event_texts {
+                        log.add(&text.into())?;
+                    }
+                    Ok(())
+                };
+                put().map_err(|error| js(error).to_string())
+            })();
+            if let Err(why) = written {
+                failed.borrow_mut().get_or_insert(why);
+                let _ = writing.abort();
+            }
+        });
+        request.set_onsuccess(Some(check.unchecked_ref()));
+        request.set_onerror(Some(check.unchecked_ref()));
+        let announce = self.channel.clone().map(|channel| (channel, announced));
+        self.written = Some(watch(&transaction, &self.failed, announce));
         Ok(())
     }
 }
 
-impl Drop for BrowserStore {
-    /// Closes the connection; the transactions already queued still complete.
+impl Drop for Shared {
+    /// Stops listening and closes the connection; the transactions already queued still complete
+    /// and are still announced.
     fn drop(&mut self) {
+        if let Some(channel) = &self.channel {
+            channel.set_onmessage(None);
+        }
         self.database.close();
+        let _ = OPEN.try_with(|open| {
+            if let Ok(mut open) = open.try_borrow_mut() {
+                open.retain(|_, shared| shared.strong_count() > 0);
+            }
+        });
     }
 }
 
 impl Store for BrowserStore {
     fn load(&mut self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
-        self.healthy()?;
-        Ok(self.rows.get(&key(entity, identity)).cloned())
+        let shared = self.shared.borrow();
+        shared.healthy()?;
+        Ok(shared.rows.get(&key(entity, identity)).cloned())
     }
 
     fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
-        self.healthy()?;
+        let mut shared = self.shared.borrow_mut();
+        shared.healthy()?;
         let key = key(&change.entity, &change.identity);
-        let actual = self.rows.get(&key).map(|stored| stored.version);
+        let actual = shared.rows.get(&key).map(|stored| stored.version);
         if actual != change.expected {
             return Err(StoreError::Conflict {
                 entity: change.entity.clone(),
@@ -255,18 +409,17 @@ impl Store for BrowserStore {
                 actual,
             });
         }
-        let version = actual
-            .or_else(|| self.removed.get(&key).copied())
-            .unwrap_or(0)
-            + 1;
+        let believed = shared.standing(&key);
+        let version = believed.map_or(0, |(version, _)| version) + 1;
         let record = Record {
             entity: key.0.clone(),
             identity: key.1.clone(),
             version,
             row: Some(change.row.clone()),
         };
-        self.write(&record, &change.identity, &change.events)?;
-        self.rows.insert(
+        shared.write(&record, believed, &change.identity, &change.events)?;
+        shared.removed.remove(&key);
+        shared.rows.insert(
             key,
             Stored {
                 row: change.row.clone(),
@@ -277,9 +430,10 @@ impl Store for BrowserStore {
     }
 
     fn remove(&mut self, removal: &Removal) -> Result<(), StoreError> {
-        self.healthy()?;
+        let mut shared = self.shared.borrow_mut();
+        shared.healthy()?;
         let key = key(&removal.entity, &removal.identity);
-        let actual = self.rows.get(&key).map(|stored| stored.version);
+        let actual = shared.rows.get(&key).map(|stored| stored.version);
         if actual != Some(removal.expected) {
             return Err(StoreError::Conflict {
                 entity: removal.entity.clone(),
@@ -294,15 +448,22 @@ impl Store for BrowserStore {
             version: removal.expected,
             row: None,
         };
-        self.write(&record, &removal.identity, &removal.events)?;
-        self.rows.remove(&key);
-        self.removed.insert(key, removal.expected);
+        shared.write(
+            &record,
+            Some((removal.expected, false)),
+            &removal.identity,
+            &removal.events,
+        )?;
+        shared.rows.remove(&key);
+        shared.removed.insert(key, removal.expected);
         Ok(())
     }
 
     fn scan(&mut self, entity: &str) -> Result<Vec<(Value, Stored)>, StoreError> {
-        self.healthy()?;
-        self.rows
+        let shared = self.shared.borrow();
+        shared.healthy()?;
+        shared
+            .rows
             .iter()
             .filter(|((held, _), _)| held == entity)
             .map(|((_, identity), stored)| {
@@ -317,6 +478,43 @@ impl Store for BrowserStore {
 
 fn key(entity: &str, identity: &Value) -> Key {
     (entity.to_owned(), identity.to_string())
+}
+
+fn describe_standing(standing: Standing) -> String {
+    match standing {
+        None => "no record".to_owned(),
+        Some((version, false)) => format!("version {version}"),
+        Some((version, true)) => format!("a removal at version {version}"),
+    }
+}
+
+/// Every value of the object store `name`, each a JSON text, in key order.
+async fn read_all(database: &IdbDatabase, name: &str) -> Result<Vec<String>, StoreError> {
+    let transaction = database.transaction_with_str(name).map_err(js)?;
+    let request = transaction
+        .object_store(name)
+        .map_err(js)?
+        .get_all()
+        .map_err(js)?;
+    Array::from(&settled(&request).await?)
+        .iter()
+        .map(|value| {
+            value
+                .as_string()
+                .ok_or_else(|| StoreError::Backend(format!("a value in {name} is not text")))
+        })
+        .collect()
+}
+
+/// The broadcast channel of the database `name`, where this global scope has broadcast
+/// channels.
+fn channel(name: &str) -> Option<BroadcastChannel> {
+    let constructor =
+        Reflect::get(&js_sys::global(), &JsValue::from_str("BroadcastChannel")).ok()?;
+    if constructor.is_undefined() || constructor.is_null() {
+        return None;
+    }
+    BroadcastChannel::new(&format!("{CHANNEL}{name}")).ok()
 }
 
 /// The IndexedDB factory of this global scope: a window's, or a worker's.
@@ -367,13 +565,22 @@ async fn settled(request: &IdbRequest) -> Result<JsValue, StoreError> {
 }
 
 /// A promise that settles when `transaction` completes or aborts, recording into `failed` why
-/// it aborted.
-fn watch(transaction: &IdbTransaction, failed: &Rc<RefCell<Option<String>>>) -> Promise {
+/// it aborted, and once it completes posting `announce`'s record on its channel.
+fn watch(
+    transaction: &IdbTransaction,
+    failed: &Rc<RefCell<Option<String>>>,
+    announce: Option<(BroadcastChannel, String)>,
+) -> Promise {
     Promise::new(&mut |resolve, _| {
         let failed = failed.clone();
         let aborted = transaction.clone();
+        let announce = announce.clone();
         let done = Closure::once_into_js(move |event: web_sys::Event| {
-            if event.type_() != "complete" {
+            if event.type_() == "complete" {
+                if let Some((channel, record)) = announce {
+                    let _ = channel.post_message(&JsValue::from_str(&record));
+                }
+            } else {
                 let why = aborted
                     .error()
                     .map(|error| describe(&error))
