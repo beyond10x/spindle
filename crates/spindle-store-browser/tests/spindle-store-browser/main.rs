@@ -1,7 +1,7 @@
 //! The integration tests of `spindle-store-browser`, linked into one test binary.
 //!
-//! `environment` runs on native targets. `adversary`, `contract`, `handles` and `reload` compile
-//! only for `wasm32-unknown-unknown` and run in a headless browser under
+//! `environment` runs on native targets. `adversary`, `contract`, `handles`, `reload` and
+//! `tabs_adversary` compile only for `wasm32-unknown-unknown` and run in a headless browser under
 //! `wasm-bindgen-test-runner` (`task check:the_browser_store_keeps_state_in_indexeddb`), where
 //! IndexedDB exists.
 
@@ -18,6 +18,8 @@ mod environment;
 mod handles;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 mod reload;
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+mod tabs_adversary;
 
 /// A database name no other case of this run opens.
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
