@@ -12,9 +12,9 @@ ESS pin 0.88.0, the newest ESS release: no move this wave.
 
 | unit | story | branch | tree (managed id) | build dir | scratch | starts | stage |
 |---|---|---|---|---|---|---|---|
-| U1 | `story:outcome-scoped-refusal` | `unit/w12-refusal` | `spindle-w12-refusal` | `<tree>/target` | `<scratch>/u1` | at open | ed97240 green, merged 920e475; adversary pass 1 running |
+| U1 | `story:outcome-scoped-refusal` | `unit/w12-refusal` | `spindle-w12-refusal` | `<tree>/target` | `<scratch>/u1` | at open | merged 920e475, f896aff (755c126 after adversary pass 1) |
 | U2 | `story:view-list-query-parameters` | `unit/w12-listparam` | `spindle-w12-listparam` | `<tree>/target` | `<scratch>/u2` | at open | merged 0f55ecc, d655e3d (31328a5 after adversary pass 1); tree finished |
-| U3 | `story:http-outcome-bodies` | `unit/w12-bodies` | `spindle-w12-bodies` | `<tree>/target` | `<scratch>/u3` | after U1 merges (`depends_on`) | dispatched from 920e475 |
+| U3 | `story:http-outcome-bodies` | `unit/w12-bodies` | `spindle-w12-bodies` | `<tree>/target` | `<scratch>/u3` | after U1 merges (`depends_on`) | merged 9e3762d, cec2f20 (1404dd0 after adversary pass 1) |
 | U4 | `story:observe-ingress-model` | `unit/w12-observe` | `spindle-w12-observe` | `<tree>/target` | `<scratch>/u4` | at open | merged d91fc3a, 95641e3 (5a571cd after adversary pass 1); tree finished |
 
 Trees live under the worktree manager's `trees/b10x/spindle/`; `<scratch>` is the coordinator's
@@ -90,3 +90,35 @@ and 11 recorded it.
 One or more commits per unit on its branch, the merges of U1 to U4 into `wave/12`, fix commits from
 the adversary passes, the closing store commit, one PR to `main` through the bot, and the release
 the orchestrator's item names. Nothing else.
+
+## Run record
+
+| unit | adversary pass 1 | findings (introduced / pre-existing / undecided) | routed |
+|---|---|---|---|
+| U1 | `review-result:w12-u1-adversary-1`, 8 cases | 1 / 2 / 0 | all three fixed in the unit (the two pre-existing ones are the story's own outcome and acceptance) |
+| U2 | `review-result:w12-u2-adversary-1`, 17 cases | 1 / 0 / 2 | list and scalar `Decimal` fixed; command input `Decimal` filed |
+| U3 | `review-result:w12-u3-adversary-1`, 9 cases | 2 / 0 / 1 | wire names for the bare bodies and the envelope fixed; four other answers filed |
+| U4 | `review-result:w12-u4-adversary-1`, 6 cases | 6 / 1 / 0 | five fixed; the shape-check gap filed; the graph rules left to the stories that serve those answers |
+
+One pass per unit; each correction was read by the coordinator (no assertion dropped, no test
+relaxed) instead of a second attack.
+
+Decisions taken in the wave: a request's class follows who answered it (`RequestClass`, U4); a
+`body: none` on an outcome that reports an error is served empty at its status (U3); the
+response, bare or in the envelope, is written under ESS's wire names (U3); `compensates` and
+`affects:` refuse only the outcome that carries them (U1).
+
+`check:conformance` refused the known-failures declaration after U4 changed `ess/`; it was
+rebound to the new specification and suite digests (41 executed, 1 failed as declared, counts
+held).
+
+## Backlog filed by this wave (drafts, not scheduled)
+
+- `story:shape-check-numeric-bounds` (from U4's pass)
+- `story:command-input-decimal-text` (from U2's pass)
+- `story:wire-names-everywhere` (from U3's correction)
+
+ESS gaps reported: generated Rust for `spindle-observe-api` is not rustfmt- or clippy-clean
+(ESS 0.88.0); an enum whose values start with a digit gets `V0`.. variants in Rust and no value
+object in TypeScript; `ess_gen::http::flat` reads no `Optional<List<T>>`; a string-equality
+invariant is not enforced by the generated schema.

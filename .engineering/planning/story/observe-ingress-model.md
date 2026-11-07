@@ -23,8 +23,12 @@ scope:
 - confidence: cited
   path: ui/src/api/generated
 - confidence: cited
+  path: ui/src/api/shapes.ts
+- confidence: cited
   path: ui/src/api/types.test.ts
-revision: 12
+- confidence: cited
+  path: ui/src/api/types.ts
+revision: 14
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-06T14:45:46Z", actor: "human:timo", revision: 11}
 - {from: "proposed", to: "active", at: "2026-11-06T14:45:46Z", actor: "human:timo", revision: 12}

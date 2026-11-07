@@ -11,11 +11,23 @@ relations:
 scope:
 - confidence: inferred
   path: crates/spindle-cli/tests/fixtures/outcome-bodies
+- confidence: cited
+  path: crates/spindle-cli/tests/spindle-cli/outcome_bodies.rs
+- confidence: cited
+  path: crates/spindle-docs/src/status.rs
 - confidence: inferred
   path: crates/spindle-ingress/src/answer.rs
+- confidence: cited
+  path: crates/spindle-ingress/src/console.rs
+- confidence: cited
+  path: crates/spindle-ingress/src/listener.rs
+- confidence: cited
+  path: crates/spindle-ingress/src/router.rs
 - confidence: inferred
   path: crates/spindle-ingress/src/surface.rs
-revision: 8
+- confidence: cited
+  path: crates/spindle-ingress/src/wire.rs
+revision: 15
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-06T15:02:53Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"review_outcome":5}}}
 - {from: "proposed", to: "active", at: "2026-11-06T15:02:53Z", actor: "human:timo", revision: 8, decided_on: {"recorded":{"review_outcome":5}}}
@@ -69,3 +81,14 @@ command per body kind. For each, before: the route answers 501 with the refusal 
 
 A consumer serving a specification as a UI test backend (2026-11-06, on main 62b97a9): two create
 routes answered 501 with this refusal, 6 calls in one UI run.
+
+## Scope
+
+Delivered in wave 12 (implementor's confirmation table, commits 5315f8f, 1404dd0):
+
+- `crates/spindle-ingress/src/surface.rs` — inferred, confirmed: `Route::bodies`, `Route::body`, `unwritten()` (the refusal was at about line 976 at 920e475, not 851-858).
+- `crates/spindle-ingress/src/answer.rs` — inferred, confirmed: `Answer.body: Option<Value>`, `bare()`, one wire-name mapping for the envelope and the bare bodies.
+- `crates/spindle-ingress/src/wire.rs` — new: a declared value rewritten to ESS's wire names and spellings.
+- `crates/spindle-ingress/src/router.rs`, `listener.rs`, `console.rs`, `lib.rs` — not in the scope, needed: the empty body and its headers.
+- `crates/spindle-cli/tests/fixtures/outcome-bodies` — inferred, confirmed; plus `adversary-outcome-bodies`.
+- `crates/spindle-cli/src/cli.rs`, `crates/spindle-docs/src/status.rs`, `website/` — help text, status item, generated pages.
