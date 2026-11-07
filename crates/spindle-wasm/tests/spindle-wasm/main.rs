@@ -9,6 +9,8 @@
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_service_worker);
 
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+mod adversary_service_worker;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod listener;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
