@@ -204,6 +204,13 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "Set outcomes",
+        "An outcome that declares instances: selects every row of its entity whose filter holds, read from the store before the outcome, and moves, updates or removes each in ascending order of identity as ESS's interpreter does; a move skips a row outside its from states, and zero rows selected is a successful outcome. {count: changed} reads how many rows changed, and an event declared once per changed row is published once for each. A filter that walks the rows of an entity stays refused, by name.",
+        "/docs/concepts/specification",
+        "crates/spindle-kernel/tests/spindle-kernel/set_outcomes.rs::set_outcomes_agree_with_the_interpreter",
+    ),
+    shipped(
+        "Execution",
         "List views with filters",
         "List views over every instance of an entity, with a state filter and an order.",
         "/docs/concepts/specification",
