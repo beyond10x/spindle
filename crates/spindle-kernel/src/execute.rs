@@ -7,16 +7,18 @@ use ess_compiler::EssIr;
 use ess_compiler::ir::{
     EventHandle, PrecedencePlan, ResolvedCommand, ResolvedCondition, ResolvedEffect,
     ResolvedEntity, ResolvedField, ResolvedInstance, ResolvedOutcome, ResolvedPayloadField,
-    ResolvedPayloadValue, ResolvedRelatedTest, ResolvedRelatedVia,
+    ResolvedPayloadValue, ResolvedRelatedTest, ResolvedRelatedVia, ResolvedRowSelection,
+    ResolvedRowSetTest, RowMember,
 };
 use ess_domain::QualifiedName;
 use ess_domain::command::precedence::Phase;
 use ess_primitives::predicate::{Predicate, Truth};
+use ess_primitives::time::Rfc3339Instant;
 use serde_json::{Map, Value};
 use spindle_capability::mint::Unsourced;
 
 use crate::decider::{Decider, External};
-use crate::facts::Facts;
+use crate::facts::{Facts, Selector};
 use crate::mint::{Generator, IDENTITY_MINT, Identity, Mint, UuidV4};
 use crate::store::{Change, Row, Store, Stored};
 use crate::values::Sources;
@@ -248,6 +250,7 @@ pub fn execute_refusing(
             let stored = store.load(&entity.name.to_string(), &identity)?;
             Some(Addressed {
                 entity,
+                field,
                 identity,
                 stored,
             })
@@ -267,6 +270,7 @@ pub fn execute_refusing(
         held,
         related,
         generator: Generator::new(mint, now, command),
+        instant: None,
         minted: None,
         answered: BTreeMap::new(),
         refused,
@@ -315,6 +319,8 @@ fn none_runs(
 /// The instance the command addresses, as read before deciding.
 struct Addressed<'ir> {
     entity: &'ir ResolvedEntity,
+    /// The input field naming the instance.
+    field: &'ir ResolvedField,
     identity: Value,
     stored: Option<Stored>,
 }
@@ -355,6 +361,22 @@ fn present_related(outcome: &ResolvedOutcome) -> bool {
     )
 }
 
+/// Whether a branch of `spec` is guarded by a row set (ESS `row_set::uses`).
+fn uses_row_sets(spec: &ResolvedCommand) -> bool {
+    spec.outcomes
+        .iter()
+        .any(|outcome| matches!(outcome.condition, ResolvedCondition::RelatedSet { .. }))
+}
+
+/// Whether `predicate` reads the addressed subject, under `subject.` (ESS
+/// `row_set::reads_subject`).
+fn reads_subject(predicate: &Predicate) -> bool {
+    predicate.fact_paths().iter().any(|path| {
+        path.segments().len() > 1
+            && path.namespace() == ess_domain::command::set_effects::SUBJECT_NAMESPACE
+    })
+}
+
 /// What selection found.
 enum Selected<'ir> {
     /// The outcome to take.
@@ -378,6 +400,9 @@ struct Run<'a, 'ir> {
     /// The rows the command's related values name, read before anything else ([`crate::values::related`]).
     related: crate::values::Related,
     generator: Generator<'a>,
+    /// The decision's instant, as a row-set selector reads `now`: read from the clock once per
+    /// run, on the first read, and `None` inside where the clock spells no instant.
+    instant: Option<Option<Rfc3339Instant>>,
     /// The identity this run minted: the creating event that publishes it, and the identity
     /// field's name.
     minted: Option<(&'ir EventHandle, String, Value)>,
@@ -422,6 +447,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 Phase::Existence => {
                     if let Some(addressed) = &self.held
                         && addressed.stored.is_none()
+                        && (stored || !self.creation_takes_absent(addressed))
                     {
                         if let Some(outcome) = planned
                             .branches
@@ -432,6 +458,15 @@ impl<'a, 'ir> Run<'a, 'ir> {
                         }
                         // An instance nobody holds rests in no state any move of this command
                         // starts from: the wrong-state answer, where the command declares one.
+                        return self.wrong_state().map(Selected::Answered);
+                    }
+                    // On a command guarded by a row set the addressed row's held state answers
+                    // before any row set is read, where no branch acting on the row may act from
+                    // it (ESS `addressed_row`).
+                    if uses_row_sets(self.spec)
+                        && let Some(row) = self.before()
+                        && !self.may_act(row)
+                    {
                         return self.wrong_state().map(Selected::Answered);
                     }
                     if stored {
@@ -551,6 +586,10 @@ impl<'a, 'ir> Run<'a, 'ir> {
             // A marker, never selected by reading: the wrong-state answer comes from the branch that
             // is selected, when its move does not start from the state held (ESS `act`).
             ResolvedCondition::WrongState => Truth::False,
+            // A marker too: on a row-set upsert the plan reads it after the row sets, and the
+            // branch selected after them answers a row nobody holds with it
+            // ([`Self::unknown_instance`]).
+            ResolvedCondition::UnknownInstance => Truth::False,
             ResolvedCondition::Related {
                 via,
                 entity,
@@ -575,6 +614,14 @@ impl<'a, 'ir> Run<'a, 'ir> {
                         both(related, || self.guard(input.as_ref()))
                     }
                 }
+            }
+            ResolvedCondition::RelatedSet {
+                selection,
+                test,
+                input,
+            } => {
+                let tested = self.row_set(outcome, selection, test)?;
+                both(tested, || self.guard(input.as_ref()))
             }
             other => {
                 return Err(ExecuteError::Unsupported {
@@ -622,6 +669,139 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 None => Reference::Missing,
             },
         )
+    }
+
+    /// Whether `test` holds of the rows of `selection`'s entity its selector selects, read from the
+    /// store as it was before selection (ESS `interpret::execute::row_set::Reader::decide`).
+    ///
+    /// Every stored row is a candidate. The selector reads the row's fields, identity and held
+    /// state, the input under `input.`, the addressed subject under `subject.` and the decision's
+    /// instant as `now` ([`crate::facts::Selector`]). A row it leaves `Unknown` stays a possible
+    /// member, and ESS decides the test over the members ([`ResolvedRowSetTest::decide`]): a test
+    /// those possible members leave open is `Unknown`. A selector reading `subject.` on a command
+    /// that addresses no held row decides nothing.
+    fn row_set(
+        &mut self,
+        outcome: &ResolvedOutcome,
+        selection: &ResolvedRowSelection,
+        test: &ResolvedRowSetTest,
+    ) -> Result<Truth, ExecuteError> {
+        let ir = self.ir;
+        let entity = ir.entity(&selection.entity);
+        let subject = match &self.held {
+            Some(Addressed {
+                entity,
+                identity,
+                stored: Some(stored),
+                ..
+            }) => Some(Facts::row(ir, entity, identity, &stored.row, None)),
+            _ => None,
+        };
+        if subject.is_none()
+            && (reads_subject(&selection.filter) || test.predicate().is_some_and(reads_subject))
+        {
+            return Err(ExecuteError::Undecidable {
+                outcome: format!("{}/{}", self.command, outcome.name.as_str()),
+            });
+        }
+        let input = Facts::values(ir, &self.spec.input, self.input);
+        let now = match self.instant {
+            Some(now) => now,
+            None => *self.instant.insert(self.generator.instant()),
+        };
+        let mut members = Vec::new();
+        for (identity, stored) in self.store.scan(&entity.name.to_string())? {
+            let row = Facts::row(ir, entity, &identity, &stored.row, None);
+            let facts = Selector {
+                row: &row,
+                input: &input,
+                subject: subject.as_ref(),
+                now,
+            };
+            let selected = selection.filter.evaluate(&facts);
+            let satisfies = match (test.predicate(), selected) {
+                (Some(_), Truth::False) | (None, _) => Truth::True,
+                (Some(predicate), _) => predicate.evaluate(&facts),
+            };
+            members.push(RowMember {
+                selected,
+                satisfies,
+            });
+        }
+        Ok(test.decide(&members))
+    }
+
+    /// Whether the absent `addressed` row is a creation's to take rather than an unknown instance,
+    /// on a command guarded by a row set: no branch is guarded by the row's held state, which
+    /// answers a missing row first (ESS `held_rows`), and a creation branch of the same entity
+    /// takes its identity from the input field that names the row (ESS `addressed_row`,
+    /// `creation_takes_absent`). The row sets then answer first, then the creation: an upsert
+    /// (beyond10x/ess#462). A stored reference answers a missing row before either (ESS
+    /// `stored_reference`), so its caller asks only without one.
+    fn creation_takes_absent(&self, addressed: &Addressed<'ir>) -> bool {
+        let ir = self.ir;
+        uses_row_sets(self.spec)
+            && !self.spec.outcomes.iter().any(|outcome| {
+                matches!(
+                    outcome.condition,
+                    ResolvedCondition::SubjectState { .. }
+                        | ResolvedCondition::StateChange { .. }
+                        | ResolvedCondition::SubjectField { .. }
+                        | ResolvedCondition::SubjectPredicate { .. }
+                        | ResolvedCondition::ExternalSubject { .. }
+                )
+            })
+            && self.spec.outcomes.iter().any(|outcome| {
+                let Some(subject) = outcome.subject.as_ref().filter(|_| outcome.error.is_none())
+                else {
+                    return false;
+                };
+                let (ResolvedEffect::Creates, ResolvedInstance::Observed { event, field }) =
+                    (&subject.effect, &subject.instance)
+                else {
+                    return false;
+                };
+                ir.entity(&subject.entity).name == addressed.entity.name
+                    && outcome
+                        .payload
+                        .iter()
+                        .filter(|payload| payload.event == *event)
+                        .flat_map(|payload| &payload.fields)
+                        .find(|source| source.target == field.name)
+                        .is_some_and(|source| {
+                            matches!(
+                                &source.value,
+                                ResolvedPayloadValue::InputField { field: taken, .. }
+                                | ResolvedPayloadValue::InputOrGenerated { field: taken, .. }
+                                    if *taken == addressed.field.name
+                            )
+                        })
+            })
+    }
+
+    /// Whether some branch of the command that acts on the addressed row may act on it in the
+    /// state `row` holds: a move from that state, or any other effect on it. `true` where no
+    /// branch acts on it (ESS `addressed_row`).
+    fn may_act(&self, row: &Row) -> bool {
+        let mut acting = self
+            .spec
+            .outcomes
+            .iter()
+            .filter(|outcome| outcome.error.is_none())
+            .filter_map(|outcome| outcome.subject.as_ref())
+            .filter(|subject| {
+                !matches!(subject.effect, ResolvedEffect::Creates)
+                    && matches!(subject.instance, ResolvedInstance::Supplied { .. })
+            })
+            .peekable();
+        acting.peek().is_none()
+            || acting.any(|subject| match &subject.effect {
+                ResolvedEffect::Moves { transition } => transition
+                    .from
+                    .iter()
+                    .any(|state| state.as_str() == row.state),
+                _ => true,
+            })
     }
 
     /// The facts a guard over a related row reads: the row, the input under `input.` and the
@@ -758,6 +938,12 @@ impl<'a, 'ir> Run<'a, 'ir> {
         plan: &PrecedencePlan<'ir>,
         subjects: bool,
     ) -> Result<Option<Executed>, ExecuteError> {
+        // An absent addressed row reaches here only where a creation takes it
+        // ([`Self::creation_takes_absent`]): no branch the request selects answers for it before
+        // the row sets (ESS `selected_subject_refusal`), so no decider is asked ahead of them; an
+        // external branch stays one possible answer and reading goes on, as under an open
+        // provider.
+        let absent = self.held.as_ref().is_some_and(|held| held.stored.is_none());
         let mut selected = None;
         'phases: for planned in plan.phases() {
             match planned.phase {
@@ -784,6 +970,13 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 match self.truth(outcome, true)? {
                     Truth::True => {
                         let taken = match &outcome.condition {
+                            ResolvedCondition::External { .. }
+                            | ResolvedCondition::ExternalWhen { .. }
+                            | ResolvedCondition::ExternalSubject { .. }
+                                if absent =>
+                            {
+                                false
+                            }
                             ResolvedCondition::External { cause }
                             | ResolvedCondition::ExternalWhen { cause, .. }
                             | ResolvedCondition::ExternalSubject { cause, .. } => {
@@ -887,6 +1080,23 @@ impl<'a, 'ir> Run<'a, 'ir> {
             .map_err(|reason| ExecuteError::Undecided { capability, reason })
     }
 
+    /// The answer for the addressed row no store holds, where `taken`, the branch selection took,
+    /// acts on it: the command's `unknown_instance:` branch, taken as selection would take it,
+    /// else the wrong-state answer (ESS `take`, `unknown_instance`). Selection leaves such a row to
+    /// the branch it selects only on a row-set upsert ([`Self::creation_takes_absent`]); `taken`
+    /// being that branch itself is the wrong-state answer.
+    fn unknown_instance(&mut self, taken: &ResolvedOutcome) -> Result<Executed, ExecuteError> {
+        match self
+            .spec
+            .outcomes
+            .iter()
+            .find(|outcome| outcome.condition == ResolvedCondition::UnknownInstance)
+        {
+            Some(outcome) if outcome.name != taken.name => self.take(outcome),
+            _ => self.wrong_state(),
+        }
+    }
+
     /// The command's `wrong_state:` outcome, answered for the addressed instance: its error, or
     /// with `refuses: false` an accepted request that changes nothing.
     fn wrong_state(&self) -> Result<Executed, ExecuteError> {
@@ -901,6 +1111,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     entity,
                     identity,
                     stored: None,
+                    ..
                 }) => format!(
                     "no `{}` has the identity {identity}, and the command declares neither \
                      `unknown_instance:` nor `wrong_state:`",
@@ -1022,7 +1233,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     ..
                 }) = &self.held
                 else {
-                    return self.wrong_state();
+                    return self.unknown_instance(outcome);
                 };
                 let mut after = stored.row.clone();
                 if let ResolvedEffect::Moves { transition } = effect {

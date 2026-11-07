@@ -14,7 +14,8 @@
 //!
 //! The declared types answer how text is ordered, as ESS's typed fact sources answer it: a
 //! `Timestamp` by the instant it names, a `Duration` not at all, any other text by its UTF-8
-//! bytes. No current time is supplied, so a comparison with `now` stays `Unknown`.
+//! bytes. No current time is supplied, so a comparison with `now` stays `Unknown`, except in a
+//! row-set selector ([`Selector`]), which reads the decision's instant.
 
 use std::collections::BTreeSet;
 
@@ -22,6 +23,7 @@ use ess_compiler::EssIr;
 use ess_compiler::ir::{ResolvedEntity, ResolvedField, ResolvedTypeRef};
 use ess_domain::types::Primitive;
 use ess_primitives::facts::{FactPath, FactSource, FactStore, FactValue, Scales};
+use ess_primitives::time::Rfc3339Instant;
 use serde_json::{Map, Value};
 
 use crate::store::Row;
@@ -31,6 +33,9 @@ pub(crate) const INPUT: &str = ess_domain::command::subject_fact::INPUT_NAMESPAC
 
 /// The namespace a guard reads the caller's attributes under.
 pub(crate) const CALLER: &str = ess_domain::command::caller_value::CALLER_NAMESPACE;
+
+/// The namespace a row-set selector reads the addressed subject under.
+const SUBJECT: &str = ess_domain::command::set_effects::SUBJECT_NAMESPACE;
 
 /// Bound facts and the fields that declare them.
 pub(crate) struct Facts<'a> {
@@ -179,6 +184,84 @@ impl<'a> Facts<'a> {
             },
             Err(_) => None,
         }
+    }
+}
+
+/// The facts a row-set selector reads of one candidate row, routed as ESS's interpreter routes
+/// them (`interpret::execute::set_effects::Facts` inside `caller::Facts`): `input.<field>` to the
+/// command's input, `subject.<field>` to the addressed subject as it was before the outcome, and
+/// every other path to the candidate row, its fields and identity at their own names and its held
+/// state at `state`. `now` is the decision's one instant. A selector is read as no caller, so
+/// `caller.<attribute>` binds nothing, and walks no rows.
+pub(crate) struct Selector<'a> {
+    /// The candidate row ([`Facts::row`], without the input).
+    pub(crate) row: &'a Facts<'a>,
+    /// The command's input at its fields' own names ([`Facts::values`]).
+    pub(crate) input: &'a Facts<'a>,
+    /// The addressed subject, where the command addresses one the store holds.
+    pub(crate) subject: Option<&'a Facts<'a>>,
+    /// The decision's instant.
+    pub(crate) now: Option<Rfc3339Instant>,
+}
+
+impl Selector<'_> {
+    fn source(&self, path: &FactPath) -> Option<(&dyn FactSource, FactPath)> {
+        let (first, rest) = path.segments().split_first()?;
+        if rest.is_empty() {
+            return Some((self.row, path.clone()));
+        }
+        match first.as_str() {
+            CALLER => None,
+            INPUT => Some((self.input, FactPath::from_segments(rest))),
+            SUBJECT => Some((self.subject?, FactPath::from_segments(rest))),
+            _ => Some((self.row, path.clone())),
+        }
+    }
+}
+
+impl FactSource for Selector<'_> {
+    fn fact(&self, path: &FactPath) -> Option<FactValue> {
+        self.source(path)
+            .and_then(|(source, path)| source.fact(&path))
+    }
+
+    fn observe(&self, path: &FactPath) -> Option<FactValue> {
+        self.source(path)
+            .and_then(|(source, path)| source.observe(&path))
+    }
+
+    fn present(&self, path: &FactPath) -> bool {
+        self.source(path)
+            .is_some_and(|(source, path)| source.present(&path))
+    }
+
+    fn observed_presence(&self, path: &FactPath) -> Option<bool> {
+        self.source(path).map_or(Some(false), |(source, path)| {
+            source.observed_presence(&path)
+        })
+    }
+
+    fn cardinality(&self, path: &FactPath) -> Option<usize> {
+        self.source(path)
+            .and_then(|(source, path)| source.cardinality(&path))
+    }
+
+    fn scales(&self) -> &Scales {
+        self.input.scales()
+    }
+
+    fn orders_as_instant(&self, path: &FactPath) -> bool {
+        self.source(path)
+            .is_some_and(|(source, path)| source.orders_as_instant(&path))
+    }
+
+    fn orders_text_by_bytes(&self, path: &FactPath) -> bool {
+        self.source(path)
+            .is_some_and(|(source, path)| source.orders_text_by_bytes(&path))
+    }
+
+    fn now(&self) -> Option<Rfc3339Instant> {
+        self.now
     }
 }
 

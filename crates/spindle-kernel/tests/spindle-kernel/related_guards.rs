@@ -340,7 +340,16 @@ pub(crate) fn interpreted(
     views: &[(&str, &str, &str)],
     steps: &[(&str, Value)],
 ) -> (Vec<Answer>, Rows) {
-    let target = Interpreted::for_model(ir.clone());
+    interpreted_on(Interpreted::for_model(ir.clone()), views, steps)
+}
+
+/// [`interpreted`], on `target`: the interpreter as the caller configured it, such as with a
+/// command clock.
+pub(crate) fn interpreted_on(
+    target: Interpreted,
+    views: &[(&str, &str, &str)],
+    steps: &[(&str, Value)],
+) -> (Vec<Answer>, Rows) {
     let context = ScenarioContext::new(
         "depot.warehouse/authored/related"
             .parse()
@@ -419,10 +428,21 @@ pub(crate) fn spindled(
     views: &[(&str, &str, &str)],
     steps: &[(&str, Value)],
 ) -> (Vec<Answer>, Rows) {
+    spindled_with(views, steps, &mut |store, command, input| {
+        run(ir, store, command, input)
+    })
+}
+
+/// [`spindled`], each step executed by `execute`, such as on a fixed clock.
+pub(crate) fn spindled_with(
+    views: &[(&str, &str, &str)],
+    steps: &[(&str, Value)],
+    execute: &mut dyn FnMut(&mut MemoryStore, &str, Value) -> Executed,
+) -> (Vec<Answer>, Rows) {
     let mut store = MemoryStore::default();
     let mut answers = Vec::new();
     for (command, input) in steps {
-        let executed = run(ir, &mut store, command, input.clone());
+        let executed = execute(&mut store, command, input.clone());
         answers.push((
             executed.outcome,
             executed.error.map(|error| error.name),

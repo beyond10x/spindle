@@ -1,0 +1,172 @@
+domain: yard.tasks
+summary: An owner adds weighed tasks, at most two open at once, finishes the heaviest first, and sweeps open tasks unless every one weighs five or more.
+types:
+  - name: yard.tasks.TaskId
+    kind: newtype
+    of: Uuid
+  - name: yard.tasks.OwnerId
+    kind: newtype
+    of: Uuid
+  - name: yard.tasks.SweepId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: yard.tasks.Task
+    identity:
+      name: task_id
+      type: yard.tasks.TaskId
+    fields:
+      - name: owner_id
+        type: yard.tasks.OwnerId
+      - name: note
+        type: Optional<String>
+      - name: weight
+        type: Integer
+    lifecycle:
+      initial: Open
+      states: [Open, Done]
+      terminal: [Done]
+      transitions:
+        - {name: finish, from: [Open], to: Done}
+  - name: yard.tasks.SweepRecord
+    identity:
+      name: sweep_id
+      type: yard.tasks.SweepId
+    fields:
+      - name: owner_id
+        type: yard.tasks.OwnerId
+    lifecycle:
+      initial: Made
+      states: [Made]
+      terminal: [Made]
+errors:
+  - name: yard.tasks.Full
+    summary: The owner already has two open tasks.
+    fields: []
+  - name: yard.tasks.NotHeaviest
+    summary: Another open task of the owner is heavier.
+    fields: []
+  - name: yard.tasks.NotOpen
+    summary: The task is done.
+    fields: []
+  - name: yard.tasks.AllKept
+    summary: Every open task of the owner weighs five or more.
+    fields: []
+commands:
+  - name: yard.tasks.AddTask
+    input:
+      - name: task_id
+        type: yard.tasks.TaskId
+      - name: owner_id
+        type: yard.tasks.OwnerId
+      - name: note
+        type: Optional<String>
+      - name: weight
+        type: Integer
+    outcomes:
+      - name: full
+        when_related:
+          entity: yard.tasks.Task
+          where:
+            all:
+              - owner_id == input.owner_id
+              - state == Open
+          count: {gte: 2}
+        error: yard.tasks.Full
+        summary: The owner already has two open tasks.
+      - name: added
+        creates: yard.tasks.Task
+        instance: task_id
+        sets:
+          owner_id: input.owner_id
+          note: input.note
+          weight: input.weight
+        emits: [yard.tasks.TaskAdded]
+        payload:
+          yard.tasks.TaskAdded:
+            task_id: input.task_id
+        summary: The task is added.
+  - name: yard.tasks.Finish
+    input:
+      - name: task_id
+        type: yard.tasks.TaskId
+    outcomes:
+      - name: not-heaviest
+        when_related:
+          entity: yard.tasks.Task
+          where:
+            all:
+              - owner_id == subject.owner_id
+              - state == Open
+              - task_id != subject.task_id
+              - weight > subject.weight
+          exists: true
+        error: yard.tasks.NotHeaviest
+        summary: Another open task of the owner is heavier.
+      - name: finished
+        moves: yard.tasks.Task.finish
+        instance: task_id
+        emits: [yard.tasks.Finished]
+        payload:
+          yard.tasks.Finished:
+            task_id: input.task_id
+        summary: The task is finished.
+      - name: wrong-state
+        wrong_state: true
+        error: yard.tasks.NotOpen
+        summary: The task is done.
+  - name: yard.tasks.Sweep
+    input:
+      - name: sweep_id
+        type: yard.tasks.SweepId
+      - name: owner_id
+        type: yard.tasks.OwnerId
+    outcomes:
+      - name: all-kept
+        when_related:
+          entity: yard.tasks.Task
+          where:
+            all:
+              - owner_id == input.owner_id
+              - state == Open
+          forall: weight >= 5
+        error: yard.tasks.AllKept
+        summary: Every open task of the owner weighs five or more.
+      - name: swept
+        creates: yard.tasks.SweepRecord
+        instance: sweep_id
+        sets:
+          owner_id: input.owner_id
+        emits: [yard.tasks.Swept]
+        payload:
+          yard.tasks.Swept:
+            sweep_id: input.sweep_id
+        summary: The open tasks are swept.
+events:
+  - name: yard.tasks.TaskAdded
+    fields:
+      - name: task_id
+        type: yard.tasks.TaskId
+  - name: yard.tasks.Finished
+    fields:
+      - name: task_id
+        type: yard.tasks.TaskId
+  - name: yard.tasks.Swept
+    fields:
+      - name: sweep_id
+        type: yard.tasks.SweepId
+views:
+  - name: yard.tasks.TaskCard
+    source: yard.tasks.Task
+    consistency: read_your_writes
+    fields:
+      - name: task_id
+        type: yard.tasks.TaskId
+      - name: owner_id
+        type: yard.tasks.OwnerId
+      - name: note
+        type: Optional<String>
+      - name: weight
+        type: Integer
+      - name: state
+        type: yard.tasks.Task.State
