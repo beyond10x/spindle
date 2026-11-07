@@ -19,7 +19,7 @@ environment, and executes it. Humans start at [`README.md`](README.md); the desi
 | path | what |
 |---|---|
 | `.engineering/` | the AEP store (`aep.project/5`, protocol `adp/1`, profile `development.standard`) |
-| `ess/` | Spindle's own specification: `spindle.deployment`, `spindle.placement`, `spindle.observe` (the observe API answers); `ess/fixtures/observe/` holds API fixtures, `ess/generated/` the generated JSON Schema (`task generate:observe`) |
+| `ess/` | Spindle's own specification: `spindle.deployment`, `spindle.placement`, `spindle.observe` (the observe API answers, and the request log, metric families and topology a served run answers under `/__spindle/`); `ess/fixtures/observe/` holds API fixtures, `ess/generated/` the generated JSON Schema (`task generate:observe`) |
 | `crates/spindle-spec/` | `load`/`compile`: source files → `EssIr`, through `ess-domain` and `ess-compiler` only |
 | `crates/spindle-capability/` | `derive` (IR → requirements with reasons), `Environment` (`spindle-environment/1`, TOML), `admit` |
 | `crates/spindle-kernel/` | executes commands against the compiled IR: guards, outcomes, entity and newtype invariants, events; SQLite or memory store; `contract`, the cases every `Store` passes |
