@@ -6,6 +6,11 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Changed
+
+- ESS 0.90.0: every ESS crate, `schema-contract` included, and CI's `ess` CLI move to tag 0.90.0; the
+  specification requires ess 0.90 and the generated output is restamped.
+
 ## [0.5.0] - 2026-11-07
 
 ### Added
