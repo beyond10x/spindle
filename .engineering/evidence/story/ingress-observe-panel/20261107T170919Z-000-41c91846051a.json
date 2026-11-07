@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-07T17:09:19Z",
+  "actor": "human:timo",
+  "artifact": "story:ingress-observe-panel",
+  "kind": "story",
+  "revision": 15,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "wave 14 U2",
+    "reference": "unit merge 85bf890 into wave/14; adversary cases ui/src/panel/adversary.test.ts pass"
+  }
+}

@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:ingress-observe-panel
 kind: story
-status: active
+status: implemented
 title: An observed run serves one embeddable panel page
 relations:
 - serves: vision:spindle
@@ -30,10 +30,11 @@ scope:
   path: ui/vite.config.ts
 - confidence: inferred
   path: ui/vite.panel.config.ts
-revision: 15
+revision: 16
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-06T14:45:47Z", actor: "human:timo", revision: 14, decided_on: {"recorded":{"review_outcome":1}}}
 - {from: "proposed", to: "active", at: "2026-11-06T14:45:47Z", actor: "human:timo", revision: 15, decided_on: {"recorded":{"review_outcome":1}}}
+- {from: "active", to: "implemented", at: "2026-11-07T17:09:20Z", actor: "human:timo", revision: 16, decided_on: {"recorded":{"test_result":1,"review_outcome":2,"verification":1}}}
 ---
 # An observed run serves one embeddable panel page
 

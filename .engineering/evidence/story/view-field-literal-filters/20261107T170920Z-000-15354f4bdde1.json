@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-07T17:09:20Z",
+  "actor": "human:timo",
+  "artifact": "story:view-field-literal-filters",
+  "kind": "story",
+  "revision": 5,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "wave 14 U4",
+    "reference": "unit merge 7e695cf into wave/14; adversary cases adversary_view_filters.rs pass"
+  }
+}
