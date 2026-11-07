@@ -1,0 +1,53 @@
+type: ess-http/1
+specification:
+  system: depot
+  version: v1
+  source_digest: sha256:f0e4e57e24cd71e9fd434f93cb2c81f56d8c13792b69dd56d84a8146ce67cca5
+routes:
+  - command: depot.parcel.RegisterParcel
+    method: post
+    path: /parcels/registered
+    outcomes:
+      registered:
+        status: 201
+        body: response
+  - command: depot.parcel.TagParcel
+    method: post
+    path: /parcels/tagged
+    outcomes:
+      tagged:
+        status: 201
+        body: response.id
+  - command: depot.parcel.StoreParcel
+    method: post
+    path: /parcels/stored
+    outcomes:
+      stored:
+        status: 204
+        body: none
+  - command: depot.parcel.AnnounceParcel
+    method: post
+    path: /parcels/announced
+    outcomes:
+      announced:
+        status: 201
+        headers:
+          X-Announced: {literal: "yes"}
+  - command: depot.parcel.ForwardParcel
+    method: post
+    path: /parcels/forwarded
+    outcomes:
+      forwarded:
+        status: 303
+        body: none
+        redirect:
+          location: input.return_to
+          mode: query
+  - command: depot.parcel.PrintParcel
+    method: post
+    path: /parcels/printed
+    outcomes:
+      printed:
+        status: 201
+        body: response.id
+        encoding: text

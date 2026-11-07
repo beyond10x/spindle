@@ -14,7 +14,7 @@ use crate::surface::{Resolved, Route, Surface};
 /// listener one announced larger before it is read.
 pub const BODY_LIMIT: usize = 1 << 20;
 
-/// The media type of every [`Response`] body.
+/// The media type of every [`Response`] body that is not empty.
 pub const CONTENT_TYPE: &str = "application/json";
 
 /// One request, as a value.
@@ -32,7 +32,8 @@ pub struct Request {
     pub body: Vec<u8>,
 }
 
-/// One answer, as a value: its body is [`CONTENT_TYPE`].
+/// One answer, as a value: its body, where it is not empty, is [`CONTENT_TYPE`]; an empty body
+/// carries no `Content-Type`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response {
     /// The status.
@@ -48,7 +49,7 @@ impl From<Answer> for Response {
         Self {
             status: answer.status,
             allow: None,
-            body: answer.body.to_string(),
+            body: answer.body.map(|body| body.to_string()).unwrap_or_default(),
         }
     }
 }

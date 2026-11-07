@@ -1,0 +1,183 @@
+domain: depot.parcel
+summary: Parcels taken in by one of six commands, each answered with its own body.
+types:
+  - name: depot.parcel.ParcelId
+    kind: newtype
+    of: String
+entities:
+  - name: depot.parcel.Parcel
+    identity:
+      name: parcel_id
+      type: depot.parcel.ParcelId
+    fields:
+      - name: label
+        type: String
+    lifecycle:
+      initial: Held
+      states: [Held]
+      terminal: [Held]
+commands:
+  - name: depot.parcel.RegisterParcel
+    input:
+      - name: parcel_id
+        type: depot.parcel.ParcelId
+      - name: label
+        type: String
+    response:
+      - name: id
+        type: String
+      - name: receipt
+        type: String
+    outcomes:
+      - name: registered
+        creates: depot.parcel.Parcel
+        instance: parcel_id
+        sets:
+          label: input.label
+        emits: [depot.parcel.ParcelTakenIn]
+        payload:
+          depot.parcel.ParcelTakenIn: {parcel_id: input.parcel_id}
+        returns: true
+        summary: The parcel is taken in; the binding answers the whole response.
+  - name: depot.parcel.TagParcel
+    input:
+      - name: parcel_id
+        type: depot.parcel.ParcelId
+      - name: label
+        type: String
+    response:
+      - name: id
+        type: String
+      - name: receipt
+        type: String
+    outcomes:
+      - name: tagged
+        creates: depot.parcel.Parcel
+        instance: parcel_id
+        sets:
+          label: input.label
+        emits: [depot.parcel.ParcelTakenIn]
+        payload:
+          depot.parcel.ParcelTakenIn: {parcel_id: input.parcel_id}
+        returns: true
+        summary: The parcel is taken in; the binding answers one field of the response.
+  - name: depot.parcel.StoreParcel
+    input:
+      - name: parcel_id
+        type: depot.parcel.ParcelId
+      - name: label
+        type: String
+    outcomes:
+      - name: stored
+        creates: depot.parcel.Parcel
+        instance: parcel_id
+        sets:
+          label: input.label
+        emits: [depot.parcel.ParcelTakenIn]
+        payload:
+          depot.parcel.ParcelTakenIn: {parcel_id: input.parcel_id}
+        summary: The parcel is taken in; the binding answers no body.
+  - name: depot.parcel.AnnounceParcel
+    input:
+      - name: parcel_id
+        type: depot.parcel.ParcelId
+      - name: label
+        type: String
+      - name: announce
+        type: Boolean
+    outcomes:
+      - name: announced
+        when: announce == true
+        creates: depot.parcel.Parcel
+        instance: parcel_id
+        sets:
+          label: input.label
+        emits: [depot.parcel.ParcelTakenIn]
+        payload:
+          depot.parcel.ParcelTakenIn: {parcel_id: input.parcel_id}
+        summary: The parcel is taken in; the binding answers with a header.
+      - name: received
+        creates: depot.parcel.Parcel
+        instance: parcel_id
+        sets:
+          label: input.label
+        emits: [depot.parcel.ParcelTakenIn]
+        payload:
+          depot.parcel.ParcelTakenIn: {parcel_id: input.parcel_id}
+        summary: The parcel is taken in quietly.
+  - name: depot.parcel.ForwardParcel
+    input:
+      - name: parcel_id
+        type: depot.parcel.ParcelId
+      - name: label
+        type: String
+      - name: return_to
+        type: String
+      - name: forward
+        type: Boolean
+    outcomes:
+      - name: forwarded
+        when: forward == true
+        creates: depot.parcel.Parcel
+        instance: parcel_id
+        sets:
+          label: input.label
+        emits: [depot.parcel.ParcelTakenIn]
+        payload:
+          depot.parcel.ParcelTakenIn: {parcel_id: input.parcel_id}
+        summary: The parcel is taken in; the binding answers with a redirect.
+      - name: received
+        creates: depot.parcel.Parcel
+        instance: parcel_id
+        sets:
+          label: input.label
+        emits: [depot.parcel.ParcelTakenIn]
+        payload:
+          depot.parcel.ParcelTakenIn: {parcel_id: input.parcel_id}
+        summary: The parcel is taken in and kept here.
+  - name: depot.parcel.PrintParcel
+    input:
+      - name: parcel_id
+        type: depot.parcel.ParcelId
+      - name: label
+        type: String
+      - name: print
+        type: Boolean
+    response:
+      - name: id
+        type: String
+    outcomes:
+      - name: printed
+        when: print == true
+        creates: depot.parcel.Parcel
+        instance: parcel_id
+        sets:
+          label: input.label
+        emits: [depot.parcel.ParcelTakenIn]
+        payload:
+          depot.parcel.ParcelTakenIn: {parcel_id: input.parcel_id}
+        returns: true
+        summary: The parcel is taken in; the binding answers one response field as text.
+      - name: received
+        creates: depot.parcel.Parcel
+        instance: parcel_id
+        sets:
+          label: input.label
+        emits: [depot.parcel.ParcelTakenIn]
+        payload:
+          depot.parcel.ParcelTakenIn: {parcel_id: input.parcel_id}
+        summary: The parcel is taken in unprinted.
+events:
+  - name: depot.parcel.ParcelTakenIn
+    fields:
+      - name: parcel_id
+        type: depot.parcel.ParcelId
+views:
+  - name: depot.parcel.AllParcels
+    source: depot.parcel.Parcel
+    consistency: read_your_writes
+    fields:
+      - name: parcel_id
+        type: depot.parcel.ParcelId
+      - name: label
+        type: String

@@ -1,20 +1,21 @@
 //! One request's answer, from the host that runs the command or reads the view.
 
 use ess_gen::http::{FORBIDDEN, NOT_GRANTED};
-use ess_http::{Encoding, Operation};
+use ess_http::{Body, Encoding, Operation};
 use serde_json::{Map, Value, json};
 use spindle_host::{Failed, Host, HostError};
 use spindle_kernel::{DeclaredError, Event, ExecuteError};
 
 use crate::surface::{Route, Unserved};
 
-/// A status and the JSON body written under it.
+/// A status and the JSON body written under it, where it has one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Answer {
     /// The HTTP status.
     pub status: u16,
-    /// The body, written as `application/json`.
-    pub body: Value,
+    /// The body, written as `application/json`; `None` for an answer with no body and no
+    /// `Content-Type`, as a binding's `body: none` declares.
+    pub body: Option<Value>,
 }
 
 impl Answer {
@@ -23,7 +24,7 @@ impl Answer {
     pub fn refusal(status: u16, detail: impl Into<String>) -> Self {
         Self {
             status,
-            body: json!({"refused": detail.into()}),
+            body: Some(json!({"refused": detail.into()})),
         }
     }
 
@@ -32,7 +33,7 @@ impl Answer {
     pub fn not_granted(actor: &str) -> Self {
         Self {
             status: FORBIDDEN.parse().unwrap_or(403),
-            body: json!({"refused": NOT_GRANTED, "actor": actor}),
+            body: Some(json!({"refused": NOT_GRANTED, "actor": actor})),
         }
     }
 
@@ -41,7 +42,7 @@ impl Answer {
     pub fn unfinished(detail: impl Into<String>, committed: bool) -> Self {
         Self {
             status: 501,
-            body: json!({"refused": detail.into(), "committed": committed}),
+            body: Some(json!({"refused": detail.into(), "committed": committed})),
         }
     }
 }
@@ -63,7 +64,10 @@ impl Answer {
 /// qualified name, with `payload` where the kernel determined its fields, none for the
 /// `wrong_state:` answer to an identity no record carries, and on an outcome that
 /// returns the command's response (`returns: true`, `200`) `response`, the values the kernel
-/// chose for its declared fields.
+/// chose for its declared fields. An outcome the binding answers with another body
+/// ([`Route::body`]) answers its status with that body alone, as ESS's served application writes
+/// it: `response` the command's response, `response.<field>` the value of that one field (`null`
+/// where the outcome answers no response), and `none` no body and no `Content-Type`.
 ///
 /// A view answers `200` with the body ESS publishes for it, `{"rows": [...]}`, every row it
 /// holds for its parameters: those `carried` holds from the path, and those `query` holds
@@ -144,7 +148,7 @@ pub fn answered(
                 Ok(rows) => (
                     Answer {
                         status: 200,
-                        body: json!({"rows": rows}),
+                        body: Some(json!({"rows": rows})),
                     },
                     Vec::new(),
                 ),
@@ -270,7 +274,8 @@ fn form(
 /// The media type of a `form` request body.
 const FORM: &str = "application/x-www-form-urlencoded";
 
-/// The envelope ESS publishes for `outcome` of `command`, at the status `route` gives it.
+/// The envelope ESS publishes for `outcome` of `command`, at the status `route` gives it, or the
+/// body the binding answers in its place ([`bare`]).
 fn envelope(
     route: &Route,
     command: &str,
@@ -285,6 +290,9 @@ fn envelope(
             refusal.is_none(),
         );
     };
+    if let Some(body) = bare(route, outcome, response) {
+        return Answer { status, body };
+    }
     let mut body = Map::new();
     body.insert("outcome".to_owned(), Value::String(outcome.to_owned()));
     body.insert(
@@ -307,6 +315,31 @@ fn envelope(
     }
     Answer {
         status,
-        body: Value::Object(body),
+        body: Some(Value::Object(body)),
+    }
+}
+
+/// The body the binding answers `outcome` with in place of the envelope, where it does
+/// ([`Route::body`]): `Some(None)` for `none`, the response or one field of it, bare, otherwise,
+/// `null` where `response` holds none. `None` for an outcome answered with the envelope.
+fn bare(
+    route: &Route,
+    outcome: &str,
+    response: Option<&Map<String, Value>>,
+) -> Option<Option<Value>> {
+    match route.body(outcome)? {
+        Body::None => Some(None),
+        Body::Response => {
+            Some(Some(response.map_or(Value::Null, |response| {
+                Value::Object(response.clone())
+            })))
+        }
+        Body::ResponseField(field) => Some(Some(
+            response
+                .and_then(|response| response.get(field))
+                .cloned()
+                .unwrap_or(Value::Null),
+        )),
+        Body::Envelope | Body::Error { .. } => None,
     }
 }

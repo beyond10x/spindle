@@ -98,7 +98,7 @@ pub fn events(host: &Host) -> Answer {
         .collect::<Vec<_>>();
     Answer {
         status: 200,
-        body: json!({"events": events}),
+        body: Some(json!({"events": events})),
     }
 }
 
@@ -131,7 +131,7 @@ pub fn reset(host: &mut Host, body: &[u8], worlds: Option<Worlds<'_>>) -> Answer
     match host.reset_to(world) {
         Ok(emptied) => Answer {
             status: 200,
-            body: json!({"emptied": emptied}),
+            body: Some(json!({"emptied": emptied})),
         },
         Err(error @ HostError::World(_)) => Answer::refusal(400, error.to_string()),
         Err(error) => Answer::refusal(500, error.to_string()),

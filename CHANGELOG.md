@@ -19,6 +19,12 @@ are Spindle's releases.
   number its decimal text spells (`amount=3.25`), so the view answers the rows ESS's interpreter
   answers; text that is not a decimal literal answers `400` naming the parameter. Before, every
   such read answered `400`.
+- A command outcome an `ess-http/1` binding answers with `body: response`, `body:
+  response.<field>` or `body: none` is served: at the bound status, the command's response bare
+  as `application/json`, the value of the one field bare, or no body and no `Content-Type`, as
+  `ess generate --kind openapi --http <file>` publishes it. Before, such an outcome answered `501`.
+  An outcome bound with headers, a redirect, the `text` encoding or an error object still answers
+  `501` when a request selects it, now naming which of those it is.
 
 ### Changed
 
