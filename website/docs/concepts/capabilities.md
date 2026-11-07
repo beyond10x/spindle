@@ -107,9 +107,11 @@ ESS publishes for that outcome:
 `error` only on a refusing outcome, `payload` only where the error carries fields. An outcome the
 binding answers with `body: response` answers the command's response alone, with
 `body: response.<field>` the value of that one field alone, both as `application/json`, and with
-`body: none` no body and no `Content-Type`. An outcome the binding answers with headers, a
-redirect, the `text` encoding or an error object answers `501` naming the outcome and which of
-those it is, and writes nothing. A view answers
+`body: none` no body and no `Content-Type`. A refusing outcome the binding answers with an error
+object, `body: {<member>: error}`, answers its bound status with an object whose `<member>` is
+the error's wire name, beside the error's fields under their wire names, and writes nothing. An
+outcome the binding answers with headers, a redirect or the `text` encoding answers `501` naming
+the outcome and which of those it is, and writes nothing. A view answers
 `200` with the body ESS publishes for it, `{"rows": [...]}`. Refusals the surface makes, as ESS's
 served application makes them, are `{"refused": "<why>"}`: `400` for a request it cannot read
 (an undeclared field, a broken path escape, a body that breaks off), `404` for an unknown path,

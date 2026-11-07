@@ -1,7 +1,7 @@
 //! One request's answer, from the host that runs the command or reads the view.
 
 use ess_compiler::EssIr;
-use ess_compiler::ir::ResolvedField;
+use ess_compiler::ir::{ResolvedCommand, ResolvedField};
 use ess_gen::http::{FORBIDDEN, NOT_GRANTED};
 use ess_http::{Body, Encoding, Operation};
 use serde_json::{Map, Value, json};
@@ -71,7 +71,10 @@ impl Answer {
 /// every depth. An outcome the binding answers with another body
 /// ([`Route::body`]) answers its status with that body alone, as ESS's served application writes
 /// it: `response` the command's response, `response.<field>` the value of that one field (`null`
-/// where the outcome answers no response), and `none` no body and no `Content-Type`.
+/// where the outcome answers no response), `{<member>: error}` on a refusing outcome an object
+/// whose `<member>` is the error's wire name beside the error's fields under their wire names, and
+/// `none` no body and no `Content-Type`. A refusal answered so writes nothing, as under the
+/// envelope.
 ///
 /// A view answers `200` with the body ESS publishes for it, `{"rows": [...]}`, every row it
 /// holds for its parameters: those `carried` holds from the path, and those `query` holds
@@ -345,7 +348,7 @@ fn envelope(
         );
     };
     let written = Written::of(ir, command);
-    if let Some(body) = bare(route, outcome, response, &written) {
+    if let Some(body) = bare(route, outcome, response, refusal, &written) {
         return Answer { status, body };
     }
     let mut body = Map::new();
@@ -378,13 +381,15 @@ fn envelope(
 }
 
 /// The body the binding answers `outcome` with in place of the envelope, where it does
-/// ([`Route::body`]): `Some(None)` for `none`; otherwise the response, or the value of the one
-/// field the body names (by its declared name), bare and written as ESS publishes it, `null` where
-/// `response` holds none. `None` for an outcome answered with the envelope.
+/// ([`Route::body`]): `Some(None)` for `none`; for `response`, or `response.<field>`, the response,
+/// or the value of the one field the body names (by its declared name), bare and written as ESS
+/// publishes it, `null` where `response` holds none; for `{<member>: error}` the error object
+/// ([`Written::error_object`]). `None` for an outcome answered with the envelope.
 fn bare(
     route: &Route,
     outcome: &str,
     response: Option<&Map<String, Value>>,
+    refusal: Option<&DeclaredError>,
     written: &Written<'_>,
 ) -> Option<Option<Value>> {
     match route.body(outcome)? {
@@ -397,7 +402,8 @@ fn bare(
                 .and_then(|response| response.get(field))
                 .map_or(Value::Null, |held| written.field(field, held)),
         )),
-        Body::Envelope | Body::Error { .. } => None,
+        Body::Error { member } => Some(Some(written.error_object(outcome, member, refusal))),
+        Body::Envelope => None,
     }
 }
 
@@ -407,6 +413,7 @@ fn bare(
 /// envelope's `response` and a bare body never disagree.
 struct Written<'ir> {
     ir: &'ir EssIr,
+    command: Option<&'ir ResolvedCommand>,
     fields: &'ir [ResolvedField],
 }
 
@@ -414,12 +421,55 @@ impl<'ir> Written<'ir> {
     /// The response fields of `command`, by qualified name; none for a name the IR does not
     /// declare, whose response is then written as it is.
     fn of(ir: &'ir EssIr, command: &str) -> Self {
-        let fields = ir
+        let command = ir
             .commands()
             .values()
-            .find(|declared| declared.name.to_string() == command)
-            .map_or(&[][..], |declared| declared.response.as_slice());
-        Self { ir, fields }
+            .find(|declared| declared.name.to_string() == command);
+        let fields = command.map_or(&[][..], |declared| declared.response.as_slice());
+        Self {
+            ir,
+            command,
+            fields,
+        }
+    }
+
+    /// The error object a binding's `{<member>: error}` answers `outcome` with, as ESS's served
+    /// application writes it (`ess-synth` `http::error_object`, `ess-gen`
+    /// `openapi::error_object`): `<member>` the wire name of the error the outcome reports
+    /// (`naming.wire`, else its local name), beside the fields `refusal` carries, each under its
+    /// wire name and written as ESS publishes it. No fields for the `wrong_state:` answer to an
+    /// identity no record carries, which ESS answers without a payload.
+    fn error_object(&self, outcome: &str, member: &str, refusal: Option<&DeclaredError>) -> Value {
+        let declared = self
+            .command
+            .and_then(|command| {
+                command
+                    .outcomes
+                    .iter()
+                    .find(|declared| declared.name.to_string() == outcome)
+            })
+            .and_then(|outcome| outcome.error.as_ref())
+            .map(|error| self.ir.error(error));
+        let wire = declared.map_or_else(
+            || {
+                refusal.map_or_else(String::new, |refusal| {
+                    refusal
+                        .name
+                        .rsplit('.')
+                        .next()
+                        .unwrap_or_default()
+                        .to_owned()
+                })
+            },
+            |error| error.naming.wire_or(&error.name).to_owned(),
+        );
+        let mut object = Map::new();
+        object.insert(member.to_owned(), Value::String(wire));
+        if let Some(refusal) = refusal.filter(|refusal| !refusal.unknown_instance) {
+            let fields = declared.map_or(&[][..], |error| error.fields.as_slice());
+            object.extend(crate::wire::fields(self.ir, fields, &refusal.fields));
+        }
+        Value::Object(object)
     }
 
     /// The whole response, keyed by wire name.

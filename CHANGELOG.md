@@ -6,6 +6,13 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- A refusing outcome an `ess-http/1` binding answers with an error object, `body: {<member>:
+  error}`, is served: at the bound status, an object whose `<member>` is the error's wire name,
+  beside the error's fields under their wire names, as `ess generate --kind openapi --http <file>`
+  publishes it, and nothing is written. Before, such an outcome answered `501`.
+
 ## [0.5.0] - 2026-11-07
 
 ### Added

@@ -289,9 +289,16 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "Outcome bodies",
-        "A command outcome an ess-http/1 binding answers with body: response, body: response.<field> or body: none answers its bound status with the command's response bare, the one field's value bare, or no body and no Content-Type, as ess generate --kind openapi publishes it; one bound with headers, a redirect, the text encoding or an error object answers 501 naming which.",
+        "A command outcome an ess-http/1 binding answers with body: response, body: response.<field> or body: none answers its bound status with the command's response bare, the one field's value bare, or no body and no Content-Type, as ess generate --kind openapi publishes it; one bound with headers, a redirect or the text encoding answers 501 naming which.",
         "/docs/concepts/capabilities",
         "crates/spindle-cli/tests/spindle-cli/outcome_bodies.rs::a_response_body_is_served_bare",
+    ),
+    shipped(
+        "Execution",
+        "Error object bodies",
+        "A refusing outcome an ess-http/1 binding answers with body: {<member>: error} answers its bound status with an object whose <member> is the error's wire name, beside the error's fields under their wire names, as ess generate --kind openapi publishes it, and writes nothing.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-cli/tests/spindle-cli/error_object_bodies.rs::a_bound_error_outcome_answers_its_status_and_error_object",
     ),
     shipped(
         "Execution",

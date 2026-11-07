@@ -1,0 +1,19 @@
+format: ess/34
+system: intake
+version: v1
+summary: Forms taken in over the network, a refused one answered with the error object its HTTP binding declares.
+domains:
+  - intake.form
+components:
+  - component: intake
+    summary: Takes in forms for callers outside the process.
+    owns:
+      domains:
+        - intake.form
+    accepts:
+      commands:
+        - intake.form.SubmitForm
+    publishes:
+      events:
+        - intake.form.FormReceived
+    reached_by: network

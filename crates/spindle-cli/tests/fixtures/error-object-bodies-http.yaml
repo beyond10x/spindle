@@ -1,0 +1,13 @@
+type: ess-http/1
+specification:
+  system: intake
+  version: v1
+  source_digest: sha256:9f2eda1b1d6bad420f8da89413ea73b88c5a09d7e52a2350a4eb3d372e1a3283
+routes:
+  - command: intake.form.SubmitForm
+    method: post
+    path: /forms
+    outcomes:
+      rejected:
+        status: 400
+        body: {problem: error}
