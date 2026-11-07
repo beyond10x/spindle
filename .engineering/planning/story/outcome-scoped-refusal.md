@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:outcome-scoped-refusal
 kind: story
-status: active
+status: implemented
 title: An unsupported outcome refuses only when it is chosen
 relations:
 - serves: vision:spindle
@@ -29,10 +29,11 @@ scope:
   path: crates/spindle-kernel/src/lib.rs
 - confidence: inferred
   path: crates/spindle-kernel/src/supported.rs
-revision: 15
+revision: 16
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-06T13:06:15Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-06T13:06:15Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-07T01:57:23Z", actor: "human:timo", revision: 16, decided_on: {"recorded":{"test_result":1,"review_outcome":1,"verification":1}}}
 ---
 # An unsupported outcome refuses only when it is chosen
 

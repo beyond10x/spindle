@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:view-list-query-parameters
 kind: story
-status: active
+status: implemented
 title: A view's list parameter is read from its repeated query key
 relations:
 - depends_on: story:one-test-binary-per-crate
@@ -16,10 +16,11 @@ scope:
   path: crates/spindle-host/src/view.rs
 - confidence: cited
   path: crates/spindle-ingress/src/surface.rs
-revision: 10
+revision: 11
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-06T15:43:16Z", actor: "human:timo", revision: 6, decided_on: {"recorded":{"review_outcome":1}}}
 - {from: "proposed", to: "active", at: "2026-11-06T15:43:16Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"review_outcome":1}}}
+- {from: "active", to: "implemented", at: "2026-11-07T01:57:24Z", actor: "human:timo", revision: 11, decided_on: {"recorded":{"test_result":1,"review_outcome":2,"verification":1}}}
 ---
 # A view's list parameter is read from its repeated query key
 

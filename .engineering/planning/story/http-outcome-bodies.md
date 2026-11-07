@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:http-outcome-bodies
 kind: story
-status: active
+status: implemented
 title: Success outcome bodies an HTTP binding declares
 relations:
 - depends_on: story:outcome-scoped-refusal
@@ -27,10 +27,11 @@ scope:
   path: crates/spindle-ingress/src/surface.rs
 - confidence: cited
   path: crates/spindle-ingress/src/wire.rs
-revision: 15
+revision: 16
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-06T15:02:53Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"review_outcome":5}}}
 - {from: "proposed", to: "active", at: "2026-11-06T15:02:53Z", actor: "human:timo", revision: 8, decided_on: {"recorded":{"review_outcome":5}}}
+- {from: "active", to: "implemented", at: "2026-11-07T01:57:24Z", actor: "human:timo", revision: 16, decided_on: {"recorded":{"test_result":1,"review_outcome":6,"verification":1}}}
 ---
 # Success outcome bodies an HTTP binding declares
 
