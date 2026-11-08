@@ -85,6 +85,7 @@ pub fn seed(store: &mut dyn Store, row: Row) {
             expected: None,
             row,
             events: Vec::new(),
+            scanned: Vec::new(),
         })
         .expect("the seed commits");
 }

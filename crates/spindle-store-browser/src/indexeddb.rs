@@ -7,7 +7,9 @@ use std::rc::{Rc, Weak};
 use js_sys::{Array, Promise, Reflect};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use spindle_kernel::{Change, Event, Removal, Row, Store, StoreError, Stored, Write};
+use spindle_kernel::{
+    Change, EVERY_INSTANCE, Event, Removal, Row, Scan, Store, StoreError, Stored, Write,
+};
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
@@ -120,6 +122,8 @@ struct Shared {
     rows: BTreeMap<Key, Stored>,
     /// The last version of each removed instance, as [`spindle_kernel::MemoryStore`] keeps it.
     removed: BTreeMap<Key, u64>,
+    /// Each entity's version: how many writes of its instances this global scope made or heard.
+    entities: BTreeMap<String, u64>,
     /// Settles when the last write's transaction completes or aborts.
     written: Option<Promise>,
     /// Why a write did not land, once one did not.
@@ -244,6 +248,7 @@ impl Shared {
             database: database.clone(),
             rows: BTreeMap::new(),
             removed: BTreeMap::new(),
+            entities: BTreeMap::new(),
             written: None,
             failed: Rc::new(RefCell::new(None)),
             channel: None,
@@ -284,6 +289,7 @@ impl Shared {
         if heard <= self.standing(&key) {
             return;
         }
+        *self.entities.entry(key.0.clone()).or_default() += 1;
         match record.row {
             Some(row) => {
                 self.removed.remove(&key);
@@ -501,7 +507,8 @@ impl Store for BrowserStore {
         self.commit_all(&[Write::Remove(removal.clone())])
     }
 
-    /// Checks and takes in each write in turn, then writes them all in one IndexedDB
+    /// Checks every write's scanned entities against the versions this global scope holds, then
+    /// checks and takes in each write in turn, then writes them all in one IndexedDB
     /// transaction; where one is refused, or the transaction cannot be queued, every instance is
     /// put back as this global scope held it.
     fn commit_all(&mut self, writes: &[Write]) -> Result<(), StoreError> {
@@ -509,6 +516,17 @@ impl Store for BrowserStore {
         shared.healthy()?;
         if writes.is_empty() {
             return Ok(());
+        }
+        for scanned in writes.iter().flat_map(Write::scanned) {
+            let actual = shared.entities.get(&scanned.entity).copied().unwrap_or(0);
+            if actual != scanned.version {
+                return Err(StoreError::Conflict {
+                    entity: scanned.entity.clone(),
+                    identity: EVERY_INSTANCE.to_owned(),
+                    expected: Some(scanned.version),
+                    actual: Some(actual),
+                });
+            }
         }
         let mut before: BTreeMap<Key, (Option<Stored>, Option<u64>)> = BTreeMap::new();
         let staged = (|| {
@@ -538,7 +556,15 @@ impl Store for BrowserStore {
             }
             shared.write(&pending)
         })();
-        if staged.is_err() {
+        if staged.is_ok() {
+            for write in writes {
+                let entity = match write {
+                    Write::Commit(change) => &change.entity,
+                    Write::Remove(removal) => &removal.entity,
+                };
+                *shared.entities.entry(entity.clone()).or_default() += 1;
+            }
+        } else {
             for (key, (row, removed)) in before {
                 match row {
                     Some(row) => shared.rows.insert(key.clone(), row),
@@ -553,10 +579,10 @@ impl Store for BrowserStore {
         staged
     }
 
-    fn scan(&mut self, entity: &str) -> Result<Vec<(Value, Stored)>, StoreError> {
+    fn scan(&mut self, entity: &str) -> Result<Scan, StoreError> {
         let shared = self.shared.borrow();
         shared.healthy()?;
-        shared
+        let rows = shared
             .rows
             .iter()
             .filter(|((held, _), _)| held == entity)
@@ -566,7 +592,11 @@ impl Store for BrowserStore {
                     stored.clone(),
                 ))
             })
-            .collect()
+            .collect::<Result<_, StoreError>>()?;
+        Ok(Scan {
+            rows,
+            version: shared.entities.get(entity).copied().unwrap_or(0),
+        })
     }
 }
 

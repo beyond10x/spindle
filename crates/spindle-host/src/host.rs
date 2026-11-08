@@ -387,7 +387,7 @@ impl Store for Supplied {
         self.0.commit_all(writes)
     }
 
-    fn scan(&mut self, entity: &str) -> Result<Vec<(Value, spindle_kernel::Stored)>, StoreError> {
+    fn scan(&mut self, entity: &str) -> Result<spindle_kernel::Scan, StoreError> {
         self.0.scan(entity)
     }
 }
@@ -808,6 +808,7 @@ impl Host {
             expected: None,
             row,
             events: Vec::new(),
+            scanned: Vec::new(),
         })?;
         Ok(())
     }
@@ -926,6 +927,7 @@ impl Host {
                 expected: None,
                 row: seed.row,
                 events: Vec::new(),
+                scanned: Vec::new(),
             })?;
         }
         self.answers = world.answers;
@@ -1591,7 +1593,7 @@ impl Store for Lost {
         Err(StoreError::Backend(self.0.clone()))
     }
 
-    fn scan(&mut self, _: &str) -> Result<Vec<(Value, spindle_kernel::Stored)>, StoreError> {
+    fn scan(&mut self, _: &str) -> Result<spindle_kernel::Scan, StoreError> {
         Err(StoreError::Backend(self.0.clone()))
     }
 }

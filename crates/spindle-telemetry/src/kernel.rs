@@ -79,7 +79,7 @@ impl<S: Store> Store for CountingStore<S> {
         self.inner.load(entity, identity)
     }
 
-    fn scan(&mut self, entity: &str) -> Result<Vec<(Value, Stored)>, StoreError> {
+    fn scan(&mut self, entity: &str) -> Result<spindle_kernel::Scan, StoreError> {
         self.inner.scan(entity)
     }
 

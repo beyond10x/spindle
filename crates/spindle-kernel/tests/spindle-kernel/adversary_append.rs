@@ -254,6 +254,7 @@ fn a_held_null_reads_as_empty_for_an_optional_and_a_required_list() {
                 fields: fields_held,
             },
             events: Vec::new(),
+            scanned: Vec::new(),
         })
         .expect("the held nulls commit");
     ok(

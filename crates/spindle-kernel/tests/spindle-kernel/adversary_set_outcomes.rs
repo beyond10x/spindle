@@ -240,6 +240,7 @@ impl Store for Interfering {
                 expected: Some(held.version),
                 row,
                 events: Vec::new(),
+                scanned: Vec::new(),
             })?;
         }
         self.inner.commit(change)
@@ -249,7 +250,7 @@ impl Store for Interfering {
         self.inner.remove(removal)
     }
 
-    fn scan(&mut self, entity: &str) -> Result<Vec<(Value, Stored)>, StoreError> {
+    fn scan(&mut self, entity: &str) -> Result<spindle_kernel::Scan, StoreError> {
         self.inner.scan(entity)
     }
 }

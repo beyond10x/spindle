@@ -23,6 +23,7 @@ fn create(store: &mut dyn Store, identity: &Value, title: &str) {
             expected: None,
             row: row(title),
             events: Vec::new(),
+            scanned: Vec::new(),
         })
         .expect("the creation commits");
 }
@@ -79,6 +80,7 @@ fn a_removed_instance_takes_no_second_removal_and_no_update_on_either_store() {
                 expected: Some(expected),
                 row: row("Tides, revived"),
                 events: Vec::new(),
+                scanned: Vec::new(),
             });
             assert!(
                 matches!(update, Err(StoreError::Conflict { .. })),

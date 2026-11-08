@@ -67,8 +67,8 @@ impl Store for Nowhere {
         Ok(())
     }
 
-    fn scan(&mut self, _: &str) -> Result<Vec<(serde_json::Value, Stored)>, StoreError> {
-        Ok(Vec::new())
+    fn scan(&mut self, _: &str) -> Result<spindle_kernel::Scan, StoreError> {
+        Ok(spindle_kernel::Scan::default())
     }
 }
 
@@ -100,6 +100,7 @@ fn recording_never_blocks_a_command() {
             name: "rally.table.BallMoved".to_owned(),
             payload,
         }],
+        scanned: Vec::new(),
     };
     let executed = Ok(Executed {
         outcome: "opened".to_owned(),
