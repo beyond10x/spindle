@@ -1,6 +1,6 @@
 # Wave 15
 
-**Gating.**
+**Delivered.** PR https://github.com/beyond10x/spindle/pull/32 (head 2bda8cd8) merged as 82c4fb1a; released as 0.7.0 (`verification-report:release-0.7.0`). The five stories (U1 to U5) moved to `implemented` on CI run 42465501089 (Gate and macOS, attempt 5).
 
 Run by the coordinator under `approval-record:wave15-approval` (the operator's standing acceptance
 of future waves). Skill `aep:implementing` 0.26.0, wave mode. All stories serve `vision:spindle`.
@@ -22,11 +22,11 @@ host's build queue.
 
 | unit | story | branch | tree (managed id) | agent | stage |
 |---|---|---|---|---|---|
-| U1 | `story:ingress-prometheus-metrics` | `unit/w15-prom` | `spindle-w15-prom` | `aep:implementor` | merged |
-| U2 | `story:kernel-set-outcomes` | `unit/w15-setout` | `spindle-w15-setout` | `aep:implementor` | merged |
-| U3 | `story:kernel-row-set-commit-conflict` | `unit/w15-rowset` | `spindle-w15-rowset` | `aep:implementor` | merged |
-| U4 | `story:links-second-hello-race` | `unit/w15-hello` | `spindle-w15-hello` | `aep:implementor` | merged |
-| U5 | `story:route-literal-segment-precedence` | `unit/w15-route` | `spindle-w15-route` | `aep:implementor` | merged |
+| U1 | `story:ingress-prometheus-metrics` | `unit/w15-prom` | `spindle-w15-prom` | `aep:implementor` | delivered |
+| U2 | `story:kernel-set-outcomes` | `unit/w15-setout` | `spindle-w15-setout` | `aep:implementor` | delivered |
+| U3 | `story:kernel-row-set-commit-conflict` | `unit/w15-rowset` | `spindle-w15-rowset` | `aep:implementor` | delivered |
+| U4 | `story:links-second-hello-race` | `unit/w15-hello` | `spindle-w15-hello` | `aep:implementor` | delivered |
+| U5 | `story:route-literal-segment-precedence` | `unit/w15-route` | `spindle-w15-route` | `aep:implementor` | delivered |
 
 Trees live under the worktree manager's `trees/b10x/spindle/`; each builds into its own `target/`.
 Each unit gets one `aep:adversary` pass when its implementor reports green.
