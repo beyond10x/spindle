@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:kernel-row-set-commit-conflict
 kind: story
-status: active
+status: implemented
 title: A row-set guard holds against a second writer
 relations:
 - serves: vision:spindle
@@ -47,10 +47,11 @@ scope:
   path: crates/spindle-store-browser/tests/spindle-store-browser/adversary.rs
 - confidence: cited
   path: crates/spindle-store-browser/tests/spindle-store-browser/contract.rs
-revision: 23
+revision: 24
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-07T18:59:08Z", actor: "human:timo", revision: 22}
 - {from: "proposed", to: "active", at: "2026-11-07T18:59:08Z", actor: "human:timo", revision: 23}
+- {from: "active", to: "implemented", at: "2026-11-08T14:30:57Z", actor: "human:timo", revision: 24, decided_on: {"recorded":{"test_result":1,"verification":1}}}
 ---
 # A row-set guard holds against a second writer
 

@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:kernel-set-outcomes
 kind: story
-status: active
+status: implemented
 title: Set outcomes
 relations:
 - serves: vision:spindle
@@ -18,10 +18,11 @@ scope:
   path: crates/spindle-kernel/src/values.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/set_outcomes.rs
-revision: 8
+revision: 9
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-05T12:00:30Z", actor: "human:timo", revision: 7}
 - {from: "proposed", to: "active", at: "2026-11-05T12:00:30Z", actor: "human:timo", revision: 8}
+- {from: "active", to: "implemented", at: "2026-11-08T14:30:57Z", actor: "human:timo", revision: 9, decided_on: {"recorded":{"test_result":1,"review_outcome":1,"verification":1}}}
 ---
 # Set outcomes
 

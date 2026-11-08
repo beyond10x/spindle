@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-08T14:30:56Z",
+  "actor": "human:timo",
+  "artifact": "story:links-second-hello-race",
+  "kind": "story",
+  "revision": 5,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "wave 15 U4",
+    "reference": "unit merge 30e3e36c into wave/15; no adversary pass (a small defect: one test)"
+  }
+}

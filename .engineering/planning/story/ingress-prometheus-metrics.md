@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:ingress-prometheus-metrics
 kind: story
-status: active
+status: implemented
 title: An observed run exposes its metrics as Prometheus text
 relations:
 - serves: vision:spindle
@@ -23,10 +23,11 @@ scope:
   path: crates/spindle-ingress/src/observe/metrics.rs
 - confidence: cited
   path: crates/spindle-telemetry/src/counters.rs
-revision: 11
+revision: 12
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-06T14:45:46Z", actor: "human:timo", revision: 10, decided_on: {"recorded":{"review_outcome":1}}}
 - {from: "proposed", to: "active", at: "2026-11-06T14:45:47Z", actor: "human:timo", revision: 11, decided_on: {"recorded":{"review_outcome":1}}}
+- {from: "active", to: "implemented", at: "2026-11-08T14:30:57Z", actor: "human:timo", revision: 12, decided_on: {"recorded":{"test_result":1,"review_outcome":2,"verification":1}}}
 ---
 # An observed run exposes its metrics as Prometheus text
 

@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-08T14:30:56Z",
+  "actor": "human:timo",
+  "artifact": "story:kernel-row-set-commit-conflict",
+  "kind": "story",
+  "revision": 23,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "wave 15 U3",
+    "reference": "unit merge a4982e0d into wave/15; adversary pass review-result:w15-u3-adversary-1 approves, eleven cases, nothing found"
+  }
+}

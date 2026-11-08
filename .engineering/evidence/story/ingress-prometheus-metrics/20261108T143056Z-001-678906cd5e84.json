@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-08T14:30:56Z",
+  "actor": "human:timo",
+  "artifact": "story:ingress-prometheus-metrics",
+  "kind": "story",
+  "revision": 11,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "wave 15 U1",
+    "reference": "unit merge 9dffdd94 into wave/15; adversary pass review-result:w15-u1-adversary-1 fixed in e09e4668"
+  }
+}
