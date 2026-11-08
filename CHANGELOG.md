@@ -6,6 +6,20 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- `run --observe` records what answered each external cause asked while a request is answered:
+  the request's `externals` lists every one, in the order asked, whether the routed command or a
+  command an event binding invoked on the way asked it, each with its `command`, `outcome`,
+  `holds` (absent when nothing answered) and `source`: `world` (the decision table of the last
+  reset), `file` (`--decisions`), `default` (the default branch `--answer-default` takes) or
+  `unanswered` (the command answered `501`). `GET /__spindle/metrics` counts them as
+  `spindle_external_causes_total{command,outcome,source}`, so every cause counted during a
+  request is listed in it; a cause asked outside any request, by a command a timer fired, is
+  counted and listed in no record. `spindle.observe.ExternalAnswer` gains a required `command`.
+  Without `--observe` the decider is not wrapped. Before, `externals` was always empty and the
+  family had no sample.
+
 ### Fixed
 
 - `Surface::new` refuses two components that claim one route template of one method on one

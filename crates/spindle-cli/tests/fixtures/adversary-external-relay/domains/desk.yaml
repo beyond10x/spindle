@@ -1,0 +1,42 @@
+domain: chain.desk
+summary: Links, each forwarded once.
+entities:
+  - name: chain.desk.Link
+    identity:
+      name: link_id
+      type: String
+    fields: []
+    lifecycle:
+      initial: Forwarded
+      states: [Forwarded]
+      terminal: [Forwarded]
+errors:
+  - name: chain.desk.Held
+    summary: A clerk held the link.
+    fields: []
+commands:
+  - name: chain.desk.Forward
+    input:
+      - name: link_id
+        type: String
+      - name: next
+        type: String
+    outcomes:
+      - name: held
+        external: a clerk holds the link
+        error: chain.desk.Held
+        summary: A clerk may hold any link.
+      - name: forwarded
+        creates: chain.desk.Link
+        instance: link_id
+        emits: [chain.desk.Forwarded]
+        payload:
+          chain.desk.Forwarded: {link_id: input.next, next: input.next}
+        summary: The link is forwarded, and the next one with it.
+events:
+  - name: chain.desk.Forwarded
+    fields:
+      - name: link_id
+        type: String
+      - name: next
+        type: String

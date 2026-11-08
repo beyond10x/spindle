@@ -192,6 +192,7 @@ export const requestLogShape: Shape<RequestLog> = {
           of: {
             type: 'object',
             fields: {
+              command: text,
               outcome: text,
               holds: { type: 'boolean', optional: true },
               source: oneOf(AnswerSource),

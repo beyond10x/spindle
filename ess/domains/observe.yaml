@@ -282,8 +282,16 @@ types:
   - name: spindle.observe.ExternalAnswer
     kind: struct
     naming:
-      summary: One external cause a served command asked about, and what answered it.
+      summary: >-
+        One external cause a command asked about while a served request was answered, and what
+        answered it.
     fields:
+      - name: command
+        type: String
+        summary: >-
+          The qualified command that asked: the routed command, or one an event binding invoked
+          while the request was answered; the `command` label of
+          `spindle_external_causes_total`.
       - name: outcome
         type: String
         summary: The outcome whose cause was asked about, as the command declares it.
@@ -343,7 +351,9 @@ types:
         summary: The qualified names of the events the command published, in order.
       - name: externals
         type: List<spindle.observe.ExternalAnswer>
-        summary: The external causes the command asked about, in the order asked.
+        summary: >-
+          Every external cause asked while the request was answered, in the order asked: by the
+          routed command and by every command an event binding invoked on the way.
     invariants:
       - sequence >= 0
       - status >= 100

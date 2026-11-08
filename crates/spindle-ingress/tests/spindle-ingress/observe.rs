@@ -14,7 +14,7 @@ use std::time::Duration;
 use serde_json::Value;
 use spindle_capability::Environment;
 use spindle_host::{Host, ManualClock};
-use spindle_ingress::{Listener, Surface};
+use spindle_ingress::{AnswerSource, ExternalAnswer, Listener, Surface};
 
 const COMPONENT: &str = "desk";
 
@@ -49,6 +49,13 @@ fn in_memory() -> Environment {
 
 /// One `Connection: close` request: the status and the body as JSON.
 fn send(address: SocketAddr, method: &str, target: &str) -> (u16, Value) {
+    let (status, body) = send_text(address, method, target);
+    let body = serde_json::from_str(&body).unwrap_or_else(|error| panic!("{error}: {body}"));
+    (status, body)
+}
+
+/// One `Connection: close` request: the status and the body as text.
+fn send_text(address: SocketAddr, method: &str, target: &str) -> (u16, String) {
     let mut stream = TcpStream::connect(address).expect("the listener accepts");
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
@@ -70,8 +77,7 @@ fn send(address: SocketAddr, method: &str, target: &str) -> (u16, Value) {
         .nth(1)
         .and_then(|status| status.parse().ok())
         .unwrap_or_else(|| panic!("a response without a status: {head}"));
-    let body = serde_json::from_str(body).unwrap_or_else(|error| panic!("{error}: {body}"));
-    (status, body)
+    (status, body.to_owned())
 }
 
 #[test]
@@ -180,4 +186,67 @@ fn a_responded_exchange_is_classed_by_its_answer() {
         "{log}"
     );
     assert_eq!(log["totals"]["refused"], 1, "{log}");
+}
+
+/// A cause asked while no request is served, as a timer-fired command asks it, is counted in the
+/// metrics and listed in no record: the next request served lists only what it asked itself.
+#[test]
+fn a_cause_asked_outside_a_request_is_counted_and_listed_in_no_later_request() {
+    let ir = spindle_spec::load(&fixtures().join("desk"))
+        .expect("the desk fixture compiles")
+        .ir;
+    let surface = Surface::new(&ir, &[COMPONENT.to_owned()], None)
+        .expect("the desk surface is served")
+        .observing(16);
+    let view = surface
+        .routes()
+        .iter()
+        .find(|route| route.operation.name() == "study.desk.AllDesks")
+        .expect("the surface serves the view")
+        .path
+        .clone();
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let mut host = Host::new(ir, &in_memory(), Arc::new(ManualClock::new()), state.path())
+        .unwrap_or_else(|error| panic!("the host admits the desk: {error}"));
+    let recorder = surface.recorder().expect("the surface observes").clone();
+    for _ in 0..3 {
+        recorder.answered(ExternalAnswer {
+            command: "study.desk.Tick".to_owned(),
+            outcome: "skipped".to_owned(),
+            holds: Some(false),
+            source: AnswerSource::File,
+        });
+    }
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+
+    let asked = thread::spawn(move || send(address, "GET", &view));
+    listener
+        .next(ARRIVAL)
+        .expect("the request arrives as an exchange")
+        .serve(&mut host);
+    let (status, body) = asked.join().expect("the request thread ends");
+    assert_eq!(status, 200, "{body}");
+
+    let (status, log) = send(address, "GET", "/__spindle/requests");
+    assert_eq!(status, 200, "{log}");
+    assert_eq!(log["recorded"], 1, "{log}");
+    assert_eq!(
+        log["requests"][0]["externals"],
+        serde_json::json!([]),
+        "{log}"
+    );
+
+    let asked = thread::spawn(move || send_text(address, "GET", "/__spindle/metrics"));
+    listener
+        .next(ARRIVAL)
+        .expect("the scrape arrives as an exchange")
+        .serve(&mut host);
+    let (status, metrics) = asked.join().expect("the scrape thread ends");
+    assert_eq!(status, 200, "{metrics}");
+    let sample = concat!(
+        "spindle_external_causes_total",
+        "{command=\"study.desk.Tick\",outcome=\"skipped\",source=\"file\"} 3"
+    );
+    assert!(metrics.lines().any(|line| line == sample), "{metrics}");
 }

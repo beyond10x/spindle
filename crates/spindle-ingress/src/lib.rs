@@ -48,9 +48,12 @@
 //! panel's page ([`Surface::with_panel`], [`PANEL_MEDIA`] with [`PANEL_POLICY`]), `503` where it
 //! was given none; `GET /__spindle/metrics` answers the run's metrics as the Prometheus text
 //! format ([`METRICS_MEDIA`]): the requests counted, the host's counters per component, the rows
-//! each entity holds and the resets, read on the host's thread as an `Exchange`
-//! (`Exchange::metrics`). A reset clears no count and no record. Without a recorder every path
-//! under the prefix answers `404`.
+//! each entity holds, the resets and the external causes answered, read on the host's thread as
+//! an `Exchange` (`Exchange::metrics`). The run's decider notes each external cause it answers on
+//! the recorder ([`Recorder::answered`], an [`ExternalAnswer`] with its [`AnswerSource`]); the
+//! record of a request lists every one asked while it was answered, with the command that
+//! asked. A reset clears no count and no record. Without a recorder every path under the prefix
+//! answers `404`.
 
 mod answer;
 pub mod console;
@@ -69,8 +72,8 @@ pub use console::Console;
 pub use listener::{BODY_READ, Exchange, HEADER_READ, Listener};
 pub use observe::metrics::METRICS_MEDIA;
 pub use observe::{
-    By, Class, PANEL_MEDIA, PANEL_POLICY, REQUESTS_DEFAULT, REQUESTS_MOST, RESERVED_SEGMENT,
-    Recorder, Reserved,
+    AnswerSource, By, Class, ExternalAnswer, PANEL_MEDIA, PANEL_POLICY, REQUESTS_DEFAULT,
+    REQUESTS_MOST, RESERVED_SEGMENT, Recorder, Reserved,
 };
 pub use router::{BODY_LIMIT, CONTENT_TYPE, Request, Response, Routed, route, route_with};
 pub use surface::{Caller, Queried, Resolved, Route, Surface, SurfaceError, Unserved, Variable};

@@ -1,0 +1,86 @@
+{
+  "format": "spindle-requests/1",
+  "capacity": 256,
+  "recorded": 4,
+  "totals": {
+    "served": 3,
+    "refused": 0,
+    "not_granted": 0,
+    "not_served": 1,
+    "failed": 0,
+    "unrouted": 0
+  },
+  "requests": [
+    {
+      "sequence": 3,
+      "at": "2026-11-07T09:00:00.409Z",
+      "method": "POST",
+      "path": "/settlements/s4/review",
+      "route": "/settlements/{settlement_id}/review",
+      "operation": "tasks.ledger.Review",
+      "kind": "command",
+      "status": 501,
+      "class": "not-served",
+      "reason": "neither the request nor a decisions file answers `external.vetoed`, and `tasks.ledger.Review` declares no default branch for --answer-default to take",
+      "duration_us": 233,
+      "events": [],
+      "externals": [
+        { "command": "tasks.ledger.Review", "outcome": "vetoed", "source": "unanswered" }
+      ]
+    },
+    {
+      "sequence": 2,
+      "at": "2026-11-07T09:00:00.308Z",
+      "method": "PUT",
+      "path": "/settlements/s3",
+      "route": "/settlements/{settlement_id}",
+      "operation": "tasks.ledger.Settle",
+      "kind": "command",
+      "status": 201,
+      "class": "served",
+      "outcome": "settled",
+      "duration_us": 1102,
+      "events": ["tasks.ledger.Settled"],
+      "externals": [
+        { "command": "tasks.ledger.Settle", "outcome": "disputed", "holds": false, "source": "world" },
+        { "command": "tasks.ledger.Settle", "outcome": "delayed", "holds": false, "source": "default" },
+        { "command": "tasks.audit.Record", "outcome": "rejected", "holds": false, "source": "file" }
+      ]
+    },
+    {
+      "sequence": 1,
+      "at": "2026-11-07T09:00:00.207Z",
+      "method": "PUT",
+      "path": "/settlements/s2",
+      "route": "/settlements/{settlement_id}",
+      "operation": "tasks.ledger.Settle",
+      "kind": "command",
+      "status": 409,
+      "class": "served",
+      "outcome": "disputed",
+      "duration_us": 640,
+      "events": [],
+      "externals": [
+        { "command": "tasks.ledger.Settle", "outcome": "disputed", "holds": true, "source": "file" }
+      ]
+    },
+    {
+      "sequence": 0,
+      "at": "2026-11-07T09:00:00.106Z",
+      "method": "PUT",
+      "path": "/settlements/s1",
+      "route": "/settlements/{settlement_id}",
+      "operation": "tasks.ledger.Settle",
+      "kind": "command",
+      "status": 201,
+      "class": "served",
+      "outcome": "settled",
+      "duration_us": 1219,
+      "events": ["tasks.ledger.Settled"],
+      "externals": [
+        { "command": "tasks.ledger.Settle", "outcome": "disputed", "holds": false, "source": "file" },
+        { "command": "tasks.ledger.Settle", "outcome": "delayed", "holds": false, "source": "default" }
+      ]
+    }
+  ]
+}
