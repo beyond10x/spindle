@@ -49,8 +49,10 @@ prints the URL of the observe UI, `http://127.0.0.1:7341/?t=<token>`.
 Where `run` serves HTTP, `--observe` records every request it answers and lists the last 256
 (`--observe-requests <N>`, 1 to 10000) at `GET /__spindle/requests`, newest first, with totals
 per class since start; `?class=not-served` keeps only the requests answered `501`. Each record
-lists the external causes its command asked about and what answered each: `world` (the last
-reset's decision table), `file` (`--decisions`), `default` (`--answer-default`) or `unanswered`.
+lists every external cause asked while it was answered, by its command or by one an event
+binding invoked, with the command that asked and what answered: `world` (the last reset's
+decision table), `file` (`--decisions`), `default` (`--answer-default`) or `unanswered`; a cause
+asked outside any request, by a timer-fired command, is counted and listed in no record.
 `GET /__spindle/metrics` answers the run's metrics in the Prometheus text format
 (`text/plain; version=0.0.4`), the families of `ess/fixtures/observe/metrics/families.json`:
 requests by method, route template, operation, kind, class and status class, their durations,

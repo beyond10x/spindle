@@ -51,8 +51,9 @@
 //! each entity holds, the resets and the external causes answered, read on the host's thread as
 //! an `Exchange` (`Exchange::metrics`). The run's decider notes each external cause it answers on
 //! the recorder ([`Recorder::answered`], an [`ExternalAnswer`] with its [`AnswerSource`]); the
-//! record of the request lists those its command asked. A reset clears no count and no record.
-//! Without a recorder every path under the prefix answers `404`.
+//! record of a request lists every one asked while it was answered, with the command that
+//! asked. A reset clears no count and no record. Without a recorder every path under the prefix
+//! answers `404`.
 
 mod answer;
 pub mod console;

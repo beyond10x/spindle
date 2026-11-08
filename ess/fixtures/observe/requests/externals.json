@@ -25,7 +25,7 @@
       "duration_us": 233,
       "events": [],
       "externals": [
-        { "outcome": "vetoed", "source": "unanswered" }
+        { "command": "tasks.ledger.Review", "outcome": "vetoed", "source": "unanswered" }
       ]
     },
     {
@@ -42,8 +42,9 @@
       "duration_us": 1102,
       "events": ["tasks.ledger.Settled"],
       "externals": [
-        { "outcome": "disputed", "holds": false, "source": "world" },
-        { "outcome": "delayed", "holds": false, "source": "default" }
+        { "command": "tasks.ledger.Settle", "outcome": "disputed", "holds": false, "source": "world" },
+        { "command": "tasks.ledger.Settle", "outcome": "delayed", "holds": false, "source": "default" },
+        { "command": "tasks.audit.Record", "outcome": "rejected", "holds": false, "source": "file" }
       ]
     },
     {
@@ -60,7 +61,7 @@
       "duration_us": 640,
       "events": [],
       "externals": [
-        { "outcome": "disputed", "holds": true, "source": "file" }
+        { "command": "tasks.ledger.Settle", "outcome": "disputed", "holds": true, "source": "file" }
       ]
     },
     {
@@ -77,8 +78,8 @@
       "duration_us": 1219,
       "events": ["tasks.ledger.Settled"],
       "externals": [
-        { "outcome": "disputed", "holds": false, "source": "file" },
-        { "outcome": "delayed", "holds": false, "source": "default" }
+        { "command": "tasks.ledger.Settle", "outcome": "disputed", "holds": false, "source": "file" },
+        { "command": "tasks.ledger.Settle", "outcome": "delayed", "holds": false, "source": "default" }
       ]
     }
   ]

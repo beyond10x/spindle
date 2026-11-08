@@ -338,8 +338,12 @@
     },
     "spindle.observe.ExternalAnswer": {
       "additionalProperties": false,
-      "description": "One external cause a served command asked about, and what answered it.",
+      "description": "One external cause a command asked about while a served request was answered, and what answered it.",
       "properties": {
+        "command": {
+          "description": "The qualified command that asked: the routed command, or one an event binding invoked while the request was answered; the `command` label of `spindle_external_causes_total`.",
+          "type": "string"
+        },
         "holds": {
           "description": "Whether the cause holds; absent when nothing answered it.",
           "type": "boolean"
@@ -353,6 +357,7 @@
         }
       },
       "required": [
+        "command",
         "outcome",
         "source"
       ],
@@ -628,7 +633,7 @@
           "type": "array"
         },
         "externals": {
-          "description": "The external causes the command asked about, in the order asked.",
+          "description": "Every external cause asked while the request was answered, in the order asked: by the routed command and by every command an event binding invoked on the way.",
           "items": {
             "$ref": "#/$defs/spindle.observe.ExternalAnswer"
           },
@@ -1117,8 +1122,8 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-ess-provenance": {
-    "contract_digest": "slice-sha256/2:6a43943815e69a200ae42249d1f59e0086ccf950224015906b72af329af39255",
-    "source_digest": "48b3a3604fbbca5a7267a7405e7872990a9b074fdda5fc2f44f0f3db55ea0d7d",
+    "contract_digest": "slice-sha256/2:5465d6a6d76234797cf5510c0adcb61a3ad655c61a80b7beb58be263fbefc1df",
+    "source_digest": "8047fdad3aa0148d72a124c3eba71853fb69e0b1e4497d545c71f5ff6188def0",
     "specification_version": "v1",
     "system": "spindle"
   }

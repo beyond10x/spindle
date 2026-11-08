@@ -5,7 +5,7 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:176513235ac28bda0b9e3caae787328289b4c4ed0939036a7840a1a19a1b40e4",
+    "contract_digest": "slice-sha256/2:46f720995736b9de7993d6d8cf13d15a5b5dfaa1a4adb9f4fc84e5149d694759",
     "regenerate": "ess generate"
   },
   "$defs": {
@@ -24,11 +24,15 @@
     },
     "spindle.observe.ExternalAnswer": {
       "title": "ExternalAnswer",
-      "description": "One external cause a served command asked about, and what answered it.",
+      "description": "One external cause a command asked about while a served request was answered, and what answered it.",
       "x-ess-name": "spindle.observe.ExternalAnswer",
       "x-ess-kind": "struct",
       "type": "object",
       "properties": {
+        "command": {
+          "description": "The qualified command that asked: the routed command, or one an event binding invoked while the request was answered; the `command` label of `spindle_external_causes_total`.",
+          "type": "string"
+        },
         "outcome": {
           "description": "The outcome whose cause was asked about, as the command declares it.",
           "type": "string"
@@ -42,6 +46,7 @@
         }
       },
       "required": [
+        "command",
         "outcome",
         "source"
       ],
@@ -140,7 +145,7 @@
           }
         },
         "externals": {
-          "description": "The external causes the command asked about, in the order asked.",
+          "description": "Every external cause asked while the request was answered, in the order asked: by the routed command and by every command an event binding invoked on the way.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/spindle.observe.ExternalAnswer"

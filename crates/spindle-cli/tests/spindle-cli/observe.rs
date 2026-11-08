@@ -1237,7 +1237,7 @@ fn an_external_cause_answered_by_the_decisions_file_is_recorded_as_file() {
     assert_eq!(record["operation"], SUBMIT, "{record}");
     assert_eq!(
         record["externals"],
-        json!([{"outcome": "flagged", "holds": true, "source": "file"}]),
+        json!([{"command": SUBMIT, "outcome": "flagged", "holds": true, "source": "file"}]),
         "{record}"
     );
 }
@@ -1261,8 +1261,8 @@ fn an_external_cause_answered_by_the_reset_world_is_recorded_as_world() {
     assert_eq!(
         record["externals"],
         json!([
-            {"outcome": "flagged", "holds": false, "source": "world"},
-            {"outcome": "escalated", "holds": false, "source": "default"},
+            {"command": SUBMIT, "outcome": "flagged", "holds": false, "source": "world"},
+            {"command": SUBMIT, "outcome": "escalated", "holds": false, "source": "default"},
         ]),
         "the world's table answers first, the run's answers what it does not: {record}"
     );
@@ -1282,8 +1282,8 @@ fn an_external_cause_answered_by_answer_default_is_recorded_as_default() {
     assert_eq!(
         record["externals"],
         json!([
-            {"outcome": "flagged", "holds": false, "source": "default"},
-            {"outcome": "escalated", "holds": false, "source": "default"},
+            {"command": SUBMIT, "outcome": "flagged", "holds": false, "source": "default"},
+            {"command": SUBMIT, "outcome": "escalated", "holds": false, "source": "default"},
         ]),
         "{record}"
     );
@@ -1304,7 +1304,7 @@ fn an_unanswered_cause_is_recorded_as_unanswered() {
     assert_eq!(record["reason"], answer["refused"], "{record}");
     assert_eq!(
         record["externals"],
-        json!([{"outcome": "vetoed", "source": "unanswered"}]),
+        json!([{"command": DECIDE, "outcome": "vetoed", "source": "unanswered"}]),
         "{record}"
     );
     let answered = log(&served, "");
@@ -1367,10 +1367,7 @@ fn external_causes_are_counted_per_command_outcome_and_source() {
             let key = series(
                 "spindle_external_causes_total",
                 &[
-                    (
-                        "command",
-                        record["operation"].as_str().expect("an operation"),
-                    ),
+                    ("command", external["command"].as_str().expect("a command")),
                     ("outcome", external["outcome"].as_str().expect("an outcome")),
                     ("source", external["source"].as_str().expect("a source")),
                 ],

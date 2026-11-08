@@ -8,13 +8,17 @@ are Spindle's releases.
 
 ### Added
 
-- `run --observe` records what answered each external cause a served command asked about: the
-  request's `externals` lists them in the order asked, each with its `outcome`, `holds` (absent
-  when nothing answered) and `source`: `world` (the decision table of the last reset), `file`
-  (`--decisions`), `default` (the default branch `--answer-default` takes) or `unanswered` (the
-  command answered `501`). `GET /__spindle/metrics` counts them as
-  `spindle_external_causes_total{command,outcome,source}`. Without `--observe` the decider is
-  not wrapped. Before, `externals` was always empty and the family had no sample.
+- `run --observe` records what answered each external cause asked while a request is answered:
+  the request's `externals` lists every one, in the order asked, whether the routed command or a
+  command an event binding invoked on the way asked it, each with its `command`, `outcome`,
+  `holds` (absent when nothing answered) and `source`: `world` (the decision table of the last
+  reset), `file` (`--decisions`), `default` (the default branch `--answer-default` takes) or
+  `unanswered` (the command answered `501`). `GET /__spindle/metrics` counts them as
+  `spindle_external_causes_total{command,outcome,source}`, so every cause counted during a
+  request is listed in it; a cause asked outside any request, by a command a timer fired, is
+  counted and listed in no record. `spindle.observe.ExternalAnswer` gains a required `command`.
+  Without `--observe` the decider is not wrapped. Before, `externals` was always empty and the
+  family had no sample.
 - The kernel runs a set outcome (`instances:`): it selects every row of the named entity whose
   filter holds, read from the store as it was before the outcome, and moves, updates or removes
   each in ascending order of identity, as ESS's interpreter does. A move skips a row resting

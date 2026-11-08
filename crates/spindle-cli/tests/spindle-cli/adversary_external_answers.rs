@@ -208,7 +208,7 @@ fn listed(log: &Value) -> BTreeMap<String, f64> {
         for external in record["externals"].as_array().expect("externals") {
             let key = format!(
                 "{FAMILY}{{command=\"{}\",outcome=\"{}\",source=\"{}\"}}",
-                record["operation"].as_str().expect("an operation"),
+                external["command"].as_str().expect("a command"),
                 external["outcome"].as_str().expect("an outcome"),
                 external["source"].as_str().expect("a source"),
             );
@@ -268,13 +268,23 @@ fn a_reinvoked_command_does_not_add_to_the_externals_of_the_request() {
         &json!({"link_id": "a", "next": "b"}),
     );
     assert!((200..300).contains(&status), "{status} {answer}");
-    let record = log(&served)["requests"][0].clone();
+    // story:external-answers-observed, decided in its fix pass: a request's `externals` lists every
+    // cause asked between its start and its end, each with the command that asked, so the bound
+    // `chain.desk.Forward` for link `b` adds its own entry after the routed one's single ask, and
+    // the record holds exactly what the metric counted, no more.
+    let logged = log(&served);
+    assert_eq!(logged["recorded"], 1, "{logged}");
+    let record = logged["requests"][0].clone();
     assert_eq!(record["operation"], "chain.desk.Forward", "{record}");
     assert_eq!(
         record["externals"],
-        json!([{"outcome": "held", "holds": false, "source": "file"}]),
-        "chain.desk.Forward asked `held` once in this run: {record}"
+        json!([
+            {"command": "chain.desk.Forward", "outcome": "held", "holds": false, "source": "file"},
+            {"command": "chain.desk.Forward", "outcome": "held", "holds": false, "source": "file"},
+        ]),
+        "the routed chain.desk.Forward asked `held` once, the bound one for `b` once: {record}"
     );
+    assert_eq!(listed(&logged), counted(&served), "{logged}");
 }
 
 // Probe: a command refused by a cause that holds lists what it asked.
@@ -295,7 +305,7 @@ fn a_command_refused_by_its_cause_lists_it() {
     let record = log(&served)["requests"][0].clone();
     assert_eq!(
         record["externals"],
-        json!([{"outcome": "vetoed", "holds": true, "source": "file"}]),
+        json!([{"command": DECIDE, "outcome": "vetoed", "holds": true, "source": "file"}]),
         "{record}"
     );
 }
@@ -325,8 +335,8 @@ fn a_reset_without_a_table_returns_causes_to_the_run() {
     assert_eq!(
         record["externals"],
         json!([
-            {"outcome": "flagged", "holds": false, "source": "default"},
-            {"outcome": "escalated", "holds": false, "source": "default"},
+            {"command": SUBMIT, "outcome": "flagged", "holds": false, "source": "default"},
+            {"command": SUBMIT, "outcome": "escalated", "holds": false, "source": "default"},
         ]),
         "{record}"
     );
@@ -369,11 +379,11 @@ fn concurrent_requests_keep_their_own_externals() {
     for record in logged["requests"].as_array().expect("requests") {
         let expected = if record["operation"] == SUBMIT {
             json!([
-                {"outcome": "flagged", "holds": false, "source": "file"},
-                {"outcome": "escalated", "holds": false, "source": "default"},
+                {"command": SUBMIT, "outcome": "flagged", "holds": false, "source": "file"},
+                {"command": SUBMIT, "outcome": "escalated", "holds": false, "source": "default"},
             ])
         } else {
-            json!([{"outcome": "vetoed", "source": "unanswered"}])
+            json!([{"command": DECIDE, "outcome": "vetoed", "source": "unanswered"}])
         };
         assert_eq!(record["externals"], expected, "{record}");
     }

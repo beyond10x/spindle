@@ -214,11 +214,11 @@ impl fmt::Display for AnswerSource {
     }
 }
 
-/// One external cause a served command asked about, and what answered it
-/// (`spindle.observe.ExternalAnswer`, with the command it was asked of).
+/// One external cause a command asked about, and what answered it
+/// (`spindle.observe.ExternalAnswer`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalAnswer {
-    /// The command that asked, by qualified name.
+    /// The command that asked, by qualified name: the `command` label it is counted by.
     pub command: String,
     /// The outcome whose cause was asked about.
     pub outcome: String,
@@ -231,6 +231,7 @@ pub struct ExternalAnswer {
 impl ExternalAnswer {
     fn json(&self) -> Value {
         let mut answer = Map::new();
+        answer.insert("command".to_owned(), json!(self.command));
         answer.insert("outcome".to_owned(), json!(self.outcome));
         if let Some(holds) = self.holds {
             answer.insert("holds".to_owned(), json!(holds));
@@ -241,7 +242,7 @@ impl ExternalAnswer {
 }
 
 /// What the model answered a request with, beside its status and body: who answered, the outcome
-/// it selected, the events it published and the external causes its command asked about.
+/// it selected, the events it published and every external cause asked while it was answered.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Answered {
     pub(crate) by: By,
@@ -390,8 +391,10 @@ struct Ring {
     resets: u64,
     /// Every external cause answered, by command, outcome and source.
     externals: BTreeMap<[String; 3], u64>,
-    /// The external causes answered since the host's thread last took them
-    /// ([`Recorder::take_answers`]), in the order asked.
+    /// Whether the host's thread is answering a request ([`Recorder::serving`]).
+    serving: bool,
+    /// The external causes asked since the request being answered began, in the order asked;
+    /// empty while none is.
     answers: Vec<ExternalAnswer>,
 }
 
@@ -441,6 +444,7 @@ impl Recorder {
             duration_sum_us: 0,
             resets: 0,
             externals: BTreeMap::new(),
+            serving: false,
             answers: Vec::new(),
         })))
     }
@@ -543,8 +547,10 @@ impl Recorder {
     }
 
     /// Notes one external cause a command asked about on the host's thread, and what answered
-    /// it: counted at once by command, outcome and source, and listed in the record of the
-    /// request the host is answering, where its command is the one that asked.
+    /// it: counted at once by command, outcome and source, and, while the host answers a request
+    /// ([`Recorder::serving`]), listed in that request's record, whichever command asked it: the
+    /// routed one or one an event binding invoked on the way. One asked while no request is
+    /// answered, by a command a timer fired, is counted and kept nowhere.
     pub fn answered(&self, answer: ExternalAnswer) {
         self.ring(|ring| {
             let series = [
@@ -553,13 +559,28 @@ impl Recorder {
                 answer.source.name().to_owned(),
             ];
             *ring.externals.entry(series).or_default() += 1;
-            ring.answers.push(answer);
+            if ring.serving {
+                ring.answers.push(answer);
+            }
         });
     }
 
-    /// The external causes answered since the last call, in the order asked.
-    pub(crate) fn take_answers(&self) -> Vec<ExternalAnswer> {
-        self.ring(|ring| std::mem::take(&mut ring.answers))
+    /// The host's thread begins answering a request: every external cause noted from now until
+    /// [`Recorder::served`] is that request's.
+    pub(crate) fn serving(&self) {
+        self.ring(|ring| {
+            ring.serving = true;
+            ring.answers.clear();
+        });
+    }
+
+    /// The host's thread has answered the request [`Recorder::serving`] began: the external
+    /// causes asked since, in the order asked. Until the next request begins, none is kept.
+    pub(crate) fn served(&self) -> Vec<ExternalAnswer> {
+        self.ring(|ring| {
+            ring.serving = false;
+            std::mem::take(&mut ring.answers)
+        })
     }
 
     /// What it counted since the run started.
@@ -829,5 +850,38 @@ mod tests {
     fn a_recorder_holds_its_capacity_within_bounds() {
         assert_eq!(Recorder::new(0).capacity(), 1);
         assert_eq!(Recorder::new(20_000).capacity(), super::REQUESTS_MOST);
+    }
+
+    /// A timer-fired command asks its causes while no request is served: each is counted, and
+    /// none is kept, however many the timer fires before the next request.
+    #[test]
+    fn causes_asked_outside_a_request_are_counted_and_not_kept() {
+        let recorder = Recorder::new(4);
+        let asked = || super::ExternalAnswer {
+            command: "tick.clock.Fire".to_owned(),
+            outcome: "skipped".to_owned(),
+            holds: Some(false),
+            source: super::AnswerSource::File,
+        };
+        for _ in 0..1000 {
+            recorder.answered(asked());
+        }
+        assert_eq!(recorder.ring(|ring| ring.answers.len()), 0);
+        assert_eq!(
+            recorder.traffic().externals,
+            vec![(
+                [
+                    "tick.clock.Fire".to_owned(),
+                    "skipped".to_owned(),
+                    "file".to_owned()
+                ],
+                1000
+            )]
+        );
+        recorder.serving();
+        recorder.answered(asked());
+        assert_eq!(recorder.served(), vec![asked()]);
+        recorder.answered(asked());
+        assert_eq!(recorder.ring(|ring| ring.answers.len()), 0);
     }
 }
