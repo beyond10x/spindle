@@ -14,6 +14,7 @@ mod adversary_outcome_bodies;
 mod adversary_outcome_scoped_refusal;
 mod adversary_processes;
 mod adversary_processes2;
+mod adversary_prometheus;
 mod adversary_replay;
 mod adversary_responses;
 mod adversary_served_decisions;

@@ -1,12 +1,12 @@
 {
   "format": "ess-types-report/3",
-  "source_digest": "70563d91ca383baeb86c944716b5ed0a7a852e1705431a1bae003de587369072",
+  "source_digest": "48b3a3604fbbca5a7267a7405e7872990a9b074fdda5fc2f44f0f3db55ea0d7d",
   "input": {
     "kind": "model",
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:85c2e43ed76a06ad4f871930597f079233f2d701e8c12d2fa9f4a6383a06bae3",
-    "projection_digest": "421d257c7065183016d0a22c54a9c491c9975acb8e7908cb21d275e4e614a357"
+    "contract_digest": "slice-sha256/2:6a43943815e69a200ae42249d1f59e0086ccf950224015906b72af329af39255",
+    "projection_digest": "cad4efa439bbdb07dfbb3e7c68c690bcf8c3f2c6d68a0ac5469e46e7531a632b"
   },
   "generator_version": "0.90.0",
   "target": "rust",
@@ -1182,6 +1182,16 @@
     },
     {
       "pointer": "/$defs/spindle.observe.Histogram/properties/counts/items",
+      "rule": "rust_exact_numbers",
+      "detail": "this value holds JSON numbers in serde_json; the generated crate's default-on `exact-numbers` feature enables serde_json/arbitrary_precision, and a consumer that turns default features off gets these numbers as binary64"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Histogram/properties/sum_us",
+      "rule": "integer",
+      "detail": "serde_json::Number holds exact JSON numbers with the default `exact-numbers` feature and binary64 without it, and does not enforce integrality; validate the source constraint"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Histogram/properties/sum_us",
       "rule": "rust_exact_numbers",
       "detail": "this value holds JSON numbers in serde_json; the generated crate's default-on `exact-numbers` feature enables serde_json/arbitrary_precision, and a consumer that turns default features off gets these numbers as binary64"
     },

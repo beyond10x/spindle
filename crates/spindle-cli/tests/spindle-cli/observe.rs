@@ -1,5 +1,8 @@
 //! `run --observe` serving HTTP: the request log at `GET /__spindle/requests`
-//! (`story:ingress-request-log`), and the reserved prefix `/__spindle/`, with and without the flag.
+//! (`story:ingress-request-log`), the metrics at `GET /__spindle/metrics`
+//! (`story:ingress-prometheus-metrics`), read with a Prometheus text parser and held to
+//! `ess/fixtures/observe/metrics/families.json`, and the reserved prefix `/__spindle/`, with and
+//! without the flag.
 //!
 //! The scripted sequence runs on the fixture `tests/fixtures/ingress` with its `ess-http/1`
 //! binding, and its log is compared with `ess/fixtures/observe/requests/scripted.json`, the
@@ -8,6 +11,7 @@
 //! under the prefix would match, and a command a binding routes under the prefix. (`GET /{a}/{b}`
 //! would match the console's `GET /api/model` too, which `http-loopback` refuses at start.)
 
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
@@ -340,8 +344,15 @@ fn a_variable_only_route_never_answers_under_the_reserved_prefix() {
     let observed = serve(RESERVED, &["--http", RESERVED_VARIABLES_HTTP, "--observe"]);
     let (status, body) = exchange(observed.address, "GET", "/x/metrics/y", None);
     assert_eq!(status, 200, "{body}");
-    let (status, body) = exchange(observed.address, "GET", "/__spindle/metrics", None);
-    assert_eq!(status, 404, "{body}");
+    // Under `--observe` the prefix answers the metrics (`story:ingress-prometheus-metrics`),
+    // never the view.
+    let (status, media, body) = text(observed.address, "GET", "/__spindle/metrics");
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(media.as_deref(), Some(METRICS_MEDIA), "{body}");
+    assert!(
+        body.starts_with("# HELP ") && serde_json::from_str::<Value>(&body).is_err(),
+        "{body}"
+    );
     let answered = log(&observed, "");
     assert_eq!(answered["format"], "spindle-requests/1", "{answered}");
     assert_eq!(answered["recorded"], 1, "{answered}");
@@ -606,4 +617,573 @@ fn a_double_slash_never_carries_the_reserved_segment_into_a_route() {
     let (status, body) = exchange(plain.address, "GET", "//__spindle/x", None);
     assert_eq!(status, 404, "//__spindle/x reaches no view: {body}");
     assert!(body.get("rows").is_none(), "{body}");
+}
+
+// The metrics a served run exposes at `GET /__spindle/metrics` (`story:ingress-prometheus-metrics`).
+
+/// The metric families the observe model specifies, in order.
+const FAMILIES: &str = "ess/fixtures/observe/metrics/families.json";
+/// The fixture whose binding retries (`on_failure: retry`).
+const RETRIED: &str = "crates/spindle-cli/tests/fixtures/retried";
+/// The rally example: event bindings between three components and a periodic binding.
+const RALLY: &str = "examples/rally/ess";
+/// The media type of the Prometheus text exposition.
+const METRICS_MEDIA: &str = "text/plain; version=0.0.4";
+
+/// `method path` on its own connection, sent without a body: the status, the `Content-Type` and
+/// the body as text.
+fn text(address: SocketAddr, method: &str, path: &str) -> (u16, Option<String>, String) {
+    let mut stream = TcpStream::connect_timeout(&address, ANSWER).expect("the listener accepts");
+    stream
+        .set_read_timeout(Some(ANSWER))
+        .expect("a read timeout");
+    write!(
+        stream,
+        "{method} {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+    )
+    .expect("the request is written");
+    let mut answer = Vec::new();
+    stream
+        .read_to_end(&mut answer)
+        .expect("the answer is read before the timeout");
+    let answer = String::from_utf8(answer).expect("the answer is UTF-8");
+    let (head, body) = answer
+        .split_once("\r\n\r\n")
+        .unwrap_or_else(|| panic!("an answer with a head: {answer:?}"));
+    let mut lines = head.split("\r\n");
+    let status = lines
+        .next()
+        .and_then(|line| line.split(' ').nth(1))
+        .and_then(|status| status.parse().ok())
+        .unwrap_or_else(|| panic!("a status line: {head:?}"));
+    let media = lines
+        .filter_map(|line| line.split_once(':'))
+        .find(|(name, _)| name.trim().eq_ignore_ascii_case("content-type"))
+        .map(|(_, value)| value.trim().to_owned());
+    (status, media, body.to_owned())
+}
+
+/// `GET /__spindle/metrics`, answered `200` as the Prometheus text exposition.
+fn scrape(served: &Served) -> String {
+    let (status, media, body) = text(served.address, "GET", "/__spindle/metrics");
+    assert_eq!(status, 200, "the metrics are answered: {body}");
+    assert_eq!(media.as_deref(), Some(METRICS_MEDIA), "{body}");
+    body
+}
+
+/// The specified families: name, kind and label names, in order.
+fn families() -> Vec<(String, String, Vec<String>)> {
+    let families: Value = serde_json::from_str(
+        &std::fs::read_to_string(root().join(FAMILIES)).expect("the families are read"),
+    )
+    .expect("the families are JSON");
+    families["families"]
+        .as_array()
+        .expect("families")
+        .iter()
+        .map(|family| {
+            let labels = family["labels"]
+                .as_array()
+                .expect("labels")
+                .iter()
+                .map(|label| label.as_str().expect("a label name").to_owned())
+                .collect();
+            (
+                family["name"].as_str().expect("a name").to_owned(),
+                family["kind"].as_str().expect("a kind").to_owned(),
+                labels,
+            )
+        })
+        .collect()
+}
+
+/// `name{label="value",...}` with the labels in the order given; `name` without any.
+fn series(name: &str, labels: &[(&str, &str)]) -> String {
+    if labels.is_empty() {
+        return name.to_owned();
+    }
+    let labels = labels
+        .iter()
+        .map(|(label, value)| format!("{label}=\"{value}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{name}{{{labels}}}")
+}
+
+/// Every sample of `exposition` as a Prometheus text parser reads it, by its series: a counter or
+/// gauge by its name, a histogram as its `_bucket` (with `le`), `_count` and `_sum` series, each
+/// with its labels in the order its specified family lists them (the parser hands them back
+/// sorted by name).
+fn samples(exposition: &str) -> BTreeMap<String, f64> {
+    use openmetrics_parser::PrometheusValue;
+    let parsed = openmetrics_parser::prometheus::parse_prometheus(exposition)
+        .unwrap_or_else(|error| panic!("{error:?}: {exposition}"));
+    let declared = families();
+    let mut samples = BTreeMap::new();
+    for (name, family) in &parsed.families {
+        let order = declared
+            .iter()
+            .find(|(declared, ..)| declared == name)
+            .map(|(_, _, labels)| labels.clone())
+            .unwrap_or_else(|| panic!("{name} is not a specified family"));
+        for sample in family.iter_samples() {
+            let labelset = sample.get_labelset().expect("a sample of a family");
+            let mut labels = labelset
+                .iter()
+                .map(|(label, value)| (label.as_str(), value.as_str()))
+                .collect::<Vec<_>>();
+            labels.sort_by_key(|(label, _)| order.iter().position(|named| named == label));
+            match &sample.value {
+                PrometheusValue::Counter(counter) => {
+                    samples.insert(series(name, &labels), counter.value.as_f64());
+                }
+                PrometheusValue::Gauge(value) | PrometheusValue::Unknown(value) => {
+                    samples.insert(series(name, &labels), value.as_f64());
+                }
+                PrometheusValue::Histogram(histogram) => {
+                    for bucket in &histogram.buckets {
+                        let bound = if bucket.upper_bound.is_infinite() {
+                            "+Inf".to_owned()
+                        } else {
+                            bucket.upper_bound.to_string()
+                        };
+                        let mut labels = labels.clone();
+                        labels.push(("le", &bound));
+                        samples.insert(
+                            series(&format!("{name}_bucket"), &labels),
+                            bucket.count.as_f64(),
+                        );
+                    }
+                    if let Some(count) = histogram.count {
+                        samples.insert(series(&format!("{name}_count"), &labels), count as f64);
+                    }
+                    if let Some(sum) = &histogram.sum {
+                        samples.insert(series(&format!("{name}_sum"), &labels), sum.as_f64());
+                    }
+                }
+                PrometheusValue::Summary(_) => panic!("{name} is a summary: {exposition}"),
+            }
+        }
+    }
+    samples
+}
+
+/// The value of `key` among `samples`.
+fn sample(samples: &BTreeMap<String, f64>, key: &str) -> f64 {
+    *samples
+        .get(key)
+        .unwrap_or_else(|| panic!("no sample {key} among {samples:#?}"))
+}
+
+/// The `spindle_http_requests_total` series of one request.
+fn requests(
+    method: &str,
+    route: &str,
+    operation: &str,
+    kind: &str,
+    class: &str,
+    status_class: &str,
+) -> String {
+    series(
+        "spindle_http_requests_total",
+        &[
+            ("method", method),
+            ("route", route),
+            ("operation", operation),
+            ("kind", kind),
+            ("class", class),
+            ("status_class", status_class),
+        ],
+    )
+}
+
+/// `POST /api/reset` with no body, answered `200`.
+fn reset(served: &Served) {
+    let (status, _, body) = text(served.address, "POST", "/api/reset");
+    assert_eq!(status, 200, "the reset is answered: {body}");
+}
+
+#[test]
+fn the_metrics_parse_as_prometheus_text() {
+    let served = serve(INGRESS, &["--http", INGRESS_HTTP, "--observe"]);
+    scripted(&served);
+    let exposition = scrape(&served);
+    assert!(
+        exposition.ends_with('\n'),
+        "every line ends: {exposition:?}"
+    );
+    openmetrics_parser::prometheus::parse_prometheus(&exposition)
+        .unwrap_or_else(|error| panic!("{error:?}: {exposition}"));
+    let declared = families();
+    let sampled = |name: &str| {
+        declared.iter().any(|(family, kind, _)| {
+            name == family
+                || (kind == "histogram"
+                    && ["_bucket", "_count", "_sum"]
+                        .iter()
+                        .any(|suffix| name.strip_suffix(suffix) == Some(family.as_str())))
+        })
+    };
+    for line in exposition.lines() {
+        let described = ["# HELP ", "# TYPE "].iter().find_map(|prefix| {
+            line.strip_prefix(prefix)
+                .and_then(|rest| rest.split(' ').next())
+        });
+        if let Some(name) = described {
+            assert!(
+                declared.iter().any(|(family, ..)| family == name),
+                "{line:?} describes a declared family"
+            );
+            continue;
+        }
+        let name = line
+            .split(['{', ' '])
+            .next()
+            .expect("a line has a first token");
+        assert!(
+            sampled(name),
+            "{line:?} is a sample of a declared family:\n{exposition}"
+        );
+    }
+    let (status, _, body) = text(served.address, "POST", "/__spindle/metrics");
+    assert_eq!(status, 405, "{body}");
+}
+
+#[test]
+fn the_metrics_count_a_scripted_request_sequence() {
+    let served = serve(INGRESS, &["--http", INGRESS_HTTP, "--observe"]);
+    scripted(&served);
+    let samples = samples(&scrape(&served));
+    let close = "/tasks/{task_id}/close";
+    let close_command = "tasks.board.CloseTask";
+    for status_class in ["2xx", "4xx"] {
+        let key = requests(
+            "POST",
+            close,
+            close_command,
+            "command",
+            "served",
+            status_class,
+        );
+        assert_eq!(sample(&samples, &key), 1.0, "{key}");
+    }
+    let unrouted = samples
+        .iter()
+        .filter(|(key, _)| {
+            key.starts_with("spindle_http_requests_total{") && key.contains("class=\"unrouted\"")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        unrouted.iter().map(|(_, value)| **value).sum::<f64>(),
+        2.0,
+        "{unrouted:?}"
+    );
+    for (key, _) in &unrouted {
+        assert!(
+            key.contains("route=\"\",operation=\"\",kind=\"\""),
+            "an unrouted request has an empty route, operation and kind: {key}"
+        );
+    }
+    let all = requests(
+        "GET",
+        "/tasks",
+        "tasks.board.AllTasks",
+        "view",
+        "served",
+        "2xx",
+    );
+    assert_eq!(sample(&samples, &all), 1.0, "{all}");
+    let closed = series(
+        "spindle_commands_total",
+        &[("command", close_command), ("outcome", "closed")],
+    );
+    assert_eq!(sample(&samples, &closed), 1.0, "{closed}");
+    assert_eq!(
+        sample(&samples, "spindle_http_request_duration_seconds_count"),
+        7.0
+    );
+    assert_eq!(
+        sample(
+            &samples,
+            "spindle_http_request_duration_seconds_bucket{le=\"+Inf\"}"
+        ),
+        7.0
+    );
+    let total = samples
+        .iter()
+        .filter(|(key, _)| key.starts_with("spindle_http_requests_total{"))
+        .map(|(_, value)| *value)
+        .sum::<f64>();
+    assert_eq!(total, 7.0, "{samples:#?}");
+}
+
+#[test]
+fn the_exposed_families_are_the_specified_families() {
+    let served = serve(INGRESS, &["--http", INGRESS_HTTP, "--observe"]);
+    scripted(&served);
+    let exposition = scrape(&served);
+    let typed = exposition
+        .lines()
+        .filter_map(|line| line.strip_prefix("# TYPE "))
+        .map(|rest| {
+            let (name, kind) = rest.split_once(' ').expect("a TYPE line names a kind");
+            (name.to_owned(), kind.to_owned())
+        })
+        .collect::<Vec<_>>();
+    let declared = families();
+    let specified = declared
+        .iter()
+        .map(|(name, kind, _)| (name.clone(), kind.clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(typed, specified);
+    // Every sample line carries its family's labels in the specified order (`le` last).
+    let mut sampled = std::collections::BTreeSet::new();
+    for line in exposition.lines().filter(|line| !line.starts_with('#')) {
+        let name = line
+            .split(['{', ' '])
+            .next()
+            .expect("a sample names its series");
+        let (family, _, labels) = declared
+            .iter()
+            .find(|(family, kind, _)| {
+                name == family
+                    || (kind == "histogram"
+                        && ["_bucket", "_count", "_sum"]
+                            .iter()
+                            .any(|suffix| name.strip_suffix(suffix) == Some(family.as_str())))
+            })
+            .unwrap_or_else(|| panic!("{line:?} is a sample of a specified family"));
+        let named = line
+            .split_once('{')
+            .and_then(|(_, rest)| rest.rsplit_once('}'))
+            .map(|(pairs, _)| {
+                pairs
+                    .split("\",")
+                    .map(|pair| pair.split_once('=').expect("a label pair").0.to_owned())
+                    .filter(|label| label != "le")
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        assert_eq!(&named, labels, "{line}");
+        sampled.insert(family.clone());
+    }
+    assert!(
+        sampled.contains("spindle_http_requests_total"),
+        "the label order is checked on the request family: {sampled:?}"
+    );
+}
+
+#[test]
+fn every_catalogue_counter_is_exposed() {
+    use spindle_telemetry::Key;
+    let mut kinds = std::collections::HashSet::new();
+    for spec in [INGRESS, RETRIED, RALLY] {
+        let served = serve(spec, &["--observe"]);
+        let samples = samples(&scrape(&served));
+        let ir = spindle_spec::load(&root().join(spec))
+            .expect("the specification compiles")
+            .ir;
+        let mut expected = std::collections::BTreeSet::new();
+        for component in ir.components().values() {
+            let component = component.name.as_str();
+            let catalogue = spindle_telemetry::catalogue(&ir, component).expect("a catalogue");
+            for counter in &catalogue.counters {
+                let key = match &counter.key {
+                    Key::Outcome { command, outcome } => series(
+                        "spindle_commands_total",
+                        &[("command", command), ("outcome", outcome)],
+                    ),
+                    Key::Failed { command, failure } => series(
+                        "spindle_command_failures_total",
+                        &[("command", command), ("failure", failure.as_str())],
+                    ),
+                    Key::Duration { command } => series(
+                        "spindle_command_duration_seconds_bucket",
+                        &[("command", command), ("le", "+Inf")],
+                    ),
+                    Key::Appended { event } => {
+                        series("spindle_events_appended_total", &[("event", event)])
+                    }
+                    Key::Carried { binding, carried } => series(
+                        "spindle_bindings_total",
+                        &[
+                            ("component", component),
+                            ("binding", binding),
+                            ("carried", carried.as_str()),
+                        ],
+                    ),
+                    Key::Retried { binding, retried } => series(
+                        "spindle_binding_retries_total",
+                        &[("binding", binding), ("retried", retried.as_str())],
+                    ),
+                    Key::Timed { binding, timed } => series(
+                        "spindle_timer_ticks_total",
+                        &[("binding", binding), ("timed", timed.as_str())],
+                    ),
+                    Key::RowsWritten => series(
+                        "spindle_store_rows_written_total",
+                        &[("component", component)],
+                    ),
+                    Key::BytesWritten => series(
+                        "spindle_store_bytes_written_total",
+                        &[("component", component)],
+                    ),
+                };
+                kinds.insert(std::mem::discriminant(&counter.key));
+                assert!(
+                    samples.contains_key(&key),
+                    "{spec}: {} of {component} is exposed as {key}: {samples:#?}",
+                    counter.name
+                );
+                expected.insert(key);
+            }
+        }
+        let counted = [
+            "spindle_commands_total{",
+            "spindle_command_failures_total{",
+            "spindle_command_duration_seconds_bucket{",
+            "spindle_events_appended_total{",
+            "spindle_bindings_total{",
+            "spindle_binding_retries_total{",
+            "spindle_timer_ticks_total{",
+            "spindle_store_rows_written_total{",
+            "spindle_store_bytes_written_total{",
+        ];
+        let exposed = samples
+            .keys()
+            .filter(|key| counted.iter().any(|prefix| key.starts_with(prefix)))
+            .filter(|key| {
+                !key.starts_with("spindle_command_duration_seconds_bucket{")
+                    || key.ends_with(",le=\"+Inf\"}")
+            })
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            exposed, expected,
+            "{spec}: every counter sample is one catalogue counter"
+        );
+    }
+    assert_eq!(kinds.len(), 9, "the fixtures hold every kind of counter");
+}
+
+#[test]
+fn entity_rows_follow_writes_and_resets() {
+    let served = serve(INGRESS, &["--http", INGRESS_HTTP, "--observe"]);
+    let rows = series("spindle_entity_rows", &[("entity", "tasks.board.Task")]);
+    let before = samples(&scrape(&served));
+    assert_eq!(sample(&before, &rows), 0.0);
+    assert_eq!(sample(&before, "spindle_resets_total"), 0.0);
+    for (task, title) in [("t1", "Water the plants"), ("t2", "Sweep")] {
+        let (status, body) = exchange(
+            served.address,
+            "PUT",
+            &format!("/tasks/{task}"),
+            Some(&json!({"title": title})),
+        );
+        assert_eq!(status, 201, "{body}");
+    }
+    let opened = samples(&scrape(&served));
+    assert_eq!(sample(&opened, &rows), 2.0);
+    reset(&served);
+    let emptied = samples(&scrape(&served));
+    assert_eq!(sample(&emptied, &rows), 0.0);
+    assert_eq!(sample(&emptied, "spindle_resets_total"), 1.0);
+}
+
+#[test]
+fn a_reset_leaves_counters_and_the_log_intact() {
+    let served = serve(INGRESS, &["--http", INGRESS_HTTP, "--observe"]);
+    scripted(&served);
+    let before = samples(&scrape(&served));
+    let logged = log(&served, "");
+    reset(&served);
+    let after = samples(&scrape(&served));
+
+    // The reset is itself a request the run answered: it adds its own series and one duration.
+    let own = requests(
+        "POST",
+        "/api/reset",
+        "POST /api/reset",
+        "console",
+        "served",
+        "2xx",
+    );
+    assert!(!before.contains_key(&own), "{before:#?}");
+    assert_eq!(sample(&after, &own), 1.0, "{own}");
+    let duration = "spindle_http_request_duration_seconds";
+    for (key, value) in &before {
+        if key.starts_with("spindle_entity_rows") || key == "spindle_resets_total" {
+            continue;
+        }
+        if key.starts_with(duration) {
+            let now = sample(&after, key);
+            if key.starts_with(&format!("{duration}_bucket")) || key.ends_with("_sum") {
+                assert!(now >= *value, "{key}: {value} then {now}");
+            } else {
+                assert_eq!(now, value + 1.0, "{key}");
+            }
+            continue;
+        }
+        assert_eq!(sample(&after, key), *value, "{key} is kept by the reset");
+    }
+    let added = after
+        .keys()
+        .filter(|key| !before.contains_key(*key))
+        .collect::<Vec<_>>();
+    assert_eq!(added, [&own], "the reset adds only its own series");
+    assert!(sample(&before, "spindle_entity_rows{entity=\"tasks.board.Task\"}") > 0.0);
+    assert_eq!(
+        sample(&after, "spindle_entity_rows{entity=\"tasks.board.Task\"}"),
+        0.0
+    );
+    assert_eq!(
+        sample(&after, "spindle_resets_total"),
+        sample(&before, "spindle_resets_total") + 1.0
+    );
+
+    let kept = log(&served, "");
+    assert_eq!(kept["recorded"], 8, "{kept}");
+    let mut totals = logged["totals"].clone();
+    totals["served"] = json!(logged["totals"]["served"].as_u64().expect("a total") + 1);
+    assert_eq!(kept["totals"], totals, "{kept}");
+    let records = kept["requests"].as_array().expect("requests");
+    assert_eq!(records[0]["path"], "/api/reset", "{kept}");
+    assert_eq!(
+        records[1..],
+        logged["requests"].as_array().expect("requests")[..],
+        "the earlier records are kept"
+    );
+
+    let (status, body) = exchange(
+        served.address,
+        "PUT",
+        "/tasks/t3",
+        Some(&json!({"title": "Dust"})),
+    );
+    assert_eq!(status, 201, "{body}");
+    let later = samples(&scrape(&served));
+    let opened = series(
+        "spindle_commands_total",
+        &[("command", "tasks.board.OpenTask"), ("outcome", "opened")],
+    );
+    assert_eq!(sample(&later, &opened), sample(&before, &opened) + 1.0);
+    let open = requests(
+        "PUT",
+        "/tasks/{task_id}",
+        "tasks.board.OpenTask",
+        "command",
+        "served",
+        "2xx",
+    );
+    assert_eq!(sample(&later, &open), sample(&before, &open) + 1.0);
+}
+
+#[test]
+fn reading_the_metrics_changes_no_count() {
+    let served = serve(INGRESS, &["--http", INGRESS_HTTP, "--observe"]);
+    scripted(&served);
+    let first = scrape(&served);
+    let second = scrape(&served);
+    assert_eq!(first, second);
+    assert_eq!(log(&served, "")["recorded"], 7, "a scrape is not recorded");
 }

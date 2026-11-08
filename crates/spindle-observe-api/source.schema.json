@@ -363,7 +363,7 @@
     },
     "spindle.observe.Histogram": {
       "additionalProperties": false,
-      "description": "The cumulative buckets of one histogram of the catalogue. `bounds` are the inclusive upper bounds of the buckets in ascending order; `counts` has one entry per bound and one more for the values above the last bound.",
+      "description": "The cumulative buckets of one histogram of the catalogue. `bounds` are the inclusive upper bounds of the buckets in ascending order; `counts` has one entry per bound and one more for the values above the last bound; `sum_us` is the sum of the observed values in microseconds.",
       "properties": {
         "bounds": {
           "items": {
@@ -379,12 +379,16 @@
         },
         "name": {
           "type": "string"
+        },
+        "sum_us": {
+          "type": "integer"
         }
       },
       "required": [
         "name",
         "bounds",
-        "counts"
+        "counts",
+        "sum_us"
       ],
       "title": "Histogram",
       "type": "object",
@@ -1113,8 +1117,8 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-ess-provenance": {
-    "contract_digest": "slice-sha256/2:85c2e43ed76a06ad4f871930597f079233f2d701e8c12d2fa9f4a6383a06bae3",
-    "source_digest": "70563d91ca383baeb86c944716b5ed0a7a852e1705431a1bae003de587369072",
+    "contract_digest": "slice-sha256/2:6a43943815e69a200ae42249d1f59e0086ccf950224015906b72af329af39255",
+    "source_digest": "48b3a3604fbbca5a7267a7405e7872990a9b074fdda5fc2f44f0f3db55ea0d7d",
     "specification_version": "v1",
     "system": "spindle"
   }

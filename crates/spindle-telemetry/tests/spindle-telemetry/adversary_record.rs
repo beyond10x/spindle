@@ -15,6 +15,32 @@ fn rally() -> PathBuf {
 }
 
 #[test]
+fn a_duration_histograms_sum_is_the_total_of_the_observed_durations() {
+    let loaded = spindle_spec::load(&rally()).expect("rally compiles");
+    let counters = Arc::new(Counters::new(
+        catalogue(&loaded.ir, "rally-table").expect("rally-table exists"),
+    ));
+    for micros in [20, 700, 3_000_000] {
+        counters.record(Record::Command {
+            command: "rally.table.OpenMatch",
+            outcome: Outcome::Declared("opened"),
+            elapsed: Duration::from_micros(micros),
+        });
+    }
+    let name = "command.rally.table.OpenMatch.duration_us";
+    let histogram = counters.histogram(name).expect("a duration histogram");
+    assert_eq!(histogram.sum_us, 20 + 700 + 3_000_000);
+    assert_eq!(histogram.counts.len(), histogram.bounds.len() + 1);
+    let snapshot = counters.snapshot();
+    let in_snapshot = snapshot
+        .histograms
+        .iter()
+        .find(|histogram| histogram.name == name)
+        .expect("the snapshot holds it");
+    assert_eq!(in_snapshot, &histogram);
+}
+
+#[test]
 fn an_uncatalogued_outcome_is_not_also_timed_as_the_command() {
     let loaded = spindle_spec::load(&rally()).expect("rally compiles");
     let counters = Arc::new(Counters::new(
