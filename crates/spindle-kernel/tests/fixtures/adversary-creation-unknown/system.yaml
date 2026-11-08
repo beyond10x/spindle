@@ -1,0 +1,37 @@
+format: ess/34
+system: depot
+version: v1
+summary: Lockers in bays, opened, relabelled, shut and removed, where an absent locker is answered as the model answers it.
+domains:
+  - depot.hall
+components:
+  - component: hall
+    summary: Opens, relabels, shuts and removes lockers, and opens and shuts bays.
+    owns:
+      domains:
+        - depot.hall
+    accepts:
+      commands:
+        - depot.hall.OpenBay
+        - depot.hall.ShutBay
+        - depot.hall.Open
+        - depot.hall.Shut
+        - depot.hall.Seal
+        - depot.hall.Claim
+        - depot.hall.Adopt
+        - depot.hall.Assign
+        - depot.hall.Discard
+        - depot.hall.Recycle
+        - depot.hall.Place
+        - depot.hall.Enrol
+        - depot.hall.Screen
+        - depot.hall.Reseal
+    publishes:
+      events:
+        - depot.hall.BayOpened
+        - depot.hall.BayShut
+        - depot.hall.LockerOpened
+        - depot.hall.LockerRelabelled
+        - depot.hall.LockerShut
+        - depot.hall.LockerRemoved
+    reached_by: in_process

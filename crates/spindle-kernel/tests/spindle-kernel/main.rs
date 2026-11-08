@@ -9,6 +9,7 @@ mod adversary_admission;
 mod adversary_append;
 mod adversary_boolean;
 mod adversary_bytes;
+mod adversary_creation_unknown;
 mod adversary_deletes;
 mod adversary_generated;
 mod adversary_mint_text;
