@@ -298,6 +298,7 @@ fn a_reference_stored_on_the_subject_is_followed() {
                 fields: BTreeMap::from([("home".to_owned(), json!(NOWHERE))]),
             },
             events: Vec::new(),
+            scanned: Vec::new(),
         })
         .expect("the store takes the seeded desk");
     let gone = run(&ir, &mut store, RETURN, json!({"item_id": DESK}));

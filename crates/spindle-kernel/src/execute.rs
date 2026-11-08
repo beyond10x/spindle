@@ -20,7 +20,7 @@ use spindle_capability::mint::Unsourced;
 use crate::decider::{Decider, External};
 use crate::facts::{Facts, Selector};
 use crate::mint::{Generator, IDENTITY_MINT, Identity, Mint, UuidV4};
-use crate::store::{Change, Row, Store, Stored};
+use crate::store::{Change, Row, Scanned, Store, Stored};
 use crate::values::Sources;
 use crate::{DeclaredError, Event, ExecuteError, Executed};
 
@@ -275,6 +275,7 @@ pub fn execute_refusing(
         instant: None,
         minted: None,
         answered: BTreeMap::new(),
+        scanned: Vec::new(),
         refused,
     };
     match run.select()? {
@@ -411,6 +412,9 @@ struct Run<'a, 'ir> {
     /// What the decider answered for each external branch it was asked about, by outcome name:
     /// asked once per run, whether the look-ahead or selection reads the branch first.
     answered: BTreeMap<String, bool>,
+    /// Each entity a row-set guard scanned, at the version its first scan answered: the change
+    /// the selected outcome commits is conditioned on them ([`Change::scanned`]).
+    scanned: Vec<Scanned>,
     /// The outcomes the caller does not serve, by name, each with why ([`execute_refusing`]).
     refused: &'a BTreeMap<String, String>,
 }
@@ -712,7 +716,15 @@ impl<'a, 'ir> Run<'a, 'ir> {
             None => *self.instant.insert(self.generator.instant()),
         };
         let mut members = Vec::new();
-        for (identity, stored) in self.store.scan(&entity.name.to_string())? {
+        let name = entity.name.to_string();
+        let scan = self.store.scan(&name)?;
+        if !self.scanned.iter().any(|scanned| scanned.entity == name) {
+            self.scanned.push(Scanned {
+                entity: name,
+                version: scan.version,
+            });
+        }
+        for (identity, stored) in scan {
             let row = Facts::row(ir, entity, &identity, &stored.row, None);
             let facts = Selector {
                 row: &row,
@@ -1228,6 +1240,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                         expected: None,
                         row: Row { state, fields },
                         events: events.clone(),
+                        scanned: self.scanned.clone(),
                     }),
                     events,
                 )
@@ -1263,6 +1276,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     expected: Some(stored.version),
                     row: after,
                     events: events.clone(),
+                    scanned: self.scanned.clone(),
                 });
                 (change, events)
             }

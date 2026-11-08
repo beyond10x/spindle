@@ -7,7 +7,10 @@
 //! commit names, so two writers that read the same row cannot both commit. A removal appends the
 //! events and one `spindle.removed` event, which loading and scanning read as no row. Several
 //! writes together ([`Store::commit_all`]) are one append group: every stream's append in one
-//! transaction.
+//! transaction. Every write is one append group, which also appends one `spindle.written` event to
+//! the stream of each entity it writes: that stream's version is the entity's version a scan
+//! answers and a change decided on a scan names ([`crate::Change::scanned`]), so a row of the
+//! entity written after the scan refuses the change.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -21,7 +24,8 @@ use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::store::{
-    Change, Removal, Row, Store, StoreError, Stored, Write, first_writes, identity_from_key,
+    Change, Removal, Row, Scan, Scanned, Store, StoreError, Stored, Write, first_writes,
+    identity_from_key, moved,
 };
 
 /// The table prefix Spindle's events are kept under.
@@ -32,6 +36,11 @@ const TENANT: &str = "local";
 const ROW: &str = "spindle.row";
 /// The event that ends the stream of a removed instance (`deletes:`).
 const REMOVED: &str = "spindle.removed";
+/// The event each write appends to the stream of an entity it writes.
+const WRITTEN: &str = "spindle.written";
+/// The stream type of the streams carrying an entity's version, one per entity: no qualified
+/// entity name holds a colon.
+const ENTITY: &str = "spindle:entity";
 /// Who records the change: the runtime itself.
 const ACTOR: &str = "spindle-kernel";
 /// The schema version of every event Spindle appends.
@@ -101,26 +110,6 @@ impl SqliteStore {
         Ok(Some((version, last)))
     }
 
-    /// Refuses a write that names `expected` where the stream holds no row: it ends with the
-    /// removal, so the instance is absent, as [`crate::MemoryStore`] answers it. A stream at
-    /// another version, or none, is refused by the append itself.
-    fn held_at(
-        &self,
-        stream: &StreamId,
-        (entity, identity): (&str, &Value),
-        expected: u64,
-    ) -> Result<(), StoreError> {
-        match self.last(stream)? {
-            Some((_, last)) if last.name == REMOVED => Err(StoreError::Conflict {
-                entity: entity.to_owned(),
-                identity: identity.to_string(),
-                expected: Some(expected),
-                actual: None,
-            }),
-            _ => Ok(()),
-        }
-    }
-
     /// Refuses `write` where its instance stands at another version than the one it names, or
     /// at none: the conflict [`Store::commit`] names.
     fn stands_at(&mut self, write: &Write) -> Result<(), StoreError> {
@@ -137,32 +126,29 @@ impl SqliteStore {
         })
     }
 
-    /// Appends `events` followed by `end` to `stream` in one append, at `expected`. A conflict
-    /// names `named`, the version the change or removal named (`None` for a creation), not the
-    /// stream position the append was made at, and no held version for a stream never written
-    /// (eventlog's 0), as [`crate::MemoryStore`] names them.
-    fn append(
-        &self,
-        stream: &StreamId,
-        (entity, identity): (&str, &Value),
-        (expected, named): (Expected, Option<u64>),
-        events: &[crate::Event],
-        end: NewEvent,
-    ) -> Result<(), StoreError> {
-        let events = recorded(events, end)?;
-        let meta = meta(request_hash(&events).map_err(backend)?);
-        self.runtime
-            .block_on(self.log.append(stream, expected, &events, &meta))
-            .map(|_| ())
-            .map_err(|error| match error {
-                EventLogError::Conflict { actual, .. } => StoreError::Conflict {
-                    entity: entity.to_owned(),
-                    identity: identity.to_string(),
-                    expected: named,
-                    actual: (actual > 0).then_some(actual),
-                },
-                other => backend(other),
-            })
+    /// The stream every write of an instance of `entity` appends one event to: its version is
+    /// the entity's version a scan answers.
+    fn entity_stream(&self, entity: &str) -> Result<StreamId, StoreError> {
+        StreamId::new(self.tenant.clone(), ENTITY, entity).map_err(backend)
+    }
+
+    /// The entity's version: how many writes of its instances landed, 0 for none.
+    fn entity_version(&self, entity: &str) -> Result<u64, StoreError> {
+        let stream = self.entity_stream(entity)?;
+        Ok(self
+            .runtime
+            .block_on(self.log.stream_version(&stream))
+            .map_err(backend)?
+            .unwrap_or(0))
+    }
+
+    /// Refuses `scanned` where its entity no longer stands at the version the scan answered.
+    fn unmoved(&self, scanned: &Scanned) -> Result<(), StoreError> {
+        let actual = self.entity_version(&scanned.entity)?;
+        if actual == scanned.version {
+            return Ok(());
+        }
+        Err(moved(scanned, actual))
     }
 }
 
@@ -185,61 +171,58 @@ impl Store for SqliteStore {
         Ok(Some(Stored { row, version }))
     }
 
-    /// Appends the change's events and its row. A creation (`expected: None`) on the stream of a
-    /// removed instance goes on from the removal's version; a change naming a version of a removed
-    /// instance is a conflict, as on [`crate::MemoryStore`].
+    /// Appends the change's events and its row, as a group of one write ([`Store::commit_all`]).
     fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
-        let stream = self.stream(&change.entity, &change.identity)?;
-        let expected = match change.expected {
-            Some(version) => {
-                self.held_at(&stream, (&change.entity, &change.identity), version)?;
-                Expected::Exact(version)
-            }
-            None => match self.last(&stream)? {
-                Some((version, last)) if last.name == REMOVED => Expected::Exact(version),
-                _ => Expected::NoStream,
-            },
-        };
-        self.append(
-            &stream,
-            (&change.entity, &change.identity),
-            (expected, change.expected),
-            &change.events,
-            row_event(&change.row)?,
-        )
+        self.commit_all(&[Write::Commit(change.clone())])
     }
 
     /// Appends the removal's events and a `spindle.removed` event: the stream's end, which
     /// [`Store::load`] and [`Store::scan`] read as no row.
     fn remove(&mut self, removal: &Removal) -> Result<(), StoreError> {
-        let stream = self.stream(&removal.entity, &removal.identity)?;
-        self.held_at(
-            &stream,
-            (&removal.entity, &removal.identity),
-            removal.expected,
-        )?;
-        self.append(
-            &stream,
-            (&removal.entity, &removal.identity),
-            (Expected::Exact(removal.expected), Some(removal.expected)),
-            &removal.events,
-            removed_event()?,
-        )
+        self.commit_all(&[Write::Remove(removal.clone())])
     }
 
     /// Appends every write's events and its `spindle.row` or `spindle.removed` event as one
     /// append group: one transaction over every stream, each at the version its write names. A
     /// write naming a version its instance does not stand at is refused before anything is
-    /// appended, naming that instance; a stream moved in between refuses the whole group.
+    /// appended, naming that instance; a stream moved in between refuses the whole group. The
+    /// group appends one `spindle.written` event to the stream of each entity it writes, and of
+    /// each entity a write was conditioned on ([`Change::scanned`]), that one at the version the
+    /// scan answered: a write of the entity landed since refuses the group.
     fn commit_all(&mut self, writes: &[Write]) -> Result<(), StoreError> {
         if writes.is_empty() {
             return Ok(());
+        }
+        let scanned: Vec<&Scanned> = writes.iter().flat_map(Write::scanned).collect();
+        for scanned in &scanned {
+            self.unmoved(scanned)?;
         }
         let firsts = first_writes(writes);
         for write in &firsts {
             self.stands_at(write)?;
         }
-        let mut appends = Vec::with_capacity(writes.len());
+        let mut marks = BTreeMap::<&str, Expected>::new();
+        for scanned in &scanned {
+            let expected = match scanned.version {
+                0 => Expected::NoStream,
+                version => Expected::Exact(version),
+            };
+            marks.insert(&scanned.entity, expected);
+        }
+        for write in writes {
+            marks.entry(write.instance().0).or_insert(Expected::Any);
+        }
+        let mut appends = Vec::with_capacity(writes.len() + marks.len());
+        for (entity, expected) in marks {
+            appends.push(StreamAppend {
+                stream: self.entity_stream(entity)?,
+                expected,
+                events: vec![
+                    NewEvent::new(WRITTEN, SCHEMA, Value::Object(serde_json::Map::new()))
+                        .map_err(backend)?,
+                ],
+            });
+        }
         for write in writes {
             let (entity, identity) = write.instance();
             let stream = self.stream(entity, identity)?;
@@ -270,7 +253,10 @@ impl Store for SqliteStore {
             Ok(_) => Ok(()),
             Err(EventLogError::Conflict { .. }) => {
                 // Another writer moved a stream between the check above and the append: name
-                // the first instance no longer where its write found it.
+                // the first entity or instance no longer where its write found it.
+                for scanned in &scanned {
+                    self.unmoved(scanned)?;
+                }
                 for write in &firsts {
                     self.stands_at(write)?;
                 }
@@ -285,8 +271,10 @@ impl Store for SqliteStore {
     /// Reads the tenant's feed in commit order and keeps, for each stream of `entity`, its last
     /// `spindle.row` event: the row as it rests and the stream version a later commit names. A
     /// `spindle.removed` event after it leaves the stream out, until a later row.
-    /// Every page moves the position forward, or the read stops as a backend error.
-    fn scan(&mut self, entity: &str) -> Result<Vec<(Value, Stored)>, StoreError> {
+    /// Every page moves the position forward, or the read stops as a backend error. The entity's
+    /// version is read first, so a write landing during the read leaves it behind the rows.
+    fn scan(&mut self, entity: &str) -> Result<Scan, StoreError> {
+        let version = self.entity_version(entity)?;
         let mut latest = BTreeMap::<String, Stored>::new();
         let mut position = 0;
         loop {
@@ -325,10 +313,11 @@ impl Store for SqliteStore {
             }
             position = page.next_position;
         }
-        latest
+        let rows = latest
             .into_iter()
             .map(|(identity, stored)| Ok((identity_from_key(&identity)?, stored)))
-            .collect()
+            .collect::<Result<_, StoreError>>()?;
+        Ok(Scan { rows, version })
     }
 }
 

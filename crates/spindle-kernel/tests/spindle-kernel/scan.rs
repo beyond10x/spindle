@@ -20,6 +20,7 @@ fn commit(store: &mut dyn Store, entity: &str, identity: Value, expected: Option
             expected,
             row,
             events: Vec::new(),
+            scanned: Vec::new(),
         })
         .expect("the change commits");
 }
@@ -70,10 +71,19 @@ fn expected() -> Vec<(Value, Stored)> {
 #[test]
 fn a_memory_store_scans_every_instance_of_one_entity_by_identity() {
     let mut store = MemoryStore::default();
-    assert_eq!(store.scan("a.Task").expect("an empty scan"), Vec::new());
+    assert_eq!(
+        store.scan("a.Task").expect("an empty scan").rows,
+        Vec::new()
+    );
     arrange(&mut store);
-    assert_eq!(store.scan("a.Task").expect("the scan reads"), expected());
-    assert_eq!(store.scan("a.Missing").expect("the scan reads"), Vec::new());
+    assert_eq!(
+        store.scan("a.Task").expect("the scan reads").rows,
+        expected()
+    );
+    assert_eq!(
+        store.scan("a.Missing").expect("the scan reads").rows,
+        Vec::new()
+    );
 }
 
 #[test]
@@ -81,16 +91,26 @@ fn a_sqlite_store_scans_every_instance_of_one_entity_by_identity() {
     let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
     let path = directory.path().join("scan.sqlite");
     let mut store = SqliteStore::open(&path).expect("the store opens");
-    assert_eq!(store.scan("a.Task").expect("an empty scan"), Vec::new());
+    assert_eq!(
+        store.scan("a.Task").expect("an empty scan").rows,
+        Vec::new()
+    );
     arrange(&mut store);
-    assert_eq!(store.scan("a.Task").expect("the scan reads"), expected());
-    assert_eq!(store.scan("a.Missing").expect("the scan reads"), Vec::new());
+    assert_eq!(
+        store.scan("a.Task").expect("the scan reads").rows,
+        expected()
+    );
+    assert_eq!(
+        store.scan("a.Missing").expect("the scan reads").rows,
+        Vec::new()
+    );
     drop(store);
     let mut reopened = SqliteStore::open(&path).expect("the store reopens");
     assert_eq!(
         reopened
             .scan("a.Task")
-            .expect("the scan reads after a reopen"),
+            .expect("the scan reads after a reopen")
+            .rows,
         expected(),
         "a scan reads what the file holds, not what the process remembers"
     );
@@ -104,7 +124,7 @@ fn a_scanned_version_is_the_one_a_commit_names() {
     let mut memory = MemoryStore::default();
     for store in [&mut sqlite as &mut dyn Store, &mut memory] {
         arrange(store);
-        let scanned = store.scan("a.Task").expect("the scan reads");
+        let scanned = store.scan("a.Task").expect("the scan reads").rows;
         let (identity, stored) = &scanned[1];
         commit(
             store,

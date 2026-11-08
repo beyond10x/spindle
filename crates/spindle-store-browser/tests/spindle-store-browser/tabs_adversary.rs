@@ -38,6 +38,7 @@ fn change(identity: &Value, expected: Option<u64>, step: u64) -> Change {
             name: "tabs.tasks.Touched".to_owned(),
             payload: Map::from_iter([("step".to_owned(), json!(step))]),
         }],
+        scanned: Vec::new(),
     }
 }
 
@@ -78,7 +79,7 @@ fn apply(
 }
 
 fn held(store: &mut dyn Store) -> Vec<(Value, Stored)> {
-    store.scan(ENTITY).expect("scans")
+    store.scan(ENTITY).expect("scans").rows
 }
 
 /// Resolves after `milliseconds`, so the browser delivers what it has queued.

@@ -15,7 +15,9 @@ use std::collections::BTreeMap;
 use serde_json::{Map, Value, json};
 
 use crate::Event;
-use crate::store::{Change, Removal, Row, Store, StoreError, Stored, Write};
+use crate::store::{
+    Change, EVERY_INSTANCE, Removal, Row, Scan, Scanned, Store, StoreError, Stored, Write,
+};
 
 /// The entity most cases write.
 pub const TASK: &str = "contract.tasks.Task";
@@ -86,6 +88,10 @@ pub const CASES: &[Case] = &[
         name: "writes_committed_together_one_refused_write_none",
         run: writes_committed_together_one_refused_write_none,
     },
+    Case {
+        name: "a_commit_conditioned_on_a_scanned_entity_is_refused_after_another_write",
+        run: a_commit_conditioned_on_a_scanned_entity_is_refused_after_another_write,
+    },
 ];
 
 fn row(state: &str, title: &str) -> Row {
@@ -111,6 +117,7 @@ fn change(entity: &str, identity: &Value, expected: Option<u64>, row: Row) -> Ch
         expected,
         row,
         events: events(2),
+        scanned: Vec::new(),
     }
 }
 
@@ -143,6 +150,10 @@ fn held(case: &str, store: &mut dyn Store, identity: &Value) -> Stored {
 }
 
 fn scan(case: &str, store: &mut dyn Store, entity: &str) -> Vec<(Value, Stored)> {
+    scanned(case, store, entity).rows
+}
+
+fn scanned(case: &str, store: &mut dyn Store, entity: &str) -> Scan {
     store
         .scan(entity)
         .unwrap_or_else(|error| panic!("{case}: {entity} scans: {error}"))
@@ -643,4 +654,140 @@ fn writes_committed_together_one_refused_write_none(store: &mut dyn Store) {
         store,
         &change(TASK, &first, Some(one.version), row("Done", "after")),
     );
+}
+
+/// Commits `change`, conditioned on `scanned`, by itself and as the one write of a group; the
+/// store must refuse both as a conflict naming the entity, the version the scan answered and the
+/// one the store holds now, and must leave every instance as it was.
+fn refused_scanned(case: &str, store: &mut dyn Store, change: &Change, condition: &Scanned) {
+    let before = everything(case, store);
+    let now = scanned(case, store, &condition.entity).version;
+    for grouped in [false, true] {
+        let (what, result) = if grouped {
+            (
+                "the commit as a group",
+                store.commit_all(&[Write::Commit(change.clone())]),
+            )
+        } else {
+            ("the commit", store.commit(change))
+        };
+        if let Err(StoreError::Conflict {
+            entity, identity, ..
+        }) = &result
+        {
+            assert_eq!(
+                (entity.as_str(), identity.as_str()),
+                (condition.entity.as_str(), EVERY_INSTANCE),
+                "{case}: {what}: the conflict names the scanned entity"
+            );
+        }
+        conflict(case, what, result, Some(condition.version), Some(now));
+        assert_eq!(
+            everything(case, store),
+            before,
+            "{case}: {what} writes nothing"
+        );
+    }
+}
+
+fn a_commit_conditioned_on_a_scanned_entity_is_refused_after_another_write(store: &mut dyn Store) {
+    let case = "a_commit_conditioned_on_a_scanned_entity_is_refused_after_another_write";
+    commit(
+        case,
+        store,
+        &change(TASK, &json!("t1"), None, row("Open", "1")),
+    );
+    let tasks = scanned(case, store, TASK);
+    let others = scanned(case, store, OTHER);
+    assert_eq!(
+        scanned(case, store, TASK).version,
+        tasks.version,
+        "{case}: a scan moves no version"
+    );
+    // A second writer creates a row of the scanned entity.
+    commit(
+        case,
+        store,
+        &change(TASK, &json!("t2"), None, row("Open", "2")),
+    );
+    let left = scan(case, store, TASK);
+    let at_scan = Scanned {
+        entity: TASK.to_owned(),
+        version: tasks.version,
+    };
+    let created = Change {
+        scanned: vec![at_scan.clone()],
+        ..change(TASK, &json!("t3"), None, row("Open", "3"))
+    };
+    refused_scanned(case, store, &created, &at_scan);
+    let t1 = held(case, store, &json!("t1"));
+    let moved = Change {
+        scanned: vec![at_scan.clone()],
+        ..change(TASK, &json!("t1"), Some(t1.version), row("Done", "1"))
+    };
+    refused_scanned(case, store, &moved, &at_scan);
+    assert_eq!(
+        scan(case, store, TASK),
+        left,
+        "{case}: the rows are as the second writer left them"
+    );
+    // A removal moves the entity too.
+    let fresh = scanned(case, store, TASK);
+    assert!(
+        fresh.version > tasks.version,
+        "{case}: a write moves the version"
+    );
+    let t2 = held(case, store, &json!("t2"));
+    let removed = Removal {
+        events: Vec::new(),
+        ..removal(&json!("t2"), t2.version)
+    };
+    commit_removal(case, store, &removed);
+    let at_fresh = Scanned {
+        entity: TASK.to_owned(),
+        version: fresh.version,
+    };
+    let after_removal = Change {
+        scanned: vec![at_fresh.clone()],
+        ..change(TASK, &json!("t3"), None, row("Open", "3"))
+    };
+    refused_scanned(case, store, &after_removal, &at_fresh);
+    // A write of another entity does not move the scanned one, and a condition that still
+    // holds lets the change land.
+    let current = scanned(case, store, TASK);
+    commit(
+        case,
+        store,
+        &change(OTHER, &json!("o1"), None, row("Open", "o")),
+    );
+    let lands = Change {
+        scanned: vec![Scanned {
+            entity: TASK.to_owned(),
+            version: current.version,
+        }],
+        ..change(TASK, &json!("t3"), None, row("Open", "3"))
+    };
+    commit(case, store, &lands);
+    assert!(
+        scanned(case, store, TASK).version > current.version,
+        "{case}: a conditioned change moves the version"
+    );
+    let at_others = Scanned {
+        entity: OTHER.to_owned(),
+        version: others.version,
+    };
+    let stale_other = Change {
+        scanned: vec![at_others.clone()],
+        ..change(TASK, &json!("t4"), None, row("Open", "4"))
+    };
+    refused_scanned(case, store, &stale_other, &at_others);
+}
+
+fn commit_removal(case: &str, store: &mut dyn Store, removal: &Removal) {
+    store.remove(removal).unwrap_or_else(|error| {
+        panic!(
+            "{case}: {} {} is removed: {error}",
+            removal.entity, removal.identity
+        )
+    });
 }

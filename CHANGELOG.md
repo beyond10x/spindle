@@ -43,6 +43,16 @@ are Spindle's releases.
 
 ### Fixed
 
+- A command whose outcome a `when_related:` guard over a row set selected no longer commits when
+  another writer wrote a row of that set's entity between the kernel's scan and its commit: the
+  commit is refused as a conflict (`StoreError::Conflict`, identity `*`), so a guard such as "at
+  most one active reservation per reader and book" holds with two writers on one store. `Store::scan`
+  now answers a `Scan`, the rows and the entity's version, and a `Change` carries the scanned
+  entities it is conditioned on (`Change::scanned`), checked by `commit` and `commit_all` alike.
+  The memory store counts the writes of each entity; SQLite appends one `spindle.written` event to
+  a stream per entity in the same append group; the IndexedDB store counts the writes one global
+  scope made or heard. A set outcome's writes are not conditioned on a scan yet.
+
 - `adversary_links::a_second_hello_before_the_link_opens_is_refused` writes both `hello` frames in
   one `write_all`, so it always meets the pending link's refusal; it had written them in two
   writes, which a runner could split around an accept and so land on the open-link case that

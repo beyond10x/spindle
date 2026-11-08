@@ -222,6 +222,7 @@ fn two_writers_of_one_sqlite_file_cannot_both_commit() {
             fields: BTreeMap::new(),
         },
         events: Vec::new(),
+        scanned: Vec::new(),
     };
     first
         .commit(&change("Admitted", a.version))

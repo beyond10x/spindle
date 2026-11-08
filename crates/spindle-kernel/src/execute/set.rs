@@ -76,6 +76,9 @@ impl Run<'_, '_> {
                 expected: Some(stored.version),
                 row: after,
                 events: Vec::new(),
+                // Not conditioned on the scan that selected the rows: a row of the entity
+                // created after it is left out unrefused, an open gap no story covers yet.
+                scanned: Vec::new(),
             };
             self.at_rest(entity, &change)?;
             writes.push(Write::Commit(change));

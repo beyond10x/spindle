@@ -86,6 +86,7 @@ impl Driven<'_> {
                     expected: None,
                     row,
                     events,
+                    scanned: Vec::new(),
                 }),
             ),
             1 => {
@@ -98,6 +99,7 @@ impl Driven<'_> {
                         expected: Some(version),
                         row,
                         events,
+                        scanned: Vec::new(),
                     }),
                 )
             }
@@ -224,7 +226,7 @@ impl Store for MisnamesTheHeldVersion {
     fn remove(&mut self, removal: &Removal) -> Result<(), StoreError> {
         misnamed(self.0.remove(removal))
     }
-    fn scan(&mut self, entity: &str) -> Result<Vec<(Value, spindle_kernel::Stored)>, StoreError> {
+    fn scan(&mut self, entity: &str) -> Result<spindle_kernel::Scan, StoreError> {
         self.0.scan(entity)
     }
 }

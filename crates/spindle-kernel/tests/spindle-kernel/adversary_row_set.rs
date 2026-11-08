@@ -209,14 +209,14 @@ impl Store for Racing {
         self.inner.remove(removal)
     }
 
-    fn scan(&mut self, entity: &str) -> Result<Vec<(Value, Stored)>, StoreError> {
-        let rows = self.inner.scan(entity)?;
+    fn scan(&mut self, entity: &str) -> Result<spindle_kernel::Scan, StoreError> {
+        let scan = self.inner.scan(entity)?;
         if entity == self.entity
             && let Some(raced) = self.raced.take()
         {
             self.inner.commit(&raced)?;
         }
-        Ok(rows)
+        Ok(scan)
     }
 }
 
@@ -234,11 +234,10 @@ fn library_now() -> SystemTime {
 
 /// `already-reserved` refuses a second active reservation of a book by one reader. Another writer
 /// commits such a reservation after the kernel scanned the reservations and before it commits its
-/// own. The kernel's decision rests on a row set that no longer holds, and its commit names only
-/// the one instance it creates (`Change::expected: None`), so both commits land and the reader
-/// holds two active reservations of the book: the state the guard exists to rule out.
+/// own. The kernel's decision rests on a row set that no longer holds, so its commit, conditioned
+/// on the version of the reservations it scanned, is refused as a conflict: the reader holds one
+/// active reservation of the book, the one committed first.
 #[test]
-#[ignore = "a row committed by another writer between the scan and the commit is not detected; story:kernel-row-set-commit-conflict"]
 fn a_row_committed_between_the_scan_and_the_commit_does_not_slip_past_the_guard() {
     let ir = load("library");
     let mut store = Racing {
@@ -272,6 +271,7 @@ fn a_row_committed_between_the_scan_and_the_commit_does_not_slip_past_the_guard(
             .collect(),
         },
         events: Vec::new(),
+        scanned: Vec::new(),
     });
     let ours = execute_at(
         &ir,
@@ -288,6 +288,19 @@ fn a_row_committed_between_the_scan_and_the_commit_does_not_slip_past_the_guard(
             "shelfmarks": ["QA-76"],
         })),
     );
+    let answered = match &ours {
+        Ok(executed) => format!("Ok({})", executed.outcome),
+        Err(error) => format!("Err({error:?})"),
+    };
+    assert!(
+        matches!(
+            ours,
+            Err(spindle_kernel::ExecuteError::Store(
+                StoreError::Conflict { .. }
+            ))
+        ),
+        "the losing Reserve is refused as a store conflict, not {answered}"
+    );
     let active: Vec<Value> = store
         .inner
         .scan(RESERVATION)
@@ -299,7 +312,6 @@ fn a_row_committed_between_the_scan_and_the_commit_does_not_slip_past_the_guard(
     assert_eq!(
         active,
         [json!(THEIRS)],
-        "only the reservation committed first is active; the kernel answered {:?}",
-        ours.map(|executed| executed.outcome)
+        "only the reservation committed first is active"
     );
 }
