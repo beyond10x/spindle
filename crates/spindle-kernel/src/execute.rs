@@ -503,9 +503,10 @@ impl<'a, 'ir> Run<'a, 'ir> {
                         {
                             return Ok(Selected::Outcome(outcome));
                         }
-                        // An instance nobody holds rests in no state any move of this command
-                        // starts from: the wrong-state answer, where the command declares one.
-                        return self.wrong_state().map(Selected::Answered);
+                        // An instance nobody holds: the command's one declared not-found refusal,
+                        // else the wrong-state answer, since it rests in no state any move of this
+                        // command starts from (ESS `unknown_instance`).
+                        return self.not_found().map(Selected::Answered);
                     }
                     // On a command guarded by a row set the addressed row's held state answers
                     // before any row set is read, where no branch acting on the row may act from
@@ -993,10 +994,10 @@ impl<'a, 'ir> Run<'a, 'ir> {
         subjects: bool,
     ) -> Result<Option<Executed>, ExecuteError> {
         // An absent addressed row reaches here only where a creation takes it
-        // ([`Self::creation_takes_absent`]): no branch the request selects answers for it before
-        // the row sets (ESS `selected_subject_refusal`), so no decider is asked ahead of them; an
-        // external branch stays one possible answer and reading goes on, as under an open
-        // provider.
+        // ([`Self::creation_takes_absent`]). No decider is asked for it here: an external branch
+        // stays one possible answer and reading goes on, as under an open provider. A branch
+        // selected that acts on the row without creating it is answered for the missing row,
+        // except beside row sets, which answer first (ESS `selected_subject_refusal`).
         let absent = self.held.as_ref().is_some_and(|held| held.stored.is_none());
         let mut selected = None;
         'phases: for planned in plan.phases() {
@@ -1052,9 +1053,21 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 }
             }
         }
-        let Some(subject) = selected.and_then(|outcome| outcome.subject.as_ref()) else {
+        let Some((outcome, subject)) =
+            selected.and_then(|outcome| Some((outcome, outcome.subject.as_ref()?)))
+        else {
             return Ok(None);
         };
+        // The branch selected acts on the absent row without creating it: the row's existence
+        // answers before any present-related refusal, outside row sets, where the creation
+        // answers after the row sets instead (ESS `selected_subject_refusal`).
+        if absent
+            && subject.effect != ResolvedEffect::Creates
+            && matches!(subject.instance, ResolvedInstance::Supplied { .. })
+            && !uses_row_sets(self.spec)
+        {
+            return self.unknown_instance(outcome).map(Some);
+        }
         let (ResolvedEffect::Moves { transition }, ResolvedInstance::Supplied { .. }) =
             (&subject.effect, &subject.instance)
         else {
@@ -1149,11 +1162,26 @@ impl<'a, 'ir> Run<'a, 'ir> {
         {
             Some(outcome) if outcome.name != taken.name => self.take(outcome),
             Some(_) => self.wrong_state(),
-            None => match declared_not_found(self.ir, self.spec) {
-                Some(outcome) => self.refusal(outcome),
-                None => self.wrong_state(),
-            },
+            None => self.not_found(),
         }
+    }
+
+    /// The answer for the addressed row no store holds on a command that declares no
+    /// `unknown_instance:`: its one declared not-found refusal ([`declared_not_found`]), else the
+    /// wrong-state answer (ESS `unknown_instance`). The not-found refusal is answered as ESS's
+    /// interpreter answers it: an error field it gives no source is left out, not minted, as no
+    /// row exists to describe.
+    fn not_found(&self) -> Result<Executed, ExecuteError> {
+        let Some(outcome) = declared_not_found(self.ir, self.spec) else {
+            return self.wrong_state();
+        };
+        self.runs(outcome)?;
+        Ok(Executed {
+            outcome: outcome.name.as_str().to_owned(),
+            events: Vec::new(),
+            error: self.error_of(outcome, None, false)?,
+            response: self.response(outcome)?,
+        })
     }
 
     /// The command's `wrong_state:` outcome, answered for the addressed instance: its error, or
@@ -1569,6 +1597,17 @@ impl<'a, 'ir> Run<'a, 'ir> {
         outcome: &ResolvedOutcome,
         before: Option<&Row>,
     ) -> Result<Option<DeclaredError>, ExecuteError> {
+        self.error_of(outcome, before, true)
+    }
+
+    /// [`Self::declared_error`]; `mint: false` leaves a field that would be minted out
+    /// ([`Self::not_found`]).
+    fn error_of(
+        &self,
+        outcome: &ResolvedOutcome,
+        before: Option<&Row>,
+        mint: bool,
+    ) -> Result<Option<DeclaredError>, ExecuteError> {
         // A `wrong_state:` branch that accepts (`refuses: false`) reports no error.
         let Some(error) = outcome.error.as_ref().filter(|_| outcome.refuses) else {
             return Ok(None);
@@ -1578,7 +1617,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
             ..self.sources(outcome, error.name(), None, before)
         };
         let mut fields = sources.object(&outcome.error_payload)?;
-        self.unsourced_error_fields(outcome, before, &mut fields)?;
+        self.unsourced_error_fields(outcome, before, mint, &mut fields)?;
         Ok(Some(DeclaredError {
             name: error.name().to_string(),
             fields,
@@ -1592,11 +1631,13 @@ impl<'a, 'ir> Run<'a, 'ir> {
     /// answered for (`before`), as ESS's served application reads it, else minted from its type,
     /// as ESS's interpreter leaves it to the implementation; an `Optional` one no row fills stays
     /// absent. Without a row (the unknown-instance arm of `wrong_state:`) a field the row would
-    /// fill is left out: an instance that does not exist has nothing to describe.
+    /// fill is left out: an instance that does not exist has nothing to describe. With `mint`
+    /// false a field that would be minted is left out too.
     fn unsourced_error_fields(
         &self,
         outcome: &ResolvedOutcome,
         before: Option<&Row>,
+        mint: bool,
         fields: &mut Map<String, Value>,
     ) -> Result<(), ExecuteError> {
         let Some(error) = outcome.error.as_ref() else {
@@ -1615,6 +1656,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     .filter(|value| !value.is_null()),
                 (Unsourced::State | Unsourced::Stored(_), None)
                 | (Unsourced::Absent | Unsourced::Unanswered, _) => None,
+                (Unsourced::Minted(_), _) if !mint => None,
                 (Unsourced::Minted(choice), _) => {
                     let minted = self
                         .generator
