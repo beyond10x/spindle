@@ -383,6 +383,10 @@ impl Store for Supplied {
         self.0.remove(removal)
     }
 
+    fn commit_all(&mut self, writes: &[spindle_kernel::Write]) -> Result<(), StoreError> {
+        self.0.commit_all(writes)
+    }
+
     fn scan(&mut self, entity: &str) -> Result<Vec<(Value, spindle_kernel::Stored)>, StoreError> {
         self.0.scan(entity)
     }

@@ -3,7 +3,8 @@
 //!
 //! Only the sources Spindle's own specification and the `rally` example use,
 //! `{append: input.<path>}`, and a field or the state of the row an input field names
-//! (`{related: {via: input.<field>, field: …}}`), are read here; the rest are refused by
+//! (`{related: {via: input.<field>, field: …}}`), and what a set outcome changed
+//! (`{count: changed}`, `{changed: …}`), are read here; the rest are refused by
 //! [`crate::supported`] before a command runs. Numbers are ESS's own [`Number`], so `{increment: N}` adds exactly as ESS adds, and a literal is typed by
 //! [`EssIr::literal_primitive`], the one question every ESS consumer asks of a literal.
 
@@ -121,6 +122,10 @@ pub(crate) struct Sources<'a, 'm> {
     pub(crate) owner: &'a QualifiedName,
     /// The values this run mints for its generated fields, each once.
     pub(crate) generator: &'a Generator<'m>,
+    /// How many rows a set outcome changed, where these are its fields: what `{count: changed}`
+    /// reads. A `{changed: …}` field reads [`Self::before`], the changed row as it was before the
+    /// outcome with its identity among its fields.
+    pub(crate) changed: Option<usize>,
 }
 
 impl<'a> Sources<'a, '_> {
@@ -149,6 +154,25 @@ impl<'a> Sources<'a, '_> {
             ResolvedPayloadValue::SubjectState { .. } => {
                 Ok(Some(Value::String(self.before(field)?.state.clone())))
             }
+            // ESS `emit` holds the changed row an occurrence is for as the row before the outcome.
+            ResolvedPayloadValue::ChangedField { field: read, .. } => Ok(self
+                .before(field)?
+                .fields
+                .get(read)
+                .filter(|value| !value.is_null())
+                .cloned()),
+            ResolvedPayloadValue::ChangedState { .. } => {
+                Ok(Some(Value::String(self.before(field)?.state.clone())))
+            }
+            ResolvedPayloadValue::ChangedCount => self
+                .changed
+                .map(|count| Some(Value::from(count)))
+                .ok_or_else(|| ExecuteError::NoValue {
+                    what: format!(
+                        "`{}`, which counts the rows changed by an outcome that changes no set",
+                        field.target
+                    ),
+                }),
             ResolvedPayloadValue::Increment { by } => self.increment(field, by).map(Some),
             ResolvedPayloadValue::Append { field: read, .. } => self.append(field, read).map(Some),
             ResolvedPayloadValue::Generated { .. }

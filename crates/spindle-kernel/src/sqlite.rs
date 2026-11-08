@@ -5,20 +5,24 @@
 //! rests, in one append, so the row and the events that changed it are recorded together or not
 //! at all. Loading reads the stream's last event. The stream's version is the version a later
 //! commit names, so two writers that read the same row cannot both commit. A removal appends the
-//! events and one `spindle.removed` event, which loading and scanning read as no row.
+//! events and one `spindle.removed` event, which loading and scanning read as no row. Several
+//! writes together ([`Store::commit_all`]) are one append group: every stream's append in one
+//! transaction.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use eventlog_core::{
-    CommandMeta, EventLogError, EventStore, Expected, NewEvent, RecordedEvent, StreamId, TenantId,
-    new_event_id, request_hash,
+    AppendGroup, AtomicEventStore, CommandMeta, EventLogError, EventStore, Expected, NewEvent,
+    RecordedEvent, StreamAppend, StreamId, TenantId, new_event_id, request_hash,
 };
 use eventlog_sqlite::SqliteEventStore;
 use serde_json::Value;
 use time::OffsetDateTime;
 
-use crate::store::{Change, Removal, Row, Store, StoreError, Stored, identity_from_key};
+use crate::store::{
+    Change, Removal, Row, Store, StoreError, Stored, Write, first_writes, identity_from_key,
+};
 
 /// The table prefix Spindle's events are kept under.
 const PREFIX: &str = "spindle";
@@ -117,6 +121,22 @@ impl SqliteStore {
         }
     }
 
+    /// Refuses `write` where its instance stands at another version than the one it names, or
+    /// at none: the conflict [`Store::commit`] names.
+    fn stands_at(&mut self, write: &Write) -> Result<(), StoreError> {
+        let (entity, identity) = write.instance();
+        let actual = self.load(entity, identity)?.map(|stored| stored.version);
+        if actual == write.expected() {
+            return Ok(());
+        }
+        Err(StoreError::Conflict {
+            entity: entity.to_owned(),
+            identity: identity.to_string(),
+            expected: write.expected(),
+            actual,
+        })
+    }
+
     /// Appends `events` followed by `end` to `stream` in one append, at `expected`. A conflict
     /// names `named`, the version the change or removal named (`None` for a creation), not the
     /// stream position the append was made at, and no held version for a stream never written
@@ -129,30 +149,8 @@ impl SqliteStore {
         events: &[crate::Event],
         end: NewEvent,
     ) -> Result<(), StoreError> {
-        let mut events = events
-            .iter()
-            .map(|event| {
-                NewEvent::new(
-                    event.name.clone(),
-                    SCHEMA,
-                    Value::Object(event.payload.clone()),
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(backend)?;
-        events.push(end);
-        let meta = CommandMeta {
-            idempotency_key: new_event_id(),
-            request_hash: request_hash(&events).map_err(backend)?,
-            subject: ACTOR.to_owned(),
-            actor: ACTOR.to_owned(),
-            request_id: new_event_id(),
-            trace_id: new_event_id(),
-            causation_id: None,
-            causation_depth: 0,
-            occurred_at: OffsetDateTime::now_utc(),
-            claim: None,
-        };
+        let events = recorded(events, end)?;
+        let meta = meta(request_hash(&events).map_err(backend)?);
         self.runtime
             .block_on(self.log.append(stream, expected, &events, &meta))
             .map(|_| ())
@@ -192,8 +190,6 @@ impl Store for SqliteStore {
     /// instance is a conflict, as on [`crate::MemoryStore`].
     fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
         let stream = self.stream(&change.entity, &change.identity)?;
-        let row = serde_json::to_value(&change.row)
-            .map_err(|error| StoreError::Backend(error.to_string()))?;
         let expected = match change.expected {
             Some(version) => {
                 self.held_at(&stream, (&change.entity, &change.identity), version)?;
@@ -209,7 +205,7 @@ impl Store for SqliteStore {
             (&change.entity, &change.identity),
             (expected, change.expected),
             &change.events,
-            NewEvent::new(ROW, SCHEMA, row).map_err(backend)?,
+            row_event(&change.row)?,
         )
     }
 
@@ -227,9 +223,63 @@ impl Store for SqliteStore {
             (&removal.entity, &removal.identity),
             (Expected::Exact(removal.expected), Some(removal.expected)),
             &removal.events,
-            NewEvent::new(REMOVED, SCHEMA, Value::Object(serde_json::Map::new()))
-                .map_err(backend)?,
+            removed_event()?,
         )
+    }
+
+    /// Appends every write's events and its `spindle.row` or `spindle.removed` event as one
+    /// append group: one transaction over every stream, each at the version its write names. A
+    /// write naming a version its instance does not stand at is refused before anything is
+    /// appended, naming that instance; a stream moved in between refuses the whole group.
+    fn commit_all(&mut self, writes: &[Write]) -> Result<(), StoreError> {
+        if writes.is_empty() {
+            return Ok(());
+        }
+        let firsts = first_writes(writes);
+        for write in &firsts {
+            self.stands_at(write)?;
+        }
+        let mut appends = Vec::with_capacity(writes.len());
+        for write in writes {
+            let (entity, identity) = write.instance();
+            let stream = self.stream(entity, identity)?;
+            let expected = match write.expected() {
+                Some(version) => Expected::Exact(version),
+                None => match self.last(&stream)? {
+                    Some((version, last)) if last.name == REMOVED => Expected::Exact(version),
+                    _ => Expected::NoStream,
+                },
+            };
+            let (events, end) = match write {
+                Write::Commit(change) => (&change.events, row_event(&change.row)?),
+                Write::Remove(removal) => (&removal.events, removed_event()?),
+            };
+            appends.push(StreamAppend {
+                stream,
+                expected,
+                events: recorded(events, end)?,
+            });
+        }
+        let entries: Vec<&Vec<NewEvent>> = appends.iter().map(|append| &append.events).collect();
+        let group = AppendGroup {
+            tenant: self.tenant.clone(),
+            meta: meta(request_hash(&entries).map_err(backend)?),
+            appends,
+        };
+        match self.runtime.block_on(self.log.append_group(&group)) {
+            Ok(_) => Ok(()),
+            Err(EventLogError::Conflict { .. }) => {
+                // Another writer moved a stream between the check above and the append: name
+                // the first instance no longer where its write found it.
+                for write in &firsts {
+                    self.stands_at(write)?;
+                }
+                Err(StoreError::Backend(
+                    "another writer moved an instance while the writes were appended".to_owned(),
+                ))
+            }
+            Err(other) => Err(backend(other)),
+        }
     }
 
     /// Reads the tenant's feed in commit order and keeps, for each stream of `entity`, its last
@@ -279,6 +329,51 @@ impl Store for SqliteStore {
             .into_iter()
             .map(|(identity, stored)| Ok((identity_from_key(&identity)?, stored)))
             .collect()
+    }
+}
+
+/// The `spindle.row` event carrying `row` as it rests.
+fn row_event(row: &Row) -> Result<NewEvent, StoreError> {
+    let row = serde_json::to_value(row).map_err(|error| StoreError::Backend(error.to_string()))?;
+    NewEvent::new(ROW, SCHEMA, row).map_err(backend)
+}
+
+/// The `spindle.removed` event ending a removed instance's stream.
+fn removed_event() -> Result<NewEvent, StoreError> {
+    NewEvent::new(REMOVED, SCHEMA, Value::Object(serde_json::Map::new())).map_err(backend)
+}
+
+/// `events` as the log records them, followed by `end`.
+fn recorded(events: &[crate::Event], end: NewEvent) -> Result<Vec<NewEvent>, StoreError> {
+    let mut recorded = events
+        .iter()
+        .map(|event| {
+            NewEvent::new(
+                event.name.clone(),
+                SCHEMA,
+                Value::Object(event.payload.clone()),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(backend)?;
+    recorded.push(end);
+    Ok(recorded)
+}
+
+/// What every append records about the command it is for: the runtime as actor, a fresh
+/// idempotency key, and `request_hash`.
+fn meta(request_hash: String) -> CommandMeta {
+    CommandMeta {
+        idempotency_key: new_event_id(),
+        request_hash,
+        subject: ACTOR.to_owned(),
+        actor: ACTOR.to_owned(),
+        request_id: new_event_id(),
+        trace_id: new_event_id(),
+        causation_id: None,
+        causation_depth: 0,
+        occurred_at: OffsetDateTime::now_utc(),
+        claim: None,
     }
 }
 

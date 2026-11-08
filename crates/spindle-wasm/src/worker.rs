@@ -291,6 +291,10 @@ impl Store for Shared {
         self.with(|store| store.remove(removal))
     }
 
+    fn commit_all(&mut self, writes: &[spindle_kernel::Write]) -> Result<(), StoreError> {
+        self.with(|store| store.commit_all(writes))
+    }
+
     fn scan(&mut self, entity: &str) -> Result<Vec<(Value, Stored)>, StoreError> {
         self.with(|store| store.scan(entity))
     }

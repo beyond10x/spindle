@@ -1,8 +1,9 @@
 //! Where instances rest between commands.
 //!
 //! The kernel reads one instance, decides, and commits one [`Change`] to that instance: the
-//! runtime default of § 3a, one command on one instance. A store never decides anything; it holds
-//! rows and the events that changed them.
+//! runtime default of § 3a, one command on one instance. A set outcome (`instances:`) writes every
+//! row it changes in one [`Store::commit_all`]. A store never decides anything; it holds rows and
+//! the events that changed them.
 
 use std::collections::BTreeMap;
 
@@ -62,6 +63,34 @@ pub struct Removal {
     pub events: Vec<Event>,
 }
 
+/// One write of several a command makes together ([`Store::commit_all`]): a set outcome's change
+/// or removal of one row it selected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Write {
+    /// The instance rests on, holding this.
+    Commit(Change),
+    /// The instance is removed.
+    Remove(Removal),
+}
+
+impl Write {
+    /// The entity and identity of the instance written.
+    pub(crate) fn instance(&self) -> (&str, &Value) {
+        match self {
+            Self::Commit(change) => (&change.entity, &change.identity),
+            Self::Remove(removal) => (&removal.entity, &removal.identity),
+        }
+    }
+
+    /// The version the write names: `None` for a creation.
+    pub(crate) fn expected(&self) -> Option<u64> {
+        match self {
+            Self::Commit(change) => change.expected,
+            Self::Remove(removal) => Some(removal.expected),
+        }
+    }
+}
+
 /// Why a store could not read or commit.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -106,6 +135,26 @@ pub trait Store {
     /// [`StoreError::Backend`] when the store cannot be written.
     fn remove(&mut self, removal: &Removal) -> Result<(), StoreError>;
 
+    /// Records every write of `writes`, in order, each with its events, atomically: all of them,
+    /// or, where one is refused, none. Each names the version it read, as [`Store::commit`] and
+    /// [`Store::remove`] do, and a later write of an instance an earlier one wrote names the
+    /// version that one left.
+    ///
+    /// The memory, SQLite and IndexedDB stores write them in one transaction. This default, for a
+    /// store that can write one instance at a time only, first refuses a write that names a
+    /// version the store does not hold, writing nothing; it then writes each in turn, and where
+    /// one is still refused (another writer moved it in between), writes back, with no events,
+    /// every instance it already wrote, so the rows are as they were though their versions have
+    /// grown. Such a store records the events of a write with it: a caller that keeps them on the
+    /// last write records none unless every write landed.
+    ///
+    /// # Errors
+    /// [`StoreError::Conflict`] when an instance is not at the version its write names, and
+    /// [`StoreError::Backend`] when the store cannot be written.
+    fn commit_all(&mut self, writes: &[Write]) -> Result<(), StoreError> {
+        one_at_a_time(self, writes)
+    }
+
     /// Every instance of `entity`, each with its identity, ordered by the identity's canonical
     /// JSON text: one order on every store, whatever order the instances were written in. Each
     /// carries the row and the version [`Store::load`] would answer for it.
@@ -113,6 +162,82 @@ pub trait Store {
     /// # Errors
     /// [`StoreError::Backend`] when the store cannot be read.
     fn scan(&mut self, entity: &str) -> Result<Vec<(Value, Stored)>, StoreError>;
+}
+
+/// [`Store::commit_all`] on a store that writes one instance at a time: every write's version
+/// checked first, then each written in turn, and those written undone where a later one is
+/// refused.
+fn one_at_a_time<S: Store + ?Sized>(store: &mut S, writes: &[Write]) -> Result<(), StoreError> {
+    for write in first_writes(writes) {
+        let (entity, identity) = write.instance();
+        let actual = store.load(entity, identity)?.map(|stored| stored.version);
+        if actual != write.expected() {
+            return Err(StoreError::Conflict {
+                entity: entity.to_owned(),
+                identity: identity.to_string(),
+                expected: write.expected(),
+                actual,
+            });
+        }
+    }
+    let mut written: Vec<(&str, &Value, Option<Row>)> = Vec::with_capacity(writes.len());
+    for write in writes {
+        let (entity, identity) = write.instance();
+        let before = store.load(entity, identity)?.map(|stored| stored.row);
+        let landed = match write {
+            Write::Commit(change) => store.commit(change),
+            Write::Remove(removal) => store.remove(removal),
+        };
+        if let Err(error) = landed {
+            for (entity, identity, before) in written.into_iter().rev() {
+                // Best effort: the refusal is what the caller is answered, whatever this finds.
+                let _ = restore(store, entity, identity, before);
+            }
+            return Err(error);
+        }
+        written.push((entity, identity, before));
+    }
+    Ok(())
+}
+
+/// The first write of each instance in `writes`, in order: those whose named version is the one
+/// the store holds before any of them lands.
+pub(crate) fn first_writes(writes: &[Write]) -> Vec<&Write> {
+    let mut seen = std::collections::BTreeSet::new();
+    writes
+        .iter()
+        .filter(|write| {
+            let (entity, identity) = write.instance();
+            seen.insert(key(entity, identity))
+        })
+        .collect()
+}
+
+/// Writes the instance of `entity` under `identity` back to `before`, with no events: the row it
+/// held, or, where it held none, no row.
+fn restore<S: Store + ?Sized>(
+    store: &mut S,
+    entity: &str,
+    identity: &Value,
+    before: Option<Row>,
+) -> Result<(), StoreError> {
+    let now = store.load(entity, identity)?.map(|stored| stored.version);
+    match (before, now) {
+        (Some(row), expected) => store.commit(&Change {
+            entity: entity.to_owned(),
+            identity: identity.clone(),
+            expected,
+            row,
+            events: Vec::new(),
+        }),
+        (None, Some(expected)) => store.remove(&Removal {
+            entity: entity.to_owned(),
+            identity: identity.clone(),
+            expected,
+            events: Vec::new(),
+        }),
+        (None, None) => Ok(()),
+    }
 }
 
 /// The key an instance is held under: its entity and its identity as canonical JSON text.
@@ -189,6 +314,44 @@ impl Store for MemoryStore {
         self.rows.remove(&key);
         self.removed.insert(key, removal.expected);
         self.events.extend(removal.events.iter().cloned());
+        Ok(())
+    }
+
+    /// Writes each in turn, keeping what each instance it touches held before; where one is
+    /// refused, every instance is put back and the events recorded since dropped.
+    fn commit_all(&mut self, writes: &[Write]) -> Result<(), StoreError> {
+        type Held = (Option<Stored>, Option<u64>);
+        let mut before: BTreeMap<(String, String), Held> = BTreeMap::new();
+        let recorded = self.events.len();
+        for write in writes {
+            let (entity, identity) = write.instance();
+            let key = key(entity, identity);
+            if let std::collections::btree_map::Entry::Vacant(vacant) = before.entry(key) {
+                let held = (
+                    self.rows.get(vacant.key()).cloned(),
+                    self.removed.get(vacant.key()).copied(),
+                );
+                vacant.insert(held);
+            }
+            let landed = match write {
+                Write::Commit(change) => self.commit(change),
+                Write::Remove(removal) => self.remove(removal),
+            };
+            if let Err(error) = landed {
+                for (key, (row, removed)) in before {
+                    match row {
+                        Some(row) => self.rows.insert(key.clone(), row),
+                        None => self.rows.remove(&key),
+                    };
+                    match removed {
+                        Some(version) => self.removed.insert(key, version),
+                        None => self.removed.remove(&key),
+                    };
+                }
+                self.events.truncate(recorded);
+                return Err(error);
+            }
+        }
         Ok(())
     }
 

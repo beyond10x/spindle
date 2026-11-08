@@ -26,7 +26,9 @@
 //! from the same [`Mint`], where the interpreter draws them from a counter of its own, so after a
 //! returning outcome the two sequences no longer line up.
 //! Each such field is minted once per command run ([`Generator`]), so
-//! `{payload: <Event>.<field>}` in `sets:` stores what the event published.
+//! `{payload: <Event>.<field>}` in `sets:` stores what the event published; a set outcome
+//! (`instances:`) mints its `sets:` once per row it writes and an event's fields once per
+//! occurrence, as the interpreter does, each published value read still minted once.
 //!
 //! An outcome that returns the command's response ([`answers`]) has each declared `response:`
 //! field minted by the same rule, an `Optional` one as its required type, after everything else
@@ -175,6 +177,18 @@ impl<'m> Generator<'m> {
             .as_ref()
             .and_then(Value::as_str)
             .and_then(ess_primitives::time::Rfc3339Instant::parse_rfc3339)
+    }
+
+    /// How many generated fields this run has minted so far: what [`Self::rewind`] keeps.
+    pub(crate) fn mark(&self) -> usize {
+        self.minted.borrow().len()
+    }
+
+    /// Forgets every generated field minted after `mark`, so the next read of one mints it
+    /// afresh: a set outcome mints its fields once per row and its events' once per occurrence,
+    /// as ESS's interpreter does, keeping only the published values read before ([`Self::mark`]).
+    pub(crate) fn rewind(&self, mark: usize) {
+        self.minted.borrow_mut().truncate(mark);
     }
 
     /// A fresh UUID for `identity`.

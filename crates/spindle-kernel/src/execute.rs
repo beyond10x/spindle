@@ -25,6 +25,7 @@ use crate::values::Sources;
 use crate::{DeclaredError, Event, ExecuteError, Executed};
 
 mod delete;
+mod set;
 
 /// The prefix of the capability an `external:` outcome is answered through, as admission derives
 /// it.
@@ -73,7 +74,8 @@ fn rests(
 ///
 /// Reads the instance the command addresses, selects the outcome, and commits that outcome's
 /// change in one [`Store::commit`]. A refusal, a `preserves:` outcome and a `refuses: false`
-/// outcome commit nothing. An identity the runtime mints is a random UUIDv4 ([`UuidV4`]).
+/// outcome commit nothing; a set outcome (`instances:`) writes every row it changes, with its
+/// events, in one [`Store::commit_all`]. An identity the runtime mints is a random UUIDv4 ([`UuidV4`]).
 ///
 /// # Errors
 /// [`ExecuteError`] where the command does not run; the store is then unchanged.
@@ -1158,6 +1160,10 @@ impl<'a, 'ir> Run<'a, 'ir> {
     /// run ([`Self::runs`]) is refused there, and a move from a state the row does not hold is
     /// the wrong-state answer instead.
     fn take(&mut self, outcome: &'ir ResolvedOutcome) -> Result<Executed, ExecuteError> {
+        if let Some(set) = &outcome.instances {
+            self.runs(outcome)?;
+            return self.take_set(outcome, set);
+        }
         let Some(subject) = &outcome.subject else {
             self.runs(outcome)?;
             self.publish_reads(outcome, None)?;
@@ -1443,6 +1449,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
             outcome,
             owner,
             generator: &self.generator,
+            changed: None,
         }
     }
 
@@ -1455,33 +1462,47 @@ impl<'a, 'ir> Run<'a, 'ir> {
         outcome
             .emits
             .iter()
-            .map(|event| {
-                let fields = outcome
-                    .payload
-                    .iter()
-                    .find(|payload| payload.event == *event)
-                    .map_or(&[][..], |payload| payload.fields.as_slice());
-                let mut payload = self
-                    .sources(outcome, event.name(), Some(event), before)
-                    .object(fields)?;
-                // A minted identity is published in the field `instance:` names on the event
-                // `instance:` names, where the outcome gives that field no source of its own,
-                // and on no other event (ESS `interpret::execute::emit`).
-                if let Some((creating, name, minted)) = &self.minted
-                    && *creating == event
-                    && !fields.iter().any(|source| source.target == *name)
-                    && self.ir.events().get(event.name()).is_some_and(|declared| {
-                        declared.fields.iter().any(|field| field.name == *name)
-                    })
-                {
-                    payload.insert(name.clone(), minted.clone());
-                }
-                Ok(Event {
-                    name: event.name().to_string(),
-                    payload,
-                })
-            })
+            .map(|event| self.event(outcome, event, before, None))
             .collect()
+    }
+
+    /// One occurrence of `event`, which `outcome` emits, with the payload fields it determines,
+    /// read with the instance as it was `before`; `changed` is how many rows a set outcome changed.
+    fn event(
+        &self,
+        outcome: &ResolvedOutcome,
+        event: &EventHandle,
+        before: Option<&Row>,
+        changed: Option<usize>,
+    ) -> Result<Event, ExecuteError> {
+        let fields = outcome
+            .payload
+            .iter()
+            .find(|payload| payload.event == *event)
+            .map_or(&[][..], |payload| payload.fields.as_slice());
+        let mut payload = Sources {
+            changed,
+            ..self.sources(outcome, event.name(), Some(event), before)
+        }
+        .object(fields)?;
+        // A minted identity is published in the field `instance:` names on the event `instance:`
+        // names, where the outcome gives that field no source of its own, and on no other event
+        // (ESS `interpret::execute::emit`).
+        if let Some((creating, name, minted)) = &self.minted
+            && *creating == event
+            && !fields.iter().any(|source| source.target == *name)
+            && self
+                .ir
+                .events()
+                .get(event.name())
+                .is_some_and(|declared| declared.fields.iter().any(|field| field.name == *name))
+        {
+            payload.insert(name.clone(), minted.clone());
+        }
+        Ok(Event {
+            name: event.name().to_string(),
+            payload,
+        })
     }
 
     fn declared_error(

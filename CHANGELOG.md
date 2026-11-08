@@ -6,6 +6,24 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- The kernel runs a set outcome (`instances:`): it selects every row of the named entity whose
+  filter holds, read from the store as it was before the outcome, and moves, updates or removes
+  each in ascending order of identity, as ESS's interpreter does. A move skips a row resting
+  outside its `from` states, and zero rows selected is a successful outcome. `{count: changed}`
+  reads how many rows changed, and an event declared once per changed row (`each: changed`, with
+  its `when_state:`) is published once for each, its `{changed: …}` fields read from that row as
+  it was before. A `{generated: true}` value is minted afresh for each row written and each event
+  occurrence, as ESS's interpreter mints them. Every row and every event of the outcome is one
+  store write (`Store::commit_all`): all of them, or, where one row is refused, none. A filter
+  that walks the rows of an entity stays refused. Before, every such outcome was refused as
+  unsupported.
+- `Store::commit_all` writes several instances, with their events, atomically: the memory store
+  and the IndexedDB store in one transaction, SQLite in one `eventlog` append group. A store that
+  does not provide it checks every named version first and writes back what it already wrote
+  where a later write is still refused. The store contract (`spindle_kernel::contract`) holds it.
+
 ### Fixed
 
 - `adversary_links::a_second_hello_before_the_link_opens_is_refused` writes both `hello` frames in

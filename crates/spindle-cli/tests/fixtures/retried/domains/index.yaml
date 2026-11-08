@@ -14,15 +14,22 @@ errors:
   - name: notes.index.NotIndexed
     summary: No entry carries the id.
     fields: []
+  - name: notes.index.BodyMissing
+    summary: The request carried no body.
+    fields: []
 commands:
   - name: notes.index.IndexNote
     input:
       - name: note_id
         type: notes.pad.NoteId
     outcomes:
+      - name: body-missing
+        input_absent: true
+        error: notes.index.BodyMissing
+        summary: The request carried no body.
       - name: replaced
         deletes: notes.index.Entry
-        instances: {where: note_id == input.note_id}
+        instance: note_id
         emits: [notes.index.NoteIndexed]
         payload:
           notes.index.NoteIndexed: {note_id: input.note_id}
