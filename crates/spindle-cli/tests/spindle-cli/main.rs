@@ -7,6 +7,7 @@ mod adversary_caller;
 mod adversary_console;
 mod adversary_control;
 mod adversary_delete;
+mod adversary_external_answers;
 mod adversary_fixed_caller;
 mod adversary_form_query;
 mod adversary_ingress;
