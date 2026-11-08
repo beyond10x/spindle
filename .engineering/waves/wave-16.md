@@ -21,7 +21,7 @@ U3.
 |---|---|---|---|---|---|
 | U1 | `story:kernel-creation-takes-unknown-row` | `unit/w16-unknown` | `spindle-w16-unknown` | `aep:implementor` | dispatched |
 | U2 | `story:external-answers-observed` | `unit/w16-external` | `spindle-w16-external` | `aep:implementor` | dispatched |
-| U3 | `story:surface-cross-component-template-collision` | `unit/w16-collision` | `spindle-w16-collision` | `aep:implementor` | dispatched |
+| U3 | `story:surface-cross-component-template-collision` | `unit/w16-collision` | `spindle-w16-collision` | `aep:implementor` | merged |
 
 Each unit gets one `aep:adversary` pass when its implementor reports green.
 
