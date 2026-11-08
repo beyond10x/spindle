@@ -1,6 +1,6 @@
 # Wave 16
 
-**Merged, gating.** All three units merged into `wave/16`: U3 as aa432f2e, U1 as 0dd405ed
+**Delivered.** PR https://github.com/beyond10x/spindle/pull/35 (head d5254a15) merged as 1a3879aa; released as 0.8.0 (`verification-report:release-0.8.0`). The three stories moved to `implemented` on CI run 42499657344 (Gate and macOS). Units merged into `wave/16`: U3 as aa432f2e, U1 as 0dd405ed
 (`review-result:w16-u1-adversary-1`), U2 as cd444acf (`review-result:w16-u2-adversary-1`).
 
 Run by the coordinator under `approval-record:wave16-approval` (the operator's standing acceptance
@@ -20,9 +20,9 @@ U3.
 
 | unit | story | branch | tree (managed id) | agent | stage |
 |---|---|---|---|---|---|
-| U1 | `story:kernel-creation-takes-unknown-row` | `unit/w16-unknown` | `spindle-w16-unknown` | `aep:implementor` | merged |
-| U2 | `story:external-answers-observed` | `unit/w16-external` | `spindle-w16-external` | `aep:implementor` | merged |
-| U3 | `story:surface-cross-component-template-collision` | `unit/w16-collision` | `spindle-w16-collision` | `aep:implementor` | merged |
+| U1 | `story:kernel-creation-takes-unknown-row` | `unit/w16-unknown` | `spindle-w16-unknown` | `aep:implementor` | delivered |
+| U2 | `story:external-answers-observed` | `unit/w16-external` | `spindle-w16-external` | `aep:implementor` | delivered |
+| U3 | `story:surface-cross-component-template-collision` | `unit/w16-collision` | `spindle-w16-collision` | `aep:implementor` | delivered |
 
 Each unit gets one `aep:adversary` pass when its implementor reports green.
 
