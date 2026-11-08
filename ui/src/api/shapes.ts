@@ -114,7 +114,12 @@ export const sampleShape: Shape<Sample> = {
     type: 'array',
     of: {
       type: 'object',
-      fields: { name: text, bounds: { type: 'array', of: number }, counts: { type: 'array', of: number } },
+      fields: {
+        name: text,
+        bounds: { type: 'array', of: number },
+        counts: { type: 'array', of: number },
+        sum_us: number,
+      },
     },
   },
   recent: {

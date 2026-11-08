@@ -5,7 +5,7 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:bb8fa28feac4e2cd62e7a4d8e0293cb5dc5ea08afae05536a7e852f44c1322b9",
+    "contract_digest": "slice-sha256/2:f65f0db2387cbde50d410a78b7cd01b8dd0e2ba100360de4f33314172c254d3e",
     "regenerate": "ess generate"
   },
   "$defs": {
@@ -35,7 +35,7 @@
     },
     "spindle.observe.Histogram": {
       "title": "Histogram",
-      "description": "The cumulative buckets of one histogram of the catalogue. `bounds` are the inclusive upper bounds of the buckets in ascending order; `counts` has one entry per bound and one more for the values above the last bound.",
+      "description": "The cumulative buckets of one histogram of the catalogue. `bounds` are the inclusive upper bounds of the buckets in ascending order; `counts` has one entry per bound and one more for the values above the last bound; `sum_us` is the sum of the observed values in microseconds.",
       "x-ess-name": "spindle.observe.Histogram",
       "x-ess-kind": "struct",
       "type": "object",
@@ -54,12 +54,16 @@
           "items": {
             "type": "integer"
           }
+        },
+        "sum_us": {
+          "type": "integer"
         }
       },
       "required": [
         "name",
         "bounds",
-        "counts"
+        "counts",
+        "sum_us"
       ],
       "additionalProperties": false
     },

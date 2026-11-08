@@ -18,7 +18,10 @@ are Spindle's releases.
   binding retries, timer ticks, store rows and bytes written), `spindle_entity_rows` read from
   each store, `spindle_resets_total`, and `spindle_external_causes_total`, declared with no sample
   yet. Duration buckets are `DURATION_BOUNDS_US` in seconds; a command's duration histogram has
-  buckets only, since its counters keep no sum. The scrape is answered on the host's thread and
+  buckets, a `_sum` and a `_count` equal to its `+Inf` bucket; a duration histogram of
+  `spindle-telemetry` now also keeps the sum of its observed microseconds
+  (`HistogramValue::sum_us`, 0 in a frame from an older sender); `spindle.observe.Histogram`
+  gains `sum_us`. The scrape is answered on the host's thread and
   is not recorded. `POST /api/reset` keeps every counter and the request log: only
   `spindle_entity_rows` falls and `spindle_resets_total` rises. `Host::rows` reads the rows each
   entity holds; `Exchange::metrics` names a scrape.

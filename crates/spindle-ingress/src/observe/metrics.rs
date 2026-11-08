@@ -234,8 +234,8 @@ fn write_sample(text: &mut String, name: &str, labels: &[(&str, &str)], value: &
                     series(labels, None),
                     seconds(*sum_us)
                 );
-                let _ = writeln!(text, "{name}_count{} {cumulative}", series(labels, None));
             }
+            let _ = writeln!(text, "{name}_count{} {cumulative}", series(labels, None));
         }
     }
 }
@@ -338,7 +338,7 @@ fn counted(samples: &mut Samples, component: &str, counters: &Counters) {
             Kind::Histogram => match histograms.next() {
                 Some(histogram) => Value::Buckets {
                     counts: histogram.counts,
-                    sum_us: None,
+                    sum_us: Some(histogram.sum_us),
                 },
                 None => continue,
             },

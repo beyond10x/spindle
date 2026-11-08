@@ -84,6 +84,23 @@ pub struct HistogramValue {
     pub bounds: Vec<u64>,
     /// One cumulative count per bound, then one for the values above the last.
     pub counts: Vec<u64>,
+    /// The sum of the observed values, in microseconds; 0 from a sender that kept none.
+    #[serde(default)]
+    pub sum_us: u64,
+}
+
+/// The values of one histogram slot: one count per bucket, then the sum in microseconds.
+fn histogram_value(name: &str, slot: &[AtomicU64]) -> HistogramValue {
+    let buckets = DURATION_BOUNDS_US.len() + 1;
+    HistogramValue {
+        name: name.to_owned(),
+        bounds: DURATION_BOUNDS_US.to_vec(),
+        counts: slot[..buckets]
+            .iter()
+            .map(|count| count.load(Ordering::Relaxed))
+            .collect(),
+        sum_us: slot[buckets].load(Ordering::Relaxed),
+    }
 }
 
 impl Counters {
@@ -95,7 +112,7 @@ impl Counters {
             slots.push(match counter.kind {
                 Kind::Counter => Slot::Counter(AtomicU64::new(0)),
                 Kind::Histogram => Slot::Histogram(
-                    (0..=DURATION_BOUNDS_US.len())
+                    (0..DURATION_BOUNDS_US.len() + 2)
                         .map(|_| AtomicU64::new(0))
                         .collect(),
                 ),
@@ -129,14 +146,7 @@ impl Counters {
     pub fn histogram(&self, name: &str) -> Option<HistogramValue> {
         let position = self.position(name)?;
         match &self.slots[position] {
-            Slot::Histogram(counts) => Some(HistogramValue {
-                name: name.to_owned(),
-                bounds: DURATION_BOUNDS_US.to_vec(),
-                counts: counts
-                    .iter()
-                    .map(|count| count.load(Ordering::Relaxed))
-                    .collect(),
-            }),
+            Slot::Histogram(slot) => Some(histogram_value(name, slot)),
             Slot::Counter(_) => None,
         }
     }
@@ -157,14 +167,7 @@ impl Counters {
                     name: counter.name.clone(),
                     value: value.load(Ordering::Relaxed),
                 }),
-                Slot::Histogram(counts) => histograms.push(HistogramValue {
-                    name: counter.name.clone(),
-                    bounds: DURATION_BOUNDS_US.to_vec(),
-                    counts: counts
-                        .iter()
-                        .map(|count| count.load(Ordering::Relaxed))
-                        .collect(),
-                }),
+                Slot::Histogram(slot) => histograms.push(histogram_value(&counter.name, slot)),
             }
         }
         Snapshot {
@@ -230,13 +233,18 @@ impl Counters {
     }
 
     fn observe(&self, position: Option<usize>, elapsed: Duration) {
-        if let Some(Slot::Histogram(counts)) = position.map(|position| &self.slots[position]) {
+        if let Some(Slot::Histogram(slot)) = position.map(|position| &self.slots[position]) {
             let micros = u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX);
             let bucket = DURATION_BOUNDS_US
                 .iter()
                 .position(|bound| micros <= *bound)
                 .unwrap_or(DURATION_BOUNDS_US.len());
-            counts[bucket].fetch_add(1, Ordering::Relaxed);
+            slot[bucket].fetch_add(1, Ordering::Relaxed);
+            let _ = slot[DURATION_BOUNDS_US.len() + 1].fetch_update(
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+                |sum| Some(sum.saturating_add(micros)),
+            );
         }
     }
 
