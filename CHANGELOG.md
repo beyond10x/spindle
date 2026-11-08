@@ -43,6 +43,10 @@ are Spindle's releases.
 
 ### Fixed
 
+- `Surface::new` refuses two components that claim one route template of one method on one
+  listener, under ESS's rule (ESS-HTTP-010: templates that differ only in their variable names),
+  answering `SurfaceError::Collision` naming both. Before, `GET /things/{id}` and
+  `GET /things/{key}` were both accepted and the second could never be reached.
 - A command whose outcome a `when_related:` guard over a row set selected no longer commits when
   another writer wrote a row of that set's entity between the kernel's scan and its commit: the
   commit is refused as a conflict (`StoreError::Conflict`, identity `*`), so a guard such as "at
