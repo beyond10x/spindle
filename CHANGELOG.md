@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-08
+
 ### Added
 
 - The kernel runs a set outcome (`instances:`): it selects every row of the named entity whose
