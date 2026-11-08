@@ -1023,7 +1023,7 @@ impl Host {
                 continue;
             };
             let name = entity.name.to_string();
-            let held = component.store.scan(&name)?.len();
+            let held = component.store.scan(&name)?.rows.len();
             rows.push((name, held));
         }
         Ok(rows)
