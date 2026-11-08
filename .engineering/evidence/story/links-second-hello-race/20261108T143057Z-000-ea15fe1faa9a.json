@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-08T14:30:57Z",
+  "actor": "human:timo",
+  "artifact": "story:links-second-hello-race",
+  "kind": "story",
+  "revision": 5,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "task check (CI Gate and macOS jobs, PR 32, attempt 5)",
+    "reference": "https://github.com/beyond10x/spindle/actions/runs/42465501089"
+  }
+}

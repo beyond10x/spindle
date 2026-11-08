@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-08T14:30:56Z",
+  "actor": "human:timo",
+  "artifact": "story:kernel-set-outcomes",
+  "kind": "story",
+  "revision": 8,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "wave 15 U2",
+    "reference": "unit merge c30e2ddd into wave/15; adversary pass review-result:w15-u2-adversary-1 fixed in 25bc889d"
+  }
+}
