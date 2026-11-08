@@ -218,7 +218,8 @@
         0,
         0,
         0
-      ]
+      ],
+      "sum_us": 2600
     },
     {
       "name": "command.rally.table.OpenMatch.duration_us",
@@ -236,7 +237,8 @@
         0,
         0,
         0
-      ]
+      ],
+      "sum_us": 250
     },
     {
       "name": "command.rally.table.Tick.duration_us",
@@ -254,7 +256,8 @@
         0,
         0,
         0
-      ]
+      ],
+      "sum_us": 2550
     }
   ],
   "recent": [
