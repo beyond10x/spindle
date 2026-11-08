@@ -7,8 +7,8 @@
     }
   ],
   "format": "ess-known-failures/1",
-  "implementation": "b10x-spindle 0.6.0",
-  "implementation_build": "sha256:a589cd91dedea5ba8bd36c2bee85f44abb8e4ec4f23ed86296914e755e3abe9f",
+  "implementation": "b10x-spindle 0.7.0",
+  "implementation_build": "sha256:fcca19087fd36628e5d77807a09eafe833c94652c089aaffc18d21e143851157",
   "spec_digest": "48b3a3604fbbca5a7267a7405e7872990a9b074fdda5fc2f44f0f3db55ea0d7d",
   "suite_digest": "sha256:a60325f8c93a16d8edabebc732b3bceaafb31c1ce6c12eb0564cf7d655864620"
 }
