@@ -273,11 +273,14 @@ fn a_removal_and_a_landed_group_move_the_entity_version_on_the_sqlite_store() {
     a_removal_and_a_landed_group_move_the_entity_version(&mut store);
 }
 
+/// What another writer does to the store, once.
+type Race<S> = Box<dyn FnOnce(&mut S)>;
+
 /// A store another writer writes to right after the kernel's first scan of `entity`.
 struct Raced<S: Store> {
     inner: S,
     entity: &'static str,
-    race: Option<Box<dyn FnOnce(&mut S)>>,
+    race: Option<Race<S>>,
 }
 
 impl<S: Store> Store for Raced<S> {
