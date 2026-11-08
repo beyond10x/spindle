@@ -48,13 +48,17 @@ prints the URL of the observe UI, `http://127.0.0.1:7341/?t=<token>`.
 
 Where `run` serves HTTP, `--observe` records every request it answers and lists the last 256
 (`--observe-requests <N>`, 1 to 10000) at `GET /__spindle/requests`, newest first, with totals
-per class since start; `?class=not-served` keeps only the requests answered `501`.
+per class since start; `?class=not-served` keeps only the requests answered `501`. Each record
+lists every external cause asked while it was answered, by its command or by one an event
+binding invoked, with the command that asked and what answered: `world` (the last reset's
+decision table), `file` (`--decisions`), `default` (`--answer-default`) or `unanswered`; a cause
+asked outside any request, by a timer-fired command, is counted and listed in no record.
 `GET /__spindle/metrics` answers the run's metrics in the Prometheus text format
 (`text/plain; version=0.0.4`), the families of `ess/fixtures/observe/metrics/families.json`:
 requests by method, route template, operation, kind, class and status class, their durations,
 commands by outcome and failure, events appended, bindings, timer ticks, store writes, the rows
-each entity holds and the resets. `POST /api/reset` empties the stores and keeps every count and
-the request log.
+each entity holds, the resets and the external causes answered, by command, outcome and source.
+`POST /api/reset` empties the stores and keeps every count and the request log.
 `GET /__spindle/ui` answers a panel of them: one HTML page, its script and style inline, that any
 page may frame and that reads `./requests` beside itself (`ui/dist-panel/panel.html`, built by
 `pnpm build:panel` and embedded; a binary built without it answers `503`). Paths under

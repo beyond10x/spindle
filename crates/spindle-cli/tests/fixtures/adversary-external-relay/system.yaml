@@ -1,0 +1,30 @@
+format: ess/34
+system: chain
+version: v1
+summary: Links forwarded over the network, each forwarding the next through a binding, a clerk outside the model holding any of them.
+domains:
+  - chain.desk
+components:
+  - component: desk
+    summary: Forwards links for callers outside the process.
+    owns:
+      domains:
+        - chain.desk
+    accepts:
+      commands:
+        - chain.desk.Forward
+    publishes:
+      events:
+        - chain.desk.Forwarded
+    reached_by: network
+bindings:
+  - id: forward-next
+    when:
+      event: chain.desk.Forwarded
+    invoke:
+      command: chain.desk.Forward
+    mapping:
+      link_id: event.link_id
+      next: event.next
+    delivery: at_most_once
+    on_failure: drop

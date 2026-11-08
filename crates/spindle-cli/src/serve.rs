@@ -12,10 +12,9 @@ use ess_gen::http::Binding;
 use spindle_capability::{Capability, Environment};
 use spindle_host::{Cause, Host, HostError, Retries, SystemClock};
 use spindle_ingress::{Caller, Listener, Surface, Unserved};
-use spindle_kernel::Decider;
 use spindle_spec::EssIr;
 
-use crate::decisions::Answers;
+use crate::decisions::{self, Run};
 use crate::{REFUSED, SIGNAL_POLL, SIGNALLED, signals};
 
 /// The components of `ir` that require `ingress.network` when each runs on its own.
@@ -83,11 +82,12 @@ pub(crate) struct Serving<'a> {
     pub ingress: &'a str,
     /// `--drop-retries`: run each `on_failure: retry` binding as a `drop` binding.
     pub drop_retries: bool,
-    /// With `--decisions` or `--answer-default`, what answers every request's external causes;
-    /// without either, the host answers none and refuses a specification that declares one.
-    pub decider: Option<Box<dyn Decider + Send>>,
+    /// With `--decisions` or `--answer-default`: `answers` answer every request's external causes
+    /// ([`decisions::deciding`]); without either, the host answers none and refuses a
+    /// specification that declares one.
+    pub decides: bool,
     /// The run's own answers, beneath the decision table a reset's world carries.
-    pub answers: Answers,
+    pub answers: Run,
     /// `--fixed-actor` with `--fixed-caller`, in the order given: each served operation is sent
     /// or read as the first its grant names ([`Surface::fixing_callers`]), a test-backend switch,
     /// not authentication; with none, as no caller.
@@ -169,12 +169,16 @@ fn fixed(ir: &EssIr, caller: &Caller) -> Result<()> {
 /// command a binding invoked that did not execute is printed on stderr as it is dropped, after
 /// its last attempt where the binding retries it ([`spindle_host::RETRY_ATTEMPTS`]).
 ///
-/// The `external:` causes of every request are answered by `serving.decider`; without one, a
-/// specification that declares an external outcome is refused before listening.
+/// The `external:` causes of every request are answered by `serving.answers` where
+/// `serving.decides`; otherwise a specification that declares an external outcome is refused
+/// before listening.
 ///
 /// A `POST /api/reset` may carry a world ([`crate::world`]): rows written once every store is
-/// empty, a decision table answering external causes before `serving.decider` does, and a seed
+/// empty, a decision table answering external causes before `serving.answers` do, and a seed
 /// identities are minted from, each until the next reset.
+///
+/// With `serving.observe`, and only then, the decider is wrapped so that each external cause it
+/// answers is noted on the surface's recorder with what answered it ([`decisions::deciding`]).
 ///
 /// With `serving.callers`, each command is sent as the first of them its grant names, each bound
 /// against the model and printed on stderr, in order, before listening; a caller the model refuses
@@ -287,16 +291,19 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     } else {
         Retries::Retried
     };
-    let opened = match serving.decider {
-        Some(decider) => Host::deciding_with_retries(
+    let answers = serving.answers;
+    let recorder = surface.recorder().cloned();
+    let opened = if serving.decides {
+        Host::deciding_with_retries(
             ir,
             environment,
             Arc::new(SystemClock),
             directory,
-            decider,
+            decisions::deciding(&answers, None, recorder.as_ref()).boxed(),
             retries,
-        ),
-        None => Host::with_retries(ir, environment, Arc::new(SystemClock), directory, retries),
+        )
+    } else {
+        Host::with_retries(ir, environment, Arc::new(SystemClock), directory, retries)
     };
     let mut host = match opened {
         Ok(host) => host,
@@ -315,9 +322,11 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         }
     }
     let listener = Listener::bind(serving.port, surface).context("binding the HTTP listener")?;
-    let answers = serving.answers;
     let worlds = |ir: &EssIr, body: &serde_json::Value| {
-        crate::world::read(ir, body, &answers).map_err(|error| format!("{error:#}"))
+        crate::world::read(ir, body, |table| {
+            decisions::deciding(&answers, Some(table), recorder.as_ref()).boxed()
+        })
+        .map_err(|error| format!("{error:#}"))
     };
     let stdout = std::io::stdout();
     let mut out = stdout.lock();

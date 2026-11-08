@@ -321,7 +321,6 @@ fn adversary_a_405_names_a_method_two_matching_routes_share_once() {
 /// Accepting them makes every `GET /things/<x>` answered by whichever component comes first, and
 /// the other route unreachable.
 #[test]
-#[ignore = "story:surface-cross-component-template-collision"]
 fn adversary_two_components_claiming_one_template_collide() {
     let ir = ir(&[
         ("system.yaml", PAIR),

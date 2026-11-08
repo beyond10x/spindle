@@ -6,6 +6,39 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- `run --observe` records what answered each external cause asked while a request is answered:
+  the request's `externals` lists every one, in the order asked, whether the routed command or a
+  command an event binding invoked on the way asked it, each with its `command`, `outcome`,
+  `holds` (absent when nothing answered) and `source`: `world` (the decision table of the last
+  reset), `file` (`--decisions`), `default` (the default branch `--answer-default` takes) or
+  `unanswered` (the command answered `501`). `GET /__spindle/metrics` counts them as
+  `spindle_external_causes_total{command,outcome,source}`, so every cause counted during a
+  request is listed in it; a cause asked outside any request, by a command a timer fired, is
+  counted and listed in no record. `spindle.observe.ExternalAnswer` gains a required `command`.
+  Without `--observe` the decider is not wrapped. Before, `externals` was always empty and the
+  family had no sample.
+
+### Fixed
+
+- `Surface::new` refuses two components that claim one route template of one method on one
+  listener, under ESS's rule (ESS-HTTP-010: templates that differ only in their variable names),
+  answering `SurfaceError::Collision` naming both. Before, `GET /things/{id}` and
+  `GET /things/{key}` were both accepted and the second could never be reached.
+- A creation branch takes an addressed row no store holds beside `unknown_instance:` on every
+  command, as ESS's interpreter does (`addressed_unknown`), where it takes its identity from the
+  input field that names the row: the creation may take the row, and the `unknown_instance:` answer
+  applies only where the branch selected acts on the missing row. Where that branch acts on it
+  without creating it, outside row sets, the missing row is answered before any present-related
+  refusal (`selected_subject_refusal`). Before, outside row sets, the kernel answered every absent
+  addressed row with `unknown_instance:` before any creation was read. A command that declares no
+  `unknown_instance:`, a delete among them, answers an absent addressed row, whether or not it
+  declares a creation, with its one declared not-found refusal (an `external:` refusal whose error
+  carries the identity's type), before its `wrong_state:`, as the interpreter does; an error field
+  that refusal gives no source is left out rather than minted. Before, it failed as undeclared or
+  answered `wrong_state:`.
+
 ## [0.7.0] - 2026-11-08
 
 ### Added

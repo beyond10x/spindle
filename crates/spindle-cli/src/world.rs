@@ -23,7 +23,7 @@ use ess_domain::entity::StateName;
 use ess_primitives::node::Node;
 use serde_json::Value;
 use spindle_host::{Seed, World};
-use spindle_kernel::Row;
+use spindle_kernel::{Decider, Row};
 
 use crate::decisions::Answers;
 
@@ -46,12 +46,17 @@ struct SeedRow {
     fields: BTreeMap<String, Node>,
 }
 
-/// Reads the world `body` carries against `ir`, its decision table laid over `run`.
+/// Reads the world `body` carries against `ir`, its decision table made the decider `over` makes of
+/// it: laid over the run's answers ([`crate::decisions::deciding`]).
 ///
 /// # Errors
 /// A body not of the shape above, a row ESS refuses, or a decision table [`Answers::from_json`]
 /// refuses.
-pub fn read(ir: &EssIr, body: &Value, run: &Answers) -> Result<World> {
+pub fn read(
+    ir: &EssIr,
+    body: &Value,
+    over: impl FnOnce(Answers) -> Box<dyn Decider + Send>,
+) -> Result<World> {
     let body: Body = serde_json::from_value(body.clone()).context("reading the reset's world")?;
     let rows = body
         .rows
@@ -67,7 +72,7 @@ pub fn read(ir: &EssIr, body: &Value, run: &Answers) -> Result<World> {
                 .context("in the decision table")
         })
         .transpose()?
-        .map(|table| table.over(run.clone()));
+        .map(over);
     Ok(World {
         rows,
         answers,

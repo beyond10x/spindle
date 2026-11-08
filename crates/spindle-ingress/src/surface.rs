@@ -730,10 +730,9 @@ impl Surface {
                         path: route.path,
                     });
                 }
-                if let Some(taken) = routes
-                    .iter()
-                    .find(|taken| taken.method == route.method && taken.path == route.path)
-                {
+                if let Some(taken) = routes.iter().find(|taken| {
+                    taken.method == route.method && same_template(&taken.segments, &route.segments)
+                }) {
                     return Err(SurfaceError::Collision {
                         method: route.method,
                         path: route.path,
@@ -892,6 +891,16 @@ impl Surface {
             Resolved::WrongMethod(served)
         }
     }
+}
+
+/// Whether two templates name one route under ESS's rule (ESS-HTTP-010): the same segments, the
+/// variable names erased.
+fn same_template(left: &[Segment], right: &[Segment]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|pair| match pair {
+            (Segment::Variable(_), Segment::Variable(_)) => true,
+            (left, right) => left == right,
+        })
 }
 
 /// One route of `component`, owned: served, or kept and marked [`Unserved`] with what it uses
