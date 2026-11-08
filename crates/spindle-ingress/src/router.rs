@@ -221,9 +221,32 @@ pub(crate) struct Pending {
 
 impl Pending {
     /// Answers the request on `host`, a reset's world read by `worlds` where given, and says who
-    /// answered it.
+    /// answered it. Where the surface observes, the external causes its command asked about while
+    /// it was answered, as the run's decider noted them ([`Recorder::answered`]), are answered
+    /// with it; one asked outside a request, or by another command a binding invoked, is counted
+    /// and listed in no record.
     pub(crate) fn serve(
         self,
+        host: &mut Host,
+        worlds: Option<Worlds<'_>>,
+    ) -> (Response, Vec<Failed>, Answered) {
+        if let Some(recorder) = &self.recorder {
+            recorder.take_answers();
+        }
+        let (response, failed, mut answered) = self.answer(host, worlds);
+        if let (Some(recorder), Asked::Route(route)) = (&self.recorder, &self.asked) {
+            let command = route.operation.name().to_string();
+            answered.externals = recorder
+                .take_answers()
+                .into_iter()
+                .filter(|answer| answer.command == command)
+                .collect();
+        }
+        (response, failed, answered)
+    }
+
+    fn answer(
+        &self,
         host: &mut Host,
         worlds: Option<Worlds<'_>>,
     ) -> (Response, Vec<Failed>, Answered) {

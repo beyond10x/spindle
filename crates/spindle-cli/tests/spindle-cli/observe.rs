@@ -1187,3 +1187,220 @@ fn reading_the_metrics_changes_no_count() {
     assert_eq!(first, second);
     assert_eq!(log(&served, "")["recorded"], 7, "a scrape is not recorded");
 }
+
+// story:external-answers-observed: what answered each external cause a served command asked
+// about, in its request's `externals` and in `spindle_external_causes_total`. The fixture
+// `tests/fixtures/served-review` serves `probe.review.Submit`, which asks `flagged` and then
+// `escalated` beside a default branch, and `probe.review.Decide`, which asks `vetoed` of an
+// approving decision with no default branch beside it.
+
+const REVIEW: &str = "crates/spindle-cli/tests/fixtures/served-review";
+const SUBMIT: &str = "probe.review.Submit";
+const DECIDE: &str = "probe.review.Decide";
+
+/// Writes `text` as a decisions file in `directory` and returns its path.
+fn decisions_file(directory: &tempfile::TempDir, text: &str) -> String {
+    let path = directory.path().join("decisions.toml");
+    std::fs::write(&path, text).expect("the decisions file is written");
+    path.to_str().expect("a UTF-8 path").to_owned()
+}
+
+/// Calls `operation` of the review fixture's `probe` at its route with `body`.
+fn call_review(served: &Served, operation: &str, body: &Value) -> (u16, Value) {
+    let (method, path) = route(REVIEW, "probe", operation);
+    exchange(served.address, &method, &path, Some(body))
+}
+
+/// `POST /api/reset` carrying `world`, answered `200`.
+fn reset_to(served: &Served, world: &Value) {
+    let (status, body) = exchange(served.address, "POST", "/api/reset", Some(world));
+    assert_eq!(status, 200, "the reset is answered: {body}");
+}
+
+/// The newest record of the request log.
+fn newest(served: &Served) -> Value {
+    log(served, "")["requests"][0].clone()
+}
+
+#[test]
+fn an_external_cause_answered_by_the_decisions_file_is_recorded_as_file() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let file = decisions_file(&directory, "[\"probe.review.Submit\"]\nflagged = true\n");
+    let served = serve(REVIEW, &["--decisions", &file, "--observe"]);
+    let (_, answer) = call_review(
+        &served,
+        SUBMIT,
+        &json!({"submission_id": "s1", "amount": 5}),
+    );
+    assert_eq!(answer["outcome"], "flagged", "{answer}");
+    let record = newest(&served);
+    assert_eq!(record["operation"], SUBMIT, "{record}");
+    assert_eq!(
+        record["externals"],
+        json!([{"outcome": "flagged", "holds": true, "source": "file"}]),
+        "{record}"
+    );
+}
+
+#[test]
+fn an_external_cause_answered_by_the_reset_world_is_recorded_as_world() {
+    let served = serve(REVIEW, &["--answer-default", "--observe"]);
+    reset_to(
+        &served,
+        &json!({"decisions": {"probe.review.Submit": {"flagged": false}}}),
+    );
+    let (status, answer) = call_review(
+        &served,
+        SUBMIT,
+        &json!({"submission_id": "s1", "amount": 5}),
+    );
+    assert!((200..300).contains(&status), "{status} {answer}");
+    assert_eq!(answer["outcome"], "submitted", "{answer}");
+    let record = newest(&served);
+    assert_eq!(record["operation"], SUBMIT, "{record}");
+    assert_eq!(
+        record["externals"],
+        json!([
+            {"outcome": "flagged", "holds": false, "source": "world"},
+            {"outcome": "escalated", "holds": false, "source": "default"},
+        ]),
+        "the world's table answers first, the run's answers what it does not: {record}"
+    );
+}
+
+#[test]
+fn an_external_cause_answered_by_answer_default_is_recorded_as_default() {
+    let served = serve(REVIEW, &["--answer-default", "--observe"]);
+    let (status, answer) = call_review(
+        &served,
+        SUBMIT,
+        &json!({"submission_id": "s1", "amount": 5}),
+    );
+    assert!((200..300).contains(&status), "{status} {answer}");
+    let record = newest(&served);
+    assert_eq!(record["class"], "served", "{record}");
+    assert_eq!(
+        record["externals"],
+        json!([
+            {"outcome": "flagged", "holds": false, "source": "default"},
+            {"outcome": "escalated", "holds": false, "source": "default"},
+        ]),
+        "{record}"
+    );
+}
+
+#[test]
+fn an_unanswered_cause_is_recorded_as_unanswered() {
+    let served = serve(REVIEW, &["--answer-default", "--observe"]);
+    let (status, answer) = call_review(
+        &served,
+        DECIDE,
+        &json!({"decision_id": "d1", "approve": true}),
+    );
+    assert_eq!(status, 501, "{answer}");
+    let record = newest(&served);
+    assert_eq!(record["operation"], DECIDE, "{record}");
+    assert_eq!(record["class"], "not-served", "{record}");
+    assert_eq!(record["reason"], answer["refused"], "{record}");
+    assert_eq!(
+        record["externals"],
+        json!([{"outcome": "vetoed", "source": "unanswered"}]),
+        "{record}"
+    );
+    let answered = log(&served, "");
+    let typed: spindle_observe_api::RequestLog = serde_json::from_value(answered.clone())
+        .unwrap_or_else(|error| panic!("{error}: {answered}"));
+    assert_eq!(typed.requests[0].externals.len(), 1, "{answered}");
+    let schema: Value = serde_json::from_str(
+        &std::fs::read_to_string(root().join(SCHEMA)).expect("the schema is read"),
+    )
+    .expect("the schema is JSON");
+    let validator = jsonschema::draft202012::new(&schema).expect("the schema compiles");
+    let errors = validator
+        .iter_errors(&answered)
+        .map(|error| format!("{error} at {}", error.instance_path()))
+        .collect::<Vec<_>>();
+    assert!(errors.is_empty(), "{answered}: {errors:?}");
+}
+
+#[test]
+fn external_causes_are_counted_per_command_outcome_and_source() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let file = decisions_file(&directory, "[\"probe.review.Submit\"]\nflagged = false\n");
+    let served = serve(
+        REVIEW,
+        &["--decisions", &file, "--answer-default", "--observe"],
+    );
+    let submit = |id: &str| {
+        let (status, answer) =
+            call_review(&served, SUBMIT, &json!({"submission_id": id, "amount": 5}));
+        assert_eq!(answer["outcome"], "submitted", "{status} {answer}");
+    };
+    let decide = |id: &str, approve: bool| {
+        call_review(
+            &served,
+            DECIDE,
+            &json!({"decision_id": id, "approve": approve}),
+        )
+    };
+    submit("s1");
+    submit("s2");
+    let (status, answer) = decide("d1", true);
+    assert_eq!(status, 501, "nothing answers `vetoed`: {answer}");
+    let (_, answer) = decide("d2", false);
+    assert_eq!(
+        answer["outcome"], "declined",
+        "no external cause is asked: {answer}"
+    );
+    reset_to(
+        &served,
+        &json!({"decisions": {"probe.review.Decide": {"vetoed": false}}}),
+    );
+    let (_, answer) = decide("d3", true);
+    assert_eq!(answer["outcome"], "approved", "{answer}");
+    submit("s3");
+
+    let mut recorded = BTreeMap::<String, f64>::new();
+    let logged = log(&served, "");
+    for record in logged["requests"].as_array().expect("requests") {
+        for external in record["externals"].as_array().expect("externals") {
+            let key = series(
+                "spindle_external_causes_total",
+                &[
+                    (
+                        "command",
+                        record["operation"].as_str().expect("an operation"),
+                    ),
+                    ("outcome", external["outcome"].as_str().expect("an outcome")),
+                    ("source", external["source"].as_str().expect("a source")),
+                ],
+            );
+            *recorded.entry(key).or_default() += 1.0;
+        }
+    }
+    let counted = samples(&scrape(&served))
+        .into_iter()
+        .filter(|(key, _)| key.starts_with("spindle_external_causes_total"))
+        .collect::<BTreeMap<_, _>>();
+    let expected = [
+        (SUBMIT, "flagged", "file", 3.0),
+        (SUBMIT, "escalated", "default", 3.0),
+        (DECIDE, "vetoed", "unanswered", 1.0),
+        (DECIDE, "vetoed", "world", 1.0),
+    ]
+    .into_iter()
+    .map(|(command, outcome, source, count)| {
+        let labels = [
+            ("command", command),
+            ("outcome", outcome),
+            ("source", source),
+        ];
+        (series("spindle_external_causes_total", &labels), count)
+    })
+    .collect::<BTreeMap<_, _>>();
+    assert_eq!(counted, expected, "{logged}");
+    assert_eq!(
+        recorded, counted,
+        "the metric matches the records: {logged}"
+    );
+}

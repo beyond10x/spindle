@@ -457,7 +457,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 spindle_ingress::HTTP_LOOPBACK
             );
         }
-        let decider = (decisions.is_some() || answer_default).then(|| answers.clone().served());
+        let decides = decisions.is_some() || answer_default;
         let binding = match http {
             Some(path) => match serve::binding(path, &loaded.ir)? {
                 Some(binding) => Some(binding),
@@ -477,7 +477,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 port: port.unwrap_or(0),
                 ingress: ingress.implementation.as_str(),
                 drop_retries,
-                decider,
+                decides,
                 answers,
                 callers: callers.clone(),
                 observe,
@@ -558,7 +558,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
             Err(error) => serde_json::json!({
                 "failure": {"kind": "invalid_request", "message": error.to_string()},
             }),
-            Ok(request) => answer(&loaded.ir, store.as_mut(), &answers, &request),
+            Ok(request) => answer(&loaded.ir, store.as_mut(), answers.answers(), &request),
         };
         writeln!(out, "{result}")?;
         out.flush()?;

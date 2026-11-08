@@ -2,7 +2,8 @@
 //! 0.0.4 ([`METRICS_MEDIA`]), with exactly the families `spindle.observe.MetricFamilies` specifies
 //! (`ess/fixtures/observe/metrics/families.json`), in its order.
 //!
-//! Read when scraped, on the host's thread: the request families from the [`Recorder`], the
+//! Read when scraped, on the host's thread: the request and external cause families from the
+//! [`Recorder`] (the external causes as the run's decider noted them, [`Recorder::answered`]), the
 //! command, event, binding, timer and store families from the [`Counters`] the host holds per
 //! component ([`Host::counters`]), and the rows each entity holds from its store ([`Host::rows`]).
 //! A reset empties the stores and leaves every count, so every counter stays monotonic; only
@@ -290,6 +291,7 @@ pub(crate) fn exposition(recorder: &Recorder, host: &mut Host) -> Result<String,
         durations,
         duration_sum_us,
         resets,
+        externals,
     } = recorder.traffic();
     for (labels, count) in requests {
         samples.add(
@@ -320,6 +322,13 @@ pub(crate) fn exposition(recorder: &Recorder, host: &mut Host) -> Result<String,
         );
     }
     samples.add("spindle_resets_total", Vec::new(), Value::Number(resets));
+    for (labels, count) in externals {
+        samples.add(
+            "spindle_external_causes_total",
+            labels.to_vec(),
+            Value::Number(count),
+        );
+    }
     Ok(samples.text())
 }
 

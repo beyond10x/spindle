@@ -183,13 +183,71 @@ pub enum By {
     Unrouted,
 }
 
+/// What answered one external cause of a served command (`spindle.observe.AnswerSource`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AnswerSource {
+    /// The decision table of the last reset's world.
+    World,
+    /// The decisions file, `--decisions`.
+    File,
+    /// The default branch `--answer-default` takes.
+    Default,
+    /// Nothing did, and the command answered `501`.
+    Unanswered,
+}
+
+impl AnswerSource {
+    /// Its name on the wire: `unanswered`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::World => "world",
+            Self::File => "file",
+            Self::Default => "default",
+            Self::Unanswered => "unanswered",
+        }
+    }
+}
+
+impl fmt::Display for AnswerSource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.name())
+    }
+}
+
+/// One external cause a served command asked about, and what answered it
+/// (`spindle.observe.ExternalAnswer`, with the command it was asked of).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalAnswer {
+    /// The command that asked, by qualified name.
+    pub command: String,
+    /// The outcome whose cause was asked about.
+    pub outcome: String,
+    /// Whether the cause holds; `None` when nothing answered it.
+    pub holds: Option<bool>,
+    /// What answered it.
+    pub source: AnswerSource,
+}
+
+impl ExternalAnswer {
+    fn json(&self) -> Value {
+        let mut answer = Map::new();
+        answer.insert("outcome".to_owned(), json!(self.outcome));
+        if let Some(holds) = self.holds {
+            answer.insert("holds".to_owned(), json!(holds));
+        }
+        answer.insert("source".to_owned(), json!(self.source.name()));
+        Value::Object(answer)
+    }
+}
+
 /// What the model answered a request with, beside its status and body: who answered, the outcome
-/// it selected and the events it published.
+/// it selected, the events it published and the external causes its command asked about.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Answered {
     pub(crate) by: By,
     pub(crate) outcome: Option<String>,
     pub(crate) events: Vec<String>,
+    pub(crate) externals: Vec<ExternalAnswer>,
 }
 
 impl Answered {
@@ -199,6 +257,7 @@ impl Answered {
             by: By::Ingress,
             outcome: None,
             events: Vec::new(),
+            externals: Vec::new(),
         }
     }
 
@@ -208,6 +267,7 @@ impl Answered {
             by: By::Model,
             outcome,
             events,
+            externals: Vec::new(),
         }
     }
 
@@ -244,8 +304,7 @@ impl Note {
             kind: None,
             answered: Answered {
                 by,
-                outcome: None,
-                events: Vec::new(),
+                ..Answered::ingress()
             },
         }
     }
@@ -267,6 +326,7 @@ struct Record {
     reason: Option<String>,
     duration: Duration,
     events: Vec<String>,
+    externals: Vec<ExternalAnswer>,
 }
 
 impl Record {
@@ -305,7 +365,10 @@ impl Record {
             json!(u64::try_from(self.duration.as_micros()).unwrap_or(u64::MAX)),
         );
         record.insert("events".to_owned(), json!(self.events));
-        record.insert("externals".to_owned(), json!([]));
+        record.insert(
+            "externals".to_owned(),
+            Value::Array(self.externals.iter().map(ExternalAnswer::json).collect()),
+        );
         Value::Object(record)
     }
 }
@@ -325,6 +388,11 @@ struct Ring {
     duration_sum_us: u64,
     /// Resets of the run's stores through `POST /api/reset`.
     resets: u64,
+    /// Every external cause answered, by command, outcome and source.
+    externals: BTreeMap<[String; 3], u64>,
+    /// The external causes answered since the host's thread last took them
+    /// ([`Recorder::take_answers`]), in the order asked.
+    answers: Vec<ExternalAnswer>,
 }
 
 /// The labels a request is counted by: method, route template, operation, kind, class and status
@@ -349,6 +417,8 @@ pub(crate) struct Traffic {
     pub(crate) duration_sum_us: u64,
     /// Resets of the run's stores.
     pub(crate) resets: u64,
+    /// Every external cause answered, by command, outcome and source, in label order.
+    pub(crate) externals: Vec<([String; 3], u64)>,
 }
 
 /// The requests a served run answered: the last of them, at most its capacity, and the totals
@@ -370,6 +440,8 @@ impl Recorder {
             durations: vec![0; DURATION_BOUNDS_US.len() + 1],
             duration_sum_us: 0,
             resets: 0,
+            externals: BTreeMap::new(),
+            answers: Vec::new(),
         })))
     }
 
@@ -430,6 +502,7 @@ impl Recorder {
                 reason: refused.filter(|_| class != Class::Served),
                 duration,
                 events: note.answered.events,
+                externals: note.answered.externals,
             };
             ring.recorded += 1;
             ring.totals[class.index()] += 1;
@@ -469,6 +542,26 @@ impl Recorder {
         self.ring(|ring| ring.resets += 1);
     }
 
+    /// Notes one external cause a command asked about on the host's thread, and what answered
+    /// it: counted at once by command, outcome and source, and listed in the record of the
+    /// request the host is answering, where its command is the one that asked.
+    pub fn answered(&self, answer: ExternalAnswer) {
+        self.ring(|ring| {
+            let series = [
+                answer.command.clone(),
+                answer.outcome.clone(),
+                answer.source.name().to_owned(),
+            ];
+            *ring.externals.entry(series).or_default() += 1;
+            ring.answers.push(answer);
+        });
+    }
+
+    /// The external causes answered since the last call, in the order asked.
+    pub(crate) fn take_answers(&self) -> Vec<ExternalAnswer> {
+        self.ring(|ring| std::mem::take(&mut ring.answers))
+    }
+
     /// What it counted since the run started.
     pub(crate) fn traffic(&self) -> Traffic {
         self.ring(|ring| Traffic {
@@ -480,6 +573,11 @@ impl Recorder {
             durations: ring.durations.clone(),
             duration_sum_us: ring.duration_sum_us,
             resets: ring.resets,
+            externals: ring
+                .externals
+                .iter()
+                .map(|(series, count)| (series.clone(), *count))
+                .collect(),
         })
     }
 
