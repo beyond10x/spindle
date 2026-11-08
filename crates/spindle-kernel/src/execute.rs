@@ -74,8 +74,8 @@ fn rests(
 ///
 /// Reads the instance the command addresses, selects the outcome, and commits that outcome's
 /// change in one [`Store::commit`]. A refusal, a `preserves:` outcome and a `refuses: false`
-/// outcome commit nothing; a set outcome (`instances:`) writes each row it changes in a store
-/// write of its own. An identity the runtime mints is a random UUIDv4 ([`UuidV4`]).
+/// outcome commit nothing; a set outcome (`instances:`) writes every row it changes, with its
+/// events, in one [`Store::commit_all`]. An identity the runtime mints is a random UUIDv4 ([`UuidV4`]).
 ///
 /// # Errors
 /// [`ExecuteError`] where the command does not run; the store is then unchanged.

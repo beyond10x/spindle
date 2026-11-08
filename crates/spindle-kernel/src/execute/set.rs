@@ -10,16 +10,8 @@ use serde_json::Value;
 
 use super::{Run, write};
 use crate::facts::{Facts, Selector};
-use crate::store::{Change, Removal, Row, Stored};
+use crate::store::{Change, Removal, Row, Stored, Write};
 use crate::{Event, ExecuteError, Executed};
-
-/// What a set outcome does to one row it selected, once every row is decided.
-enum Write {
-    /// The row rests on, holding this.
-    Commit(Change),
-    /// The row is removed.
-    Remove(Removal),
-}
 
 impl Run<'_, '_> {
     /// Takes the set outcome `outcome` over every row of `set`'s entity its filter selects.
@@ -32,12 +24,16 @@ impl Run<'_, '_> {
     /// changed row is published once for each its state filter admits, in the same order, its
     /// `{changed: …}` fields read from that row as it was before, its identity among its fields.
     ///
-    /// Every row is decided before any is written. Each is then written in its own
-    /// [`Store::commit`](crate::Store::commit) or [`Store::remove`](crate::Store::remove), naming
-    /// the version it was selected at, and the outcome's events travel with the last write: a
-    /// store commits one row at a time, so a conflict on a later row leaves the earlier ones
-    /// written. With no row selected the events are answered and no store records them, as for an
-    /// outcome without a subject.
+    /// A `{generated: true}` value is minted afresh for each row the outcome writes and for each
+    /// occurrence of an event, in that order, as ESS's interpreter mints them
+    /// (`interpret::execute::take`): only a published value a `{payload: <Event>.<field>}` reads
+    /// is minted once, first, and read alike by every row and occurrence.
+    ///
+    /// Every row is decided before any is written. All are then written in one
+    /// [`Store::commit_all`](crate::Store::commit_all), each naming the version it was selected
+    /// at, the outcome's events with the last: every row and every event, or, where one row is
+    /// refused, none. With no row selected the events are answered and no store records them, as
+    /// for an outcome without a subject.
     pub(super) fn take_set(
         &mut self,
         outcome: &ResolvedOutcome,
@@ -47,6 +43,7 @@ impl Run<'_, '_> {
         let entity = ir.entity(&set.entity);
         let selected = self.select_rows(outcome, entity, set)?;
         self.publish_reads(outcome, None)?;
+        let published = self.generator.mark();
         let mut writes = Vec::with_capacity(selected.len());
         let mut changed = Vec::with_capacity(selected.len());
         for (identity, stored) in selected {
@@ -67,6 +64,7 @@ impl Run<'_, '_> {
             if let ResolvedEffect::Moves { transition } = &set.effect {
                 after.state = transition.to.to_string();
             }
+            self.generator.rewind(published);
             write(
                 &self.sources(outcome, &entity.name, None, None),
                 outcome,
@@ -82,7 +80,7 @@ impl Run<'_, '_> {
             self.at_rest(entity, &change)?;
             writes.push(Write::Commit(change));
         }
-        let events = self.emit_set(outcome, set, &changed)?;
+        let events = self.emit_set(outcome, set, &changed, published)?;
         let error = self.declared_error(outcome, None)?;
         let response = self.response(outcome)?;
         if let Some(last) = writes.last_mut() {
@@ -90,12 +88,7 @@ impl Run<'_, '_> {
                 Write::Commit(change) => change.events.clone_from(&events),
                 Write::Remove(removal) => removal.events.clone_from(&events),
             }
-        }
-        for write in &writes {
-            match write {
-                Write::Commit(change) => self.store.commit(change)?,
-                Write::Remove(removal) => self.store.remove(removal)?,
-            }
+            self.store.commit_all(&writes)?;
         }
         Ok(Executed {
             outcome: outcome.name.as_str().to_owned(),
@@ -155,12 +148,14 @@ impl Run<'_, '_> {
     /// The events the set outcome `outcome` emits, in the order it lists them: an event declared
     /// once per changed row once for each row of `changed` its state filter admits, read with that
     /// row as the one held before, and every other event once, read with none. Every event reads
-    /// `{count: changed}` as how many rows `changed` holds (ESS `emit`).
+    /// `{count: changed}` as how many rows `changed` holds (ESS `emit`). Each occurrence mints its
+    /// own generated values, keeping those minted up to `published`.
     fn emit_set(
         &self,
         outcome: &ResolvedOutcome,
         set: &ResolvedSetSubject,
         changed: &[Row],
+        published: usize,
     ) -> Result<Vec<Event>, ExecuteError> {
         let mut events = Vec::new();
         for event in &outcome.emits {
@@ -176,6 +171,7 @@ impl Run<'_, '_> {
                         .collect(),
                 };
             for before in occurrences {
+                self.generator.rewind(published);
                 events.push(self.event(outcome, event, before, Some(changed.len()))?);
             }
         }

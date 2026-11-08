@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use serde_json::{Map, Value, json};
 
 use crate::Event;
-use crate::store::{Change, Removal, Row, Store, StoreError, Stored};
+use crate::store::{Change, Removal, Row, Store, StoreError, Stored, Write};
 
 /// The entity most cases write.
 pub const TASK: &str = "contract.tasks.Task";
@@ -77,6 +77,14 @@ pub const CASES: &[Case] = &[
     Case {
         name: "a_removed_identity_is_created_again_past_its_removed_version",
         run: a_removed_identity_is_created_again_past_its_removed_version,
+    },
+    Case {
+        name: "writes_committed_together_all_land",
+        run: writes_committed_together_all_land,
+    },
+    Case {
+        name: "writes_committed_together_one_refused_write_none",
+        run: writes_committed_together_one_refused_write_none,
     },
 ];
 
@@ -511,4 +519,128 @@ fn a_removed_identity_is_created_again_past_its_removed_version(store: &mut dyn 
     }
     assert_eq!(held(case, store, &identity), again, "{case}");
     assert_eq!(scan(case, store, TASK), vec![(identity, again)], "{case}");
+}
+
+/// What every entity of [`ENTITIES`] holds.
+fn everything(case: &str, store: &mut dyn Store) -> Vec<Vec<(Value, Stored)>> {
+    ENTITIES
+        .iter()
+        .map(|entity| scan(case, store, entity))
+        .collect()
+}
+
+fn writes_committed_together_all_land(store: &mut dyn Store) {
+    let case = "writes_committed_together_all_land";
+    let (moved, gone, made, other) = (json!("t1"), json!("t2"), json!("t3"), json!("o1"));
+    commit(
+        case,
+        store,
+        &change(TASK, &moved, None, row("Open", "moved")),
+    );
+    commit(case, store, &change(TASK, &gone, None, row("Open", "gone")));
+    let (before_moved, before_gone) = (held(case, store, &moved), held(case, store, &gone));
+    store
+        .commit_all(&[
+            Write::Commit(change(
+                TASK,
+                &moved,
+                Some(before_moved.version),
+                row("Done", "moved"),
+            )),
+            Write::Remove(removal(&gone, before_gone.version)),
+            Write::Commit(change(TASK, &made, None, row("Open", "made"))),
+            Write::Commit(change(OTHER, &other, None, row("Open", "other"))),
+        ])
+        .unwrap_or_else(|error| panic!("{case}: the writes commit together: {error}"));
+    let after = held(case, store, &moved);
+    assert_eq!(after.row, row("Done", "moved"), "{case}");
+    assert!(after.version > before_moved.version, "{case}");
+    assert_eq!(load(case, store, TASK, &gone), None, "{case}");
+    assert_eq!(held(case, store, &made).row, row("Open", "made"), "{case}");
+    assert_eq!(
+        load(case, store, OTHER, &other).map(|stored| stored.row),
+        Some(row("Open", "other")),
+        "{case}"
+    );
+    store
+        .commit_all(&[])
+        .unwrap_or_else(|error| panic!("{case}: no writes commit: {error}"));
+    commit(
+        case,
+        store,
+        &change(TASK, &moved, Some(after.version), row("Open", "again")),
+    );
+}
+
+/// Writes committed together that the store refuses: what is refused, the writes, the version
+/// the refused write names and the version its instance is held at.
+type Refusal<'a> = (&'a str, Vec<Write>, Option<u64>, Option<u64>);
+
+fn writes_committed_together_one_refused_write_none(store: &mut dyn Store) {
+    let case = "writes_committed_together_one_refused_write_none";
+    let (first, second, third) = (json!("t1"), json!("t2"), json!("t3"));
+    for identity in [&first, &second, &third] {
+        commit(
+            case,
+            store,
+            &change(TASK, identity, None, row("Open", "held")),
+        );
+    }
+    let stale = held(case, store, &second).version;
+    commit(
+        case,
+        store,
+        &change(TASK, &second, Some(stale), row("Busy", "moved on")),
+    );
+    let (one, two, three) = (
+        held(case, store, &first),
+        held(case, store, &second),
+        held(case, store, &third),
+    );
+    let before = everything(case, store);
+    let refusals: [Refusal<'_>; 3] = [
+        (
+            "a later change naming a stale version",
+            vec![
+                Write::Commit(change(TASK, &first, Some(one.version), row("Done", "1"))),
+                Write::Remove(removal(&third, three.version)),
+                Write::Commit(change(TASK, &second, Some(stale), row("Done", "2"))),
+            ],
+            Some(stale),
+            Some(two.version),
+        ),
+        (
+            "a later removal naming a stale version",
+            vec![
+                Write::Commit(change(TASK, &first, Some(one.version), row("Done", "1"))),
+                Write::Commit(change(OTHER, &json!("o1"), None, row("Open", "o"))),
+                Write::Remove(removal(&second, stale)),
+            ],
+            Some(stale),
+            Some(two.version),
+        ),
+        (
+            "a later creation of a held identity",
+            vec![
+                Write::Remove(removal(&first, one.version)),
+                Write::Commit(change(TASK, &json!("t4"), None, row("Open", "4"))),
+                Write::Commit(change(TASK, &third, None, row("Open", "3"))),
+            ],
+            None,
+            Some(three.version),
+        ),
+    ];
+    for (what, writes, named, held_version) in refusals {
+        conflict(case, what, store.commit_all(&writes), named, held_version);
+        assert_eq!(
+            everything(case, store),
+            before,
+            "{case}: {what} writes none of the writes"
+        );
+    }
+    commit(
+        case,
+        store,
+        &change(TASK, &first, Some(one.version), row("Done", "after")),
+    );
 }

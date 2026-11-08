@@ -7,7 +7,7 @@ use std::rc::{Rc, Weak};
 use js_sys::{Array, Promise, Reflect};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use spindle_kernel::{Change, Event, Removal, Row, Store, StoreError, Stored};
+use spindle_kernel::{Change, Event, Removal, Row, Store, StoreError, Stored, Write};
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
@@ -44,6 +44,52 @@ struct Recorded {
     identity: Value,
     event: String,
     payload: Map<String, Value>,
+}
+
+/// One instance [`Shared::write`] writes: the record it is written as, where this global scope
+/// believed it stood before the writes, and the events recorded with it.
+struct Pending<'w> {
+    record: Record,
+    believed: Standing,
+    identity: &'w Value,
+    events: &'w [Event],
+}
+
+/// One instance of a transaction [`Shared::write`] queued: its key, what is put, and the read of
+/// the record it found.
+struct Entry {
+    key: Array,
+    record_text: String,
+    event_texts: Vec<String>,
+    believed: Standing,
+    instance: String,
+    read: IdbRequest,
+}
+
+impl Entry {
+    /// Refuses the write where the database holds the instance elsewhere than this global scope
+    /// believed.
+    fn check(&self) -> Result<(), String> {
+        let stored = self.read.result().map_err(|error| js(error).to_string())?;
+        let found = if stored.is_undefined() {
+            None
+        } else {
+            let text = stored
+                .as_string()
+                .ok_or_else(|| format!("the record of {} is not text", self.instance))?;
+            let found = parse::<Record>(&text, "an instance").map_err(|e| e.to_string())?;
+            Some((found.version, found.row.is_none()))
+        };
+        if found != self.believed {
+            return Err(format!(
+                "another handle wrote {} first: the database holds {}, this handle held {}",
+                self.instance,
+                describe_standing(found),
+                describe_standing(self.believed)
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// An instance's key: its entity and its identity as canonical JSON text.
@@ -276,52 +322,117 @@ impl Shared {
         }
     }
 
-    /// Writes `record` and `events` in one readwrite transaction, if the database still holds
-    /// the instance where this global scope believed it stood; otherwise the transaction aborts
-    /// and the write does not land. The requests are queued before this returns; the transaction
-    /// runs once control returns to the browser, after every transaction on the database queued
-    /// before it, whichever global scope queued it.
-    fn write(
-        &mut self,
-        record: &Record,
-        believed: Standing,
-        identity: &Value,
-        events: &[Event],
-    ) -> Result<(), StoreError> {
-        let record_text = serde_json::to_string(record).map_err(json)?;
-        let event_texts = events
-            .iter()
-            .map(|event| {
-                serde_json::to_string(&Recorded {
-                    entity: record.entity.clone(),
-                    identity: identity.clone(),
-                    event: event.name.clone(),
-                    payload: event.payload.clone(),
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(json)?;
+    /// Checks `write` against what this global scope holds, as [`spindle_kernel::MemoryStore`]
+    /// checks it, and takes it in: the record the instance is then written as.
+    fn stage(&mut self, write: &Write) -> Result<Record, StoreError> {
+        let (entity, identity) = match write {
+            Write::Commit(change) => (&change.entity, &change.identity),
+            Write::Remove(removal) => (&removal.entity, &removal.identity),
+        };
+        let key = key(entity, identity);
+        let actual = self.rows.get(&key).map(|stored| stored.version);
+        let named = match write {
+            Write::Commit(change) => change.expected,
+            Write::Remove(removal) => Some(removal.expected),
+        };
+        if actual != named {
+            return Err(StoreError::Conflict {
+                entity: entity.clone(),
+                identity: key.1,
+                expected: named,
+                actual,
+            });
+        }
+        let (version, row) = match write {
+            Write::Commit(change) => {
+                let version = self.standing(&key).map_or(0, |(version, _)| version) + 1;
+                self.removed.remove(&key);
+                self.rows.insert(
+                    key.clone(),
+                    Stored {
+                        row: change.row.clone(),
+                        version,
+                    },
+                );
+                (version, Some(change.row.clone()))
+            }
+            Write::Remove(removal) => {
+                self.rows.remove(&key);
+                self.removed.insert(key.clone(), removal.expected);
+                (removal.expected, None)
+            }
+        };
+        Ok(Record {
+            entity: key.0,
+            identity: key.1,
+            version,
+            row,
+        })
+    }
+
+    /// Writes every record of `pending` and its events in one readwrite transaction, if the
+    /// database still holds each instance where this global scope believed it stood before them;
+    /// otherwise the transaction aborts and none of them lands. The requests are queued before
+    /// this returns; the transaction runs once control returns to the browser, after every
+    /// transaction on the database queued before it, whichever global scope queued it.
+    fn write(&mut self, pending: &[Pending<'_>]) -> Result<(), StoreError> {
         let scope = Array::of2(&ROWS.into(), &EVENTS.into());
         let transaction = self
             .database
             .transaction_with_str_sequence_and_mode(&scope, IdbTransactionMode::Readwrite)
             .map_err(js)?;
-        let key = Array::of2(
-            &record.entity.as_str().into(),
-            &record.identity.as_str().into(),
-        );
-        let request = transaction
-            .object_store(ROWS)
-            .and_then(|rows| rows.get(&key))
-            .map_err(|error| {
-                let _ = transaction.abort();
-                js(error)
-            })?;
+        let mut entries = Vec::with_capacity(pending.len());
+        let mut announced = Vec::with_capacity(pending.len());
+        for Pending {
+            record,
+            believed,
+            identity,
+            events,
+        } in pending
+        {
+            let record_text = serde_json::to_string(record).map_err(json)?;
+            let event_texts = events
+                .iter()
+                .map(|event| {
+                    serde_json::to_string(&Recorded {
+                        entity: record.entity.clone(),
+                        identity: (*identity).clone(),
+                        event: event.name.clone(),
+                        payload: event.payload.clone(),
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(json)?;
+            let key = Array::of2(
+                &record.entity.as_str().into(),
+                &record.identity.as_str().into(),
+            );
+            // Every read is queued before any put, so each reads the record as it stood before
+            // this transaction.
+            let request = transaction
+                .object_store(ROWS)
+                .and_then(|rows| rows.get(&key))
+                .map_err(|error| {
+                    let _ = transaction.abort();
+                    js(error)
+                })?;
+            announced.push(record_text.clone());
+            entries.push(Entry {
+                key,
+                record_text,
+                event_texts,
+                believed: *believed,
+                instance: format!("{} {}", record.entity, record.identity),
+                read: request,
+            });
+        }
+        let Some(last) = entries.last().map(|entry| entry.read.clone()) else {
+            return Ok(());
+        };
         let failed = self.failed.clone();
-        let read = request.clone();
         let writing = transaction.clone();
-        let instance = format!("{} {}", record.entity, record.identity);
-        let announced = record_text.clone();
+        // Requests of one transaction succeed in the order they were made: once the last read
+        // has, every read has.
         let check = Closure::once_into_js(move |event: web_sys::Event| {
             if event.type_() != "success" {
                 return;
@@ -330,31 +441,17 @@ impl Shared {
                 if failed.borrow().is_some() {
                     return Err("an earlier write did not land".to_owned());
                 }
-                let stored = read.result().map_err(|error| js(error).to_string())?;
-                let found = if stored.is_undefined() {
-                    None
-                } else {
-                    let text = stored
-                        .as_string()
-                        .ok_or_else(|| format!("the record of {instance} is not text"))?;
-                    let found = parse::<Record>(&text, "an instance").map_err(|e| e.to_string())?;
-                    Some((found.version, found.row.is_none()))
-                };
-                if found != believed {
-                    return Err(format!(
-                        "another handle wrote {instance} first: the database holds {}, this \
-                         handle held {}",
-                        describe_standing(found),
-                        describe_standing(believed)
-                    ));
+                for entry in &entries {
+                    entry.check()?;
                 }
                 let put = || -> Result<(), JsValue> {
-                    writing
-                        .object_store(ROWS)?
-                        .put_with_key(&record_text.into(), &key)?;
+                    let rows = writing.object_store(ROWS)?;
                     let log = writing.object_store(EVENTS)?;
-                    for text in event_texts {
-                        log.add(&text.into())?;
+                    for entry in entries {
+                        rows.put_with_key(&entry.record_text.into(), &entry.key)?;
+                        for text in entry.event_texts {
+                            log.add(&text.into())?;
+                        }
                     }
                     Ok(())
                 };
@@ -365,8 +462,8 @@ impl Shared {
                 let _ = writing.abort();
             }
         });
-        request.set_onsuccess(Some(check.unchecked_ref()));
-        request.set_onerror(Some(check.unchecked_ref()));
+        last.set_onsuccess(Some(check.unchecked_ref()));
+        last.set_onerror(Some(check.unchecked_ref()));
         let announce = self.channel.clone().map(|channel| (channel, announced));
         self.written = Some(watch(&transaction, &self.failed, announce));
         Ok(())
@@ -397,66 +494,63 @@ impl Store for BrowserStore {
     }
 
     fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
-        let mut shared = self.shared.borrow_mut();
-        shared.healthy()?;
-        let key = key(&change.entity, &change.identity);
-        let actual = shared.rows.get(&key).map(|stored| stored.version);
-        if actual != change.expected {
-            return Err(StoreError::Conflict {
-                entity: change.entity.clone(),
-                identity: key.1,
-                expected: change.expected,
-                actual,
-            });
-        }
-        let believed = shared.standing(&key);
-        let version = believed.map_or(0, |(version, _)| version) + 1;
-        let record = Record {
-            entity: key.0.clone(),
-            identity: key.1.clone(),
-            version,
-            row: Some(change.row.clone()),
-        };
-        shared.write(&record, believed, &change.identity, &change.events)?;
-        shared.removed.remove(&key);
-        shared.rows.insert(
-            key,
-            Stored {
-                row: change.row.clone(),
-                version,
-            },
-        );
-        Ok(())
+        self.commit_all(&[Write::Commit(change.clone())])
     }
 
     fn remove(&mut self, removal: &Removal) -> Result<(), StoreError> {
+        self.commit_all(&[Write::Remove(removal.clone())])
+    }
+
+    /// Checks and takes in each write in turn, then writes them all in one IndexedDB
+    /// transaction; where one is refused, or the transaction cannot be queued, every instance is
+    /// put back as this global scope held it.
+    fn commit_all(&mut self, writes: &[Write]) -> Result<(), StoreError> {
         let mut shared = self.shared.borrow_mut();
         shared.healthy()?;
-        let key = key(&removal.entity, &removal.identity);
-        let actual = shared.rows.get(&key).map(|stored| stored.version);
-        if actual != Some(removal.expected) {
-            return Err(StoreError::Conflict {
-                entity: removal.entity.clone(),
-                identity: key.1,
-                expected: Some(removal.expected),
-                actual,
-            });
+        if writes.is_empty() {
+            return Ok(());
         }
-        let record = Record {
-            entity: key.0.clone(),
-            identity: key.1.clone(),
-            version: removal.expected,
-            row: None,
-        };
-        shared.write(
-            &record,
-            Some((removal.expected, false)),
-            &removal.identity,
-            &removal.events,
-        )?;
-        shared.rows.remove(&key);
-        shared.removed.insert(key, removal.expected);
-        Ok(())
+        let mut before: BTreeMap<Key, (Option<Stored>, Option<u64>)> = BTreeMap::new();
+        let staged = (|| {
+            let mut pending = Vec::with_capacity(writes.len());
+            for write in writes {
+                let (entity, identity, events) = match write {
+                    Write::Commit(change) => (&change.entity, &change.identity, &change.events),
+                    Write::Remove(removal) => (&removal.entity, &removal.identity, &removal.events),
+                };
+                let key = key(entity, identity);
+                let held = before.entry(key.clone()).or_insert_with(|| {
+                    (
+                        shared.rows.get(&key).cloned(),
+                        shared.removed.get(&key).copied(),
+                    )
+                });
+                let believed = match held {
+                    (Some(stored), _) => Some((stored.version, false)),
+                    (None, removed) => removed.map(|version| (version, true)),
+                };
+                pending.push(Pending {
+                    record: shared.stage(write)?,
+                    believed,
+                    identity,
+                    events,
+                });
+            }
+            shared.write(&pending)
+        })();
+        if staged.is_err() {
+            for (key, (row, removed)) in before {
+                match row {
+                    Some(row) => shared.rows.insert(key.clone(), row),
+                    None => shared.rows.remove(&key),
+                };
+                match removed {
+                    Some(version) => shared.removed.insert(key, version),
+                    None => shared.removed.remove(&key),
+                };
+            }
+        }
+        staged
     }
 
     fn scan(&mut self, entity: &str) -> Result<Vec<(Value, Stored)>, StoreError> {
@@ -565,11 +659,11 @@ async fn settled(request: &IdbRequest) -> Result<JsValue, StoreError> {
 }
 
 /// A promise that settles when `transaction` completes or aborts, recording into `failed` why
-/// it aborted, and once it completes posting `announce`'s record on its channel.
+/// it aborted, and once it completes posting each of `announce`'s records on its channel.
 fn watch(
     transaction: &IdbTransaction,
     failed: &Rc<RefCell<Option<String>>>,
-    announce: Option<(BroadcastChannel, String)>,
+    announce: Option<(BroadcastChannel, Vec<String>)>,
 ) -> Promise {
     Promise::new(&mut |resolve, _| {
         let failed = failed.clone();
@@ -577,8 +671,10 @@ fn watch(
         let announce = announce.clone();
         let done = Closure::once_into_js(move |event: web_sys::Event| {
             if event.type_() == "complete" {
-                if let Some((channel, record)) = announce {
-                    let _ = channel.post_message(&JsValue::from_str(&record));
+                if let Some((channel, records)) = announce {
+                    for record in records {
+                        let _ = channel.post_message(&JsValue::from_str(&record));
+                    }
                 }
             } else {
                 let why = aborted

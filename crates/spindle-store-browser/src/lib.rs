@@ -5,7 +5,9 @@
 //! instance of one database into memory; reads are answered from there, and every commit or
 //! removal is checked there first, exactly as [`spindle_kernel::MemoryStore`] checks it (the same
 //! versions, conflicts and removed versions), then written in one IndexedDB transaction: the
-//! instance's record and the events the command emitted, together or not at all. IndexedDB runs
+//! instance's record and the events the command emitted, together or not at all; the writes of a
+//! set outcome (`Store::commit_all`) are all checked there, then written in one transaction
+//! together, every record and every event, or none of them. IndexedDB runs
 //! the readwrite transactions on one database in the order they were made, so the database
 //! follows the order of the commits.
 //!
