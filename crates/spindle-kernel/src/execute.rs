@@ -20,11 +20,12 @@ use spindle_capability::mint::Unsourced;
 use crate::decider::{Decider, External};
 use crate::facts::{Facts, Selector};
 use crate::mint::{Generator, IDENTITY_MINT, Identity, Mint, UuidV4};
-use crate::store::{Change, Row, Store, Stored};
+use crate::store::{Change, Row, Scanned, Store, Stored};
 use crate::values::Sources;
 use crate::{DeclaredError, Event, ExecuteError, Executed};
 
 mod delete;
+mod set;
 
 /// The prefix of the capability an `external:` outcome is answered through, as admission derives
 /// it.
@@ -73,7 +74,8 @@ fn rests(
 ///
 /// Reads the instance the command addresses, selects the outcome, and commits that outcome's
 /// change in one [`Store::commit`]. A refusal, a `preserves:` outcome and a `refuses: false`
-/// outcome commit nothing. An identity the runtime mints is a random UUIDv4 ([`UuidV4`]).
+/// outcome commit nothing; a set outcome (`instances:`) writes every row it changes, with its
+/// events, in one [`Store::commit_all`]. An identity the runtime mints is a random UUIDv4 ([`UuidV4`]).
 ///
 /// # Errors
 /// [`ExecuteError`] where the command does not run; the store is then unchanged.
@@ -273,6 +275,7 @@ pub fn execute_refusing(
         instant: None,
         minted: None,
         answered: BTreeMap::new(),
+        scanned: Vec::new(),
         refused,
     };
     match run.select()? {
@@ -409,6 +412,9 @@ struct Run<'a, 'ir> {
     /// What the decider answered for each external branch it was asked about, by outcome name:
     /// asked once per run, whether the look-ahead or selection reads the branch first.
     answered: BTreeMap<String, bool>,
+    /// Each entity a row-set guard scanned, at the version its first scan answered: the change
+    /// the selected outcome commits is conditioned on them ([`Change::scanned`]).
+    scanned: Vec<Scanned>,
     /// The outcomes the caller does not serve, by name, each with why ([`execute_refusing`]).
     refused: &'a BTreeMap<String, String>,
 }
@@ -710,7 +716,15 @@ impl<'a, 'ir> Run<'a, 'ir> {
             None => *self.instant.insert(self.generator.instant()),
         };
         let mut members = Vec::new();
-        for (identity, stored) in self.store.scan(&entity.name.to_string())? {
+        let name = entity.name.to_string();
+        let scan = self.store.scan(&name)?;
+        if !self.scanned.iter().any(|scanned| scanned.entity == name) {
+            self.scanned.push(Scanned {
+                entity: name,
+                version: scan.version,
+            });
+        }
+        for (identity, stored) in scan {
             let row = Facts::row(ir, entity, &identity, &stored.row, None);
             let facts = Selector {
                 row: &row,
@@ -1158,6 +1172,10 @@ impl<'a, 'ir> Run<'a, 'ir> {
     /// run ([`Self::runs`]) is refused there, and a move from a state the row does not hold is
     /// the wrong-state answer instead.
     fn take(&mut self, outcome: &'ir ResolvedOutcome) -> Result<Executed, ExecuteError> {
+        if let Some(set) = &outcome.instances {
+            self.runs(outcome)?;
+            return self.take_set(outcome, set);
+        }
         let Some(subject) = &outcome.subject else {
             self.runs(outcome)?;
             self.publish_reads(outcome, None)?;
@@ -1222,6 +1240,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                         expected: None,
                         row: Row { state, fields },
                         events: events.clone(),
+                        scanned: self.scanned.clone(),
                     }),
                     events,
                 )
@@ -1257,6 +1276,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     expected: Some(stored.version),
                     row: after,
                     events: events.clone(),
+                    scanned: self.scanned.clone(),
                 });
                 (change, events)
             }
@@ -1443,6 +1463,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
             outcome,
             owner,
             generator: &self.generator,
+            changed: None,
         }
     }
 
@@ -1455,33 +1476,47 @@ impl<'a, 'ir> Run<'a, 'ir> {
         outcome
             .emits
             .iter()
-            .map(|event| {
-                let fields = outcome
-                    .payload
-                    .iter()
-                    .find(|payload| payload.event == *event)
-                    .map_or(&[][..], |payload| payload.fields.as_slice());
-                let mut payload = self
-                    .sources(outcome, event.name(), Some(event), before)
-                    .object(fields)?;
-                // A minted identity is published in the field `instance:` names on the event
-                // `instance:` names, where the outcome gives that field no source of its own,
-                // and on no other event (ESS `interpret::execute::emit`).
-                if let Some((creating, name, minted)) = &self.minted
-                    && *creating == event
-                    && !fields.iter().any(|source| source.target == *name)
-                    && self.ir.events().get(event.name()).is_some_and(|declared| {
-                        declared.fields.iter().any(|field| field.name == *name)
-                    })
-                {
-                    payload.insert(name.clone(), minted.clone());
-                }
-                Ok(Event {
-                    name: event.name().to_string(),
-                    payload,
-                })
-            })
+            .map(|event| self.event(outcome, event, before, None))
             .collect()
+    }
+
+    /// One occurrence of `event`, which `outcome` emits, with the payload fields it determines,
+    /// read with the instance as it was `before`; `changed` is how many rows a set outcome changed.
+    fn event(
+        &self,
+        outcome: &ResolvedOutcome,
+        event: &EventHandle,
+        before: Option<&Row>,
+        changed: Option<usize>,
+    ) -> Result<Event, ExecuteError> {
+        let fields = outcome
+            .payload
+            .iter()
+            .find(|payload| payload.event == *event)
+            .map_or(&[][..], |payload| payload.fields.as_slice());
+        let mut payload = Sources {
+            changed,
+            ..self.sources(outcome, event.name(), Some(event), before)
+        }
+        .object(fields)?;
+        // A minted identity is published in the field `instance:` names on the event `instance:`
+        // names, where the outcome gives that field no source of its own, and on no other event
+        // (ESS `interpret::execute::emit`).
+        if let Some((creating, name, minted)) = &self.minted
+            && *creating == event
+            && !fields.iter().any(|source| source.target == *name)
+            && self
+                .ir
+                .events()
+                .get(event.name())
+                .is_some_and(|declared| declared.fields.iter().any(|field| field.name == *name))
+        {
+            payload.insert(name.clone(), minted.clone());
+        }
+        Ok(Event {
+            name: event.name().to_string(),
+            payload,
+        })
     }
 
     fn declared_error(

@@ -4,7 +4,7 @@ use std::io;
 use std::time::Duration;
 
 use serde_json::Value;
-use spindle_kernel::{Change, ExecuteError, Executed, Removal, Store, StoreError, Stored};
+use spindle_kernel::{Change, ExecuteError, Executed, Removal, Store, StoreError, Stored, Write};
 
 use crate::port::{Failure, Outcome, Record, Sink};
 
@@ -79,12 +79,38 @@ impl<S: Store> Store for CountingStore<S> {
         self.inner.load(entity, identity)
     }
 
-    fn scan(&mut self, entity: &str) -> Result<Vec<(Value, Stored)>, StoreError> {
+    fn scan(&mut self, entity: &str) -> Result<spindle_kernel::Scan, StoreError> {
         self.inner.scan(entity)
     }
 
     fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
         self.inner.commit(change)?;
+        self.committed(change);
+        Ok(())
+    }
+
+    /// The writes land in `inner` together, then count as each would alone.
+    fn commit_all(&mut self, writes: &[Write]) -> Result<(), StoreError> {
+        self.inner.commit_all(writes)?;
+        for write in writes {
+            match write {
+                Write::Commit(change) => self.committed(change),
+                Write::Remove(removal) => self.removed(removal),
+            }
+        }
+        Ok(())
+    }
+
+    fn remove(&mut self, removal: &Removal) -> Result<(), StoreError> {
+        self.inner.remove(removal)?;
+        self.removed(removal);
+        Ok(())
+    }
+}
+
+impl<S: Store> CountingStore<S> {
+    /// Counts `change`, which `inner` committed.
+    fn committed(&self, change: &Change) {
         let mut length = Length::default();
         let encoded = serde_json::to_writer(&mut length, &change.row).is_ok()
             && change
@@ -100,12 +126,11 @@ impl<S: Store> Store for CountingStore<S> {
         for event in &change.events {
             self.sink.record(Record::Appended { event: &event.name });
         }
-        Ok(())
     }
 
-    /// A removal counts as one row written, its bytes those of its events: no row rests.
-    fn remove(&mut self, removal: &Removal) -> Result<(), StoreError> {
-        self.inner.remove(removal)?;
+    /// Counts `removal`, which `inner` committed: one row written, its bytes those of its
+    /// events, since no row rests.
+    fn removed(&self, removal: &Removal) {
         let mut length = Length::default();
         let encoded = removal
             .events
@@ -120,7 +145,6 @@ impl<S: Store> Store for CountingStore<S> {
         for event in &removal.events {
             self.sink.record(Record::Appended { event: &event.name });
         }
-        Ok(())
     }
 }
 

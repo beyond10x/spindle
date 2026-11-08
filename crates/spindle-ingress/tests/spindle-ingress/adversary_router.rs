@@ -118,6 +118,12 @@ fn announce(address: SocketAddr, method: &str, target: &str, length: usize) -> R
         status,
         allow,
         panel,
+        metrics: head.lines().skip(1).any(|line| {
+            line.split_once(':').is_some_and(|(key, value)| {
+                key.eq_ignore_ascii_case("content-type")
+                    && value.trim() == spindle_ingress::METRICS_MEDIA
+            })
+        }),
         body: body.to_owned(),
     }
 }

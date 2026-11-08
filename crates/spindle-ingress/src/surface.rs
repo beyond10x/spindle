@@ -84,6 +84,9 @@ pub struct Route {
     /// The command or view it serves.
     pub operation: Operation,
     segments: Vec<Segment>,
+    /// Whether an `ess-http/1` binding declares it: a declared template's literals are compared
+    /// with a request segment in its [`literal_spelling`]; a derived route's path exactly.
+    declared: bool,
     variables: Vec<Variable>,
     queried: Vec<Queried>,
     statuses: BTreeMap<String, u16>,
@@ -366,11 +369,21 @@ impl Route {
     /// The input `path` carries in its variables, read as [`ess_gen::http::Flat`] says; `None`
     /// when `path` does not match the template or leaves a variable's segment empty (ESS's
     /// served application matches only a variable holding a segment that is not empty),
-    /// `Some(Err)` when a variable's text is malformed. Nothing is read from a matched path for an
+    /// `Some(Err)` when a variable's text is malformed. A declared template's literals are
+    /// compared with `path` in its [`literal_spelling`], as ESS's served application compares
+    /// them, so `/things/%7Emodules` matches `/things/~modules`; a variable is read from the raw
+    /// segment, every escape decoded ([`decoded`]). Nothing is read from a matched path for an
     /// operation the ingress does not serve or a view the fixed caller may not read: both are
     /// refused before their request is read.
     fn carried(&self, path: &str) -> Option<Result<Map<String, Value>, String>> {
-        if !ess_gen::http::template_matches(&self.segments, path) {
+        let spelled;
+        let compared = if self.declared {
+            spelled = literal_spelling(path);
+            spelled.as_str()
+        } else {
+            path
+        };
+        if !ess_gen::http::template_matches(&self.segments, compared) {
             return None;
         }
         let given: Vec<&str> = path.strip_prefix('/').unwrap_or(path).split('/').collect();
@@ -399,6 +412,40 @@ impl Route {
         }
         Some(Ok(carried))
     }
+}
+
+/// `text` with each `%XX` escape of an RFC 3986 unreserved character (ALPHA / DIGIT / `-` / `.` /
+/// `_` / `~`, §2.3) decoded and every other escape left as written (§6.2.2.2): the spelling ESS
+/// 0.90.0's served application compares a request segment with a literal in
+/// (`literal_spelling` in the server `ess generate synthesize --http` emits,
+/// `docs/design/http-presentation-binding.md`, "Path templates"). ESS publishes it only as
+/// emitted source, not as a function this crate can call, so it is written here to the same rule.
+/// It decodes no `/`, so `text` keeps its segments.
+fn literal_spelling(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let digit = |at: usize| {
+        bytes
+            .get(at)
+            .and_then(|byte| char::from(*byte).to_digit(16))
+    };
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let escaped = match (bytes[index], digit(index + 1), digit(index + 2)) {
+            (b'%', Some(high), Some(low)) => u8::try_from(high * 16 + low)
+                .ok()
+                .filter(|byte| byte.is_ascii_alphanumeric() || b"-._~".contains(byte)),
+            _ => None,
+        };
+        if let Some(byte) = escaped {
+            out.push(byte);
+            index += 3;
+        } else {
+            out.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| text.to_owned())
 }
 
 /// A path segment with every `%XX` decoded, as ESS's served application decodes it; `None` where
@@ -482,7 +529,7 @@ pub enum Resolved<'a> {
     /// A path under the reserved prefix `/__spindle/`, matched before any other route, with the
     /// recorder on or off ([`Surface::observing`]).
     Reserved(Reserved),
-    /// The path is served, under these methods only.
+    /// The path is served, under these methods only: sorted, each once.
     WrongMethod(Vec<Method>),
     /// No route has the path.
     NotFound,
@@ -787,12 +834,17 @@ impl Surface {
     }
 
     /// The route a request with `method` (compared exactly, RFC 9110 §9.1) and `path` is for.
-    /// Compiling the binding
-    /// refused two templates a request path can both match (`ESS-HTTP-010`, `ESS-HTTP-011`), so
-    /// at most one route of a method matches. A console route, where the surface has them, is
-    /// matched exactly; no other route shares its path ([`Surface::with_console`]). A path under
-    /// the reserved prefix `/__spindle/` is matched before either, with or without a recorder,
-    /// so that it never reaches a route of the specification.
+    /// Compiling the binding refuses two templates of one method that are the same but for
+    /// variable names (`ESS-HTTP-010`) or that cross (`ESS-HTTP-011`); from ESS 0.89.0 it admits a
+    /// nested pair, where one template holds the literal at every position the two differ. Of the
+    /// routes of `method` that match, the one ESS's dispatch order tries first answers
+    /// ([`ess_gen::http::dispatch_order`]): the more specific of a nested pair, whatever order the
+    /// routes are declared or held in, and otherwise the first. A path no route of `method`
+    /// matches answers the methods of the routes that do, sorted and each once, as ESS's served
+    /// application names them in `Allow`. A console route, where the surface has
+    /// them, is matched exactly; no other route shares its path ([`Surface::with_console`]). A
+    /// path under the reserved prefix `/__spindle/` is matched before either, with or without a
+    /// recorder, so that it never reaches a route of the specification.
     pub fn resolve(&self, method: &str, path: &str) -> Resolved<'_> {
         if let Some(reserved) = Reserved::of(path) {
             return Resolved::Reserved(reserved);
@@ -809,14 +861,23 @@ impl Surface {
             };
         }
         let mut served = Vec::new();
+        let mut matched = Vec::new();
         for route in &self.routes {
             let Some(carried) = route.carried(path) else {
                 continue;
             };
-            if route.method.as_str().to_uppercase() != method {
+            if route.method.as_str().to_uppercase() == method {
+                matched.push((route, carried));
+            } else {
                 served.push(route.method);
-                continue;
             }
+        }
+        let rows: Vec<(&str, &str)> = matched
+            .iter()
+            .map(|(route, _)| (route.method.as_str(), route.path.as_str()))
+            .collect();
+        if let Some(&first) = ess_gen::http::dispatch_order(&rows).first() {
+            let (route, carried) = matched.swap_remove(first);
             return match carried {
                 Ok(carried) => Resolved::Found(route, carried),
                 Err(why) => Resolved::Malformed(route, why),
@@ -825,6 +886,9 @@ impl Surface {
         if served.is_empty() {
             Resolved::NotFound
         } else {
+            // As ESS's served application names them in `Allow`: sorted, each method once.
+            served.sort_unstable_by_key(|method| method.as_str());
+            served.dedup();
             Resolved::WrongMethod(served)
         }
     }
@@ -855,6 +919,7 @@ fn route(
         path,
         operation,
         segments,
+        declared: bound.declared.is_some(),
         variables: Vec::new(),
         queried: Vec::new(),
         statuses: BTreeMap::new(),

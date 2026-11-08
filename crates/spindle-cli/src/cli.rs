@@ -204,7 +204,10 @@ pub enum Command {
         /// read to its answer handed back, and answer `GET /__spindle/requests` with a
         /// `spindle-requests/1` log: the totals per class since start (`served`, `refused`,
         /// `not-granted`, `not-served`, `failed`, `unrouted`) and the last records, newest first;
-        /// `?class=<class>`, repeatable, keeps only those classes. Without it every path under
+        /// `?class=<class>`, repeatable, keeps only those classes; answer `GET /__spindle/metrics`
+        /// with the run's metrics in the Prometheus text format (`text/plain; version=0.0.4`),
+        /// the families of `ess/fixtures/observe/metrics/families.json`; a `POST /api/reset`
+        /// keeps every count and the log. Without it every path under
         /// `/__spindle/` answers `404`; with it or without, a binding route under that prefix
         /// exits 1 before listening. The listening line is the same either way. Only where `run`
         /// serves HTTP.

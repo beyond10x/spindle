@@ -25,6 +25,7 @@ fn change(identity: &Value, expected: Option<u64>, step: u64) -> Change {
             name: "handles.tasks.Touched".to_owned(),
             payload: Map::from_iter([("step".to_owned(), json!(step))]),
         }],
+        scanned: Vec::new(),
     }
 }
 

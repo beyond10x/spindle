@@ -8,7 +8,7 @@ use spindle_host::{Failed, Host};
 
 use crate::answer::Answer;
 use crate::console::{Console, Worlds};
-use crate::observe::{Answered, By, Reserved};
+use crate::observe::{Answered, By, Recorder, Reserved};
 use crate::surface::{Resolved, Route, Surface};
 
 /// The largest request body read, in bytes: [`route`] refuses a larger one `413`, and the
@@ -33,8 +33,9 @@ pub struct Request {
     pub body: Vec<u8>,
 }
 
-/// One answer, as a value: its body, where it is not empty, is [`CONTENT_TYPE`], or the observe
-/// panel's page where [`Response::panel`] says so; an empty body carries no `Content-Type`.
+/// One answer, as a value: its body, where it is not empty, is [`CONTENT_TYPE`], the observe
+/// panel's page where [`Response::panel`] says so, or the metrics where [`Response::metrics`]
+/// does; an empty body carries no `Content-Type`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response {
     /// The status.
@@ -45,6 +46,9 @@ pub struct Response {
     /// [`PANEL_MEDIA`](crate::PANEL_MEDIA), answered with
     /// [`PANEL_POLICY`](crate::PANEL_POLICY) as its `Content-Security-Policy`.
     pub panel: bool,
+    /// The body is the metrics, `GET /__spindle/metrics`: it is
+    /// [`METRICS_MEDIA`](crate::METRICS_MEDIA), the Prometheus text format.
+    pub metrics: bool,
     /// The body.
     pub body: String,
 }
@@ -55,6 +59,7 @@ impl From<Answer> for Response {
             status: answer.status,
             allow: None,
             panel: false,
+            metrics: false,
             body: answer.body.map(|body| body.to_string()).unwrap_or_default(),
         }
     }
@@ -99,15 +104,23 @@ fn routing(
     worlds: Option<Worlds<'_>>,
 ) -> Routed {
     if let Some(reserved) = Reserved::of(&request.path) {
+        let answered = crate::observe::reserved(
+            surface.recorder(),
+            surface.panel(),
+            reserved,
+            &request.method,
+            &request.path,
+            &request.query,
+        );
+        let response = match (answered, surface.recorder()) {
+            (Some(response), _) => response,
+            (None, Some(recorder)) => crate::observe::metrics(recorder, host),
+            (None, None) => {
+                Answer::refusal(404, format!("no route serves {}", request.path)).into()
+            }
+        };
         return Routed {
-            response: crate::observe::reserved(
-                surface.recorder(),
-                surface.panel(),
-                reserved,
-                &request.method,
-                &request.path,
-                &request.query,
-            ),
+            response,
             failed: Vec::new(),
         };
     }
@@ -132,6 +145,7 @@ fn routing(
         query: request.query,
         content_type: request.content_type,
         body: request.body,
+        recorder: surface.recorder().cloned(),
     }
     .serve(host, worlds);
     Routed { response, failed }
@@ -150,6 +164,10 @@ pub(crate) enum Asked {
     Route(Box<Route>),
     /// A console route.
     Console(Console),
+    /// `GET /__spindle/metrics`, on an observing surface, handed to the host's thread by the
+    /// listener; [`route`] answers it directly.
+    #[cfg_attr(not(feature = "listener"), allow(dead_code))]
+    Metrics,
 }
 
 /// A refusal, who gave it, and the route it was for where the path matched one.
@@ -197,6 +215,8 @@ pub(crate) struct Pending {
     pub(crate) query: String,
     pub(crate) content_type: Option<String>,
     pub(crate) body: Vec<u8>,
+    /// The surface's recorder, where it observes: what the metrics read, and what counts a reset.
+    pub(crate) recorder: Option<Recorder>,
 }
 
 impl Pending {
@@ -224,6 +244,7 @@ impl Pending {
                     status: 200,
                     allow: None,
                     panel: false,
+                    metrics: false,
                     body: crate::console::model(host.ir()),
                 },
                 Vec::new(),
@@ -234,8 +255,20 @@ impl Pending {
                 Vec::new(),
                 Answered::ingress(),
             ),
-            Asked::Console(Console::Reset) => (
-                crate::console::reset(host, &self.body, worlds).into(),
+            Asked::Console(Console::Reset) => {
+                let answer = crate::console::reset(host, &self.body, worlds);
+                if answer.status == 200
+                    && let Some(recorder) = &self.recorder
+                {
+                    recorder.count_reset();
+                }
+                (answer.into(), Vec::new(), Answered::ingress())
+            }
+            Asked::Metrics => (
+                match &self.recorder {
+                    Some(recorder) => crate::observe::metrics(recorder, host),
+                    None => Answer::refusal(404, "no route serves /__spindle/metrics").into(),
+                },
                 Vec::new(),
                 Answered::ingress(),
             ),

@@ -56,6 +56,7 @@ fn apply(
             expected: None,
             row,
             events,
+            scanned: Vec::new(),
         }),
         1 => store.commit(&Change {
             entity: ENTITY.to_owned(),
@@ -63,6 +64,7 @@ fn apply(
             expected: Some(version),
             row,
             events,
+            scanned: Vec::new(),
         }),
         _ => store.remove(&Removal {
             entity: ENTITY.to_owned(),
@@ -74,7 +76,7 @@ fn apply(
 }
 
 fn held(store: &mut dyn Store) -> Vec<(Value, Stored)> {
-    store.scan(ENTITY).expect("scans")
+    store.scan(ENTITY).expect("scans").rows
 }
 
 #[wasm_bindgen_test]

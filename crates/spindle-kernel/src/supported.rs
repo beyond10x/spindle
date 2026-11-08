@@ -1,8 +1,9 @@
 //! What the kernel runs, checked before a command runs.
 //!
 //! The kernel runs the conditions, effects and value sources Spindle's own specification and the
-//! `rally` example use, a value read from the row an input field names, and a guard over a row
-//! set. Every other construct is refused by name, as
+//! `rally` example use, a value read from the row an input field names, a guard over a row set,
+//! and a set outcome (`instances:`) with the rows it changed. Every other construct is refused by
+//! name, as
 //! [`ExecuteError::Unsupported`], before anything is written; what it refuses depends on what
 //! reads the construct.
 //!
@@ -68,6 +69,7 @@ pub fn takes(
     outcome: &ResolvedOutcome,
 ) -> Result<(), ExecuteError> {
     let refuse = |what: &str| Err(unsupported(command, outcome, what));
+    let set = outcome.instances.is_some();
     if let Some(what) = effect(outcome) {
         return refuse(what);
     }
@@ -118,7 +120,7 @@ pub fn takes(
         {
             continue;
         }
-        if let Some(what) = value(ir, field) {
+        if let Some(what) = value(ir, field, set) {
             return refuse(&what);
         }
     }
@@ -128,7 +130,7 @@ pub fn takes(
         .chain(other_fields)
         .chain(&outcome.error_payload)
     {
-        if let Some(what) = value(ir, field) {
+        if let Some(what) = value(ir, field, set) {
             return refuse(&what);
         }
     }
@@ -243,9 +245,9 @@ fn mixed_references(command: &ResolvedCommand) -> Option<&ResolvedOutcome> {
 
 /// The effect beyond the outcome's subject, named, when the kernel does not run it: the change a
 /// refusal makes to its row, the rows it affects besides its subject, or fields it sets with no
-/// subject to set them on. Neither the kernel's selection nor ESS's precedence plan reads one
-/// (`compensates`, `affects:` and `sets:` are read only when the outcome is taken), so it refuses
-/// the outcome alone.
+/// subject to set them on and no set of rows (`instances:`). Neither the kernel's selection nor
+/// ESS's precedence plan reads one (`compensates`, `affects:` and `sets:` are read only when the
+/// outcome is taken), so it refuses the outcome alone.
 fn effect(outcome: &ResolvedOutcome) -> Option<&'static str> {
     if outcome.compensates {
         return Some("a refusal that changes its row (`compensates: true`)");
@@ -253,7 +255,7 @@ fn effect(outcome: &ResolvedOutcome) -> Option<&'static str> {
     if !outcome.affects.is_empty() {
         return Some("secondary effects (`affects:`)");
     }
-    if outcome.subject.is_none() && !outcome.sets.is_empty() {
+    if outcome.subject.is_none() && outcome.instances.is_none() && !outcome.sets.is_empty() {
         return Some("`sets:` without a subject");
     }
     None
@@ -268,8 +270,23 @@ fn shape(outcome: &ResolvedOutcome) -> Option<&'static str> {
     if outcome.before_row {
         return Some("an external refusal before the row (`before_row: true`)");
     }
-    if outcome.instances.is_some() {
-        return Some("a set outcome (`instances:`)");
+    // The rows a set outcome changes are selected from the store when it is taken
+    // ([`crate::execute`]); a filter that walks the rows of an entity stays refused, as in a
+    // row-set guard.
+    if let Some(set) = &outcome.instances {
+        return match set.effect {
+            ResolvedEffect::Moves { .. } | ResolvedEffect::Updates | ResolvedEffect::Deletes
+                if !ess_domain::command::related_rows::walked(&set.filter).is_empty() =>
+            {
+                Some("a rows quantifier in an `instances:` filter")
+            }
+            ResolvedEffect::Moves { .. } | ResolvedEffect::Updates | ResolvedEffect::Deletes => {
+                None
+            }
+            ResolvedEffect::Creates | ResolvedEffect::Preserves => {
+                Some("a set outcome (`instances:`) that neither moves, updates nor removes")
+            }
+        };
     }
     match &outcome.subject {
         None => None,
@@ -326,8 +343,9 @@ fn response(ir: &EssIr, command: &ResolvedCommand, outcome: &ResolvedOutcome) ->
 
 /// The value source, named, when the kernel does not read it. A generated value is read where
 /// its type is one the runtime mints ([`crate::mint::minted`]), and the refusal of one that is
-/// not names the field and its type.
-fn value(ir: &EssIr, field: &ResolvedPayloadField) -> Option<String> {
+/// not names the field and its type. What a set outcome changed (`{count: changed}`,
+/// `{changed: …}`) is read where `set`, the outcome being one.
+fn value(ir: &EssIr, field: &ResolvedPayloadField, set: bool) -> Option<String> {
     let mintable = |present: bool| {
         (!crate::mint::absent(&field.target_type, present)
             && crate::mint::generated(ir, &field.target_type, present).is_none())
@@ -350,12 +368,19 @@ fn value(ir: &EssIr, field: &ResolvedPayloadField) -> Option<String> {
         | ResolvedPayloadValue::PayloadRead { .. }
         | ResolvedPayloadValue::CallerAttribute { .. }
         | ResolvedPayloadValue::Cleared => None,
+        ResolvedPayloadValue::ChangedCount
+        | ResolvedPayloadValue::ChangedField { .. }
+        | ResolvedPayloadValue::ChangedState { .. }
+            if set =>
+        {
+            None
+        }
         ResolvedPayloadValue::Generated { present } => mintable(*present),
         ResolvedPayloadValue::InputOrGenerated {
             otherwise: None, ..
         } => mintable(false),
         ResolvedPayloadValue::Struct { fields } => {
-            fields.iter().find_map(|member| value(ir, member))
+            fields.iter().find_map(|member| value(ir, member, set))
         }
         // The field or the held state of the row an input field names (ess/16, ess/28), read as
         // the store held it before the outcome ([`crate::values::related`]). A reference stored on

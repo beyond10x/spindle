@@ -114,6 +114,7 @@ impl Inner {
                 status: 404,
                 allow: None,
                 panel: false,
+                metrics: false,
                 body: serde_json::json!({"refused": format!("{} is outside this host", request.url())})
                     .to_string(),
             });
@@ -150,7 +151,8 @@ impl Inner {
 /// refused (`TypeError`), so the fetch it answers would reject.
 const NULL_BODY: [u16; 5] = [101, 103, 204, 205, 304];
 
-/// `response` as a `Response`: its status, its body as [`spindle_ingress::CONTENT_TYPE`] where
+/// `response` as a `Response`: its status, its body as [`spindle_ingress::CONTENT_TYPE`] (or the
+/// panel's or the metrics' media type, where the response says it is one of them) where
 /// it has one and the status may carry one ([`NULL_BODY`]), and `Allow` where it carries it.
 fn respond(response: &spindle_ingress::Response) -> Result<Response, JsValue> {
     let headers = Headers::new()?;
@@ -159,6 +161,8 @@ fn respond(response: &spindle_ingress::Response) -> Result<Response, JsValue> {
     if response.panel {
         headers.set("content-type", spindle_ingress::PANEL_MEDIA)?;
         headers.set("content-security-policy", spindle_ingress::PANEL_POLICY)?;
+    } else if response.metrics && body.is_some() {
+        headers.set("content-type", spindle_ingress::METRICS_MEDIA)?;
     } else if body.is_some() {
         headers.set("content-type", spindle_ingress::CONTENT_TYPE)?;
     }
@@ -291,7 +295,11 @@ impl Store for Shared {
         self.with(|store| store.remove(removal))
     }
 
-    fn scan(&mut self, entity: &str) -> Result<Vec<(Value, Stored)>, StoreError> {
+    fn commit_all(&mut self, writes: &[spindle_kernel::Write]) -> Result<(), StoreError> {
+        self.with(|store| store.commit_all(writes))
+    }
+
+    fn scan(&mut self, entity: &str) -> Result<spindle_kernel::Scan, StoreError> {
         self.with(|store| store.scan(entity))
     }
 }

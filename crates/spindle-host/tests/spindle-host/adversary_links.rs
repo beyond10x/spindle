@@ -57,12 +57,17 @@ fn host_of(component: &str) -> (Host, TcpListener, TempDir) {
 }
 
 fn send(stream: &mut TcpStream, message: &Value) {
-    let body = serde_json::to_vec(message).expect("encodes");
-    let mut bytes = u32::try_from(body.len())
-        .expect("small")
-        .to_be_bytes()
-        .to_vec();
-    bytes.extend_from_slice(&body);
+    send_together(stream, std::slice::from_ref(message));
+}
+
+/// Several frames in one `write_all`: they reach the peer's socket together.
+fn send_together(stream: &mut TcpStream, messages: &[Value]) {
+    let mut bytes = Vec::new();
+    for message in messages {
+        let body = serde_json::to_vec(message).expect("encodes");
+        bytes.extend_from_slice(&u32::try_from(body.len()).expect("small").to_be_bytes());
+        bytes.extend_from_slice(&body);
+    }
     stream.write_all(&bytes).expect("the write");
 }
 
@@ -281,8 +286,8 @@ fn deliver_for_a_while(host: &mut Host) -> Option<HostError> {
 fn a_second_hello_before_the_link_opens_is_refused() {
     let (mut table, listener, _state) = host_of(TABLE);
     let mut stream = TcpStream::connect(listener.local_addr().expect("bound")).expect("connects");
-    send(&mut stream, &hello(WEST, TABLE));
-    send(&mut stream, &hello(EAST, TABLE));
+    // One write, so one poll reads both: the pending link moves to refused.
+    send_together(&mut stream, &[hello(WEST, TABLE), hello(EAST, TABLE)]);
     let (refused, unlinked) = accept_for_refusals(&mut table, &listener, 1);
     assert!(
         !refused.is_empty() && unlinked.contains(&format!("{EAST} (from)")),

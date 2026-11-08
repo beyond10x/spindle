@@ -1,0 +1,52 @@
+domain: catalogue.things
+summary: Asks after a thing by id, after the modules and after the actions, each answered by its own outcome.
+types:
+  - name: catalogue.things.ThingId
+    kind: newtype
+    of: String
+commands:
+  - name: catalogue.things.AskThing
+    input:
+      - name: id
+        type: catalogue.things.ThingId
+    outcomes:
+      - name: thing-asked
+        emits: [catalogue.things.ThingAsked]
+        payload:
+          catalogue.things.ThingAsked: {id: input.id}
+        summary: The thing is asked after by its id.
+  - name: catalogue.things.AskModules
+    input: []
+    outcomes:
+      - name: modules-asked
+        emits: [catalogue.things.ModulesAsked]
+        payload:
+          catalogue.things.ModulesAsked: {}
+        summary: The modules are asked after.
+  - name: catalogue.things.AskActions
+    input: []
+    outcomes:
+      - name: actions-asked
+        emits: [catalogue.things.ActionsAsked]
+        payload:
+          catalogue.things.ActionsAsked: {}
+        summary: The actions are asked after.
+  - name: catalogue.things.AddModule
+    input: []
+    outcomes:
+      - name: module-added
+        emits: [catalogue.things.ModuleAdded]
+        payload:
+          catalogue.things.ModuleAdded: {}
+        summary: A module is added.
+events:
+  - name: catalogue.things.ThingAsked
+    fields:
+      - name: id
+        type: catalogue.things.ThingId
+  - name: catalogue.things.ModulesAsked
+    fields: []
+  - name: catalogue.things.ActionsAsked
+    fields: []
+  - name: catalogue.things.ModuleAdded
+    fields: []

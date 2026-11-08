@@ -128,6 +128,7 @@ fn send(
         status,
         allow: header("allow"),
         panel: false,
+        metrics: false,
         body: body.to_owned(),
     }
 }

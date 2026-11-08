@@ -6,6 +6,68 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- The kernel runs a set outcome (`instances:`): it selects every row of the named entity whose
+  filter holds, read from the store as it was before the outcome, and moves, updates or removes
+  each in ascending order of identity, as ESS's interpreter does. A move skips a row resting
+  outside its `from` states, and zero rows selected is a successful outcome. `{count: changed}`
+  reads how many rows changed, and an event declared once per changed row (`each: changed`, with
+  its `when_state:`) is published once for each, its `{changed: …}` fields read from that row as
+  it was before. A `{generated: true}` value is minted afresh for each row written and each event
+  occurrence, as ESS's interpreter mints them. Every row and every event of the outcome is one
+  store write (`Store::commit_all`): all of them, or, where one row is refused, none. A filter
+  that walks the rows of an entity stays refused. Before, every such outcome was refused as
+  unsupported.
+- `Store::commit_all` writes several instances, with their events, atomically: the memory store
+  and the IndexedDB store in one transaction, SQLite in one `eventlog` append group. A store that
+  does not provide it checks every named version first and writes back what it already wrote
+  where a later write is still refused. The store contract (`spindle_kernel::contract`) holds it.
+- `run --observe` answers `GET /__spindle/metrics` with the run's metrics in the Prometheus text
+  format (`text/plain; version=0.0.4`), exactly the families of
+  `ess/fixtures/observe/metrics/families.json`, in its order: `spindle_http_requests_total` by
+  method, route template, operation, kind, class and status class (an unrouted request has an
+  empty route, operation and kind; a method RFC 9110 does not register is counted as `other`),
+  `spindle_http_request_duration_seconds`, the counters the host holds per component read at
+  scrape time (commands by outcome and failure, command durations, events appended, bindings,
+  binding retries, timer ticks, store rows and bytes written), `spindle_entity_rows` read from
+  each store, `spindle_resets_total`, and `spindle_external_causes_total`, declared with no sample
+  yet. Duration buckets are `DURATION_BOUNDS_US` in seconds; a command's duration histogram has
+  buckets, a `_sum` and a `_count` equal to its `+Inf` bucket; a duration histogram of
+  `spindle-telemetry` now also keeps the sum of its observed microseconds
+  (`HistogramValue::sum_us`, 0 in a frame from an older sender); `spindle.observe.Histogram`
+  gains `sum_us`. The scrape is answered on the host's thread and
+  is not recorded. `POST /api/reset` keeps every counter and the request log: only
+  `spindle_entity_rows` falls and `spindle_resets_total` rises. `Host::rows` reads the rows each
+  entity holds; `Exchange::metrics` names a scrape.
+
+### Fixed
+
+- A command whose outcome a `when_related:` guard over a row set selected no longer commits when
+  another writer wrote a row of that set's entity between the kernel's scan and its commit: the
+  commit is refused as a conflict (`StoreError::Conflict`, identity `*`), so a guard such as "at
+  most one active reservation per reader and book" holds with two writers on one store. `Store::scan`
+  now answers a `Scan`, the rows and the entity's version, and a `Change` carries the scanned
+  entities it is conditioned on (`Change::scanned`), checked by `commit` and `commit_all` alike.
+  The memory store counts the writes of each entity; SQLite appends one `spindle.written` event to
+  a stream per entity in the same append group; the IndexedDB store counts the writes one global
+  scope made or heard. A set outcome's writes are not conditioned on a scan yet.
+
+- `adversary_links::a_second_hello_before_the_link_opens_is_refused` writes both `hello` frames in
+  one `write_all`, so it always meets the pending link's refusal; it had written them in two
+  writes, which a runner could split around an accept and so land on the open-link case that
+  `a_second_hello_on_an_open_link_is_refused_naming_the_peer` asserts. No host code changes.
+- A literal path segment wins over a path variable: of two routes of one method that both match a
+  request path, the one with a literal where the other has a variable answers, as ESS's dispatch
+  order (`ess_gen::http::dispatch_order`, `ESS-HTTP-011`) defines, whatever order the routes are
+  declared in. Before, the first route in path-text order answered, so a literal that sorts after
+  `{`, such as `/things/~modules`, was shadowed by `/things/{id}`. A request segment is compared
+  with a literal of a route an `ess-http/1` binding declares after decoding percent-encoded
+  unreserved characters (RFC 3986 §6.2.2.2), as ESS's served application compares it, so
+  `/things/%7Emodules` reaches `/things/~modules`; a variable's value is decoded as before. A 405
+  names each method once, sorted, in its body and in `Allow`; before, a method two matching routes
+  share was named twice.
+
 ## [0.6.0] - 2026-11-07
 
 ### Added

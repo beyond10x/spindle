@@ -47,6 +47,7 @@ impl Shared {
             .expect("the store")
             .scan(NOTEBOOK)
             .expect("the store reads")
+            .rows
     }
 }
 
@@ -63,7 +64,7 @@ impl Store for Shared {
         self.0.lock().expect("the store").remove(removal)
     }
 
-    fn scan(&mut self, entity: &str) -> Result<Vec<(Value, Stored)>, StoreError> {
+    fn scan(&mut self, entity: &str) -> Result<spindle_kernel::Scan, StoreError> {
         self.0.lock().expect("the store").scan(entity)
     }
 }

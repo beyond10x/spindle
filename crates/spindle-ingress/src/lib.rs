@@ -46,8 +46,11 @@
 //! ([`Class`]) and timed from its head read to its answer handed back, and answers
 //! `GET /__spindle/requests` with the request log, and `GET /__spindle/ui` with the observe
 //! panel's page ([`Surface::with_panel`], [`PANEL_MEDIA`] with [`PANEL_POLICY`]), `503` where it
-//! was given none; without a recorder every path under the prefix
-//! answers `404`.
+//! was given none; `GET /__spindle/metrics` answers the run's metrics as the Prometheus text
+//! format ([`METRICS_MEDIA`]): the requests counted, the host's counters per component, the rows
+//! each entity holds and the resets, read on the host's thread as an `Exchange`
+//! (`Exchange::metrics`). A reset clears no count and no record. Without a recorder every path
+//! under the prefix answers `404`.
 
 mod answer;
 pub mod console;
@@ -64,6 +67,7 @@ pub use answer::{Answer, answer, answered};
 pub use console::Console;
 #[cfg(feature = "listener")]
 pub use listener::{BODY_READ, Exchange, HEADER_READ, Listener};
+pub use observe::metrics::METRICS_MEDIA;
 pub use observe::{
     By, Class, PANEL_MEDIA, PANEL_POLICY, REQUESTS_DEFAULT, REQUESTS_MOST, RESERVED_SEGMENT,
     Recorder, Reserved,

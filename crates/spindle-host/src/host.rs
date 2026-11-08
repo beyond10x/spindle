@@ -383,7 +383,11 @@ impl Store for Supplied {
         self.0.remove(removal)
     }
 
-    fn scan(&mut self, entity: &str) -> Result<Vec<(Value, spindle_kernel::Stored)>, StoreError> {
+    fn commit_all(&mut self, writes: &[spindle_kernel::Write]) -> Result<(), StoreError> {
+        self.0.commit_all(writes)
+    }
+
+    fn scan(&mut self, entity: &str) -> Result<spindle_kernel::Scan, StoreError> {
         self.0.scan(entity)
     }
 }
@@ -804,6 +808,7 @@ impl Host {
             expected: None,
             row,
             events: Vec::new(),
+            scanned: Vec::new(),
         })?;
         Ok(())
     }
@@ -922,6 +927,7 @@ impl Host {
                 expected: None,
                 row: seed.row,
                 events: Vec::new(),
+                scanned: Vec::new(),
             })?;
         }
         self.answers = world.answers;
@@ -996,6 +1002,31 @@ impl Host {
         self.components
             .get(component)
             .map(|component| component.counters.as_ref())
+    }
+
+    /// The rows each entity holds now, by entity name in the IR's order, each read by scanning
+    /// the store of the component that owns its domain; an entity no component here owns is left
+    /// out. A reset leaves the counters as they are and empties these.
+    ///
+    /// # Errors
+    /// [`HostError::Store`] when a store cannot be scanned.
+    pub fn rows(&mut self) -> Result<Vec<(String, usize)>, HostError> {
+        let ir = Arc::clone(&self.ir);
+        let mut rows = Vec::new();
+        for entity in ir.entities().values() {
+            let Some(component) = ir
+                .components()
+                .values()
+                .find(|component| component.owns.contains(&entity.domain))
+                .and_then(|owner| self.components.get_mut(owner.name.as_str()))
+            else {
+                continue;
+            };
+            let name = entity.name.to_string();
+            let held = component.store.scan(&name)?.rows.len();
+            rows.push((name, held));
+        }
+        Ok(rows)
     }
 
     /// The names of the specification's periodic bindings.
@@ -1587,7 +1618,7 @@ impl Store for Lost {
         Err(StoreError::Backend(self.0.clone()))
     }
 
-    fn scan(&mut self, _: &str) -> Result<Vec<(Value, spindle_kernel::Stored)>, StoreError> {
+    fn scan(&mut self, _: &str) -> Result<spindle_kernel::Scan, StoreError> {
         Err(StoreError::Backend(self.0.clone()))
     }
 }

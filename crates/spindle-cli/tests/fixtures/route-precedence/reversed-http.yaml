@@ -1,0 +1,22 @@
+type: ess-http/1
+specification:
+  system: catalogue
+  version: v1
+  source_digest: sha256:5a9659a59c0ca38d9ad694ae18246897ef8fafec3918b7d5b70e469800ca1696
+routes:
+  - command: catalogue.things.AskActions
+    method: get
+    path: /things/actions
+    outcomes:
+      actions-asked: {status: 200}
+  - command: catalogue.things.AskModules
+    method: get
+    path: /things/modules
+    outcomes:
+      modules-asked: {status: 200}
+  - command: catalogue.things.AskThing
+    method: get
+    path: /things/{id}
+    parameters: {id: input.id}
+    outcomes:
+      thing-asked: {status: 200}

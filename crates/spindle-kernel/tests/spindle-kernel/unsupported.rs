@@ -44,6 +44,9 @@ errors:
   - name: probe.counter.NegativeStart
     summary: The start is below zero.
     fields: []
+  - name: probe.counter.BodyMissing
+    summary: The request carried no body.
+    fields: []
 commands:
   - name: probe.counter.OpenCounter
     input:
@@ -70,9 +73,13 @@ commands:
       - name: counter_id
         type: String
     outcomes:
+      - name: body-missing
+        input_absent: true
+        error: probe.counter.BodyMissing
+        summary: The request carried no body.
       - name: removed
         deletes: probe.counter.Counter
-        instances: {where: counter_id == input.counter_id}
+        instance: counter_id
         emits: [probe.counter.CounterRemoved]
         payload:
           probe.counter.CounterRemoved: {counter_id: input.counter_id}
@@ -143,8 +150,11 @@ fn a_when_guard_over_the_input_refuses_before_anything_is_created() {
     assert_eq!(stored.row.fields.get("value"), Some(&json!(3)));
 }
 
+/// Was `a_set_deletion_is_refused_as_unsupported_and_changes_nothing`: the kernel runs a set
+/// outcome since story:kernel-set-outcomes (`set_outcomes.rs`), so the refusal is read on
+/// `input_absent:`, which it still does not run.
 #[test]
-fn a_set_deletion_is_refused_as_unsupported_and_changes_nothing() {
+fn an_unsupported_construct_is_refused_and_changes_nothing() {
     let ir = probe();
     let mut store = MemoryStore::default();
     execute(
@@ -163,10 +173,10 @@ fn a_set_deletion_is_refused_as_unsupported_and_changes_nothing() {
         "probe.counter.RemoveCounter",
         &input(json!({"counter_id": "c1"})),
     )
-    .expect_err("a set outcome (`instances:`) is not run");
+    .expect_err("`input_absent:` is not run");
     match &error {
         ExecuteError::Unsupported { construct } => {
-            assert!(construct.contains("instances"), "{construct}");
+            assert!(construct.contains("`input_absent:`"), "{construct}");
             assert!(construct.contains("RemoveCounter"), "{construct}");
         }
         other => panic!("expected Unsupported, got {other:?}"),

@@ -10,7 +10,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 fn scans(store: &mut dyn Store) -> Vec<(&'static str, Vec<(serde_json::Value, Stored)>)> {
     contract::ENTITIES
         .iter()
-        .map(|entity| (*entity, store.scan(entity).expect("the scan reads")))
+        .map(|entity| (*entity, store.scan(entity).expect("the scan reads").rows))
         .collect()
 }
 
