@@ -9,6 +9,6 @@
   "format": "ess-known-failures/1",
   "implementation": "b10x-spindle 0.6.0",
   "implementation_build": "sha256:a589cd91dedea5ba8bd36c2bee85f44abb8e4ec4f23ed86296914e755e3abe9f",
-  "spec_digest": "70563d91ca383baeb86c944716b5ed0a7a852e1705431a1bae003de587369072",
-  "suite_digest": "sha256:68dfeaaa637939f70d4c756a1343951db92a3ea4956e411e5105aaeace9e4001"
+  "spec_digest": "48b3a3604fbbca5a7267a7405e7872990a9b074fdda5fc2f44f0f3db55ea0d7d",
+  "suite_digest": "sha256:a60325f8c93a16d8edabebc732b3bceaafb31c1ce6c12eb0564cf7d655864620"
 }
