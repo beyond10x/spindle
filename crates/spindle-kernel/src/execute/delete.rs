@@ -11,7 +11,8 @@ impl Run<'_, '_> {
     /// interpreter takes a deleting branch (`interpret::execute::take`, `Acted::Removed`): the
     /// published values are read first, the row's `sets:` are not written, its events read the
     /// row as it was before, and no invariant is checked, since nothing rests. An identity no row
-    /// carries is answered in selection, or, on a row-set upsert, here ([`Run::unknown_instance`]).
+    /// carries is answered in selection, or, where a creation may take it, here
+    /// ([`Run::unknown_instance`]).
     pub(super) fn delete(
         &mut self,
         outcome: &ResolvedOutcome,

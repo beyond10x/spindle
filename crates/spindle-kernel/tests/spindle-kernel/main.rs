@@ -23,6 +23,7 @@ mod adversary_set_outcomes;
 mod adversary_store_contract;
 mod adversary_structured_responses;
 mod caller;
+mod creation_takes_unknown_row;
 mod deletes;
 mod deployment;
 mod error_fields;

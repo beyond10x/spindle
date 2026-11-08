@@ -52,6 +52,15 @@ are Spindle's releases.
   The memory store counts the writes of each entity; SQLite appends one `spindle.written` event to
   a stream per entity in the same append group; the IndexedDB store counts the writes one global
   scope made or heard. A set outcome's writes are not conditioned on a scan yet.
+- A creation branch takes an addressed row no store holds beside `unknown_instance:` on every
+  command, as ESS's interpreter does (`addressed_unknown`), where it takes its identity from the
+  input field that names the row: the creation may take the row, and the `unknown_instance:` answer
+  applies only where the branch selected acts on the missing row. Before, outside row sets, the
+  kernel answered every absent addressed row with `unknown_instance:` before any creation was
+  read. A command that declares no `unknown_instance:` answers such a row with its one declared
+  not-found refusal (an `external:` refusal whose error carries the identity's type), before its
+  `wrong_state:`, as the interpreter does; before, it failed as undeclared or answered
+  `wrong_state:`.
 
 - `adversary_links::a_second_hello_before_the_link_opens_is_refused` writes both `hello` frames in
   one `write_all`, so it always meets the pending link's refusal; it had written them in two
