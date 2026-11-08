@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-08T17:25:49Z",
+  "actor": "human:timo",
+  "artifact": "story:surface-cross-component-template-collision",
+  "kind": "story",
+  "revision": 6,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "wave 16 U3",
+    "reference": "unit merge aa432f2e into wave/16; a small defect, no adversary pass; its adversary test runs and passes"
+  }
+}
