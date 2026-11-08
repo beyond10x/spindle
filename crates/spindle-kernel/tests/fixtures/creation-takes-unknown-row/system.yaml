@@ -1,0 +1,21 @@
+format: ess/34
+system: depot
+version: v1
+summary: Lockers opened or relabelled by one command, where an absent locker is the creation's to take.
+domains:
+  - depot.lockers
+components:
+  - component: hall
+    summary: Opens and relabels lockers.
+    owns:
+      domains:
+        - depot.lockers
+    accepts:
+      commands:
+        - depot.lockers.Open
+        - depot.lockers.Register
+    publishes:
+      events:
+        - depot.lockers.LockerOpened
+        - depot.lockers.LockerRelabelled
+    reached_by: in_process

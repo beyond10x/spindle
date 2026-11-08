@@ -1,0 +1,84 @@
+domain: depot.lockers
+summary: Lockers a command opens where none carries the identity and the request allows it, and relabels otherwise.
+entities:
+  - name: depot.lockers.Locker
+    identity: {name: locker, type: String}
+    fields:
+      - {name: label, type: String}
+    lifecycle: {initial: Open, states: [Open], terminal: [Open]}
+errors:
+  - {name: depot.lockers.UnknownLocker, summary: No locker carries the identity., fields: []}
+  - name: depot.lockers.LockerNotFound
+    summary: No locker carries the identity.
+    fields:
+      - {name: locker, type: String}
+events:
+  - name: depot.lockers.LockerOpened
+    fields: [{name: locker, type: String}]
+  - name: depot.lockers.LockerRelabelled
+    fields: [{name: locker, type: String}]
+commands:
+  - name: depot.lockers.Open
+    input:
+      - {name: locker, type: String}
+      - {name: label, type: String}
+      - {name: allow, type: Boolean}
+    outcomes:
+      - name: unknown-locker
+        unknown_instance: true
+        error: depot.lockers.UnknownLocker
+        summary: No locker carries the identity.
+      - name: opened
+        when: allow == true
+        creates: depot.lockers.Locker
+        instance: locker
+        sets: {label: input.label}
+        emits: [depot.lockers.LockerOpened]
+        payload:
+          depot.lockers.LockerOpened: {locker: input.locker}
+        summary: The locker is opened.
+      - name: relabelled
+        updates: depot.lockers.Locker
+        instance: locker
+        sets: {label: input.label}
+        emits: [depot.lockers.LockerRelabelled]
+        payload:
+          depot.lockers.LockerRelabelled: {locker: input.locker}
+        summary: The locker is relabelled.
+  - name: depot.lockers.Register
+    input:
+      - {name: locker, type: String}
+      - {name: label, type: String}
+      - {name: allow, type: Boolean}
+    outcomes:
+      - name: not-found
+        external: the register holds no such locker
+        error: depot.lockers.LockerNotFound
+        payload:
+          depot.lockers.LockerNotFound: {locker: input.locker}
+        summary: No locker carries the identity.
+      - name: registered
+        when: allow == true
+        creates: depot.lockers.Locker
+        instance: locker
+        sets: {label: input.label}
+        emits: [depot.lockers.LockerOpened]
+        payload:
+          depot.lockers.LockerOpened: {locker: input.locker}
+        summary: The locker is registered.
+      - name: relabelled
+        updates: depot.lockers.Locker
+        instance: locker
+        sets: {label: input.label}
+        emits: [depot.lockers.LockerRelabelled]
+        payload:
+          depot.lockers.LockerRelabelled: {locker: input.locker}
+        summary: The locker is relabelled.
+views:
+  - name: depot.lockers.Lockers
+    source: depot.lockers.Locker
+    consistency: read_your_writes
+    fields:
+      - {name: locker, type: String}
+      - {name: label, type: String}
+      - {name: state, type: depot.lockers.Locker.State}

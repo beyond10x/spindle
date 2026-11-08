@@ -1,0 +1,424 @@
+domain: depot.hall
+summary: Lockers opened in bays where none carries the identity and the request allows it, relabelled, shut and removed otherwise.
+types:
+  - name: depot.hall.BayId
+    kind: newtype
+    of: String
+entities:
+  - name: depot.hall.Bay
+    identity: {name: bay, type: depot.hall.BayId}
+    fields: []
+    lifecycle:
+      initial: Open
+      states: [Open, Shut]
+      terminal: [Shut]
+      transitions:
+        - {name: shut, from: [Open], to: Shut}
+  - name: depot.hall.Locker
+    identity: {name: locker, type: String}
+    fields:
+      - {name: label, type: String}
+    lifecycle:
+      initial: Open
+      states: [Open, Shut]
+      terminal: [Shut]
+      transitions:
+        - {name: shut, from: [Open], to: Shut}
+errors:
+  - {name: depot.hall.UnknownLocker, summary: No locker carries the identity., fields: []}
+  - {name: depot.hall.AlreadyShut, summary: The locker is shut already., fields: []}
+  - {name: depot.hall.NoBay, summary: No bay carries the identity., fields: []}
+  - {name: depot.hall.BayClosed, summary: The bay is shut., fields: []}
+  - name: depot.hall.LockerNotFound
+    summary: No locker carries the identity.
+    fields:
+      - {name: locker, type: String}
+  - name: depot.hall.LockerMissing
+    summary: The register misses the locker.
+    fields:
+      - {name: locker, type: String}
+  - {name: depot.hall.HeldBack, summary: The register holds the request back., fields: []}
+events:
+  - name: depot.hall.BayOpened
+    fields: [{name: bay, type: depot.hall.BayId}]
+  - name: depot.hall.BayShut
+    fields: [{name: bay, type: depot.hall.BayId}]
+  - name: depot.hall.LockerOpened
+    fields: [{name: locker, type: String}]
+  - name: depot.hall.LockerRelabelled
+    fields: [{name: locker, type: String}]
+  - name: depot.hall.LockerShut
+    fields: [{name: locker, type: String}]
+  - name: depot.hall.LockerRemoved
+    fields: [{name: locker, type: String}]
+commands:
+  - name: depot.hall.OpenBay
+    input:
+      - {name: bay, type: depot.hall.BayId}
+    outcomes:
+      - name: opened
+        creates: depot.hall.Bay
+        instance: bay
+        emits: [depot.hall.BayOpened]
+        payload:
+          depot.hall.BayOpened: {bay: input.bay}
+        summary: The bay opens.
+  - name: depot.hall.ShutBay
+    input:
+      - {name: bay, type: depot.hall.BayId}
+    outcomes:
+      - name: shut
+        moves: depot.hall.Bay.shut
+        instance: bay
+        emits: [depot.hall.BayShut]
+        payload:
+          depot.hall.BayShut: {bay: input.bay}
+        summary: The bay shuts.
+  - name: depot.hall.Open
+    input:
+      - {name: locker, type: String}
+      - {name: label, type: String}
+      - {name: allow, type: Boolean}
+      - {name: quiet, type: Boolean}
+    outcomes:
+      - name: unknown-locker
+        unknown_instance: true
+        error: depot.hall.UnknownLocker
+        summary: No locker carries the identity.
+      - name: opened
+        when: allow == true
+        creates: depot.hall.Locker
+        instance: locker
+        sets: {label: input.label}
+        emits: [depot.hall.LockerOpened]
+        payload:
+          depot.hall.LockerOpened: {locker: input.locker}
+        summary: The locker is opened.
+      - name: opened-quietly
+        when: quiet == true
+        creates: depot.hall.Locker
+        instance: locker
+        sets: {label: input.label}
+        emits: [depot.hall.LockerOpened]
+        payload:
+          depot.hall.LockerOpened: {locker: input.locker}
+        summary: The locker is opened without a word.
+      - name: relabelled
+        updates: depot.hall.Locker
+        instance: locker
+        sets: {label: input.label}
+        emits: [depot.hall.LockerRelabelled]
+        payload:
+          depot.hall.LockerRelabelled: {locker: input.locker}
+        summary: The locker is relabelled.
+  - name: depot.hall.Shut
+    input:
+      - {name: locker, type: String}
+    outcomes:
+      - name: not-found
+        external: the register holds no such locker
+        error: depot.hall.LockerNotFound
+        payload:
+          depot.hall.LockerNotFound: {locker: input.locker}
+        summary: No locker carries the identity.
+      - name: shut
+        moves: depot.hall.Locker.shut
+        instance: locker
+        emits: [depot.hall.LockerShut]
+        payload:
+          depot.hall.LockerShut: {locker: input.locker}
+        summary: The locker shuts.
+      - name: already-shut
+        wrong_state: true
+        error: depot.hall.AlreadyShut
+        summary: The locker is shut already.
+  - name: depot.hall.Seal
+    input:
+      - {name: locker, type: String}
+    outcomes:
+      - name: sealed
+        moves: depot.hall.Locker.shut
+        instance: locker
+        emits: [depot.hall.LockerShut]
+        payload:
+          depot.hall.LockerShut: {locker: input.locker}
+        summary: The locker is sealed.
+      - name: already-shut
+        wrong_state: true
+        error: depot.hall.AlreadyShut
+        summary: The locker is shut already.
+  - name: depot.hall.Claim
+    input:
+      - {name: locker, type: String}
+      - {name: label, type: String}
+      - {name: allow, type: Boolean}
+    outcomes:
+      - name: not-found
+        external: the register holds no such locker
+        error: depot.hall.LockerNotFound
+        payload:
+          depot.hall.LockerNotFound: {locker: input.locker}
+        summary: No locker carries the identity.
+      - name: missing
+        external: the register misses the locker
+        error: depot.hall.LockerMissing
+        payload:
+          depot.hall.LockerMissing: {locker: input.locker}
+        summary: The register misses the locker.
+      - name: claimed
+        when: allow == true
+        creates: depot.hall.Locker
+        instance: locker
+        sets: {label: input.label}
+        emits: [depot.hall.LockerOpened]
+        payload:
+          depot.hall.LockerOpened: {locker: input.locker}
+        summary: The locker is claimed.
+      - name: relabelled
+        updates: depot.hall.Locker
+        instance: locker
+        sets: {label: input.label}
+        emits: [depot.hall.LockerRelabelled]
+        payload:
+          depot.hall.LockerRelabelled: {locker: input.locker}
+        summary: The locker is relabelled.
+  - name: depot.hall.Adopt
+    input:
+      - {name: locker, type: String}
+      - {name: spare, type: String}
+      - {name: label, type: String}
+      - {name: allow, type: Boolean}
+    outcomes:
+      - name: unknown-locker
+        unknown_instance: true
+        error: depot.hall.UnknownLocker
+        summary: No locker carries the identity.
+      - name: adopted
+        when: allow == true
+        creates: depot.hall.Locker
+        instance: locker
+        sets: {label: input.label}
+        emits: [depot.hall.LockerOpened]
+        payload:
+          depot.hall.LockerOpened: {locker: input.spare}
+        summary: A spare locker is opened.
+      - name: relabelled
+        updates: depot.hall.Locker
+        instance: locker
+        sets: {label: input.label}
+        emits: [depot.hall.LockerRelabelled]
+        payload:
+          depot.hall.LockerRelabelled: {locker: input.locker}
+        summary: The locker is relabelled.
+  - name: depot.hall.Assign
+    input:
+      - {name: locker, type: String}
+      - {name: bay, type: depot.hall.BayId}
+      - {name: label, type: String}
+      - {name: allow, type: Boolean}
+    outcomes:
+      - name: no-bay
+        when_related:
+          via: input.bay
+          exists: false
+        error: depot.hall.NoBay
+        summary: No bay carries the identity.
+      - name: unknown-locker
+        unknown_instance: true
+        error: depot.hall.UnknownLocker
+        summary: No locker carries the identity.
+      - name: bay-shut
+        when_related:
+          via: input.bay
+          predicate: state == Shut
+        error: depot.hall.BayClosed
+        summary: The bay is shut.
+      - name: opened
+        when: allow == true
+        creates: depot.hall.Locker
+        instance: locker
+        sets: {label: input.label}
+        emits: [depot.hall.LockerOpened]
+        payload:
+          depot.hall.LockerOpened: {locker: input.locker}
+        summary: The locker is opened in the bay.
+      - name: relabelled
+        updates: depot.hall.Locker
+        instance: locker
+        sets: {label: input.label}
+        emits: [depot.hall.LockerRelabelled]
+        payload:
+          depot.hall.LockerRelabelled: {locker: input.locker}
+        summary: The locker is relabelled.
+  - name: depot.hall.Discard
+    input:
+      - {name: locker, type: String}
+    outcomes:
+      - name: not-found
+        external: the register holds no such locker
+        error: depot.hall.LockerNotFound
+        payload:
+          depot.hall.LockerNotFound: {locker: input.locker}
+        summary: No locker carries the identity.
+      - name: removed
+        deletes: depot.hall.Locker
+        instance: locker
+        emits: [depot.hall.LockerRemoved]
+        payload:
+          depot.hall.LockerRemoved: {locker: input.locker}
+        summary: The locker is removed.
+  - name: depot.hall.Recycle
+    input:
+      - {name: locker, type: String}
+      - {name: label, type: String}
+      - {name: allow, type: Boolean}
+    outcomes:
+      - name: not-found
+        external: the register holds no such locker
+        error: depot.hall.LockerNotFound
+        payload:
+          depot.hall.LockerNotFound: {locker: input.locker}
+        summary: No locker carries the identity.
+      - name: opened
+        when: allow == true
+        creates: depot.hall.Locker
+        instance: locker
+        sets: {label: input.label}
+        emits: [depot.hall.LockerOpened]
+        payload:
+          depot.hall.LockerOpened: {locker: input.locker}
+        summary: The locker is opened anew.
+      - name: removed
+        deletes: depot.hall.Locker
+        instance: locker
+        emits: [depot.hall.LockerRemoved]
+        payload:
+          depot.hall.LockerRemoved: {locker: input.locker}
+        summary: The locker is removed.
+  - name: depot.hall.Place
+    input:
+      - {name: locker, type: String}
+      - {name: bay, type: depot.hall.BayId}
+      - {name: label, type: String}
+    outcomes:
+      - name: no-bay
+        when_related:
+          via: input.bay
+          exists: false
+        error: depot.hall.NoBay
+        summary: No bay carries the identity.
+      - name: unknown-locker
+        unknown_instance: true
+        error: depot.hall.UnknownLocker
+        summary: No locker carries the identity.
+      - name: opened
+        when_related:
+          via: input.bay
+          predicate: state == Open
+        creates: depot.hall.Locker
+        instance: locker
+        sets: {label: input.label}
+        emits: [depot.hall.LockerOpened]
+        payload:
+          depot.hall.LockerOpened: {locker: input.locker}
+        summary: The locker is opened in an open bay.
+      - name: relabelled
+        updates: depot.hall.Locker
+        instance: locker
+        sets: {label: input.label}
+        emits: [depot.hall.LockerRelabelled]
+        payload:
+          depot.hall.LockerRelabelled: {locker: input.locker}
+        summary: The locker is relabelled.
+  - name: depot.hall.Enrol
+    input:
+      - {name: locker, type: String}
+      - {name: label, type: String}
+      - {name: allow, type: Boolean}
+    outcomes:
+      - name: not-found
+        external: the register holds no such locker
+        error: depot.hall.LockerNotFound
+        summary: No locker carries the identity.
+      - name: enrolled
+        when: allow == true
+        creates: depot.hall.Locker
+        instance: locker
+        sets: {label: input.label}
+        emits: [depot.hall.LockerOpened]
+        payload:
+          depot.hall.LockerOpened: {locker: input.locker}
+        summary: The locker is enrolled.
+      - name: relabelled
+        updates: depot.hall.Locker
+        instance: locker
+        sets: {label: input.label}
+        emits: [depot.hall.LockerRelabelled]
+        payload:
+          depot.hall.LockerRelabelled: {locker: input.locker}
+        summary: The locker is relabelled.
+  - name: depot.hall.Screen
+    input:
+      - {name: locker, type: String}
+      - {name: label, type: String}
+      - {name: allow, type: Boolean}
+    outcomes:
+      - name: unknown-locker
+        unknown_instance: true
+        error: depot.hall.UnknownLocker
+        summary: No locker carries the identity.
+      - name: held-back
+        external: the register holds the request back
+        error: depot.hall.HeldBack
+        summary: The register holds the request back.
+      - name: opened
+        when: allow == true
+        creates: depot.hall.Locker
+        instance: locker
+        sets: {label: input.label}
+        emits: [depot.hall.LockerOpened]
+        payload:
+          depot.hall.LockerOpened: {locker: input.locker}
+        summary: The locker is opened.
+      - name: relabelled
+        updates: depot.hall.Locker
+        instance: locker
+        sets: {label: input.label}
+        emits: [depot.hall.LockerRelabelled]
+        payload:
+          depot.hall.LockerRelabelled: {locker: input.locker}
+        summary: The locker is relabelled.
+  - name: depot.hall.Reseal
+    input:
+      - {name: locker, type: String}
+      - {name: label, type: String}
+      - {name: allow, type: Boolean}
+    outcomes:
+      - name: opened
+        when: allow == true
+        creates: depot.hall.Locker
+        instance: locker
+        sets: {label: input.label}
+        emits: [depot.hall.LockerOpened]
+        payload:
+          depot.hall.LockerOpened: {locker: input.locker}
+        summary: The locker is opened.
+      - name: sealed
+        moves: depot.hall.Locker.shut
+        instance: locker
+        emits: [depot.hall.LockerShut]
+        payload:
+          depot.hall.LockerShut: {locker: input.locker}
+        summary: The locker is sealed.
+      - name: already-shut
+        wrong_state: true
+        error: depot.hall.AlreadyShut
+        summary: The locker is shut already.
+views:
+  - name: depot.hall.Lockers
+    source: depot.hall.Locker
+    consistency: read_your_writes
+    fields:
+      - {name: locker, type: String}
+      - {name: label, type: String}
+      - {name: state, type: depot.hall.Locker.State}
