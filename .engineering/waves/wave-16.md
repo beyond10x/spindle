@@ -1,6 +1,7 @@
 # Wave 16
 
-**Building.**
+**Merged, gating.** All three units merged into `wave/16`: U3 as aa432f2e, U1 as 0dd405ed
+(`review-result:w16-u1-adversary-1`), U2 as cd444acf (`review-result:w16-u2-adversary-1`).
 
 Run by the coordinator under `approval-record:wave16-approval` (the operator's standing acceptance
 of future waves). Skill `aep:implementing`, wave mode. All stories serve `vision:spindle`.
@@ -19,8 +20,8 @@ U3.
 
 | unit | story | branch | tree (managed id) | agent | stage |
 |---|---|---|---|---|---|
-| U1 | `story:kernel-creation-takes-unknown-row` | `unit/w16-unknown` | `spindle-w16-unknown` | `aep:implementor` | dispatched |
-| U2 | `story:external-answers-observed` | `unit/w16-external` | `spindle-w16-external` | `aep:implementor` | dispatched |
+| U1 | `story:kernel-creation-takes-unknown-row` | `unit/w16-unknown` | `spindle-w16-unknown` | `aep:implementor` | merged |
+| U2 | `story:external-answers-observed` | `unit/w16-external` | `spindle-w16-external` | `aep:implementor` | merged |
 | U3 | `story:surface-cross-component-template-collision` | `unit/w16-collision` | `spindle-w16-collision` | `aep:implementor` | merged |
 
 Each unit gets one `aep:adversary` pass when its implementor reports green.
