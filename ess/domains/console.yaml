@@ -18,8 +18,11 @@ naming:
 # this specification: it empties the store of every component of whatever specification the run
 # serves (`crates/spindle-host/src/host.rs:855-872,941-991`), and an ESS command changes only the
 # entities its own specification declares. Its route, `POST /api/reset`, and its statuses (`200`
-# with `ResetAnswer`, `400` and `500` with `ResetRefusal`) are stated in the summaries below and
-# checked by no declaration. Open question: whether a run-level operation gets an ESS construct.
+# with `ResetAnswer`; `400`, `405`, `408`, `411`, `413`, `500` and `503` with `ResetRefusal`, `413`
+# for a body over 1 MiB, `crates/spindle-ingress/src/router.rs:16,136-141,156-158`; on
+# `play --component`, which serves no reset, `401`, `403` and `404`) are stated in the summaries
+# below and checked by no declaration. Open question: whether a run-level operation gets an ESS
+# construct.
 
 types:
   - name: spindle.console.WorldRow
@@ -60,13 +63,21 @@ types:
         is optional and no other is read. An empty or all-whitespace body loads no world: the run
         starts from empty stores, its own answers and a random mint. A world loaded holds until
         the next reset, which drops its decisions and its mint. Only `b10x-spindle run` loads a
-        world; a run that loads none (`play --component`, the browser run) refuses a reset with a
-        body `400`. Source: `crates/spindle-cli/src/world.rs:1-81`,
+        world. The browser run serves the reset and loads no world: it refuses a reset with a
+        body `400`. `play --component` serves no console route, so every reset there that passes
+        its token and `Host` checks (`401`, `403`, `crates/spindle-ingress/src/listener.rs:221-224`)
+        is answered `404`. Source: `crates/spindle-cli/src/world.rs:1-81`,
         `crates/spindle-ingress/src/console.rs:112-130`, `crates/spindle-cli/src/serve.rs:325-349`,
-        `crates/spindle-cli/src/cli.rs:141-146`.
+        `crates/spindle-cli/src/cli.rs:141-146`, `crates/spindle-wasm/src/worker.rs:124,228-229`,
+        `crates/spindle-cli/src/component.rs:258`.
     # UNMAPPED: "every row is checked before any store is emptied, and a refused world changes
     # nothing" (`crates/spindle-host/src/host.rs:881-889,922`) is an ordering rule of the reset; no
     # declaration here carries it.
+    # UNMAPPED: the run also reads a body, and each row, written as an array of its members' values
+    # in declaration order (`[[], null, null]` is a world, `["<entity>", <identity>, "<State>",
+    # {...}]` a row), as the object with those members (`crates/spindle-cli/src/world.rs:30-47`
+    # reads both with serde, which takes a struct from a sequence). ESS declares one spelling, the
+    # object, so the schema refuses the array and the run loads it.
     fields:
       - name: rows
         type: Optional<List<spindle.console.WorldRow>>
@@ -75,25 +86,37 @@ types:
           instance are refused (`crates/spindle-host/src/host.rs:897-902`).
       - name: decisions
         type: Optional<Map<String, Json>>
+        presence: omitted_or_null
         summary: >-
           A decision table in the decisions file's shape, `{"<outcome>": true | false,
-          "<command>": {"<outcome>": true | false}}`, each key an external outcome or a command
-          that declares one. It answers external causes before `--decisions` and
+          "<command>": {"<outcome>": true | false}}`; absent, or `null`, for none. Every Boolean
+          in it answers the outcome its own key names, under the command the keys of the tables
+          around it name, joined by `.`, or under every command for a Boolean at the top: so
+          `{"shelf": {"books": {"Donate": {"refused": true}}}}` is
+          `{"shelf.books.Donate": {"refused": true}}`. A table that holds no Boolean answers
+          nothing and is loaded unchecked, whatever its key. An answer whose command the
+          specification does not declare, whose outcome is no external outcome of that command
+          (or of any command, at the top), or a value that is neither a Boolean nor a table, is
+          refused `400`. The table answers external causes before `--decisions` and
           `--answer-default` do, until the next reset; an answer from it is the `world` source
-          of `spindle.observe.AnswerSource`. Source: `crates/spindle-host/src/decisions.rs:47-59`,
+          of `spindle.observe.AnswerSource`. Source:
+          `crates/spindle-host/src/decisions.rs:47-59,75-116,209-240`,
           `crates/spindle-cli/src/decisions.rs:35-44`.
-        # UNMAPPED: each value is either a Boolean or a map of outcome to Boolean, by whether its
-        # key names an outcome or a command. ESS has no untagged union, so the value is `Json`; the
-        # run refuses any other value (`crates/spindle-host/src/decisions.rs:75-116,212-240`).
+        # UNMAPPED: each value is a Boolean or a table of the same shape, nested to any depth.
+        # ESS has no untagged union and no recursive map, so the value is `Json`; the rule is the
+        # run's check (`crates/spindle-host/src/decisions.rs:209-240`).
       - name: mint
         type: Optional<Integer>
+        presence: omitted_or_null
         summary: >-
           The seed every identity and generated value is minted from until the next reset, so the
-          same requests mint the same identities; absent for random version 4 UUIDs. A seeded
-          mint never answers a UUID a row's identity holds or ends in. Source:
+          same requests mint the same identities; absent, or `null`, for random version 4 UUIDs.
+          A seeded mint never answers a UUID a row's identity holds or ends in. Source:
           `crates/spindle-host/src/host.rs:101-112,874-879,913-937`.
-        # UNMAPPED: the run reads the seed as an unsigned 64-bit integer
-        # (`crates/spindle-cli/src/world.rs:36`); no upper bound is declared here.
+        # UNMAPPED: the run reads the seed as an unsigned 64-bit integer written without a fraction
+        # or an exponent (`crates/spindle-cli/src/world.rs:36`): above 2^64 - 1, and an integral
+        # number written as `7.0` or `1e1`, are refused `400`, while the schema of `Integer`
+        # admits both. Neither the upper bound nor the spelling is declared here.
     invariants:
       - mint >= 0
 
@@ -114,11 +137,18 @@ types:
     kind: struct
     naming:
       summary: >-
-        A refused reset. `400`: the body is not JSON, the run loads no world, or the world does
-        not validate; nothing changed. `500`: a store could not be emptied or a row could not be
-        written; the components emptied before it stay empty, the rows before it stay written, and
-        the decisions and mint of the last world are kept. Source:
-        `crates/spindle-ingress/src/console.rs:112-138`, `crates/spindle-ingress/src/answer.rs:27-32`,
+        A refused reset. `400`: the body is not JSON, the run loads no world, the world does not
+        validate, or the body broke off; nothing changed. `413`: the body is over 1 MiB
+        (1 048 576 bytes), announced or sent; nothing changed. `405` (with `Allow: POST`), `408`
+        (the body did not arrive in time), `411` (a body sent with `Transfer-Encoding`) and `503`
+        (the listener is stopping): answered before the reset runs; nothing changed. `401`, `403`
+        and `404`: on `play --component`, which serves no reset; nothing changed. `500`: a
+        store could not be emptied or a row could not be written; the components emptied before it
+        stay empty, the rows before it stay written, and the decisions and mint of the last world
+        are kept. Source: `crates/spindle-ingress/src/console.rs:112-138`,
+        `crates/spindle-ingress/src/answer.rs:27-32`,
+        `crates/spindle-ingress/src/router.rs:16,136-141,156-158,194-203`,
+        `crates/spindle-ingress/src/listener.rs:206-211,386-430,451-460`,
         `crates/spindle-host/src/host.rs:864-869,886-889`.
     fields:
       - name: refused

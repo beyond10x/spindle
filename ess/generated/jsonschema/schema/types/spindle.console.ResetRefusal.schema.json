@@ -5,13 +5,13 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:81410b436ca029884baeb0e681b8338eee5b5fb46d770fa822b40bd9c7d56d37",
+    "contract_digest": "slice-sha256/2:9481fbb5ff45fa95c06474ee1e660435afc2ba493d0bc9dea41fdb757ec33ff3",
     "regenerate": "ess generate"
   },
   "$defs": {
     "spindle.console.ResetRefusal": {
       "title": "ResetRefusal",
-      "description": "A refused reset. `400`: the body is not JSON, the run loads no world, or the world does not validate; nothing changed. `500`: a store could not be emptied or a row could not be written; the components emptied before it stay empty, the rows before it stay written, and the decisions and mint of the last world are kept. Source: `crates/spindle-ingress/src/console.rs:112-138`, `crates/spindle-ingress/src/answer.rs:27-32`, `crates/spindle-host/src/host.rs:864-869,886-889`.",
+      "description": "A refused reset. `400`: the body is not JSON, the run loads no world, the world does not validate, or the body broke off; nothing changed. `413`: the body is over 1 MiB (1 048 576 bytes), announced or sent; nothing changed. `405` (with `Allow: POST`), `408` (the body did not arrive in time), `411` (a body sent with `Transfer-Encoding`) and `503` (the listener is stopping): answered before the reset runs; nothing changed. `401`, `403` and `404`: on `play --component`, which serves no reset; nothing changed. `500`: a store could not be emptied or a row could not be written; the components emptied before it stay empty, the rows before it stay written, and the decisions and mint of the last world are kept. Source: `crates/spindle-ingress/src/console.rs:112-138`, `crates/spindle-ingress/src/answer.rs:27-32`, `crates/spindle-ingress/src/router.rs:16,136-141,156-158,194-203`, `crates/spindle-ingress/src/listener.rs:206-211,386-430,451-460`, `crates/spindle-host/src/host.rs:864-869,886-889`.",
       "x-ess-name": "spindle.console.ResetRefusal",
       "x-ess-kind": "struct",
       "type": "object",
