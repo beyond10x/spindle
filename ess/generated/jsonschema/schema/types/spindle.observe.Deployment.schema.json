@@ -5,13 +5,13 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:e31e415a85ad2e986b8fbf3440c058949a3a54310ae0c9ef3882d5004ddf1984",
+    "contract_digest": "slice-sha256/2:c46cad64dd034753a3ca9db9b9c42cb0cfc0be4a1430f943fa2bce71d9efb085",
     "regenerate": "ess generate"
   },
   "$defs": {
     "spindle.observe.Binding": {
       "title": "Binding",
-      "description": "One binding of the system. A periodic binding fires a command of `to` on a schedule and has no `from` and no `event`; an event binding carries `event` from `from` to a command of `to`. The schedule is ESS's, not Spindle's: `every`, `anchor`, `first`, `cadence`, `overlap`, `missed` and `lifetime` are the keys of the binding's `when.periodic` cause, each answered with the word the specification declares, as ESS defines it (ESS guide \"Declare a periodic host cause\", `ess_domain::binding::periodic`); `crates/spindle-timer/src/lib.rs` honours each. They are present for a periodic binding and absent for an event binding.",
+      "description": "One binding of the system. A periodic binding fires a command of `to` on a schedule and has no `from` and no `event`; an event binding carries `event` from `from` to a command of `to`. The schedule is ESS's, not Spindle's. Seven keys of the binding's `when.periodic` cause are published, each answered with the word the specification declares, as ESS defines it (ESS guide \"Declare a periodic host cause\", `ess_domain::binding::periodic`): `every`, `anchor`, `first`, `cadence`, `overlap`, `missed` and `lifetime`, which together say when a tick is due and which ticks are dropped. They are present for a periodic binding and absent for an event binding. The cause's two other keys, `cancellation` and `host`, are not published; `crates/spindle-timer/src/lib.rs` honours `cancellation` and `host.eligibility` too.",
       "x-ess-name": "spindle.observe.Binding",
       "x-ess-kind": "struct",
       "type": "object",
