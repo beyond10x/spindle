@@ -70,11 +70,11 @@ entities:
       - name: environment_id
         type: spindle.deployment.EnvironmentId
       - name: requires
-        type: List<spindle.deployment.CapabilityName>
+        type: Optional<List<spindle.deployment.CapabilityName>>
       - name: bindings
-        type: List<spindle.deployment.Binding>
+        type: Optional<List<spindle.deployment.Binding>>
       - name: missing
-        type: List<spindle.deployment.CapabilityName>
+        type: Optional<List<spindle.deployment.CapabilityName>>
 
     relations:
       - name: environment
@@ -126,8 +126,15 @@ errors:
 
   - name: spindle.deployment.AdmissionDecisionInvalid
     summary: >-
-      The decision binds a capability twice, leaves a required one unbound, binds one that is not
-      required, or refuses naming no capability or one it binds, so nothing moved.
+      The decision binds a capability twice, binds one that is not required or to an
+      implementation the environment does not provide for it, names missing one that is not
+      required, that it binds or that the environment provides, leaves a required one neither
+      bound nor missing, or refuses where no capability it names missing is confirmed missing, so
+      nothing moved.
+    fields: []
+
+  - name: spindle.deployment.EnvironmentUnknown
+    summary: No environment is declared under the identity the offer names, so nothing moved.
     fields: []
 
 commands:
@@ -170,9 +177,14 @@ commands:
         type: spindle.deployment.BundleDigest
       - name: environment_id
         type: spindle.deployment.EnvironmentId
-      - name: requires
-        type: List<spindle.deployment.CapabilityName>
     outcomes:
+      - name: unknown-environment
+        when_related:
+          via: input.environment_id
+          exists: false
+        error: spindle.deployment.EnvironmentUnknown
+        summary: No environment is declared under `environment_id`, so nothing was offered.
+
       - name: offered
         creates: spindle.deployment.Deployment
         instance: deployment_id
@@ -185,10 +197,9 @@ commands:
         sets:
           bundle: input.bundle
           environment_id: input.environment_id
-          requires: input.requires
         summary: >-
-          The bundle is offered to the environment with the capabilities its specification
-          requires, derived from the specification and never written by the bundle's author.
+          The bundle is offered to a declared environment. The offer names no capability: what the
+          bundle requires is the admitter's answer, given with its decision.
 
   - name: spindle.deployment.DecideAdmission
     naming:
@@ -197,10 +208,17 @@ commands:
     input:
       - name: deployment_id
         type: spindle.deployment.DeploymentId
+      - name: requires
+        type: List<spindle.deployment.CapabilityName>
+        summary: >-
+          The capabilities the bundle requires, as the admitter derives them from the bundle's
+          compiled specification; never written by the bundle's author.
       - name: bindings
         type: List<spindle.deployment.Binding>
       - name: missing
         type: List<spindle.deployment.CapabilityName>
+        summary: >-
+          The required capabilities the admitter finds no implementation for in the environment.
     outcomes:
       - name: bound-twice
         when:
@@ -209,19 +227,78 @@ commands:
         error: spindle.deployment.AdmissionDecisionInvalid
         summary: The decision binds one capability to two implementations, so nothing moved.
 
-      - name: admitted
-        when_subject:
-          predicate:
+      - name: not-decided
+        when:
+          not:
             all:
-              - input.missing.count == 0
+              - forall:
+                  in: bindings
+                  as: b
+                  that: {exists: {in: requires, as: c, that: b.capability == c}}
+              - forall:
+                  in: missing
+                  as: m
+                  that:
+                    all:
+                      - {exists: {in: requires, as: c, that: m == c}}
+                      - {not: {exists: {in: bindings, as: b, that: b.capability == m}}}
               - forall:
                   in: requires
                   as: c
-                  that: {exists: {in: input.bindings, as: b, that: b.capability == c}}
-              - forall:
-                  in: input.bindings
-                  as: b
-                  that: {exists: {in: requires, as: c, that: b.capability == c}}
+                  that:
+                    any:
+                      - {exists: {in: bindings, as: b, that: b.capability == c}}
+                      - {exists: {in: missing, as: m, that: m == c}}
+        error: spindle.deployment.AdmissionDecisionInvalid
+        summary: >-
+          The decision binds a capability that is not required, names one missing that is not
+          required or that it binds, or leaves a required one neither bound nor missing, so nothing
+          moved, whether or not admission was already decided.
+
+      - name: wrong-state
+        wrong_state: true
+        error: spindle.deployment.DeploymentStateConflict
+        summary: >-
+          The decision is consistent, but the deployment's admission was already decided, so
+          nothing moved. The held state answers before the environment is read, so a binding the
+          environment does not provide is answered here too once admission was decided.
+
+      - name: not-provided
+        when_related:
+          via: environment_id
+          predicate:
+            exists:
+              in: input.bindings
+              as: b
+              that:
+                not:
+                  exists:
+                    in: provides
+                    as: p
+                    that:
+                      all:
+                        - p.capability == b.capability
+                        - p.implementation == b.implementation
+        error: spindle.deployment.AdmissionDecisionInvalid
+        summary: >-
+          The decision binds a capability to an implementation the deployment's environment does
+          not provide for it, so nothing moved.
+
+      - name: missing-provided
+        when_related:
+          via: environment_id
+          predicate:
+            exists:
+              in: input.missing
+              as: m
+              that: {exists: {in: provides, as: p, that: p.capability == m}}
+        error: spindle.deployment.AdmissionDecisionInvalid
+        summary: >-
+          The decision names missing a capability the deployment's environment provides, so
+          nothing moved. Declared beside `not-provided`, it answers before `refused` is read.
+
+      - name: admitted
+        when: missing.count == 0
         moves: spindle.deployment.Deployment.admit
         instance: deployment_id
         emits:
@@ -230,20 +307,17 @@ commands:
           spindle.deployment.DeploymentAdmitted:
             deployment_id: input.deployment_id
         sets:
+          requires: input.requires
           bindings: input.bindings
         summary: >-
-          Every required capability is bound to exactly one implementation, and nothing that is not
-          required is bound.
+          Every required capability is bound to exactly one implementation the environment
+          provides for it, and nothing that is not required is bound. `requires` and the bindings
+          are the admitter's answer; the model checks them against each other and against the
+          environment's `provides`, and keeps both.
 
       - name: refused
         external: at least one required capability has no implementation in the environment
-        when:
-          all:
-            - missing.count >= 1
-            - forall:
-                in: missing
-                as: m
-                that: {not: {exists: {in: bindings, as: b, that: b.capability == m}}}
+        when: missing.count >= 1
         moves: spindle.deployment.Deployment.refuse
         instance: deployment_id
         emits:
@@ -253,25 +327,19 @@ commands:
             deployment_id: input.deployment_id
             missing: input.missing
         sets:
+          requires: input.requires
           missing: input.missing
         summary: >-
-          The deployment is refused. `missing` is not empty and names no capability the decision
-          binds.
+          The deployment is refused. `missing` names at least one required capability, none the
+          decision binds, and every required capability is bound or missing. No capability named
+          missing is in the environment's `provides`, and none bound is outside it, so `missing`
+          is exactly what the environment lacks of `requires`; the external cause confirms it.
 
-      - name: wrong-state
-        wrong_state: true
-        error: spindle.deployment.DeploymentStateConflict
-        summary: >-
-          The decision is valid for the deployment, but its admission was already decided, so
-          nothing moved. An invalid decision is answered `bound-twice` or `not-decided` whatever
-          the state.
-
-      - name: not-decided
+      - name: unconfirmed
         error: spindle.deployment.AdmissionDecisionInvalid
         summary: >-
-          The decision neither binds exactly the required capabilities nor refuses naming at least
-          one capability it does not bind, so nothing moved, whether or not admission was already
-          decided.
+          The decision refuses, but the environment's admission does not confirm a capability it
+          names missing, so nothing moved.
 
   - name: spindle.deployment.StartDeployment
     naming:
@@ -365,7 +433,24 @@ views:
         type: spindle.deployment.DeploymentId
       - name: state
         type: spindle.deployment.Deployment.State
+      - name: bundle
+        type: spindle.deployment.BundleDigest
+      - name: environment_id
+        type: spindle.deployment.EnvironmentId
+      - name: requires
+        type: Optional<List<spindle.deployment.CapabilityName>>
       - name: bindings
-        type: List<spindle.deployment.Binding>
+        type: Optional<List<spindle.deployment.Binding>>
       - name: missing
-        type: List<spindle.deployment.CapabilityName>
+        type: Optional<List<spindle.deployment.CapabilityName>>
+
+  - name: spindle.deployment.EnvironmentState
+    source: spindle.deployment.Environment
+    consistency: read_your_writes
+    fields:
+      - name: environment_id
+        type: spindle.deployment.EnvironmentId
+      - name: state
+        type: spindle.deployment.Environment.State
+      - name: provides
+        type: List<spindle.deployment.Binding>

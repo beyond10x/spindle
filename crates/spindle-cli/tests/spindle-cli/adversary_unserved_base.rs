@@ -233,9 +233,11 @@ fn adversary_refusals_without_a_flag_exit_as_the_base_did() {
 #[ignore = "needs SPINDLE_BASE_BIN, a b10x-spindle built from the unit's base commit"]
 fn adversary_stdin_runs_answer_as_the_base_did() {
     let lines = concat!(
-        r#"{"command": "spindle.deployment.OfferBundle", "input": {"deployment_id": "d1", "bundle": "sha256:0f", "environment_id": "laptop", "requires": []}}"#,
+        r#"{"command": "spindle.deployment.DeclareEnvironment", "input": {"environment_id": "laptop", "os": "linux", "arch": "x86_64", "provides": []}}"#,
         "\n",
-        r#"{"command": "spindle.deployment.DecideAdmission", "input": {"deployment_id": "d1", "bindings": [], "missing": []}, "external": {"refused": false}}"#,
+        r#"{"command": "spindle.deployment.OfferBundle", "input": {"deployment_id": "d1", "bundle": "sha256:0f", "environment_id": "laptop"}}"#,
+        "\n",
+        r#"{"command": "spindle.deployment.DecideAdmission", "input": {"deployment_id": "d1", "requires": [], "bindings": [], "missing": []}, "external": {"refused": false}}"#,
         "\n",
         r#"{"command": "spindle.deployment.Nothing", "input": {}}"#,
         "\n",

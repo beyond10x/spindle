@@ -15,6 +15,20 @@ are Spindle's releases.
   `500` once a store could not be emptied or written). `AnswerSource`'s `world` names the world's
   `decisions`. No behaviour changes.
 
+### Changed
+
+- `spindle.deployment` checks an admission decision itself. `DecideAdmission` takes `requires`
+  beside `bindings` and `missing`, all three the admitter's answer, and `OfferBundle` no longer
+  takes `requires`; an offer to an environment nobody declared is `unknown-environment`
+  (`EnvironmentUnknown`). A decision inconsistent with its own `requires` is `not-decided` before
+  the deployment's state is read, a binding the environment's `provides` does not list is
+  `not-provided`, a refusal naming missing a capability `provides` lists is `missing-provided`,
+  and a consistent refusal its external cause does not confirm is `unconfirmed`,
+  each `AdmissionDecisionInvalid`. `Deployment`'s `requires`, `bindings` and `missing` are
+  `Optional`, absent until a decision sets them; `DeploymentState` publishes them with `bundle`
+  and `environment_id`, and `EnvironmentState` is new. Before, `requires` was the offer's caller's, `admitted`
+  never read `provides`, and `refused` took a refusal naming a capability that was not required.
+
 ## [0.8.0] - 2026-11-08
 
 ### Added
