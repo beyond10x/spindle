@@ -8,6 +8,7 @@ import {
   BindingKind,
   CounterKind,
   CounterSource,
+  DeliveryGuarantee,
   EdgeKind,
   MetricKind,
   NodeKind,
@@ -74,6 +75,11 @@ export const deploymentShape: Shape<Deployment> = {
         overlap: { ...text, optional: true },
         missed: { ...text, optional: true },
         lifetime: { ...text, optional: true },
+        delivery: {
+          type: 'object',
+          fields: { guarantee: oneOf(DeliveryGuarantee), attempts: number },
+          optional: true,
+        },
       },
     },
   },
@@ -204,6 +210,13 @@ export const requestLogShape: Shape<RequestLog> = {
               holds: { type: 'boolean', optional: true },
               source: oneOf(AnswerSource),
             },
+          },
+        },
+        unmet: {
+          type: 'array',
+          of: {
+            type: 'object',
+            fields: { binding: text, component: text, command: text, reason: text },
           },
         },
       },

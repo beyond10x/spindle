@@ -117,6 +117,9 @@ types:
           ESS's `when.periodic.lifetime`, such as `host_instance`: a lifetime runs from activation
           to acknowledged stop and holds no durable state, so a new host instance starts a new
           grid. Absent for an event binding.
+      - name: delivery
+        type: Optional<spindle.observe.BindingDelivery>
+        summary: How an event binding delivers; absent for a periodic binding.
 
   - name: spindle.observe.DeployedInstance
     kind: struct
@@ -399,6 +402,13 @@ types:
         summary: >-
           Every external cause asked while the request was answered, in the order asked: by the
           routed command and by every command an event binding invoked on the way.
+      - name: unmet
+        type: List<spindle.observe.UnmetInput>
+        summary: >-
+          Every event binding whose input was unmet while the request was answered, in the order
+          the runtime reported them: bindings of the events the routed command published and of
+          the events every command an event binding invoked on the way published. Empty when
+          every binding's input was met.
     invariants:
       - sequence >= 0
       - status >= 100

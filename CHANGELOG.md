@@ -8,11 +8,15 @@ are Spindle's releases.
 
 ### Added
 
-- `spindle.observe` types how an event binding delivers: `DeliveryGuarantee` (ESS's
-  `at_least_once` and `at_most_once`, published unchanged), `BindingDelivery` (the guarantee and
-  the run's limit on attempts, 5 where the binding retries and 1 otherwise) and `UnmetInput` (a
-  binding whose input the event did not fill, so its command was not invoked). Each has a
-  generated schema; no answer carries them yet.
+- `GET /api/deployment` answers `delivery` for each event binding: `guarantee`, ESS's
+  `at_least_once` or `at_most_once` as the binding declares it, and `attempts`, the most times
+  Spindle invokes its command for one event (5 where the binding retries a failure, 1 otherwise;
+  `spindle.observe.BindingDelivery`). A periodic binding answers none.
+- `run --observe` lists in each request's `unmet` every event binding whose input an event
+  published while the request was answered did not fill, so its command was not invoked: the
+  binding, the component that accepts the command, the command and why
+  (`spindle.observe.UnmetInput`). `spindle.observe.RequestRecord` gains a required `unmet`, empty
+  when every input was met. Before, such a binding was only a line on stderr.
 
 ## [0.8.0] - 2026-11-08
 

@@ -10,6 +10,7 @@ export {
   BindingKind,
   CounterKind,
   CounterSource,
+  DeliveryGuarantee,
   EdgeKind,
   MetricKind,
   NodeKind,
@@ -23,6 +24,7 @@ export {
 
 export type {
   Binding,
+  BindingDelivery,
   Catalogue,
   Component,
   Counter,
@@ -51,6 +53,7 @@ export type {
   Topology,
   TopologyEdge,
   TopologyNode,
+  UnmetInput,
 } from './generated/types';
 
 /** One placed instance, as the deployment answer lists it. */

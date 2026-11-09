@@ -1,12 +1,12 @@
 {
   "format": "ess-types-report/3",
-  "source_digest": "22eff80bb66251bf859cb1bffe18c7c0a1d0ee769dbe474b169b711bd22c1066",
+  "source_digest": "cd60946fea30f02b0d37d43f43f20eb750a608fb2686f43f40c2c5035bf96bdb",
   "input": {
     "kind": "model",
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:00976978ab1f1273388315a58f4c30357677f9ee9ed6e5dccf05763923558c79",
-    "projection_digest": "c139f3ebc86ff26929b3fd89daa39e9da988e556283ead5365cec5d3696a67c5"
+    "contract_digest": "slice-sha256/2:60961b216d60377f21caaedf0be74a6b9e0f62abf556196f1e5499cc55bb6249",
+    "projection_digest": "87d17a6b2b9dfc0de61f134f73cacd0c8784f45d82d3c2208858cb6518791d96"
   },
   "generator_version": "0.90.0",
   "target": "rust",
@@ -26,6 +26,7 @@
   "declarations": {
     "spindle.observe.AnswerSource": "AnswerSource",
     "spindle.observe.Binding": "Binding",
+    "spindle.observe.BindingDelivery": "BindingDelivery",
     "spindle.observe.BindingKind": "BindingKind",
     "spindle.observe.Catalogue": "Catalogue",
     "spindle.observe.Component": "Component",
@@ -33,6 +34,7 @@
     "spindle.observe.CounterKind": "CounterKind",
     "spindle.observe.CounterSource": "CounterSource",
     "spindle.observe.CounterValue": "CounterValue",
+    "spindle.observe.DeliveryGuarantee": "DeliveryGuarantee",
     "spindle.observe.DeployedInstance": "DeployedInstance",
     "spindle.observe.Deployment": "Deployment",
     "spindle.observe.EdgeKind": "EdgeKind",
@@ -61,6 +63,7 @@
     "spindle.observe.TopologyEdge": "TopologyEdge",
     "spindle.observe.TopologyFormat": "TopologyFormat",
     "spindle.observe.TopologyNode": "TopologyNode",
+    "spindle.observe.UnmetInput": "UnmetInput",
     "spindle.placement.Instance.State": "State",
     "spindle.placement.InstanceId": "InstanceId",
     "spindle.placement.Resources": "Resources",
@@ -105,6 +108,11 @@
     },
     {
       "pointer": "/$defs/spindle.observe.Binding/properties/command/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Binding/properties/delivery/description",
       "rule": "description",
       "detail": "retained in source.schema.json; no decoder behavior inferred"
     },
@@ -160,6 +168,31 @@
     },
     {
       "pointer": "/$defs/spindle.observe.Binding/x-ess-name",
+      "rule": "x-ess-name",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.BindingDelivery/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.BindingDelivery/properties/attempts/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.BindingDelivery/title",
+      "rule": "title",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.BindingDelivery/x-ess-kind",
+      "rule": "x-ess-kind",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.BindingDelivery/x-ess-name",
       "rule": "x-ess-name",
       "detail": "model identity and wire mapping retained in source.schema.json"
     },
@@ -300,6 +333,26 @@
     },
     {
       "pointer": "/$defs/spindle.observe.CounterValue/x-ess-name",
+      "rule": "x-ess-name",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeliveryGuarantee/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeliveryGuarantee/title",
+      "rule": "title",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeliveryGuarantee/x-ess-kind",
+      "rule": "x-ess-kind",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeliveryGuarantee/x-ess-name",
       "rule": "x-ess-name",
       "detail": "model identity and wire mapping retained in source.schema.json"
     },
@@ -769,6 +822,11 @@
       "detail": "retained in source.schema.json; no decoder behavior inferred"
     },
     {
+      "pointer": "/$defs/spindle.observe.RequestRecord/properties/unmet/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
       "pointer": "/$defs/spindle.observe.RequestRecord/title",
       "rule": "title",
       "detail": "retained in source.schema.json; no decoder behavior inferred"
@@ -1079,6 +1137,46 @@
       "detail": "model identity and wire mapping retained in source.schema.json"
     },
     {
+      "pointer": "/$defs/spindle.observe.UnmetInput/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.UnmetInput/properties/binding/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.UnmetInput/properties/command/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.UnmetInput/properties/component/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.UnmetInput/properties/reason/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.UnmetInput/title",
+      "rule": "title",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.UnmetInput/x-ess-kind",
+      "rule": "x-ess-kind",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.UnmetInput/x-ess-name",
+      "rule": "x-ess-name",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
       "pointer": "/$defs/spindle.placement.Instance.State/title",
       "rule": "title",
       "detail": "retained in source.schema.json; no decoder behavior inferred"
@@ -1155,6 +1253,21 @@
     }
   ],
   "obligations": [
+    {
+      "pointer": "/$defs/spindle.observe.BindingDelivery/properties/attempts/maximum",
+      "rule": "maximum",
+      "detail": "validate this constraint against the source schema at runtime"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.BindingDelivery/properties/attempts/minimum",
+      "rule": "minimum",
+      "detail": "validate this constraint against the source schema at runtime"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.BindingDelivery/x-ess-invariants",
+      "rule": "model_invariants",
+      "detail": "enforce the retained model invariant statements; structural codecs do not evaluate predicates"
+    },
     {
       "pointer": "/$defs/spindle.observe.CounterValue/properties/value",
       "rule": "integer",

@@ -3,6 +3,7 @@
 
 use ess_compiler::EssIr;
 use serde::Serialize;
+use spindle_host::RETRY_ATTEMPTS;
 use spindle_target::{Resources, TargetKind};
 
 /// `spindle.observe.Deployment`.
@@ -79,6 +80,19 @@ pub struct Binding {
     /// ESS's `when.periodic.lifetime`; none for an event binding.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lifetime: Option<String>,
+    /// How it delivers; none for a periodic binding.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<BindingDelivery>,
+}
+
+/// `spindle.observe.BindingDelivery`: ESS's guarantee and Spindle's limit on attempts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BindingDelivery {
+    /// The binding's `delivery:` word, as ESS writes it: `at_least_once` or `at_most_once`.
+    pub guarantee: String,
+    /// The most times its command is invoked for one event: [`RETRY_ATTEMPTS`] where it
+    /// retries a failure ([`spindle_host::retried`]), 1 otherwise.
+    pub attempts: u32,
 }
 
 /// `spindle.placement.Instance.State`.
@@ -175,6 +189,7 @@ pub fn system(ir: &EssIr) -> (String, Vec<Component>, Vec<Binding>) {
             })
             .map(|component| component.name.as_str().to_owned())
     };
+    let retried = spindle_host::retried(ir);
     let bindings = ir
         .bindings()
         .values()
@@ -192,6 +207,17 @@ pub fn system(ir: &EssIr) -> (String, Vec<Component>, Vec<Binding>) {
                     .and_then(serde_json::Value::as_str)
                     .map(str::to_owned)
             };
+            let delivery = event.as_ref().map(|_| BindingDelivery {
+                guarantee: serde_json::to_value(binding.delivery)
+                    .ok()
+                    .and_then(|word| word.as_str().map(str::to_owned))
+                    .unwrap_or_default(),
+                attempts: if retried.iter().any(|name| name == binding.name.as_str()) {
+                    RETRY_ATTEMPTS
+                } else {
+                    1
+                },
+            });
             Binding {
                 name: binding.name.as_str().to_owned(),
                 kind: if event.is_some() {
@@ -210,6 +236,7 @@ pub fn system(ir: &EssIr) -> (String, Vec<Component>, Vec<Binding>) {
                 overlap: word("overlap"),
                 missed: word("missed"),
                 lifetime: word("lifetime"),
+                delivery,
             }
         })
         .collect();
@@ -249,5 +276,38 @@ mod tests {
         ] {
             assert!(answer.get(key).is_none(), "{key} in {answer}");
         }
+    }
+
+    /// `story:binding-delivery-specified`: an event binding answers `delivery`, ESS's guarantee
+    /// word and Spindle's limit on attempts (`spindle.observe.BindingDelivery`): 5 where it
+    /// retries a failure (`spindle_host::RETRY_ATTEMPTS`), 1 where it drops. A periodic binding
+    /// answers none.
+    #[test]
+    fn an_event_binding_publishes_its_guarantee_and_its_attempts() {
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spindle-host/tests/fixtures");
+        let delivery = |specification: &Path, name: &str| {
+            let loaded = spindle_spec::load(specification).expect("the fixture compiles");
+            let (_, _, bindings) = system(&loaded.ir);
+            let binding = bindings
+                .iter()
+                .find(|binding| binding.name == name)
+                .unwrap_or_else(|| panic!("the binding {name}"));
+            serde_json::to_value(binding).expect("a binding serializes")["delivery"].clone()
+        };
+        let retry = fixtures.join("retry");
+        assert_eq!(
+            delivery(&retry, "record-filing"),
+            serde_json::json!({"guarantee": "at_most_once", "attempts": 5})
+        );
+        assert_eq!(
+            delivery(&retry, "log-note"),
+            serde_json::json!({"guarantee": "at_most_once", "attempts": 1})
+        );
+        assert_eq!(
+            delivery(&fixtures.join("adversary/notice"), "pin-post"),
+            serde_json::json!({"guarantee": "at_least_once", "attempts": 5})
+        );
+        let rally = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/rally/ess");
+        assert_eq!(delivery(&rally, "tick"), serde_json::Value::Null);
     }
 }
