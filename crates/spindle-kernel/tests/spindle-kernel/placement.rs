@@ -87,6 +87,7 @@ fn declare(ir: &EssIr, store: &mut dyn Store, target: &str, kind: &str) -> Execu
 }
 
 fn plan(ir: &EssIr, store: &mut dyn Store, decider: &mut dyn Decider, instance: &str) -> Executed {
+    admitted(ir, store);
     run(
         ir,
         store,
@@ -101,6 +102,56 @@ fn plan(ir: &EssIr, store: &mut dyn Store, decider: &mut dyn Decider, instance: 
             "request": {"vcpus": 1, "memory_mib": 64, "disk_mib": 0},
         }),
     )
+}
+
+/// Offers deployment `d1` and admits it, unless it is already held: `PlanInstance` refuses an
+/// instance of a deployment no one offered (`unknown-deployment`).
+fn admitted(ir: &EssIr, store: &mut dyn Store) {
+    if store
+        .load("spindle.deployment.Deployment", &json!("d1"))
+        .expect("the store reads")
+        .is_some()
+    {
+        return;
+    }
+    let offered = deployment(
+        ir,
+        store,
+        "OfferBundle",
+        json!({"deployment_id": "d1", "bundle": "sha256:0f", "environment_id": "laptop", "requires": []}),
+    );
+    assert_eq!(offered.outcome, "offered", "{offered:?}");
+    let admitted = deployment(
+        ir,
+        store,
+        "DecideAdmission",
+        json!({"deployment_id": "d1", "bindings": [], "missing": []}),
+    );
+    assert_eq!(admitted.outcome, "admitted", "{admitted:?}");
+}
+
+/// Runs `spindle.deployment.<command>`, which asks no external cause on these inputs.
+fn deployment(ir: &EssIr, store: &mut dyn Store, command: &str, request: Value) -> Executed {
+    let Value::Object(map) = request else {
+        panic!("an input is an object");
+    };
+    execute(
+        ir,
+        store,
+        &mut NoExternal,
+        &format!("spindle.deployment.{command}"),
+        &map,
+    )
+    .unwrap_or_else(|error| panic!("{command} executes: {error}"))
+}
+
+/// Answers every external cause `false`.
+struct NoExternal;
+
+impl Decider for NoExternal {
+    fn decide(&mut self, _question: &External<'_>) -> Result<bool, String> {
+        Ok(false)
+    }
 }
 
 fn planned(ir: &EssIr, store: &mut dyn Store, instance: &str) {
@@ -203,13 +254,25 @@ fn an_instance_of_a_refused_deployment_cannot_be_placed() {
         json!({"instance_id": "i2"}),
     );
     assert_eq!(placed.outcome, "placed", "{placed:?}");
-    let mut refusing = Holds::only(&external("LaunchInstance", "not-admitted"));
+    let stopped = deployment(
+        &ir,
+        &mut store,
+        "StopDeployment",
+        json!({"deployment_id": "d1"}),
+    );
+    assert_eq!(stopped.outcome, "stopped", "{stopped:?}");
+    let mut none = Holds::default();
     let launched = run(
         &ir,
         &mut store,
-        &mut refusing,
+        &mut none,
         "LaunchInstance",
         json!({"instance_id": "i2"}),
+    );
+    assert!(
+        none.asked.is_empty(),
+        "the deployment's state decides the launch: {:?}",
+        none.asked
     );
     assert_eq!(
         (launched.outcome.as_str(), error_of(&launched)),
@@ -233,6 +296,7 @@ fn a_placement_refusal_names_its_cause() {
     let ir = specification();
     let causes = [
         ("target-retired", "TargetRetired"),
+        ("environment-mismatch", "EnvironmentMismatch"),
         ("not-admitted", "NotAdmitted"),
         ("above-ceiling", "AboveCeiling"),
     ];

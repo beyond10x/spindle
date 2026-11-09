@@ -63,7 +63,7 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:ba7cd9bc1ecdc1b6f009a1e5538e7d5ded9c33f1793659c4a887cb05af57d7c1",
+    "contract_digest": "slice-sha256/2:568270a3a56a5cf4d35b0cddc389dd30f05e6123357504c79a3f9a58d8fec2f0",
     "regenerate": "ess generate"
   },
   "$defs": {
@@ -94,11 +94,13 @@
     },
     "spindle.placement.RefusalCause": {
       "title": "RefusalCause",
+      "description": "Why an instance was refused. An instance refused for several reasons at once records one: the first of these in the order they are declared, which is the order `PlaceInstance` decides them in.",
       "x-ess-name": "spindle.placement.RefusalCause",
       "x-ess-kind": "enum",
       "type": "string",
       "enum": [
         "TargetRetired",
+        "EnvironmentMismatch",
         "NotAdmitted",
         "AboveCeiling"
       ]

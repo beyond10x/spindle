@@ -6,6 +6,18 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Changed
+
+- `spindle.placement` names every refusal `spindle-target` returns: `RefusalCause` gains
+  `EnvironmentMismatch`, recorded by `PlaceInstance`'s own `environment-mismatch` outcome, and
+  `not-admitted` no longer covers an admission decided for another environment. An instance
+  refused for several reasons records the first in `RefusalCause`'s order, the order
+  `spindle_target::place` reports them in (`Refusal::cause` names each). `LaunchInstance`'s
+  `not-admitted` is decided by the deployment's state instead of asked as an external cause,
+  and `PlanInstance` refuses a deployment no one offered (`unknown-deployment`). Admitting
+  `ess/` now needs `external.spindle.placement.PlaceInstance.environment-mismatch` and no
+  longer `external.spindle.placement.LaunchInstance.not-admitted`.
+
 ## [0.8.0] - 2026-11-08
 
 ### Added

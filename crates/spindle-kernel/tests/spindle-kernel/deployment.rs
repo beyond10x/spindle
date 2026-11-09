@@ -359,8 +359,16 @@ fn assert_invalid(executed: &Executed, outcome: &str, store: &mut dyn Store, id:
     assert!(executed.events.is_empty(), "{executed:?}");
     let stored = store.load(DEPLOYMENT, &json!(id)).unwrap().unwrap();
     assert_eq!(stored.row.state, "Offered");
-    assert_eq!(stored.row.fields.get("bindings"), None, "{stored:?}");
-    assert_eq!(stored.row.fields.get("missing"), None, "{stored:?}");
+    assert_eq!(
+        stored.row.fields.get("bindings"),
+        Some(&json!([])),
+        "{stored:?}"
+    );
+    assert_eq!(
+        stored.row.fields.get("missing"),
+        Some(&json!([])),
+        "{stored:?}"
+    );
 }
 
 fn names(requirements: &spindle_capability::Requirements) -> Vec<String> {

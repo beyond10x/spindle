@@ -186,6 +186,8 @@ commands:
           bundle: input.bundle
           environment_id: input.environment_id
           requires: input.requires
+          bindings: []
+          missing: []
         summary: >-
           The bundle is offered to the environment with the capabilities its specification
           requires, derived from the specification and never written by the bundle's author.
