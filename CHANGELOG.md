@@ -6,6 +6,16 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Changed
+
+- Spindle's own specification types what an environment provides as the environment document
+  states it: a new domain `spindle.environment` declares `Provision`, a capability or `prefix.*`
+  key (`CapabilityKey`) with its implementations, most preferred first, and
+  `spindle.deployment.Environment.provides` and `DeclareEnvironment`'s `provides` input are a list
+  of them instead of `Binding`s. `DeclareEnvironment` refuses a key listed twice (`key-twice`) or
+  one with no implementation (`no-implementation`) as `ProvidesInvalid`. That an exact key wins
+  over a prefix, and the longest prefix over a shorter one, is stated on `provides`.
+
 ## [0.8.0] - 2026-11-08
 
 ### Added

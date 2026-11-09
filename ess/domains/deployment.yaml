@@ -50,7 +50,12 @@ entities:
       - name: arch
         type: String
       - name: provides
-        type: List<spindle.deployment.Binding>
+        type: List<spindle.environment.Provision>
+        summary: >-
+          Each capability or `prefix.*` key the environment provides, with its implementations,
+          most preferred first. A capability is provided by its exact key, or else by the longest
+          `prefix.*` key that covers it, and an exact key wins over a prefix (README.md:101-102,
+          crates/spindle-capability/src/environment.rs:81-96).
 
     lifecycle:
       initial: Declared
@@ -143,8 +148,28 @@ commands:
       - name: arch
         type: String
       - name: provides
-        type: List<spindle.deployment.Binding>
+        type: List<spindle.environment.Provision>
     outcomes:
+      - name: key-twice
+        when:
+          not:
+            distinct: {in: provides, as: p, by: p.capability}
+        error: spindle.environment.ProvidesInvalid
+        summary: >-
+          The environment lists one key twice, which its document cannot hold, so nothing
+          was recorded (crates/spindle-capability/src/environment.rs:37,45,63).
+
+      - name: no-implementation
+        when:
+          exists:
+            in: provides
+            as: p
+            that: p.implementations.count == 0
+        error: spindle.environment.ProvidesInvalid
+        summary: >-
+          A key lists no implementation, so nothing was recorded
+          (crates/spindle-capability/src/environment.rs:52-57,69-77).
+
       - name: declared
         creates: spindle.deployment.Environment
         instance: environment_id

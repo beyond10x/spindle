@@ -1,0 +1,45 @@
+domain: spindle.environment
+
+summary: >-
+  What an environment provides: for each capability, or each prefix of capabilities, the
+  implementations that back it, most preferred first (README.md:87-102,
+  crates/spindle-capability/src/environment.rs:8-38).
+
+naming:
+  wire: environments
+  display: Environments
+
+types:
+  - name: spindle.environment.CapabilityKey
+    kind: newtype
+    of: String
+    naming:
+      summary: >-
+        A capability name, which provides exactly that capability, or a prefix ending in `.*`,
+        which provides every capability under that prefix (README.md:101-102,
+        crates/spindle-capability/src/environment.rs:22-23,35).
+
+  - name: spindle.environment.Provision
+    kind: struct
+    naming:
+      summary: >-
+        One key of the environment document's `provides` and its implementations, in order of
+        preference (README.md:101, crates/spindle-capability/src/environment.rs:35-37).
+    fields:
+      - name: capability
+        type: spindle.environment.CapabilityKey
+        summary: >-
+          The capability, or the `prefix.*` key, these implementations provide
+          (crates/spindle-capability/src/environment.rs:35).
+      - name: implementations
+        type: List<spindle.deployment.ImplementationName>
+        summary: >-
+          The implementations that provide it, each named by its identifier, most preferred first
+          (README.md:101, crates/spindle-capability/src/environment.rs:35).
+
+errors:
+  - name: spindle.environment.ProvidesInvalid
+    summary: >-
+      A key of `provides` is listed twice, or lists no implementation, so nothing was recorded
+      (crates/spindle-capability/src/environment.rs:37,52-57,69-77).
+    fields: []
