@@ -8,13 +8,19 @@ source: crates/spindle-telemetry/src/lib.rs, crates/spindle-target/src/process.r
 
 ## Counters
 
-`spindle-telemetry` counts what an instance does: the kernel's caller records each command's
-outcome and duration, a counting store each committed row, its bytes and its events, the channel
-endpoints each envelope sent, delivered, redelivered or dropped, and the timer each tick fired,
-late or dropped. Recording is one atomic increment: no lock and no allocation on the command path.
+`spindle-telemetry` counts what an instance does:
 
-The **catalogue** of counters is derived from the compiled specification for one component, never
-written down:
+| Recorder | Records |
+|---|---|
+| the kernel's caller | each command's outcome and duration |
+| a counting store | each committed row, its bytes and its events |
+| the channel endpoints | each envelope sent, delivered, redelivered or dropped |
+| the timer | each tick fired, late or dropped |
+
+Recording is one atomic increment: no lock and no allocation on the command path.
+
+The **catalogue** of counters is derived from the compiled specification for one component. It is
+not written down:
 
 | Counter | One per |
 |---|---|
@@ -51,13 +57,16 @@ sample period (1 s by default) to the endpoint its launcher gives it in `SPINDLE
 
 A frame is one line of JSON with the shape of `spindle.observe.Sample`: the instance id, a
 sequence number, the cumulative counters and histogram buckets, the last answers and the
-instance's own readings (CPU seconds and memory in use, from `/proc/self` for a process and from
-`/proc/stat` and `/proc/meminfo` inside a guest). Counters are cumulative, so a lost frame loses
-no count. The sender runs on its own thread: with no collector, or a slow one, it drops frames and
-reports the number dropped in the next frame it delivers, and a command never waits for it.
-A frame counts as sent once it is written to the socket, which does not prove a collector read it.
-A Unix socket path must be UTF-8 and fit the platform's `sun_path` less its NUL: at most 107 bytes
-on Linux and 103 on macOS. The launcher refuses any other.
+instance's own readings. The readings are CPU seconds and memory in use, from `/proc/self` for a
+process and from `/proc/stat` and `/proc/meminfo` inside a guest. Counters are cumulative, so a
+lost frame loses no count.
+
+The sender runs on its own thread. With no collector, or a slow one, it drops frames and reports
+the number dropped in the next frame it delivers. A command does not wait for it. A frame counts as
+sent once it is written to the socket, which does not prove a collector read it.
+
+A Unix socket path must be UTF-8 and fit the platform's `sun_path` less its NUL: at most 107 bytes on Linux and
+103 on macOS. The launcher refuses any other.
 
 ## The observe API and UI
 
@@ -77,7 +86,7 @@ prints the URL to open, with the development token `dev`.
 on its target as `spindle.placement.PlaceInstance` decides, collects the frames they send over a
 Unix socket, keeps the last 15 minutes of samples per instance in memory, and serves the observe
 API and the UI on `127.0.0.1`. The UI is built into the binary at compile time from `ui/dist`, so
-`deploy` needs nothing installed; `task build` builds `ui/` before cargo.
+`deploy` needs nothing installed. `task build` builds `ui/` before cargo.
 
 ```console
 task build
@@ -86,11 +95,15 @@ target/release/b10x-spindle deploy examples/rally/ess --environment examples/env
 
 It prints where it listens and the URL to open, with a random token. Every request needs that
 token, as `?t=` or as a bearer credential, and a `Host` header of `127.0.0.1:<port>` or
-`localhost:<port>`; only `GET` is answered. `GET /api/deployment` answers the components, bindings
-and instances with their state, `GET /api/stream` one `sample` per instance per period and one
-`state` per state change, and `GET /api/views/<component>/<view>` the view's answer from the
-ingress of a running instance of a component reached over the network. SIGINT or SIGTERM stops
-every instance.
+`localhost:<port>`. Only `GET` is answered:
+
+| Route | Answers |
+|---|---|
+| `GET /api/deployment` | the components, bindings and instances with their state |
+| `GET /api/stream` | one `sample` per instance per period and one `state` per state change |
+| `GET /api/views/<component>/<view>` | the view's answer from the ingress of a running instance of a component reached over the network |
+
+SIGINT or SIGTERM stops every instance.
 
 :::caution[Planned]
 This build launches instances on `Process` targets only; QEMU and Firecracker targets are refused

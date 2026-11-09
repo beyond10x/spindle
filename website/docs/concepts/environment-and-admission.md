@@ -29,7 +29,7 @@ projection = ["in-process"]
 ```
 
 - Each list is in order of preference.
-- A key ending in `.*` provides every capability under that prefix; an exact key wins over it.
+- A key ending in `.*` provides every capability under that prefix. An exact key wins over it.
 - A document in another format, an unknown field, or a capability with an empty list is refused.
 
 The repository ships two: `examples/environments/laptop.toml` and
@@ -41,11 +41,11 @@ Admission takes the capabilities a specification (or one component) requires and
 and answers one of two things:
 
 - **admitted**, with exactly one implementation bound to every required capability: the first one
-  the environment lists for it;
-- **refused**, naming every capability the environment has no implementation for.
+  the environment lists for it
+- **refused**, with every capability the environment has no implementation for
 
-The specification never chooses an implementation. `b10x-spindle admit` prints the result and
-exits 0 when admitted, 3 when refused; `--json` prints it as JSON.
+The specification does not choose an implementation. `b10x-spindle admit` prints the result and
+exits 0 when admitted, 3 when refused. `--json` prints it as JSON.
 
 ```console
 $ b10x-spindle admit examples/rally/ess --environment examples/environments/microvm.toml
@@ -71,8 +71,8 @@ Admission binds names. The parts that run today act on these bindings:
 | `ingress.network` | `http-loopback`: `run` serves the routes and the console routes over HTTP on 127.0.0.1; `service-worker`: the Service Worker host (`spindle-wasm`, the site in `web/`) answers the specification's routes and the console routes in the browser, through the router the loopback listener calls |
 | `external.*` | answered by `run` from the line, `--decisions` or `--answer-default`, whatever the binding names; `decisions-file` in the Service Worker host: each external outcome answered from the decisions file it is opened with, as `run --decisions` answers it |
 
-A host refuses, as unsupported, a binding it cannot run: the one-process host refuses a `tcp`
-channel, and a host opened with nothing to answer external causes refuses every `external.*`
-outcome. `run` serves `ingress.network` only where it is bound to `http-loopback`, and the Service
-Worker host only where it is bound to `service-worker`; any other binding of it is refused before
-anything is served.
+A host refuses, as unsupported, a binding it cannot run. The one-process host refuses a `tcp`
+channel. A host opened with nothing to answer external causes refuses every `external.*` outcome.
+`run` serves `ingress.network` only where it is bound to `http-loopback`, and the Service Worker
+host only where it is bound to `service-worker`. Any other binding of it is refused before anything
+is served.

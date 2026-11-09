@@ -26,7 +26,7 @@ The last lines of the build:
     Finished `release` profile [optimized] target(s) in 37.59s
 ```
 
-The binary is `target/release/b10x-spindle`. The commands below call it `b10x-spindle`; put
+The binary is `target/release/b10x-spindle`. The commands below call it `b10x-spindle`. Put
 `target/release` on your `PATH` or type the path.
 
 ```console
@@ -69,9 +69,9 @@ timer
   binding tick: a periodic cause invokes rally.table.Tick
 ```
 
-Nobody wrote this list down: it comes from the entities, bindings and components in the
-specification ([capabilities](/docs/concepts/capabilities)). `--component` narrows it to what one
-component needs on its own:
+The list is derived from the entities, bindings and components in the specification
+([capabilities](/docs/concepts/capabilities)). `--component` narrows it to what one component needs
+on its own:
 
 ```console
 $ b10x-spindle capabilities examples/rally/ess --component rally-player-west
@@ -138,11 +138,11 @@ Exit status 3 means refused ([environment and admission](/docs/concepts/environm
 
 ## Play it
 
-`play` runs all three rally components in one process: each is admitted on its own, the timer
+`play` runs all three rally components in one process. Each is admitted on its own, the timer
 fires the table's `Tick` once a second, and in-process channels carry `BallMoved` to the players
 and their paddle moves back to the table. The terminal is redrawn from the table's `MatchState`
-view after every tick, with the table's non-zero counters under the grid, until a side has won
-(three points by default):
+view after every tick, with the table's non-zero counters under the grid. It stops when a side has
+won, at three points by default:
 
 ```console
 $ b10x-spindle play examples/rally/ess --environment examples/environments/laptop.toml

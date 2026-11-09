@@ -16,8 +16,8 @@ and the one-process host admits each component on its own and gives each its own
 ## Bindings
 
 A **binding** invokes a command. Its cause is either periodic or an event, and it maps fields into
-the command's input. Spindle runs both kinds from the compiled IR; nothing about them is configured
-outside the specification.
+the command's input. Spindle runs both kinds from the compiled IR. They are not configured outside
+the specification.
 
 ### Periodic bindings
 
@@ -39,7 +39,7 @@ admits one periodic profile, and the timer honours each word of it:
 another:
 
 - A sender maps each event into one envelope per binding and holds it in an **outbox** until the
-  state that produced the event is durable; only then is it sent.
+  state that produced the event is durable. Only then is it sent.
 - `at_most_once` envelopes are sent once. `at_least_once` envelopes are acknowledged by the
   receiver and redelivered when an acknowledgement is overdue.
 - Two channels implement the port: `in-process`, a pair of queues, and `tcp`, length-prefixed JSON

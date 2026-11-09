@@ -14,8 +14,8 @@ one component placed on one target.
 ## Placement
 
 Placement refuses an instance when its target is retired, when the target's environment does not
-admit the component, or when the instance asks for more than the target's ceiling, and names every
-reason that applies.
+admit the component, or when the instance asks for more than the target's ceiling. The refusal
+lists every reason that applies.
 
 ## The launcher contract
 
@@ -32,12 +32,12 @@ starts, a request for a resource it cannot enforce.
 | QEMU microvm | `spindle-qemu` | one `qemu-system-x86_64 -M microvm` per instance with KVM, without root. The guest is the host's kernel and an initramfs with a static `b10x-spindle` and a Rust `/init`. vCPUs and memory are enforced, disk is not. All VMs of one launcher share a socket network inside a user and network namespace the launcher owns. |
 | Firecracker | `spindle-firecracker` | the Firecracker release binary inside a user and network namespace, one tap per instance on a bridge, without root. vCPUs and memory are set through the API socket; disk is not enforced. |
 
-The specification also names Docker, Compose, Kubernetes and browser targets; no launcher exists
+The specification also lists Docker, Compose, Kubernetes and browser targets. No launcher exists
 for them.
 
 The QEMU and Firecracker launchers are libraries: no `b10x-spindle` command starts a VM yet. Their
-tests need `/dev/kvm` and are ignored in CI; `task check:vm` runs them on a host that has it
-(Firecracker also needs the Firecracker binary and a guest kernel).
+tests need `/dev/kvm` and are ignored in CI. `task check:vm` runs them on a host that has it.
+Firecracker also needs the Firecracker binary and a guest kernel.
 
 Each launcher also samples, from `/proc`, the CPU seconds and resident memory an instance costs
 the host and its share of the request ([observe](/docs/concepts/observe)).

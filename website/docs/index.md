@@ -21,9 +21,9 @@ It works in four steps, one `b10x-spindle` command each:
 | Admit | `admit` | An **environment** names implementations; admission binds one to every capability, or refuses and names every one missing. |
 | Execute | `run`, `play` | Commands run against the compiled model; periodic bindings fire on a timer; channels carry events between components. |
 
-Nothing is generated per application. The compiled model is the program, and guards are ESS's own
+No code is generated per application. The compiled model is the program, and guards are ESS's own
 predicates evaluated by ESS. The same specification runs on a laptop with an in-process channel and
-on a TCP channel elsewhere; admission is the only step that differs.
+on a TCP channel elsewhere. Admission is the only step that differs.
 
 :::caution[Early]
 Loading, capability derivation, admission, command execution with list views and minted
@@ -36,12 +36,12 @@ process or microVM, HTTP ingress, deployment and a live observe API are planned.
 
 ## What Spindle is not
 
-- **Not a code generator.** It never emits Rust, TypeScript or SQL for an application; it executes
-  the compiled IR.
-- **Not a second ESS.** It does not parse, validate or evaluate ESS on its own. A document
+- Not a code generator: it emits no Rust, TypeScript or SQL for an application. It executes the
+  compiled IR.
+- Not a second ESS: it does not parse, validate or evaluate ESS on its own. A document
   `ess specify validate` refuses is refused by Spindle with the compiler's diagnostics.
-- **Not a place for technical words in a specification.** A specification never names a database,
-  a protocol or a queue; those live in an environment document.
+- Not a place for technical words in a specification: a specification does not name a database, a
+  protocol or a queue. Those live in an environment document.
 
 ## Neighbours
 
