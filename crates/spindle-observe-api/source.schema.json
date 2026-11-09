@@ -15,14 +15,30 @@
     },
     "spindle.observe.Binding": {
       "additionalProperties": false,
-      "description": "One binding of the system. A periodic binding fires a command of `to` on a schedule and has no `from` and no `event`; an event binding carries `event` from `from` to a command of `to`.",
+      "description": "One binding of the system. A periodic binding fires a command of `to` on a schedule and has no `from` and no `event`; an event binding carries `event` from `from` to a command of `to`. The schedule is ESS's, not Spindle's: `every`, `anchor`, `first`, `cadence`, `overlap`, `missed` and `lifetime` are the keys of the binding's `when.periodic` cause, each answered with the word the specification declares, as ESS defines it (ESS guide \"Declare a periodic host cause\", `ess_domain::binding::periodic`); `crates/spindle-timer/src/lib.rs` honours each. They are present for a periodic binding and absent for an event binding.",
       "properties": {
+        "anchor": {
+          "description": "ESS's `when.periodic.anchor`, such as `host_activation`: the grid starts at the instant the binding's lifetime is activated. Absent for an event binding.",
+          "type": "string"
+        },
+        "cadence": {
+          "description": "ESS's `when.periodic.cadence`, such as `fixed_rate`: tick n is due at activation plus n periods, and completing a tick does not move the grid. Absent for an event binding.",
+          "type": "string"
+        },
         "command": {
           "description": "The qualified name of the command the binding issues.",
           "type": "string"
         },
         "event": {
           "description": "The qualified name of the event carried; absent for a periodic binding.",
+          "type": "string"
+        },
+        "every": {
+          "description": "ESS's `when.periodic.every`, the period as `PT<seconds>S`, such as `PT1S`; tick n is due one period after tick n-1 on the binding's grid. Absent for an event binding.",
+          "type": "string"
+        },
+        "first": {
+          "description": "ESS's `when.periodic.first`, such as `after_period`: nothing is due at activation, and the first tick is one period later. Absent for an event binding.",
           "type": "string"
         },
         "from": {
@@ -32,7 +48,19 @@
         "kind": {
           "$ref": "#/$defs/spindle.observe.BindingKind"
         },
+        "lifetime": {
+          "description": "ESS's `when.periodic.lifetime`, such as `host_instance`: a lifetime runs from activation to acknowledged stop and holds no durable state, so a new host instance starts a new grid. Absent for an event binding.",
+          "type": "string"
+        },
+        "missed": {
+          "description": "ESS's `when.periodic.missed`, such as `one_pending_drop_excess`: deadlines that pass while a tick is open or unobserved keep one pending tick, the earliest, and the rest are dropped and counted. Absent for an event binding.",
+          "type": "string"
+        },
         "name": {
+          "type": "string"
+        },
+        "overlap": {
+          "description": "ESS's `when.periodic.overlap`, such as `serial_per_instance`: no second tick is issued while one is still open. Absent for an event binding.",
           "type": "string"
         },
         "to": {
@@ -1122,8 +1150,8 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-ess-provenance": {
-    "contract_digest": "slice-sha256/2:5465d6a6d76234797cf5510c0adcb61a3ad655c61a80b7beb58be263fbefc1df",
-    "source_digest": "8047fdad3aa0148d72a124c3eba71853fb69e0b1e4497d545c71f5ff6188def0",
+    "contract_digest": "slice-sha256/2:dcbe633046c76d342c45dc215bdde46e3261059565672291aaeff55ca33aa521",
+    "source_digest": "210770838721a1fbef21f54233a7f943f897ab989aa35730c49f27cd9218166e",
     "specification_version": "v1",
     "system": "spindle"
   }
