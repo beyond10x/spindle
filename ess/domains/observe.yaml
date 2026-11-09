@@ -274,9 +274,11 @@ types:
     kind: enum
     naming:
       summary: >-
-        What answered one external cause of a served command. `world`: the decision table of the
-        last reset's world. `file`: the decisions file. `default`: the default branch
-        `--answer-default` takes. `unanswered`: nothing did, and the command answered `501`.
+        What answered one external cause of a served command. `world`: the `decisions` of the
+        world the last reset loaded, `spindle.console.World`. `file`: the decisions file.
+        `default`: the default branch `--answer-default` takes. `unanswered`: nothing did, and the
+        command answered `501`. Source: `crates/spindle-cli/src/decisions.rs:35-53`,
+        `crates/spindle-ingress/src/observe.rs:186-209`.
     variants: [world, file, default, unanswered]
 
   - name: spindle.observe.ExternalAnswer

@@ -1,0 +1,126 @@
+domain: spindle.console
+
+summary: >-
+  The reset a served run answers beside the routes its specification publishes, `POST /api/reset`,
+  and the world a reset may load: rows, a decision table and a mint seed. A reset empties the store
+  of every component of the run and forgets every event published, then writes the world's rows
+  where their entities rest. A world that does not validate is refused `400` and changes nothing.
+  Sources: the handler `crates/spindle-ingress/src/console.rs:109-139`, its route
+  `crates/spindle-ingress/src/router.rs:277-285`, the world reader
+  `crates/spindle-cli/src/world.rs:1-81` and `Host::reset_to`
+  `crates/spindle-host/src/host.rs:855-991`.
+
+naming:
+  wire: console
+  display: Console
+
+# UNMAPPED: the reset itself has no declaration here. It is a route of the run, not a command of
+# this specification: it empties the store of every component of whatever specification the run
+# serves (`crates/spindle-host/src/host.rs:855-872,941-991`), and an ESS command changes only the
+# entities its own specification declares. Its route, `POST /api/reset`, and its statuses (`200`
+# with `ResetAnswer`, `400` and `500` with `ResetRefusal`) are stated in the summaries below and
+# checked by no declaration. Open question: whether a run-level operation gets an ESS construct.
+
+types:
+  - name: spindle.console.WorldRow
+    kind: struct
+    naming:
+      summary: >-
+        One row of a world: an instance of a declared entity as it rests, written once every store
+        is empty, where its entity rests. ESS checks it against the model as it checks a scenario's
+        `establish` step; the run then checks that a running component owns its entity, that its
+        invariants hold, that its store can key its identity and that no other row of the world is
+        the same instance. Source: `crates/spindle-cli/src/world.rs:39-47,83-113`,
+        `crates/spindle-host/src/host.rs:881-911`.
+    # UNMAPPED: `identity`, `state` and `fields` are typed by the entity `entity` names: its
+    # identity type, one of its lifecycle states, and its declared fields each of its own type. ESS
+    # has no type that depends on another member's value, so here they are `Json`, `String` and a
+    # map of `Json`, and the rule is the run's check (`crates/spindle-cli/src/world.rs:84-98`).
+    fields:
+      - name: entity
+        type: String
+        summary: The qualified name of the entity the row is an instance of.
+      - name: identity
+        type: Json
+        summary: The instance's identity, a value of the entity's identity type.
+      - name: state
+        type: String
+        summary: The lifecycle state the row rests in, one the entity declares.
+      - name: fields
+        type: Optional<Map<String, Json>>
+        summary: >-
+          The row's fields by name, each a value of its declared type; absent for none. A field
+          sent as `null` is held as absent (`crates/spindle-cli/src/world.rs:99-104`).
+
+  - name: spindle.console.World
+    kind: struct
+    naming:
+      summary: >-
+        What a reset loads once every store is empty, the body of `POST /api/reset`; every member
+        is optional and no other is read. An empty or all-whitespace body loads no world: the run
+        starts from empty stores, its own answers and a random mint. A world loaded holds until
+        the next reset, which drops its decisions and its mint. Only `b10x-spindle run` loads a
+        world; a run that loads none (`play --component`, the browser run) refuses a reset with a
+        body `400`. Source: `crates/spindle-cli/src/world.rs:1-81`,
+        `crates/spindle-ingress/src/console.rs:112-130`, `crates/spindle-cli/src/serve.rs:325-349`,
+        `crates/spindle-cli/src/cli.rs:141-146`.
+    # UNMAPPED: "every row is checked before any store is emptied, and a refused world changes
+    # nothing" (`crates/spindle-host/src/host.rs:881-889,922`) is an ordering rule of the reset; no
+    # declaration here carries it.
+    fields:
+      - name: rows
+        type: Optional<List<spindle.console.WorldRow>>
+        summary: >-
+          The rows written once every store is empty, in order; absent for none. Two rows of one
+          instance are refused (`crates/spindle-host/src/host.rs:897-902`).
+      - name: decisions
+        type: Optional<Map<String, Json>>
+        summary: >-
+          A decision table in the decisions file's shape, `{"<outcome>": true | false,
+          "<command>": {"<outcome>": true | false}}`, each key an external outcome or a command
+          that declares one. It answers external causes before `--decisions` and
+          `--answer-default` do, until the next reset; an answer from it is the `world` source
+          of `spindle.observe.AnswerSource`. Source: `crates/spindle-host/src/decisions.rs:47-59`,
+          `crates/spindle-cli/src/decisions.rs:35-44`.
+        # UNMAPPED: each value is either a Boolean or a map of outcome to Boolean, by whether its
+        # key names an outcome or a command. ESS has no untagged union, so the value is `Json`; the
+        # run refuses any other value (`crates/spindle-host/src/decisions.rs:75-116,212-240`).
+      - name: mint
+        type: Optional<Integer>
+        summary: >-
+          The seed every identity and generated value is minted from until the next reset, so the
+          same requests mint the same identities; absent for random version 4 UUIDs. A seeded
+          mint never answers a UUID a row's identity holds or ends in. Source:
+          `crates/spindle-host/src/host.rs:101-112,874-879,913-937`.
+        # UNMAPPED: the run reads the seed as an unsigned 64-bit integer
+        # (`crates/spindle-cli/src/world.rs:36`); no upper bound is declared here.
+    invariants:
+      - mint >= 0
+
+  - name: spindle.console.ResetAnswer
+    kind: struct
+    naming:
+      summary: >-
+        The answer of `POST /api/reset`, `200`, once every store is empty and the world is
+        loaded. A reset keeps every count and the request log of an observed run (`README.md:61`).
+        Source: `crates/spindle-ingress/src/console.rs:131-135`,
+        `crates/spindle-host/src/host.rs:941-991`.
+    fields:
+      - name: emptied
+        type: List<String>
+        summary: The components whose stores were emptied, every component of the run, in name order.
+
+  - name: spindle.console.ResetRefusal
+    kind: struct
+    naming:
+      summary: >-
+        A refused reset. `400`: the body is not JSON, the run loads no world, or the world does
+        not validate; nothing changed. `500`: a store could not be emptied or a row could not be
+        written; the components emptied before it stay empty, the rows before it stay written, and
+        the decisions and mint of the last world are kept. Source:
+        `crates/spindle-ingress/src/console.rs:112-138`, `crates/spindle-ingress/src/answer.rs:27-32`,
+        `crates/spindle-host/src/host.rs:864-869,886-889`.
+    fields:
+      - name: refused
+        type: String
+        summary: Why the reset was refused.

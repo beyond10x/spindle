@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.console.ResetRefusal.schema.json",
+  "$ref": "#/$defs/spindle.console.ResetRefusal",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "contract_digest": "slice-sha256/2:81410b436ca029884baeb0e681b8338eee5b5fb46d770fa822b40bd9c7d56d37",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.console.ResetRefusal": {
+      "title": "ResetRefusal",
+      "description": "A refused reset. `400`: the body is not JSON, the run loads no world, or the world does not validate; nothing changed. `500`: a store could not be emptied or a row could not be written; the components emptied before it stay empty, the rows before it stay written, and the decisions and mint of the last world are kept. Source: `crates/spindle-ingress/src/console.rs:112-138`, `crates/spindle-ingress/src/answer.rs:27-32`, `crates/spindle-host/src/host.rs:864-869,886-889`.",
+      "x-ess-name": "spindle.console.ResetRefusal",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "refused": {
+          "description": "Why the reset was refused.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "refused"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

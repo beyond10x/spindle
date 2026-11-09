@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.console.World.schema.json",
+  "$ref": "#/$defs/spindle.console.World",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "contract_digest": "slice-sha256/2:21b7b892270650bf7c93efd6a0c75d4f9f45a3b847bf96b607f1241022ca1f9c",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.console.World": {
+      "title": "World",
+      "description": "What a reset loads once every store is empty, the body of `POST /api/reset`; every member is optional and no other is read. An empty or all-whitespace body loads no world: the run starts from empty stores, its own answers and a random mint. A world loaded holds until the next reset, which drops its decisions and its mint. Only `b10x-spindle run` loads a world; a run that loads none (`play --component`, the browser run) refuses a reset with a body `400`. Source: `crates/spindle-cli/src/world.rs:1-81`, `crates/spindle-ingress/src/console.rs:112-130`, `crates/spindle-cli/src/serve.rs:325-349`, `crates/spindle-cli/src/cli.rs:141-146`.",
+      "x-ess-name": "spindle.console.World",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "rows": {
+          "description": "The rows written once every store is empty, in order; absent for none. Two rows of one instance are refused (`crates/spindle-host/src/host.rs:897-902`).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/spindle.console.WorldRow"
+          }
+        },
+        "decisions": {
+          "description": "A decision table in the decisions file's shape, `{\"<outcome>\": true | false, \"<command>\": {\"<outcome>\": true | false}}`, each key an external outcome or a command that declares one. It answers external causes before `--decisions` and `--answer-default` do, until the next reset; an answer from it is the `world` source of `spindle.observe.AnswerSource`. Source: `crates/spindle-host/src/decisions.rs:47-59`, `crates/spindle-cli/src/decisions.rs:35-44`.",
+          "type": "object",
+          "additionalProperties": {},
+          "x-ess-map-key": "String"
+        },
+        "mint": {
+          "description": "The seed every identity and generated value is minted from until the next reset, so the same requests mint the same identities; absent for random version 4 UUIDs. A seeded mint never answers a UUID a row's identity holds or ends in. Source: `crates/spindle-host/src/host.rs:101-112,874-879,913-937`.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "x-ess-invariants": [
+        "mint >= 0"
+      ]
+    },
+    "spindle.console.WorldRow": {
+      "title": "WorldRow",
+      "description": "One row of a world: an instance of a declared entity as it rests, written once every store is empty, where its entity rests. ESS checks it against the model as it checks a scenario's `establish` step; the run then checks that a running component owns its entity, that its invariants hold, that its store can key its identity and that no other row of the world is the same instance. Source: `crates/spindle-cli/src/world.rs:39-47,83-113`, `crates/spindle-host/src/host.rs:881-911`.",
+      "x-ess-name": "spindle.console.WorldRow",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "entity": {
+          "description": "The qualified name of the entity the row is an instance of.",
+          "type": "string"
+        },
+        "identity": {
+          "description": "The instance's identity, a value of the entity's identity type."
+        },
+        "state": {
+          "description": "The lifecycle state the row rests in, one the entity declares.",
+          "type": "string"
+        },
+        "fields": {
+          "description": "The row's fields by name, each a value of its declared type; absent for none. A field sent as `null` is held as absent (`crates/spindle-cli/src/world.rs:99-104`).",
+          "type": "object",
+          "additionalProperties": {},
+          "x-ess-map-key": "String"
+        }
+      },
+      "required": [
+        "entity",
+        "identity",
+        "state"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
