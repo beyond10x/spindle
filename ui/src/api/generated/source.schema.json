@@ -15,7 +15,7 @@
     },
     "spindle.observe.Binding": {
       "additionalProperties": false,
-      "description": "One binding of the system. A periodic binding fires a command of `to` on a schedule and has no `from` and no `event`; an event binding carries `event` from `from` to a command of `to`. The schedule is ESS's, not Spindle's: `every`, `anchor`, `first`, `cadence`, `overlap`, `missed` and `lifetime` are the keys of the binding's `when.periodic` cause, each answered with the word the specification declares, as ESS defines it (ESS guide \"Declare a periodic host cause\", `ess_domain::binding::periodic`); `crates/spindle-timer/src/lib.rs` honours each. They are present for a periodic binding and absent for an event binding.",
+      "description": "One binding of the system. A periodic binding fires a command of `to` on a schedule and has no `from` and no `event`; an event binding carries `event` from `from` to a command of `to`. The schedule is ESS's, not Spindle's. Seven keys of the binding's `when.periodic` cause are published, each answered with the word the specification declares, as ESS defines it (ESS guide \"Declare a periodic host cause\", `ess_domain::binding::periodic`): `every`, `anchor`, `first`, `cadence`, `overlap`, `missed` and `lifetime`, which together say when a tick is due and which ticks are dropped. They are present for a periodic binding and absent for an event binding. The cause's two other keys, `cancellation` and `host`, are not published; `crates/spindle-timer/src/lib.rs` honours `cancellation` and `host.eligibility` too.",
       "properties": {
         "anchor": {
           "description": "ESS's `when.periodic.anchor`, such as `host_activation`: the grid starts at the instant the binding's lifetime is activated. Absent for an event binding.",
@@ -1150,8 +1150,8 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-ess-provenance": {
-    "contract_digest": "slice-sha256/2:dcbe633046c76d342c45dc215bdde46e3261059565672291aaeff55ca33aa521",
-    "source_digest": "210770838721a1fbef21f54233a7f943f897ab989aa35730c49f27cd9218166e",
+    "contract_digest": "slice-sha256/2:a7b396044bb191f5c5d6b3346b9573cab487c920d4161402dad9515518c409ed",
+    "source_digest": "8366b90754b1a8266288b48f963297e635fb2395e44db62f42751d3f58478384",
     "specification_version": "v1",
     "system": "spindle"
   }
