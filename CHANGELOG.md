@@ -6,6 +6,15 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- `ess/` specifies the reset and the world it loads, in a new domain `spindle.console`
+  (`ess/domains/console.yaml`): `World` and `WorldRow` (the body of `POST /api/reset`: rows, a
+  decision table and a mint seed, every member optional, no other read), `ResetAnswer`
+  (`{"emptied": [...]}`, `200`) and `ResetRefusal` (`{"refused"}`, `400` before anything changed,
+  `500` once a store could not be emptied or written). `AnswerSource`'s `world` names the world's
+  `decisions`. No behaviour changes.
+
 ## [0.8.0] - 2026-11-08
 
 ### Added

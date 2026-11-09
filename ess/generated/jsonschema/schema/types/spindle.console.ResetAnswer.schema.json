@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.console.ResetAnswer.schema.json",
+  "$ref": "#/$defs/spindle.console.ResetAnswer",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "contract_digest": "slice-sha256/2:3c8073f43e3b4c58c5ad8a947d62c404a98992a4ff6bac74ddf6f6f9cd856819",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.console.ResetAnswer": {
+      "title": "ResetAnswer",
+      "description": "The answer of `POST /api/reset`, `200`, once every store is empty and the world is loaded. A reset keeps every count and the request log of an observed run (`README.md:61`). Source: `crates/spindle-ingress/src/console.rs:131-135`, `crates/spindle-host/src/host.rs:941-991`.",
+      "x-ess-name": "spindle.console.ResetAnswer",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "emptied": {
+          "description": "The components whose stores were emptied, every component of the run, in name order.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "emptied"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

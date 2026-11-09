@@ -1,7 +1,7 @@
 {
   "$defs": {
     "spindle.observe.AnswerSource": {
-      "description": "What answered one external cause of a served command. `world`: the decision table of the last reset's world. `file`: the decisions file. `default`: the default branch `--answer-default` takes. `unanswered`: nothing did, and the command answered `501`.",
+      "description": "What answered one external cause of a served command. `world`: the `decisions` of the world the last reset loaded, `spindle.console.World`. `file`: the decisions file. `default`: the default branch `--answer-default` takes. `unanswered`: nothing did, and the command answered `501`. Source: `crates/spindle-cli/src/decisions.rs:35-53`, `crates/spindle-ingress/src/observe.rs:186-209`.",
       "enum": [
         "world",
         "file",
@@ -1150,8 +1150,8 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-ess-provenance": {
-    "contract_digest": "slice-sha256/2:a7b396044bb191f5c5d6b3346b9573cab487c920d4161402dad9515518c409ed",
-    "source_digest": "8366b90754b1a8266288b48f963297e635fb2395e44db62f42751d3f58478384",
+    "contract_digest": "slice-sha256/2:356acc44a9ac5d2fe3b8bd1174562579f808e39c1637ee2e1b461f3e30f556c0",
+    "source_digest": "69789dabf7be5f9f2e9db8bc4b8b86eb2e467db5290f0d8bfc8d004876528869",
     "specification_version": "v1",
     "system": "spindle"
   }

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.console.WorldRow.schema.json",
+  "$ref": "#/$defs/spindle.console.WorldRow",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "contract_digest": "slice-sha256/2:ba15c899e92916f51966e38db7d02c9c0d0fc47bd7704075588d06d2b8330d24",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.console.WorldRow": {
+      "title": "WorldRow",
+      "description": "One row of a world: an instance of a declared entity as it rests, written once every store is empty, where its entity rests. ESS checks it against the model as it checks a scenario's `establish` step; the run then checks that a running component owns its entity, that its invariants hold, that its store can key its identity and that no other row of the world is the same instance. Source: `crates/spindle-cli/src/world.rs:39-47,83-113`, `crates/spindle-host/src/host.rs:881-911`.",
+      "x-ess-name": "spindle.console.WorldRow",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "entity": {
+          "description": "The qualified name of the entity the row is an instance of.",
+          "type": "string"
+        },
+        "identity": {
+          "description": "The instance's identity, a value of the entity's identity type."
+        },
+        "state": {
+          "description": "The lifecycle state the row rests in, one the entity declares.",
+          "type": "string"
+        },
+        "fields": {
+          "description": "The row's fields by name, each a value of its declared type; absent for none. A field sent as `null` is held as absent (`crates/spindle-cli/src/world.rs:99-104`).",
+          "type": "object",
+          "additionalProperties": {},
+          "x-ess-map-key": "String"
+        }
+      },
+      "required": [
+        "entity",
+        "identity",
+        "state"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
