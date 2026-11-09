@@ -654,6 +654,36 @@ fn a_refusal_the_invalid_decision_error_describes_is_not_refused() {
     }
 }
 
+/// story:admission-decision-checked-by-model: a refusal naming missing a capability the deployment's
+/// environment provides is `missing-provided`, even where the external cause holds; `laptop`
+/// provides `store.durable` and `clock`.
+#[test]
+fn a_refusal_naming_a_provided_capability_missing_is_not_refused() {
+    let ir = specification();
+    let cases = [
+        ("provided-durable", json!(["store.durable"]), json!([])),
+        (
+            "provided-beside-lacking",
+            json!(["channel", "clock"]),
+            json!([]),
+        ),
+    ];
+    for (id, missing, bindings) in cases {
+        let mut store = MemoryStore::default();
+        offer(&ir, &mut store, id);
+        let decided = decide(
+            &ir,
+            &mut store,
+            &mut Always::default(),
+            id,
+            missing.clone(),
+            bindings,
+            missing,
+        );
+        assert_invalid(&decided, "missing-provided", &mut store, id);
+    }
+}
+
 /// A consistent refusal whose external cause does not hold changes nothing.
 #[test]
 fn a_refusal_the_cause_does_not_confirm_is_unconfirmed() {

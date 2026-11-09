@@ -6,6 +6,7 @@ mod rally_cases;
 
 mod adversary;
 mod adversary_admission;
+mod adversary_admission_checked;
 mod adversary_append;
 mod adversary_boolean;
 mod adversary_bytes;

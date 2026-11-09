@@ -128,8 +128,9 @@ errors:
     summary: >-
       The decision binds a capability twice, binds one that is not required or to an
       implementation the environment does not provide for it, names missing one that is not
-      required or that it binds, leaves a required one neither bound nor missing, or refuses
-      where no capability it names missing is confirmed missing, so nothing moved.
+      required, that it binds or that the environment provides, leaves a required one neither
+      bound nor missing, or refuses where no capability it names missing is confirmed missing, so
+      nothing moved.
     fields: []
 
   - name: spindle.deployment.EnvironmentUnknown
@@ -283,6 +284,19 @@ commands:
           The decision binds a capability to an implementation the deployment's environment does
           not provide for it, so nothing moved.
 
+      - name: missing-provided
+        when_related:
+          via: environment_id
+          predicate:
+            exists:
+              in: input.missing
+              as: m
+              that: {exists: {in: provides, as: p, that: p.capability == m}}
+        error: spindle.deployment.AdmissionDecisionInvalid
+        summary: >-
+          The decision names missing a capability the deployment's environment provides, so
+          nothing moved. Declared beside `not-provided`, it answers before `refused` is read.
+
       - name: admitted
         when: missing.count == 0
         moves: spindle.deployment.Deployment.admit
@@ -317,9 +331,9 @@ commands:
           missing: input.missing
         summary: >-
           The deployment is refused. `missing` names at least one required capability, none the
-          decision binds, and every required capability is bound or missing. That a capability
-          named missing has no implementation in the environment is the admitter's answer,
-          confirmed by the external cause; the model does not read `provides` for it.
+          decision binds, and every required capability is bound or missing. No capability named
+          missing is in the environment's `provides`, and none bound is outside it, so `missing`
+          is exactly what the environment lacks of `requires`; the external cause confirms it.
 
       - name: unconfirmed
         error: spindle.deployment.AdmissionDecisionInvalid

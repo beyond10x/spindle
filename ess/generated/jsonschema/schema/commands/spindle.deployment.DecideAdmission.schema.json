@@ -9,6 +9,13 @@
     "deployment_id": {
       "$ref": "#/$defs/spindle.deployment.DeploymentId"
     },
+    "requires": {
+      "description": "The capabilities the bundle requires, as the admitter derives them from the bundle's compiled specification; never written by the bundle's author.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/spindle.deployment.CapabilityName"
+      }
+    },
     "bindings": {
       "type": "array",
       "items": {
@@ -16,6 +23,7 @@
       }
     },
     "missing": {
+      "description": "The required capabilities the admitter finds no implementation for in the environment.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/spindle.deployment.CapabilityName"
@@ -24,6 +32,7 @@
   },
   "required": [
     "deployment_id",
+    "requires",
     "bindings",
     "missing"
   ],
@@ -31,7 +40,7 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:f48cb30aea7998ada44ecffe86b00dd65f3415fcef00fa2c105683538bab3a11",
+    "contract_digest": "slice-sha256/2:d6e2b86600fb1c8144377307da6c0051568f1f9bbbec4af9aaba52d023c8d468",
     "regenerate": "ess generate"
   },
   "$defs": {

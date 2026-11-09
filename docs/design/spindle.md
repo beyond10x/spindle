@@ -131,12 +131,14 @@ What `spindle.deployment` declares, and what stays a runtime rule outside the mo
 - **A refusal names what is missing.** `refused` is eligible only for a consistent decision whose
   `missing` is not empty, and its external cause confirms it; `DeploymentRefused` carries that
   list. A consistent refusal the cause does not confirm is `unconfirmed`. Every invalid answer is
-  `AdmissionDecisionInvalid` and changes nothing. That a capability named missing has no
-  implementation in the environment stays the admitter's answer: the model does not read
-  `provides` for it. ESS 0.90 does not synthesise the forced `refused` scenario beside a
-  `when_related:` refusal over a stored reference (ESS-SYNTH-003, "such a reference is not
-  arranged for an external branch"), and an `external:` branch may not carry `when_related:`
-  (ESS-COMMAND-004).
+  `AdmissionDecisionInvalid` and changes nothing. The model reads `provides` for `missing` too: a
+  refusal naming missing a capability the environment provides is `missing-provided`
+  (`crates/spindle-kernel/tests/spindle-kernel/deployment.rs::a_refusal_naming_a_provided_capability_missing_is_not_refused`),
+  so a refusal the model takes names exactly the required capabilities the environment lacks.
+  ESS 0.90 synthesises neither the forced `refused` scenario beside a `when_related:` refusal
+  over a stored reference (ESS-SYNTH-003, "such a reference is not arranged for an external
+  branch") nor `missing-provided` (ESS-SYNTH-003), and an `external:` branch may not carry
+  `when_related:` (ESS-COMMAND-004); the kernel tests above decide both.
 - **Preference order is a runtime rule.** The model holds the bindings admission chose, not their
   rank. The rank is the order of each capability's list in the environment document, most
   preferred first, and `spindle_capability::admit` takes the first
