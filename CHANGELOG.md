@@ -6,6 +6,14 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- `spindle.observe` types how an event binding delivers: `DeliveryGuarantee` (ESS's
+  `at_least_once` and `at_most_once`, published unchanged), `BindingDelivery` (the guarantee and
+  the run's limit on attempts, 5 where the binding retries and 1 otherwise) and `UnmetInput` (a
+  binding whose input the event did not fill, so its command was not invoked). Each has a
+  generated schema; no answer carries them yet.
+
 ## [0.8.0] - 2026-11-08
 
 ### Added

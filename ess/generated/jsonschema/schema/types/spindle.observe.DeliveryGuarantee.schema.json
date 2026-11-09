@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.DeliveryGuarantee.schema.json",
+  "$ref": "#/$defs/spindle.observe.DeliveryGuarantee",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "contract_digest": "slice-sha256/2:f7ac1c6414ea343145d37ee86603338d2e027ee0974b96fc59207f12dbec0a16",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.DeliveryGuarantee": {
+      "title": "DeliveryGuarantee",
+      "description": "How many times an event binding's command may run for one event, as the binding's `delivery:` writes it. The words are ESS's (`Delivery` in ESS 0.90.0 `crates/specify/ess-domain/src/binding.rs`, carried on `ResolvedBinding::delivery`), and Spindle publishes them unchanged. `at_least_once`: the command may run again, so it must be idempotent; Spindle redelivers an envelope to another component whose acknowledgement is overdue. `at_most_once`: one send and no redelivery. Neither is exactly once. In either, Spindle sends nothing for an event before the state that published it is durable (`crates/spindle-channel/src/lib.rs`).",
+      "x-ess-name": "spindle.observe.DeliveryGuarantee",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "at_least_once",
+        "at_most_once"
+      ]
+    }
+  }
+}
