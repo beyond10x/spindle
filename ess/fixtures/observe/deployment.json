@@ -61,7 +61,14 @@
       "name": "tick",
       "kind": "periodic",
       "to": "rally-table",
-      "command": "rally.table.Tick"
+      "command": "rally.table.Tick",
+      "every": "PT1S",
+      "anchor": "host_activation",
+      "first": "after_period",
+      "cadence": "fixed_rate",
+      "overlap": "serial_per_instance",
+      "missed": "one_pending_drop_excess",
+      "lifetime": "host_instance"
     },
     {
       "name": "west-moves",
