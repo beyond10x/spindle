@@ -85,13 +85,68 @@ fn run_ess(dir: &Path) -> (Output, Value, Value) {
     run_spec(dir, SPEC)
 }
 
+/// The scenario [`skipping_spec`] lists, which the in-process target skips: it takes the
+/// environment's identity from a fixture, and the host provides no fixture value.
+const SKIPPED: &str = "spindle.deployment/authored/fixture-provided";
+
+/// The reason the target gives for skipping [`SKIPPED`].
+const NO_FIXTURE: &str = "cannot expose fixture values: the in-process host provides no fixture";
+
+/// A copy of `ess/` in `dir/name` whose `ess-inputs.yaml` also lists each of `scenarios`, a file
+/// stem and the document written to `scenarios/<stem>.yaml`.
+fn spec_with(dir: &Path, name: &str, scenarios: &[(&str, String)]) -> PathBuf {
+    let spec = dir.join(name);
+    copy(&root().join(SPEC), &spec);
+    let manifest = spec.join("ess-inputs.yaml");
+    let mut listed = std::fs::read_to_string(&manifest).expect("the manifest");
+    assert!(
+        listed
+            .trim_end()
+            .ends_with("- scenarios/launch-not-admitted.yaml"),
+        "ess-inputs.yaml ends with its scenarios list: {listed}"
+    );
+    for (stem, document) in scenarios {
+        std::fs::write(
+            spec.join("scenarios").join(format!("{stem}.yaml")),
+            document,
+        )
+        .expect("writing a scenario");
+        listed.push_str(&format!("  - scenarios/{stem}.yaml\n"));
+    }
+    std::fs::write(&manifest, listed).expect("writing the manifest");
+    spec
+}
+
+/// A copy of `ess/` in `dir` whose `ess-inputs.yaml` also lists [`SKIPPED`]: a run of it executes
+/// exactly what a run of `ess/` executes, and skips one scenario more.
+fn skipping_spec(dir: &Path) -> PathBuf {
+    let document = "type: ess-scenario/3\n\
+                    domain: spindle.deployment\n\
+                    scenario: fixture-provided\n\
+                    summary: An environment whose identity a fixture provides is declared.\n\
+                    fixtures:\n\
+                    \x20 env: spindle.deployment.EnvironmentId\n\
+                    timeline:\n\
+                    \x20 - at: 2026-01-05T09:00:00Z\n\
+                    \x20   command: spindle.deployment.DeclareEnvironment\n\
+                    \x20   input:\n\
+                    \x20     environment_id: {$fixture: env}\n\
+                    \x20     os: linux\n\
+                    \x20     arch: x86_64\n\
+                    \x20     provides: []\n\
+                    \x20   outcome: declared\n";
+    spec_with(
+        dir,
+        "skipping-ess",
+        &[("fixture-provided", document.to_owned())],
+    )
+}
+
 /// A copy of `ess/` in `dir` whose `ess-inputs.yaml` also lists the two [`WRONG`] scenarios.
 fn failing_spec(dir: &Path) -> PathBuf {
-    let spec = dir.join("failing-ess");
-    copy(&root().join(SPEC), &spec);
-    for (name, _) in WRONG {
-        std::fs::write(
-            spec.join("scenarios").join(format!("{name}.yaml")),
+    let wrong = WRONG.map(|(name, _)| {
+        (
+            name,
             format!(
                 "type: ess-scenario/1\n\
                  domain: spindle.deployment\n\
@@ -111,20 +166,8 @@ fn failing_spec(dir: &Path) -> PathBuf {
                  \x20   excludes: {{environment_id: {name}}}\n"
             ),
         )
-        .expect("writing a scenario");
-    }
-    let manifest = spec.join("ess-inputs.yaml");
-    let mut text = std::fs::read_to_string(&manifest).expect("the manifest");
-    assert!(
-        text.trim_end()
-            .ends_with("- scenarios/launch-not-admitted.yaml"),
-        "ess-inputs.yaml ends with its scenarios list: {text}"
-    );
-    for (name, _) in WRONG {
-        text.push_str(&format!("  - scenarios/{name}.yaml\n"));
-    }
-    std::fs::write(&manifest, text).expect("writing the manifest");
-    spec
+    });
+    spec_with(dir, "failing-ess", &wrong)
 }
 
 /// Copies the directory `from` to `to`.
@@ -213,15 +256,30 @@ fn every_executed_scenario_passes() {
     );
 }
 
+/// Every scenario a run skips is printed, reported and listed with the target's reason: on the
+/// specification with [`SKIPPED`], which the run does skip.
 #[test]
 fn every_skipped_scenario_has_a_reason() {
     let dir = scratch();
-    let (output, report, results) = run_ess(dir.path());
+    let skipping = skipping_spec(dir.path());
+    let (output, report, results) = run_spec(dir.path(), utf8(&skipping));
     let printed = stdout(&output);
     let skipped = scenarios(&results)
         .iter()
         .filter(|scenario| scenario["status"] == "unsupported")
         .collect::<Vec<_>>();
+    assert_eq!(
+        skipped
+            .iter()
+            .map(|scenario| scenario["scenario"].as_str())
+            .collect::<Vec<_>>(),
+        vec![Some(SKIPPED)],
+        "the run skips {SKIPPED} and nothing else: {results}"
+    );
+    assert!(
+        printed.contains(&format!("skipped {SKIPPED}: {NO_FIXTURE}")),
+        "{printed}"
+    );
     for scenario in &skipped {
         let id = scenario["scenario"].as_str().expect("an id");
         let reasons = scenario["checks"]
@@ -449,18 +507,10 @@ fn the_suite_counts_are_held() {
         "{AUTHORED} is held as executed"
     );
 
-    if skipped > 0 {
-        let grown = gate_with(
-            dir.path(),
-            "fewer.toml",
-            &counts(&executed, skipped - 1, known_failed),
-        );
-        assert_eq!(grown.status.code(), Some(1), "{grown:?}");
-        assert!(
-            stdout(&grown).contains(&format!("skipped grew from {} to {skipped}", skipped - 1)),
-            "{grown:?}"
-        );
-    }
+    assert_eq!(
+        skipped, 0,
+        "nothing is skipped; a_skipped_scenario_fails_the_committed_counts holds the skipped count"
+    );
 
     // Known failures are held too: on a specification with two scenarios that fail, both
     // declared, counts that hold no known failure fail the gate, and counts that hold both pass.
@@ -518,6 +568,37 @@ fn the_suite_counts_are_held() {
         steps.iter().all(|line| !line.contains("--known-failing")),
         "check:conformance declares no known failure: {steps:?}"
     );
+}
+
+/// The skipped count is held: a run that executes exactly the committed set and skips one
+/// scenario more fails the gate against the committed counts, naming the scenario and the count,
+/// and passes against counts that hold the skip.
+#[test]
+fn a_skipped_scenario_fails_the_committed_counts() {
+    let dir = scratch();
+    let skipping = skipping_spec(dir.path());
+    let skipping = utf8(&skipping);
+
+    let grown = gate(dir.path(), skipping, COUNTS, None);
+    assert_eq!(grown.status.code(), Some(1), "{grown:?}");
+    let printed = stdout(&grown);
+    assert!(
+        printed.contains(&format!("skipped {SKIPPED}: {NO_FIXTURE}")),
+        "{printed}"
+    );
+    assert!(
+        printed.contains(&format!("{COUNTS}: skipped grew from 0 to 1")),
+        "{printed}"
+    );
+    assert!(
+        !printed.contains("no longer executes") && !printed.contains("is not held"),
+        "the executed set is the committed one, so only the skipped count fails: {printed}"
+    );
+
+    let (executed, _, _) = committed();
+    let held = counts_file(dir.path(), "skipped-one.toml", &counts(&executed, 1, 0));
+    let held = gate(dir.path(), skipping, utf8(&held), None);
+    assert_eq!(held.status.code(), Some(0), "{held:?}");
 }
 
 /// The gate goes red when a declared scenario passes: a declaration of the two scenarios that

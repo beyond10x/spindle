@@ -56,8 +56,9 @@ are Spindle's releases.
 - `task check:conformance` declares no known failure: `conformance-known-failures.json` is
   removed and the task passes neither `--known-failing` nor `--accounting-out`, so every executed
   scenario must pass. `spindle.placement.LaunchInstance/outcome/not-admitted`, the one scenario it
-  declared, passes, and the authored `spindle.placement/authored/launch-not-admitted` covers the
-  outcome. `conformance.toml` holds 79 executed scenarios, 0 skipped and 0 known failed.
+  declared, is no longer synthesised: ESS's synthesis refuses it (`ESS-SYNTH-001`). The outcome
+  is covered by the authored scenario `spindle.placement/authored/launch-not-admitted`, which
+  passes. `conformance.toml` holds 79 executed scenarios, 0 skipped and 0 known failed.
   `conform --known-failing` is unchanged.
 
 ### Fixed
