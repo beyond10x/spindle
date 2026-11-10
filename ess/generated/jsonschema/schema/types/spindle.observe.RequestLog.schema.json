@@ -5,13 +5,13 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:cfe44107110abc2991bcf21b907e1c306a7301edb884a47ad9f3f13ad2ab8394",
+    "contract_digest": "slice-sha256/2:7ec50064a6d2605c6baa20520d2689a6862a83b5b5cfe511b7f6daccac344975",
     "regenerate": "ess generate"
   },
   "$defs": {
     "spindle.observe.AnswerSource": {
       "title": "AnswerSource",
-      "description": "What answered one external cause of a served command. `world`: the decision table of the last reset's world. `file`: the decisions file. `default`: the default branch `--answer-default` takes. `unanswered`: nothing did, and the command answered `501`.",
+      "description": "What answered one external cause of a served command. `world`: the `decisions` of the world the last reset loaded, `spindle.console.World`. `file`: the decisions file. `default`: the default branch `--answer-default` takes. `unanswered`: nothing did, and the command answered `501`. Source: `crates/spindle-cli/src/decisions.rs:35-53`, `crates/spindle-ingress/src/observe.rs:186-209`.",
       "x-ess-name": "spindle.observe.AnswerSource",
       "x-ess-kind": "enum",
       "type": "string",

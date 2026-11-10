@@ -16,9 +16,10 @@
       "type": "string"
     },
     "provides": {
+      "description": "Each capability or `prefix.*` key the environment provides, with its implementations, most preferred first. A capability is provided by its exact key, or else by the longest `prefix.*` key that covers it, and an exact key wins over a prefix (README.md:101-102, crates/spindle-capability/src/environment.rs:81-96).",
       "type": "array",
       "items": {
-        "$ref": "#/$defs/spindle.deployment.Binding"
+        "$ref": "#/$defs/spindle.environment.Provision"
       }
     },
     "state": {
@@ -36,35 +37,10 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:d8f47ff572c641e850639b7e906f308bb5c84ea21de26bcf1996e3686cf2f3e5",
+    "contract_digest": "slice-sha256/2:931ae5f6e5d752524782367cf59dc807e13c3e28f0aef7da90a46d48d5f151cd",
     "regenerate": "ess generate"
   },
   "$defs": {
-    "spindle.deployment.Binding": {
-      "title": "Binding",
-      "x-ess-name": "spindle.deployment.Binding",
-      "x-ess-kind": "struct",
-      "type": "object",
-      "properties": {
-        "capability": {
-          "$ref": "#/$defs/spindle.deployment.CapabilityName"
-        },
-        "implementation": {
-          "$ref": "#/$defs/spindle.deployment.ImplementationName"
-        }
-      },
-      "required": [
-        "capability",
-        "implementation"
-      ],
-      "additionalProperties": false
-    },
-    "spindle.deployment.CapabilityName": {
-      "title": "CapabilityName",
-      "x-ess-name": "spindle.deployment.CapabilityName",
-      "x-ess-kind": "newtype",
-      "type": "string"
-    },
     "spindle.deployment.Environment.State": {
       "title": "State",
       "x-ess-name": "spindle.deployment.Environment.State",
@@ -85,6 +61,38 @@
       "x-ess-name": "spindle.deployment.ImplementationName",
       "x-ess-kind": "newtype",
       "type": "string"
+    },
+    "spindle.environment.CapabilityKey": {
+      "title": "CapabilityKey",
+      "description": "A capability name, which provides exactly that capability, or a prefix ending in `.*`, which provides every capability under that prefix (README.md:101-102, crates/spindle-capability/src/environment.rs:22-23,35).",
+      "x-ess-name": "spindle.environment.CapabilityKey",
+      "x-ess-kind": "newtype",
+      "type": "string"
+    },
+    "spindle.environment.Provision": {
+      "title": "Provision",
+      "description": "One key of the environment document's `provides` and its implementations, in order of preference (README.md:101, crates/spindle-capability/src/environment.rs:35-37).",
+      "x-ess-name": "spindle.environment.Provision",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "capability": {
+          "$ref": "#/$defs/spindle.environment.CapabilityKey",
+          "description": "The capability, or the `prefix.*` key, these implementations provide (crates/spindle-capability/src/environment.rs:35)."
+        },
+        "implementations": {
+          "description": "The implementations that provide it, each named by its identifier, most preferred first (README.md:101, crates/spindle-capability/src/environment.rs:35).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/spindle.deployment.ImplementationName"
+          }
+        }
+      },
+      "required": [
+        "capability",
+        "implementations"
+      ],
+      "additionalProperties": false
     }
   }
 }

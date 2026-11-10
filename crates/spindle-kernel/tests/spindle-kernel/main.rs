@@ -6,6 +6,7 @@ mod rally_cases;
 
 mod adversary;
 mod adversary_admission;
+mod adversary_admission_checked;
 mod adversary_append;
 mod adversary_boolean;
 mod adversary_bytes;
@@ -33,6 +34,7 @@ mod guards;
 mod list_append;
 mod mint;
 mod placement;
+mod provides;
 mod rally;
 mod related_guards;
 mod related_values;

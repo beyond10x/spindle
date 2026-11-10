@@ -12,3 +12,4 @@ domains:
   - spindle.placement
   - spindle.observe
   - spindle.environment
+  - spindle.console

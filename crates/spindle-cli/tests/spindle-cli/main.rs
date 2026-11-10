@@ -23,6 +23,7 @@ mod adversary_unserved;
 mod adversary_unserved_base;
 mod adversary_view_list_parameter;
 mod adversary_world;
+mod adversary_world_spec;
 mod caller;
 mod conform;
 mod console;
