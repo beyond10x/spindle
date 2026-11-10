@@ -73,7 +73,8 @@ pub use endpoint::{
     MAX_UNIX_PATH, VSOCK_HOST_CID,
 };
 pub use frame::{
-    Answers, Frame, FrameReader, PAYLOAD_LIMIT, PROTOCOL, RecentAnswer, ResourceReading, timestamp,
+    Answers, Frame, FrameReader, PAYLOAD_LIMIT, PROTOCOL, RecentAnswer, ResourceReading, civil_now,
+    timestamp,
 };
 #[cfg(feature = "kernel")]
 pub use kernel::CountingStore;

@@ -81,10 +81,12 @@ fn interpreted(
     steps: &[(&str, Value)],
 ) -> (Vec<Answer>, Vec<Map<String, Value>>) {
     let target = Interpreted::for_model(ir.clone()).with_command_clock(At(
-        instant.map(|text| DecisionInstant::parse(text).expect("a decision instant")),
+        instant.map(|text| DecisionInstant::parse(text).expect("a decision instant"))
     ));
     let context = ScenarioContext::new(
-        "probe.board/authored/guard-now".parse().expect("a scenario id"),
+        "probe.board/authored/guard-now"
+            .parse()
+            .expect("a scenario id"),
         CorrelationId::new("guard-now").expect("a correlation id"),
     );
     target.begin_scenario(&context).expect("the scenario opens");
@@ -201,7 +203,10 @@ fn disagreements(
             eprintln!("{:?}\n  ess    {ess:?}\n  kernel {kernel:?}", steps.last());
         }
         let agree = ess.len() == kernel.len()
-            && ess.iter().zip(&kernel).all(|(left, right)| same(left, right))
+            && ess
+                .iter()
+                .zip(&kernel)
+                .all(|(left, right)| same(left, right))
             && (ess.last().is_some_and(Result::is_err) || ess_rows == kernel_rows);
         if !agree {
             found.push(format!(

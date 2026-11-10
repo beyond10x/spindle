@@ -24,7 +24,6 @@
 //! `contains` edge carries nothing. Reading it counts nothing.
 
 use std::collections::BTreeMap;
-use std::time::SystemTime;
 
 use ess_compiler::ir::{ResolvedCondition, ResolvedOutcome};
 use serde_json::{Map, Value, json};
@@ -257,7 +256,7 @@ pub(crate) fn topology(recorder: &Recorder, host: &Host) -> Value {
 
     json!({
         "format": FORMAT,
-        "at": spindle_telemetry::timestamp(SystemTime::now()),
+        "at": spindle_telemetry::timestamp(spindle_telemetry::civil_now()),
         "specifications": [specification],
         "nodes": graph.nodes,
         "edges": graph.edges,

@@ -20,18 +20,19 @@ the 10 unscoped active stories on 2026-11-10, places three stories in wave 1:
 it in the first wave after wave 17. The verb puts it in wave 2 for two inferred collisions with
 `story:kernel-existing-instance`, both split below (*Surfaces*).
 
-Left for later waves: `story:http-caller-proves-actor` waits on the design decision in
-`docs/design/spindle.md` § 11 ("how an HTTP caller proves its actor": undecided), which the scope
-found still open (`ess/components.yaml:37-43` holds it as `UNMAPPED:`).
+Left for later waves: `story:http-caller-proves-actor` waited on the design decision in
+`docs/design/spindle.md` § 11 ("how an HTTP caller proves its actor"). The operator accepted
+`architecture-decision-record:http-caller-proof` (a trusted proxy header) during this wave; the
+story goes to wave 19.
 
 ## Units
 
 | unit | story | branch | tree (managed id) | agent | stage |
 |---|---|---|---|---|---|
-| U1 | `story:kernel-guard-reads-now` | `unit/w18-guard-now` | `spindle-w18-guard-now` | `aep:implementor` | green c70c93ed; adversary 1 running |
-| U2 | `story:kernel-existing-instance` | `unit/w18-existing` | `spindle-w18-existing` | `aep:implementor` | dispatched |
-| U3 | `story:external-cause-bound-to-http-call` | `unit/w18-http-cause` | `spindle-w18-http-cause` | `aep:implementor` | dispatched |
-| U4 | `story:live-topology` | `unit/w18-topology` | `spindle-w18-topology` | `aep:implementor` | dispatched |
+| U1 | `story:kernel-guard-reads-now` | `unit/w18-guard-now` | `spindle-w18-guard-now` | `aep:implementor` | merged 4d17ddf6 (c70c93ed, 0cb0a9ab); adversary 1 approved |
+| U2 | `story:kernel-existing-instance` | `unit/w18-existing` | `spindle-w18-existing` | `aep:implementor` | merged 69a6781d (fe90c61e, 72947d9f); adversary 1 fixed |
+| U3 | `story:external-cause-bound-to-http-call` | `unit/w18-http-cause` | `spindle-w18-http-cause` | `aep:implementor` | merged 68661ada (f2446927, 594016f7, 5e11f44e); adversary 1 and 2 fixed |
+| U4 | `story:live-topology` | `unit/w18-topology` | `spindle-w18-topology` | `aep:implementor` | merged 18afddca (aa961108, 2a5c8859, a7272ed8); adversary 1 and 2 fixed |
 
 Each tree builds into its own `target/`. Each unit gets one `aep:adversary` pass when its
 implementor reports green, at most two.
