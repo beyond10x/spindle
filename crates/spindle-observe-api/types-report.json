@@ -1,12 +1,12 @@
 {
   "format": "ess-types-report/3",
-  "source_digest": "a2b52f33b62e29f807565008994a663144a031ac9803b51a9b8ac024732fbaa8",
+  "source_digest": "71605aa9f49593c61bf39e9f862d06dbcd2ccf7d57145ebf310a614d38ad0d47",
   "input": {
     "kind": "model",
     "system": "spindle",
     "specification_version": "v1",
     "contract_digest": "slice-sha256/2:06eab1d3817bcb83553e5322ffbe1d3b8ca8b3ff29f3e61742a5b54d7c5ea44a",
-    "projection_digest": "438b68f3c6f296a09d1d07008d36a0ea61c39131aa6fec6408d8668ff0c3867c"
+    "projection_digest": "e0eb0f1d7b63f8d75dbad6c94a9a52144d0f9843a37bc0680fa157fc0e22a6c9"
   },
   "generator_version": "0.90.0",
   "target": "rust",

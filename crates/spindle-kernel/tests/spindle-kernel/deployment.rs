@@ -45,7 +45,8 @@ fn run(
         .unwrap_or_else(|error| panic!("{command} executes: {error}"))
 }
 
-/// Declares `environment` providing `provides`, a list of bindings.
+/// Declares `environment` providing `provides`, a list of capability and implementation pairs,
+/// as `spindle.environment.Provision`s.
 fn declare(ir: &EssIr, store: &mut dyn Store, environment: &str, provides: Value) {
     let declared = run(
         ir,
@@ -56,7 +57,7 @@ fn declare(ir: &EssIr, store: &mut dyn Store, environment: &str, provides: Value
             "environment_id": environment,
             "os": "linux",
             "arch": "x86_64",
-            "provides": provides,
+            "provides": crate::provides::provisions(&provides),
         }),
     );
     assert_eq!(declared.outcome, "declared", "{declared:?}");
@@ -681,6 +682,80 @@ fn a_refusal_naming_a_provided_capability_missing_is_not_refused() {
             missing,
         );
         assert_invalid(&decided, "missing-provided", &mut store, id);
+    }
+}
+
+/// story:environment-implementations-specified: a capability is provided by its exact key, else by
+/// a `prefix.*` key that covers it (README.md:101-102). An exact key that does not list the bound
+/// implementation is `not-provided` though a prefix key would; a binding or a capability named
+/// missing that only a prefix key covers is neither `not-provided` nor `missing-provided`.
+#[test]
+fn a_capability_only_a_prefix_key_covers_is_not_refused_as_unprovided() {
+    let ir = specification();
+    let cases = [
+        (
+            "prefix-binding",
+            json!(["external.lobby.Join.full"]),
+            json!([{"capability": "external.lobby.Join.full", "implementation": "operator-prompt"}]),
+            json!([]),
+            Some("admitted"),
+        ),
+        (
+            "prefix-beside-exact",
+            json!(["store.events"]),
+            json!([{"capability": "store.events", "implementation": "memory"}]),
+            json!([]),
+            Some("admitted"),
+        ),
+        (
+            "exact-wins",
+            json!(["store.durable"]),
+            json!([{"capability": "store.durable", "implementation": "memory"}]),
+            json!([]),
+            Some("not-provided"),
+        ),
+        (
+            "prefix-missing",
+            json!(["external.lobby.Join.full"]),
+            json!([]),
+            json!(["external.lobby.Join.full"]),
+            None,
+        ),
+    ];
+    for (id, requires, bindings, missing, outcome) in cases {
+        let mut store = MemoryStore::default();
+        declare(
+            &ir,
+            &mut store,
+            "edge",
+            json!([
+                {"capability": "store.durable", "implementation": "sqlite"},
+                {"capability": "store.*", "implementation": "memory"},
+                {"capability": "external.*", "implementation": "operator-prompt"},
+            ]),
+        );
+        let offered = offer_to(&ir, &mut store, id, "edge");
+        assert_eq!(offered.outcome, "offered", "{offered:?}");
+        let decided = decide(
+            &ir,
+            &mut store,
+            &mut Always::default(),
+            id,
+            requires,
+            bindings,
+            missing,
+        );
+        match outcome {
+            Some("not-provided") => assert_invalid(&decided, "not-provided", &mut store, id),
+            Some(outcome) => assert_eq!(decided.outcome, outcome, "{id}: {decided:?}"),
+            None => assert!(
+                !matches!(
+                    decided.outcome.as_str(),
+                    "not-provided" | "missing-provided"
+                ),
+                "{id}: {decided:?}"
+            ),
+        }
     }
 }
 

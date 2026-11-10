@@ -36,7 +36,7 @@ fn run_admits_then_answers_each_command_line() {
     let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
     let state = directory.path().join("state.sqlite");
     let lines = concat!(
-        r#"{"command": "spindle.deployment.DeclareEnvironment", "input": {"environment_id": "laptop", "os": "linux", "arch": "x86_64", "provides": [{"capability": "store.durable", "implementation": "sqlite"}]}}"#,
+        r#"{"command": "spindle.deployment.DeclareEnvironment", "input": {"environment_id": "laptop", "os": "linux", "arch": "x86_64", "provides": [{"capability": "store.durable", "implementations": ["sqlite"]}]}}"#,
         "\n",
         r#"{"command": "spindle.deployment.OfferBundle", "input": {"deployment_id": "d1", "bundle": "sha256:0f", "environment_id": "laptop"}}"#,
         "\n",

@@ -62,7 +62,8 @@ fn run(
         .unwrap_or_else(|error| panic!("{command} executes: {error}"))
 }
 
-/// Declares `laptop` providing `provides`, then offers a bundle to it.
+/// Declares `laptop` providing `provides`, capability and implementation pairs declared as
+/// `spindle.environment.Provision`s, then offers a bundle to it.
 fn offer_providing(ir: &EssIr, store: &mut dyn Store, id: &str, provides: Value) {
     let declared = run(
         ir,
@@ -73,7 +74,7 @@ fn offer_providing(ir: &EssIr, store: &mut dyn Store, id: &str, provides: Value)
             "environment_id": "laptop",
             "os": "linux",
             "arch": "x86_64",
-            "provides": provides,
+            "provides": crate::provides::provisions(&provides),
         }),
     );
     assert_eq!(declared.outcome, "declared", "{declared:?}");

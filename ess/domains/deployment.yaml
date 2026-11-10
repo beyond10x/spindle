@@ -50,7 +50,12 @@ entities:
       - name: arch
         type: String
       - name: provides
-        type: List<spindle.deployment.Binding>
+        type: List<spindle.environment.Provision>
+        summary: >-
+          Each capability or `prefix.*` key the environment provides, with its implementations,
+          most preferred first. A capability is provided by its exact key, or else by the longest
+          `prefix.*` key that covers it, and an exact key wins over a prefix (README.md:101-102,
+          crates/spindle-capability/src/environment.rs:81-96).
 
     lifecycle:
       initial: Declared
@@ -150,8 +155,28 @@ commands:
       - name: arch
         type: String
       - name: provides
-        type: List<spindle.deployment.Binding>
+        type: List<spindle.environment.Provision>
     outcomes:
+      - name: key-twice
+        when:
+          not:
+            distinct: {in: provides, as: p, by: p.capability}
+        error: spindle.environment.ProvidesInvalid
+        summary: >-
+          The environment lists one key twice, which its document cannot hold, so nothing
+          was recorded (crates/spindle-capability/src/environment.rs:37,45,63).
+
+      - name: no-implementation
+        when:
+          exists:
+            in: provides
+            as: p
+            that: p.implementations.count == 0
+        error: spindle.environment.ProvidesInvalid
+        summary: >-
+          A key lists no implementation, so nothing was recorded
+          (crates/spindle-capability/src/environment.rs:52-57,69-77).
+
       - name: declared
         creates: spindle.deployment.Environment
         instance: environment_id
@@ -263,6 +288,11 @@ commands:
           nothing moved. The held state answers before the environment is read, so a binding the
           environment does not provide is answered here too once admission was decided.
 
+      # UNMAPPED: once `provides` holds any `prefix.*` key, no binding whose capability has no
+      # exact key is guarded, whether or not a prefix key covers it: whether one does is a prefix
+      # match against a list element, and an ESS 0.90 string operator compares only with a
+      # literal, `{param:}` or `{input:}` (`unparsable_predicate`). The runtime decides it
+      # (environment.rs:81-96).
       - name: not-provided
         when_related:
           via: environment_id
@@ -271,19 +301,33 @@ commands:
               in: input.bindings
               as: b
               that:
-                not:
-                  exists:
-                    in: provides
-                    as: p
-                    that:
-                      all:
-                        - p.capability == b.capability
-                        - p.implementation == b.implementation
+                any:
+                  - exists:
+                      in: provides
+                      as: p
+                      that:
+                        all:
+                          - p.capability == b.capability
+                          - not:
+                              exists:
+                                in: p.implementations
+                                as: i
+                                that: i == b.implementation
+                  - all:
+                      - not: {exists: {in: provides, as: p, that: p.capability == b.capability}}
+                      - forall:
+                          in: provides
+                          as: p
+                          that: {not: {p.capability: {ends_with: ".*"}}}
         error: spindle.deployment.AdmissionDecisionInvalid
         summary: >-
           The decision binds a capability to an implementation the deployment's environment does
-          not provide for it, so nothing moved.
+          not provide for it, so nothing moved: the capability's exact key does not list the
+          implementation, or it has no exact key and the environment has no `prefix.*` key at all
+          (README.md:101-102, crates/spindle-capability/src/environment.rs:81-96).
 
+      # UNMAPPED: a capability named missing that only a `prefix.*` key provides is not refused
+      # here, for the reason given above `not-provided`.
       - name: missing-provided
         when_related:
           via: environment_id
@@ -294,8 +338,9 @@ commands:
               that: {exists: {in: provides, as: p, that: p.capability == m}}
         error: spindle.deployment.AdmissionDecisionInvalid
         summary: >-
-          The decision names missing a capability the deployment's environment provides, so
-          nothing moved. Declared beside `not-provided`, it answers before `refused` is read.
+          The decision names missing a capability the deployment's environment provides by its
+          exact key, which lists at least one implementation, so nothing moved. Declared beside
+          `not-provided`, it answers before `refused` is read.
 
       - name: admitted
         when: missing.count == 0
@@ -310,10 +355,13 @@ commands:
           requires: input.requires
           bindings: input.bindings
         summary: >-
-          Every required capability is bound to exactly one implementation the environment
-          provides for it, and nothing that is not required is bound. `requires` and the bindings
-          are the admitter's answer; the model checks them against each other and against the
-          environment's `provides`, and keeps both.
+          Every required capability is bound to exactly one implementation, and nothing that is
+          not required is bound. `requires` and the bindings are the admitter's answer; the model
+          checks them against each other and keeps both. Against the environment's `provides` it
+          checks each binding whose capability has an exact key, and, where `provides` holds no
+          `prefix.*` key, each binding at all. Once any `prefix.*` key is present, a binding whose
+          capability has no exact key is left to the runtime, whether or not a prefix key covers
+          it.
 
       - name: refused
         external: at least one required capability has no implementation in the environment
@@ -332,8 +380,10 @@ commands:
         summary: >-
           The deployment is refused. `missing` names at least one required capability, none the
           decision binds, and every required capability is bound or missing. No capability named
-          missing is in the environment's `provides`, and none bound is outside it, so `missing`
-          is exactly what the environment lacks of `requires`; the external cause confirms it.
+          missing has an exact key in the environment's `provides`, and no binding is outside the
+          list of its capability's exact key. Once any `prefix.*` key is present, a capability
+          with no exact key is left to the runtime, bound or named missing; the external cause
+          confirms the refusal.
 
       - name: unconfirmed
         error: spindle.deployment.AdmissionDecisionInvalid
@@ -453,4 +503,4 @@ views:
       - name: state
         type: spindle.deployment.Environment.State
       - name: provides
-        type: List<spindle.deployment.Binding>
+        type: List<spindle.environment.Provision>

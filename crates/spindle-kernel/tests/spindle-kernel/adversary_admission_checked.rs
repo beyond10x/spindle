@@ -39,7 +39,12 @@ fn declared_and_offered(ir: &EssIr, store: &mut dyn Store, id: &str, provides: &
         ir,
         store,
         "spindle.deployment.DeclareEnvironment",
-        json!({"environment_id": id, "os": "linux", "arch": "x86_64", "provides": provides}),
+        json!({
+            "environment_id": id,
+            "os": "linux",
+            "arch": "x86_64",
+            "provides": crate::provides::provisions(provides),
+        }),
     );
     assert_eq!(declared.outcome, "declared", "{declared:?}");
     let offered = run(
