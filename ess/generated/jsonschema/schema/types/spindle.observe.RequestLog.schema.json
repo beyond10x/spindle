@@ -5,7 +5,7 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:7ec50064a6d2605c6baa20520d2689a6862a83b5b5cfe511b7f6daccac344975",
+    "contract_digest": "slice-sha256/2:5fbf5a94c9ea5bc877c1a8b08d35eb6320d7937b088c48fde02707fc5091508f",
     "regenerate": "ess generate"
   },
   "$defs": {
@@ -205,6 +205,13 @@
           "items": {
             "$ref": "#/$defs/spindle.observe.ExternalAnswer"
           }
+        },
+        "unmet": {
+          "description": "Every event binding whose input was unmet while the request was answered, in the order the runtime reported them: bindings of the events the routed command published and of the events every command an event binding invoked on the way published. Empty when every binding's input was met. The list is complete when everything the request led to has run, and when it stopped because bindings kept triggering each other. When the routed command was kept and carrying its events on then failed, because the link to another component failed, a component's state could not be read or written, or another component stopped answering, the bindings found unmet before that failure are not listed.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/spindle.observe.UnmetInput"
+          }
         }
       },
       "required": [
@@ -216,7 +223,8 @@
         "class",
         "duration_us",
         "events",
-        "externals"
+        "externals",
+        "unmet"
       ],
       "additionalProperties": false,
       "x-ess-invariants": [
@@ -275,6 +283,38 @@
         "failed >= 0",
         "unrouted >= 0"
       ]
+    },
+    "spindle.observe.UnmetInput": {
+      "title": "UnmetInput",
+      "description": "One event binding whose command input the event did not fill: a required field absent, or a value carried across a declared conversion that is no value of the input's type. The command is not invoked: zero attempts, no retry, and the event's other bindings still run; the command that published the event stays committed. ESS 0.90.0 calls this an unmet binding-input obligation, with no attempt and no policy, only for a binding whose failure policy is chosen per refusal, answers the same failure of every other binding unsupported, and defines no observable result for either (`crates/verify/ess-conformance/src/interpret/bindings.rs`). The rule for every binding and this answer are Spindle's (`docs/design/spindle.md` § 11, unmet binding input; `spindle_channel::Unmet`).",
+      "x-ess-name": "spindle.observe.UnmetInput",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "binding": {
+          "description": "The binding id.",
+          "type": "string"
+        },
+        "component": {
+          "description": "The component that accepts the command.",
+          "type": "string"
+        },
+        "command": {
+          "description": "The qualified name of the command not invoked.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why the input could not be filled, as the runtime words it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding",
+        "component",
+        "command",
+        "reason"
+      ],
+      "additionalProperties": false
     }
   }
 }

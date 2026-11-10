@@ -117,6 +117,9 @@ types:
           ESS's `when.periodic.lifetime`, such as `host_instance`: a lifetime runs from activation
           to acknowledged stop and holds no durable state, so a new host instance starts a new
           grid. Absent for an event binding.
+      - name: delivery
+        type: Optional<spindle.observe.BindingDelivery>
+        summary: How an event binding delivers; absent for a periodic binding.
 
   - name: spindle.observe.DeployedInstance
     kind: struct
@@ -401,6 +404,18 @@ types:
         summary: >-
           Every external cause asked while the request was answered, in the order asked: by the
           routed command and by every command an event binding invoked on the way.
+      - name: unmet
+        type: List<spindle.observe.UnmetInput>
+        summary: >-
+          Every event binding whose input was unmet while the request was answered, in the order
+          the runtime reported them: bindings of the events the routed command published and of
+          the events every command an event binding invoked on the way published. Empty when
+          every binding's input was met. The list is complete when everything the request led to
+          has run, and when it stopped because bindings kept triggering each other. When the
+          routed command was kept and carrying its events on then failed, because the link to
+          another component failed, a component's state could not be read or written, or another
+          component stopped answering, the bindings found unmet before that failure are not
+          listed.
     invariants:
       - sequence >= 0
       - status >= 100
@@ -646,3 +661,74 @@ types:
         type: List<spindle.observe.TopologyNode>
       - name: edges
         type: List<spindle.observe.TopologyEdge>
+
+  - name: spindle.observe.DeliveryGuarantee
+    kind: enum
+    naming:
+      summary: >-
+        How many times an event binding's command may run for one event, as the binding's
+        `delivery:` writes it. The words are ESS's (`Delivery` in ESS 0.90.0
+        `crates/specify/ess-domain/src/binding.rs`, carried on `ResolvedBinding::delivery`), and
+        Spindle publishes them unchanged. `at_least_once`: ESS lets the command run again, so it
+        must be idempotent. `at_most_once`: one send and no redelivery. Neither is exactly once.
+        Spindle sends each event to a binding once under either word: the receiving component
+        acknowledges an `at_least_once` envelope, and no runtime path resends one whose
+        acknowledgement is overdue (`spindle_channel::Sender::redeliver` exists, and the host
+        never calls it), so the conformance target answers ESS's redelivery step unsupported
+        (`crates/spindle-conformance/src/target.rs`). A command that does not take effect may
+        still run again where the binding retries (`BindingDelivery.attempts`). In either, Spindle
+        sends nothing for an event before the state that published it is durable
+        (`crates/spindle-channel/src/lib.rs`).
+    variants: [at_least_once, at_most_once]
+
+  - name: spindle.observe.BindingDelivery
+    kind: struct
+    naming:
+      summary: >-
+        How one event binding delivers in a run: ESS's guarantee and Spindle's limit on attempts.
+        ESS gives a bare `on_failure: retry` no count, leaving it to the deployment (ESS 0.90.0
+        `crates/specify/ess-domain/src/binding/retry.rs`, `docs/design/binding-delivery-guarantees.md`).
+        Spindle's count is 5 (`spindle_host::RETRY_ATTEMPTS`, `docs/design/spindle.md` § 11,
+        runtime defaults).
+    fields:
+      - name: guarantee
+        type: spindle.observe.DeliveryGuarantee
+      - name: attempts
+        type: Integer
+        summary: >-
+          The most times the run invokes the binding's command for one event, the first included:
+          5 where the binding retries a failure (`on_failure: retry`, or `retry` chosen for some
+          refusal), every attempt at once with no backoff; 1 where it drops, and where the run
+          drops retries (`--drop-retries`). After the last attempt the invocation is given up and
+          reported once.
+    invariants:
+      - attempts >= 1
+      - attempts <= 5
+
+  - name: spindle.observe.UnmetInput
+    kind: struct
+    naming:
+      summary: >-
+        One event binding whose command input the event did not fill: a required field absent, or
+        a value carried across a declared conversion that is no value of the input's type. The
+        command is not invoked: zero attempts, no retry, and the event's other bindings still run;
+        the command that published the event stays committed. ESS 0.90.0 calls this an unmet
+        binding-input obligation, with no attempt and no policy, only for a binding whose failure
+        policy is chosen per refusal, answers the same failure of every other binding unsupported,
+        and defines no observable result for either
+        (`crates/verify/ess-conformance/src/interpret/bindings.rs`). The rule for every binding and
+        this answer are Spindle's (`docs/design/spindle.md` § 11, unmet binding input;
+        `spindle_channel::Unmet`).
+    fields:
+      - name: binding
+        type: String
+        summary: The binding id.
+      - name: component
+        type: String
+        summary: The component that accepts the command.
+      - name: command
+        type: String
+        summary: The qualified name of the command not invoked.
+      - name: reason
+        type: String
+        summary: Why the input could not be filled, as the runtime words it.

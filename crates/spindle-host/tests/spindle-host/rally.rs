@@ -259,6 +259,7 @@ fn runaway_child() {
         Err(HostError::Runaway {
             deliveries,
             bindings,
+            ..
         }) => {
             assert_eq!(deliveries, spindle_host::DELIVERY_LIMIT);
             assert_eq!(

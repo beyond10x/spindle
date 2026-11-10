@@ -778,6 +778,7 @@ impl Host {
                         return Err(HostError::Runaway {
                             deliveries: deliveries.count,
                             bindings: std::mem::take(&mut deliveries.bindings),
+                            failed: std::mem::take(&mut report.failed),
                         });
                     }
                     deliveries.count += 1;

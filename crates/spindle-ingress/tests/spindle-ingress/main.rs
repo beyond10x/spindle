@@ -3,6 +3,7 @@
 //! module path.
 
 mod adversary_component_reset;
+mod adversary_delivery;
 mod adversary_refusal_payload;
 mod adversary_route_precedence;
 mod adversary_router;

@@ -24,7 +24,8 @@
       "outcome": "already-done",
       "duration_us": 688,
       "events": [],
-      "externals": []
+      "externals": [],
+      "unmet": []
     },
     {
       "sequence": 1,
@@ -39,7 +40,8 @@
       "outcome": "closed",
       "duration_us": 1190,
       "events": ["tasks.board.TaskClosed"],
-      "externals": []
+      "externals": [],
+      "unmet": []
     },
     {
       "sequence": 0,
@@ -54,7 +56,8 @@
       "outcome": "opened",
       "duration_us": 1544,
       "events": ["tasks.board.TaskOpened"],
-      "externals": []
+      "externals": [],
+      "unmet": []
     }
   ]
 }

@@ -29,6 +29,10 @@
           "description": "The qualified name of the command the binding issues.",
           "type": "string"
         },
+        "delivery": {
+          "$ref": "#/$defs/spindle.observe.BindingDelivery",
+          "description": "How an event binding delivers; absent for a periodic binding."
+        },
         "event": {
           "description": "The qualified name of the event carried; absent for a periodic binding.",
           "type": "string"
@@ -78,6 +82,33 @@
       "type": "object",
       "x-ess-kind": "struct",
       "x-ess-name": "spindle.observe.Binding"
+    },
+    "spindle.observe.BindingDelivery": {
+      "additionalProperties": false,
+      "description": "How one event binding delivers in a run: ESS's guarantee and Spindle's limit on attempts. ESS gives a bare `on_failure: retry` no count, leaving it to the deployment (ESS 0.90.0 `crates/specify/ess-domain/src/binding/retry.rs`, `docs/design/binding-delivery-guarantees.md`). Spindle's count is 5 (`spindle_host::RETRY_ATTEMPTS`, `docs/design/spindle.md` § 11, runtime defaults).",
+      "properties": {
+        "attempts": {
+          "description": "The most times the run invokes the binding's command for one event, the first included: 5 where the binding retries a failure (`on_failure: retry`, or `retry` chosen for some refusal), every attempt at once with no backoff; 1 where it drops, and where the run drops retries (`--drop-retries`). After the last attempt the invocation is given up and reported once.",
+          "maximum": 5,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "guarantee": {
+          "$ref": "#/$defs/spindle.observe.DeliveryGuarantee"
+        }
+      },
+      "required": [
+        "guarantee",
+        "attempts"
+      ],
+      "title": "BindingDelivery",
+      "type": "object",
+      "x-ess-invariants": [
+        "attempts >= 1",
+        "attempts <= 5"
+      ],
+      "x-ess-kind": "struct",
+      "x-ess-name": "spindle.observe.BindingDelivery"
     },
     "spindle.observe.BindingKind": {
       "enum": [
@@ -224,6 +255,17 @@
       ],
       "x-ess-kind": "struct",
       "x-ess-name": "spindle.observe.CounterValue"
+    },
+    "spindle.observe.DeliveryGuarantee": {
+      "description": "How many times an event binding's command may run for one event, as the binding's `delivery:` writes it. The words are ESS's (`Delivery` in ESS 0.90.0 `crates/specify/ess-domain/src/binding.rs`, carried on `ResolvedBinding::delivery`), and Spindle publishes them unchanged. `at_least_once`: ESS lets the command run again, so it must be idempotent. `at_most_once`: one send and no redelivery. Neither is exactly once. Spindle sends each event to a binding once under either word: the receiving component acknowledges an `at_least_once` envelope, and no runtime path resends one whose acknowledgement is overdue (`spindle_channel::Sender::redeliver` exists, and the host never calls it), so the conformance target answers ESS's redelivery step unsupported (`crates/spindle-conformance/src/target.rs`). A command that does not take effect may still run again where the binding retries (`BindingDelivery.attempts`). In either, Spindle sends nothing for an event before the state that published it is durable (`crates/spindle-channel/src/lib.rs`).",
+      "enum": [
+        "at_least_once",
+        "at_most_once"
+      ],
+      "title": "DeliveryGuarantee",
+      "type": "string",
+      "x-ess-kind": "enum",
+      "x-ess-name": "spindle.observe.DeliveryGuarantee"
     },
     "spindle.observe.DeployedInstance": {
       "additionalProperties": false,
@@ -704,6 +746,13 @@
           "maximum": 599,
           "minimum": 100,
           "type": "integer"
+        },
+        "unmet": {
+          "description": "Every event binding whose input was unmet while the request was answered, in the order the runtime reported them: bindings of the events the routed command published and of the events every command an event binding invoked on the way published. Empty when every binding's input was met. The list is complete when everything the request led to has run, and when it stopped because bindings kept triggering each other. When the routed command was kept and carrying its events on then failed, because the link to another component failed, a component's state could not be read or written, or another component stopped answering, the bindings found unmet before that failure are not listed.",
+          "items": {
+            "$ref": "#/$defs/spindle.observe.UnmetInput"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -715,7 +764,8 @@
         "class",
         "duration_us",
         "events",
-        "externals"
+        "externals",
+        "unmet"
       ],
       "title": "RequestRecord",
       "type": "object",
@@ -1084,6 +1134,38 @@
       "x-ess-kind": "struct",
       "x-ess-name": "spindle.observe.TopologyNode"
     },
+    "spindle.observe.UnmetInput": {
+      "additionalProperties": false,
+      "description": "One event binding whose command input the event did not fill: a required field absent, or a value carried across a declared conversion that is no value of the input's type. The command is not invoked: zero attempts, no retry, and the event's other bindings still run; the command that published the event stays committed. ESS 0.90.0 calls this an unmet binding-input obligation, with no attempt and no policy, only for a binding whose failure policy is chosen per refusal, answers the same failure of every other binding unsupported, and defines no observable result for either (`crates/verify/ess-conformance/src/interpret/bindings.rs`). The rule for every binding and this answer are Spindle's (`docs/design/spindle.md` § 11, unmet binding input; `spindle_channel::Unmet`).",
+      "properties": {
+        "binding": {
+          "description": "The binding id.",
+          "type": "string"
+        },
+        "command": {
+          "description": "The qualified name of the command not invoked.",
+          "type": "string"
+        },
+        "component": {
+          "description": "The component that accepts the command.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why the input could not be filled, as the runtime words it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding",
+        "component",
+        "command",
+        "reason"
+      ],
+      "title": "UnmetInput",
+      "type": "object",
+      "x-ess-kind": "struct",
+      "x-ess-name": "spindle.observe.UnmetInput"
+    },
     "spindle.placement.Instance.State": {
       "enum": [
         "Exited",
@@ -1150,8 +1232,8 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-ess-provenance": {
-    "contract_digest": "slice-sha256/2:356acc44a9ac5d2fe3b8bd1174562579f808e39c1637ee2e1b461f3e30f556c0",
-    "source_digest": "da87370498e780a2b1627a64ac1c24855e650bc80f3e7cfe37f7baaee937ed23",
+    "contract_digest": "slice-sha256/2:06eab1d3817bcb83553e5322ffbe1d3b8ca8b3ff29f3e61742a5b54d7c5ea44a",
+    "source_digest": "a2b52f33b62e29f807565008994a663144a031ac9803b51a9b8ac024732fbaa8",
     "specification_version": "v1",
     "system": "spindle"
   }

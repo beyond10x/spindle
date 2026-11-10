@@ -260,7 +260,7 @@ and later stories of the epic serve them.
 
 | route | answer | format | noun in `spindle.observe` |
 |---|---|---|---|
-| `GET /__spindle/requests` | the totals per class since start and the last N requests, newest first; `?class=` keeps only the classes it names | `spindle-requests/1` | `RequestLog` (`RequestTotals`, `RequestRecord`, `RequestClass`, `OperationKind`, `ExternalAnswer`, `AnswerSource`) |
+| `GET /__spindle/requests` | the totals per class since start and the last N requests, newest first; `?class=` keeps only the classes it names | `spindle-requests/1` | `RequestLog` (`RequestTotals`, `RequestRecord`, `RequestClass`, `OperationKind`, `ExternalAnswer`, `AnswerSource`, `UnmetInput`) |
 | `GET /__spindle/metrics` | Prometheus text, `text/plain; version=0.0.4` | the exposition format | `MetricFamilies` (`MetricFamily`, `MetricKind`): the families exposed, by name, type and labels |
 | `GET /__spindle/ui` | the observe panel: one HTML page, script and style inline, framable by any page; its `Content-Security-Policy` allows inline script and style and `connect-src 'self'` only; it reads `./requests` beside itself; `503` from a binary built without `ui/dist-panel/panel.html` | `text/html` | none: it renders `RequestLog` |
 | `GET /__spindle/topology` | the graph of the served specifications, with live numbers per edge | `spindle-topology/1` | `Topology` (`TopologyNode`, `NodeKind`, `TopologyEdge`, `EdgeKind`, `EdgeTraffic`, `StatusCount`, `SourceCount`) |

@@ -14,6 +14,15 @@ are Spindle's releases.
   (`{"emptied": [...]}`, `200`) and `ResetRefusal` (`{"refused"}`, `400` before anything changed,
   `500` once a store could not be emptied or written). `AnswerSource`'s `world` names the world's
   `decisions`. No behaviour changes.
+- `GET /api/deployment` answers `delivery` for each event binding: `guarantee`, ESS's
+  `at_least_once` or `at_most_once` as the binding declares it, and `attempts`, the most times
+  Spindle invokes its command for one event (5 where the binding retries a failure, 1 otherwise;
+  `spindle.observe.BindingDelivery`). A periodic binding answers none.
+- `run --observe` lists in each request's `unmet` every event binding whose input an event
+  published while the request was answered did not fill, so its command was not invoked: the
+  binding, the component that accepts the command, the command and why
+  (`spindle.observe.UnmetInput`). `spindle.observe.RequestRecord` gains a required `unmet`, empty
+  when every input was met. Before, such a binding was only a line on stderr.
 
 ### Changed
 

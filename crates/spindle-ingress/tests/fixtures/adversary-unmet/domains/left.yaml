@@ -1,0 +1,59 @@
+domain: relay.left
+summary: A sender that sends once, loops, and bounces what is echoed back.
+types:
+  - name: relay.left.Handle
+    kind: newtype
+    of: String
+errors: []
+commands:
+  - name: relay.left.Send
+    input:
+      - name: n
+        type: Integer
+      - name: member
+        type: relay.left.Handle
+    outcomes:
+      - name: sent
+        emits: [relay.left.Sent]
+        payload:
+          relay.left.Sent: {n: input.n, member: input.member}
+        summary: The member is sent on.
+  - name: relay.left.Loop
+    input:
+      - name: n
+        type: Integer
+      - name: member
+        type: relay.left.Handle
+    outcomes:
+      - name: looped
+        emits: [relay.left.Looped]
+        payload:
+          relay.left.Looped: {n: input.n, member: input.member}
+        summary: The member starts a loop that never settles.
+  - name: relay.left.Bounce
+    input:
+      - name: n
+        type: Integer
+    outcomes:
+      - name: bounced
+        emits: [relay.left.Bounced]
+        payload:
+          relay.left.Bounced: {n: input.n}
+        summary: The echo is bounced back.
+events:
+  - name: relay.left.Sent
+    fields:
+      - name: n
+        type: Integer
+      - name: member
+        type: relay.left.Handle
+  - name: relay.left.Looped
+    fields:
+      - name: n
+        type: Integer
+      - name: member
+        type: relay.left.Handle
+  - name: relay.left.Bounced
+    fields:
+      - name: n
+        type: Integer

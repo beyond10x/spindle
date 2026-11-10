@@ -1,0 +1,48 @@
+format: ess/34
+system: library
+version: v1
+summary: A library that thanks a member as a reader when one of their loans closes.
+domains:
+  - library.lending
+  - library.notices
+conversions:
+  - from: library.lending.MemberId
+    to: library.notices.ReaderRef
+    because: >-
+      A member who borrows is a reader the notices context may address; the notices context bounds
+      a reader reference itself and checks that bound on the way in.
+components:
+  - component: lending
+    summary: Closes loans.
+    owns:
+      domains:
+        - library.lending
+    accepts:
+      commands:
+        - library.lending.CloseLoan
+    publishes:
+      events:
+        - library.lending.LoanClosed
+    reached_by: network
+  - component: notices
+    summary: Thanks readers.
+    owns:
+      domains:
+        - library.notices
+    accepts:
+      commands:
+        - library.notices.SendThanks
+    publishes:
+      events:
+        - library.notices.ThanksSent
+    reached_by: in_process
+bindings:
+  - id: thank-on-close
+    when:
+      event: library.lending.LoanClosed
+    invoke:
+      command: library.notices.SendThanks
+    mapping:
+      reader_id: event.member_id
+    delivery: at_most_once
+    on_failure: drop
