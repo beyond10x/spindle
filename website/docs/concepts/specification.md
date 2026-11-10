@@ -110,6 +110,6 @@ A replay forces no external cause, sends no command as an actor and reads no vie
 parameters. A step that needs one is reported as unsupported, which also exits 1.
 
 :::caution[Planned]
-Running the conformance suite ESS synthesises from Spindle's own specification is planned; see
-[status](/docs/status).
+Running the conformance suite ESS synthesises from Spindle's own specification is planned
+([status](/docs/status)).
 :::

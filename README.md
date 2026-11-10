@@ -17,7 +17,7 @@ where Spindle runs. **Admission** binds each required capability to one implemen
 and lists every capability the environment lacks. The same specification runs on a laptop with an
 in-process channel and in a microVM with a TCP one. Admission is the only step that differs.
 
-Status: early. These parts work:
+Status: early, and these parts work:
 
 - loading, capability derivation, admission and command execution, with list views, minted
   identities and external decisions from a file
@@ -59,11 +59,8 @@ since start. `?class=not-served` keeps only the requests answered `501`.
 
 A record lists every external cause asked while the request was answered, by its command or by
 one an event binding invoked. For each cause it gives the command that asked and what answered:
-
-- `world`: the last reset's decision table
-- `file`: `--decisions`
-- `default`: `--answer-default`
-- `unanswered`
+`world` for the last reset's decision table, `file` for `--decisions`, `default` for
+`--answer-default`, or `unanswered`.
 
 A cause asked outside any request, by a timer-fired command, is counted and listed in no record.
 
@@ -72,6 +69,7 @@ A cause asked outside any request, by a timer-fired command, is counted and list
 requests by method, route template, operation, kind, class and status class, their durations,
 commands by outcome and failure, events appended, bindings, timer ticks, store writes, the rows
 each entity holds, the resets and the external causes answered, by command, outcome and source.
+
 `POST /api/reset` empties the stores and keeps every count and the request log.
 
 `GET /__spindle/ui` answers a panel of them: one HTML page with its script and style inline. Any
@@ -114,7 +112,7 @@ channel = ["in-process"]
 ```
 
 Each list is in order of preference. A key ending in `.*` covers every capability under that
-prefix. An exact key wins over it.
+prefix, and an exact key wins over it.
 
 ## Layout
 

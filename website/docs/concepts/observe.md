@@ -72,7 +72,7 @@ A Unix socket path must be UTF-8 and fit the platform's `sun_path` less its NUL:
 
 Spindle's own specification has a domain `spindle.observe` for the answers of the observe API:
 the deployment, the counter catalogue, the sample and the state change. `ess` generates their JSON
-Schema, Rust types (`crates/spindle-observe-api`) and TypeScript types (`ui/src/api/generated`), and
+Schema, Rust types (`crates/spindle-observe-api`) and TypeScript types (`ui/src/api/generated`).
 `task check` fails when a committed projection differs from a fresh generation or a fixture answer
 does not validate.
 
@@ -83,8 +83,8 @@ prints the URL to open, with the development token `dev`.
 ## The control process
 
 `b10x-spindle deploy` places and launches the instances of a `spindle-placement/1` document, each
-on its target as `spindle.placement.PlaceInstance` decides, collects the frames they send over a
-Unix socket, keeps the last 15 minutes of samples per instance in memory, and serves the observe
+on its target as `spindle.placement.PlaceInstance` decides. It collects the frames they send over a
+Unix socket and keeps the last 15 minutes of samples per instance in memory. It serves the observe
 API and the UI on `127.0.0.1`. The UI is built into the binary at compile time from `ui/dist`, so
 `deploy` needs nothing installed. `task build` builds `ui/` before cargo.
 
@@ -95,7 +95,7 @@ target/release/b10x-spindle deploy examples/rally/ess --environment examples/env
 
 It prints where it listens and the URL to open, with a random token. Every request needs that
 token, as `?t=` or as a bearer credential, and a `Host` header of `127.0.0.1:<port>` or
-`localhost:<port>`. Only `GET` is answered:
+`localhost:<port>`. Only `GET` is answered, on these routes:
 
 | Route | Answers |
 |---|---|
@@ -106,7 +106,7 @@ token, as `?t=` or as a bearer credential, and a `Host` header of `127.0.0.1:<po
 SIGINT or SIGTERM stops every instance.
 
 :::caution[Planned]
-This build launches instances on `Process` targets only; QEMU and Firecracker targets are refused
-by name. See [status](/docs/status) and
+This build launches instances on `Process` targets only. QEMU and Firecracker targets are refused,
+and the refusal message gives the target kind. See [status](/docs/status) and
 [`docs/design/observe.md`](https://github.com/beyond10x/spindle/blob/main/docs/design/observe.md).
 :::

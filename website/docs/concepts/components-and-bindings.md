@@ -10,8 +10,8 @@ source: crates/spindle-host/src/lib.rs, crates/spindle-timer/src/lib.rs, crates/
 
 An ESS system declares **components**. Each owns one or more domains, accepts commands, publishes
 events and says how it is reached (`reached_by: network`, `command_line` or `in_process`). A
-component is the unit Spindle admits and places: `--component` derives and admits for one of them,
-and the one-process host admits each component on its own and gives each its own store.
+component is the unit Spindle admits and places: `--component` derives and admits for one of them.
+The one-process host admits each component on its own and gives each its own store.
 
 ## Bindings
 
@@ -57,6 +57,6 @@ that owns its source. `b10x-spindle play` is this host driving the
 [rally example](/docs/examples/rally).
 
 :::caution[Planned]
-Components in separate processes or microVMs joined by the `tcp` channel are planned; see
-[status](/docs/status).
+Components in separate processes or microVMs joined by the `tcp` channel are planned
+([status](/docs/status)).
 :::

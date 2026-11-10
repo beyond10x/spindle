@@ -6,7 +6,7 @@ lede: Build the binary, then take the rally example through check, capabilities,
 source: every command below was run in a checkout of main on 2026-11-04; output pasted from that run
 ---
 
-Spindle has no release yet. Build it from source.
+Spindle has no release yet, so build it from source.
 
 ## Build
 
@@ -26,7 +26,7 @@ The last lines of the build:
     Finished `release` profile [optimized] target(s) in 37.59s
 ```
 
-The binary is `target/release/b10x-spindle`. The commands below call it `b10x-spindle`. Put
+The binary is `target/release/b10x-spindle`, and the commands below call it `b10x-spindle`: put
 `target/release` on your `PATH` or type the path.
 
 ```console

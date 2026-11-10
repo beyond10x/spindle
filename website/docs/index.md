@@ -29,9 +29,10 @@ on a TCP channel elsewhere. Admission is the only step that differs.
 Loading, capability derivation, admission, command execution with list views and minted
 identities, external decisions from a file, per-component counters, and the rally example in one
 process work today. The process, QEMU and Firecracker launchers exist as libraries and sample each
-instance's CPU and memory. The observe UI runs on fixture data. Running each component in its own
-process or microVM, HTTP ingress, deployment and a live observe API are planned. The
-[status page](/docs/status) lists each item with the test that holds it.
+instance's CPU and memory. The observe UI runs on fixture data.
+
+Running each component in its own process or microVM, HTTP ingress, deployment and a live observe
+API are planned. The [status page](/docs/status) lists each item with the test that checks it.
 :::
 
 ## What Spindle is not
