@@ -3,7 +3,7 @@ title: Rally
 sidebar_position: 1
 description: The rally example, a two-player paddle-and-ball game written as an ESS system of three components that talk only through bindings.
 lede: Three components, one periodic binding and four event bindings play a match to a winner, with no game code outside the specification.
-source: examples/rally/ess, crates/spindle-host/tests/spindle-host/rally.rs, crates/spindle-host/src/rally.rs, crates/spindle-cli/tests/spindle-cli/play.rs, crates/spindle-cli/tests/spindle-cli/processes.rs, crates/spindle-cli/tests/spindle-cli/adversary_processes.rs, crates/spindle-host/src/host/component.rs, docs/design/spindle.md §13
+source: examples/rally/ess, crates/spindle-host/tests/spindle-host/rally.rs, crates/spindle-host/src/rally.rs, crates/spindle-cli/tests/spindle-cli/play.rs, crates/spindle-cli/tests/spindle-cli/processes.rs, crates/spindle-cli/tests/spindle-cli/adversary_processes.rs, crates/spindle-host/src/host/component.rs, crates/spindle-qemu/tests/spindle-qemu/rally.rs, crates/spindle-firecracker/tests/spindle-firecracker/rally.rs, examples/rally/placement.toml, docs/design/spindle.md §13
 ---
 
 Rally is an original two-player paddle-and-ball game, written as an ESS system in
@@ -109,8 +109,9 @@ The processes print one JSON line per command they run. SIGINT or SIGTERM exits 
 `SPINDLE_TELEMETRY` set, each process sends its own counters as `spindle-telemetry/1` frames.
 `--speed` runs the match clock that many times faster than real time.
 
-:::caution[Planned]
-Each component in its own microVM is planned. It is the design's showcase: one deployment to the
-environment `microvm` (`channel = tcp`), its three components placed on three microVM targets,
-with admission the only step that differs from the laptop. See [status](/docs/status).
-:::
+## Three microVMs
+
+Each component also runs in its own microVM, one `b10x-spindle play` per VM in its per-component
+mode. The three are joined by TCP channels across the VM network and play a match to a winner. One
+placement, `examples/rally/placement.toml`, runs on QEMU and on Firecracker. Its tests run on a
+host with `/dev/kvm` (`task check:vm`), not in CI. See [status](/docs/status).

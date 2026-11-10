@@ -32,7 +32,8 @@ projection = ["in-process"]
 - A key ending in `.*` provides every capability under that prefix, and an exact key wins over it.
 - A document in another format, an unknown field, or a capability with an empty list is refused.
 
-The repository ships two: `examples/environments/laptop.toml` and
+The repository ships four: `examples/environments/browser.toml`,
+`examples/environments/laptop.toml`, `examples/environments/laptop-processes.toml` and
 `examples/environments/microvm.toml`.
 
 ## Admission

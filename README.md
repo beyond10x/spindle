@@ -22,14 +22,15 @@ Status: early, and these parts work:
 - loading, capability derivation, admission and command execution, with list views, minted
   identities and external decisions from a file
 - per-component counters
-- the rally example in one process and as three processes joined by TCP channels
+- the rally example in one process, and as three processes or three microVMs joined by TCP
+  channels
 - `run`, which serves a network-reached component over HTTP on 127.0.0.1
 - the process, QEMU and Firecracker launchers, as libraries that sample each instance's CPU and
   memory
 - `deploy`, which launches the instances of a placement as processes and serves the live observe
   API and UI
 
-Running each component in its own microVM is planned. The
+A bundle uploaded to deploy, and cells with ownership leases, are planned. The
 [status page](https://beyond10x.github.io/spindle/docs/status) lists each item with the test that
 checks it, and the design is [`docs/design/spindle.md`](docs/design/spindle.md).
 

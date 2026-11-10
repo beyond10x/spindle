@@ -3,10 +3,12 @@ title: Getting started
 sidebar_position: 2
 description: Build b10x-spindle from source, then compile, derive, admit and play the rally example.
 lede: Build the binary, then take the rally example through check, capabilities, admit and play.
-source: every command below was run in a checkout of main on 2026-11-04; output pasted from that run
+source: every command below was run on 2026-11-10 in a checkout of 0.9.0 (main at 244fb60e); output pasted from that run
 ---
 
-Spindle has no release yet, so build it from source.
+Binaries for Linux and macOS, x86_64 and aarch64 each, are attached to each
+[GitHub release](https://github.com/beyond10x/spindle/releases) with a `SHA256SUMS` file. This page
+builds `b10x-spindle` from source.
 
 ## Build
 
@@ -22,8 +24,8 @@ cargo build --locked --release -p spindle-cli
 The last lines of the build:
 
 ```text
-   Compiling spindle-cli v0.6.0 (…/spindle/crates/spindle-cli)
-    Finished `release` profile [optimized] target(s) in 37.59s
+   Compiling spindle-conformance v0.9.0 (…/spindle/crates/spindle-conformance)
+    Finished `release` profile [optimized] target(s) in 88m 23s
 ```
 
 The binary is `target/release/b10x-spindle`, and the commands below call it `b10x-spindle`: put
@@ -31,7 +33,7 @@ The binary is `target/release/b10x-spindle`, and the commands below call it `b10
 
 ```console
 $ b10x-spindle --version
-b10x-spindle 0.6.0
+b10x-spindle 0.9.0
 ```
 
 ## Compile the specification
@@ -171,7 +173,7 @@ store.rows_written 1
 store.bytes_written 359
 ```
 
-and the last, 30 seconds and 31 frames later, with exit status 0:
+and the last of its 31 frames, 30 seconds later, with exit status 0:
 
 ```text
 west needs 3    east needs 0

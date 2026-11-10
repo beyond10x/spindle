@@ -3,7 +3,7 @@ title: Components and bindings
 sidebar_position: 4
 description: How the components of one ESS system run together, and how periodic and event bindings drive their commands.
 lede: Components own domains and accept commands; bindings are the only way one drives another.
-source: crates/spindle-host/src/lib.rs, crates/spindle-timer/src/lib.rs, crates/spindle-timer/tests/spindle-timer/periodic.rs, crates/spindle-channel/src/lib.rs, crates/spindle-channel/tests/spindle-channel/channel.rs, examples/rally/ess/components.yaml
+source: crates/spindle-host/src/lib.rs, crates/spindle-timer/src/lib.rs, crates/spindle-timer/tests/spindle-timer/periodic.rs, crates/spindle-channel/src/lib.rs, crates/spindle-channel/tests/spindle-channel/channel.rs, examples/rally/ess/components.yaml, Cargo.toml, ess/domains/observe.yaml
 ---
 
 ## Components
@@ -22,7 +22,7 @@ the specification.
 ### Periodic bindings
 
 `spindle-timer` reads every periodic binding and answers, for an instant from a clock, which are
-due. The clock is a port, so tests run a system on a manual clock without sleeping. ESS 0.85.0
+due. The clock is a port, so tests run a system on a manual clock without sleeping. ESS 0.90.0
 admits one periodic profile, and the timer honours each word of it:
 
 | Word | Value | Meaning |
@@ -56,7 +56,6 @@ components, until nothing is left in flight. A view is answered from the store o
 that owns its source. `b10x-spindle play` is this host driving the
 [rally example](/docs/examples/rally).
 
-:::caution[Planned]
-Components in separate processes or microVMs joined by the `tcp` channel are planned
-([status](/docs/status)).
-:::
+Components also run in separate processes or microVMs joined by the `tcp` channel: the rally
+example plays a match as three processes and as three microVMs
+([rally](/docs/examples/rally#three-processes), [status](/docs/status)).

@@ -3,7 +3,7 @@ title: The specification
 sidebar_position: 1
 description: What Spindle reads, how it compiles it, and what the kernel executes from it.
 lede: A specification is a directory of ESS documents, compiled by ESS's own compiler into the program Spindle runs.
-source: crates/spindle-spec/src/lib.rs, crates/spindle-spec/tests/spindle-spec/load.rs, crates/spindle-kernel/src/lib.rs, crates/spindle-kernel/src/supported.rs, docs/design/spindle.md §3a
+source: crates/spindle-spec/src/lib.rs, crates/spindle-spec/tests/spindle-spec/load.rs, crates/spindle-kernel/src/lib.rs, crates/spindle-kernel/src/supported.rs, crates/spindle-cli/src/conform.rs, crates/spindle-cli/tests/spindle-cli/conform.rs, docs/design/spindle.md §3a
 ---
 
 The directory of [ESS](https://beyond10x.github.io/ess/)
@@ -45,8 +45,10 @@ pinned to a released tag in the workspace `Cargo.toml`.
 A guard that evaluates to *unknown* refuses the command. It does not take a branch by default.
 
 A `creates:` outcome whose identity is neither an input nor a payload source (`generated: true`,
-or no source) leaves the identity to the runtime, which mints it. Only a `Uuid` identity, or a
-newtype of one, is minted, as a UUIDv4. This needs the `identity.mint` capability
+or no source) leaves the identity to the runtime, which mints it. A `Uuid` identity, or a `Uuid`
+newtype without invariants, is minted as a UUIDv4. A `String` newtype identity whose prefix and
+alphabet admit a UUID's text, and whose invariants bound only its length, is minted as its prefix
+and a UUIDv4's text. Any other identity type is refused. This needs the `identity.mint` capability
 ([capabilities](/docs/concepts/capabilities)).
 
 The kernel runs the constructs Spindle's own specification and the rally example use. Any other
@@ -109,7 +111,9 @@ read it.
 A replay forces no external cause, sends no command as an actor and reads no view with
 parameters. A step that needs one is reported as unsupported, which also exits 1.
 
-:::caution[Planned]
-Running the conformance suite ESS synthesises from Spindle's own specification is planned
+## Conformance
+
+`b10x-spindle conform` runs the suite ESS synthesises from a specification, or one written for it,
+against every component in one process. `task check` runs it on Spindle's own specification. It
+lists every synthesis refusal with its code and holds the executed and skipped counts
 ([status](/docs/status)).
-:::
