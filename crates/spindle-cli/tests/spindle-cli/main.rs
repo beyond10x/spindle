@@ -20,6 +20,7 @@ mod adversary_replay;
 mod adversary_responses;
 mod adversary_served_decisions;
 mod adversary_topology;
+mod adversary_topology_emitted;
 mod adversary_unserved;
 mod adversary_unserved_base;
 mod adversary_view_list_parameter;

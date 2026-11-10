@@ -371,6 +371,59 @@ enum Kept {
 /// A store the host was given, as a [`Store`] of its own.
 struct Supplied(Box<dyn Store>);
 
+/// A component's store while one command runs on it: each write that lands tallies the events it
+/// carries, by name, where the [`CountingStore`] beneath counts them appended.
+struct Tallied<'a> {
+    store: &'a mut dyn Store,
+    appended: Vec<String>,
+}
+
+impl Tallied<'_> {
+    /// Tallies `events`, which a write that landed carried.
+    fn tally(&mut self, events: &[Event]) {
+        self.appended
+            .extend(events.iter().map(|event| event.name.clone()));
+    }
+}
+
+impl Store for Tallied<'_> {
+    fn load(
+        &mut self,
+        entity: &str,
+        identity: &Value,
+    ) -> Result<Option<spindle_kernel::Stored>, StoreError> {
+        self.store.load(entity, identity)
+    }
+
+    fn scan(&mut self, entity: &str) -> Result<spindle_kernel::Scan, StoreError> {
+        self.store.scan(entity)
+    }
+
+    fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
+        self.store.commit(change)?;
+        self.tally(&change.events);
+        Ok(())
+    }
+
+    fn remove(&mut self, removal: &spindle_kernel::Removal) -> Result<(), StoreError> {
+        self.store.remove(removal)?;
+        self.tally(&removal.events);
+        Ok(())
+    }
+
+    /// The writes land together, then tally as each would alone.
+    fn commit_all(&mut self, writes: &[spindle_kernel::Write]) -> Result<(), StoreError> {
+        self.store.commit_all(writes)?;
+        for write in writes {
+            match write {
+                spindle_kernel::Write::Commit(change) => self.tally(&change.events),
+                spindle_kernel::Write::Remove(removal) => self.tally(&removal.events),
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Store for Supplied {
     fn load(
         &mut self,
@@ -434,8 +487,8 @@ pub struct Host {
     periodic: BTreeMap<String, Periodic>,
     remote: Option<component::Remote>,
     published: Vec<Published>,
-    /// Every event committed since the host started, by the command that published it and the
-    /// event: a reset keeps the counts, as it keeps the counters.
+    /// Every event a store appended since the host started, by the command whose write carried it
+    /// and the event: a reset keeps the counts, as it keeps the counters.
     emitted: BTreeMap<(String, String), u64>,
     /// Answers the `external:` causes of every command any component runs, unless the world of
     /// the last reset carries its own answers.
@@ -861,10 +914,12 @@ impl Host {
         &self.published
     }
 
-    /// How many events each command published since the host started, by command and event, one
-    /// per event committed: a set outcome that publishes an event once per changed row counts
-    /// each row's. Its counts add up to each event's appended counter; a [reset](Self::reset)
-    /// keeps them.
+    /// How many events each command appended since the host started, by command and event,
+    /// counted where a component's store commits them, as its `event.<Event>.appended` counter
+    /// is: a set outcome that publishes an event once per changed row counts each row's, and an
+    /// event no write carries, one of an outcome without a subject or of a set outcome that
+    /// selected no row, counts nothing. Its counts add up to each event's appended counter; a
+    /// [reset](Self::reset) keeps them.
     pub fn emitted(&self) -> &BTreeMap<(String, String), u64> {
         &self.emitted
     }
@@ -1355,9 +1410,13 @@ impl Host {
             .ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
         let started = Instant::now();
         let clock = &self.clock;
+        let mut tallied = Tallied {
+            store: held.store.as_mut(),
+            appended: Vec::new(),
+        };
         let result = spindle_kernel::execute_refusing(
             &self.ir,
-            held.store.as_mut(),
+            &mut tallied,
             match &mut self.answers {
                 Some(answers) => answers.as_mut(),
                 None => self.decider.as_mut(),
@@ -1372,18 +1431,16 @@ impl Host {
             },
             refused,
         );
+        let appended = tallied.appended;
         held.sink.executed(command, &result, started.elapsed());
+        for event in appended {
+            let count = self.emitted.entry((command.to_owned(), event)).or_default();
+            *count = count.saturating_add(1);
+        }
         let executed = match result {
             Ok(executed) => executed,
             Err(error) => return Ok(Err(error)),
         };
-        for event in &executed.events {
-            let count = self
-                .emitted
-                .entry((command.to_owned(), event.name.clone()))
-                .or_default();
-            *count = count.saturating_add(1);
-        }
         self.published
             .extend(executed.events.iter().map(|event| Published {
                 component: component.to_owned(),

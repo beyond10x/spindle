@@ -15,7 +15,7 @@ are Spindle's releases.
   `routes` edge, one answered `501` too. Each edge but `contains` carries live numbers read from
   the counters `GET /__spindle/metrics` exposes and the ring `GET /__spindle/requests` holds: a
   route's requests by status class and the sequences of its latest five, a cause's answers by
-  source, the events a command emitted, the envelopes a binding sent and the commands it invoked.
+  source, the events a command appended, the envelopes a binding sent and the commands it invoked.
   Without `--observe` the route answers `404`. The panel at `GET /__spindle/ui` gains a topology
   screen that draws the graph top-down as SVG, the ingress first, and polls it.
 

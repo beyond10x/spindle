@@ -4,23 +4,24 @@
 //! The graph is derived, never authored. Its nodes: the ingress, `ingress`; the specification the
 //! host runs, `specification:<system>`; each domain in name order, followed by its commands,
 //! views and events, each in name order, and the external causes of its commands' outcomes; each
-//! binding in name order. Its edges, kind by kind: `routes` from the ingress to the command or view of each route
-//! the surface has, also one answered `501`, in the order of the nodes they reach
-//! ([`Recorder::routes`]); `contains` from the specification to each domain and from each domain
-//! to what it declares; `asks` from a command to each external cause of its outcomes; `emits`
-//! from a command to each event its outcomes emit; `carries` from an event to each event binding
-//! it travels; `invokes` from a binding to the command it invokes.
+//! binding in name order. Its edges, kind by kind: `routes` from the ingress to the command or
+//! view of each route the surface has, also one answered `501`, in the order of the nodes they
+//! reach ([`Recorder::routes`]); `contains` from the specification to each domain and from each
+//! domain to what it declares; `asks` from a command to each external cause of its outcomes;
+//! `emits` from a command to each event its outcomes emit; `carries` from an event to each event
+//! binding it travels; `invokes` from a binding to the command it invokes.
 //!
 //! Read when asked, on the host's thread, from the same numbers as the metrics ([`super::metrics`])
 //! and the request log: a `routes` edge counts the requests of its route by status class from the
 //! [`Recorder`], with the sequences of its latest five records still in the ring; an `asks` edge
 //! the answers to its cause by source, from the recorder; an `emits` edge the events of that kind
-//! its command published, one per event committed ([`Host::emitted`]), so a set outcome that
-//! publishes once per changed row counts every row and the edges into one event add up to
-//! `spindle_events_appended_total`; from the host's counters, a `carries` edge the envelopes its
-//! binding sent, and an `invokes` edge the envelopes its binding delivered or, for a periodic
-//! binding, the ticks its timer fired. A `contains` edge carries nothing. Reading it counts
-//! nothing.
+//! its command appended, counted where the store commits them ([`Host::emitted`]): a set
+//! outcome that publishes once per changed row counts every row, an event that no write carries,
+//! as one of an outcome without a subject or of a set outcome that selected no row, counts
+//! nothing, and the edges into one event add up to `spindle_events_appended_total`; from the
+//! host's counters, a `carries` edge the envelopes its binding sent, and an `invokes` edge the
+//! envelopes its binding delivered or, for a periodic binding, the ticks its timer fired. A
+//! `contains` edge carries nothing. Reading it counts nothing.
 
 use std::collections::BTreeMap;
 use std::time::SystemTime;
