@@ -215,7 +215,9 @@ impl Listener {
     ///
     /// On a surface made [`Surface::proving_callers`] each request for a command or view is
     /// handed on with the caller its header proves where it also carries the proxy's secret, both
-    /// read once and never printed; the router refuses one that proves none.
+    /// read once and never printed; the router refuses one that proves none. A console route or
+    /// one under `/__spindle/` answers the proxy's secret alone, and without it is refused `403`
+    /// `{"refused": "not granted", "actor": null}` before anything is read.
     ///
     /// # Errors
     /// When the socket cannot be bound or the server thread cannot start.
@@ -338,6 +340,15 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
     {
         return (refusal.into(), unrouted(By::Ingress));
     }
+    // On a surface whose requests prove their caller, the run's own routes are operator tooling
+    // behind the proxy: they answer the proxy's secret alone.
+    let unproxied = served
+        .surface
+        .caller_secret()
+        .is_some_and(|secret| !presents(request.headers(), secret.expose()));
+    if reserved.is_some() && unproxied {
+        return (Answer::not_proven().into(), None);
+    }
     if let Some(reserved) = reserved {
         let query = request.uri().query().unwrap_or_default();
         let query = match &served.guard {
@@ -390,6 +401,9 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
     let refused = |answer: Answer| -> (Reply, Option<Note>) {
         (answer.into(), Some(noted(&asked, Answered::ingress())))
     };
+    if matches!(asked, Asked::Console(_)) && unproxied {
+        return refused(Answer::not_proven());
+    }
     if request.headers().contains_key(TRANSFER_ENCODING) {
         return refused(Answer::refusal(
             411,
@@ -471,16 +485,26 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
 /// `None` where either header is absent or given more than once, or the secret is another. No
 /// value is printed.
 fn proven(headers: &HeaderMap, header: &str, secret: &str) -> Option<Caller> {
-    let once = |name: &str| {
-        let mut values = headers.get_all(name).iter();
-        let value = values.next()?;
-        values.next().is_none().then_some(value)
-    };
-    let presented = once(Surface::SECRET_HEADER)?.to_str().ok()?;
-    if !same(presented, secret) {
+    if !presents(headers, secret) {
         return None;
     }
-    Caller::proven(once(header)?.as_bytes())
+    Caller::proven(once(headers, header)?.as_bytes())
+}
+
+/// Whether `headers` carry `secret` once in [`Surface::SECRET_HEADER`], compared in time that
+/// depends only on the lengths ([`same`]).
+fn presents(headers: &HeaderMap, secret: &str) -> bool {
+    once(headers, Surface::SECRET_HEADER)
+        .and_then(|presented| presented.to_str().ok())
+        .is_some_and(|presented| same(presented, secret))
+}
+
+/// The one value of the header `name` in `headers`; `None` where it is absent or given more than
+/// once.
+fn once<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a HeaderValue> {
+    let mut values = headers.get_all(name).iter();
+    let value = values.next()?;
+    values.next().is_none().then_some(value)
 }
 
 /// Hands `pending` to the host's thread as an [`Exchange`] and waits for its answer; the `503`

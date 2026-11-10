@@ -125,12 +125,17 @@ impl Caller {
     /// The caller a header `value` proves, as [`Surface::proving_callers`] reads it: one JSON
     /// object, `{"actor": "<qualified actor>", "caller": {"<attribute>": <value>}}`, `caller` left
     /// out for an actor with no attribute. `None` for any other value: not UTF-8 JSON, not an
-    /// object, `actor` missing or not a string, `caller` not an object, or any other member. The
-    /// caller is not bound here against a model; [`crate::answer`] binds it before it is used.
+    /// object, an object at any depth naming a member twice under any spelling of its name
+    /// ([`unique_members`]), `actor` missing or not a string, `caller` not an object, or any other
+    /// member. The caller is not bound here against a model; [`crate::answer`] binds it before it
+    /// is used.
     pub fn proven(value: &[u8]) -> Option<Self> {
         let Ok(Value::Object(mut proof)) = serde_json::from_slice::<Value>(value) else {
             return None;
         };
+        if !unique_members(std::str::from_utf8(value).ok()?) {
+            return None;
+        }
         let Some(Value::String(actor)) = proof.remove("actor") else {
             return None;
         };
@@ -150,6 +155,55 @@ impl Caller {
             .any(|name| name.to_string() == self.actor)
             && spindle_kernel::caller_binds(ir, Some(&self.actor), Some(&self.attributes)).is_ok()
     }
+}
+
+/// Whether every object in `json`, text that parses as JSON, names each member once: each name
+/// is compared once its escapes are decoded, so `"actor"` and `"actor"` are the same member.
+/// A parser keeps one of two same-named members, and which one differs between parsers, so a
+/// proxy and this ingress could read two different callers from one value.
+fn unique_members(json: &str) -> bool {
+    // Per open object, the names seen and whether a name comes next; `None` for an array.
+    let mut open: Vec<Option<(std::collections::BTreeSet<String>, bool)>> = Vec::new();
+    let bytes = json.as_bytes();
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'{' => open.push(Some((std::collections::BTreeSet::new(), true))),
+            b'[' => open.push(None),
+            b'}' | b']' => {
+                open.pop();
+            }
+            b',' => {
+                if let Some(Some((_, name_next))) = open.last_mut() {
+                    *name_next = true;
+                }
+            }
+            b':' => {
+                if let Some(Some((_, name_next))) = open.last_mut() {
+                    *name_next = false;
+                }
+            }
+            b'"' => {
+                let start = at;
+                at += 1;
+                while at < bytes.len() && bytes[at] != b'"' {
+                    at += if bytes[at] == b'\\' { 2 } else { 1 };
+                }
+                if let Some(Some((seen, true))) = open.last_mut() {
+                    let Some(Ok(name)) = json.get(start..=at).map(serde_json::from_str::<String>)
+                    else {
+                        return false;
+                    };
+                    if !seen.insert(name) {
+                        return false;
+                    }
+                }
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    true
 }
 
 /// Why a route is kept but its operation not served.
@@ -796,8 +850,10 @@ impl Surface {
     /// once or another (compared in time that depends only on the lengths), answers the standard
     /// refusal for a request authenticated as no caller, `403`
     /// `{"refused": "not granted", "actor": null}`, and nothing is read or written; no default
-    /// caller is taken. A request [`crate::route`] answers carries no header, so there every such
-    /// request is refused.
+    /// caller is taken. The console routes and those under `/__spindle/` serve operator tooling
+    /// behind the proxy: each answers a request that carries the secret, with or without a caller,
+    /// and refuses one without it the same way, doing nothing. A request [`crate::route`] answers
+    /// carries no header, so there every request but one for a path no route has is refused.
     ///
     /// The headers are trusted only because the proxy sets them: the listener must be reachable
     /// only through the proxy, and the proxy must remove both from every request it forwards
@@ -1412,8 +1468,36 @@ fn unwritten(listed: &ess_http::Outcome) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Flat, Queried, Surface};
+    use super::{Caller, Flat, Queried, Surface, unique_members};
     use serde_json::{Value, json};
+
+    #[test]
+    fn a_member_named_twice_at_any_depth_or_spelling_is_found() {
+        for twice in [
+            r#"{"actor": "A", "actor": "B"}"#,
+            r#"{"actor": "A", "actor": "B"}"#,
+            r#"{"actor": "A", "caller": {"id": 1, "id": 2}}"#,
+            r#"{"actor": "A", "caller": {"list": [{"x": 1, "x": 2}]}}"#,
+        ] {
+            assert!(!unique_members(twice), "{twice}");
+            assert_eq!(Caller::proven(twice.as_bytes()), None, "{twice}");
+        }
+    }
+
+    #[test]
+    fn names_in_values_and_in_sibling_objects_are_not_members_named_twice() {
+        for once in [
+            r#"{"actor": "actor", "caller": {"actor": "\"actor\": {\"a\": 1, \"a\": 2}"}}"#,
+            r#"{"actor": "A", "caller": {"rows": [{"id": 1}, {"id": 2}], "id": 3}}"#,
+            r#"{"actor": "A", "caller": {"k\"ey": 1, "key": 2}}"#,
+        ] {
+            assert!(unique_members(once), "{once}");
+        }
+        assert!(
+            Caller::proven(br#"{"actor": "A", "caller": {"actor": "B"}}"#).is_some(),
+            "an attribute may share the name actor"
+        );
+    }
 
     #[test]
     fn a_surface_without_observe_holds_no_recorder() {

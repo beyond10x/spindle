@@ -16,9 +16,11 @@ are Spindle's releases.
   empty), and the proxy sends the secret on every request in the header `Spindle-Proxy-Secret`. A
   command that reads its caller then runs for that caller instead of answering `501`, and a
   read-granted view is read as it. A request for a command or view without the caller header,
-  with it twice, with a value that proves no caller of the model, or without the right secret is
-  refused `403` `{"refused": "not granted", "actor": null}` and writes nothing; no default caller
-  is taken, and neither header's value nor the secret is ever printed. The ingress must be
+  with it twice, with a value that names a member twice or proves no caller of the model, or
+  without the right secret is refused `403` `{"refused": "not granted", "actor": null}` and writes
+  nothing; no default caller is taken, and neither header's value nor the secret is ever printed.
+  On such a run the console routes (`/api/*`) and `/__spindle/*` require the secret alone and are
+  refused the same way without it. The ingress must be
   reachable only through that proxy, which must remove both headers from client requests. With
   `--fixed-actor` the run exits 1 (design § 11, `architecture-decision-record:http-caller-proof`).
 

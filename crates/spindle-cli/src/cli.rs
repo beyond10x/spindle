@@ -222,7 +222,10 @@ pub enum Command {
         /// that caller, and a read-granted view is read as it. A request for a command or view
         /// without the header, with it twice, with a value that proves no caller of the model, or
         /// without the right secret is refused `403` `{"refused": "not granted", "actor": null}`
-        /// and writes nothing; no default caller is taken. No value of either header is printed.
+        /// and writes nothing; no default caller is taken. A value naming any member twice proves
+        /// no caller. The console routes (`/api/*`) and `/__spindle/*` require the secret alone,
+        /// and without it are refused the same way, doing nothing. No value of either header is
+        /// printed.
         /// The headers are trusted only because the proxy sets them: the ingress must be
         /// reachable only through that proxy, and the proxy must remove both from every client
         /// request. Given with `--fixed-actor`, or without `--trusted-caller-secret`, `run` exits

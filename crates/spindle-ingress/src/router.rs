@@ -83,8 +83,8 @@ pub struct Routed {
 /// has `404`; a served path under another method `405` with [`Response::allow`], the method
 /// compared exactly; a path variable that does not decode `400`; a body over [`BODY_LIMIT`]
 /// `413`. A [`Request`] carries no header, so on a surface made [`Surface::proving_callers`] it
-/// proves no caller, and every command or view is refused `403`
-/// `{"refused": "not granted", "actor": null}`.
+/// proves no caller and carries no proxy secret: every command, view, console route and route
+/// under `/__spindle/` is refused `403` `{"refused": "not granted", "actor": null}`.
 pub fn route(surface: &Surface, host: &mut Host, request: Request) -> Routed {
     routing(surface, host, request, None)
 }
@@ -105,6 +105,16 @@ fn routing(
     request: Request,
     worlds: Option<Worlds<'_>>,
 ) -> Routed {
+    // A request value carries no header, so on a surface whose requests prove their caller it
+    // carries neither a caller nor the proxy's secret, which the run's own routes answer alone.
+    let proving = surface.caller_header().is_some();
+    let unproven = || Routed {
+        response: Answer::not_proven().into(),
+        failed: Vec::new(),
+    };
+    if proving && Reserved::of(&request.path).is_some() {
+        return unproven();
+    }
     if let Some(reserved) = Reserved::of(&request.path) {
         let answered = crate::observe::reserved(
             surface.recorder(),
@@ -135,6 +145,9 @@ fn routing(
             };
         }
     };
+    if proving && matches!(asked, Asked::Console(_)) {
+        return unproven();
+    }
     if request.body.len() > BODY_LIMIT {
         return Routed {
             response: oversized().into(),

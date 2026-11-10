@@ -153,14 +153,21 @@ fn serve(arguments: &[&str]) -> Result<Served, (Option<i32>, String, String)> {
 /// `run` trusting [`HEADER`], its proxy's secret [`SECRET`] read from a file that ends in a
 /// newline.
 fn trusting() -> Served {
+    trusting_with(&[])
+}
+
+/// [`trusting`], `extra` arguments added.
+fn trusting_with(extra: &[&str]) -> Served {
     let (directory, path) = secret_file(&format!("{SECRET}\n"));
-    let mut served = serve(&[
+    let mut arguments = vec![
         "--trusted-caller-header",
         HEADER,
         "--trusted-caller-secret",
         &path,
-    ])
-    .unwrap_or_else(|stopped| panic!("run stopped before listening: {stopped:?}"));
+    ];
+    arguments.extend_from_slice(extra);
+    let mut served = serve(&arguments)
+        .unwrap_or_else(|stopped| panic!("run stopped before listening: {stopped:?}"));
     served.secret = Some((directory, path));
     served
 }
@@ -234,8 +241,16 @@ fn member(person: &str) -> String {
     json!({"actor": MEMBER, "caller": {"person_id": person}}).to_string()
 }
 
+/// Every event published, read through the console as operator tooling behind the proxy reads it:
+/// with the proxy's secret and no caller.
 fn events(served: &Served) -> Value {
-    let (status, events) = exchange(served.address, "GET", "/api/events", &[], None);
+    let (status, events) = exchange(
+        served.address,
+        "GET",
+        "/api/events",
+        &[(SECRET_HEADER, SECRET)],
+        None,
+    );
     assert_eq!(status, 200, "{events}");
     events["events"].clone()
 }
@@ -609,6 +624,109 @@ fn the_secret_is_never_printed() {
     assert!(line.contains(SECRET_HEADER), "{line}");
 }
 
+/// The console and `/__spindle/` serve operator tooling behind the proxy: on a run whose requests
+/// prove their caller each answers a request carrying the proxy's secret, with no caller header,
+/// and refuses one without it, or with another, as a request that proves no caller, doing nothing.
+#[test]
+fn the_console_and_reserved_routes_answer_the_proxy_secret_alone() {
+    let served = trusting_with(&["--observe"]);
+    let proof = member(PERSON);
+    let (status, body) = call(
+        &served,
+        RECORD,
+        &[(HEADER, &proof)],
+        Some(&json!({"visit_id": VISIT})),
+    );
+    assert_eq!(status, 202, "{body}");
+    let wrong = SECRET.replace('7', "8");
+    let world = json!({"rows": []});
+    let routes: [(&str, &str, Option<&Value>); 5] = [
+        ("GET", "/api/events", None),
+        ("GET", "/api/model", None),
+        ("POST", "/api/reset", Some(&world)),
+        ("GET", "/__spindle/requests", None),
+        ("GET", "/__spindle/metrics", None),
+    ];
+    for (method, path, body) in routes {
+        for (case, headers) in [
+            ("no secret", vec![]),
+            ("no secret, a valid caller", vec![(HEADER, proof.as_str())]),
+            ("a wrong secret", vec![(SECRET_HEADER, wrong.as_str())]),
+            (
+                "the secret twice",
+                vec![(SECRET_HEADER, SECRET), (SECRET_HEADER, SECRET)],
+            ),
+        ] {
+            let (status, answer) = exchange(served.address, method, path, &headers, body);
+            assert_eq!(status, 403, "{method} {path}, {case}: {answer}");
+            assert_eq!(answer, not_proven(), "{method} {path}, {case}");
+        }
+    }
+    assert_eq!(
+        events(&served).as_array().map(Vec::len),
+        Some(1),
+        "the secret alone reads the events, and no refused reset emptied them"
+    );
+    let (status, answer) = exchange(
+        served.address,
+        "GET",
+        "/__spindle/requests",
+        &[(SECRET_HEADER, SECRET)],
+        None,
+    );
+    assert_eq!(status, 200, "{answer}");
+    let (status, answer) = exchange(
+        served.address,
+        "POST",
+        "/api/reset",
+        &[(SECRET_HEADER, SECRET)],
+        Some(&world),
+    );
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(events(&served), json!([]), "the reset with the secret ran");
+}
+
+/// A proof names each member once at every depth: one that names a member twice, under any
+/// spelling of its name, proves no caller, since which value counts depends on the parser.
+#[test]
+fn a_proof_naming_a_member_twice_at_any_depth_proves_no_caller() {
+    let served = trusting();
+    let cases = [
+        (
+            "caller twice",
+            format!(
+                "{{\"actor\": \"{MEMBER}\", \"caller\": {{\"person_id\": \"{OTHER}\"}}, \
+                 \"caller\": {{\"person_id\": \"{PERSON}\"}}}}"
+            ),
+        ),
+        (
+            "an attribute twice",
+            format!(
+                "{{\"actor\": \"{MEMBER}\", \"caller\": {{\"person_id\": \"{OTHER}\", \
+                 \"person_id\": \"{PERSON}\"}}}}"
+            ),
+        ),
+        (
+            "actor twice, once escaped",
+            format!(
+                "{{\"actor\": \"{AUDITOR}\", \"\\u0061ctor\": \"{MEMBER}\", \
+                 \"caller\": {{\"person_id\": \"{PERSON}\"}}}}"
+            ),
+        ),
+    ];
+    for (case, proof) in &cases {
+        let (status, body) = call(
+            &served,
+            RECORD,
+            &[(HEADER, proof)],
+            Some(&json!({"visit_id": VISIT})),
+        );
+        assert_eq!(status, 403, "{case}: {body}");
+        assert_eq!(body, not_proven(), "{case}");
+    }
+    assert_eq!(events(&served), json!([]), "nothing is published");
+}
+
 /// The transport-free router, which a host with no socket answers through, is handed a request
 /// value with no header: on a surface whose requests prove their caller it proves none, so every
 /// command and view is refused, and nothing is run as a default caller.
@@ -624,7 +742,10 @@ fn the_router_refuses_every_request_where_the_caller_is_proven_by_a_header() {
         HEADER,
         SECRET,
     )
-    .expect("the fixture's surface is routed");
+    .expect("the fixture's surface is routed")
+    .with_console(spindle_ingress::HTTP_LOOPBACK)
+    .expect("the console is served")
+    .observing(16);
     assert_eq!(surface.caller_header(), Some("x-spindle-caller"));
     assert!(
         surface.unserved().is_empty(),
@@ -665,6 +786,33 @@ fn the_router_refuses_every_request_where_the_caller_is_proven_by_a_header() {
             serde_json::from_str::<Value>(&routed.response.body).expect("a JSON body"),
             not_proven(),
             "{operation}"
+        );
+    }
+    for (method, path) in [
+        ("GET", "/api/events"),
+        ("GET", "/api/model"),
+        ("POST", "/api/reset"),
+        ("GET", "/__spindle/requests"),
+        ("GET", "/__spindle/metrics"),
+    ] {
+        let routed = spindle_ingress::route(
+            &surface,
+            &mut host,
+            spindle_ingress::Request {
+                method: method.to_owned(),
+                path: path.to_owned(),
+                query: String::new(),
+                content_type: None,
+                body: Vec::new(),
+            },
+        );
+        assert_eq!(
+            (
+                routed.response.status,
+                serde_json::from_str::<Value>(&routed.response.body).ok()
+            ),
+            (403, Some(not_proven())),
+            "{method} {path}: no request value carries the proxy's secret"
         );
     }
     assert!(host.published().is_empty(), "nothing is published");
