@@ -311,9 +311,12 @@ commands:
           The target is available, the deployment is admitted or running for the environment the
           target provides, and the request is within the target's ceiling.
 
-      # UNMAPPED: target.state == Retired. As `when_related: {via: target_id}` it validates, and
-      # synthesis then forces no external sibling (ESS-SYNTH-003, "such a reference is not
-      # arranged for an external branch"), so every other refusal here would lose its scenario.
+      # UNMAPPED: target.state == Retired. As `when_related: {via: target_id}` alone it is refused
+      # (ESS-COMMAND-005, non_exhaustive_branches): `PlanInstance` does not refuse a target no row
+      # holds, so the read needs an `exists: false` branch for the target too. With that branch it
+      # validates, and synthesis then forces no external sibling (ESS-SYNTH-003, "such a reference
+      # is not arranged for an external branch"), so `environment-mismatch`, `not-admitted` and
+      # `above-ceiling` lose their scenarios.
       - name: target-retired
         external: the instance's target is retired
         moves: spindle.placement.Instance.refuse

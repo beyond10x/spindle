@@ -637,33 +637,50 @@ fn target_kind_resources_and_exit_mirror_the_specification() {
     }
 }
 
-/// One refusal of every variant [`place`] can return. The `match` makes a variant added to
-/// [`Refusal`] a compile error here until it is listed, so no refusal escapes the check below.
+/// One example of each listed refusal pattern, from one list: the patterns are the arms of an
+/// exhaustive `match` over [`Refusal`], and each example must match its own pattern.
+macro_rules! one_of_each {
+    ($($pattern:pat => $example:expr),+ $(,)?) => {{
+        fn listed(refusal: &Refusal) {
+            match refusal {
+                $($pattern => {})+
+            }
+        }
+        let every = vec![$($example),+];
+        let mut examples = every.iter();
+        $(
+            let example = examples.next().expect("one example per pattern");
+            listed(example);
+            assert!(
+                matches!(example, $pattern),
+                "{example:?} is not a {}",
+                stringify!($pattern)
+            );
+        )+
+        every
+    }};
+}
+
+/// One refusal of every variant [`place`] can return. Each variant is one entry of a single list:
+/// a variant added to [`Refusal`] is a compile error here until it has an entry, an entry's
+/// example must be of its own variant, and a variant listed twice is an unreachable arm, so the
+/// list holds every variant once and no refusal escapes the check below.
 fn one_refusal_of_each_kind() -> Vec<Refusal> {
-    let every = vec![
-        Refusal::TargetRetired,
-        Refusal::EnvironmentMismatch {
+    one_of_each![
+        Refusal::TargetRetired => Refusal::TargetRetired,
+        Refusal::EnvironmentMismatch { .. } => Refusal::EnvironmentMismatch {
             target: "microvm".to_owned(),
             admitted: "laptop".to_owned(),
         },
-        Refusal::NotAdmitted {
+        Refusal::NotAdmitted { .. } => Refusal::NotAdmitted {
             missing: Vec::new(),
         },
-        Refusal::AboveCeiling {
+        Refusal::AboveCeiling { .. } => Refusal::AboveCeiling {
             resource: ResourceKind::Vcpus,
             requested: 2,
             ceiling: 1,
         },
-    ];
-    for refusal in &every {
-        match refusal {
-            Refusal::TargetRetired
-            | Refusal::EnvironmentMismatch { .. }
-            | Refusal::NotAdmitted { .. }
-            | Refusal::AboveCeiling { .. } => {}
-        }
-    }
-    every
+    ]
 }
 
 /// story:placement-refusals-match-target: every refusal `place` returns is a cause

@@ -1,9 +1,7 @@
 type: ess-scenario/1
 domain: spindle.placement
 scenario: launch-not-admitted
-summary: >-
-  A placed instance whose deployment is only offered launches nothing and stays placed, while an
-  instance of an admitted deployment in another environment launches.
+summary: A placed instance launches only while its deployment is admitted or running.
 timeline:
   - at: 2026-01-05T09:00:00Z
     command: spindle.deployment.DeclareEnvironment
@@ -60,6 +58,41 @@ timeline:
       missing: []
     outcome: admitted
   - at: 2026-01-05T09:00:07Z
+    command: spindle.deployment.OfferBundle
+    input:
+      deployment_id: running
+      bundle: sha256:0f
+      environment_id: laptop
+    outcome: offered
+  - at: 2026-01-05T09:00:08Z
+    command: spindle.deployment.DecideAdmission
+    input:
+      deployment_id: running
+      requires: []
+      bindings: []
+      missing: []
+    outcome: admitted
+  - at: 2026-01-05T09:00:09Z
+    command: spindle.deployment.StartDeployment
+    input:
+      deployment_id: running
+    outcome: started
+  - at: 2026-01-05T09:00:10Z
+    command: spindle.deployment.OfferBundle
+    input:
+      deployment_id: stopped
+      bundle: sha256:0f
+      environment_id: laptop
+    outcome: offered
+  - at: 2026-01-05T09:00:11Z
+    command: spindle.deployment.DecideAdmission
+    input:
+      deployment_id: stopped
+      requires: []
+      bindings: []
+      missing: []
+    outcome: admitted
+  - at: 2026-01-05T09:00:12Z
     command: spindle.placement.PlanInstance
     input:
       instance_id: of-offered
@@ -69,7 +102,7 @@ timeline:
       target_id: laptop-host
       request: {vcpus: 1, memory_mib: 64, disk_mib: 0}
     outcome: planned
-  - at: 2026-01-05T09:00:08Z
+  - at: 2026-01-05T09:00:13Z
     command: spindle.placement.PlanInstance
     input:
       instance_id: of-admitted
@@ -79,17 +112,52 @@ timeline:
       target_id: microvm-host
       request: {vcpus: 1, memory_mib: 64, disk_mib: 0}
     outcome: planned
-  - at: 2026-01-05T09:00:09Z
+  - at: 2026-01-05T09:00:14Z
+    command: spindle.placement.PlanInstance
+    input:
+      instance_id: of-running
+      deployment_id: running
+      component: spindle-control
+      settings: []
+      target_id: laptop-host
+      request: {vcpus: 1, memory_mib: 64, disk_mib: 0}
+    outcome: planned
+  - at: 2026-01-05T09:00:15Z
+    command: spindle.placement.PlanInstance
+    input:
+      instance_id: of-stopped
+      deployment_id: stopped
+      component: spindle-control
+      settings: []
+      target_id: laptop-host
+      request: {vcpus: 1, memory_mib: 64, disk_mib: 0}
+    outcome: planned
+  - at: 2026-01-05T09:00:16Z
     command: spindle.placement.PlaceInstance
     input:
       instance_id: of-offered
     outcome: placed
-  - at: 2026-01-05T09:00:10Z
+  - at: 2026-01-05T09:00:17Z
     command: spindle.placement.PlaceInstance
     input:
       instance_id: of-admitted
     outcome: placed
-  - at: 2026-01-05T09:00:11Z
+  - at: 2026-01-05T09:00:18Z
+    command: spindle.placement.PlaceInstance
+    input:
+      instance_id: of-running
+    outcome: placed
+  - at: 2026-01-05T09:00:19Z
+    command: spindle.placement.PlaceInstance
+    input:
+      instance_id: of-stopped
+    outcome: placed
+  - at: 2026-01-05T09:00:20Z
+    command: spindle.deployment.StopDeployment
+    input:
+      deployment_id: stopped
+    outcome: stopped
+  - at: 2026-01-05T09:00:21Z
     command: spindle.placement.LaunchInstance
     input:
       instance_id: of-offered
@@ -97,13 +165,30 @@ timeline:
     error:
       name: spindle.placement.DeploymentNotAdmitted
       fields: {deployment_id: offered}
-  - at: 2026-01-05T09:00:12Z
+  - at: 2026-01-05T09:00:22Z
     command: spindle.placement.LaunchInstance
     input:
       instance_id: of-admitted
     outcome: launched
+  - at: 2026-01-05T09:00:23Z
+    command: spindle.placement.LaunchInstance
+    input:
+      instance_id: of-running
+    outcome: launched
+  - at: 2026-01-05T09:00:24Z
+    command: spindle.placement.LaunchInstance
+    input:
+      instance_id: of-stopped
+    outcome: not-admitted
+    error:
+      name: spindle.placement.DeploymentNotAdmitted
+      fields: {deployment_id: stopped}
 assert:
   - view: spindle.placement.InstanceState
     contains: {instance_id: of-offered, state: Placed}
   - view: spindle.placement.InstanceState
     contains: {instance_id: of-admitted, state: Running}
+  - view: spindle.placement.InstanceState
+    contains: {instance_id: of-running, state: Running}
+  - view: spindle.placement.InstanceState
+    contains: {instance_id: of-stopped, state: Placed}

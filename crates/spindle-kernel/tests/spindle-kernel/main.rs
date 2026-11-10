@@ -13,6 +13,7 @@ mod adversary_bytes;
 mod adversary_creation_unknown;
 mod adversary_deletes;
 mod adversary_generated;
+mod adversary_launch_admission;
 mod adversary_mint_text;
 mod adversary_placement;
 mod adversary_rally;
