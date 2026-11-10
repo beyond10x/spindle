@@ -1,0 +1,15 @@
+{
+  "at": "2026-11-10T12:52:37Z",
+  "actor": "human:timo",
+  "artifact": "story:external-cause-bound-to-http-call",
+  "kind": "story",
+  "revision": 6,
+  "change": {
+    "change": "evidence",
+    "kind": "review_outcome",
+    "source": "review-result:w18-u3-adversary-1",
+    "reference": "594016f7",
+    "review": "review-result:w18-u3-adversary-1",
+    "outcome": "fixed"
+  }
+}
