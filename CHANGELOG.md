@@ -6,6 +6,20 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- An environment can bind an external cause to an HTTP call: `spindle-environment/1` takes
+  optional `[http.<name>]` tables (`method`, `url`, `timeout_ms`, `secret_env`), and an
+  `external.<command>.<outcome>` key of `provides` bound to `<name>` is answered by one request to
+  that call each time `run` asks the cause, on stdin and served. The request is a
+  `spindle-external/1` JSON body (capability, command, outcome, cause, the command's input); a
+  `2xx` reply `{"holds": true | false}` answers it, and a timeout, a failure or any other reply
+  fails the command `undecided` with nothing written (`501` when served). The secret is read from
+  the environment variable `secret_env` names and sent as `Authorization: Bearer`; an unset
+  variable exits 1 before the first request. `http://` only. A served run whose every external
+  cause is bound to a call needs neither `--decisions` nor `--answer-default`. A document without
+  `[http]` reads as before.
+
 ## [0.9.0] - 2026-11-10
 
 ### Added

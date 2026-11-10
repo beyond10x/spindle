@@ -2,6 +2,8 @@
 
 use std::collections::BTreeMap;
 
+use crate::Capability;
+
 /// The format an environment document declares.
 pub const FORMAT: &str = "spindle-environment/1";
 
@@ -21,6 +23,20 @@ pub const FORMAT: &str = "spindle-environment/1";
 ///
 /// Each list is in order of preference. A key ending in `.*` provides every capability under
 /// that prefix, and an exact key wins over it.
+///
+/// An `external.` key may name an HTTP call the environment declares as `[http.<name>]`; the
+/// cause it provides is then answered by that call where the runtime makes one:
+///
+/// ```toml
+/// [provides]
+/// "external.shop.order.Place.approved" = ["approvals"]
+///
+/// [http.approvals]
+/// method = "POST"
+/// url = "http://127.0.0.1:8080/approvals"
+/// timeout_ms = 2000
+/// secret_env = "APPROVALS_TOKEN"
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Environment {
@@ -35,6 +51,24 @@ pub struct Environment {
     /// Capability (or `prefix.*`) to implementations, most preferred first.
     #[serde(default)]
     pub provides: BTreeMap<String, Vec<String>>,
+    /// The HTTP calls an `external.` key may name, by name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub http: BTreeMap<String, HttpCall>,
+}
+
+/// An HTTP call that answers external causes: `[http.<name>]`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpCall {
+    /// The request method: `POST`.
+    pub method: String,
+    /// The URL the request is sent to.
+    pub url: String,
+    /// How long the call may take, connecting to the last byte of its reply, in milliseconds.
+    pub timeout_ms: u64,
+    /// The environment variable holding the call's secret, never the secret itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_env: Option<String>,
 }
 
 /// Why an environment document was refused.
@@ -54,6 +88,37 @@ pub enum EnvironmentError {
     EmptyList {
         /// The capability.
         capability: String,
+    },
+    /// An HTTP call no `external.` key names.
+    #[error(
+        "[http.{name}] is named by no `external.` key of provides, so it would never be called"
+    )]
+    HttpUnused {
+        /// The call.
+        name: String,
+    },
+    /// An HTTP call named by a key that is not `external.`.
+    #[error("{capability} names the HTTP call `{name}`; an HTTP call answers external causes only")]
+    HttpNotExternal {
+        /// The call.
+        name: String,
+        /// The key naming it.
+        capability: String,
+    },
+    /// An HTTP call that may take no time.
+    #[error("[http.{name}] timeout_ms is 0; give the call time to answer")]
+    HttpTimeout {
+        /// The call.
+        name: String,
+    },
+    /// A `secret_env` that is no variable name; the value is not repeated, in case it is a secret.
+    #[error(
+        "[http.{name}] secret_env is not an environment variable name (ASCII letters, digits and \
+         `_`, not starting with a digit): the document names the variable, never the secret"
+    )]
+    SecretName {
+        /// The call.
+        name: String,
     },
 }
 
@@ -75,7 +140,44 @@ impl Environment {
                 capability: capability.clone(),
             });
         }
+        environment.check_http()?;
         Ok(environment)
+    }
+
+    /// Refuses an `[http.<name>]` table no `external.` key names or another key names, one with
+    /// no time to answer, and a `secret_env` that is no variable name.
+    fn check_http(&self) -> Result<(), EnvironmentError> {
+        for (name, call) in &self.http {
+            let naming: Vec<&String> = self
+                .provides
+                .iter()
+                .filter(|(_, implementations)| implementations.contains(name))
+                .map(|(capability, _)| capability)
+                .collect();
+            if let Some(capability) = naming
+                .iter()
+                .find(|capability| !capability.starts_with(Capability::EXTERNAL_PREFIX))
+            {
+                return Err(EnvironmentError::HttpNotExternal {
+                    name: name.clone(),
+                    capability: (*capability).clone(),
+                });
+            }
+            if naming.is_empty() {
+                return Err(EnvironmentError::HttpUnused { name: name.clone() });
+            }
+            if call.timeout_ms == 0 {
+                return Err(EnvironmentError::HttpTimeout { name: name.clone() });
+            }
+            if call
+                .secret_env
+                .as_deref()
+                .is_some_and(|variable| !variable_name(variable))
+            {
+                return Err(EnvironmentError::SecretName { name: name.clone() });
+            }
+        }
+        Ok(())
     }
 
     /// The implementations that provide `capability`, most preferred first: the exact key, or
@@ -93,5 +195,108 @@ impl Environment {
             })
             .max_by_key(|(length, _)| *length)
             .map(|(_, implementations)| implementations.as_slice())
+    }
+}
+
+/// Whether `name` is a portable environment variable name: ASCII letters, digits and `_`, not
+/// starting with a digit.
+fn variable_name(name: &str) -> bool {
+    let mut characters = name.chars();
+    characters
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && characters.all(|rest| rest.is_ascii_alphanumeric() || rest == '_')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Environment, EnvironmentError, HttpCall};
+
+    const HEAD: &str = "format = \"spindle-environment/1\"\nname = \"approvals\"\nos = \"linux\"\narch = \"x86_64\"\n\n";
+
+    fn parse(rest: &str) -> Result<Environment, EnvironmentError> {
+        Environment::parse(&format!("{HEAD}{rest}"))
+    }
+
+    #[test]
+    fn an_external_key_may_name_an_http_call() {
+        let environment = parse(
+            "[provides]\n\"external.shop.Place.approved\" = [\"approvals\"]\n\n\
+             [http.approvals]\nmethod = \"POST\"\nurl = \"http://127.0.0.1:8080/approvals\"\n\
+             timeout_ms = 2000\nsecret_env = \"APPROVALS_TOKEN\"\n",
+        )
+        .expect("the document parses");
+        assert_eq!(
+            environment.http.get("approvals"),
+            Some(&HttpCall {
+                method: "POST".to_owned(),
+                url: "http://127.0.0.1:8080/approvals".to_owned(),
+                timeout_ms: 2000,
+                secret_env: Some("APPROVALS_TOKEN".to_owned()),
+            })
+        );
+        assert_eq!(
+            environment.implementations("external.shop.Place.approved"),
+            Some(&["approvals".to_owned()][..])
+        );
+    }
+
+    #[test]
+    fn a_document_without_http_reads_and_writes_as_before() {
+        let environment =
+            parse("[provides]\n\"external.*\" = [\"operator-prompt\"]\n").expect("it parses");
+        assert!(environment.http.is_empty());
+        let written = toml::to_string(&environment).expect("it serialises");
+        assert!(!written.contains("http"), "{written}");
+    }
+
+    #[test]
+    fn an_http_call_no_external_key_names_is_refused() {
+        let unused = parse(
+            "[provides]\n\"external.*\" = [\"operator-prompt\"]\n\n\
+             [http.approvals]\nmethod = \"POST\"\nurl = \"http://127.0.0.1:1/\"\ntimeout_ms = 1\n",
+        );
+        assert!(
+            matches!(unused, Err(EnvironmentError::HttpUnused { ref name }) if name == "approvals"),
+            "{unused:?}"
+        );
+        let elsewhere = parse(
+            "[provides]\nchannel = [\"approvals\"]\n\"external.*\" = [\"approvals\"]\n\n\
+             [http.approvals]\nmethod = \"POST\"\nurl = \"http://127.0.0.1:1/\"\ntimeout_ms = 1\n",
+        );
+        assert!(
+            matches!(
+                elsewhere,
+                Err(EnvironmentError::HttpNotExternal { ref capability, .. }) if capability == "channel"
+            ),
+            "{elsewhere:?}"
+        );
+    }
+
+    #[test]
+    fn an_http_call_with_no_time_or_a_secret_in_place_of_its_variable_is_refused() {
+        let call = |extra: &str| {
+            parse(&format!(
+                "[provides]\n\"external.*\" = [\"approvals\"]\n\n[http.approvals]\n\
+                 method = \"POST\"\nurl = \"http://127.0.0.1:1/\"\n{extra}"
+            ))
+        };
+        assert!(matches!(
+            call("timeout_ms = 0\n"),
+            Err(EnvironmentError::HttpTimeout { .. })
+        ));
+        let pasted = call("timeout_ms = 10\nsecret_env = \"s3cr3t-t0ken.value\"\n");
+        let Err(error) = pasted else {
+            panic!("a secret in place of a variable name is refused: {pasted:?}");
+        };
+        assert!(matches!(error, EnvironmentError::SecretName { .. }));
+        assert!(
+            !error.to_string().contains("s3cr3t"),
+            "the refusal never repeats the value: {error}"
+        );
+        assert!(matches!(
+            call("timeout_ms = 10\nheaders = {}\n"),
+            Err(EnvironmentError::Parse(_))
+        ));
     }
 }

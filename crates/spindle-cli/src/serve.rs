@@ -14,6 +14,7 @@ use spindle_host::{Cause, Host, HostError, Retries, SystemClock};
 use spindle_ingress::{Caller, Listener, Surface, Unserved};
 use spindle_spec::EssIr;
 
+use crate::calls::Calls;
 use crate::decisions::{self, Run};
 use crate::{REFUSED, SIGNAL_POLL, SIGNALLED, signals};
 
@@ -82,12 +83,16 @@ pub(crate) struct Serving<'a> {
     pub ingress: &'a str,
     /// `--drop-retries`: run each `on_failure: retry` binding as a `drop` binding.
     pub drop_retries: bool,
-    /// With `--decisions` or `--answer-default`: `answers` answer every request's external causes
-    /// ([`decisions::deciding`]); without either, the host answers none and refuses a
-    /// specification that declares one.
+    /// With `--decisions` or `--answer-default`, or where every external cause is bound to an
+    /// HTTP call: `calls` and `answers` answer every request's external causes
+    /// ([`decisions::deciding`]); otherwise the host answers none and refuses a specification
+    /// that declares one.
     pub decides: bool,
     /// The run's own answers, beneath the decision table a reset's world carries.
     pub answers: Run,
+    /// The external causes the environment binds to an HTTP call, each answered by its call
+    /// before the world's table and `answers` are read.
+    pub calls: Calls,
     /// `--fixed-actor` with `--fixed-caller`, in the order given: each served operation is sent
     /// or read as the first its grant names ([`Surface::fixing_callers`]), a test-backend switch,
     /// not authentication; with none, as no caller.
@@ -169,8 +174,9 @@ fn fixed(ir: &EssIr, caller: &Caller) -> Result<()> {
 /// command a binding invoked that did not execute is printed on stderr as it is dropped, after
 /// its last attempt where the binding retries it ([`spindle_host::RETRY_ATTEMPTS`]).
 ///
-/// The `external:` causes of every request are answered by `serving.answers` where
-/// `serving.decides`; otherwise a specification that declares an external outcome is refused
+/// The `external:` causes of every request are answered where `serving.decides`: a cause the
+/// environment binds to an HTTP call by one request to it ([`Calls::over`]), any other by
+/// `serving.answers`; otherwise a specification that declares an external outcome is refused
 /// before listening.
 ///
 /// A `POST /api/reset` may carry a world ([`crate::world`]): rows written once every store is
@@ -292,6 +298,7 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         Retries::Retried
     };
     let answers = serving.answers;
+    let calls = serving.calls;
     let recorder = surface.recorder().cloned();
     let opened = if serving.decides {
         Host::deciding_with_retries(
@@ -299,7 +306,7 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             environment,
             Arc::new(SystemClock),
             directory,
-            decisions::deciding(&answers, None, recorder.as_ref()).boxed(),
+            calls.over(decisions::deciding(&answers, None, recorder.as_ref()).boxed()),
             retries,
         )
     } else {
@@ -324,7 +331,7 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     let listener = Listener::bind(serving.port, surface).context("binding the HTTP listener")?;
     let worlds = |ir: &EssIr, body: &serde_json::Value| {
         crate::world::read(ir, body, |table| {
-            decisions::deciding(&answers, Some(table), recorder.as_ref()).boxed()
+            calls.over(decisions::deciding(&answers, Some(table), recorder.as_ref()).boxed())
         })
         .map_err(|error| format!("{error:#}"))
     };
