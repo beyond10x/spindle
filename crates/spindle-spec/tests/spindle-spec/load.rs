@@ -20,7 +20,8 @@ fn spindles_own_specification_compiles() {
             "domains/deployment.yaml",
             "domains/placement.yaml",
             "domains/observe.yaml",
-            "domains/environment.yaml"
+            "domains/environment.yaml",
+            "domains/console.yaml"
         ]
     );
     assert!(

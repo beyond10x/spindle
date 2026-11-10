@@ -288,10 +288,11 @@ commands:
           nothing moved. The held state answers before the environment is read, so a binding the
           environment does not provide is answered here too once admission was decided.
 
-      # UNMAPPED: a binding whose capability has no exact key while `provides` holds a `prefix.*`
-      # key is not guarded: whether that key covers the capability is a prefix match against a
-      # list element, and an ESS 0.90 string operator compares only with a literal, `{param:}` or
-      # `{input:}` (`unparsable_predicate`). The runtime decides it (environment.rs:81-96).
+      # UNMAPPED: once `provides` holds any `prefix.*` key, no binding whose capability has no
+      # exact key is guarded, whether or not a prefix key covers it: whether one does is a prefix
+      # match against a list element, and an ESS 0.90 string operator compares only with a
+      # literal, `{param:}` or `{input:}` (`unparsable_predicate`). The runtime decides it
+      # (environment.rs:81-96).
       - name: not-provided
         when_related:
           via: environment_id
@@ -354,10 +355,13 @@ commands:
           requires: input.requires
           bindings: input.bindings
         summary: >-
-          Every required capability is bound to exactly one implementation the environment
-          provides for it, and nothing that is not required is bound. `requires` and the bindings
-          are the admitter's answer; the model checks them against each other and against the
-          environment's `provides`, and keeps both.
+          Every required capability is bound to exactly one implementation, and nothing that is
+          not required is bound. `requires` and the bindings are the admitter's answer; the model
+          checks them against each other and keeps both. Against the environment's `provides` it
+          checks each binding whose capability has an exact key, and, where `provides` holds no
+          `prefix.*` key, each binding at all. Once any `prefix.*` key is present, a binding whose
+          capability has no exact key is left to the runtime, whether or not a prefix key covers
+          it.
 
       - name: refused
         external: at least one required capability has no implementation in the environment
@@ -376,9 +380,10 @@ commands:
         summary: >-
           The deployment is refused. `missing` names at least one required capability, none the
           decision binds, and every required capability is bound or missing. No capability named
-          missing has an exact key in the environment's `provides`, and none bound is outside its
-          exact key's list, so `missing` is what the environment lacks of `requires` wherever no
-          `prefix.*` key decides it; the external cause confirms it.
+          missing has an exact key in the environment's `provides`, and no binding is outside the
+          list of its capability's exact key. Once any `prefix.*` key is present, a capability
+          with no exact key is left to the runtime, bound or named missing; the external cause
+          confirms the refusal.
 
       - name: unconfirmed
         error: spindle.deployment.AdmissionDecisionInvalid

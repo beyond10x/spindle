@@ -130,12 +130,16 @@ What `spindle.deployment` declares, and what stays a runtime rule outside the mo
   when its capability's exact key does not list its implementation, or when it has no exact key
   and `provides` holds no `prefix.*` key at all
   (`crates/spindle-kernel/tests/spindle-kernel/deployment.rs::a_binding_the_environment_does_not_provide_is_not_admitted`).
-  A capability only a `prefix.*` key could cover is not guarded: whether the key covers it is a
-  prefix match against a list element, and an ESS 0.90 string operator compares only with a
-  literal, a view parameter or one command input. The runtime decides it: the exact key, else the
-  longest `prefix.*` key that covers the capability (`Environment::implementations`). The kernel's
-  admission cases declare the environment expanded to the capabilities the bundle requires
-  (`declare_for`), so every binding there is checked by its exact key.
+  Once `provides` holds any `prefix.*` key, no binding whose capability has no exact key is
+  guarded, whether or not a prefix key covers it: `laptop.toml` lists `external.*`, so the model
+  admits `net.http` bound to `tcp`, which no key of it covers
+  (`crates/spindle-kernel/tests/spindle-kernel/adversary_environment.rs::adversary_a_binding_no_key_covers_beside_a_prefix_key_is_left_to_the_runtime`).
+  Whether a key covers a capability is a prefix match against a list element, and an ESS 0.90
+  string operator compares only with a literal, a view parameter or one command input. The
+  runtime decides it: the exact key, else the longest `prefix.*` key that covers the capability
+  (`Environment::implementations`). The kernel's admission cases declare the environment expanded
+  to the capabilities the bundle requires (`declare_for`), so every binding there is checked by
+  its exact key.
 - **A refusal names what is missing.** `refused` is eligible only for a consistent decision whose
   `missing` is not empty, and its external cause confirms it; `DeploymentRefused` carries that
   list. A consistent refusal the cause does not confirm is `unconfirmed`. Every invalid answer is
@@ -143,8 +147,10 @@ What `spindle.deployment` declares, and what stays a runtime rule outside the mo
   refusal naming missing a capability the environment provides by its exact key is
   `missing-provided`
   (`crates/spindle-kernel/tests/spindle-kernel/deployment.rs::a_refusal_naming_a_provided_capability_missing_is_not_refused`),
-  so a refusal the model takes names exactly the required capabilities the environment lacks,
-  wherever no `prefix.*` key decides it; one only a `prefix.*` key provides is not refused.
+  so where `provides` holds no `prefix.*` key, a refusal the model takes names exactly the
+  required capabilities the environment lacks. A capability named missing that has no exact key
+  is never `missing-provided`: once any `prefix.*` key is present, whether the environment lacks
+  it is left to the runtime.
   ESS 0.90 synthesises neither the forced `refused` scenario beside a `when_related:` refusal
   over a stored reference (ESS-SYNTH-003, "such a reference is not arranged for an external
   branch") nor `missing-provided` (ESS-SYNTH-003), and an `external:` branch may not carry
