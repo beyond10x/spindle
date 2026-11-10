@@ -13,6 +13,7 @@ mod adversary_bytes;
 mod adversary_creation_unknown;
 mod adversary_deletes;
 mod adversary_environment;
+mod adversary_existing_instance;
 mod adversary_generated;
 mod adversary_launch_admission;
 mod adversary_launch_refused;

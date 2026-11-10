@@ -830,12 +830,12 @@ impl<'a, 'ir> Run<'a, 'ir> {
             let Some((entity, Some(field))) = crate::supported::creation_address(creation) else {
                 continue;
             };
-            let Some(identity) = self.input.get(field).filter(|identity| !identity.is_null())
-            else {
+            // The source reads a field or a nested member (`wrap.id`), as ESS `read_input` does.
+            let Some(identity) = crate::values::read_input(self.input, field) else {
                 continue;
             };
             let entity = ir.entity(entity).name.to_string();
-            if self.store.load(&entity, identity)?.is_some() {
+            if self.store.load(&entity, &identity)?.is_some() {
                 self.runs(refused)?;
                 return Ok(Some(Executed {
                     outcome: refused.name.as_str().to_owned(),
