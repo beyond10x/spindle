@@ -16,6 +16,8 @@ scope:
   path: Taskfile.yml
 - confidence: cited
   path: crates/spindle-capability/src/environment.rs
+- confidence: inferred
+  path: crates/spindle-cli/src/cli.rs
 - confidence: cited
   path: crates/spindle-cli/src/main.rs
 - confidence: cited
@@ -30,7 +32,7 @@ scope:
   path: crates/spindle-kernel/src/sqlite.rs
 - confidence: inferred
   path: examples/environments/postgres.toml
-revision: 8
+revision: 9
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-10T15:08:56Z", actor: "human:timo", revision: 6}
 - {from: "proposed", to: "active", at: "2026-11-10T15:08:57Z", actor: "human:timo", revision: 7}
