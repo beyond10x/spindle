@@ -37,7 +37,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 6
+revision: 8
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-10T15:08:57Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-10T15:08:57Z", actor: "human:timo", revision: 3}
@@ -74,11 +74,15 @@ event ids (`eventlog-postgres` mints an id per append; `SqliteEventStore::restor
   `--state <dir>`, `store migrate` and `state move` into an empty database exit 0, and `run` bound to
   `postgres` on that database answers `MatchState` and every other rally view as the run on `<dir>`
   did.
-- `a_moved_instance_continues_at_its_version`: a command decided after the move commits at the
-  version the directory's last write left plus one, and a commit naming the old version is refused
-  as a conflict.
+- `a_moved_instance_continues_at_its_version`: a command decided after the move names the version
+  the directory's last write left and commits above it (its events plus `spindle.row`), and a
+  commit naming an older version is refused as a conflict (review-result:w19-u4-adversary-1,
+  note 3).
 - `a_move_into_a_non_empty_prefix_writes_nothing`: when any component's prefix already holds a
-  stream, the move exits 1 before writing to any prefix, naming the component.
+  stream, the move exits 1 before writing to any prefix, naming the component, also while another
+  write transaction is open on the server.
+- A row or event holding a string PostgreSQL refuses (U+0000) exits 1 before writing to any prefix,
+  naming the component and the stream (review-result:w19-u4-adversary-1, findings 1 and 2).
 - A directory with no `<component>.sqlite` of the specification's components exits 1, naming the
   directory.
 
@@ -89,3 +93,5 @@ event ids (`eventlog-postgres` mints an id per append; `SqliteEventStore::restor
 - A move that fails partway leaves a partial copy, which the next move refuses. The operator drops
   the component's tables (or the schema), runs `store migrate`, and moves again.
 - The stdin form of `run --state` keeps one file with no component name; it is not taken.
+- A directory whose event history holds U+0000 is refused and stays unmovable: events are not
+  changed, so no edit of current state clears it.
