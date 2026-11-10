@@ -408,7 +408,12 @@ types:
           Every event binding whose input was unmet while the request was answered, in the order
           the runtime reported them: bindings of the events the routed command published and of
           the events every command an event binding invoked on the way published. Empty when
-          every binding's input was met.
+          every binding's input was met. The list is complete when everything the request led to
+          has run, and when it stopped because bindings kept triggering each other. When the
+          routed command was kept and carrying its events on then failed, because the link to
+          another component failed, a component's state could not be read or written, or another
+          component stopped answering, the bindings found unmet before that failure are not
+          listed.
     invariants:
       - sequence >= 0
       - status >= 100
@@ -662,10 +667,14 @@ types:
         How many times an event binding's command may run for one event, as the binding's
         `delivery:` writes it. The words are ESS's (`Delivery` in ESS 0.90.0
         `crates/specify/ess-domain/src/binding.rs`, carried on `ResolvedBinding::delivery`), and
-        Spindle publishes them unchanged. `at_least_once`: the command may run again, so it must be
-        idempotent; Spindle redelivers an envelope to another component whose acknowledgement is
-        overdue.
-        `at_most_once`: one send and no redelivery. Neither is exactly once. In either, Spindle
+        Spindle publishes them unchanged. `at_least_once`: ESS lets the command run again, so it
+        must be idempotent. `at_most_once`: one send and no redelivery. Neither is exactly once.
+        Spindle sends each event to a binding once under either word: the receiving component
+        acknowledges an `at_least_once` envelope, and no runtime path resends one whose
+        acknowledgement is overdue (`spindle_channel::Sender::redeliver` exists, and the host
+        never calls it), so the conformance target answers ESS's redelivery step unsupported
+        (`crates/spindle-conformance/src/target.rs`). A command that does not take effect may
+        still run again where the binding retries (`BindingDelivery.attempts`). In either, Spindle
         sends nothing for an event before the state that published it is durable
         (`crates/spindle-channel/src/lib.rs`).
     variants: [at_least_once, at_most_once]

@@ -5,13 +5,13 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:f7ac1c6414ea343145d37ee86603338d2e027ee0974b96fc59207f12dbec0a16",
+    "contract_digest": "slice-sha256/2:9e9888c7e71bd80fbce4fef195b5b2fde4b7783d55ca35f07658b12fcf5c7b43",
     "regenerate": "ess generate"
   },
   "$defs": {
     "spindle.observe.DeliveryGuarantee": {
       "title": "DeliveryGuarantee",
-      "description": "How many times an event binding's command may run for one event, as the binding's `delivery:` writes it. The words are ESS's (`Delivery` in ESS 0.90.0 `crates/specify/ess-domain/src/binding.rs`, carried on `ResolvedBinding::delivery`), and Spindle publishes them unchanged. `at_least_once`: the command may run again, so it must be idempotent; Spindle redelivers an envelope to another component whose acknowledgement is overdue. `at_most_once`: one send and no redelivery. Neither is exactly once. In either, Spindle sends nothing for an event before the state that published it is durable (`crates/spindle-channel/src/lib.rs`).",
+      "description": "How many times an event binding's command may run for one event, as the binding's `delivery:` writes it. The words are ESS's (`Delivery` in ESS 0.90.0 `crates/specify/ess-domain/src/binding.rs`, carried on `ResolvedBinding::delivery`), and Spindle publishes them unchanged. `at_least_once`: ESS lets the command run again, so it must be idempotent. `at_most_once`: one send and no redelivery. Neither is exactly once. Spindle sends each event to a binding once under either word: the receiving component acknowledges an `at_least_once` envelope, and no runtime path resends one whose acknowledgement is overdue (`spindle_channel::Sender::redeliver` exists, and the host never calls it), so the conformance target answers ESS's redelivery step unsupported (`crates/spindle-conformance/src/target.rs`). A command that does not take effect may still run again where the binding retries (`BindingDelivery.attempts`). In either, Spindle sends nothing for an event before the state that published it is durable (`crates/spindle-channel/src/lib.rs`).",
       "x-ess-name": "spindle.observe.DeliveryGuarantee",
       "x-ess-kind": "enum",
       "type": "string",

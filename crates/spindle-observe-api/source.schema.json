@@ -257,7 +257,7 @@
       "x-ess-name": "spindle.observe.CounterValue"
     },
     "spindle.observe.DeliveryGuarantee": {
-      "description": "How many times an event binding's command may run for one event, as the binding's `delivery:` writes it. The words are ESS's (`Delivery` in ESS 0.90.0 `crates/specify/ess-domain/src/binding.rs`, carried on `ResolvedBinding::delivery`), and Spindle publishes them unchanged. `at_least_once`: the command may run again, so it must be idempotent; Spindle redelivers an envelope to another component whose acknowledgement is overdue. `at_most_once`: one send and no redelivery. Neither is exactly once. In either, Spindle sends nothing for an event before the state that published it is durable (`crates/spindle-channel/src/lib.rs`).",
+      "description": "How many times an event binding's command may run for one event, as the binding's `delivery:` writes it. The words are ESS's (`Delivery` in ESS 0.90.0 `crates/specify/ess-domain/src/binding.rs`, carried on `ResolvedBinding::delivery`), and Spindle publishes them unchanged. `at_least_once`: ESS lets the command run again, so it must be idempotent. `at_most_once`: one send and no redelivery. Neither is exactly once. Spindle sends each event to a binding once under either word: the receiving component acknowledges an `at_least_once` envelope, and no runtime path resends one whose acknowledgement is overdue (`spindle_channel::Sender::redeliver` exists, and the host never calls it), so the conformance target answers ESS's redelivery step unsupported (`crates/spindle-conformance/src/target.rs`). A command that does not take effect may still run again where the binding retries (`BindingDelivery.attempts`). In either, Spindle sends nothing for an event before the state that published it is durable (`crates/spindle-channel/src/lib.rs`).",
       "enum": [
         "at_least_once",
         "at_most_once"
@@ -748,7 +748,7 @@
           "type": "integer"
         },
         "unmet": {
-          "description": "Every event binding whose input was unmet while the request was answered, in the order the runtime reported them: bindings of the events the routed command published and of the events every command an event binding invoked on the way published. Empty when every binding's input was met.",
+          "description": "Every event binding whose input was unmet while the request was answered, in the order the runtime reported them: bindings of the events the routed command published and of the events every command an event binding invoked on the way published. Empty when every binding's input was met. The list is complete when everything the request led to has run, and when it stopped because bindings kept triggering each other. When the routed command was kept and carrying its events on then failed, because the link to another component failed, a component's state could not be read or written, or another component stopped answering, the bindings found unmet before that failure are not listed.",
           "items": {
             "$ref": "#/$defs/spindle.observe.UnmetInput"
           },
@@ -1232,8 +1232,8 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-ess-provenance": {
-    "contract_digest": "slice-sha256/2:60961b216d60377f21caaedf0be74a6b9e0f62abf556196f1e5499cc55bb6249",
-    "source_digest": "cd60946fea30f02b0d37d43f43f20eb750a608fb2686f43f40c2c5035bf96bdb",
+    "contract_digest": "slice-sha256/2:72e174c24bb30d65fec799f9ace40f93fe040766abbb87ee4b280468926b8c36",
+    "source_digest": "b2e7936ed34b6d739535238d223d3c1ef60b6d8aac8ed375ff016e87487e8b80",
     "specification_version": "v1",
     "system": "spindle"
   }

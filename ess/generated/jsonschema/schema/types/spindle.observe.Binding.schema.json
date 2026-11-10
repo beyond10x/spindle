@@ -5,7 +5,7 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:9b981ee17eb63db04585dcb4f1175898f01ff39fff9c9e64458b3941a3792659",
+    "contract_digest": "slice-sha256/2:5878c97b57d68e3f810eaabc77739a9a1e8a0fc9b40f8c9283f41482e431d1b2",
     "regenerate": "ess generate"
   },
   "$defs": {
@@ -118,7 +118,7 @@
     },
     "spindle.observe.DeliveryGuarantee": {
       "title": "DeliveryGuarantee",
-      "description": "How many times an event binding's command may run for one event, as the binding's `delivery:` writes it. The words are ESS's (`Delivery` in ESS 0.90.0 `crates/specify/ess-domain/src/binding.rs`, carried on `ResolvedBinding::delivery`), and Spindle publishes them unchanged. `at_least_once`: the command may run again, so it must be idempotent; Spindle redelivers an envelope to another component whose acknowledgement is overdue. `at_most_once`: one send and no redelivery. Neither is exactly once. In either, Spindle sends nothing for an event before the state that published it is durable (`crates/spindle-channel/src/lib.rs`).",
+      "description": "How many times an event binding's command may run for one event, as the binding's `delivery:` writes it. The words are ESS's (`Delivery` in ESS 0.90.0 `crates/specify/ess-domain/src/binding.rs`, carried on `ResolvedBinding::delivery`), and Spindle publishes them unchanged. `at_least_once`: ESS lets the command run again, so it must be idempotent. `at_most_once`: one send and no redelivery. Neither is exactly once. Spindle sends each event to a binding once under either word: the receiving component acknowledges an `at_least_once` envelope, and no runtime path resends one whose acknowledgement is overdue (`spindle_channel::Sender::redeliver` exists, and the host never calls it), so the conformance target answers ESS's redelivery step unsupported (`crates/spindle-conformance/src/target.rs`). A command that does not take effect may still run again where the binding retries (`BindingDelivery.attempts`). In either, Spindle sends nothing for an event before the state that published it is durable (`crates/spindle-channel/src/lib.rs`).",
       "x-ess-name": "spindle.observe.DeliveryGuarantee",
       "x-ess-kind": "enum",
       "type": "string",

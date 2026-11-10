@@ -5,7 +5,7 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:cd8e65b596db273a2207f15243e665bd1fc3bf5f87d80212717aafe415e0dc24",
+    "contract_digest": "slice-sha256/2:8c678afdbbddc28d73658a3e8f5b57433881578a1093c9ba43cb2bb06f2197e3",
     "regenerate": "ess generate"
   },
   "$defs": {
@@ -207,7 +207,7 @@
           }
         },
         "unmet": {
-          "description": "Every event binding whose input was unmet while the request was answered, in the order the runtime reported them: bindings of the events the routed command published and of the events every command an event binding invoked on the way published. Empty when every binding's input was met.",
+          "description": "Every event binding whose input was unmet while the request was answered, in the order the runtime reported them: bindings of the events the routed command published and of the events every command an event binding invoked on the way published. Empty when every binding's input was met. The list is complete when everything the request led to has run, and when it stopped because bindings kept triggering each other. When the routed command was kept and carrying its events on then failed, because the link to another component failed, a component's state could not be read or written, or another component stopped answering, the bindings found unmet before that failure are not listed.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/spindle.observe.UnmetInput"
