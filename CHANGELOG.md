@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-10
+
 ### Added
 
 - `ess/` specifies the reset and the world it loads, in a new domain `spindle.console`
