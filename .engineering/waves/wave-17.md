@@ -1,6 +1,13 @@
 # Wave 17
 
-**Running.** Run by the coordinator under `approval-record:wave17-approval`. The operator named the
+**Delivered.** PR https://github.com/beyond10x/spindle/pull/39 (head 3934d733) merged as 9cd4ccbc,
+released as 0.9.0. Seven stories moved to `implemented` on the PR's CI run 42768444426 (Gate and
+macOS), a `verification` and their `review_outcome`s. `story:unknown-component-refused-at-deploy`
+(U3) is archived as a recorded decline: H2 already held (`specification:unknown-component-already-refused`),
+and the unit added a regression guard only. Conformance moved from 41 executed with 1 declared
+failure to 79 executed and 79 passed, with no declaration.
+
+Run by the coordinator under `approval-record:wave17-approval`. The operator named the
 ESS review's high findings as one wave, and the standing acceptance in
 `approval-record:wave16-approval` covers it. Skill `aep:implementing` 0.26.0, wave mode. The
 stories decompose `epic:spec-states-runtime` and serve `vision:spindle`. The source is
@@ -20,14 +27,14 @@ citations, without `story-scoper` runs.
 
 | unit | story | branch | tree (managed id) | agent | stage |
 |---|---|---|---|---|---|
-| U1 | `story:admission-decision-checked-by-model` | `unit/w17-admission` | `spindle-w17-admission` | `aep:implementor` | merged 582f57d3 after correction 984648b5 and 62c58301 (`review-result:w17-u1-adversary-1`, 3 fixed) |
-| U2 | `story:placement-refusals-match-target` | `unit/w17-placement` | `spindle-w17-placement` | `aep:implementor` | merged 28220991 after corrections 6c4aef37 and 18b378ec (`review-result:w17-u2-adversary-1` 5 fixed; `-2` 3 fixed, 1 escalated) |
-| U3 | `story:unknown-component-refused-at-deploy` | `unit/w17-unknown-component` | `spindle-w17-unknown-component` | `aep:implementor` | merged 9ad8643d, tests only: H2 did not hold (`specification:unknown-component-already-refused`) |
-| U4 | `story:environment-implementations-specified` | `unit/w17-environment` | `spindle-w17-environment` | `aep:implementor` | merged b82e5182 after correction 36529dd2 (`review-result:w17-u4-adversary-1`, 3 fixed) |
-| U5 | `story:store-reset-and-world-specified` | `unit/w17-world` | `spindle-w17-world` | `aep:implementor` | merged 07af0f66 after correction e901b2d0 (`review-result:w17-u5-adversary-1`, 6 fixed) |
-| U6 | `story:periodic-timing-specified` | `unit/w17-periodic` | `spindle-w17-periodic` | `aep:implementor` | merged a055486c and 8d00dcf4 (`review-result:w17-u6-adversary-1`) |
-| U7 | `story:binding-delivery-specified` | `unit/w17-delivery` | `spindle-w17-delivery` | `aep:implementor` | merged f99b98f5 after correction be82b6ae (`review-result:w17-u7-adversary-1`, 2 fixed, 1 no-op) |
-| U8 | `story:ingress-caller-identity-specified` | `unit/w17-caller` | `spindle-w17-caller` | `aep:implementor` | merged 5ffa0306, an UNMAPPED marker only: ESS 0.90 has no construct |
+| U1 | `story:admission-decision-checked-by-model` | `unit/w17-admission` | `spindle-w17-admission` | `aep:implementor` | delivered |
+| U2 | `story:placement-refusals-match-target` | `unit/w17-placement` | `spindle-w17-placement` | `aep:implementor` | delivered |
+| U3 | `story:unknown-component-refused-at-deploy` | `unit/w17-unknown-component` | `spindle-w17-unknown-component` | `aep:implementor` | archived (recorded decline; regression guard merged 9ad8643d) |
+| U4 | `story:environment-implementations-specified` | `unit/w17-environment` | `spindle-w17-environment` | `aep:implementor` | delivered |
+| U5 | `story:store-reset-and-world-specified` | `unit/w17-world` | `spindle-w17-world` | `aep:implementor` | delivered |
+| U6 | `story:periodic-timing-specified` | `unit/w17-periodic` | `spindle-w17-periodic` | `aep:implementor` | delivered |
+| U7 | `story:binding-delivery-specified` | `unit/w17-delivery` | `spindle-w17-delivery` | `aep:implementor` | delivered |
+| U8 | `story:ingress-caller-identity-specified` | `unit/w17-caller` | `spindle-w17-caller` | `aep:implementor` | delivered |
 
 HTTP 429 stopped U4 and U5 on 2026-11-09 at about 22:55; both were resumed on the same model.
 

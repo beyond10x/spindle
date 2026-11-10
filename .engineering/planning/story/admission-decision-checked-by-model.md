@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:admission-decision-checked-by-model
 kind: story
-status: active
+status: implemented
 title: The admission decision is checked by the model, not by its caller
 relations:
 - decomposes: epic:spec-states-runtime
@@ -19,10 +19,11 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/deployment.rs
 - confidence: cited
   path: ess/domains/deployment.yaml
-revision: 8
+revision: 9
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-09T21:33:08Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-09T21:33:08Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-10T06:35:50Z", actor: "human:timo", revision: 9, decided_on: {"recorded":{"test_result":1,"review_outcome":3,"verification":1}}}
 ---
 # The admission decision is checked by the model, not by its caller
 

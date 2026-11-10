@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:environment-implementations-specified
 kind: story
-status: active
+status: implemented
 title: The environment's implementations and their matching rule are specified
 relations:
 - decomposes: epic:spec-states-runtime
@@ -15,10 +15,11 @@ scope:
   path: ess/ess-inputs.yaml
 - confidence: inferred
   path: ess/system.yaml
-revision: 6
+revision: 7
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-09T21:33:09Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-09T21:33:09Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-10T06:35:50Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"test_result":1,"review_outcome":3,"verification":1}}}
 ---
 # The environment's implementations and their matching rule are specified
 

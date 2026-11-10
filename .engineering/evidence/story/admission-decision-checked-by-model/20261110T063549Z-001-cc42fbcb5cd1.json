@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-10T06:35:49Z",
+  "actor": "human:timo",
+  "artifact": "story:admission-decision-checked-by-model",
+  "kind": "story",
+  "revision": 8,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "wave 17 U1",
+    "reference": "unit merge 582f57d3 into wave/17; PR 39 merged as 9cd4ccbc"
+  }
+}

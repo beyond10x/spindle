@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-10T06:35:52Z",
+  "actor": "human:timo",
+  "artifact": "story:ingress-caller-identity-specified",
+  "kind": "story",
+  "revision": 6,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "wave 17 U8",
+    "reference": "unit merge 5ffa0306 into wave/17; PR 39 merged as 9cd4ccbc"
+  }
+}

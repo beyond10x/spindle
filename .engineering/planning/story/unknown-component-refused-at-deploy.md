@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:unknown-component-refused-at-deploy
 kind: story
-status: active
+status: archived
 title: A placement naming an unknown component is refused at deploy
 relations:
 - decomposes: epic:spec-states-runtime
@@ -13,10 +13,11 @@ scope:
   path: crates/spindle-control/src/control.rs
 - confidence: inferred
   path: crates/spindle-control/tests/spindle-control/main.rs
-revision: 5
+revision: 6
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-09T21:33:09Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-09T21:33:09Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "archived", at: "2026-11-10T06:35:53Z", actor: "human:timo", revision: 6}
 ---
 # A placement naming an unknown component is refused at deploy
 
