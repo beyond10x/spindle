@@ -1,0 +1,22 @@
+{
+  "name": "website-ux",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"core/*.test.ts\" findings.test.ts site.test.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "gates": "playwright test -c playwright.config.ts --project gating",
+    "measure": "node cli/round.ts measure",
+    "ratchet": "node cli/ratchet.ts"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
+    "@playwright/test": "1.65.0",
+    "@types/node": "^22.19.0",
+    "typescript": "~6.0.2"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}

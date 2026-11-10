@@ -142,7 +142,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Bindings",
         "Event bindings in process and over TCP",
-        "spindle-channel carries an event to the command it binds to, in process or as length-prefixed JSON frames over TCP; at_least_once redelivers.",
+        "spindle-channel carries an event to the command it binds to, in process or as length-prefixed JSON frames over TCP; the receiver acknowledges an at_least_once envelope, and no runtime path resends one whose acknowledgement is overdue.",
         "/docs/concepts/components-and-bindings",
         "crates/spindle-channel/tests/spindle-channel/channel.rs::an_event_reaches_the_bound_component_over_tcp",
     ),

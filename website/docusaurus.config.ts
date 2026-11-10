@@ -1,6 +1,9 @@
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 import {withProductSite} from '@beyond10x/docs-system/product-site';
+import rehypeOptionAnchors from './src/rehype/option-anchors';
+import rehypeTableLabels from './src/rehype/table-labels';
+import rehypeCodeBreaks from './src/rehype/code-breaks';
 
 const config: Config = {
   title: 'Spindle',
@@ -30,7 +33,24 @@ const config: Config = {
     mermaid: true,
   },
 
-  themes: ['@docusaurus/theme-mermaid'],
+  clientModules: ['./src/client/search-row.ts', './src/client/search-focus.ts'],
+
+  themes: [
+    '@docusaurus/theme-mermaid',
+    [
+      '@easyops-cn/docusaurus-search-local',
+      {
+        hashed: true,
+        language: ['en'],
+        indexDocs: true,
+        indexBlog: false,
+        indexPages: false,
+        docsRouteBasePath: 'docs',
+        highlightSearchTermsOnTargetPage: true,
+        explicitSearchResultPath: true,
+      },
+    ],
+  ],
 
   i18n: {
     defaultLocale: 'en',
@@ -45,6 +65,7 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           routeBasePath: 'docs',
           editUrl: 'https://github.com/beyond10x/spindle/tree/main/website/',
+          rehypePlugins: [rehypeOptionAnchors, rehypeTableLabels, rehypeCodeBreaks],
         },
         blog: false,
         theme: {customCss: './src/css/custom.css'},

@@ -2,14 +2,13 @@
 title: Capabilities
 sidebar_position: 2
 description: The technical needs of a specification, derived from what it declares and never written down by its author.
-lede: Capabilities are derived from the specification, never authored, so they cannot drift from it.
+lede: Capabilities are derived from the specification and are not authored by hand.
 source: crates/spindle-capability/src/derive.rs, crates/spindle-capability/tests/spindle-capability/admission.rs, crates/spindle-capability/tests/spindle-capability/mint.rs, crates/spindle-cli/src/cli.rs, crates/spindle-cli/tests/spindle-cli/decisions.rs, crates/spindle-cli/tests/spindle-cli/served_decisions.rs, README.md
 ---
 
 A capability is something technical a specification needs from the runtime: a durable store, a
-timer, a channel between components. Spindle reads the compiled specification and lists them; the
-author never writes a requirement list, so the list cannot claim less than the specification
-needs.
+timer, a channel between components. Spindle reads the compiled specification and lists them, so
+the list cannot claim less than the specification needs.
 
 ## The derivation rules
 
@@ -55,45 +54,52 @@ timer
 ## Adding one
 
 A new capability is a new derivation rule in `crates/spindle-capability/src/derive.rs` with a test.
-A specification never gains a field that lists capabilities.
+A specification does not gain a field that lists capabilities.
 
 ## Answering external outcomes
 
 An `external.*` capability is an outcome the model cannot decide on its own. `b10x-spindle run`
-answers it per command: from the line's `"external"` object, then from a `--decisions` TOML file
-(`<outcome> = true | false` at the top level for every command, or under a `["<command>"]` table
-for one), then, with `--answer-default`, "does not hold" on a command that declares a default
-branch. A line nothing answers fails, naming the outcome, and the run goes on.
+answers it per command, from these sources in order:
 
-A `run` serving `ingress.network` answers a request's external causes the same way, from the
-decisions file and then `--answer-default`; a request carries no `"external"` object, and one
-nothing answers is refused `501`, naming the outcome. The file answers per command and outcome,
-never per input value, so every request to one command gets the same answer. Without either flag
-a served specification that declares an external outcome is refused before anything listens.
+1. the line's `"external"` object
+2. a `--decisions` TOML file: `<outcome> = true | false` at the top level for every command, or
+   under a `["<command>"]` table for one
+3. with `--answer-default`, "does not hold" on a command that declares a default branch
+
+A line that nothing answers fails with the outcome in its message, and the run goes on.
+
+A `run` serving `ingress.network` answers a request's external causes from the decisions file and
+then `--answer-default`. A request carries no `"external"` object. A request
+that nothing answers is refused `501`, with the outcome in the refusal. The file answers per
+command and outcome, not per input value, so every request to one command gets the same answer.
+Without either flag, a served specification that declares an external outcome is refused before
+anything listens.
 
 ## Serving `ingress.network` over HTTP
 
 Where a component requires `ingress.network` and the environment binds it to `http-loopback`,
-`b10x-spindle run` runs every component in one process and serves those components over HTTP on
+`b10x-spindle run` runs every component in one process. It serves those components over HTTP on
 `127.0.0.1` instead of reading stdin. Any other binding, such as `http` in `microvm.toml`, is
 refused before anything listens. Once listening it prints
-`{"listening": "127.0.0.1:<port>", "components": [...]}`; `--port` picks the port, `0` by default
-for one the system chooses. It serves until SIGINT or SIGTERM.
+`{"listening": "127.0.0.1:<port>", "components": [...]}`. `--port` picks the port, and its
+default, `0`, lets the system choose one. It serves until SIGINT or SIGTERM.
 
 What is served is what ESS derives: each command the component accepts and, for a
 `reached_by: network` component, each view of a domain it owns. Each is served exactly where
 `ess generate --kind openapi` publishes it:
 
-- **Without a binding,** at the route ESS derives: `POST /<domain>/commands/<command>` and
-  `GET /<domain>/views/<view>`, from their wire names, each outcome at the status ESS derives.
-- **With an `ess-http/1` binding** (`--http <file>`, the document `ess specify http validate`
-  checks), an operation it names is at its method, path and path variables, compiled by ESS, and
-  answers the status it lists per outcome, as `ess generate --kind openapi --http <file>`
-  publishes it. An operation it does not name keeps its derived route.
+- Without a binding: at the route ESS derives, `POST /<domain>/commands/<command>` and
+  `GET /<domain>/views/<view>`, from their wire names. Each outcome answers at the status ESS
+  derives.
+- With an `ess-http/1` binding, given as `--http <file>` and checked by
+  `ess specify http validate`: an operation the binding lists is at its method, path and path
+  variables, compiled by ESS. It answers the status the binding lists per outcome, as
+  `ess generate --kind openapi --http <file>` publishes it. An operation the binding does not
+  list keeps its derived route.
 
-A command's request body is its input as ESS publishes it, less any field the path carries; a
-field the command does not declare is refused. It answers its outcome's status with the envelope
-ESS publishes for that outcome:
+A command's request body is its input as ESS publishes it, less any field the path carries. A
+field the command does not declare is refused. The command answers its outcome's status with the
+envelope ESS publishes for that outcome:
 
 ```json
 {
@@ -104,17 +110,26 @@ ESS publishes for that outcome:
 }
 ```
 
-`error` only on a refusing outcome, `payload` only where the error carries fields. An outcome the
-binding answers with `body: response` answers the command's response alone, with
-`body: response.<field>` the value of that one field alone, both as `application/json`, and with
-`body: none` no body and no `Content-Type`. A refusing outcome the binding answers with an error
-object, `body: {<member>: error}`, answers its bound status with an object whose `<member>` is
-the error's wire name, beside the error's fields under their wire names, and writes nothing. An
-outcome the binding answers with headers, a redirect or the `text` encoding answers `501` naming
-the outcome and which of those it is, and writes nothing. A view answers
-`200` with the body ESS publishes for it, `{"rows": [...]}`. Refusals the surface makes, as ESS's
-served application makes them, are `{"refused": "<why>"}`: `400` for a request it cannot read
-(an undeclared field, a broken path escape, a body that breaks off), `404` for an unknown path,
-`405` for a method other than the route's (compared exactly), `411` for a chunked body, `413` for
-one announced over 1 MiB, `408` for a body that does not arrive in time. A command the runtime
-cannot complete answers `501` with `{"refused", "committed"}`.
+`error` appears only on a refusing outcome, `payload` only where the error carries fields.
+
+| The binding answers the outcome with | The response |
+|---|---|
+| `body: response` | the command's response alone, as `application/json` |
+| `body: response.<field>` | the value of that one field alone, as `application/json` |
+| `body: none` | no body and no `Content-Type` |
+| an error object, `body: {<member>: error}`, on a refusing outcome | its bound status with an object whose `<member>` is the error's wire name, beside the error's fields under their wire names. Nothing is written. |
+| headers, a redirect or the `text` encoding | `501` naming the outcome and which of those it is. Nothing is written. |
+
+A view answers `200` with the body ESS publishes for it, `{"rows": [...]}`. Refusals the surface
+makes, as ESS's served application makes them, are `{"refused": "<why>"}`:
+
+| Status | Request |
+|---|---|
+| `400` | a request it cannot read: an undeclared field, a broken path escape, a body that breaks off |
+| `404` | an unknown path |
+| `405` | a method other than the route's, compared exactly |
+| `408` | a body that does not arrive in time |
+| `411` | a chunked body |
+| `413` | a body announced over 1 MiB |
+
+A command the runtime cannot complete answers `501` with `{"refused", "committed"}`.

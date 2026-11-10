@@ -7,24 +7,32 @@ Documentation: <https://beyond10x.github.io/spindle/> ·
 [CLI](https://beyond10x.github.io/spindle/docs/reference/cli) ·
 [Status](https://beyond10x.github.io/spindle/docs/status)
 
-Spindle runs ESS specifications. A specification says what an application means — entities,
+Spindle runs ESS specifications. A specification says what an application means: entities,
 commands, guards, events, bindings, views. Spindle supplies everything technical underneath: where
 state is stored, how a timer fires, how an event of one component reaches a command of another.
 
 Those technical needs are **capabilities**, and Spindle derives them from the specification. An
-author never lists them. An **environment** says which implementations provide which capabilities
+author does not list them. An **environment** says which implementations provide which capabilities
 where Spindle runs. **Admission** binds each required capability to one implementation, or refuses
-and names every capability the environment lacks. The same specification runs on a laptop with an
-in-process channel and in a microVM with a TCP one; admission is the only step that differs.
+and lists every capability the environment lacks. The same specification runs on a laptop with an
+in-process channel and in a microVM with a TCP one. Admission is the only step that differs.
 
-Status: early. Loading, capability derivation, admission, command execution (with list views,
-minted identities and external decisions from a file), per-component counters and the rally example
-in one process and as three processes joined by TCP channels work, and `run` serves a network-reached component over HTTP on 127.0.0.1; the process, QEMU and Firecracker launchers exist as libraries and sample each
-instance's CPU and memory; `deploy` launches the instances of a placement as processes and serves
-the live observe API and the UI built into the binary. Running each component in its own microVM is
-planned. The
+Status: early, and these parts work:
+
+- loading, capability derivation, admission and command execution, with list views, minted
+  identities and external decisions from a file
+- per-component counters
+- the rally example in one process, and as three processes or three microVMs joined by TCP
+  channels
+- `run`, which serves a network-reached component over HTTP on 127.0.0.1
+- the process, QEMU and Firecracker launchers, as libraries that sample each instance's CPU and
+  memory
+- `deploy`, which launches the instances of a placement as processes and serves the live observe
+  API and UI
+
+A bundle uploaded to deploy, and cells with ownership leases, are planned. The
 [status page](https://beyond10x.github.io/spindle/docs/status) lists each item with the test that
-holds it; the design is [`docs/design/spindle.md`](docs/design/spindle.md).
+checks it, and the design is [`docs/design/spindle.md`](docs/design/spindle.md).
 
 ## Try it
 
@@ -40,43 +48,53 @@ target/release/b10x-spindle admit ess --environment examples/environments/microv
 The last command is refused: Spindle's own specification has an outcome decided outside the
 model, and the `microvm` environment provides nothing for it. Exit status 3 means refused.
 
-`task build` builds the observe UI (`ui/`, pnpm) and then `b10x-spindle`, which embeds it; a
+`task build` builds the observe UI (`ui/`, pnpm) and then `b10x-spindle`, which embeds it. A
 binary built without `ui/dist` answers `GET /` with 503. `b10x-spindle deploy examples/rally/ess
 --environment examples/environments/laptop-processes.toml --placement
 examples/placements/rally-processes.toml` launches the three rally components as processes and
 prints the URL of the observe UI, `http://127.0.0.1:7341/?t=<token>`.
 
-Where `run` serves HTTP, `--observe` records every request it answers and lists the last 256
-(`--observe-requests <N>`, 1 to 10000) at `GET /__spindle/requests`, newest first, with totals
-per class since start; `?class=not-served` keeps only the requests answered `501`. Each record
-lists every external cause asked while it was answered, by its command or by one an event
-binding invoked, with the command that asked and what answered: `world` (the last reset's
-decision table), `file` (`--decisions`), `default` (`--answer-default`) or `unanswered`; a cause
-asked outside any request, by a timer-fired command, is counted and listed in no record.
-Each record also lists under `unmet` every event binding whose input an event published on the way
-did not fill, so its command was not invoked: the binding, the component, the command and why.
+Where `run` serves HTTP, `--observe` records every request it answers. `GET /__spindle/requests`
+lists the last 256 (`--observe-requests <N>`, 1 to 10000), newest first, with totals per class
+since start. `?class=not-served` keeps only the requests answered `501`.
+
+A record lists every external cause asked while the request was answered, by its command or by
+one an event binding invoked. For each cause it gives the command that asked and what answered:
+`world` for the last reset's decision table, `file` for `--decisions`, `default` for
+`--answer-default`, or `unanswered`.
+
+A cause asked outside any request, by a timer-fired command, is counted and listed in no record.
+
+Under `unmet`, a record lists each event binding whose input an event published on the way did
+not fill. Its command was not invoked. The entry gives the binding, the component, the command and
+why.
+
 `GET /__spindle/metrics` answers the run's metrics in the Prometheus text format
-(`text/plain; version=0.0.4`), the families of `ess/fixtures/observe/metrics/families.json`:
+(`text/plain; version=0.0.4`). The families are those of `ess/fixtures/observe/metrics/families.json`:
 requests by method, route template, operation, kind, class and status class, their durations,
 commands by outcome and failure, events appended, bindings, timer ticks, store writes, the rows
 each entity holds, the resets and the external causes answered, by command, outcome and source.
-`GET /__spindle/topology` answers the graph of what the run serves (`spindle-topology/1`),
-derived from the specification: the ingress, the specification, its domains, their commands,
-views and events, each external cause, each binding. Its edges are `routes`, `contains`, `asks`,
-`emits`, `carries` and `invokes`, and each but `contains` carries live numbers read from the same
-counters as the metrics and the same ring as the request log: a route's requests by status class
-and its latest five, a cause's answers by source, events emitted, envelopes sent, commands invoked.
+
+`GET /__spindle/topology` answers the graph of what the run serves (`spindle-topology/1`), derived
+from the specification. It holds the ingress, the specification, its domains, their commands,
+views and events, each external cause and each binding.
+
+Its edges are `routes`, `contains`, `asks`, `emits`, `carries` and `invokes`. Each edge but
+`contains` carries live numbers, read from the same counters as the metrics and the same ring as
+the request log: a route's requests by status class and its latest five, a cause's answers by
+source, events emitted, envelopes sent, commands invoked.
+
 `POST /api/reset` empties the stores and keeps every count and the request log.
-`GET /__spindle/ui` answers a panel of them: one HTML page, its script and style inline, that any
-page may frame and that reads `./requests` and `./topology` beside itself, the topology drawn
-top-down as SVG (`ui/dist-panel/panel.html`, built by
-`pnpm build:panel` and embedded; a binary built without it answers `503`). Paths under
-`/__spindle/` belong to the run: a binding route there is refused at start, and without
-`--observe` they answer `404`.
+
+`GET /__spindle/ui` answers a panel of them: one HTML page with its script and style inline. Any
+page may frame it, and it reads `./requests` and `./topology` beside itself. It draws the topology
+top-down as SVG. The page is `ui/dist-panel/panel.html`, built by `pnpm build:panel` and embedded.
+A binary built without it answers `503`. Paths under `/__spindle/` belong to the run: a binding
+route there is refused at start, and without `--observe` they answer `404`.
 
 `b10x-spindle conform ess --environment examples/environments/laptop.toml` runs the suite ESS
-synthesises from Spindle's own specification, with the scenarios `ess/ess-inputs.yaml` lists,
-against Spindle itself; `task check:conformance` holds its counts against `conformance.toml`.
+synthesises from Spindle's own specification against Spindle itself, with the scenarios
+`ess/ess-inputs.yaml` lists. `task check:conformance` checks its counts against `conformance.toml`.
 No scenario is known to fail, so the task declares none and every executed scenario must pass.
 
 ## Capabilities
@@ -108,36 +126,38 @@ channel = ["in-process"]
 ```
 
 Each list is in order of preference. A key ending in `.*` covers every capability under that
-prefix; an exact key wins over it.
+prefix, and an exact key wins over it.
 
 ## Layout
 
-- `ess/` — Spindle's own specification: environments, deployments, admission.
-- `crates/spindle-spec` — loads and compiles a specification with `ess-compiler`.
-- `crates/spindle-capability` — derivation, environments, admission.
-- `crates/spindle-kernel` — executes commands against the compiled model.
-- `crates/spindle-timer`, `crates/spindle-channel` — periodic bindings and event bindings.
-- `crates/spindle-target` — the deployment target contract and the process launcher.
-- `crates/spindle-qemu`, `crates/spindle-firecracker` — microVM launchers.
-- `crates/spindle-telemetry` — counters and histograms per instance, their catalogue derived from the specification, and the sender that reports them as `spindle-telemetry/1` frames over a Unix socket or vsock.
-- `crates/spindle-host` — runs every component of a system in one process.
-- `crates/spindle-store-browser` — the store on the browser's IndexedDB, for a run in a page or a Service Worker.
-- `crates/spindle-wasm` — the wasm-bindgen entry a Service Worker opens: a specification compiled in the browser, its routes and the console routes answered by the same router the loopback listener calls, state in IndexedDB, external outcomes from a decisions file.
-- `crates/spindle-conformance` — runs an ESS conformance suite against every component in one process.
-- `crates/spindle-control` — the control process `deploy` runs: launch, collect, and the observe API and UI on 127.0.0.1.
-- `crates/spindle-cli` — the `b10x-spindle` binary.
-- `crates/spindle-docs` — generates the site's CLI reference and status page.
-- `examples/` — environments and the `rally` example system.
-- `web/` — the static site: a Vue shell that registers the Service Worker (`task web` builds `web/dist`).
-- `website/` — the documentation site (Docusaurus).
-- `docs/design/spindle.md` — the design.
+| path | what |
+|---|---|
+| `ess/` | Spindle's own specification: environments, deployments, admission |
+| `crates/spindle-spec` | loads and compiles a specification with `ess-compiler` |
+| `crates/spindle-capability` | derivation, environments, admission |
+| `crates/spindle-kernel` | executes commands against the compiled model |
+| `crates/spindle-timer`, `crates/spindle-channel` | periodic bindings and event bindings |
+| `crates/spindle-target` | the deployment target contract and the process launcher |
+| `crates/spindle-qemu`, `crates/spindle-firecracker` | microVM launchers |
+| `crates/spindle-telemetry` | counters and histograms per instance, their catalogue derived from the specification, and the sender that reports them as `spindle-telemetry/1` frames over a Unix socket or vsock |
+| `crates/spindle-host` | runs every component of a system in one process |
+| `crates/spindle-store-browser` | the store on the browser's IndexedDB, for a run in a page or a Service Worker |
+| `crates/spindle-wasm` | the wasm-bindgen entry a Service Worker opens: a specification compiled in the browser, its routes and the console routes answered by the same router the loopback listener calls, state in IndexedDB, external outcomes from a decisions file |
+| `crates/spindle-conformance` | runs an ESS conformance suite against every component in one process |
+| `crates/spindle-control` | the control process `deploy` runs: launch, collect, and the observe API and UI on 127.0.0.1 |
+| `crates/spindle-cli` | the `b10x-spindle` binary |
+| `crates/spindle-docs` | generates the site's CLI reference and status page |
+| `examples/` | environments and the `rally` example system |
+| `web/` | the static site: a Vue shell that registers the Service Worker (`task web` builds `web/dist`) |
+| `website/` | the documentation site (Docusaurus) |
+| `docs/design/spindle.md` | the design |
 
 Agents start at [`AGENTS.md`](AGENTS.md).
 
 ## Releases
 
 Binaries for Linux and macOS (x86_64 and aarch64 each) are attached to each
-[GitHub release](https://github.com/beyond10x/spindle/releases) with a `SHA256SUMS` file; changes
+[GitHub release](https://github.com/beyond10x/spindle/releases) with a `SHA256SUMS` file. Changes
 are in [`CHANGELOG.md`](CHANGELOG.md), and the release steps in
 [`AGENTS.md`](AGENTS.md#cutting-a-release).
 

@@ -74,7 +74,7 @@
     },
     {
       "area": "Bindings",
-      "detail": "spindle-channel carries an event to the command it binds to, in process or as length-prefixed JSON frames over TCP; at_least_once redelivers.",
+      "detail": "spindle-channel carries an event to the command it binds to, in process or as length-prefixed JSON frames over TCP; the receiver acknowledges an at_least_once envelope, and no runtime path resends one whose acknowledgement is overdue.",
       "href": "/docs/concepts/components-and-bindings",
       "label": "Event bindings in process and over TCP",
       "status": "shipped"
