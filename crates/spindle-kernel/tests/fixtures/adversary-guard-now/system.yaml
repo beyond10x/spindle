@@ -1,0 +1,31 @@
+format: ess/34
+system: probe
+version: v1
+summary: Tasks probed for how a command guard reads now.
+domains:
+  - probe.board
+components:
+  - component: board
+    summary: Schedules, closes, sweeps and annotates tasks.
+    owns:
+      domains:
+        - probe.board
+    accepts:
+      commands:
+        - probe.board.Typed
+        - probe.board.Maybe
+        - probe.board.Far
+        - probe.board.Record
+        - probe.board.Close
+        - probe.board.CloseTyped
+        - probe.board.Reschedule
+        - probe.board.Sweep
+        - probe.board.Annotate
+        - probe.board.Finish
+    publishes:
+      events:
+        - probe.board.TaskScheduled
+        - probe.board.TaskClosed
+        - probe.board.Swept
+        - probe.board.NoteWritten
+    reached_by: in_process

@@ -1,0 +1,25 @@
+format: ess/34
+system: chores
+version: v1
+summary: Tasks that fall due at a time, closed and annotated while they are not yet overdue.
+domains:
+  - chores.board
+components:
+  - component: board
+    summary: Schedules, records, closes and annotates tasks.
+    owns:
+      domains:
+        - chores.board
+    accepts:
+      commands:
+        - chores.board.Schedule
+        - chores.board.ScheduleWithGrace
+        - chores.board.Record
+        - chores.board.Close
+        - chores.board.Annotate
+    publishes:
+      events:
+        - chores.board.TaskScheduled
+        - chores.board.TaskClosed
+        - chores.board.NoteWritten
+    reached_by: in_process

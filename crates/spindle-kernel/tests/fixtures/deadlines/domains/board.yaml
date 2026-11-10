@@ -1,0 +1,191 @@
+domain: chores.board
+summary: A task falls due at a time; scheduling, closing and annotating it are refused once that time has passed.
+types:
+  - name: chores.board.TaskId
+    kind: newtype
+    of: Uuid
+  - name: chores.board.NoteId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: chores.board.Task
+    identity:
+      name: task_id
+      type: chores.board.TaskId
+    fields:
+      - name: due_at
+        type: Timestamp
+    lifecycle:
+      initial: Open
+      states: [Open, Done]
+      terminal: [Done]
+      transitions:
+        - {name: close, from: [Open], to: Done}
+  - name: chores.board.Note
+    identity:
+      name: note_id
+      type: chores.board.NoteId
+    fields:
+      - name: task_id
+        type: chores.board.TaskId
+    relations:
+      - {name: task_id, kind: references, target: chores.board.Task, cardinality: one, via: task_id}
+    lifecycle:
+      initial: Written
+      states: [Written]
+      terminal: [Written]
+errors:
+  - name: chores.board.Overdue
+    summary: The task's due time has passed.
+    fields: []
+  - name: chores.board.NoTask
+    summary: No task carries the id.
+    fields: []
+  - name: chores.board.AlreadyDone
+    summary: The task is already done.
+    fields: []
+commands:
+  - name: chores.board.Schedule
+    input:
+      - name: task_id
+        type: chores.board.TaskId
+      - name: due_at
+        type: Timestamp
+    outcomes:
+      - name: overdue
+        when: due_at < now
+        error: chores.board.Overdue
+        summary: A due time already passed is refused.
+      - name: scheduled
+        creates: chores.board.Task
+        instance: task_id
+        sets:
+          due_at: input.due_at
+        emits: [chores.board.TaskScheduled]
+        payload:
+          chores.board.TaskScheduled:
+            task_id: input.task_id
+        summary: The task is scheduled.
+  - name: chores.board.ScheduleWithGrace
+    input:
+      - name: task_id
+        type: chores.board.TaskId
+      - name: due_at
+        type: Timestamp
+    outcomes:
+      - name: overdue
+        when: due_at < now - 3600s
+        error: chores.board.Overdue
+        summary: A due time more than an hour past is refused.
+      - name: scheduled
+        creates: chores.board.Task
+        instance: task_id
+        sets:
+          due_at: input.due_at
+        emits: [chores.board.TaskScheduled]
+        payload:
+          chores.board.TaskScheduled:
+            task_id: input.task_id
+        summary: The task is scheduled.
+  - name: chores.board.Record
+    input:
+      - name: task_id
+        type: chores.board.TaskId
+      - name: due_at
+        type: Timestamp
+    outcomes:
+      - name: recorded
+        creates: chores.board.Task
+        instance: task_id
+        sets:
+          due_at: input.due_at
+        emits: [chores.board.TaskScheduled]
+        payload:
+          chores.board.TaskScheduled:
+            task_id: input.task_id
+        summary: The task is recorded with any due time.
+  - name: chores.board.Close
+    input:
+      - name: task_id
+        type: chores.board.TaskId
+    outcomes:
+      - name: overdue
+        when_subject:
+          predicate: due_at < now
+        error: chores.board.Overdue
+        summary: An overdue task is not closed.
+      - name: closed
+        moves: chores.board.Task.close
+        instance: task_id
+        emits: [chores.board.TaskClosed]
+        payload:
+          chores.board.TaskClosed:
+            task_id: input.task_id
+        summary: The task is closed.
+      - name: wrong-state
+        wrong_state: true
+        error: chores.board.AlreadyDone
+        summary: The task is already done.
+  - name: chores.board.Annotate
+    input:
+      - name: note_id
+        type: chores.board.NoteId
+      - name: task_id
+        type: chores.board.TaskId
+    outcomes:
+      - name: no-task
+        when_related:
+          via: input.task_id
+          exists: false
+        error: chores.board.NoTask
+        summary: The named task does not exist.
+      - name: overdue
+        when_related:
+          via: input.task_id
+          predicate: due_at < now
+        error: chores.board.Overdue
+        summary: The named task is overdue.
+      - name: noted
+        creates: chores.board.Note
+        instance: note_id
+        sets:
+          task_id: input.task_id
+        emits: [chores.board.NoteWritten]
+        payload:
+          chores.board.NoteWritten:
+            note_id: input.note_id
+        summary: The note is written on the task.
+events:
+  - name: chores.board.TaskScheduled
+    fields:
+      - name: task_id
+        type: chores.board.TaskId
+  - name: chores.board.TaskClosed
+    fields:
+      - name: task_id
+        type: chores.board.TaskId
+  - name: chores.board.NoteWritten
+    fields:
+      - name: note_id
+        type: chores.board.NoteId
+views:
+  - name: chores.board.TaskCard
+    source: chores.board.Task
+    consistency: read_your_writes
+    fields:
+      - name: task_id
+        type: chores.board.TaskId
+      - name: due_at
+        type: Timestamp
+      - name: state
+        type: chores.board.Task.State
+  - name: chores.board.NoteCard
+    source: chores.board.Note
+    consistency: read_your_writes
+    fields:
+      - name: note_id
+        type: chores.board.NoteId
+      - name: task_id
+        type: chores.board.TaskId
+      - name: state
+        type: chores.board.Note.State

@@ -1,0 +1,345 @@
+domain: probe.board
+summary: Tasks probed for how a command guard reads now.
+types:
+  - name: probe.board.TaskId
+    kind: newtype
+    of: Uuid
+  - name: probe.board.MarkId
+    kind: newtype
+    of: Uuid
+  - name: probe.board.NoteId
+    kind: newtype
+    of: Uuid
+  - name: probe.board.DueAt
+    kind: newtype
+    of: Timestamp
+entities:
+  - name: probe.board.Task
+    identity:
+      name: task_id
+      type: probe.board.TaskId
+    fields:
+      - name: due_at
+        type: Optional<Timestamp>
+      - name: typed_at
+        type: Optional<probe.board.DueAt>
+    lifecycle:
+      initial: Open
+      states: [Open, Done]
+      terminal: [Done]
+      transitions:
+        - {name: close, from: [Open], to: Done}
+        - {name: reschedule, from: [Open], to: Open}
+  - name: probe.board.Mark
+    identity:
+      name: mark_id
+      type: probe.board.MarkId
+    fields: []
+    lifecycle:
+      initial: Made
+      states: [Made]
+      terminal: [Made]
+  - name: probe.board.Note
+    identity:
+      name: note_id
+      type: probe.board.NoteId
+    fields:
+      - name: task_id
+        type: probe.board.TaskId
+    relations:
+      - {name: task_id, kind: references, target: probe.board.Task, cardinality: one, via: task_id}
+    lifecycle:
+      initial: Written
+      states: [Written]
+      terminal: [Written]
+errors:
+  - name: probe.board.Overdue
+    summary: The due time has passed.
+    fields: []
+  - name: probe.board.TooFar
+    summary: The due time is too far ahead.
+    fields: []
+  - name: probe.board.Backlog
+    summary: An open task is overdue.
+    fields: []
+  - name: probe.board.NoTask
+    summary: No task carries the id.
+    fields: []
+  - name: probe.board.AlreadyDone
+    summary: The task is already done.
+    fields: []
+commands:
+  - name: probe.board.Typed
+    input:
+      - name: task_id
+        type: probe.board.TaskId
+      - name: due_at
+        type: probe.board.DueAt
+    outcomes:
+      - name: overdue
+        when: due_at < now
+        error: probe.board.Overdue
+        summary: A due time already passed is refused.
+      - name: scheduled
+        creates: probe.board.Task
+        instance: task_id
+        sets:
+          typed_at: input.due_at
+        emits: [probe.board.TaskScheduled]
+        payload:
+          probe.board.TaskScheduled:
+            task_id: input.task_id
+        summary: The task is scheduled.
+  - name: probe.board.Maybe
+    input:
+      - name: task_id
+        type: probe.board.TaskId
+      - name: due_at
+        type: Optional<Timestamp>
+    outcomes:
+      - name: overdue
+        when: due_at < now
+        error: probe.board.Overdue
+        summary: A due time already passed is refused.
+      - name: scheduled
+        creates: probe.board.Task
+        instance: task_id
+        sets:
+          due_at: input.due_at
+        emits: [probe.board.TaskScheduled]
+        payload:
+          probe.board.TaskScheduled:
+            task_id: input.task_id
+        summary: The task is scheduled.
+  - name: probe.board.Far
+    input:
+      - name: task_id
+        type: probe.board.TaskId
+      - name: due_at
+        type: Timestamp
+    outcomes:
+      - name: too-far
+        when: due_at > now + 24h
+        error: probe.board.TooFar
+        summary: A due time more than a day ahead is refused.
+      - name: overdue
+        when: due_at <= now
+        error: probe.board.Overdue
+        summary: A due time not ahead of now is refused.
+      - name: scheduled
+        creates: probe.board.Task
+        instance: task_id
+        sets:
+          due_at: input.due_at
+        emits: [probe.board.TaskScheduled]
+        payload:
+          probe.board.TaskScheduled:
+            task_id: input.task_id
+        summary: The task is scheduled.
+  - name: probe.board.Record
+    input:
+      - name: task_id
+        type: probe.board.TaskId
+      - name: due_at
+        type: Optional<Timestamp>
+      - name: typed_at
+        type: Optional<probe.board.DueAt>
+    outcomes:
+      - name: recorded
+        creates: probe.board.Task
+        instance: task_id
+        sets:
+          due_at: input.due_at
+          typed_at: input.typed_at
+        emits: [probe.board.TaskScheduled]
+        payload:
+          probe.board.TaskScheduled:
+            task_id: input.task_id
+        summary: The task is recorded with any due time.
+  - name: probe.board.Close
+    input:
+      - name: task_id
+        type: probe.board.TaskId
+    outcomes:
+      - name: overdue
+        when_subject:
+          predicate: due_at < now
+        error: probe.board.Overdue
+        summary: An overdue task is not closed.
+      - name: closed
+        moves: probe.board.Task.close
+        instance: task_id
+        emits: [probe.board.TaskClosed]
+        payload:
+          probe.board.TaskClosed:
+            task_id: input.task_id
+        summary: The task is closed.
+      - name: wrong-state
+        wrong_state: true
+        error: probe.board.AlreadyDone
+        summary: The task is already done.
+  - name: probe.board.CloseTyped
+    input:
+      - name: task_id
+        type: probe.board.TaskId
+    outcomes:
+      - name: overdue
+        when_subject:
+          predicate: typed_at < now
+        error: probe.board.Overdue
+        summary: An overdue task is not closed.
+      - name: closed
+        moves: probe.board.Task.close
+        instance: task_id
+        emits: [probe.board.TaskClosed]
+        payload:
+          probe.board.TaskClosed:
+            task_id: input.task_id
+        summary: The task is closed.
+      - name: wrong-state
+        wrong_state: true
+        error: probe.board.AlreadyDone
+        summary: The task is already done.
+  - name: probe.board.Reschedule
+    input:
+      - name: task_id
+        type: probe.board.TaskId
+      - name: due_at
+        type: Timestamp
+    outcomes:
+      - name: overdue
+        when_subject:
+          predicate: input.due_at < now
+        error: probe.board.Overdue
+        summary: A new due time already passed is refused.
+      - name: rescheduled
+        moves: probe.board.Task.reschedule
+        instance: task_id
+        sets:
+          due_at: input.due_at
+        emits: [probe.board.TaskScheduled]
+        payload:
+          probe.board.TaskScheduled:
+            task_id: input.task_id
+        summary: The task is rescheduled.
+      - name: wrong-state
+        wrong_state: true
+        error: probe.board.AlreadyDone
+        summary: The task is already done.
+  - name: probe.board.Sweep
+    input:
+      - name: mark_id
+        type: probe.board.MarkId
+      - name: at
+        type: Timestamp
+    outcomes:
+      - name: late
+        when: at < now
+        error: probe.board.Overdue
+        summary: A sweep stamped before now is refused.
+      - name: backlog
+        when_related:
+          entity: probe.board.Task
+          where:
+            all:
+              - state == Open
+              - due_at < now
+          exists: true
+        error: probe.board.Backlog
+        summary: An open task is overdue.
+      - name: swept
+        creates: probe.board.Mark
+        instance: mark_id
+        emits: [probe.board.Swept]
+        payload:
+          probe.board.Swept:
+            mark_id: input.mark_id
+        summary: The board is swept.
+  - name: probe.board.Annotate
+    input:
+      - name: note_id
+        type: probe.board.NoteId
+      - name: task_id
+        type: probe.board.TaskId
+      - name: at
+        type: Timestamp
+    outcomes:
+      - name: late
+        when: at < now
+        error: probe.board.Overdue
+        summary: A note stamped before now is refused.
+      - name: no-task
+        when_related:
+          via: input.task_id
+          exists: false
+        error: probe.board.NoTask
+        summary: The named task does not exist.
+      - name: task-overdue
+        when_related:
+          via: input.task_id
+          predicate: due_at < now
+        error: probe.board.Overdue
+        summary: The named task is overdue.
+      - name: noted
+        creates: probe.board.Note
+        instance: note_id
+        sets:
+          task_id: input.task_id
+        emits: [probe.board.NoteWritten]
+        payload:
+          probe.board.NoteWritten:
+            note_id: input.note_id
+        summary: The note is written on the task.
+  - name: probe.board.Finish
+    input:
+      - name: task_id
+        type: probe.board.TaskId
+      - name: at
+        type: Timestamp
+    outcomes:
+      - name: late
+        when: at < now
+        error: probe.board.Overdue
+        summary: A finish stamped before now is refused.
+      - name: closed
+        moves: probe.board.Task.close
+        instance: task_id
+        emits: [probe.board.TaskClosed]
+        payload:
+          probe.board.TaskClosed:
+            task_id: input.task_id
+        summary: The task is closed.
+      - name: wrong-state
+        wrong_state: true
+        error: probe.board.AlreadyDone
+        summary: The task is already done.
+events:
+  - name: probe.board.TaskScheduled
+    fields:
+      - name: task_id
+        type: probe.board.TaskId
+  - name: probe.board.TaskClosed
+    fields:
+      - name: task_id
+        type: probe.board.TaskId
+  - name: probe.board.Swept
+    fields:
+      - name: mark_id
+        type: probe.board.MarkId
+  - name: probe.board.NoteWritten
+    fields:
+      - name: note_id
+        type: probe.board.NoteId
+views:
+  - name: probe.board.TaskCard
+    source: probe.board.Task
+    consistency: read_your_writes
+    fields:
+      - name: task_id
+        type: probe.board.TaskId
+      - name: due_at
+        type: Optional<Timestamp>
+      - name: typed_at
+        type: Optional<probe.board.DueAt>
+      - name: state
+        type: probe.board.Task.State

@@ -6,6 +6,14 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- A command guard ordering a timestamp against `now` (`when: due_at < now`, `due_at < now -
+  3600s`) is decided on the kernel's clock, in `when:`, `when_subject:` and a `when_related:`
+  over one row, as ESS's interpreter decides it. The run reads its clock once, the same instant a
+  row-set selector reads. Before, such a guard was `Unknown` and the command answered
+  `Undecidable`. An invariant is still read with no current time, as ESS reads it at rest.
+
 ## [0.9.0] - 2026-11-10
 
 ### Added

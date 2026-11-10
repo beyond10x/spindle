@@ -1,5 +1,6 @@
 //! One command, from input to committed change.
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::time::SystemTime;
 
@@ -272,7 +273,7 @@ pub fn execute_refusing(
         held,
         related,
         generator: Generator::new(mint, now, command),
-        instant: None,
+        instant: Cell::new(None),
         minted: None,
         answered: BTreeMap::new(),
         scanned: Vec::new(),
@@ -452,9 +453,10 @@ struct Run<'a, 'ir> {
     /// The rows the command's related values name, read before anything else ([`crate::values::related`]).
     related: crate::values::Related,
     generator: Generator<'a>,
-    /// The decision's instant, as a row-set selector reads `now`: read from the clock once per
-    /// run, on the first read, and `None` inside where the clock spells no instant.
-    instant: Option<Option<Rfc3339Instant>>,
+    /// The decision's instant, as every guard and row-set selector reads `now`: read from the
+    /// clock once per run, on the first read, and `None` inside where the clock spells no instant
+    /// ([`Self::now`]).
+    instant: Cell<Option<Option<Rfc3339Instant>>>,
     /// The identity this run minted: the creating event that publishes it, and the identity
     /// field's name.
     minted: Option<(&'ir EventHandle, String, Value)>,
@@ -693,14 +695,26 @@ impl<'a, 'ir> Run<'a, 'ir> {
     }
 
     /// An input guard over the command's input, read at the input fields' own names as `when:`
-    /// reads them, and the caller under `caller.`; no guard holds.
+    /// reads them, the caller under `caller.` and the decision's instant as `now`; no guard holds.
     fn guard(&self, predicate: Option<&Predicate>) -> Truth {
         predicate.map_or(Truth::True, |predicate| {
             predicate.evaluate(
                 &Facts::values(self.ir, &self.spec.input, self.input)
-                    .with_caller(self.attributes, self.caller),
+                    .with_caller(self.attributes, self.caller)
+                    .at(self.now()),
             )
         })
+    }
+
+    /// The decision's one instant, which every guard and row-set selector of this run reads as
+    /// `now` (ESS `Context::now`): read from the clock on the first read and kept for the run.
+    fn now(&self) -> Option<Rfc3339Instant> {
+        if let Some(now) = self.instant.get() {
+            return now;
+        }
+        let now = self.generator.instant();
+        self.instant.set(Some(now));
+        now
     }
 
     /// The row `via` names among `entity`'s, as the store holds it before selection: an input
@@ -762,10 +776,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
             });
         }
         let input = Facts::values(ir, &self.spec.input, self.input);
-        let now = match self.instant {
-            Some(now) => now,
-            None => *self.instant.insert(self.generator.instant()),
-        };
+        let now = self.now();
         let mut members = Vec::new();
         let name = entity.name.to_string();
         let scan = self.store.scan(&name)?;
@@ -868,15 +879,18 @@ impl<'a, 'ir> Run<'a, 'ir> {
             })
     }
 
-    /// The facts a guard over a related row reads: the row, the input under `input.` and the
-    /// caller under `caller.`, as [`Self::subject_facts`] reads the addressed one.
+    /// The facts a guard over a related row reads: the row, the input under `input.`, the caller
+    /// under `caller.` and the decision's instant as `now`, as [`Self::subject_facts`] reads the
+    /// addressed one.
     fn related_facts(&self, entity: &'ir ResolvedEntity, identity: &Value, row: &Row) -> Facts<'_> {
         let shadowed = entity
             .fields
             .iter()
             .any(|field| field.name == crate::facts::INPUT);
         let input = (!shadowed).then_some((self.spec.input.as_slice(), self.input));
-        Facts::row(self.ir, entity, identity, row, input).with_caller(self.attributes, self.caller)
+        Facts::row(self.ir, entity, identity, row, input)
+            .with_caller(self.attributes, self.caller)
+            .at(self.now())
     }
 
     /// The `exists: false` branch answering the first missing row the input names, the rows read
@@ -1163,7 +1177,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
 
     /// The facts a guard over the subject reads: the held instance, the input under `input.` and
     /// the caller under `caller.`, each unless the entity declares a field of that name, which
-    /// keeps being read as itself.
+    /// keeps being read as itself, and the decision's instant as `now`.
     fn subject_facts(&self, outcome: &ResolvedOutcome) -> Result<Facts<'_>, ExecuteError> {
         let row = self.held_row(outcome)?;
         let Some(held) = &self.held else {
@@ -1176,7 +1190,8 @@ impl<'a, 'ir> Run<'a, 'ir> {
             .any(|field| field.name == crate::facts::INPUT);
         let input = (!shadowed).then_some((self.spec.input.as_slice(), self.input));
         Ok(Facts::row(self.ir, held.entity, &held.identity, row, input)
-            .with_caller(self.attributes, self.caller))
+            .with_caller(self.attributes, self.caller)
+            .at(self.now()))
     }
 
     /// The held instance a guard over the subject reads.
