@@ -229,6 +229,11 @@ fn a_cause_bound_to_an_http_call_sends_one_request_and_commits_what_the_reply_se
     let request = &received[0];
     assert!(request.line.starts_with("POST /approvals "), "{request:?}");
     assert_eq!(
+        request.header("host"),
+        Some(desk.address.to_string().as_str()),
+        "Host is the URL's host and port: {request:?}"
+    );
+    assert_eq!(
         request.header("authorization"),
         Some(format!("Bearer {TOKEN}").as_str()),
         "the secret is read from the variable the document names: {request:?}"
@@ -339,10 +344,11 @@ impl Drop for Served {
     }
 }
 
-fn serve(environment: &str) -> Served {
+fn serve(environment: &str, extra: &[&str]) -> Served {
     let mut child = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
         .current_dir(root())
         .args(["run", SERVED_SPEC, "--environment", environment])
+        .args(extra)
         .env(SECRET, TOKEN)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -434,7 +440,7 @@ fn a_served_command_asks_the_bound_http_call_once_without_decisions() {
     let desk = Desk::start(Reply::Json(200, json!({"holds": true})));
     let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
     let environment = environment(&directory, &desk.url(), 5_000, true);
-    let served = serve(&environment);
+    let served = serve(&environment, &[]);
 
     let (status, answer) = call(&served, ASK, &json!({"request_id": "r1", "amount": 7}));
     assert!((200..300).contains(&status), "{status} {answer}");
@@ -450,4 +456,73 @@ fn a_served_command_asks_the_bound_http_call_once_without_decisions() {
         received[0].body["input"],
         json!({"request_id": "r1", "amount": 7})
     );
+}
+
+/// `GET <path>` on the served run: the status and the body as text.
+fn get(served: &Served, path: &str) -> (u16, String) {
+    let mut stream =
+        TcpStream::connect_timeout(&served.address, ANSWER).expect("the listener accepts");
+    stream
+        .set_read_timeout(Some(ANSWER))
+        .expect("a read timeout");
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+        served.address
+    )
+    .expect("the request is written");
+    let mut answer = Vec::new();
+    stream
+        .read_to_end(&mut answer)
+        .expect("the answer is read before the timeout");
+    let answer = String::from_utf8(answer).expect("the answer is UTF-8");
+    let (head, body) = answer
+        .split_once("\r\n\r\n")
+        .unwrap_or_else(|| panic!("an answer with a head: {answer:?}"));
+    let status = head
+        .split(' ')
+        .nth(1)
+        .and_then(|status| status.parse().ok())
+        .unwrap_or_else(|| panic!("a status line: {head:?}"));
+    (status, body.to_owned())
+}
+
+/// Under `--observe`, a cause its call answered is listed with the source `call` and counted under
+/// it; a call that fails is listed `unanswered`, as any cause a `501` leaves unanswered is.
+#[test]
+fn an_observed_cause_is_listed_as_answered_by_its_call_or_unanswered_when_the_call_fails() {
+    for (reply, source) in [
+        (Reply::Json(200, json!({"holds": true})), "call"),
+        (Reply::Json(503, json!({"holds": true})), "unanswered"),
+    ] {
+        let desk = Desk::start(reply);
+        let directory =
+            tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+        let environment = environment(&directory, &desk.url(), 5_000, true);
+        let served = serve(&environment, &["--observe"]);
+
+        let (answered, answer) = call(&served, ASK, &json!({"request_id": "r1", "amount": 7}));
+        if source == "call" {
+            assert!((200..300).contains(&answered), "{answered} {answer}");
+        } else {
+            assert_eq!(answered, 501, "{answer}");
+        }
+        let (_, log) = get(&served, "/__spindle/requests");
+        let log: Value = serde_json::from_str(&log).expect("the log is JSON");
+        let mut external = json!({"command": ASK, "outcome": "approved", "source": source});
+        if source == "call" {
+            external["holds"] = json!(true);
+        }
+        assert_eq!(log["requests"][0]["externals"], json!([external]), "{log}");
+        let (_, metrics) = get(&served, "/__spindle/metrics");
+        let counted = metrics
+            .lines()
+            .filter(|line| line.starts_with("spindle_external_causes_total{"))
+            .collect::<Vec<_>>();
+        assert_eq!(counted.len(), 1, "{metrics}");
+        assert!(
+            counted[0].contains(&format!("source=\"{source}\"")) && counted[0].ends_with(" 1"),
+            "{metrics}"
+        );
+    }
 }

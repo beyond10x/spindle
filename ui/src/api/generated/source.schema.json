@@ -1,11 +1,12 @@
 {
   "$defs": {
     "spindle.observe.AnswerSource": {
-      "description": "What answered one external cause of a served command. `world`: the `decisions` of the world the last reset loaded, `spindle.console.World`. `file`: the decisions file. `default`: the default branch `--answer-default` takes. `unanswered`: nothing did, and the command answered `501`. Source: `crates/spindle-cli/src/decisions.rs:35-53`, `crates/spindle-ingress/src/observe.rs:186-209`.",
+      "description": "What answered one external cause of a served command. `world`: the `decisions` of the world the last reset loaded, `spindle.console.World`. `file`: the decisions file. `default`: the default branch `--answer-default` takes. `call`: the HTTP call the environment binds the cause to (`[http.<name>]`). `unanswered`: nothing did, or the cause's HTTP call failed, and the command answered `501`. Source: `crates/spindle-cli/src/decisions.rs:47-71`, `crates/spindle-ingress/src/observe.rs:186-213`.",
       "enum": [
         "world",
         "file",
         "default",
+        "call",
         "unanswered"
       ],
       "title": "AnswerSource",
@@ -1232,8 +1233,8 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-ess-provenance": {
-    "contract_digest": "slice-sha256/2:06eab1d3817bcb83553e5322ffbe1d3b8ca8b3ff29f3e61742a5b54d7c5ea44a",
-    "source_digest": "23c1eedf2589f72ca2d9c4fd22e42a37d17d172c5d06e5f0f9bb198108c6e5b8",
+    "contract_digest": "slice-sha256/2:37dcdd8d771f6597bb8bf617b1f84fe86595adb4867aab4db58fe229f334ef10",
+    "source_digest": "6110c66da8af8c4d83518add769cbae30d42b5030d0b6695542dfdeb40a5709a",
     "specification_version": "v1",
     "system": "spindle"
   }

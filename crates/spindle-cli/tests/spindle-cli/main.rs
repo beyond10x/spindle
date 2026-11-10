@@ -10,6 +10,7 @@ mod adversary_delete;
 mod adversary_external_answers;
 mod adversary_fixed_caller;
 mod adversary_form_query;
+mod adversary_http_cause;
 mod adversary_ingress;
 mod adversary_outcome_bodies;
 mod adversary_outcome_scoped_refusal;

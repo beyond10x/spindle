@@ -4,6 +4,10 @@ use std::collections::BTreeMap;
 
 use crate::Capability;
 
+/// The longest an HTTP call may take, in milliseconds: a call holds the thread that runs every
+/// command of a served run until its reply or its timeout.
+pub const MAX_TIMEOUT_MS: u64 = 30_000;
+
 /// The format an environment document declares.
 pub const FORMAT: &str = "spindle-environment/1";
 
@@ -64,7 +68,8 @@ pub struct HttpCall {
     pub method: String,
     /// The URL the request is sent to.
     pub url: String,
-    /// How long the call may take, connecting to the last byte of its reply, in milliseconds.
+    /// How long the call may take, connecting to the last byte of its reply, in milliseconds:
+    /// 1 to 30000.
     pub timeout_ms: u64,
     /// The environment variable holding the call's secret, never the secret itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -105,9 +110,23 @@ pub enum EnvironmentError {
         /// The key naming it.
         capability: String,
     },
-    /// An HTTP call that may take no time.
-    #[error("[http.{name}] timeout_ms is 0; give the call time to answer")]
+    /// An HTTP call that may take no time, or longer than [`MAX_TIMEOUT_MS`].
+    #[error(
+        "[http.{name}] timeout_ms is {timeout_ms}; a call may take 1 to 30000 ms, as it \
+         holds the thread that runs every command while it waits"
+    )]
     HttpTimeout {
+        /// The call.
+        name: String,
+        /// The timeout it declares.
+        timeout_ms: u64,
+    },
+    /// A URL carrying userinfo (`user:password@`); the URL is not repeated, as it holds a secret.
+    #[error(
+        "[http.{name}] url carries userinfo (`user:password@`): a secret is named by secret_env, \
+         never written in the document"
+    )]
+    UrlUserinfo {
         /// The call.
         name: String,
     },
@@ -145,7 +164,8 @@ impl Environment {
     }
 
     /// Refuses an `[http.<name>]` table no `external.` key names or another key names, one with
-    /// no time to answer, and a `secret_env` that is no variable name.
+    /// no time to answer or more than [`MAX_TIMEOUT_MS`], a URL carrying userinfo, and a
+    /// `secret_env` that is no variable name.
     fn check_http(&self) -> Result<(), EnvironmentError> {
         for (name, call) in &self.http {
             let naming: Vec<&String> = self
@@ -166,8 +186,14 @@ impl Environment {
             if naming.is_empty() {
                 return Err(EnvironmentError::HttpUnused { name: name.clone() });
             }
-            if call.timeout_ms == 0 {
-                return Err(EnvironmentError::HttpTimeout { name: name.clone() });
+            if !(1..=MAX_TIMEOUT_MS).contains(&call.timeout_ms) {
+                return Err(EnvironmentError::HttpTimeout {
+                    name: name.clone(),
+                    timeout_ms: call.timeout_ms,
+                });
+            }
+            if userinfo(&call.url) {
+                return Err(EnvironmentError::UrlUserinfo { name: name.clone() });
             }
             if call
                 .secret_env
@@ -196,6 +222,15 @@ impl Environment {
             .max_by_key(|(length, _)| *length)
             .map(|(_, implementations)| implementations.as_slice())
     }
+}
+
+/// Whether `url`'s authority carries userinfo: an `@` before the first `/`, `?` or `#` after the
+/// scheme.
+fn userinfo(url: &str) -> bool {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    rest.split(['/', '?', '#'])
+        .next()
+        .is_some_and(|authority| authority.contains('@'))
 }
 
 /// Whether `name` is a portable environment variable name: ASCII letters, digits and `_`, not
@@ -298,5 +333,54 @@ mod tests {
             call("timeout_ms = 10\nheaders = {}\n"),
             Err(EnvironmentError::Parse(_))
         ));
+    }
+
+    #[test]
+    fn a_timeout_above_the_maximum_is_refused() {
+        let call = |timeout_ms: u64| {
+            parse(&format!(
+                "[provides]\n\"external.*\" = [\"approvals\"]\n\n[http.approvals]\n\
+                 method = \"POST\"\nurl = \"http://127.0.0.1:1/\"\ntimeout_ms = {timeout_ms}\n"
+            ))
+        };
+        assert!(call(super::MAX_TIMEOUT_MS).is_ok());
+        let over = call(super::MAX_TIMEOUT_MS + 1);
+        assert!(
+            matches!(over, Err(EnvironmentError::HttpTimeout { ref name, .. }) if name == "approvals"),
+            "{over:?}"
+        );
+    }
+
+    #[test]
+    fn a_url_carrying_userinfo_is_refused_without_repeating_it() {
+        for url in [
+            "http://desk-user:desk-password@127.0.0.1:1/approvals",
+            "http://desk-password@127.0.0.1:1/",
+            "HTTP://u:desk-password@127.0.0.1:1?q=a@b",
+        ] {
+            let refused = parse(&format!(
+                "[provides]\n\"external.*\" = [\"approvals\"]\n\n[http.approvals]\n\
+                 method = \"POST\"\nurl = \"{url}\"\ntimeout_ms = 10\n"
+            ));
+            let Err(error) = refused else {
+                panic!("a URL with userinfo is refused: {url}");
+            };
+            assert!(
+                matches!(error, EnvironmentError::UrlUserinfo { ref name } if name == "approvals"),
+                "{error:?}"
+            );
+            assert!(
+                !error.to_string().contains("desk-password"),
+                "the refusal never repeats the credential: {error}"
+            );
+        }
+        let query = parse(
+            "[provides]\n\"external.*\" = [\"approvals\"]\n\n[http.approvals]\n\
+             method = \"POST\"\nurl = \"http://127.0.0.1:1/a?to=x@y\"\ntimeout_ms = 10\n",
+        );
+        assert!(
+            query.is_ok(),
+            "an @ after the authority is no userinfo: {query:?}"
+        );
     }
 }

@@ -16,9 +16,13 @@ are Spindle's releases.
   `2xx` reply `{"holds": true | false}` answers it, and a timeout, a failure or any other reply
   fails the command `undecided` with nothing written (`501` when served). The secret is read from
   the environment variable `secret_env` names and sent as `Authorization: Bearer`; an unset
-  variable exits 1 before the first request. `http://` only. A served run whose every external
-  cause is bound to a call needs neither `--decisions` nor `--answer-default`. A document without
-  `[http]` reads as before.
+  variable exits 1 before the first request. `http://` only; a URL carrying userinfo and a
+  `timeout_ms` outside 1 to 30000 are refused when the document is read, and a reply body is read
+  up to 64 KiB. A call blocks the served run's one command thread until its reply or its timeout.
+  A served run whose every external cause is bound to a call needs neither `--decisions` nor
+  `--answer-default`. Under `--observe` a cause a call answers is listed and counted with the new
+  `AnswerSource` `call` (`spindle.observe`), and one whose call failed as `unanswered`. A document
+  without `[http]` reads as before.
 
 ## [0.9.0] - 2026-11-10
 

@@ -7,7 +7,11 @@
 //! no construct for an outbound request's payload: `external:` carries one phrase, `ess-http/1`
 //! binds inbound routes and `ess-transport` binds events. A `2xx` reply whose body is
 //! `{"holds": true | false}` answers the cause; a timeout, a transport failure, any other status
-//! or any other body answers no cause, and the command fails as undecided and changes nothing.
+//! or any other body answers no cause, and the command fails as undecided and changes nothing. A
+//! reply body is read up to [`REPLY_LIMIT`] bytes; a longer one is a failed call.
+//!
+//! A call blocks the thread that asks it, the one thread that runs every command of a served run,
+//! until its reply or its timeout, which the environment document bounds at 30 s.
 //!
 //! The secret is read from the environment variable `secret_env` names, once, when the run
 //! starts, and sent as `Authorization: Bearer <value>`; no document holds it and no message
@@ -18,7 +22,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::Bytes;
 use hyper::header::{AUTHORIZATION, CONTENT_TYPE, HOST, HeaderValue};
 use hyper::{Method, Request, Uri};
@@ -29,6 +33,9 @@ use spindle_kernel::{Decider, External};
 /// The format of the request body a call is sent.
 pub(crate) const FORMAT: &str = "spindle-external/1";
 
+/// The most bytes of a reply body a call reads: `{"holds": true}` is 15.
+pub(crate) const REPLY_LIMIT: usize = 64 * 1024;
+
 /// Each external cause admission bound to an `[http.<name>]` call, by capability.
 #[derive(Clone, Default)]
 pub(crate) struct Calls {
@@ -37,14 +44,28 @@ pub(crate) struct Calls {
     runtime: Option<Arc<tokio::runtime::Runtime>>,
 }
 
+/// Each bound capability with the name of its call; never a URL or a secret.
+impl std::fmt::Debug for Calls {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_map()
+            .entries(
+                self.bound
+                    .iter()
+                    .map(|(capability, call)| (capability, &call.name)),
+            )
+            .finish()
+    }
+}
+
 /// One `[http.<name>]` table, resolved: its URL parsed and its secret read.
 struct Call {
     name: String,
     method: Method,
     /// Where to connect: `host:port`.
     address: String,
-    /// The `Host` header.
-    authority: String,
+    /// The `Host` header: `host[:port]`, never userinfo.
+    host: String,
     /// The request target: path and query.
     target: Uri,
     timeout: Duration,
@@ -58,6 +79,7 @@ impl Calls {
     ///
     /// # Errors
     /// A call's method or URL is not one this build sends, or its secret's variable is not set.
+    /// No message repeats the URL, which may carry what the document should not.
     pub(crate) fn bind(environment: &Environment, bindings: &[Binding]) -> Result<Self> {
         let mut resolved: BTreeMap<&str, Arc<Call>> = BTreeMap::new();
         let mut bound = BTreeMap::new();
@@ -141,25 +163,34 @@ impl Call {
     ) -> Result<Self> {
         let method = Method::from_bytes(method.as_bytes())
             .with_context(|| format!("[http.{name}] method {method:?} is not an HTTP method"))?;
-        let uri: Uri = url
-            .parse()
-            .with_context(|| format!("[http.{name}] url {url:?} is not a URL"))?;
+        let Ok(uri) = url.parse::<Uri>() else {
+            bail!("[http.{name}] url is not a URL");
+        };
         if uri.scheme_str() != Some("http") {
-            bail!("[http.{name}] url {url:?}: this build calls http:// URLs only");
+            bail!("[http.{name}] url: this build calls http:// URLs only");
         }
         let Some(authority) = uri.authority() else {
-            bail!("[http.{name}] url {url:?} names no host");
+            bail!("[http.{name}] url names no host");
+        };
+        if authority.as_str().contains('@') {
+            bail!("[http.{name}] url carries userinfo; a secret is named by secret_env");
+        }
+        let host = match authority.port() {
+            Some(port) => format!("{}:{port}", authority.host()),
+            None => authority.host().to_owned(),
         };
         let address = format!(
             "{}:{}",
             authority.host(),
             authority.port_u16().unwrap_or(80)
         );
-        let target = uri
+        let Ok(target) = uri
             .path_and_query()
             .map_or("/", |path| path.as_str())
-            .parse()
-            .with_context(|| format!("[http.{name}] url {url:?} has no request path"))?;
+            .parse::<Uri>()
+        else {
+            bail!("[http.{name}] url has no request path");
+        };
         let authorization = match secret_env {
             None => None,
             Some(variable) => {
@@ -183,7 +214,7 @@ impl Call {
             name: name.to_owned(),
             method,
             address,
-            authority: authority.as_str().to_owned(),
+            host,
             target,
             timeout: Duration::from_millis(timeout_ms),
             authorization,
@@ -239,7 +270,7 @@ impl Call {
         let mut request = Request::builder()
             .method(self.method.clone())
             .uri(self.target.clone())
-            .header(HOST, self.authority.as_str())
+            .header(HOST, self.host.as_str())
             .header(CONTENT_TYPE, "application/json");
         if let Some(authorization) = &self.authorization {
             request = request.header(AUTHORIZATION, authorization.clone());
@@ -252,11 +283,16 @@ impl Call {
             .await
             .map_err(|error| error.to_string())?;
         let status = response.status().as_u16();
-        let reply = response
-            .into_body()
+        let reply = Limited::new(response.into_body(), REPLY_LIMIT)
             .collect()
             .await
-            .map_err(|error| error.to_string())?
+            .map_err(|error| {
+                if error.is::<http_body_util::LengthLimitError>() {
+                    format!("its reply is longer than {REPLY_LIMIT} bytes")
+                } else {
+                    error.to_string()
+                }
+            })?
             .to_bytes();
         Ok((status, reply))
     }

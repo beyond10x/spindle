@@ -144,9 +144,12 @@ pub enum Command {
     /// request, by one request to that call before any other source: a `spindle-external/1`
     /// JSON body (`format`, `capability`, `command`, `outcome`, `cause`, `input`), with
     /// `Authorization: Bearer` set from the environment variable `secret_env` names. A `2xx`
-    /// reply `{"holds": true | false}` answers the cause; a timeout, a failure or any other reply
-    /// fails the command `undecided` and writes nothing (`501` when served). An unset variable,
-    /// or a URL other than `http://`, exits 1 before the first request.
+    /// reply `{"holds": true | false}` answers the cause; a timeout, a failure, a reply body over
+    /// 64 KiB or any other reply fails the command `undecided` and writes nothing (`501` when
+    /// served). An unset variable, a URL other than `http://` or carrying userinfo, or a
+    /// `timeout_ms` outside 1 to 30000 exits 1 before the first request. A call blocks every
+    /// other command until it is answered or times out. With `--observe`, each such cause is
+    /// listed and counted with the source `call`, or `unanswered` where its call failed.
     ///
     /// `POST /api/reset` may carry a world as its JSON body, each key optional: `{"rows":
     /// [{"entity", "identity", "state", "fields"}], "decisions": {...}, "mint": <seed>}`. Every

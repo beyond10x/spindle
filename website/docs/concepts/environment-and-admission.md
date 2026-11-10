@@ -97,12 +97,16 @@ secret_env = "APPROVALS_TOKEN"
 Each time `run` asks that cause, on a stdin line or a served request, it sends one request to the
 call: a `spindle-external/1` JSON body with `format`, `capability`, `command`, `outcome`, `cause`
 and the command's `input`. A `2xx` reply `{"holds": true}` or `{"holds": false}` answers the
-cause, and the outcome it selects is committed. A timeout, a failure, another status or another
-body fails the command as `undecided` and writes nothing; served, it answers `501`.
+cause, and the outcome it selects is committed. A timeout, a failure, another status, a reply
+body over 64 KiB or another body fails the command as `undecided` and writes nothing; served, it
+answers `501`. A call holds the thread that runs every command until it is answered or times out,
+so a served run answers nothing else meanwhile.
 
 The document never holds the secret: `secret_env` names an environment variable, read when `run`
 starts and sent as `Authorization: Bearer <value>`. An unset variable stops `run` before the first
-request. A table no `external.` key names, `timeout_ms = 0`, or a `secret_env` that is not a
-variable name is refused when the document is read. This build calls `http://` URLs only; a
-served run whose every external cause is bound to a call needs neither `--decisions` nor
-`--answer-default`.
+request. A table no `external.` key names, a `timeout_ms` outside 1 to 30000, a `url` carrying
+userinfo (`user:password@`), or a `secret_env` that is not a variable name is refused when the
+document is read, naming the table and never repeating the value. This build calls `http://` URLs
+only; a served run whose every external cause is bound to a call needs neither `--decisions` nor
+`--answer-default`. With `--observe`, a cause a call answers is listed and counted with the source
+`call`, and one whose call failed as `unanswered`.

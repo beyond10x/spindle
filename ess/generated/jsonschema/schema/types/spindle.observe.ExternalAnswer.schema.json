@@ -5,13 +5,13 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:f2e3085acc6f7cd6d1ea290b30bfc88012ece6215f3959b06047b07701891ceb",
+    "contract_digest": "slice-sha256/2:9a7480d4196a0feacd2979170cf6da081149dcd57f692f93706240606d27d18e",
     "regenerate": "ess generate"
   },
   "$defs": {
     "spindle.observe.AnswerSource": {
       "title": "AnswerSource",
-      "description": "What answered one external cause of a served command. `world`: the `decisions` of the world the last reset loaded, `spindle.console.World`. `file`: the decisions file. `default`: the default branch `--answer-default` takes. `unanswered`: nothing did, and the command answered `501`. Source: `crates/spindle-cli/src/decisions.rs:35-53`, `crates/spindle-ingress/src/observe.rs:186-209`.",
+      "description": "What answered one external cause of a served command. `world`: the `decisions` of the world the last reset loaded, `spindle.console.World`. `file`: the decisions file. `default`: the default branch `--answer-default` takes. `call`: the HTTP call the environment binds the cause to (`[http.<name>]`). `unanswered`: nothing did, or the cause's HTTP call failed, and the command answered `501`. Source: `crates/spindle-cli/src/decisions.rs:47-71`, `crates/spindle-ingress/src/observe.rs:186-213`.",
       "x-ess-name": "spindle.observe.AnswerSource",
       "x-ess-kind": "enum",
       "type": "string",
@@ -19,6 +19,7 @@
         "world",
         "file",
         "default",
+        "call",
         "unanswered"
       ]
     },
