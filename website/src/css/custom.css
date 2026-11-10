@@ -12,3 +12,85 @@
   block-size: 100%;
   inline-size: auto;
 }
+
+.theme-doc-markdown a:not(.hash-link) {
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+@media (max-width: 996px) {
+  .navbar .navbar__items--right > [class*='colorModeToggle'] {
+    display: flex;
+  }
+
+  .navbar .navbar__items--right > [class*='navbarSearchContainer'] {
+    position: static;
+  }
+}
+
+.theme-doc-markdown :is(td, th),
+.theme-doc-markdown :is(td, th) code,
+.theme-code-block pre code,
+.theme-code-block pre code .token-line,
+.theme-code-block pre code .token,
+.b10x-chip .b10x-chip__text,
+.b10x-status,
+.b10x-status-strip__detail {
+  font-size: max(0.875rem, 14px) !important;
+}
+
+tr[id] {
+  scroll-margin-top: calc(var(--ifm-navbar-height) + 0.5rem);
+}
+
+@media (min-width: 997px) {
+  .theme-doc-markdown.markdown table :is(th, td) {
+    padding-inline: 0.6rem;
+  }
+  .theme-doc-markdown.markdown table th {
+    letter-spacing: 0.06em;
+  }
+}
+
+.navbar [class*='searchHint_'] {
+  color: var(--ifm-font-color-base);
+}
+
+@media (max-width: 996px) {
+  .theme-doc-markdown table:has(td[data-label]),
+  .theme-doc-markdown table:has(td[data-label]) :is(tbody, tr) {
+    display: block;
+  }
+
+  .theme-doc-markdown table:has(td[data-label]) thead {
+    display: none;
+  }
+
+  .theme-doc-markdown table:has(td[data-label]) tr {
+    border-top: 1px solid var(--ifm-table-border-color);
+    padding: 0.5rem 0;
+  }
+
+  .theme-doc-markdown table:has(td[data-label]) td {
+    display: block;
+    border: 0;
+    padding: 0.25rem 0.5rem;
+    overflow-wrap: anywhere;
+  }
+
+  .theme-doc-markdown table:has(td[data-label]) td code {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .theme-doc-markdown table:has(td[data-label]) td::before {
+    display: block;
+    content: attr(data-label);
+    color: var(--ifm-color-emphasis-700);
+    font-weight: 600;
+  }
+
+  .theme-doc-markdown table:has(td[data-label]) td:empty {
+    display: none;
+  }
+}
