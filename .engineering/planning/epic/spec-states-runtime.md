@@ -2,14 +2,15 @@
 format: aep.planning-md/3
 id: epic:spec-states-runtime
 kind: epic
-status: active
+status: implemented
 title: Spindle's own specification says what Spindle does
 relations:
 - serves: vision:spindle
-revision: 3
+revision: 4
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-09T21:33:08Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-09T21:33:08Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-10T06:36:11Z", actor: "human:timo", revision: 4}
 ---
 # Spindle's own specification says what Spindle does
 

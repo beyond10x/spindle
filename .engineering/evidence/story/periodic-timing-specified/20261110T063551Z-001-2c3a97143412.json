@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-10T06:35:51Z",
+  "actor": "human:timo",
+  "artifact": "story:periodic-timing-specified",
+  "kind": "story",
+  "revision": 5,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "wave 17 U6",
+    "reference": "unit merge 8d00dcf4 into wave/17; PR 39 merged as 9cd4ccbc"
+  }
+}

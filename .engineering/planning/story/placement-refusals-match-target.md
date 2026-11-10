@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:placement-refusals-match-target
 kind: story
-status: active
+status: implemented
 title: Placement refusals are the ones the target code returns, decided by the model
 relations:
 - decomposes: epic:spec-states-runtime
@@ -15,10 +15,11 @@ scope:
   path: crates/spindle-target/src/placement.rs
 - confidence: cited
   path: ess/domains/placement.yaml
-revision: 6
+revision: 7
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-09T21:33:08Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-09T21:33:09Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-10T06:35:50Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"test_result":1,"review_outcome":13,"verification":1}}}
 ---
 # Placement refusals are the ones the target code returns, decided by the model
 

@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-10T06:35:50Z",
+  "actor": "human:timo",
+  "artifact": "story:environment-implementations-specified",
+  "kind": "story",
+  "revision": 6,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "wave 17 U4",
+    "reference": "unit merge b82e5182 into wave/17; PR 39 merged as 9cd4ccbc"
+  }
+}

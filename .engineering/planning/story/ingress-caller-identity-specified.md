@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:ingress-caller-identity-specified
 kind: story
-status: active
+status: implemented
 title: How an ingress request proves its caller is specified
 relations:
 - decomposes: epic:spec-states-runtime
@@ -15,10 +15,11 @@ scope:
   path: ess/domains/deployment.yaml
 - confidence: inferred
   path: ess/domains/placement.yaml
-revision: 6
+revision: 7
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-09T21:33:09Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-09T21:33:09Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-10T06:35:53Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"test_result":1,"verification":1}}}
 ---
 # How an ingress request proves its caller is specified
 

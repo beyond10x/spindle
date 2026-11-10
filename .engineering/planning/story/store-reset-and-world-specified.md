@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:store-reset-and-world-specified
 kind: story
-status: active
+status: implemented
 title: A store reset and the world it seeds are specified
 relations:
 - decomposes: epic:spec-states-runtime
@@ -17,10 +17,11 @@ scope:
   path: ess/ess-inputs.yaml
 - confidence: inferred
   path: ess/system.yaml
-revision: 7
+revision: 8
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-09T21:33:09Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-09T21:33:09Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-10T06:35:51Z", actor: "human:timo", revision: 8, decided_on: {"recorded":{"test_result":1,"review_outcome":6,"verification":1}}}
 ---
 # A store reset and the world it seeds are specified
 
