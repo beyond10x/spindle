@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:live-topology
 kind: story
-status: active
+status: implemented
 title: An observed run shows its topology with live numbers
 relations:
 - serves: vision:spindle
@@ -31,10 +31,11 @@ scope:
   path: ui/src/lib/topology.ts
 - confidence: inferred
   path: ui/src/panel/TopologyPanel.vue
-revision: 13
+revision: 14
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-06T14:45:47Z", actor: "human:timo", revision: 12, decided_on: {"recorded":{"review_outcome":1}}}
 - {from: "proposed", to: "active", at: "2026-11-06T14:45:47Z", actor: "human:timo", revision: 13, decided_on: {"recorded":{"review_outcome":1}}}
+- {from: "active", to: "implemented", at: "2026-11-10T14:42:22Z", actor: "human:timo", revision: 14, decided_on: {"recorded":{"test_result":1,"review_outcome":4,"verification":1}}}
 ---
 # An observed run shows its topology with live numbers
 

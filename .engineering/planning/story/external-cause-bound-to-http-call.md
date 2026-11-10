@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:external-cause-bound-to-http-call
 kind: story
-status: active
+status: implemented
 title: An environment binds an external cause to an outbound HTTP call
 tags:
 - downstream-gap
@@ -43,10 +43,11 @@ scope:
   path: website/docs/concepts/environment-and-admission.md
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 6
+revision: 7
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-09T22:14:34Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-09T22:14:34Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-10T14:42:21Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"test_result":1,"review_outcome":2,"verification":1}}}
 ---
 # An environment binds an external cause to an outbound HTTP call
 

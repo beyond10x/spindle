@@ -1,6 +1,6 @@
 # Wave 18
 
-**Running.** Run by the coordinator under `approval-record:wave18-approval`, on the operator's
+**Delivered.** PR #42, CI run 42835134876 green; the four stories are implemented. Run by the coordinator under `approval-record:wave18-approval`, on the operator's
 standing acceptance of future waves (`approval-record:wave16-approval`: "Timo accepted all waves
 and the next 10 future waves"). Skill `aep:implementing` 0.26.0, wave mode.
 

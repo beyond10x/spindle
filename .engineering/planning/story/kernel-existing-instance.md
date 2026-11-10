@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:kernel-existing-instance
 kind: story
-status: active
+status: implemented
 title: 'An existing_instance: outcome is executed'
 tags:
 - downstream-gap
@@ -22,10 +22,11 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/existing_instance.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/spindle-kernel/main.rs
-revision: 6
+revision: 7
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-09T22:14:35Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-09T22:14:35Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-10T14:42:20Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"test_result":1,"review_outcome":1,"verification":1}}}
 ---
 # An `existing_instance:` outcome is executed
 

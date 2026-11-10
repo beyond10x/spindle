@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-10T14:42:20Z",
+  "actor": "human:timo",
+  "artifact": "story:kernel-guard-reads-now",
+  "kind": "story",
+  "revision": 7,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "cargo test -p spindle-kernel guard_now and adversary_guard_now",
+    "reference": "unit c70c93ed + adversary 0cb0a9ab, merge 4d17ddf6; review-result:w18-u1-adversary-1 approve"
+  }
+}
