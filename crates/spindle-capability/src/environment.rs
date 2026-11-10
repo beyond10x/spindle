@@ -79,9 +79,11 @@ pub struct HttpCall {
 /// Why an environment document was refused.
 #[derive(Debug, thiserror::Error)]
 pub enum EnvironmentError {
-    /// Not TOML, or not this shape.
+    /// Not TOML, or not this shape: TOML's message and where, never the source line it quotes
+    /// nor a quoted value, either of which may hold a credential ([`malformed`]). TOML's error is
+    /// not kept as the source, so no chain of causes prints it either.
     #[error("not a spindle environment: {0}")]
-    Parse(#[from] toml::de::Error),
+    Parse(String),
     /// Another format, or none.
     #[error("format is {found:?}, expected {FORMAT:?}")]
     Format {
@@ -139,6 +141,12 @@ pub enum EnvironmentError {
         /// The call.
         name: String,
     },
+}
+
+impl From<toml::de::Error> for EnvironmentError {
+    fn from(error: toml::de::Error) -> Self {
+        Self::Parse(malformed(&error))
+    }
 }
 
 impl Environment {
@@ -222,6 +230,52 @@ impl Environment {
             .max_by_key(|(length, _)| *length)
             .map(|(_, implementations)| implementations.as_slice())
     }
+}
+
+/// `error` without the source it quotes: TOML's message, every `"..."` in it and every `` `...` ``
+/// holding an `@` elided, then the line and column its first line names. A document is refused
+/// as TOML before any `[http]` check runs, so its refusal must not print a URL's userinfo.
+fn malformed(error: &toml::de::Error) -> String {
+    let message = elided(error.message().trim_end());
+    let rendered = error.to_string();
+    match rendered
+        .lines()
+        .next()
+        .and_then(|first| first.strip_prefix("TOML parse error at "))
+    {
+        Some(at) => format!("{message} (at {at})"),
+        None => message,
+    }
+}
+
+/// `message` with the inside of every `"..."` elided, and of every `` `...` `` that holds an
+/// `@`: a value TOML or serde quotes back.
+fn elided(message: &str) -> String {
+    let mut shown = String::with_capacity(message.len());
+    let mut rest = message;
+    while let Some(start) = rest.find(['"', '`']) {
+        let quote = rest[start..].chars().next().unwrap_or('"');
+        shown.push_str(&rest[..=start]);
+        let after = &rest[start + 1..];
+        let Some(end) = after.find(quote) else {
+            shown.push_str(if quote == '"' || after.contains('@') {
+                "…"
+            } else {
+                after
+            });
+            return shown;
+        };
+        let inside = &after[..end];
+        if quote == '"' || inside.contains('@') {
+            shown.push('…');
+        } else {
+            shown.push_str(inside);
+        }
+        shown.push(quote);
+        rest = &after[end + 1..];
+    }
+    shown.push_str(rest);
+    shown
 }
 
 /// Whether `url`'s authority carries userinfo: an `@` before the first `/`, `?` or `#` after the
@@ -382,5 +436,61 @@ mod tests {
             query.is_ok(),
             "an @ after the authority is no userinfo: {query:?}"
         );
+    }
+
+    #[test]
+    fn a_document_toml_cannot_read_is_refused_without_quoting_its_source() {
+        let url = "http://desk-user:desk-password@127.0.0.1:1/approvals";
+        let head = "[provides]\n\"external.*\" = [\"approvals\"]\n\n[http]\n";
+        for (mistake, row) in [
+            (
+                "a negative timeout",
+                format!("approvals = {{ method = \"POST\", url = \"{url}\", timeout_ms = -1 }}"),
+            ),
+            (
+                "no timeout",
+                format!("approvals = {{ method = \"POST\", url = \"{url}\" }}"),
+            ),
+            (
+                "a misspelt key",
+                format!("approvals = {{ method = \"POST\", url = \"{url}\", timeout = 1 }}"),
+            ),
+            (
+                "a bad escape",
+                format!("approvals = {{ method = \"POST\", url = \"{url}\\q\", timeout_ms = 1 }}"),
+            ),
+            (
+                "the URL where a number belongs",
+                format!("approvals = {{ method = \"POST\", url = \"x\", timeout_ms = \"{url}\" }}"),
+            ),
+            (
+                "the URL as a key",
+                format!(
+                    "approvals = {{ method = \"POST\", url = \"x\", timeout_ms = 1, \"{url}\" = 1 }}"
+                ),
+            ),
+            (
+                "the URL as a number",
+                format!("approvals = {{ method = \"POST\", url = {url}, timeout_ms = 1 }}"),
+            ),
+        ] {
+            let refused = parse(&format!("{head}{row}\n"));
+            let Err(error @ EnvironmentError::Parse(_)) = refused else {
+                panic!("{mistake}: TOML cannot read it: {refused:?}");
+            };
+            let shown = error.to_string();
+            assert!(
+                !shown.contains("desk-password"),
+                "{mistake}: the refusal quotes the credential: {shown}"
+            );
+            assert!(
+                shown.contains("line 10"),
+                "{mistake}: the refusal says where: {shown}"
+            );
+            assert!(
+                std::error::Error::source(&error).is_none(),
+                "{mistake}: no cause chain carries TOML's error, which quotes the source line"
+            );
+        }
     }
 }
