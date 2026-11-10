@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-10
+
 ### Added
 
 - An environment can bind an external cause to an HTTP call: `spindle-environment/1` takes
