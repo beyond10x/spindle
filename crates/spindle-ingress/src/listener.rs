@@ -46,26 +46,27 @@ pub struct Exchange {
 }
 
 impl Exchange {
-    /// The route the request is for; `None` for a console route or the metrics.
+    /// The route the request is for; `None` for a console route, the metrics or the topology.
     pub fn route(&self) -> Option<&Route> {
         match &self.pending.asked {
             Asked::Route(route) => Some(route.as_ref()),
-            Asked::Console(_) | Asked::Metrics => None,
+            Asked::Console(_) | Asked::Hosted(_) => None,
         }
     }
 
-    /// The console route the request is for; `None` for a command, a view or the metrics.
+    /// The console route the request is for; `None` for a command, a view, the metrics or the
+    /// topology.
     pub fn console(&self) -> Option<Console> {
         match self.pending.asked {
             Asked::Console(console) => Some(console),
-            Asked::Route(_) | Asked::Metrics => None,
+            Asked::Route(_) | Asked::Hosted(_) => None,
         }
     }
 
     /// The request is for the metrics, `GET /__spindle/metrics`, which [`Exchange::serve`] reads
     /// from the host's counters and stores.
     pub fn metrics(&self) -> bool {
-        matches!(self.pending.asked, Asked::Metrics)
+        matches!(self.pending.asked, Asked::Hosted(Reserved::Metrics))
     }
 
     /// The input the request's path carries in the route's variables and, for a view, the
@@ -350,9 +351,10 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         if let Some(reply) = reply {
             return (reply, None);
         }
-        // The metrics read the stores, so they are answered on the host's thread.
+        // The metrics and the topology read the stores and counters, so they are answered on the
+        // host's thread.
         let pending = Pending {
-            asked: Asked::Metrics,
+            asked: Asked::Hosted(reserved),
             carried: Map::new(),
             query,
             content_type: None,
@@ -462,7 +464,7 @@ async fn handed(served: &Served, pending: Pending) -> Result<(Reply, Answered), 
 
 /// What a record notes of a request for `asked`, answered as `answered` says: the route
 /// template, and the qualified command or view, or the console route as `GET /api/model`; none
-/// of them for the metrics.
+/// of them for the metrics or the topology.
 fn noted(asked: &Asked, answered: Answered) -> Note {
     match asked {
         Asked::Route(route) => Note {
@@ -485,7 +487,7 @@ fn noted(asked: &Asked, answered: Answered) -> Note {
             answered,
         },
         // Under the reserved prefix: the listener notes no request there, so no record holds it.
-        Asked::Metrics => Note {
+        Asked::Hosted(_) => Note {
             route: None,
             operation: None,
             kind: None,

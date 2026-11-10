@@ -50,6 +50,7 @@ mod route_precedence;
 mod run;
 mod served_decisions;
 mod served_world;
+mod topology;
 mod unserved;
 mod view_field_filters;
 mod view_list_parameter;
