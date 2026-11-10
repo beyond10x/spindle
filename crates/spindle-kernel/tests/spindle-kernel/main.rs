@@ -14,6 +14,7 @@ mod adversary_creation_unknown;
 mod adversary_deletes;
 mod adversary_environment;
 mod adversary_generated;
+mod adversary_guard_now;
 mod adversary_launch_admission;
 mod adversary_launch_refused;
 mod adversary_look_ahead;
