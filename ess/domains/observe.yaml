@@ -542,13 +542,14 @@ types:
       - name: id
         type: String
         summary: >-
-          Unique within one specification's topology: `ingress`; the specification's system
-          identifier; a domain, command, view or event by its qualified name prefixed by its
-          kind, such as `command:tasks.board.OpenTask`; an external cause by its command and
-          outcome, such as `external:tasks.ledger.Settle/settled`; a binding by its binding id,
-          not a qualified name, as `binding:<binding id>`, such as `binding:record-closure`. A
-          binding id is unique only within its specification; how ids stay unique across
-          several specifications behind one ingress is for
+          Unique within one specification's topology: `ingress`; the specification by its system
+          identifier prefixed by its kind, such as `specification:tasks`, so a system called
+          `ingress` is not the ingress; a domain, command, view or event by its qualified name
+          prefixed by its kind, such as `command:tasks.board.OpenTask`; an external cause by its
+          command and outcome, such as `external:tasks.ledger.Settle/settled`; a binding by its
+          binding id, not a qualified name, as `binding:<binding id>`, such as
+          `binding:record-closure`. A binding id is unique only within its specification; how ids
+          stay unique across several specifications behind one ingress is for
           `story:one-ingress-several-specifications` to settle.
       - name: kind
         type: spindle.observe.NodeKind

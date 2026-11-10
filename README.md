@@ -60,9 +60,16 @@ did not fill, so its command was not invoked: the binding, the component, the co
 requests by method, route template, operation, kind, class and status class, their durations,
 commands by outcome and failure, events appended, bindings, timer ticks, store writes, the rows
 each entity holds, the resets and the external causes answered, by command, outcome and source.
+`GET /__spindle/topology` answers the graph of what the run serves (`spindle-topology/1`),
+derived from the specification: the ingress, the specification, its domains, their commands,
+views and events, each external cause, each binding. Its edges are `routes`, `contains`, `asks`,
+`emits`, `carries` and `invokes`, and each but `contains` carries live numbers read from the same
+counters as the metrics and the same ring as the request log: a route's requests by status class
+and its latest five, a cause's answers by source, events emitted, envelopes sent, commands invoked.
 `POST /api/reset` empties the stores and keeps every count and the request log.
 `GET /__spindle/ui` answers a panel of them: one HTML page, its script and style inline, that any
-page may frame and that reads `./requests` beside itself (`ui/dist-panel/panel.html`, built by
+page may frame and that reads `./requests` and `./topology` beside itself, the topology drawn
+top-down as SVG (`ui/dist-panel/panel.html`, built by
 `pnpm build:panel` and embedded; a binary built without it answers `503`). Paths under
 `/__spindle/` belong to the run: a binding route there is refused at start, and without
 `--observe` they answer `404`.

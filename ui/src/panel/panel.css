@@ -70,3 +70,43 @@ tr.not-served td,
 tr.failed td {
   color: var(--bad);
 }
+
+nav button.active {
+  color: var(--good);
+}
+
+.topology svg {
+  margin-top: 8px;
+}
+
+.topology .node rect {
+  fill: var(--bg);
+  stroke: var(--border);
+}
+
+.topology .node.ingress rect,
+.topology .node.specification rect {
+  stroke: var(--good);
+}
+
+.topology .node text {
+  fill: var(--fg);
+}
+
+.topology .edge path {
+  fill: none;
+  stroke: var(--border);
+}
+
+.topology .edge.routes path {
+  stroke: var(--muted);
+}
+
+.topology .edge text {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
+.topology .edge text .count {
+  fill: var(--fg);
+}

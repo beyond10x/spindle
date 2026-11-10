@@ -10,6 +10,7 @@ use ess_http::{Body, Encoding, Method, Operation, ResponseEncoding, Segment, Unk
 use serde_json::{Map, Value};
 
 use crate::console::Console;
+use crate::observe::topology::Routed;
 use crate::observe::{Recorder, Reserved};
 
 /// One path variable of a route: the input field it carries and how its text is read.
@@ -753,10 +754,24 @@ impl Surface {
     /// This surface recording the requests its listener answers, the last `capacity` of them
     /// (held to 1 through [`REQUESTS_MOST`](crate::REQUESTS_MOST)) and the totals per
     /// [`Class`](crate::Class), and answering `GET /__spindle/requests` with them. Clones share
-    /// the one recorder.
+    /// the one recorder. The recorder holds every route, each a `routes` edge of
+    /// `GET /__spindle/topology`, also one answered `501`.
     #[must_use]
     pub fn observing(mut self, capacity: usize) -> Self {
-        self.recorder = Some(Recorder::new(capacity));
+        let routes = self
+            .routes
+            .iter()
+            .map(|route| Routed {
+                method: route.method.as_str().to_uppercase(),
+                path: route.path.clone(),
+                operation: route.operation.name().to_string(),
+                kind: match route.operation {
+                    Operation::Command(_) => "command",
+                    Operation::View(_) => "view",
+                },
+            })
+            .collect();
+        self.recorder = Some(Recorder::new(capacity).routing(routes));
         self
     }
 

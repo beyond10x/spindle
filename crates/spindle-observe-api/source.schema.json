@@ -1109,7 +1109,7 @@
       "description": "One node of the topology, derived from the loaded specifications, never authored.",
       "properties": {
         "id": {
-          "description": "Unique within one specification's topology: `ingress`; the specification's system identifier; a domain, command, view or event by its qualified name prefixed by its kind, such as `command:tasks.board.OpenTask`; an external cause by its command and outcome, such as `external:tasks.ledger.Settle/settled`; a binding by its binding id, not a qualified name, as `binding:<binding id>`, such as `binding:record-closure`. A binding id is unique only within its specification; how ids stay unique across several specifications behind one ingress is for `story:one-ingress-several-specifications` to settle.",
+          "description": "Unique within one specification's topology: `ingress`; the specification by its system identifier prefixed by its kind, such as `specification:tasks`, so a system called `ingress` is not the ingress; a domain, command, view or event by its qualified name prefixed by its kind, such as `command:tasks.board.OpenTask`; an external cause by its command and outcome, such as `external:tasks.ledger.Settle/settled`; a binding by its binding id, not a qualified name, as `binding:<binding id>`, such as `binding:record-closure`. A binding id is unique only within its specification; how ids stay unique across several specifications behind one ingress is for `story:one-ingress-several-specifications` to settle.",
           "type": "string"
         },
         "kind": {
@@ -1232,8 +1232,8 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-ess-provenance": {
-    "contract_digest": "slice-sha256/2:06eab1d3817bcb83553e5322ffbe1d3b8ca8b3ff29f3e61742a5b54d7c5ea44a",
-    "source_digest": "23c1eedf2589f72ca2d9c4fd22e42a37d17d172c5d06e5f0f9bb198108c6e5b8",
+    "contract_digest": "slice-sha256/2:3b1a62c0c752cc5c70b6266fd5980b311ea1291aed54a52a3aa5f5adaf09c7b9",
+    "source_digest": "ebe5541db7f58ba078ef8947066dc8654d94bae743fbe67d20dda9dc1328aa7a",
     "specification_version": "v1",
     "system": "spindle"
   }

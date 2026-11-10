@@ -8,6 +8,17 @@ are Spindle's releases.
 
 ### Added
 
+- `run --observe` answers `GET /__spindle/topology` with a `spindle.observe.Topology`
+  (`spindle-topology/1`), derived from the loaded specification: the ingress, the specification,
+  its domains, their commands, views and events, each external cause and each binding, joined by
+  `routes`, `contains`, `asks`, `emits`, `carries` and `invokes` edges. Every route has its
+  `routes` edge, one answered `501` too. Each edge but `contains` carries live numbers read from
+  the counters `GET /__spindle/metrics` exposes and the ring `GET /__spindle/requests` holds: a
+  route's requests by status class and the sequences of its latest five, a cause's answers by
+  source, the events a command appended, the envelopes a binding sent and the commands it invoked.
+  Without `--observe` the route answers `404`. The panel at `GET /__spindle/ui` gains a topology
+  screen that draws the graph top-down as SVG, the ingress first, and polls it.
+
 - The kernel runs an `existing_instance:` outcome, which it refused before for every request of
   its command. Where the precedence plan places the branch, a creation whose identity the input
   names and a row already carries answers the branch's declared error and writes nothing;

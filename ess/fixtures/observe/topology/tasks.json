@@ -1,37 +1,23 @@
 {
   "format": "spindle-topology/1",
-  "at": "2026-11-07T09:00:01Z",
+  "at": "2026-11-07T09:00:01.000Z",
   "specifications": ["tasks"],
   "nodes": [
     { "id": "ingress", "kind": "ingress", "name": "ingress" },
-    { "id": "tasks", "kind": "specification", "name": "tasks", "specification": "tasks" },
+    { "id": "specification:tasks", "kind": "specification", "name": "tasks", "specification": "tasks" },
     { "id": "domain:tasks.board", "kind": "domain", "name": "tasks.board", "specification": "tasks" },
-    { "id": "command:tasks.board.OpenTask", "kind": "command", "name": "tasks.board.OpenTask", "specification": "tasks" },
     { "id": "command:tasks.board.CloseTask", "kind": "command", "name": "tasks.board.CloseTask", "specification": "tasks" },
+    { "id": "command:tasks.board.OpenTask", "kind": "command", "name": "tasks.board.OpenTask", "specification": "tasks" },
     { "id": "view:tasks.board.AllTasks", "kind": "view", "name": "tasks.board.AllTasks", "specification": "tasks" },
     { "id": "view:tasks.board.OpenTasks", "kind": "view", "name": "tasks.board.OpenTasks", "specification": "tasks" },
-    { "id": "event:tasks.board.TaskOpened", "kind": "event", "name": "tasks.board.TaskOpened", "specification": "tasks" },
     { "id": "event:tasks.board.TaskClosed", "kind": "event", "name": "tasks.board.TaskClosed", "specification": "tasks" },
+    { "id": "event:tasks.board.TaskOpened", "kind": "event", "name": "tasks.board.TaskOpened", "specification": "tasks" },
     { "id": "domain:tasks.ledger", "kind": "domain", "name": "tasks.ledger", "specification": "tasks" },
     { "id": "command:tasks.ledger.RecordClosure", "kind": "command", "name": "tasks.ledger.RecordClosure", "specification": "tasks" },
     { "id": "event:tasks.ledger.ClosureRecorded", "kind": "event", "name": "tasks.ledger.ClosureRecorded", "specification": "tasks" },
     { "id": "binding:record-closure", "kind": "binding", "name": "record-closure", "specification": "tasks" }
   ],
   "edges": [
-    {
-      "from": "ingress",
-      "to": "command:tasks.board.OpenTask",
-      "kind": "routes",
-      "traffic": {
-        "count": 2,
-        "statuses": [
-          { "status_class": "2xx", "count": 1 },
-          { "status_class": "4xx", "count": 1 }
-        ],
-        "sources": [],
-        "latest": [4, 0]
-      }
-    },
     {
       "from": "ingress",
       "to": "command:tasks.board.CloseTask",
@@ -44,6 +30,20 @@
         ],
         "sources": [],
         "latest": [2, 1]
+      }
+    },
+    {
+      "from": "ingress",
+      "to": "command:tasks.board.OpenTask",
+      "kind": "routes",
+      "traffic": {
+        "count": 2,
+        "statuses": [
+          { "status_class": "2xx", "count": 1 },
+          { "status_class": "4xx", "count": 1 }
+        ],
+        "sources": [],
+        "latest": [4, 0]
       }
     },
     {
@@ -63,16 +63,22 @@
       "kind": "routes",
       "traffic": { "count": 0, "statuses": [], "sources": [], "latest": [] }
     },
-    { "from": "tasks", "to": "domain:tasks.board", "kind": "contains" },
-    { "from": "tasks", "to": "domain:tasks.ledger", "kind": "contains" },
-    { "from": "domain:tasks.board", "to": "command:tasks.board.OpenTask", "kind": "contains" },
+    { "from": "specification:tasks", "to": "domain:tasks.board", "kind": "contains" },
+    { "from": "specification:tasks", "to": "domain:tasks.ledger", "kind": "contains" },
     { "from": "domain:tasks.board", "to": "command:tasks.board.CloseTask", "kind": "contains" },
+    { "from": "domain:tasks.board", "to": "command:tasks.board.OpenTask", "kind": "contains" },
     { "from": "domain:tasks.board", "to": "view:tasks.board.AllTasks", "kind": "contains" },
     { "from": "domain:tasks.board", "to": "view:tasks.board.OpenTasks", "kind": "contains" },
-    { "from": "domain:tasks.board", "to": "event:tasks.board.TaskOpened", "kind": "contains" },
     { "from": "domain:tasks.board", "to": "event:tasks.board.TaskClosed", "kind": "contains" },
+    { "from": "domain:tasks.board", "to": "event:tasks.board.TaskOpened", "kind": "contains" },
     { "from": "domain:tasks.ledger", "to": "command:tasks.ledger.RecordClosure", "kind": "contains" },
     { "from": "domain:tasks.ledger", "to": "event:tasks.ledger.ClosureRecorded", "kind": "contains" },
+    {
+      "from": "command:tasks.board.CloseTask",
+      "to": "event:tasks.board.TaskClosed",
+      "kind": "emits",
+      "traffic": { "count": 1, "statuses": [], "sources": [], "latest": [] }
+    },
     {
       "from": "command:tasks.board.OpenTask",
       "to": "event:tasks.board.TaskOpened",
@@ -80,8 +86,8 @@
       "traffic": { "count": 1, "statuses": [], "sources": [], "latest": [] }
     },
     {
-      "from": "command:tasks.board.CloseTask",
-      "to": "event:tasks.board.TaskClosed",
+      "from": "command:tasks.ledger.RecordClosure",
+      "to": "event:tasks.ledger.ClosureRecorded",
       "kind": "emits",
       "traffic": { "count": 1, "statuses": [], "sources": [], "latest": [] }
     },
@@ -95,12 +101,6 @@
       "from": "binding:record-closure",
       "to": "command:tasks.ledger.RecordClosure",
       "kind": "invokes",
-      "traffic": { "count": 1, "statuses": [], "sources": [], "latest": [] }
-    },
-    {
-      "from": "command:tasks.ledger.RecordClosure",
-      "to": "event:tasks.ledger.ClosureRecorded",
-      "kind": "emits",
       "traffic": { "count": 1, "statuses": [], "sources": [], "latest": [] }
     }
   ]
