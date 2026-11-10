@@ -9,7 +9,7 @@ use spindle_host::{Failed, Host, HostError};
 use spindle_kernel::{DeclaredError, Event, ExecuteError};
 
 use crate::observe::Answered;
-use crate::surface::{Route, Unserved};
+use crate::surface::{Caller, Route, Unserved, may_read};
 
 /// A status and the JSON body written under it, where it has one.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +37,16 @@ impl Answer {
         Self {
             status: FORBIDDEN.parse().unwrap_or(403),
             body: Some(json!({"refused": NOT_GRANTED, "actor": actor})),
+        }
+    }
+
+    /// ESS's standard refusal for a request authenticated as no caller, on a route whose requests
+    /// prove their caller ([`Route::proves`]) where this one proves none: `403`
+    /// `{"refused": "not granted", "actor": null}`.
+    pub fn not_proven() -> Self {
+        Self {
+            status: FORBIDDEN.parse().unwrap_or(403),
+            body: Some(json!({"refused": NOT_GRANTED, "actor": null})),
         }
     }
 
@@ -94,6 +104,10 @@ impl Answer {
 /// view the fixed actor may not read ([`Route::not_granted`]), before anything is read, its
 /// path variables and query string included, as ESS's served surface checks the reader first.
 ///
+/// On a route whose requests prove their caller ([`Route::proves`]) this function is handed no
+/// proof, so it answers every request `403` `{"refused": "not granted", "actor": null}`
+/// ([`Answer::not_proven`]); the listener hands the router the caller each request proves.
+///
 /// An operation the route marks [`Unserved::Ingress`] answers `501` with `committed: false`,
 /// naming the operation and what it uses, before the body is read or the host asked. A request
 /// whose selected outcome the route refuses ([`Route::refused`]: one this ingress does not answer
@@ -121,21 +135,36 @@ pub fn answered(
     content_type: Option<&str>,
     body: &[u8],
 ) -> (Answer, Vec<Failed>) {
-    let (answer, failed, _) = answering(host, route, carried, query, content_type, body);
+    let (answer, failed, _) = answering(host, route, None, carried, query, content_type, body);
     (answer, failed)
 }
 
 /// [`answered`], and who answered: the model where the command's envelope found a status for the
 /// outcome it selected, with that outcome and the events it published, or where the view gave
 /// its rows; the ingress for every other answer.
+///
+/// On a route whose requests prove their caller ([`Route::proves`]) the request is sent or read
+/// as `proven`, the caller its header proves ([`Caller::proven`]), once the model binds it
+/// ([`Caller::binds`]); with no caller proven, or one the model does not bind, it is refused
+/// [`Answer::not_proven`] before anything else is read, run or written. A read-granted view the
+/// proven actor may not read answers [`Answer::not_granted`] naming it.
 pub(crate) fn answering(
     host: &mut Host,
     route: &Route,
+    proven: Option<&Caller>,
     carried: &Map<String, Value>,
     query: &str,
     content_type: Option<&str>,
     body: &[u8],
 ) -> (Answer, Vec<Failed>, Answered) {
+    let caller = if route.proves() {
+        match proven.filter(|caller| caller.binds(host.ir())) {
+            Some(caller) => Some(caller),
+            None => return (Answer::not_proven(), Vec::new(), Answered::ingress()),
+        }
+    } else {
+        route.caller()
+    };
     if let Some(unserved @ Unserved::Ingress(_)) = route.unserved() {
         return (
             Answer::unfinished(format!("{}: {unserved}", route.operation), false),
@@ -153,15 +182,21 @@ pub(crate) fn answering(
                     .map_err(|detail| Answer::refusal(400, detail)),
             };
             match input {
-                Ok(input) => run(host, route, command, carried, input),
+                Ok(input) => run(host, route, caller, command, carried, input),
                 Err(refusal) => (refusal, Vec::new(), Answered::ingress()),
             }
         }
-        Operation::View(_) if route.not_granted() => (
-            Answer::not_granted(route.caller().map_or("", |caller| caller.actor.as_str())),
-            Vec::new(),
-            Answered::ingress(),
-        ),
+        Operation::View(view)
+            if route.not_granted()
+                || (route.proves()
+                    && caller.is_some_and(|caller| !may_read(host.ir(), &caller.actor, view))) =>
+        {
+            (
+                Answer::not_granted(caller.map_or("", |caller| caller.actor.as_str())),
+                Vec::new(),
+                Answered::ingress(),
+            )
+        }
         Operation::View(view) => {
             let mut given = carried.clone();
             match route.parameters(query) {
@@ -195,6 +230,7 @@ pub(crate) fn answering(
 fn run(
     host: &mut Host,
     route: &Route,
+    caller: Option<&Caller>,
     command: &str,
     carried: &Map<String, Value>,
     mut input: Map<String, Value>,
@@ -222,7 +258,6 @@ fn run(
         }
         input.insert(field.clone(), value.clone());
     }
-    let caller = route.caller();
     let answer = match host.submit_refusing(
         command,
         input,

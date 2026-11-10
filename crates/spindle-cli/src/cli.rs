@@ -213,6 +213,33 @@ pub enum Command {
         /// own, `{}` for one that declares no attribute.
         #[arg(long, requires = "fixed_actor", value_parser = json_object)]
         fixed_caller: Vec<Map<String, Value>>,
+        /// Read each request's caller from the header `NAME`, which a proxy in front of the
+        /// ingress sets once it has authenticated the request: one JSON object, `{"actor":
+        /// "<qualified actor>", "caller": {"<attribute>": <value>}}` (`caller` left out for an
+        /// actor with no attribute), bound against the model as `--fixed-caller` is. The proxy
+        /// is trusted by the secret of `--trusted-caller-secret`, which it sends on every request
+        /// in the header `Spindle-Proxy-Secret`. A command that reads its caller then runs for
+        /// that caller, and a read-granted view is read as it. A request for a command or view
+        /// without the header, with it twice, with a value that proves no caller of the model, or
+        /// without the right secret is refused `403` `{"refused": "not granted", "actor": null}`
+        /// and writes nothing; no default caller is taken. A value naming any member twice proves
+        /// no caller. The console routes (`/api/*`) and `/__spindle/*` require the secret alone,
+        /// and without it are refused the same way, doing nothing. No value of either header is
+        /// printed.
+        /// The headers are trusted only because the proxy sets them: the ingress must be
+        /// reachable only through that proxy, and the proxy must remove both from every client
+        /// request. Given with `--fixed-actor`, or without `--trusted-caller-secret`, `run` exits
+        /// 1. Only where `run` serves HTTP.
+        #[arg(long, value_name = "NAME", conflicts_with = "scenario")]
+        trusted_caller_header: Option<String>,
+        /// The file holding the secret the proxy of `--trusted-caller-header` presents on every
+        /// request in the header `Spindle-Proxy-Secret`, compared in time that depends only on
+        /// its length; read once at start, one trailing newline dropped. Required with
+        /// `--trusted-caller-header` and refused without it; a file that cannot be read, is
+        /// empty, or holds anything but visible ASCII exits 1. The startup line names the file,
+        /// never the secret. Only where `run` serves HTTP.
+        #[arg(long, value_name = "FILE", conflicts_with = "scenario")]
+        trusted_caller_secret: Option<PathBuf>,
         /// Record every request the listener answers outside `/__spindle/`, timed from its head
         /// read to its answer handed back, and answer `GET /__spindle/requests` with a
         /// `spindle-requests/1` log: the totals per class since start (`served`, `refused`,
