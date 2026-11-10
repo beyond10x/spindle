@@ -29,6 +29,7 @@ mod adversary_view_list_parameter;
 mod adversary_w17_conform;
 mod adversary_world;
 mod adversary_world_spec;
+mod binding_where;
 mod caller;
 mod conform;
 mod console;

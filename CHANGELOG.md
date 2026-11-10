@@ -6,6 +6,17 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- An event binding with a payload condition (`when: {event: X, where: …}`, ess/22) runs: the
+  channel no longer refuses it at start ("a `where` condition is not supported by the channel").
+  The condition is decided on each event's payload before the input is mapped, by ESS's own
+  evaluator, as ESS 0.90.0's interpreter decides it: true invokes the command, false invokes
+  nothing and reports nothing as failed, and a condition that reads an absent or `null` Optional
+  field is unknown, invokes nothing and is reported as unmet binding input, with zero attempts,
+  while the event's other bindings still run (`spindle_channel::Route::holds`,
+  `MappingError::Undecided`).
+
 ## [0.10.0] - 2026-11-10
 
 ### Added
