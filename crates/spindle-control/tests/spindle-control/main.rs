@@ -4,3 +4,4 @@
 
 mod adversary_control;
 mod control;
+mod unknown_component;

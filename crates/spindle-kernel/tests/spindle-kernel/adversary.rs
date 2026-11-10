@@ -201,11 +201,18 @@ fn two_writers_of_one_sqlite_file_cannot_both_commit() {
     let path = directory.path().join("state.sqlite");
     let mut first = SqliteStore::open(&path).expect("the first handle opens");
     let mut second = SqliteStore::open(&path).expect("the second handle opens");
+    let declared = run(
+        &ir,
+        &mut first,
+        "spindle.deployment.DeclareEnvironment",
+        json!({"environment_id": "laptop", "os": "linux", "arch": "x86_64", "provides": []}),
+    );
+    assert_eq!(declared.outcome, "declared");
     let offered = run(
         &ir,
         &mut first,
         "spindle.deployment.OfferBundle",
-        json!({"deployment_id": "d1", "bundle": "sha256:0f", "environment_id": "laptop", "requires": []}),
+        json!({"deployment_id": "d1", "bundle": "sha256:0f", "environment_id": "laptop"}),
     );
     assert_eq!(offered.outcome, "offered");
 

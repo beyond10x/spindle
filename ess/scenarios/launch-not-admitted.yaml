@@ -1,0 +1,109 @@
+type: ess-scenario/1
+domain: spindle.placement
+scenario: launch-not-admitted
+summary: >-
+  A placed instance whose deployment is only offered launches nothing and stays placed, while an
+  instance of an admitted deployment in another environment launches.
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: spindle.deployment.DeclareEnvironment
+    input:
+      environment_id: laptop
+      os: linux
+      arch: x86_64
+      provides: []
+    outcome: declared
+  - at: 2026-01-05T09:00:01Z
+    command: spindle.deployment.DeclareEnvironment
+    input:
+      environment_id: microvm
+      os: linux
+      arch: x86_64
+      provides: []
+    outcome: declared
+  - at: 2026-01-05T09:00:02Z
+    command: spindle.placement.DeclareTarget
+    input:
+      target_id: laptop-host
+      kind: Process
+      environment_id: laptop
+      ceiling: {vcpus: 1, memory_mib: 128, disk_mib: 0}
+    outcome: declared
+  - at: 2026-01-05T09:00:03Z
+    command: spindle.placement.DeclareTarget
+    input:
+      target_id: microvm-host
+      kind: QemuMicrovm
+      environment_id: microvm
+      ceiling: {vcpus: 1, memory_mib: 128, disk_mib: 0}
+    outcome: declared
+  - at: 2026-01-05T09:00:04Z
+    command: spindle.deployment.OfferBundle
+    input:
+      deployment_id: offered
+      bundle: sha256:0f
+      environment_id: laptop
+    outcome: offered
+  - at: 2026-01-05T09:00:05Z
+    command: spindle.deployment.OfferBundle
+    input:
+      deployment_id: admitted
+      bundle: sha256:0f
+      environment_id: microvm
+    outcome: offered
+  - at: 2026-01-05T09:00:06Z
+    command: spindle.deployment.DecideAdmission
+    input:
+      deployment_id: admitted
+      requires: []
+      bindings: []
+      missing: []
+    outcome: admitted
+  - at: 2026-01-05T09:00:07Z
+    command: spindle.placement.PlanInstance
+    input:
+      instance_id: of-offered
+      deployment_id: offered
+      component: spindle-control
+      settings: []
+      target_id: laptop-host
+      request: {vcpus: 1, memory_mib: 64, disk_mib: 0}
+    outcome: planned
+  - at: 2026-01-05T09:00:08Z
+    command: spindle.placement.PlanInstance
+    input:
+      instance_id: of-admitted
+      deployment_id: admitted
+      component: spindle-control
+      settings: []
+      target_id: microvm-host
+      request: {vcpus: 1, memory_mib: 64, disk_mib: 0}
+    outcome: planned
+  - at: 2026-01-05T09:00:09Z
+    command: spindle.placement.PlaceInstance
+    input:
+      instance_id: of-offered
+    outcome: placed
+  - at: 2026-01-05T09:00:10Z
+    command: spindle.placement.PlaceInstance
+    input:
+      instance_id: of-admitted
+    outcome: placed
+  - at: 2026-01-05T09:00:11Z
+    command: spindle.placement.LaunchInstance
+    input:
+      instance_id: of-offered
+    outcome: not-admitted
+    error:
+      name: spindle.placement.DeploymentNotAdmitted
+      fields: {deployment_id: offered}
+  - at: 2026-01-05T09:00:12Z
+    command: spindle.placement.LaunchInstance
+    input:
+      instance_id: of-admitted
+    outcome: launched
+assert:
+  - view: spindle.placement.InstanceState
+    contains: {instance_id: of-offered, state: Placed}
+  - view: spindle.placement.InstanceState
+    contains: {instance_id: of-admitted, state: Running}

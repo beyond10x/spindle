@@ -49,16 +49,13 @@
     "deployment_id",
     "bundle",
     "environment_id",
-    "requires",
-    "bindings",
-    "missing",
     "state"
   ],
   "additionalProperties": false,
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:c45df6eaaecb853f4a393856ee6ca56da7a8629bc0a4c7a27d1f57e15b771273",
+    "contract_digest": "slice-sha256/2:60ce636d9f10dccdfd2288f1ba8b2a96fe3002d5de34b399fb79df7fa403e19a",
     "regenerate": "ess generate"
   },
   "$defs": {

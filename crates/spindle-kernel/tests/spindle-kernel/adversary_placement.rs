@@ -100,18 +100,25 @@ fn admitted(ir: &EssIr, store: &mut dyn Store) {
     {
         return;
     }
+    let declared = deployment(
+        ir,
+        store,
+        "DeclareEnvironment",
+        json!({"environment_id": "laptop", "os": "linux", "arch": "x86_64", "provides": []}),
+    );
+    assert_eq!(declared.outcome, "declared", "{declared:?}");
     let offered = deployment(
         ir,
         store,
         "OfferBundle",
-        json!({"deployment_id": "d1", "bundle": "sha256:0f", "environment_id": "laptop", "requires": []}),
+        json!({"deployment_id": "d1", "bundle": "sha256:0f", "environment_id": "laptop"}),
     );
     assert_eq!(offered.outcome, "offered", "{offered:?}");
     let admitted = deployment(
         ir,
         store,
         "DecideAdmission",
-        json!({"deployment_id": "d1", "bindings": [], "missing": []}),
+        json!({"deployment_id": "d1", "requires": [], "bindings": [], "missing": []}),
     );
     assert_eq!(admitted.outcome, "admitted", "{admitted:?}");
 }

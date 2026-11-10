@@ -114,18 +114,25 @@ fn admitted(ir: &EssIr, store: &mut dyn Store) {
     {
         return;
     }
+    let declared = deployment(
+        ir,
+        store,
+        "DeclareEnvironment",
+        json!({"environment_id": "laptop", "os": "linux", "arch": "x86_64", "provides": []}),
+    );
+    assert_eq!(declared.outcome, "declared", "{declared:?}");
     let offered = deployment(
         ir,
         store,
         "OfferBundle",
-        json!({"deployment_id": "d1", "bundle": "sha256:0f", "environment_id": "laptop", "requires": []}),
+        json!({"deployment_id": "d1", "bundle": "sha256:0f", "environment_id": "laptop"}),
     );
     assert_eq!(offered.outcome, "offered", "{offered:?}");
     let admitted = deployment(
         ir,
         store,
         "DecideAdmission",
-        json!({"deployment_id": "d1", "bindings": [], "missing": []}),
+        json!({"deployment_id": "d1", "requires": [], "bindings": [], "missing": []}),
     );
     assert_eq!(admitted.outcome, "admitted", "{admitted:?}");
 }
@@ -283,12 +290,57 @@ fn an_instance_of_a_refused_deployment_cannot_be_placed() {
     assert_eq!(row(&mut store, INSTANCE, "i2").0, "Placed");
 
     let scenarios = synthesised(&ir);
-    for command in ["PlanInstance", "PlaceInstance", "LaunchInstance"] {
+    for command in ["PlanInstance", "PlaceInstance"] {
         assert_synthesised(
             &scenarios,
             &format!("spindle.placement.{command}/outcome/not-admitted"),
         );
     }
+    // ESS 0.90 synthesises no `LaunchInstance` `not-admitted` once `OfferBundle` needs a declared
+    // environment (ESS-SYNTH-001: two environments under one identity), so an authored scenario
+    // covers it (story:placement-refusals-match-target).
+    assert_authored(
+        &ir,
+        "scenarios/launch-not-admitted.yaml",
+        "spindle.placement.LaunchInstance",
+        "not-admitted",
+    );
+}
+
+/// The authored scenario `file` (relative to `ess/`) is listed in `ess/ess-inputs.yaml`, compiles
+/// against the model with no refusal, and sends `command` expecting its `outcome`.
+fn assert_authored(ir: &EssIr, file: &str, command: &str, outcome: &str) {
+    let ess = workspace().join("ess");
+    let inputs = std::fs::read_to_string(ess.join("ess-inputs.yaml")).expect("ess-inputs reads");
+    assert!(
+        inputs
+            .lines()
+            .any(|line| line.trim() == format!("- {file}")),
+        "ess/ess-inputs.yaml lists {file} under scenarios"
+    );
+    let text = std::fs::read_to_string(ess.join(file)).expect("the scenario reads");
+    let authoring = ess_conformance::authored::compile(
+        ir,
+        &[ess_conformance::authored::Source::new(file, text)],
+    );
+    assert!(authoring.is_complete(), "{:?}", authoring.refusals);
+    let expected = format!("{command}/{outcome}");
+    let covered = authoring.scenarios.values().any(|scenario| {
+        scenario.steps.windows(2).any(|pair| {
+            matches!(
+                pair,
+                [
+                    ess_conformance::ScenarioStep::ExecuteCommand { command: sent, .. },
+                    ess_conformance::ScenarioStep::ExpectOutcome { outcome: answered },
+                ] if sent.to_string() == command && answered.to_string() == expected
+            )
+        })
+    });
+    assert!(
+        covered,
+        "{file} sends {command} and expects `{outcome}`: {:?}",
+        authoring.scenarios.keys().collect::<Vec<_>>()
+    );
 }
 
 #[test]

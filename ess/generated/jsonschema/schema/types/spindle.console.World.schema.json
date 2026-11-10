@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.console.World.schema.json",
+  "$ref": "#/$defs/spindle.console.World",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "contract_digest": "slice-sha256/2:0bac000b4c2da19a6009784e0e67b5cd603f929f2f88cac4b8ddefb16f7c7d2f",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.console.World": {
+      "title": "World",
+      "description": "What a reset loads once every store is empty, the body of `POST /api/reset`; every member is optional and no other is read. An empty or all-whitespace body loads no world: the run starts from empty stores, its own answers and a random mint. A world loaded holds until the next reset, which drops its decisions and its mint. Only `b10x-spindle run` loads a world. The browser run serves the reset and loads no world: it refuses a reset with a body `400`. `play --component` serves no console route, so every reset there that passes its token and `Host` checks (`401`, `403`, `crates/spindle-ingress/src/listener.rs:221-224`) is answered `404`. Source: `crates/spindle-cli/src/world.rs:1-81`, `crates/spindle-ingress/src/console.rs:112-130`, `crates/spindle-cli/src/serve.rs:325-349`, `crates/spindle-cli/src/cli.rs:141-146`, `crates/spindle-wasm/src/worker.rs:124,228-229`, `crates/spindle-cli/src/component.rs:258`.",
+      "x-ess-name": "spindle.console.World",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "rows": {
+          "description": "The rows written once every store is empty, in order; absent for none. Two rows of one instance are refused (`crates/spindle-host/src/host.rs:897-902`).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/spindle.console.WorldRow"
+          }
+        },
+        "decisions": {
+          "description": "A decision table in the decisions file's shape, `{\"<outcome>\": true | false, \"<command>\": {\"<outcome>\": true | false}}`; absent, or `null`, for none. Every Boolean in it answers the outcome its own key names, under the command the keys of the tables around it name, joined by `.`, or under every command for a Boolean at the top: so `{\"shelf\": {\"books\": {\"Donate\": {\"refused\": true}}}}` is `{\"shelf.books.Donate\": {\"refused\": true}}`. A table that holds no Boolean answers nothing and is loaded unchecked, whatever its key. An answer whose command the specification does not declare, whose outcome is no external outcome of that command (or of any command, at the top), or a value that is neither a Boolean nor a table, is refused `400`. The table answers external causes before `--decisions` and `--answer-default` do, until the next reset; an answer from it is the `world` source of `spindle.observe.AnswerSource`. Source: `crates/spindle-host/src/decisions.rs:47-59,75-116,209-240`, `crates/spindle-cli/src/decisions.rs:35-44`.",
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": {},
+              "x-ess-map-key": "String"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mint": {
+          "description": "The seed every identity and generated value is minted from until the next reset, so the same requests mint the same identities; absent, or `null`, for random version 4 UUIDs. A seeded mint never answers a UUID a row's identity holds or ends in. Source: `crates/spindle-host/src/host.rs:101-112,874-879,913-937`.",
+          "minimum": 0,
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "x-ess-invariants": [
+        "mint >= 0"
+      ]
+    },
+    "spindle.console.WorldRow": {
+      "title": "WorldRow",
+      "description": "One row of a world: an instance of a declared entity as it rests, written once every store is empty, where its entity rests. ESS checks it against the model as it checks a scenario's `establish` step; the run then checks that a running component owns its entity, that its invariants hold, that its store can key its identity and that no other row of the world is the same instance. Source: `crates/spindle-cli/src/world.rs:39-47,83-113`, `crates/spindle-host/src/host.rs:881-911`.",
+      "x-ess-name": "spindle.console.WorldRow",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "entity": {
+          "description": "The qualified name of the entity the row is an instance of.",
+          "type": "string"
+        },
+        "identity": {
+          "description": "The instance's identity, a value of the entity's identity type."
+        },
+        "state": {
+          "description": "The lifecycle state the row rests in, one the entity declares.",
+          "type": "string"
+        },
+        "fields": {
+          "description": "The row's fields by name, each a value of its declared type; absent for none. A field sent as `null` is held as absent (`crates/spindle-cli/src/world.rs:99-104`).",
+          "type": "object",
+          "additionalProperties": {},
+          "x-ess-map-key": "String"
+        }
+      },
+      "required": [
+        "entity",
+        "identity",
+        "state"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

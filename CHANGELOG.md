@@ -6,8 +6,28 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- `ess/` specifies the reset and the world it loads, in a new domain `spindle.console`
+  (`ess/domains/console.yaml`): `World` and `WorldRow` (the body of `POST /api/reset`: rows, a
+  decision table and a mint seed, every member optional, no other read), `ResetAnswer`
+  (`{"emptied": [...]}`, `200`) and `ResetRefusal` (`{"refused"}`, `400` before anything changed,
+  `500` once a store could not be emptied or written). `AnswerSource`'s `world` names the world's
+  `decisions`. No behaviour changes.
+
 ### Changed
 
+- `spindle.deployment` checks an admission decision itself. `DecideAdmission` takes `requires`
+  beside `bindings` and `missing`, all three the admitter's answer, and `OfferBundle` no longer
+  takes `requires`; an offer to an environment nobody declared is `unknown-environment`
+  (`EnvironmentUnknown`). A decision inconsistent with its own `requires` is `not-decided` before
+  the deployment's state is read, a binding the environment's `provides` does not list is
+  `not-provided`, a refusal naming missing a capability `provides` lists is `missing-provided`,
+  and a consistent refusal its external cause does not confirm is `unconfirmed`,
+  each `AdmissionDecisionInvalid`. `Deployment`'s `requires`, `bindings` and `missing` are
+  `Optional`, absent until a decision sets them; `DeploymentState` publishes them with `bundle`
+  and `environment_id`, and `EnvironmentState` is new. Before, `requires` was the offer's caller's, `admitted`
+  never read `provides`, and `refused` took a refusal naming a capability that was not required.
 - `spindle.placement` names every refusal `spindle-target` returns: `RefusalCause` gains
   `EnvironmentMismatch`, recorded by `PlaceInstance`'s own `environment-mismatch` outcome, and
   `not-admitted` no longer covers an admission decided for another environment. An instance

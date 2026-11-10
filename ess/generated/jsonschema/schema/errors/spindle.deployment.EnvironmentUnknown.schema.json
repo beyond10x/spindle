@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/errors/spindle.deployment.EnvironmentUnknown.schema.json",
+  "title": "EnvironmentUnknown payload",
+  "description": "No environment is declared under the identity the offer names, so nothing moved.",
+  "x-ess-name": "spindle.deployment.EnvironmentUnknown",
+  "x-ess-kind": "error-payload",
+  "type": "object",
+  "additionalProperties": false,
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "contract_digest": "slice-sha256/2:00aa5fae356b241f6f0da2ef0ccc5f5eb49e7d863dc3d190fadc1d018e03696c",
+    "regenerate": "ess generate"
+  }
+}
