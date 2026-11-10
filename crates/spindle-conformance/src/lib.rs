@@ -45,13 +45,19 @@ const MEMORY: &str = "memory";
 /// This is the suite `ess conform synthesize --path <dir> --scenarios <dir>` writes: the
 /// synthesised scenarios, each authored one `ess-inputs.yaml` lists compiled against the IR by
 /// ESS ([`ess_conformance::authored::compile`]) and filed beside them, a refusal an authored
-/// scenario witnesses withdrawn, and the format the newest the constructs need.
+/// scenario witnesses withdrawn, and the format the newest the constructs need. A specification
+/// that lists no scenario is the synthesised suite alone: the authored path is not run, so the
+/// model check ESS makes on it cannot report a refused listed scenario where none is listed.
 ///
 /// # Errors
 /// When ESS refuses a listed scenario, or one has the id of a scenario already in the suite.
 pub fn synthesize(specification: &Specification) -> Result<Synthesis, SynthesisError> {
     let ir = &specification.ir;
     let mut synthesis = ess_conformance::synthesize(ir);
+    if specification.scenarios.is_empty() {
+        synthesis.suite.select_fresh_format_for(ir);
+        return Ok(synthesis);
+    }
     let sources = specification
         .scenarios
         .iter()
