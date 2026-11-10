@@ -33,6 +33,7 @@ mod creation_takes_unknown_row;
 mod deletes;
 mod deployment;
 mod error_fields;
+mod existing_instance;
 mod generated;
 mod guards;
 mod list_append;

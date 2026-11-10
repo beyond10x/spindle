@@ -6,6 +6,15 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- The kernel runs an `existing_instance:` outcome, which it refused before for every request of
+  its command. Where the precedence plan places the branch, a creation whose identity the input
+  names and a row already carries answers the branch's declared error and writes nothing;
+  otherwise the creation takes the identity, as ESS 0.90.0's interpreter selects it. A command
+  whose creations take their identities from different input fields beside `existing_instance:`
+  stays refused by name: ESS reads such a command only after selecting the accepting branch.
+
 ## [0.9.0] - 2026-11-10
 
 ### Added

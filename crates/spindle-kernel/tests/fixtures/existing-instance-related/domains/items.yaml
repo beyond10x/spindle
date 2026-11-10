@@ -1,0 +1,80 @@
+domain: stock.items
+summary: Items a command adds once per identity; stowing one reads the shelf the input names, whose absence answers after the duplicate.
+types:
+  - name: stock.items.ShelfId
+    kind: newtype
+    of: String
+entities:
+  - name: stock.items.Shelf
+    identity: {name: shelf_id, type: stock.items.ShelfId}
+    fields:
+      - {name: label, type: String}
+    lifecycle: {initial: Open, states: [Open], terminal: [Open]}
+  - name: stock.items.Item
+    identity: {name: id, type: String}
+    fields:
+      - {name: label, type: String}
+    lifecycle: {initial: Listed, states: [Listed], terminal: [Listed]}
+errors:
+  - name: stock.items.ItemExists
+    summary: An item already carries the identity.
+    fields:
+      - {name: id, type: String}
+  - {name: stock.items.NoShelf, summary: No shelf carries the identity., fields: []}
+events:
+  - name: stock.items.ItemAdded
+    fields: [{name: id, type: String}]
+commands:
+  - name: stock.items.AddItem
+    input:
+      - {name: id, type: String}
+      - {name: label, type: String}
+    outcomes:
+      - name: duplicate
+        existing_instance: true
+        error: stock.items.ItemExists
+        payload:
+          stock.items.ItemExists: {id: input.id}
+        summary: An item already carries the identity.
+      - name: added
+        creates: stock.items.Item
+        instance: id
+        sets: {label: input.label}
+        emits: [stock.items.ItemAdded]
+        payload:
+          stock.items.ItemAdded: {id: input.id}
+        summary: The item is added.
+  - name: stock.items.StowItem
+    input:
+      - {name: id, type: String}
+      - {name: shelf, type: stock.items.ShelfId}
+      - {name: label, type: String}
+    outcomes:
+      - name: duplicate
+        existing_instance: true
+        error: stock.items.ItemExists
+        payload:
+          stock.items.ItemExists: {id: input.id}
+        summary: An item already carries the identity.
+      - name: no-shelf
+        when_related:
+          via: input.shelf
+          exists: false
+        error: stock.items.NoShelf
+        summary: No shelf carries the identity.
+      - name: stowed
+        creates: stock.items.Item
+        instance: id
+        sets: {label: input.label}
+        emits: [stock.items.ItemAdded]
+        payload:
+          stock.items.ItemAdded: {id: input.id}
+        summary: The item is stowed.
+views:
+  - name: stock.items.Items
+    source: stock.items.Item
+    consistency: read_your_writes
+    fields:
+      - {name: id, type: String}
+      - {name: label, type: String}
+      - {name: state, type: stock.items.Item.State}
