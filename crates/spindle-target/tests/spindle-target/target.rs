@@ -191,8 +191,8 @@ fn an_instance_whose_environment_refuses_its_component_is_refused() {
         missing,
         &vec![
             Capability::new("external.spindle.deployment.DecideAdmission.refused"),
-            Capability::new("external.spindle.placement.LaunchInstance.not-admitted"),
             Capability::new("external.spindle.placement.PlaceInstance.above-ceiling"),
+            Capability::new("external.spindle.placement.PlaceInstance.environment-mismatch"),
             Capability::new("external.spindle.placement.PlaceInstance.not-admitted"),
             Capability::new("external.spindle.placement.PlaceInstance.target-retired"),
             Capability::new("external.spindle.placement.PlanInstance.not-admitted"),
@@ -236,8 +236,8 @@ fn an_instance_whose_environment_refuses_its_component_is_refused() {
         reasons[1].to_string(),
         "the target's environment does not provide \
          external.spindle.deployment.DecideAdmission.refused, \
-         external.spindle.placement.LaunchInstance.not-admitted, \
          external.spindle.placement.PlaceInstance.above-ceiling, \
+         external.spindle.placement.PlaceInstance.environment-mismatch, \
          external.spindle.placement.PlaceInstance.not-admitted, \
          external.spindle.placement.PlaceInstance.target-retired, \
          external.spindle.placement.PlanInstance.not-admitted"
@@ -633,6 +633,137 @@ fn target_kind_resources_and_exit_mirror_the_specification() {
             "{} is optional, as in Exit: {}",
             field.name,
             field.type_ref
+        );
+    }
+}
+
+/// One example of each listed refusal pattern, from one list: the patterns are the arms of an
+/// exhaustive `match` over [`Refusal`], and each example must match its own pattern.
+macro_rules! one_of_each {
+    ($($pattern:pat => $example:expr),+ $(,)?) => {{
+        fn listed(refusal: &Refusal) {
+            match refusal {
+                $($pattern => {})+
+            }
+        }
+        let every = vec![$($example),+];
+        let mut examples = every.iter();
+        $(
+            let example = examples.next().expect("one example per pattern");
+            listed(example);
+            assert!(
+                matches!(example, $pattern),
+                "{example:?} is not a {}",
+                stringify!($pattern)
+            );
+        )+
+        every
+    }};
+}
+
+/// One refusal of every variant [`place`] can return. Each variant is one entry of a single list:
+/// a variant added to [`Refusal`] is a compile error here until it has an entry, an entry's
+/// example must be of its own variant, and a variant listed twice is an unreachable arm, so the
+/// list holds every variant once and no refusal escapes the check below.
+fn one_refusal_of_each_kind() -> Vec<Refusal> {
+    one_of_each![
+        Refusal::TargetRetired => Refusal::TargetRetired,
+        Refusal::EnvironmentMismatch { .. } => Refusal::EnvironmentMismatch {
+            target: "microvm".to_owned(),
+            admitted: "laptop".to_owned(),
+        },
+        Refusal::NotAdmitted { .. } => Refusal::NotAdmitted {
+            missing: Vec::new(),
+        },
+        Refusal::AboveCeiling { .. } => Refusal::AboveCeiling {
+            resource: ResourceKind::Vcpus,
+            requested: 2,
+            ceiling: 1,
+        },
+    ]
+}
+
+/// story:placement-refusals-match-target: every refusal `place` returns is a cause
+/// `spindle.placement` names, `PlaceInstance` records each with its own outcome, and the
+/// specification's order is the order `place` reports reasons in, so the one cause an instance
+/// records is the first reason `place` gives.
+#[test]
+fn every_refusal_place_returns_is_a_cause_the_specification_records() {
+    let loaded = spindle_spec::load(&repository().join("ess")).expect("compiles");
+
+    let declared = declared_type(&loaded.ir, "spindle.placement.RefusalCause");
+    let ResolvedBody::Enum { variants } = declared else {
+        panic!("RefusalCause is an enum: {declared:?}");
+    };
+    let causes = variants
+        .iter()
+        .map(|variant| variant.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        one_refusal_of_each_kind()
+            .iter()
+            .map(Refusal::cause)
+            .collect::<Vec<_>>(),
+        causes,
+        "RefusalCause names every refusal spindle-target returns, in the order place decides them"
+    );
+
+    let ir: serde_json::Value =
+        serde_json::from_str(&loaded.ir.to_canonical_json()).expect("the IR is JSON");
+    let recorded = ir["commands"]["spindle.placement.PlaceInstance"]["outcomes"]
+        .as_array()
+        .expect("PlaceInstance declares outcomes")
+        .iter()
+        .flat_map(|outcome| outcome["sets"].as_array().cloned().unwrap_or_default())
+        .filter(|set| set["target"] == "refusal")
+        .map(|set| {
+            set["value"]["value"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        recorded, causes,
+        "PlaceInstance records each cause with its own outcome, in RefusalCause's order"
+    );
+
+    let mut retired = target(
+        TargetKind::QemuMicrovm,
+        "microvm",
+        Resources {
+            vcpus: 1,
+            ..Resources::default()
+        },
+    );
+    retired.state = TargetState::Retired;
+    let over = Resources {
+        vcpus: 2,
+        ..Resources::default()
+    };
+    for admitted in ["laptop", "microvm"] {
+        let admission = EnvironmentAdmission {
+            environment: admitted.to_owned(),
+            admission: Admission::Refused {
+                missing: Vec::new(),
+            },
+        };
+        let Placement::Refused { reasons } = place(&retired, &over, &admission) else {
+            panic!("a retired target places nothing");
+        };
+        let positions = reasons
+            .iter()
+            .map(|reason| {
+                causes
+                    .iter()
+                    .position(|cause| *cause == reason.cause())
+                    .unwrap_or_else(|| panic!("{} is a declared cause", reason.cause()))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(positions.len(), 3, "{reasons:?}");
+        assert!(
+            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            "place reports reasons in RefusalCause's order: {reasons:?}"
         );
     }
 }

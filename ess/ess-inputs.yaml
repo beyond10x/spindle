@@ -8,4 +8,5 @@ specification:
   - domains/observe.yaml
   - domains/environment.yaml
   - domains/console.yaml
-scenarios: []
+scenarios:
+  - scenarios/launch-not-admitted.yaml

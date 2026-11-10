@@ -87,6 +87,7 @@ fn declare(ir: &EssIr, store: &mut dyn Store, target: &str, kind: &str) -> Execu
 }
 
 fn plan(ir: &EssIr, store: &mut dyn Store, decider: &mut dyn Decider, instance: &str) -> Executed {
+    admitted(ir, store);
     run(
         ir,
         store,
@@ -101,6 +102,63 @@ fn plan(ir: &EssIr, store: &mut dyn Store, decider: &mut dyn Decider, instance: 
             "request": {"vcpus": 1, "memory_mib": 64, "disk_mib": 0},
         }),
     )
+}
+
+/// Offers deployment `d1` and admits it, unless it is already held: `PlanInstance` refuses an
+/// instance of a deployment no one offered (`unknown-deployment`).
+fn admitted(ir: &EssIr, store: &mut dyn Store) {
+    if store
+        .load("spindle.deployment.Deployment", &json!("d1"))
+        .expect("the store reads")
+        .is_some()
+    {
+        return;
+    }
+    let declared = deployment(
+        ir,
+        store,
+        "DeclareEnvironment",
+        json!({"environment_id": "laptop", "os": "linux", "arch": "x86_64", "provides": []}),
+    );
+    assert_eq!(declared.outcome, "declared", "{declared:?}");
+    let offered = deployment(
+        ir,
+        store,
+        "OfferBundle",
+        json!({"deployment_id": "d1", "bundle": "sha256:0f", "environment_id": "laptop"}),
+    );
+    assert_eq!(offered.outcome, "offered", "{offered:?}");
+    let admitted = deployment(
+        ir,
+        store,
+        "DecideAdmission",
+        json!({"deployment_id": "d1", "requires": [], "bindings": [], "missing": []}),
+    );
+    assert_eq!(admitted.outcome, "admitted", "{admitted:?}");
+}
+
+/// Runs `spindle.deployment.<command>`, which asks no external cause on these inputs.
+fn deployment(ir: &EssIr, store: &mut dyn Store, command: &str, request: Value) -> Executed {
+    let Value::Object(map) = request else {
+        panic!("an input is an object");
+    };
+    execute(
+        ir,
+        store,
+        &mut NoExternal,
+        &format!("spindle.deployment.{command}"),
+        &map,
+    )
+    .unwrap_or_else(|error| panic!("{command} executes: {error}"))
+}
+
+/// Answers every external cause `false`.
+struct NoExternal;
+
+impl Decider for NoExternal {
+    fn decide(&mut self, _question: &External<'_>) -> Result<bool, String> {
+        Ok(false)
+    }
 }
 
 fn planned(ir: &EssIr, store: &mut dyn Store, instance: &str) {
@@ -203,13 +261,25 @@ fn an_instance_of_a_refused_deployment_cannot_be_placed() {
         json!({"instance_id": "i2"}),
     );
     assert_eq!(placed.outcome, "placed", "{placed:?}");
-    let mut refusing = Holds::only(&external("LaunchInstance", "not-admitted"));
+    let stopped = deployment(
+        &ir,
+        &mut store,
+        "StopDeployment",
+        json!({"deployment_id": "d1"}),
+    );
+    assert_eq!(stopped.outcome, "stopped", "{stopped:?}");
+    let mut none = Holds::default();
     let launched = run(
         &ir,
         &mut store,
-        &mut refusing,
+        &mut none,
         "LaunchInstance",
         json!({"instance_id": "i2"}),
+    );
+    assert!(
+        none.asked.is_empty(),
+        "the deployment's state decides the launch: {:?}",
+        none.asked
     );
     assert_eq!(
         (launched.outcome.as_str(), error_of(&launched)),
@@ -220,12 +290,57 @@ fn an_instance_of_a_refused_deployment_cannot_be_placed() {
     assert_eq!(row(&mut store, INSTANCE, "i2").0, "Placed");
 
     let scenarios = synthesised(&ir);
-    for command in ["PlanInstance", "PlaceInstance", "LaunchInstance"] {
+    for command in ["PlanInstance", "PlaceInstance"] {
         assert_synthesised(
             &scenarios,
             &format!("spindle.placement.{command}/outcome/not-admitted"),
         );
     }
+    // ESS 0.90 synthesises no `LaunchInstance` `not-admitted` once `OfferBundle` needs a declared
+    // environment (ESS-SYNTH-001: two environments under one identity), so an authored scenario
+    // covers it (story:placement-refusals-match-target).
+    assert_authored(
+        &ir,
+        "scenarios/launch-not-admitted.yaml",
+        "spindle.placement.LaunchInstance",
+        "not-admitted",
+    );
+}
+
+/// The authored scenario `file` (relative to `ess/`) is listed in `ess/ess-inputs.yaml`, compiles
+/// against the model with no refusal, and sends `command` expecting its `outcome`.
+fn assert_authored(ir: &EssIr, file: &str, command: &str, outcome: &str) {
+    let ess = workspace().join("ess");
+    let inputs = std::fs::read_to_string(ess.join("ess-inputs.yaml")).expect("ess-inputs reads");
+    assert!(
+        inputs
+            .lines()
+            .any(|line| line.trim() == format!("- {file}")),
+        "ess/ess-inputs.yaml lists {file} under scenarios"
+    );
+    let text = std::fs::read_to_string(ess.join(file)).expect("the scenario reads");
+    let authoring = ess_conformance::authored::compile(
+        ir,
+        &[ess_conformance::authored::Source::new(file, text)],
+    );
+    assert!(authoring.is_complete(), "{:?}", authoring.refusals);
+    let expected = format!("{command}/{outcome}");
+    let covered = authoring.scenarios.values().any(|scenario| {
+        scenario.steps.windows(2).any(|pair| {
+            matches!(
+                pair,
+                [
+                    ess_conformance::ScenarioStep::ExecuteCommand { command: sent, .. },
+                    ess_conformance::ScenarioStep::ExpectOutcome { outcome: answered },
+                ] if sent.to_string() == command && answered.to_string() == expected
+            )
+        })
+    });
+    assert!(
+        covered,
+        "{file} sends {command} and expects `{outcome}`: {:?}",
+        authoring.scenarios.keys().collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -233,6 +348,7 @@ fn a_placement_refusal_names_its_cause() {
     let ir = specification();
     let causes = [
         ("target-retired", "TargetRetired"),
+        ("environment-mismatch", "EnvironmentMismatch"),
         ("not-admitted", "NotAdmitted"),
         ("above-ceiling", "AboveCeiling"),
     ];

@@ -36,7 +36,21 @@ types:
 
   - name: spindle.placement.RefusalCause
     kind: enum
-    variants: [TargetRetired, NotAdmitted, AboveCeiling]
+    naming:
+      summary: >-
+        Why an instance was refused. An instance refused for several reasons at once records one:
+        the first of these in the order they are declared, which is the order `PlaceInstance`
+        decides them in.
+    variants:
+      - name: TargetRetired
+        summary: The target is retired.
+      - name: EnvironmentMismatch
+        summary: >-
+          The deployment was admitted for another environment than the one the target provides.
+      - name: NotAdmitted
+        summary: The deployment is neither admitted nor running for the target's environment.
+      - name: AboveCeiling
+        summary: The request exceeds the target's ceiling for at least one resource.
 
   - name: spindle.placement.Setting
     kind: struct
@@ -236,6 +250,18 @@ commands:
       - name: request
         type: spindle.placement.Resources
     outcomes:
+      - name: unknown-deployment
+        when_related: {via: input.deployment_id, exists: false}
+        error: spindle.placement.DeploymentNotAdmitted
+        payload:
+          spindle.placement.DeploymentNotAdmitted:
+            deployment_id: input.deployment_id
+        summary: Nothing is planned of a deployment no one offered.
+
+      # UNMAPPED: deployment.state not in [Admitted, Running]. As `when_related: {via:
+      # input.deployment_id}` it validates, and synthesis then reaches no `LaunchInstance`
+      # `not-admitted` (ESS-SYNTH-003: `PlanInstance` "refuses the related row in the state the
+      # branch reads").
       - name: not-admitted
         external: the deployment is neither admitted nor running
         error: spindle.placement.DeploymentNotAdmitted
@@ -285,6 +311,12 @@ commands:
           The target is available, the deployment is admitted or running for the environment the
           target provides, and the request is within the target's ceiling.
 
+      # UNMAPPED: target.state == Retired. As `when_related: {via: target_id}` alone it is refused
+      # (ESS-COMMAND-005, non_exhaustive_branches): `PlanInstance` does not refuse a target no row
+      # holds, so the read needs an `exists: false` branch for the target too. With that branch it
+      # validates, and synthesis then forces no external sibling (ESS-SYNTH-003, "such a reference
+      # is not arranged for an external branch"), so `environment-mismatch`, `not-admitted` and
+      # `above-ceiling` lose their scenarios.
       - name: target-retired
         external: the instance's target is retired
         moves: spindle.placement.Instance.refuse
@@ -299,10 +331,33 @@ commands:
           refusal: TargetRetired
         summary: The instance is refused and never launched, because its target takes no instance.
 
-      - name: not-admitted
+      # UNMAPPED: deployment.environment_id != target.environment_id. A command reads one related
+      # row through a stored reference, and a `when_related` predicate reads only that row and
+      # the input.
+      - name: environment-mismatch
         external: >-
-          the deployment is neither admitted nor running, or was admitted for another environment
-          than the instance's target provides
+          the deployment was admitted for another environment than the one the instance's target
+          provides
+        moves: spindle.placement.Instance.refuse
+        instance: instance_id
+        emits:
+          - spindle.placement.InstanceRefused
+        payload:
+          spindle.placement.InstanceRefused:
+            instance_id: input.instance_id
+            cause: EnvironmentMismatch
+        sets:
+          refusal: EnvironmentMismatch
+        summary: >-
+          The instance is refused and never launched, because an admission decided in one
+          environment places nothing in another.
+
+      # UNMAPPED: deployment.state not in [Admitted, Running]. As `when_related: {via:
+      # deployment_id}` it validates, and synthesis then forces no external sibling (ESS-SYNTH-003,
+      # as for `target-retired`); beside a guard on the target row it is refused ("a command reads
+      # one related row").
+      - name: not-admitted
+        external: the deployment is neither admitted nor running
         moves: spindle.placement.Instance.refuse
         instance: instance_id
         emits:
@@ -317,6 +372,8 @@ commands:
           The instance is refused and never launched, because the target's environment does not
           admit its deployment.
 
+      # UNMAPPED: request.<resource> > target.ceiling.<resource>. A `when_related` predicate does
+      # not read the subject's fields, and `when_subject` does not read the related row.
       - name: above-ceiling
         external: the instance's request exceeds its target's ceiling for at least one resource
         moves: spindle.placement.Instance.refuse
@@ -347,16 +404,17 @@ commands:
         type: spindle.placement.InstanceId
     outcomes:
       - name: not-admitted
-        external: the instance's deployment is neither admitted nor running
-        when_subject:
-          predicate: state == Placed
+        when_related:
+          via: deployment_id
+          predicate: {not: {any: [state == Admitted, state == Running]}}
         error: spindle.placement.DeploymentNotAdmitted
         payload:
           spindle.placement.DeploymentNotAdmitted:
             deployment_id: {subject: deployment_id}
         summary: >-
           A deployment stopped after its instance was placed launches nothing more; the instance
-          stays placed. Only a placed instance is asked: any other answers `wrong-state` first.
+          stays placed. Only a placed instance's deployment is read: any other instance answers
+          `wrong-state` first.
 
       - name: launched
         moves: spindle.placement.Instance.launch

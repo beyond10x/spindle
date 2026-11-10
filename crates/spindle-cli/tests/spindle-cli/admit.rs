@@ -44,8 +44,8 @@ fn refused_exits_three_and_names_the_missing_capability() {
         admission["missing"],
         serde_json::json!([
             "external.spindle.deployment.DecideAdmission.refused",
-            "external.spindle.placement.LaunchInstance.not-admitted",
             "external.spindle.placement.PlaceInstance.above-ceiling",
+            "external.spindle.placement.PlaceInstance.environment-mismatch",
             "external.spindle.placement.PlaceInstance.not-admitted",
             "external.spindle.placement.PlaceInstance.target-retired",
             "external.spindle.placement.PlanInstance.not-admitted"

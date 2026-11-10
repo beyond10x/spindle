@@ -3,7 +3,8 @@
 //! `spindle.placement` (`ess/domains/placement.yaml`) specifies the decision. A [`Target`] is a
 //! place an instance can be launched (a host process, a microVM, a container), with the
 //! environment it provides and the most resources one instance may take there. [`place`] decides
-//! `spindle.placement.PlaceInstance`: an instance is refused when its target is retired, when the
+//! `spindle.placement.PlaceInstance`: an instance is refused when its target is retired, when its
+//! admission was decided for another environment than the one the target provides, when the
 //! target's environment does not admit its component, or when it asks for more than the target's
 //! ceiling, and every reason that applies is named.
 //!

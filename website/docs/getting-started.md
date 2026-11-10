@@ -125,8 +125,8 @@ model, and the `microvm` environment provides nothing for them:
 $ b10x-spindle admit ess --environment examples/environments/microvm.toml
 refused on microvm: no implementation for
   external.spindle.deployment.DecideAdmission.refused
-  external.spindle.placement.LaunchInstance.not-admitted
   external.spindle.placement.PlaceInstance.above-ceiling
+  external.spindle.placement.PlaceInstance.environment-mismatch
   external.spindle.placement.PlaceInstance.not-admitted
   external.spindle.placement.PlaceInstance.target-retired
   external.spindle.placement.PlanInstance.not-admitted

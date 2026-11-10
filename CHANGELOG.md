@@ -44,6 +44,23 @@ are Spindle's releases.
   of them instead of `Binding`s. `DeclareEnvironment` refuses a key listed twice (`key-twice`) or
   one with no implementation (`no-implementation`) as `ProvidesInvalid`. That an exact key wins
   over a prefix, and the longest prefix over a shorter one, is stated on `provides`.
+- `spindle.placement` names every refusal `spindle-target` returns: `RefusalCause` gains
+  `EnvironmentMismatch`, recorded by `PlaceInstance`'s own `environment-mismatch` outcome, and
+  `not-admitted` no longer covers an admission decided for another environment. An instance
+  refused for several reasons records the first in `RefusalCause`'s order, the order
+  `spindle_target::place` reports them in (`Refusal::cause` names each). `LaunchInstance`'s
+  `not-admitted` is decided by the deployment's state instead of asked as an external cause,
+  and `PlanInstance` refuses a deployment no one offered (`unknown-deployment`). Admitting
+  `ess/` now needs `external.spindle.placement.PlaceInstance.environment-mismatch` and no
+  longer `external.spindle.placement.LaunchInstance.not-admitted`.
+
+### Fixed
+
+- `spindle-kernel` asks no decider before a related row the request names and no store holds is
+  answered, unless a branch it could select has a held-state answer for the addressed row, or a
+  guard read past an external branch is unknown: an unknown deployment sent to `PlanInstance` is
+  `unknown-deployment` whatever the decider would say of `not-admitted`. Before, the look-ahead
+  asked `not-admitted` first, and a decider with no answer for it made the request `Undecided`.
 
 ## [0.8.0] - 2026-11-08
 
