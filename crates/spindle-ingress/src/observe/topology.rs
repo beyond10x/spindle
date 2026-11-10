@@ -1,10 +1,10 @@
 //! `GET /__spindle/topology`: the graph of what a served run serves, a `spindle.observe.Topology`
 //! (`spindle-topology/1`), with the live numbers of each edge.
 //!
-//! The graph is derived, never authored. Its nodes: the ingress; the specification the host runs
-//! (its compiled model); each domain in name order, followed by its commands, views and events,
-//! each in name order, and the external causes of its commands' outcomes; each binding in name
-//! order. Its edges, kind by kind: `routes` from the ingress to the command or view of each route
+//! The graph is derived, never authored. Its nodes: the ingress, `ingress`; the specification the
+//! host runs, `specification:<system>`; each domain in name order, followed by its commands,
+//! views and events, each in name order, and the external causes of its commands' outcomes; each
+//! binding in name order. Its edges, kind by kind: `routes` from the ingress to the command or view of each route
 //! the surface has, also one answered `501`, in the order of the nodes they reach
 //! ([`Recorder::routes`]); `contains` from the specification to each domain and from each domain
 //! to what it declares; `asks` from a command to each external cause of its outcomes; `emits`
@@ -14,11 +14,13 @@
 //! Read when asked, on the host's thread, from the same numbers as the metrics ([`super::metrics`])
 //! and the request log: a `routes` edge counts the requests of its route by status class from the
 //! [`Recorder`], with the sequences of its latest five records still in the ring; an `asks` edge
-//! the answers to its cause by source, from the recorder; an `emits` edge the outcomes of its
-//! command that emit the event, from the host's counters, so the edges into one event add up to
-//! `spindle_events_appended_total`; a `carries` edge the envelopes its binding sent; an `invokes`
-//! edge the envelopes its binding delivered, or for a periodic binding the ticks fired. A `contains`
-//! edge carries nothing. Reading it counts nothing.
+//! the answers to its cause by source, from the recorder; an `emits` edge the events of that kind
+//! its command published, one per event committed ([`Host::emitted`]), so a set outcome that
+//! publishes once per changed row counts every row and the edges into one event add up to
+//! `spindle_events_appended_total`; from the host's counters, a `carries` edge the envelopes its
+//! binding sent, and an `invokes` edge the envelopes its binding delivered or, for a periodic
+//! binding, the ticks its timer fired. A `contains` edge carries nothing. Reading it counts
+//! nothing.
 
 use std::collections::BTreeMap;
 use std::time::SystemTime;
@@ -63,8 +65,6 @@ impl Routed {
 /// What the host's counters hold for the edges, summed over its components.
 #[derive(Debug, Default)]
 struct Counted {
-    /// Each declared outcome selected, by command and outcome.
-    outcomes: BTreeMap<(String, String), u64>,
     /// Each envelope of an event binding, by binding and what happened to it.
     carried: BTreeMap<(String, Carried), u64>,
     /// Each tick a periodic binding's timer fired, by binding.
@@ -87,13 +87,6 @@ impl Counted {
             for (counter, value) in keys.zip(snapshot.counters) {
                 let value = value.value;
                 match &counter.key {
-                    Key::Outcome { command, outcome } => {
-                        add(
-                            &mut counted.outcomes,
-                            (command.clone(), outcome.clone()),
-                            value,
-                        );
-                    }
                     Key::Carried { binding, carried } => {
                         add(&mut counted.carried, (binding.clone(), *carried), value);
                     }
@@ -124,19 +117,15 @@ pub(crate) fn topology(recorder: &Recorder, host: &Host) -> Value {
     let mut graph = Graph::default();
 
     graph.node(INGRESS, "ingress", INGRESS, None);
+    let system = format!("specification:{specification}");
     graph.node(
-        &specification,
+        &system,
         "specification",
         &specification,
         Some(&specification),
     );
     for domain in ir.domains().keys() {
-        graph.edge(
-            &specification,
-            &format!("domain:{domain}"),
-            "contains",
-            None,
-        );
+        graph.edge(&system, &format!("domain:{domain}"), "contains", None);
     }
     for domain in ir.domains().keys() {
         let id = format!("domain:{domain}");
@@ -193,22 +182,19 @@ pub(crate) fn topology(recorder: &Recorder, host: &Host) -> Value {
     }
 
     for (name, command) in ir.commands() {
-        let mut emitted: Vec<(String, u64)> = Vec::new();
-        for outcome in &command.outcomes {
-            let selected = counted
-                .outcomes
-                .get(&(name.to_string(), outcome.name.to_string()))
-                .copied()
-                .unwrap_or_default();
-            for event in &outcome.emits {
-                let event = event.to_string();
-                match emitted.iter_mut().find(|(held, _)| *held == event) {
-                    Some((_, count)) => *count = count.saturating_add(selected),
-                    None => emitted.push((event, selected)),
-                }
+        let mut events: Vec<String> = Vec::new();
+        for event in command.outcomes.iter().flat_map(|outcome| &outcome.emits) {
+            let event = event.to_string();
+            if !events.contains(&event) {
+                events.push(event);
             }
         }
-        for (event, count) in emitted {
+        for event in events {
+            let count = host
+                .emitted()
+                .get(&(name.to_string(), event.clone()))
+                .copied()
+                .unwrap_or_default();
             graph.edge(
                 &format!("command:{name}"),
                 &format!("event:{event}"),

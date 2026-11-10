@@ -57,13 +57,16 @@ export function draw(topology: Topology): Drawing {
     row.forEach((node, index) => nodes.push({ node, x: Math.round(left + index * (NODE.width + GAP.x)), y }));
     y += NODE.height + GAP.y;
   }
-  const at = new Map(nodes.map((placed) => [placed.node.id, placed]));
+  // The first node of an id is the one its edges reach: the ingress, drawn first, keeps its own.
+  const at = new Map<string, Placed>();
+  for (const placed of nodes) if (!at.has(placed.node.id)) at.set(placed.node.id, placed);
   const edges = topology.edges.flatMap((edge) => {
     const from = at.get(edge.from);
     const to = at.get(edge.to);
     return from && to ? [curve(edge, from, to)] : [];
   });
-  return { nodes, edges, width, height: y - GAP.y + MARGIN };
+  // With no row drawn, the height is the margins alone, never negative.
+  return { nodes, edges, width, height: nodes.length ? y - GAP.y + MARGIN : 2 * MARGIN };
 }
 
 /** A curve from the side of `from` that faces `to` into the side of `to` that faces `from`. */

@@ -4,7 +4,7 @@
   "specifications": ["tasks"],
   "nodes": [
     { "id": "ingress", "kind": "ingress", "name": "ingress" },
-    { "id": "tasks", "kind": "specification", "name": "tasks", "specification": "tasks" },
+    { "id": "specification:tasks", "kind": "specification", "name": "tasks", "specification": "tasks" },
     { "id": "domain:tasks.board", "kind": "domain", "name": "tasks.board", "specification": "tasks" },
     { "id": "command:tasks.board.CloseTask", "kind": "command", "name": "tasks.board.CloseTask", "specification": "tasks" },
     { "id": "command:tasks.board.OpenTask", "kind": "command", "name": "tasks.board.OpenTask", "specification": "tasks" },
@@ -63,8 +63,8 @@
       "kind": "routes",
       "traffic": { "count": 0, "statuses": [], "sources": [], "latest": [] }
     },
-    { "from": "tasks", "to": "domain:tasks.board", "kind": "contains" },
-    { "from": "tasks", "to": "domain:tasks.ledger", "kind": "contains" },
+    { "from": "specification:tasks", "to": "domain:tasks.board", "kind": "contains" },
+    { "from": "specification:tasks", "to": "domain:tasks.ledger", "kind": "contains" },
     { "from": "domain:tasks.board", "to": "command:tasks.board.CloseTask", "kind": "contains" },
     { "from": "domain:tasks.board", "to": "command:tasks.board.OpenTask", "kind": "contains" },
     { "from": "domain:tasks.board", "to": "view:tasks.board.AllTasks", "kind": "contains" },

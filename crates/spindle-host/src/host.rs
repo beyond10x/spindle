@@ -434,6 +434,9 @@ pub struct Host {
     periodic: BTreeMap<String, Periodic>,
     remote: Option<component::Remote>,
     published: Vec<Published>,
+    /// Every event committed since the host started, by the command that published it and the
+    /// event: a reset keeps the counts, as it keeps the counters.
+    emitted: BTreeMap<(String, String), u64>,
     /// Answers the `external:` causes of every command any component runs, unless the world of
     /// the last reset carries its own answers.
     decider: Box<dyn Decider + Send>,
@@ -783,6 +786,7 @@ impl Host {
             periodic,
             remote: None,
             published: Vec::new(),
+            emitted: BTreeMap::new(),
             decider: decider.unwrap_or_else(|| Box::new(NoExternals)),
             answers: None,
             mint: Box::new(UuidV4),
@@ -855,6 +859,14 @@ impl Host {
     /// process that kept its state in SQLite are not among them.
     pub fn published(&self) -> &[Published] {
         &self.published
+    }
+
+    /// How many events each command published since the host started, by command and event, one
+    /// per event committed: a set outcome that publishes an event once per changed row counts
+    /// each row's. Its counts add up to each event's appended counter; a [reset](Self::reset)
+    /// keeps them.
+    pub fn emitted(&self) -> &BTreeMap<(String, String), u64> {
+        &self.emitted
     }
 
     /// Empties every component's store and forgets every published event; returns the
@@ -1365,6 +1377,13 @@ impl Host {
             Ok(executed) => executed,
             Err(error) => return Ok(Err(error)),
         };
+        for event in &executed.events {
+            let count = self
+                .emitted
+                .entry((command.to_owned(), event.name.clone()))
+                .or_default();
+            *count = count.saturating_add(1);
+        }
         self.published
             .extend(executed.events.iter().map(|event| Published {
                 component: component.to_owned(),
