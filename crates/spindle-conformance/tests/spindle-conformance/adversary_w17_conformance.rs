@@ -58,8 +58,16 @@ fn the_library_suite_is_the_suite_ess_writes() {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()
-        .expect("ess runs");
+        .status();
+    // The Gate lane installs `ess` and runs this comparison; a lane without it (macOS) has
+    // nothing to compare against.
+    let status = match status {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("skipped: no `ess` on PATH to compare the library suite with");
+            return;
+        }
+        status => status.expect("ess runs"),
+    };
     assert!(status.success(), "ess conform synthesize exits 0");
     let written = std::fs::read_to_string(&out).expect("ess wrote the suite");
 
