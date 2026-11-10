@@ -28,7 +28,7 @@ found still open (`ess/components.yaml:37-43` holds it as `UNMAPPED:`).
 
 | unit | story | branch | tree (managed id) | agent | stage |
 |---|---|---|---|---|---|
-| U1 | `story:kernel-guard-reads-now` | `unit/w18-guard-now` | `spindle-w18-guard-now` | `aep:implementor` | dispatched |
+| U1 | `story:kernel-guard-reads-now` | `unit/w18-guard-now` | `spindle-w18-guard-now` | `aep:implementor` | green c70c93ed; adversary 1 running |
 | U2 | `story:kernel-existing-instance` | `unit/w18-existing` | `spindle-w18-existing` | `aep:implementor` | dispatched |
 | U3 | `story:external-cause-bound-to-http-call` | `unit/w18-http-cause` | `spindle-w18-http-cause` | `aep:implementor` | dispatched |
 | U4 | `story:live-topology` | `unit/w18-topology` | `spindle-w18-topology` | `aep:implementor` | dispatched |
