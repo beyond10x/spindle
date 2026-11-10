@@ -37,7 +37,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 8
+revision: 9
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-10T15:08:57Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-10T15:08:57Z", actor: "human:timo", revision: 3}
@@ -78,9 +78,14 @@ event ids (`eventlog-postgres` mints an id per append; `SqliteEventStore::restor
   the directory's last write left and commits above it (its events plus `spindle.row`), and a
   commit naming an older version is refused as a conflict (review-result:w19-u4-adversary-1,
   note 3).
-- `a_move_into_a_non_empty_prefix_writes_nothing`: when any component's prefix already holds a
-  stream, the move exits 1 before writing to any prefix, naming the component, also while another
-  write transaction is open on the server.
+- `a_move_into_a_non_empty_prefix_writes_nothing`: when any component's prefix holds the stream of
+  an entity the specification declares or the directory holds, or a partial move's mark, the move
+  exits 1 before writing anything, naming the component, also while another write transaction is
+  open on the server; the check only reads.
+- A second move into the same schema while one runs waits up to 5 s, then exits 1 naming the other
+  move, writing nothing (review-result:w19-u4-adversary-2).
+- A directory written by 0.7.0 to 0.10.0 arrives in the current event format and is scanned by
+  stream; one with writes from before 0.7.0 arrives marked, and loses no row.
 - A row or event holding a string PostgreSQL refuses (U+0000) exits 1 before writing to any prefix,
   naming the component and the stream (review-result:w19-u4-adversary-1, findings 1 and 2).
 - A directory with no `<component>.sqlite` of the specification's components exits 1, naming the
