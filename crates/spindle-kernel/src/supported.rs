@@ -19,10 +19,13 @@
 //! request that selects this one is refused, once it is selected and before anything is minted
 //! or written.
 
+use std::collections::BTreeSet;
+
 use ess_compiler::EssIr;
 use ess_compiler::ir::{
-    ResolvedCommand, ResolvedCondition, ResolvedEffect, ResolvedInstance, ResolvedOutcome,
-    ResolvedPayloadField, ResolvedPayloadValue, ResolvedRelatedVia, ResolvedTypeRef,
+    EntityHandle, ResolvedCommand, ResolvedCondition, ResolvedEffect, ResolvedInstance,
+    ResolvedOutcome, ResolvedPayloadField, ResolvedPayloadValue, ResolvedRelatedVia,
+    ResolvedTypeRef,
 };
 
 use crate::ExecuteError;
@@ -140,16 +143,67 @@ pub fn takes(
     Ok(())
 }
 
-/// Refuses a command whose `when_related:` branches read rows two ways ([`mixed_references`]).
+/// Refuses a command whose `when_related:` branches read rows two ways ([`mixed_references`]),
+/// or whose `existing_instance:` branch stands beside creations of different addresses
+/// ([`different_addresses`]).
 fn mixed(command: &ResolvedCommand) -> Result<(), ExecuteError> {
-    match mixed_references(command) {
-        Some(outcome) => Err(unsupported(
+    if let Some(outcome) = mixed_references(command) {
+        return Err(unsupported(
             command,
             outcome,
             "`when_related:` over rows named both by the input and by a stored field",
+        ));
+    }
+    match different_addresses(command) {
+        Some(outcome) => Err(unsupported(
+            command,
+            outcome,
+            "`existing_instance:` beside creations of different addresses",
         )),
         None => Ok(()),
     }
+}
+
+/// The entity a creation `outcome` creates and the input field its identity is read from: the
+/// source its payload gives the event field `instance:` names, where that is an input field (ESS
+/// `interpret::execute::existence::identity_source`). `None` where `outcome` creates nothing.
+pub(crate) fn creation_address(outcome: &ResolvedOutcome) -> Option<(&EntityHandle, Option<&str>)> {
+    let subject = outcome
+        .subject
+        .as_ref()
+        .filter(|subject| subject.effect == ResolvedEffect::Creates)?;
+    let field = match &subject.instance {
+        ResolvedInstance::Observed { event, field } => outcome
+            .payload
+            .iter()
+            .filter(|payload| payload.event == *event)
+            .flat_map(|payload| &payload.fields)
+            .find(|source| source.target == field.name)
+            .and_then(|source| match &source.value {
+                ResolvedPayloadValue::InputField { field, .. }
+                | ResolvedPayloadValue::InputOrGenerated { field, .. } => Some(field.as_str()),
+                _ => None,
+            }),
+        ResolvedInstance::Supplied { .. } => None,
+    };
+    Some((&subject.entity, field))
+}
+
+/// The `existing_instance:` branch of a command whose creations take their identities at
+/// different addresses. ESS's interpreter reads which address is taken only by selecting the
+/// accepting branch first (`interpret::execute::existence::existing`), and the kernel does not
+/// guess at it.
+fn different_addresses(command: &ResolvedCommand) -> Option<&ResolvedOutcome> {
+    let existing = command
+        .outcomes
+        .iter()
+        .find(|outcome| outcome.condition == ResolvedCondition::ExistingInstance)?;
+    let addresses: BTreeSet<_> = command
+        .outcomes
+        .iter()
+        .filter_map(creation_address)
+        .collect();
+    (addresses.len() > 1).then_some(existing)
 }
 
 /// Refuses `outcome` when its condition or its shape is one the kernel does not run: what
@@ -193,6 +247,7 @@ fn condition(condition: &ResolvedCondition) -> Option<&'static str> {
         | ResolvedCondition::When { .. }
         | ResolvedCondition::WrongState
         | ResolvedCondition::UnknownInstance
+        | ResolvedCondition::ExistingInstance
         | ResolvedCondition::SubjectPredicate { .. }
         | ResolvedCondition::SubjectField { .. }
         | ResolvedCondition::SubjectState { .. } => None,
@@ -219,7 +274,6 @@ fn condition(condition: &ResolvedCondition) -> Option<&'static str> {
         ResolvedCondition::RelatedSet { .. } => None,
         ResolvedCondition::StateChange { .. } => Some("`when_state_changes:`"),
         ResolvedCondition::InputAbsent => Some("`input_absent:`"),
-        ResolvedCondition::ExistingInstance => Some("`existing_instance:`"),
     }
 }
 

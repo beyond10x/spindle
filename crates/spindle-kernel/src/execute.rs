@@ -495,13 +495,21 @@ impl<'a, 'ir> Run<'a, 'ir> {
         let mut looked_ahead = false;
         for planned in plan.phases() {
             match planned.phase {
-                Phase::RelatedRow if !stored && reads_missing(&plan, planned.phase) => {
-                    if let Some(outcome) = self.missing_related(&plan, planned.phase)? {
+                Phase::RelatedRow => {
+                    if let Some(answered) = self.existing(&plan, planned.phase)? {
+                        return Ok(Selected::Answered(answered));
+                    }
+                    if !stored
+                        && reads_missing(&plan, planned.phase)
+                        && let Some(outcome) = self.missing_related(&plan, planned.phase)?
+                    {
                         return Ok(Selected::Outcome(outcome));
                     }
                 }
-                Phase::RelatedRow => {}
                 Phase::Existence => {
+                    if let Some(answered) = self.existing(&plan, planned.phase)? {
+                        return Ok(Selected::Answered(answered));
+                    }
                     if let Some(addressed) = &self.held
                         && addressed.stored.is_none()
                         && (stored || !self.creation_takes_absent(addressed))
@@ -805,6 +813,50 @@ impl<'a, 'ir> Run<'a, 'ir> {
             });
         }
         Ok(test.decide(&members))
+    }
+
+    /// The `existing_instance:` answer where the plan places that branch in `phase`, step 1 on a
+    /// command reading a related row or a row set before the one rule and the existence step
+    /// otherwise: a row already carries the identity a creation of the command takes from the
+    /// input. `None` where `phase` holds no such branch or no row carries the identity, and
+    /// selection goes on (ESS `interpret::execute::existence::existing`). Every creation shares
+    /// one address, since admission refuses the branch beside creations of different addresses
+    /// ([`crate::selects`]). The branch is answered as ESS answers it: its declared error, read
+    /// with no row, and nothing written or emitted.
+    fn existing(
+        &mut self,
+        plan: &PrecedencePlan<'ir>,
+        phase: Phase,
+    ) -> Result<Option<Executed>, ExecuteError> {
+        let Some(refused) = plan
+            .branches(phase)
+            .iter()
+            .copied()
+            .find(|outcome| outcome.condition == ResolvedCondition::ExistingInstance)
+        else {
+            return Ok(None);
+        };
+        let ir = self.ir;
+        for creation in &self.spec.outcomes {
+            let Some((entity, Some(field))) = crate::supported::creation_address(creation) else {
+                continue;
+            };
+            // The source reads a field or a nested member (`wrap.id`), as ESS `read_input` does.
+            let Some(identity) = crate::values::read_input(self.input, field) else {
+                continue;
+            };
+            let entity = ir.entity(entity).name.to_string();
+            if self.store.load(&entity, &identity)?.is_some() {
+                self.runs(refused)?;
+                return Ok(Some(Executed {
+                    outcome: refused.name.as_str().to_owned(),
+                    events: Vec::new(),
+                    error: self.declared_error(refused, None)?,
+                    response: self.response(refused)?,
+                }));
+            }
+        }
+        Ok(None)
     }
 
     /// Whether the absent `addressed` row is a creation's to take rather than an unknown instance:

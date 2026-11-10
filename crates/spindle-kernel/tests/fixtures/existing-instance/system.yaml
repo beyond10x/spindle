@@ -1,0 +1,20 @@
+format: ess/34
+system: stock
+version: v1
+summary: Items added by one command, where an identity already held answers the declared duplicate.
+domains:
+  - stock.items
+components:
+  - component: shelf
+    summary: Adds items.
+    owns:
+      domains:
+        - stock.items
+    accepts:
+      commands:
+        - stock.items.AddItem
+        - stock.items.AddCoded
+    publishes:
+      events:
+        - stock.items.ItemAdded
+    reached_by: in_process
