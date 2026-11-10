@@ -1,0 +1,15 @@
+{
+  "at": "2026-11-10T06:08:14Z",
+  "actor": "human:timo",
+  "artifact": "approval-record:downstream-gaps-acceptance-3",
+  "kind": "approval-record",
+  "revision": 3,
+  "change": {
+    "change": "redaction",
+    "literal_sha256": "a42be9e6369a6dcb68a2cfdac1757009cc64c0286e675fed848bcee56218b52d",
+    "literal_chars": 13,
+    "replacement": "from downstream",
+    "count": 1,
+    "reason": "a downstream project name in a public repository"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "at": "2026-11-10T05:46:50Z",
+  "actor": "human:timo",
+  "artifact": "story:placement-refusals-match-target",
+  "kind": "story",
+  "revision": 6,
+  "change": {
+    "change": "evidence",
+    "kind": "review_outcome",
+    "source": "finding 2 (conformance unit)",
+    "review": "review-result:w17-conformance-adversary-1",
+    "outcome": "fixed"
+  }
+}
