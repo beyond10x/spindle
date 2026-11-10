@@ -5,13 +5,13 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:4dfeb4b96094ab849b773875fd392114102b6a48c7c2e4ff992a9ace5e7a36f6",
+    "contract_digest": "slice-sha256/2:2eff46b4090f3c3da3e117fbf592e8dc5df4c6661897e55dde3ef2aa0d8e09bc",
     "regenerate": "ess generate"
   },
   "$defs": {
     "spindle.observe.Binding": {
       "title": "Binding",
-      "description": "One binding of the system. A periodic binding fires a command of `to` on a schedule and has no `from` and no `event`; an event binding carries `event` from `from` to a command of `to`.",
+      "description": "One binding of the system. A periodic binding fires a command of `to` on a schedule and has no `from` and no `event`; an event binding carries `event` from `from` to a command of `to`. The schedule is ESS's, not Spindle's. Seven keys of the binding's `when.periodic` cause are published, each answered with the word the specification declares, as ESS defines it (ESS guide \"Declare a periodic host cause\", `ess_domain::binding::periodic`): `every`, `anchor`, `first`, `cadence`, `overlap`, `missed` and `lifetime`, which together say when a tick is due and which ticks are dropped. They are present for a periodic binding and absent for an event binding. The cause's two other keys, `cancellation` and `host`, are not published; `crates/spindle-timer/src/lib.rs` honours `cancellation` and `host.eligibility` too.",
       "x-ess-name": "spindle.observe.Binding",
       "x-ess-kind": "struct",
       "type": "object",
@@ -37,6 +37,38 @@
         "command": {
           "description": "The qualified name of the command the binding issues.",
           "type": "string"
+        },
+        "every": {
+          "description": "ESS's `when.periodic.every`, the period as `PT<seconds>S`, such as `PT1S`; tick n is due one period after tick n-1 on the binding's grid. Absent for an event binding.",
+          "type": "string"
+        },
+        "anchor": {
+          "description": "ESS's `when.periodic.anchor`, such as `host_activation`: the grid starts at the instant the binding's lifetime is activated. Absent for an event binding.",
+          "type": "string"
+        },
+        "first": {
+          "description": "ESS's `when.periodic.first`, such as `after_period`: nothing is due at activation, and the first tick is one period later. Absent for an event binding.",
+          "type": "string"
+        },
+        "cadence": {
+          "description": "ESS's `when.periodic.cadence`, such as `fixed_rate`: tick n is due at activation plus n periods, and completing a tick does not move the grid. Absent for an event binding.",
+          "type": "string"
+        },
+        "overlap": {
+          "description": "ESS's `when.periodic.overlap`, such as `serial_per_instance`: no second tick is issued while one is still open. Absent for an event binding.",
+          "type": "string"
+        },
+        "missed": {
+          "description": "ESS's `when.periodic.missed`, such as `one_pending_drop_excess`: deadlines that pass while a tick is open or unobserved keep one pending tick, the earliest, and the rest are dropped and counted. Absent for an event binding.",
+          "type": "string"
+        },
+        "lifetime": {
+          "description": "ESS's `when.periodic.lifetime`, such as `host_instance`: a lifetime runs from activation to acknowledged stop and holds no durable state, so a new host instance starts a new grid. Absent for an event binding.",
+          "type": "string"
+        },
+        "delivery": {
+          "$ref": "#/$defs/spindle.observe.BindingDelivery",
+          "description": "How an event binding delivers; absent for a periodic binding."
         }
       },
       "required": [
@@ -46,6 +78,33 @@
         "command"
       ],
       "additionalProperties": false
+    },
+    "spindle.observe.BindingDelivery": {
+      "title": "BindingDelivery",
+      "description": "How one event binding delivers in a run: ESS's guarantee and Spindle's limit on attempts. ESS gives a bare `on_failure: retry` no count, leaving it to the deployment (ESS 0.90.0 `crates/specify/ess-domain/src/binding/retry.rs`, `docs/design/binding-delivery-guarantees.md`). Spindle's count is 5 (`spindle_host::RETRY_ATTEMPTS`, `docs/design/spindle.md` § 11, runtime defaults).",
+      "x-ess-name": "spindle.observe.BindingDelivery",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "guarantee": {
+          "$ref": "#/$defs/spindle.observe.DeliveryGuarantee"
+        },
+        "attempts": {
+          "description": "The most times the run invokes the binding's command for one event, the first included: 5 where the binding retries a failure (`on_failure: retry`, or `retry` chosen for some refusal), every attempt at once with no backoff; 1 where it drops, and where the run drops retries (`--drop-retries`). After the last attempt the invocation is given up and reported once.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        }
+      },
+      "required": [
+        "guarantee",
+        "attempts"
+      ],
+      "additionalProperties": false,
+      "x-ess-invariants": [
+        "attempts >= 1",
+        "attempts <= 5"
+      ]
     },
     "spindle.observe.BindingKind": {
       "title": "BindingKind",
@@ -96,6 +155,17 @@
         "views"
       ],
       "additionalProperties": false
+    },
+    "spindle.observe.DeliveryGuarantee": {
+      "title": "DeliveryGuarantee",
+      "description": "How many times an event binding's command may run for one event, as the binding's `delivery:` writes it. The words are ESS's (`Delivery` in ESS 0.90.0 `crates/specify/ess-domain/src/binding.rs`, carried on `ResolvedBinding::delivery`), and Spindle publishes them unchanged. `at_least_once`: ESS lets the command run again, so it must be idempotent. `at_most_once`: one send and no redelivery. Neither is exactly once. Spindle sends each event to a binding once under either word: the receiving component acknowledges an `at_least_once` envelope, and no runtime path resends one whose acknowledgement is overdue (`spindle_channel::Sender::redeliver` exists, and the host never calls it), so the conformance target answers ESS's redelivery step unsupported (`crates/spindle-conformance/src/target.rs`). A command that does not take effect may still run again where the binding retries (`BindingDelivery.attempts`). In either, Spindle sends nothing for an event before the state that published it is durable (`crates/spindle-channel/src/lib.rs`).",
+      "x-ess-name": "spindle.observe.DeliveryGuarantee",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "at_least_once",
+        "at_most_once"
+      ]
     },
     "spindle.observe.DeployedInstance": {
       "title": "DeployedInstance",

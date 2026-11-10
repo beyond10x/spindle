@@ -6,4 +6,7 @@ specification:
   - domains/deployment.yaml
   - domains/placement.yaml
   - domains/observe.yaml
-scenarios: []
+  - domains/environment.yaml
+  - domains/console.yaml
+scenarios:
+  - scenarios/launch-not-admitted.yaml

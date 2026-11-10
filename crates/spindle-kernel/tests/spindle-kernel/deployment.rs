@@ -45,7 +45,44 @@ fn run(
         .unwrap_or_else(|error| panic!("{command} executes: {error}"))
 }
 
+/// Declares `environment` providing `provides`, a list of capability and implementation pairs,
+/// as `spindle.environment.Provision`s.
+fn declare(ir: &EssIr, store: &mut dyn Store, environment: &str, provides: Value) {
+    let declared = run(
+        ir,
+        store,
+        &mut Never::default(),
+        "spindle.deployment.DeclareEnvironment",
+        json!({
+            "environment_id": environment,
+            "os": "linux",
+            "arch": "x86_64",
+            "provides": crate::provides::provisions(&provides),
+        }),
+    );
+    assert_eq!(declared.outcome, "declared", "{declared:?}");
+}
+
+/// Declares `laptop`, providing `store.durable` by `sqlite` and `clock` by `system`.
+fn laptop(ir: &EssIr, store: &mut dyn Store) {
+    declare(
+        ir,
+        store,
+        "laptop",
+        json!([
+            {"capability": "store.durable", "implementation": "sqlite"},
+            {"capability": "clock", "implementation": "system"},
+        ]),
+    );
+}
+
+/// Offers a bundle to `laptop`, declaring it first.
 fn offer(ir: &EssIr, store: &mut dyn Store, id: &str) -> Executed {
+    laptop(ir, store);
+    offer_to(ir, store, id, "laptop")
+}
+
+fn offer_to(ir: &EssIr, store: &mut dyn Store, id: &str, environment: &str) -> Executed {
     run(
         ir,
         store,
@@ -54,23 +91,20 @@ fn offer(ir: &EssIr, store: &mut dyn Store, id: &str) -> Executed {
         json!({
             "deployment_id": id,
             "bundle": "sha256:0f",
-            "environment_id": "laptop",
-            "requires": ["store.durable"],
+            "environment_id": environment,
         }),
     )
 }
 
 fn admit(ir: &EssIr, store: &mut dyn Store, decider: &mut dyn Decider, id: &str) -> Executed {
-    run(
+    decide(
         ir,
         store,
         decider,
-        "spindle.deployment.DecideAdmission",
-        json!({
-            "deployment_id": id,
-            "bindings": [{"capability": "store.durable", "implementation": "sqlite"}],
-            "missing": [],
-        }),
+        id,
+        json!(["store.durable"]),
+        json!([{"capability": "store.durable", "implementation": "sqlite"}]),
+        json!([]),
     )
 }
 
@@ -98,6 +132,12 @@ fn offer_then_admit_moves_a_deployment_to_admitted() {
         json!({"deployment_id": "d1", "bundle": "sha256:0f"})
     );
     assert_eq!(state_of(&mut store, "d1"), "Offered");
+    let offered_row = store.load(DEPLOYMENT, &json!("d1")).unwrap().unwrap();
+    assert_eq!(
+        offered_row.row.fields.get("requires"),
+        None,
+        "the offer names no capability: {offered_row:?}"
+    );
 
     let mut decider = Never::default();
     let admitted = admit(&ir, &mut store, &mut decider, "d1");
@@ -127,6 +167,11 @@ fn offer_then_admit_moves_a_deployment_to_admitted() {
         stored.row.fields.get("bindings"),
         Some(&json!([{"capability": "store.durable", "implementation": "sqlite"}]))
     );
+    assert_eq!(
+        stored.row.fields.get("requires"),
+        Some(&json!(["store.durable"])),
+        "`requires` is the admitter's answer, kept with the decision"
+    );
     assert_eq!(stored.row.fields.get("bundle"), Some(&json!("sha256:0f")));
 }
 
@@ -134,16 +179,19 @@ fn offer_then_admit_moves_a_deployment_to_admitted() {
 fn an_external_cause_that_holds_refuses_the_deployment() {
     let ir = specification();
     let mut store = MemoryStore::default();
-    offer(&ir, &mut store, "d1");
+    declare(&ir, &mut store, "bare", json!([]));
+    offer_to(&ir, &mut store, "d1", "bare");
 
     let mut lacking =
         |question: &External<'_>| -> Result<bool, String> { Ok(question.capability == REFUSED) };
-    let refused = run(
+    let refused = decide(
         &ir,
         &mut store,
         &mut lacking,
-        "spindle.deployment.DecideAdmission",
-        json!({"deployment_id": "d1", "bindings": [], "missing": ["store.durable"]}),
+        "d1",
+        json!(["store.durable"]),
+        json!([]),
+        json!(["store.durable"]),
     );
     assert_eq!(refused.outcome, "refused");
     assert_eq!(
@@ -154,6 +202,10 @@ fn an_external_cause_that_holds_refuses_the_deployment() {
     assert_eq!(stored.row.state, "Refused");
     assert_eq!(
         stored.row.fields.get("missing"),
+        Some(&json!(["store.durable"]))
+    );
+    assert_eq!(
+        stored.row.fields.get("requires"),
         Some(&json!(["store.durable"]))
     );
 }
@@ -174,9 +226,8 @@ fn admitting_twice_is_the_wrong_state_error() {
         Some("spindle.deployment.DeploymentStateConflict")
     );
     assert!(again.events.is_empty(), "{again:?}");
-    // `admitted` is selected by its guard over the held row before any external branch, and it
-    // does not move from `Admitted`, which is the wrong-state answer; `refused` is not eligible
-    // with nothing missing, so its cause is never asked.
+    // A consistent decision on a deployment already decided answers the held state before any
+    // external branch, so `refused`'s cause is never asked.
     assert!(decider.asked.is_empty(), "{:?}", decider.asked);
     assert_eq!(
         store.load(DEPLOYMENT, &json!("d1")).unwrap().unwrap(),
@@ -308,34 +359,12 @@ fn workspace() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
 }
 
-fn offer_requiring(
-    ir: &EssIr,
-    store: &mut dyn Store,
-    id: &str,
-    environment: &str,
-    requires: Value,
-) -> Executed {
-    let offered = run(
-        ir,
-        store,
-        &mut Never::default(),
-        "spindle.deployment.OfferBundle",
-        json!({
-            "deployment_id": id,
-            "bundle": "sha256:0f",
-            "environment_id": environment,
-            "requires": requires,
-        }),
-    );
-    assert_eq!(offered.outcome, "offered", "{offered:?}");
-    offered
-}
-
 fn decide(
     ir: &EssIr,
     store: &mut dyn Store,
     decider: &mut dyn Decider,
     id: &str,
+    requires: Value,
     bindings: Value,
     missing: Value,
 ) -> Executed {
@@ -344,11 +373,16 @@ fn decide(
         store,
         decider,
         "spindle.deployment.DecideAdmission",
-        json!({"deployment_id": id, "bindings": bindings, "missing": missing}),
+        json!({
+            "deployment_id": id,
+            "requires": requires,
+            "bindings": bindings,
+            "missing": missing,
+        }),
     )
 }
 
-/// `executed` is the invalid-decision refusal and left the deployment as it was.
+/// `executed` is the invalid-decision refusal and left the deployment as it was offered.
 fn assert_invalid(executed: &Executed, outcome: &str, store: &mut dyn Store, id: &str) {
     assert_eq!(executed.outcome, outcome, "{executed:?}");
     assert_eq!(
@@ -359,6 +393,7 @@ fn assert_invalid(executed: &Executed, outcome: &str, store: &mut dyn Store, id:
     assert!(executed.events.is_empty(), "{executed:?}");
     let stored = store.load(DEPLOYMENT, &json!(id)).unwrap().unwrap();
     assert_eq!(stored.row.state, "Offered");
+    assert_eq!(stored.row.fields.get("requires"), None, "{stored:?}");
     assert_eq!(stored.row.fields.get("bindings"), None, "{stored:?}");
     assert_eq!(stored.row.fields.get("missing"), None, "{stored:?}");
 }
@@ -398,49 +433,51 @@ fn admitted_binds_exactly_one_implementation_per_requirement() {
     let durable = json!({"capability": "store.durable", "implementation": "sqlite"});
     let clock = json!({"capability": "clock", "implementation": "system"});
     let cases = [
-        ("unbound", json!([durable]), "not-decided"),
+        ("unbound", json!([durable]), json!([]), "not-decided"),
         (
             "twice",
             json!([durable, {"capability": "store.durable", "implementation": "memory"}, clock]),
+            json!([]),
             "bound-twice",
         ),
         (
             "unrequired",
             json!([durable, clock, {"capability": "channel", "implementation": "tcp"}]),
+            json!([]),
             "not-decided",
         ),
         (
             "admitted-but-missing",
             json!([durable, clock]),
+            json!(["clock"]),
             "not-decided",
         ),
     ];
-    for (id, bindings, outcome) in cases {
+    for (id, bindings, missing, outcome) in cases {
         let mut store = MemoryStore::default();
-        offer_requiring(&ir, &mut store, id, "laptop", required.clone());
-        let missing = if id == "admitted-but-missing" {
-            json!(["clock"])
-        } else {
-            json!([])
-        };
+        offer(&ir, &mut store, id);
+        let mut decider = Always::default();
         let decided = decide(
             &ir,
             &mut store,
-            &mut Never::default(),
+            &mut decider,
             id,
+            required.clone(),
             bindings,
             missing,
         );
         assert_invalid(&decided, outcome, &mut store, id);
+        assert!(decider.asked.is_empty(), "{id}: {:?}", decider.asked);
     }
 
     let mut store = MemoryStore::default();
-    offer_requiring(&ir, &mut store, "exact", "laptop", required);
+    offer(&ir, &mut store, "exact");
     let admitted = decide(
         &ir,
         &mut store,
         &mut Never::default(),
         "exact",
+        required,
         json!([clock, durable]),
         json!([]),
     );
@@ -457,13 +494,13 @@ fn admitted_binds_exactly_one_implementation_per_requirement() {
 fn deployment_refused_carries_the_missing_capabilities() {
     let ir = specification();
     let mut store = MemoryStore::default();
-    offer_requiring(
+    declare(
         &ir,
         &mut store,
-        "d1",
-        "laptop",
-        json!(["clock", "store.durable"]),
+        "clock-only",
+        json!([{"capability": "clock", "implementation": "system"}]),
     );
+    offer_to(&ir, &mut store, "d1", "clock-only");
     let mut lacking =
         |question: &External<'_>| -> Result<bool, String> { Ok(question.capability == REFUSED) };
     let refused = decide(
@@ -471,6 +508,7 @@ fn deployment_refused_carries_the_missing_capabilities() {
         &mut store,
         &mut lacking,
         "d1",
+        json!(["clock", "store.durable"]),
         json!([{"capability": "clock", "implementation": "system"}]),
         json!(["store.durable"]),
     );
@@ -496,9 +534,17 @@ fn deployment_refused_carries_the_missing_capabilities() {
 fn a_refusal_naming_no_capability_is_refused() {
     let ir = specification();
     let mut store = MemoryStore::default();
-    offer_requiring(&ir, &mut store, "d1", "laptop", json!(["store.durable"]));
+    offer(&ir, &mut store, "d1");
     let mut refusing = Always::default();
-    let decided = decide(&ir, &mut store, &mut refusing, "d1", json!([]), json!([]));
+    let decided = decide(
+        &ir,
+        &mut store,
+        &mut refusing,
+        "d1",
+        json!(["store.durable"]),
+        json!([]),
+        json!([]),
+    );
     assert_invalid(&decided, "not-decided", &mut store, "d1");
     assert!(
         refusing.asked.is_empty(),
@@ -507,8 +553,275 @@ fn a_refusal_naming_no_capability_is_refused() {
     );
 }
 
-/// Derives what `bundle` requires, admits it against `environment`, and offers and decides it in
-/// the model as the runtime would; returns the decision and the bindings admission chose.
+/// story:admission-decision-checked-by-model (H5): `admitted` reads the environment's `provides`.
+/// A binding to an implementation the deployment's environment does not provide for the capability,
+/// or to a capability it does not provide at all, is not admitted, whatever an external cause says.
+#[test]
+fn a_binding_the_environment_does_not_provide_is_not_admitted() {
+    let ir = specification();
+    let cases = [
+        (
+            "other-implementation",
+            json!(["store.durable"]),
+            json!([{"capability": "store.durable", "implementation": "postgres"}]),
+            json!([]),
+        ),
+        (
+            "unprovided-capability",
+            json!(["channel"]),
+            json!([{"capability": "channel", "implementation": "tcp"}]),
+            json!([]),
+        ),
+        (
+            "refusal-binding-another",
+            json!(["channel", "store.durable"]),
+            json!([{"capability": "store.durable", "implementation": "memory"}]),
+            json!(["channel"]),
+        ),
+    ];
+    for (id, requires, bindings, missing) in cases {
+        let refuses = missing
+            .as_array()
+            .is_some_and(|missing| !missing.is_empty());
+        let mut store = MemoryStore::default();
+        offer(&ir, &mut store, id);
+        let mut decider = Always::default();
+        let decided = decide(
+            &ir,
+            &mut store,
+            &mut decider,
+            id,
+            requires,
+            bindings,
+            missing,
+        );
+        assert_invalid(&decided, "not-provided", &mut store, id);
+        // A refusing decision makes `refused` eligible: the held-state look-ahead, as ESS's
+        // `select` reads it, asks its cause before the environment's row is read, and the
+        // environment's refusal still answers. A decision naming nothing missing never asks it.
+        if !refuses {
+            assert!(decider.asked.is_empty(), "{id}: {:?}", decider.asked);
+        }
+    }
+}
+
+/// story:admission-decision-checked-by-model (H7): a refusal `AdmissionDecisionInvalid`'s own text
+/// calls invalid is not answered `refused`, even where the external cause holds.
+#[test]
+fn a_refusal_the_invalid_decision_error_describes_is_not_refused() {
+    let ir = specification();
+    let durable = json!({"capability": "store.durable", "implementation": "sqlite"});
+    let cases = [
+        (
+            "missing-unrequired",
+            json!(["store.durable"]),
+            json!([]),
+            json!(["channel"]),
+        ),
+        (
+            "required-left-out",
+            json!(["clock", "store.durable"]),
+            json!([]),
+            json!(["store.durable"]),
+        ),
+        (
+            "binds-unrequired",
+            json!(["channel"]),
+            json!([durable]),
+            json!(["channel"]),
+        ),
+        (
+            "missing-and-bound",
+            json!(["store.durable"]),
+            json!([durable]),
+            json!(["store.durable"]),
+        ),
+    ];
+    for (id, requires, bindings, missing) in cases {
+        let mut store = MemoryStore::default();
+        offer(&ir, &mut store, id);
+        let mut decider = Always::default();
+        let decided = decide(
+            &ir,
+            &mut store,
+            &mut decider,
+            id,
+            requires,
+            bindings,
+            missing,
+        );
+        assert_invalid(&decided, "not-decided", &mut store, id);
+        assert!(decider.asked.is_empty(), "{id}: {:?}", decider.asked);
+    }
+}
+
+/// story:admission-decision-checked-by-model: a refusal naming missing a capability the deployment's
+/// environment provides is `missing-provided`, even where the external cause holds; `laptop`
+/// provides `store.durable` and `clock`.
+#[test]
+fn a_refusal_naming_a_provided_capability_missing_is_not_refused() {
+    let ir = specification();
+    let cases = [
+        ("provided-durable", json!(["store.durable"]), json!([])),
+        (
+            "provided-beside-lacking",
+            json!(["channel", "clock"]),
+            json!([]),
+        ),
+    ];
+    for (id, missing, bindings) in cases {
+        let mut store = MemoryStore::default();
+        offer(&ir, &mut store, id);
+        let decided = decide(
+            &ir,
+            &mut store,
+            &mut Always::default(),
+            id,
+            missing.clone(),
+            bindings,
+            missing,
+        );
+        assert_invalid(&decided, "missing-provided", &mut store, id);
+    }
+}
+
+/// story:environment-implementations-specified: a capability is provided by its exact key, else by
+/// a `prefix.*` key that covers it (README.md:101-102). An exact key that does not list the bound
+/// implementation is `not-provided` though a prefix key would; a binding or a capability named
+/// missing that only a prefix key covers is neither `not-provided` nor `missing-provided`.
+#[test]
+fn a_capability_only_a_prefix_key_covers_is_not_refused_as_unprovided() {
+    let ir = specification();
+    let cases = [
+        (
+            "prefix-binding",
+            json!(["external.lobby.Join.full"]),
+            json!([{"capability": "external.lobby.Join.full", "implementation": "operator-prompt"}]),
+            json!([]),
+            Some("admitted"),
+        ),
+        (
+            "prefix-beside-exact",
+            json!(["store.events"]),
+            json!([{"capability": "store.events", "implementation": "memory"}]),
+            json!([]),
+            Some("admitted"),
+        ),
+        (
+            "exact-wins",
+            json!(["store.durable"]),
+            json!([{"capability": "store.durable", "implementation": "memory"}]),
+            json!([]),
+            Some("not-provided"),
+        ),
+        (
+            "prefix-missing",
+            json!(["external.lobby.Join.full"]),
+            json!([]),
+            json!(["external.lobby.Join.full"]),
+            None,
+        ),
+    ];
+    for (id, requires, bindings, missing, outcome) in cases {
+        let mut store = MemoryStore::default();
+        declare(
+            &ir,
+            &mut store,
+            "edge",
+            json!([
+                {"capability": "store.durable", "implementation": "sqlite"},
+                {"capability": "store.*", "implementation": "memory"},
+                {"capability": "external.*", "implementation": "operator-prompt"},
+            ]),
+        );
+        let offered = offer_to(&ir, &mut store, id, "edge");
+        assert_eq!(offered.outcome, "offered", "{offered:?}");
+        let decided = decide(
+            &ir,
+            &mut store,
+            &mut Always::default(),
+            id,
+            requires,
+            bindings,
+            missing,
+        );
+        match outcome {
+            Some("not-provided") => assert_invalid(&decided, "not-provided", &mut store, id),
+            Some(outcome) => assert_eq!(decided.outcome, outcome, "{id}: {decided:?}"),
+            None => assert!(
+                !matches!(
+                    decided.outcome.as_str(),
+                    "not-provided" | "missing-provided"
+                ),
+                "{id}: {decided:?}"
+            ),
+        }
+    }
+}
+
+/// A consistent refusal whose external cause does not hold changes nothing.
+#[test]
+fn a_refusal_the_cause_does_not_confirm_is_unconfirmed() {
+    let ir = specification();
+    let mut store = MemoryStore::default();
+    offer(&ir, &mut store, "d1");
+    let mut decider = Never::default();
+    let decided = decide(
+        &ir,
+        &mut store,
+        &mut decider,
+        "d1",
+        json!(["channel"]),
+        json!([]),
+        json!(["channel"]),
+    );
+    assert_invalid(&decided, "unconfirmed", &mut store, "d1");
+    assert_eq!(decider.asked, [REFUSED]);
+}
+
+/// An offer names a declared environment: the stored reference `DecideAdmission` reads is never
+/// dangling.
+#[test]
+fn an_offer_to_an_undeclared_environment_is_refused() {
+    let ir = specification();
+    let mut store = MemoryStore::default();
+    let offered = offer_to(&ir, &mut store, "d1", "nowhere");
+    assert_eq!(offered.outcome, "unknown-environment", "{offered:?}");
+    assert_eq!(
+        offered.error.as_ref().map(|error| error.name.as_str()),
+        Some("spindle.deployment.EnvironmentUnknown")
+    );
+    assert!(offered.events.is_empty(), "{offered:?}");
+    assert_eq!(store.load(DEPLOYMENT, &json!("d1")).unwrap(), None);
+}
+
+/// Declares `environment` in the model as the runtime reads it for `requirements`: each required
+/// capability with every implementation the environment document lists for it (a `prefix.*` key
+/// read through [`spindle_capability::Environment::implementations`]).
+fn declare_for(
+    ir: &EssIr,
+    store: &mut dyn Store,
+    environment: &spindle_capability::Environment,
+    requirements: &spindle_capability::Requirements,
+) {
+    let provides: Vec<Value> = requirements
+        .keys()
+        .flat_map(|capability| {
+            environment
+                .implementations(capability.as_str())
+                .unwrap_or_default()
+                .iter()
+                .map(move |implementation| {
+                    json!({"capability": capability.as_str(), "implementation": implementation})
+                })
+        })
+        .collect();
+    declare(ir, store, &environment.name, Value::Array(provides));
+}
+
+/// Derives what `bundle` requires, admits it against `environment`, and declares, offers and
+/// decides it in the model as the runtime would; returns the decision and the bindings admission
+/// chose.
 fn admit_through_the_model(
     ir: &EssIr,
     store: &mut dyn Store,
@@ -519,18 +832,15 @@ fn admit_through_the_model(
     let requirements = spindle_capability::derive(bundle, None).expect("the whole bundle");
     let admission = spindle_capability::admit(&requirements, environment);
     let bindings = bindings_of(&admission);
-    offer_requiring(
-        ir,
-        store,
-        id,
-        &environment.name,
-        json!(names(&requirements)),
-    );
+    declare_for(ir, store, environment, &requirements);
+    let offered = offer_to(ir, store, id, &environment.name);
+    assert_eq!(offered.outcome, "offered", "{offered:?}");
     let decided = decide(
         ir,
         store,
         &mut Never::default(),
         id,
+        json!(names(&requirements)),
         bindings.clone(),
         json!([]),
     );
@@ -571,9 +881,9 @@ fn preference_order_is_declared() {
 fn requires_is_tied_to_the_bundle() {
     let ir = specification();
     let requirements = spindle_capability::derive(&ir, None).expect("the whole bundle");
+    let laptop = environment("laptop.toml");
     let mut store = MemoryStore::default();
-    let (decided, bindings) =
-        admit_through_the_model(&ir, &mut store, "d1", &ir, &environment("laptop.toml"));
+    let (decided, bindings) = admit_through_the_model(&ir, &mut store, "d1", &ir, &laptop);
     assert_eq!(decided.outcome, "admitted", "{decided:?}");
     let stored = store.load(DEPLOYMENT, &json!("d1")).unwrap().unwrap();
     assert_eq!(
@@ -583,13 +893,14 @@ fn requires_is_tied_to_the_bundle() {
 
     let mut short = bindings.as_array().expect("a list").clone();
     short.pop();
-    let mut store = MemoryStore::default();
-    offer_requiring(&ir, &mut store, "d2", "laptop", json!(names(&requirements)));
+    let offered = offer_to(&ir, &mut store, "d2", "laptop");
+    assert_eq!(offered.outcome, "offered", "{offered:?}");
     let decided = decide(
         &ir,
         &mut store,
         &mut Never::default(),
         "d2",
+        json!(names(&requirements)),
         Value::Array(short),
         json!([]),
     );
@@ -637,7 +948,7 @@ fn stop_from_admitted_and_offered_is_stated() {
     assert_eq!(stopped.outcome, "stopped", "{stopped:?}");
     assert_eq!(state_of(&mut store, "admitted"), "Stopped");
 
-    offer(&ir, &mut store, "offered");
+    offer_to(&ir, &mut store, "offered", "laptop");
     let before = store.load(DEPLOYMENT, &json!("offered")).unwrap().unwrap();
     let ignored = run(
         &ir,

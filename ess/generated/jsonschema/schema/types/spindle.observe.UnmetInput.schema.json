@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.UnmetInput.schema.json",
+  "$ref": "#/$defs/spindle.observe.UnmetInput",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "contract_digest": "slice-sha256/2:9ec73d7f4ff29db3fe16270d0bd07822d5f7ec04eb8813e39dc7d85d597fb3c8",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.UnmetInput": {
+      "title": "UnmetInput",
+      "description": "One event binding whose command input the event did not fill: a required field absent, or a value carried across a declared conversion that is no value of the input's type. The command is not invoked: zero attempts, no retry, and the event's other bindings still run; the command that published the event stays committed. ESS 0.90.0 calls this an unmet binding-input obligation, with no attempt and no policy, only for a binding whose failure policy is chosen per refusal, answers the same failure of every other binding unsupported, and defines no observable result for either (`crates/verify/ess-conformance/src/interpret/bindings.rs`). The rule for every binding and this answer are Spindle's (`docs/design/spindle.md` § 11, unmet binding input; `spindle_channel::Unmet`).",
+      "x-ess-name": "spindle.observe.UnmetInput",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "binding": {
+          "description": "The binding id.",
+          "type": "string"
+        },
+        "component": {
+          "description": "The component that accepts the command.",
+          "type": "string"
+        },
+        "command": {
+          "description": "The qualified name of the command not invoked.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why the input could not be filled, as the runtime words it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding",
+        "component",
+        "command",
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

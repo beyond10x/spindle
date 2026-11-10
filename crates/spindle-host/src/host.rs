@@ -270,6 +270,8 @@ pub enum HostError {
     World(String),
     /// One call delivered [`DELIVERY_LIMIT`] envelopes and more were still in flight; those
     /// were discarded, and nothing runs after them.
+    /// What the call ran before it stopped is committed; the commands it reported as not
+    /// executed until then are in `failed`.
     #[error(
         "stopped after {deliveries} deliveries in one call; these bindings kept triggering each other: {}",
         bindings.iter().cloned().collect::<Vec<_>>().join(", ")
@@ -279,6 +281,9 @@ pub enum HostError {
         deliveries: usize,
         /// The bindings that carried them.
         bindings: BTreeSet<String>,
+        /// Every command the call reported as not executed before it stopped, an unmet
+        /// binding input included ([`Failed::attempts`] 0), in the order reported.
+        failed: Vec<Failed>,
     },
     /// The link to a peer component closed or failed before the run ended, or what was sent
     /// there did not settle in time.
@@ -1525,6 +1530,7 @@ impl Host {
                         return Err(HostError::Runaway {
                             deliveries: deliveries.count,
                             bindings: std::mem::take(&mut deliveries.bindings),
+                            failed: std::mem::take(&mut report.failed),
                         });
                     }
                     deliveries.count += 1;

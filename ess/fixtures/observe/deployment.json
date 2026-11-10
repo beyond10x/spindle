@@ -47,7 +47,11 @@
       "from": "rally-player-east",
       "to": "rally-table",
       "event": "rally.east.PaddleMoveRequested",
-      "command": "rally.table.MovePaddle"
+      "command": "rally.table.MovePaddle",
+      "delivery": {
+        "guarantee": "at_most_once",
+        "attempts": 1
+      }
     },
     {
       "name": "east-watches",
@@ -55,13 +59,24 @@
       "from": "rally-table",
       "to": "rally-player-east",
       "event": "rally.table.BallMoved",
-      "command": "rally.east.ObserveBall"
+      "command": "rally.east.ObserveBall",
+      "delivery": {
+        "guarantee": "at_most_once",
+        "attempts": 1
+      }
     },
     {
       "name": "tick",
       "kind": "periodic",
       "to": "rally-table",
-      "command": "rally.table.Tick"
+      "command": "rally.table.Tick",
+      "every": "PT1S",
+      "anchor": "host_activation",
+      "first": "after_period",
+      "cadence": "fixed_rate",
+      "overlap": "serial_per_instance",
+      "missed": "one_pending_drop_excess",
+      "lifetime": "host_instance"
     },
     {
       "name": "west-moves",
@@ -69,7 +84,11 @@
       "from": "rally-player-west",
       "to": "rally-table",
       "event": "rally.west.PaddleMoveRequested",
-      "command": "rally.table.MovePaddle"
+      "command": "rally.table.MovePaddle",
+      "delivery": {
+        "guarantee": "at_most_once",
+        "attempts": 1
+      }
     },
     {
       "name": "west-watches",
@@ -77,7 +96,11 @@
       "from": "rally-table",
       "to": "rally-player-west",
       "event": "rally.table.BallMoved",
-      "command": "rally.west.ObserveBall"
+      "command": "rally.west.ObserveBall",
+      "delivery": {
+        "guarantee": "at_most_once",
+        "attempts": 1
+      }
     }
   ],
   "instances": [

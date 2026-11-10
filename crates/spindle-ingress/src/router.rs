@@ -8,7 +8,7 @@ use spindle_host::{Failed, Host};
 
 use crate::answer::Answer;
 use crate::console::{Console, Worlds};
-use crate::observe::{Answered, By, Recorder, Reserved};
+use crate::observe::{Answered, By, Recorder, Reserved, UnmetInput};
 use crate::surface::{Resolved, Route, Surface};
 
 /// The largest request body read, in bytes: [`route`] refuses a larger one `413`, and the
@@ -226,6 +226,9 @@ impl Pending {
     /// with it in the order asked: by the routed command and by every command an event binding
     /// invoked on the way, each with the command that asked. One asked outside a request is
     /// counted and listed in no record.
+    ///
+    /// Every event binding whose input was unmet on the way is answered with it too
+    /// ([`UnmetInput::of`]), in the order the host reported them.
     pub(crate) fn serve(
         self,
         host: &mut Host,
@@ -238,6 +241,7 @@ impl Pending {
         if let Some(recorder) = &self.recorder {
             answered.externals = recorder.served();
         }
+        answered.unmet = failed.iter().filter_map(UnmetInput::of).collect();
         (response, failed, answered)
     }
 

@@ -1,0 +1,351 @@
+domain: probe.ahead
+summary: A desk is open or closed; a book is shelved at a desk, lent from an open desk and returned while its own desk is open.
+types:
+  - name: probe.ahead.DeskId
+    kind: newtype
+    of: Uuid
+  - name: probe.ahead.BookId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: probe.ahead.Desk
+    identity:
+      name: desk_id
+      type: probe.ahead.DeskId
+    fields:
+      - name: label
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open, Closed]
+      terminal: [Closed]
+      transitions:
+        - {name: close, from: [Open], to: Closed}
+  - name: probe.ahead.Book
+    identity:
+      name: book_id
+      type: probe.ahead.BookId
+    fields:
+      - name: home
+        type: Optional<probe.ahead.DeskId>
+    relations:
+      - {name: home, kind: references, target: probe.ahead.Desk, cardinality: one, via: home}
+    lifecycle:
+      initial: Shelved
+      states: [Shelved, Lent]
+      terminal: [Shelved]
+      transitions:
+        - {name: lend, from: [Shelved], to: Lent}
+        - {name: back, from: [Lent], to: Shelved}
+errors:
+  - name: probe.ahead.NoDesk
+    summary: No desk carries the id.
+    fields: []
+  - name: probe.ahead.DeskShut
+    summary: The desk is closed.
+    fields: []
+  - name: probe.ahead.NoBook
+    summary: No book carries the id.
+    fields: []
+  - name: probe.ahead.NotLent
+    summary: The book is not in a state this command acts from.
+    fields: []
+  - name: probe.ahead.Withheld
+    summary: The reading room withholds the book.
+    fields: []
+commands:
+  - name: probe.ahead.OpenDesk
+    input:
+      - name: desk_id
+        type: probe.ahead.DeskId
+      - name: label
+        type: String
+    outcomes:
+      - name: opened
+        creates: probe.ahead.Desk
+        instance: desk_id
+        sets:
+          label: input.label
+        emits: [probe.ahead.DeskOpened]
+        payload:
+          probe.ahead.DeskOpened:
+            desk_id: input.desk_id
+        summary: The desk opens.
+  - name: probe.ahead.CloseDesk
+    input:
+      - name: desk_id
+        type: probe.ahead.DeskId
+    outcomes:
+      - name: closed
+        moves: probe.ahead.Desk.close
+        instance: desk_id
+        emits: [probe.ahead.DeskClosed]
+        payload:
+          probe.ahead.DeskClosed:
+            desk_id: input.desk_id
+        summary: The desk closes.
+      - name: wrong-state
+        wrong_state: true
+        error: probe.ahead.DeskShut
+        summary: The desk is already closed.
+  - name: probe.ahead.ShelveBook
+    input:
+      - name: book_id
+        type: probe.ahead.BookId
+      - name: home
+        type: Optional<probe.ahead.DeskId>
+    outcomes:
+      - name: shelved
+        creates: probe.ahead.Book
+        instance: book_id
+        sets:
+          home: input.home
+        emits: [probe.ahead.BookShelved]
+        payload:
+          probe.ahead.BookShelved:
+            book_id: input.book_id
+        summary: The book is shelved, its home recorded whether or not a desk carries it.
+  - name: probe.ahead.LendPlain
+    input:
+      - name: book_id
+        type: probe.ahead.BookId
+    outcomes:
+      - name: lent
+        moves: probe.ahead.Book.lend
+        instance: book_id
+        emits: [probe.ahead.BookLent]
+        payload:
+          probe.ahead.BookLent:
+            book_id: input.book_id
+        summary: The book is lent.
+      - name: wrong-state
+        wrong_state: true
+        error: probe.ahead.NotLent
+        summary: The book is already lent.
+  - name: probe.ahead.LendQuiet
+    input:
+      - name: book_id
+        type: probe.ahead.BookId
+      - name: desk_id
+        type: probe.ahead.DeskId
+      - name: quiet
+        type: Optional<Boolean>
+    outcomes:
+      - name: no-desk
+        when_related:
+          via: input.desk_id
+          exists: false
+        error: probe.ahead.NoDesk
+        summary: The named desk does not exist.
+      - name: desk-closed
+        when_related:
+          via: input.desk_id
+          predicate: state == Closed
+        error: probe.ahead.DeskShut
+        summary: The named desk is closed.
+      - name: withheld
+        external: the reading room withholds the book
+        error: probe.ahead.Withheld
+        summary: The reading room withholds the book.
+      - name: lent-quietly
+        when: quiet == true
+        moves: probe.ahead.Book.lend
+        instance: book_id
+        emits: [probe.ahead.BookLentQuietly]
+        payload:
+          probe.ahead.BookLentQuietly:
+            book_id: input.book_id
+        summary: The book is lent without a notice.
+      - name: lent
+        moves: probe.ahead.Book.lend
+        instance: book_id
+        emits: [probe.ahead.BookLent]
+        payload:
+          probe.ahead.BookLent:
+            book_id: input.book_id
+        summary: The book is lent from the named desk.
+      - name: wrong-state
+        wrong_state: true
+        error: probe.ahead.NotLent
+        summary: The book is already lent.
+  - name: probe.ahead.ReturnQuiet
+    input:
+      - name: book_id
+        type: probe.ahead.BookId
+      - name: quiet
+        type: Optional<Boolean>
+    outcomes:
+      - name: no-book
+        unknown_instance: true
+        error: probe.ahead.NoBook
+        summary: No book carries the id.
+      - name: home-gone
+        when_related:
+          via: home
+          exists: false
+        error: probe.ahead.NoDesk
+        summary: The book's own desk does not exist.
+      - name: home-closed
+        when_related:
+          via: home
+          predicate: state == Closed
+        error: probe.ahead.DeskShut
+        summary: The book's own desk is closed.
+      - name: withheld
+        external: the reading room withholds the book
+        error: probe.ahead.Withheld
+        summary: The reading room withholds the book.
+      - name: returned-quietly
+        when: quiet == true
+        moves: probe.ahead.Book.back
+        instance: book_id
+        emits: [probe.ahead.BookReturnedQuietly]
+        payload:
+          probe.ahead.BookReturnedQuietly:
+            book_id: input.book_id
+        summary: The book goes back without a notice.
+      - name: returned
+        moves: probe.ahead.Book.back
+        instance: book_id
+        emits: [probe.ahead.BookReturned]
+        payload:
+          probe.ahead.BookReturned:
+            book_id: input.book_id
+        summary: The book goes back to its own desk.
+      - name: wrong-state
+        wrong_state: true
+        error: probe.ahead.NotLent
+        summary: The book is not lent.
+  - name: probe.ahead.LendApproved
+    input:
+      - name: book_id
+        type: probe.ahead.BookId
+      - name: desk_id
+        type: probe.ahead.DeskId
+    outcomes:
+      - name: no-desk
+        when_related:
+          via: input.desk_id
+          exists: false
+        error: probe.ahead.NoDesk
+        summary: The named desk does not exist.
+      - name: desk-closed
+        when_related:
+          via: input.desk_id
+          predicate: state == Closed
+        error: probe.ahead.DeskShut
+        summary: The named desk is closed.
+      - name: approved
+        external: the reading room approves a quiet loan
+        moves: probe.ahead.Book.lend
+        instance: book_id
+        emits: [probe.ahead.BookLentQuietly]
+        payload:
+          probe.ahead.BookLentQuietly:
+            book_id: input.book_id
+        summary: The book is lent quietly, as the reading room approved.
+      - name: lent
+        moves: probe.ahead.Book.lend
+        instance: book_id
+        emits: [probe.ahead.BookLent]
+        payload:
+          probe.ahead.BookLent:
+            book_id: input.book_id
+        summary: The book is lent from the named desk.
+      - name: wrong-state
+        wrong_state: true
+        error: probe.ahead.NotLent
+        summary: The book is already lent.
+  - name: probe.ahead.LendTwo
+    input:
+      - name: book_id
+        type: probe.ahead.BookId
+      - name: desk_id
+        type: probe.ahead.DeskId
+      - name: spare_id
+        type: probe.ahead.DeskId
+    outcomes:
+      - name: no-desk
+        when_related:
+          via: input.desk_id
+          exists: false
+        error: probe.ahead.NoDesk
+        summary: The named desk does not exist.
+      - name: no-spare
+        when_related:
+          via: input.spare_id
+          exists: false
+        error: probe.ahead.NoDesk
+        summary: The named spare desk does not exist.
+      - name: desk-closed
+        when_related:
+          via: input.desk_id
+          predicate: state == Closed
+        error: probe.ahead.DeskShut
+        summary: The named desk is closed.
+      - name: withheld
+        external: the reading room withholds the book
+        error: probe.ahead.Withheld
+        summary: The reading room withholds the book.
+      - name: lent
+        moves: probe.ahead.Book.lend
+        instance: book_id
+        emits: [probe.ahead.BookLent]
+        payload:
+          probe.ahead.BookLent:
+            book_id: input.book_id
+        summary: The book is lent from the named desk.
+      - name: wrong-state
+        wrong_state: true
+        error: probe.ahead.NotLent
+        summary: The book is already lent.
+events:
+  - name: probe.ahead.DeskOpened
+    fields:
+      - name: desk_id
+        type: probe.ahead.DeskId
+  - name: probe.ahead.DeskClosed
+    fields:
+      - name: desk_id
+        type: probe.ahead.DeskId
+  - name: probe.ahead.BookShelved
+    fields:
+      - name: book_id
+        type: probe.ahead.BookId
+  - name: probe.ahead.BookLent
+    fields:
+      - name: book_id
+        type: probe.ahead.BookId
+  - name: probe.ahead.BookLentQuietly
+    fields:
+      - name: book_id
+        type: probe.ahead.BookId
+  - name: probe.ahead.BookReturned
+    fields:
+      - name: book_id
+        type: probe.ahead.BookId
+  - name: probe.ahead.BookReturnedQuietly
+    fields:
+      - name: book_id
+        type: probe.ahead.BookId
+views:
+  - name: probe.ahead.BookCard
+    source: probe.ahead.Book
+    consistency: read_your_writes
+    fields:
+      - name: book_id
+        type: probe.ahead.BookId
+      - name: home
+        type: Optional<probe.ahead.DeskId>
+      - name: state
+        type: probe.ahead.Book.State
+  - name: probe.ahead.DeskCard
+    source: probe.ahead.Desk
+    consistency: read_your_writes
+    fields:
+      - name: desk_id
+        type: probe.ahead.DeskId
+      - name: label
+        type: String
+      - name: state
+        type: probe.ahead.Desk.State

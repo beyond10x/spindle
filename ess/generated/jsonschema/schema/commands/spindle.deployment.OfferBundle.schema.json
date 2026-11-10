@@ -14,37 +14,24 @@
     },
     "environment_id": {
       "$ref": "#/$defs/spindle.deployment.EnvironmentId"
-    },
-    "requires": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/spindle.deployment.CapabilityName"
-      }
     }
   },
   "required": [
     "deployment_id",
     "bundle",
-    "environment_id",
-    "requires"
+    "environment_id"
   ],
   "additionalProperties": false,
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:fb0e6b29e756a10c1a5ae1b250743253c071ac9e937568ce2ab83f5b81e0eacd",
+    "contract_digest": "slice-sha256/2:aba0e35135b1753d0494905d528337f0460e5c3443ac0853664b4352956105f4",
     "regenerate": "ess generate"
   },
   "$defs": {
     "spindle.deployment.BundleDigest": {
       "title": "BundleDigest",
       "x-ess-name": "spindle.deployment.BundleDigest",
-      "x-ess-kind": "newtype",
-      "type": "string"
-    },
-    "spindle.deployment.CapabilityName": {
-      "title": "CapabilityName",
-      "x-ess-name": "spindle.deployment.CapabilityName",
       "x-ess-kind": "newtype",
       "type": "string"
     },

@@ -11,3 +11,5 @@ domains:
   - spindle.deployment
   - spindle.placement
   - spindle.observe
+  - spindle.environment
+  - spindle.console

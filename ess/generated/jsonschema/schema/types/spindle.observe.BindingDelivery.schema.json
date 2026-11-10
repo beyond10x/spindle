@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.BindingDelivery.schema.json",
+  "$ref": "#/$defs/spindle.observe.BindingDelivery",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "contract_digest": "slice-sha256/2:03944a1780ee3a07fcad7780b18fb7e1ae1f1649339dee2819b7b60c079608c2",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.BindingDelivery": {
+      "title": "BindingDelivery",
+      "description": "How one event binding delivers in a run: ESS's guarantee and Spindle's limit on attempts. ESS gives a bare `on_failure: retry` no count, leaving it to the deployment (ESS 0.90.0 `crates/specify/ess-domain/src/binding/retry.rs`, `docs/design/binding-delivery-guarantees.md`). Spindle's count is 5 (`spindle_host::RETRY_ATTEMPTS`, `docs/design/spindle.md` § 11, runtime defaults).",
+      "x-ess-name": "spindle.observe.BindingDelivery",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "guarantee": {
+          "$ref": "#/$defs/spindle.observe.DeliveryGuarantee"
+        },
+        "attempts": {
+          "description": "The most times the run invokes the binding's command for one event, the first included: 5 where the binding retries a failure (`on_failure: retry`, or `retry` chosen for some refusal), every attempt at once with no backoff; 1 where it drops, and where the run drops retries (`--drop-retries`). After the last attempt the invocation is given up and reported once.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        }
+      },
+      "required": [
+        "guarantee",
+        "attempts"
+      ],
+      "additionalProperties": false,
+      "x-ess-invariants": [
+        "attempts >= 1",
+        "attempts <= 5"
+      ]
+    },
+    "spindle.observe.DeliveryGuarantee": {
+      "title": "DeliveryGuarantee",
+      "description": "How many times an event binding's command may run for one event, as the binding's `delivery:` writes it. The words are ESS's (`Delivery` in ESS 0.90.0 `crates/specify/ess-domain/src/binding.rs`, carried on `ResolvedBinding::delivery`), and Spindle publishes them unchanged. `at_least_once`: ESS lets the command run again, so it must be idempotent. `at_most_once`: one send and no redelivery. Neither is exactly once. Spindle sends each event to a binding once under either word: the receiving component acknowledges an `at_least_once` envelope, and no runtime path resends one whose acknowledgement is overdue (`spindle_channel::Sender::redeliver` exists, and the host never calls it), so the conformance target answers ESS's redelivery step unsupported (`crates/spindle-conformance/src/target.rs`). A command that does not take effect may still run again where the binding retries (`BindingDelivery.attempts`). In either, Spindle sends nothing for an event before the state that published it is durable (`crates/spindle-channel/src/lib.rs`).",
+      "x-ess-name": "spindle.observe.DeliveryGuarantee",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "at_least_once",
+        "at_most_once"
+      ]
+    }
+  }
+}

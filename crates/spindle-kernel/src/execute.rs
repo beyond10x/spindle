@@ -340,6 +340,14 @@ enum Reference {
     Row(Value, Row),
 }
 
+/// What the addressed row answers for the branch a look-ahead selects ([`Run::look_ahead`]).
+enum Ahead {
+    /// The branch acts on a row no store holds: the existence answer.
+    Unknown,
+    /// The branch moves the row from a state it does not hold: the wrong-state answer.
+    WrongState,
+}
+
 /// Whether `phase` of `plan` holds an `exists: false` branch over a row the input names: the
 /// phase a missing such row is answered in (ESS `related::reads_missing`).
 fn reads_missing(plan: &PrecedencePlan<'_>, phase: Phase) -> bool {
@@ -535,12 +543,13 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 Phase::HeldState | Phase::PresentRelated | Phase::Accepting | Phase::Default => {
                     if !looked_ahead {
                         looked_ahead = true;
+                        let missing = missing_late && !stored && self.missing_reference()?;
                         if !stored
                             && plan
                                 .branches(Phase::PresentRelated)
                                 .iter()
                                 .any(|outcome| present_related(outcome))
-                            && let Some(answered) = self.look_ahead(&plan, true)?
+                            && let Some(answered) = self.look_ahead(&plan, true, !missing)?
                         {
                             return Ok(Selected::Answered(answered));
                         }
@@ -910,6 +919,24 @@ impl<'a, 'ir> Run<'a, 'ir> {
         Ok(None)
     }
 
+    /// Whether a related row the command reads, through the input or a stored reference, is named
+    /// and no store holds it: the request is then the model's to answer, by that row's
+    /// `exists: false` branch or as undecidable, unless the held state answers first, and a
+    /// decider is asked only where a branch it could select has a held-state answer, or a guard
+    /// past an external branch is unknown ([`Self::look_ahead`]).
+    fn missing_reference(&mut self) -> Result<bool, ExecuteError> {
+        let spec = self.spec;
+        let ir = self.ir;
+        for outcome in &spec.outcomes {
+            if let ResolvedCondition::Related { via, entity, .. } = &outcome.condition
+                && let Reference::Missing = self.reference(via, ir.entity(entity))?
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Refuses a missing row the input names that no `exists: false` branch answered: a predicate
     /// over it is `Unknown`, never a branch taken by default, and ESS's interpreter refuses the
     /// whole selection where it reads it.
@@ -940,7 +967,8 @@ impl<'a, 'ir> Run<'a, 'ir> {
         &mut self,
         plan: &PrecedencePlan<'ir>,
     ) -> Result<Option<Selected<'ir>>, ExecuteError> {
-        if let Some(answered) = self.look_ahead(plan, false)? {
+        let missing = self.missing_reference()?;
+        if let Some(answered) = self.look_ahead(plan, false, !missing)? {
             return Ok(Some(Selected::Answered(answered)));
         }
         let spec = self.spec;
@@ -988,19 +1016,63 @@ impl<'a, 'ir> Run<'a, 'ir> {
     /// takes is the selected one, so nothing after it is read and no decider is asked past it.
     /// The answer is kept for selection ([`Self::ask`]). A selected refusal acts on no row, so
     /// selection goes on to the related rows.
+    ///
+    /// `ask: false` is the look-ahead beside a missing related row ([`Self::missing_reference`]),
+    /// which the model answers itself once the held state has. A first walk asks no decider and
+    /// reads past each external branch. Where no branch it could select, the external ones passed
+    /// included, has a held-state answer, nothing is asked and the missing row answers. The
+    /// decider is asked, by the walk that asks, wherever any branch it could select has a
+    /// held-state answer, and where a guard read past an external branch is unknown.
     fn look_ahead(
         &mut self,
         plan: &PrecedencePlan<'ir>,
         subjects: bool,
+        ask: bool,
     ) -> Result<Option<Executed>, ExecuteError> {
+        if !ask {
+            let mut passed = Vec::new();
+            match self.select_ahead(plan, subjects, Some(&mut passed)) {
+                Ok(selected) => {
+                    if selected
+                        .into_iter()
+                        .chain(passed)
+                        .all(|outcome| self.ahead_answer(outcome).is_none())
+                    {
+                        return Ok(None);
+                    }
+                }
+                // A guard read past an external branch is unknown: a decider that takes that
+                // branch stops the reading before it, so the walk that asks decides.
+                Err(ExecuteError::Undecidable { .. }) if !passed.is_empty() => {}
+                Err(error) => return Err(error),
+            }
+        }
+        let Some(outcome) = self.select_ahead(plan, subjects, None)? else {
+            return Ok(None);
+        };
+        match self.ahead_answer(outcome) {
+            None => Ok(None),
+            Some(Ahead::Unknown) => self.unknown_instance(outcome).map(Some),
+            Some(Ahead::WrongState) => self.wrong_state().map(Some),
+        }
+    }
+
+    /// The branch the look-ahead selects ([`Self::look_ahead`]). With `passed`, no decider is
+    /// asked: an external branch whose condition otherwise holds is collected there and reading
+    /// goes on past it, as under an open provider.
+    fn select_ahead(
+        &mut self,
+        plan: &PrecedencePlan<'ir>,
+        subjects: bool,
+        mut passed: Option<&mut Vec<&'ir ResolvedOutcome>>,
+    ) -> Result<Option<&'ir ResolvedOutcome>, ExecuteError> {
         // An absent addressed row reaches here only where a creation takes it
         // ([`Self::creation_takes_absent`]). No decider is asked for it here: an external branch
         // stays one possible answer and reading goes on, as under an open provider. A branch
         // selected that acts on the row without creating it is answered for the missing row,
         // except beside row sets, which answer first (ESS `selected_subject_refusal`).
         let absent = self.held.as_ref().is_some_and(|held| held.stored.is_none());
-        let mut selected = None;
-        'phases: for planned in plan.phases() {
+        for planned in plan.phases() {
             match planned.phase {
                 Phase::HeldState | Phase::PresentRelated | Phase::Accepting | Phase::Default => {}
                 Phase::InputAbsent | Phase::RelatedRow | Phase::InputRefusal | Phase::Existence => {
@@ -1035,13 +1107,18 @@ impl<'a, 'ir> Run<'a, 'ir> {
                             ResolvedCondition::External { cause }
                             | ResolvedCondition::ExternalWhen { cause, .. }
                             | ResolvedCondition::ExternalSubject { cause, .. } => {
-                                self.ask(outcome, cause)?
+                                match passed.as_deref_mut() {
+                                    Some(passed) => {
+                                        passed.push(*outcome);
+                                        false
+                                    }
+                                    None => self.ask(outcome, cause)?,
+                                }
                             }
                             _ => true,
                         };
                         if taken {
-                            selected = Some(*outcome);
-                            break 'phases;
+                            return Ok(Some(*outcome));
                         }
                     }
                     Truth::False => {}
@@ -1053,11 +1130,14 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 }
             }
         }
-        let Some((outcome, subject)) =
-            selected.and_then(|outcome| Some((outcome, outcome.subject.as_ref()?)))
-        else {
-            return Ok(None);
-        };
+        Ok(None)
+    }
+
+    /// What the addressed row answers for `outcome`, once the look-ahead selected it
+    /// ([`Self::look_ahead`]), or `None` where selection goes on to the related rows.
+    fn ahead_answer(&self, outcome: &ResolvedOutcome) -> Option<Ahead> {
+        let subject = outcome.subject.as_ref()?;
+        let absent = self.held.as_ref().is_some_and(|held| held.stored.is_none());
         // The branch selected acts on the absent row without creating it: the row's existence
         // answers before any present-related refusal, outside row sets, where the creation
         // answers after the row sets instead (ESS `selected_subject_refusal`).
@@ -1066,24 +1146,19 @@ impl<'a, 'ir> Run<'a, 'ir> {
             && matches!(subject.instance, ResolvedInstance::Supplied { .. })
             && !uses_row_sets(self.spec)
         {
-            return self.unknown_instance(outcome).map(Some);
+            return Some(Ahead::Unknown);
         }
         let (ResolvedEffect::Moves { transition }, ResolvedInstance::Supplied { .. }) =
             (&subject.effect, &subject.instance)
         else {
-            return Ok(None);
+            return None;
         };
-        match self.before() {
-            Some(row)
-                if !transition
-                    .from
-                    .iter()
-                    .any(|state| state.as_str() == row.state) =>
-            {
-                self.wrong_state().map(Some)
-            }
-            _ => Ok(None),
-        }
+        let row = self.before()?;
+        (!transition
+            .from
+            .iter()
+            .any(|state| state.as_str() == row.state))
+        .then_some(Ahead::WrongState)
     }
 
     /// The facts a guard over the subject reads: the held instance, the input under `input.` and

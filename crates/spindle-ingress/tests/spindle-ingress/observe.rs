@@ -250,3 +250,86 @@ fn a_cause_asked_outside_a_request_is_counted_and_listed_in_no_later_request() {
     );
     assert!(metrics.lines().any(|line| line == sample), "{metrics}");
 }
+
+/// One `Connection: close` request carrying `body` as JSON: the status and the body as JSON.
+fn send_json(address: SocketAddr, method: &str, target: &str, body: &Value) -> (u16, Value) {
+    let body = body.to_string();
+    let mut stream = TcpStream::connect(address).expect("the listener accepts");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("a read timeout");
+    write!(
+        stream,
+        "{method} {target} HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .expect("the request is written");
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .expect("the response is read");
+    let (head, answered) = response
+        .split_once("\r\n\r\n")
+        .unwrap_or_else(|| panic!("a response without a body: {response}"));
+    let status = head
+        .split(' ')
+        .nth(1)
+        .and_then(|status| status.parse().ok())
+        .unwrap_or_else(|| panic!("a response without a status: {head}"));
+    let answered =
+        serde_json::from_str(answered).unwrap_or_else(|error| panic!("{error}: {answered}"));
+    (status, answered)
+}
+
+/// `story:binding-delivery-specified`: an event binding whose input the event does not fill
+/// (`member-0042` is no `ReaderRef`, `value.count <= 8`) invokes nothing, and the request that
+/// published the event lists it under `unmet` (`spindle.observe.UnmetInput`): the binding, the
+/// component that accepts its command, the command and why. A request whose bindings all map
+/// lists none. The fixture `tests/fixtures/library` is `spindle-channel`'s, with `lending` reached
+/// over the network.
+#[test]
+fn an_unmet_binding_input_is_listed_in_the_request_that_published_the_event() {
+    let ir = spindle_spec::load(&fixtures().join("library"))
+        .expect("the library fixture compiles")
+        .ir;
+    let surface = Surface::new(&ir, &["lending".to_owned()], None)
+        .expect("the lending surface is served")
+        .observing(16);
+    let close = surface
+        .routes()
+        .iter()
+        .find(|route| route.operation.name() == "library.lending.CloseLoan")
+        .expect("the surface serves CloseLoan");
+    let (method, path) = (close.method.to_string().to_uppercase(), close.path.clone());
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let mut host = Host::new(ir, &in_memory(), Arc::new(ManualClock::new()), state.path())
+        .unwrap_or_else(|error| panic!("the host admits the library: {error}"));
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+
+    for (loan, member) in [("loan-1", "m-7"), ("loan-2", "member-0042")] {
+        let (method, path) = (method.clone(), path.clone());
+        let body = serde_json::json!({ "loan_id": loan, "member_id": member });
+        let asked = thread::spawn(move || send_json(address, &method, &path, &body));
+        listener
+            .next(ARRIVAL)
+            .expect("the request arrives as an exchange")
+            .serve(&mut host);
+        let (status, answer) = asked.join().expect("the request thread ends");
+        assert!((200..300).contains(&status), "{status} {answer}");
+    }
+
+    let (status, log) = send(address, "GET", "/__spindle/requests");
+    assert_eq!(status, 200, "{log}");
+    let records = log["requests"].as_array().expect("requests");
+    assert_eq!(records.len(), 2, "{log}");
+    let (unmet, met) = (&records[0], &records[1]);
+    assert_eq!(met["unmet"], serde_json::json!([]), "{log}");
+    let listed = unmet["unmet"].as_array().expect("unmet is a list");
+    assert_eq!(listed.len(), 1, "{log}");
+    assert_eq!(listed[0]["binding"], "thank-on-close", "{log}");
+    assert_eq!(listed[0]["component"], "notices", "{log}");
+    assert_eq!(listed[0]["command"], "library.notices.SendThanks", "{log}");
+    let reason = listed[0]["reason"].as_str().expect("a reason");
+    assert!(reason.contains("the input reader_id is unmet"), "{reason}");
+}

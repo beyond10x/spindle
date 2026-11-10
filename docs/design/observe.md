@@ -144,31 +144,34 @@ stays a runtime rule outside it (each item names the case in
 `crates/spindle-kernel/tests/spindle-kernel/placement.rs` that checks it):
 
 - **Admission gates placement.** Nothing of a deployment that is not admitted is planned, placed
-  or launched; a running deployment counts as admitted. `PlanInstance` answers `not-admitted`
-  with `DeploymentNotAdmitted` and creates no instance; `PlaceInstance` answers `not-admitted` and
-  refuses the instance; `LaunchInstance` answers `not-admitted` with `DeploymentNotAdmitted` and
-  the instance stays `Placed`, which covers a deployment stopped after its instance was placed.
-  Both errors name the deployment. `LaunchInstance` asks only for a `Placed` instance, so a
-  planned, refused, running or exited one answers `wrong-state` first, as `PlaceInstance` answers
-  a decided one. The deployment's state is read by the runtime, not by a guard: each of the three is an
-  `external:` outcome, and the control process answers `external.spindle.placement.<Command>.not-admitted`
-  from the stored `spindle.deployment.Deployment`, true unless it is `Admitted` or `Running`
-  (for `PlaceInstance`, also true when the deployment was admitted for another environment than
-  the target provides). This was decided while the kernel refused every `when_related:`
-  (`crates/spindle-kernel/src/supported.rs`); it now runs a guard over one row, and still refuses
-  one over a row set (`an_instance_of_a_refused_deployment_cannot_be_placed`).
+  or launched; a running deployment counts as admitted. `PlanInstance` answers
+  `unknown-deployment` for a deployment no one offered and `not-admitted` for one that is not
+  admitted, both with `DeploymentNotAdmitted`, and creates no instance; `PlaceInstance` answers
+  `not-admitted` and refuses the instance; `LaunchInstance` answers `not-admitted` with
+  `DeploymentNotAdmitted` and the instance stays `Placed`, which covers a deployment stopped after
+  its instance was placed. Both errors name the deployment. `LaunchInstance` reads the deployment
+  only for a `Placed` instance, so a planned, refused, running or exited one answers `wrong-state`
+  first, as `PlaceInstance` answers a decided one. `LaunchInstance` decides it with a guard over
+  the deployment its instance names, true unless it is `Admitted` or `Running`. `PlanInstance` and
+  `PlaceInstance` keep it an `external:` outcome, which the control process answers from the
+  stored `spindle.deployment.Deployment`: as a guard, `PlanInstance`'s leaves ESS no way to
+  arrange a placed instance of a stopped deployment, and `PlaceInstance`'s no way to force its
+  other refusals (`an_instance_of_a_refused_deployment_cannot_be_placed`).
 
 - **A placement refusal names its cause.** `PlaceInstance` has one refusal per cause, asked in the
-  order `spindle_target::place` lists its reasons: `target-retired`, `not-admitted`,
-  `above-ceiling`. The first that holds is taken; `InstanceRefused.cause` and the instance's
-  `refusal` record it as `TargetRetired`, `NotAdmitted` or `AboveCeiling`. An environment
-  mismatch is `NotAdmitted`. The model records one cause. `spindle_target::place` lists more: a
+  order `spindle_target::place` lists its reasons: `target-retired`, `environment-mismatch`,
+  `not-admitted`, `above-ceiling`. The first that holds is taken; `InstanceRefused.cause` and the
+  instance's `refusal` record it as `TargetRetired`, `EnvironmentMismatch`, `NotAdmitted` or
+  `AboveCeiling`, the order `RefusalCause` declares, and `spindle_target::Refusal::cause` names
+  each reason's variant. The model records one cause. `spindle_target::place` lists more: a
   retired target, then an environment mismatch or, when the environments match, an admission
   that refused with every capability it lacks, then each resource over the ceiling, and
-  `spindle_target::start` refuses with that list (`StartError::Refused`). It does not read the
-  deployment's state, so it gives no reason for an offered or stopped deployment, and on an
-  environment mismatch it names no missing capability; both reach the model only through the
-  `not-admitted` answer (`a_placement_refusal_names_its_cause`).
+  `spindle_target::start` refuses with that list (`StartError::Refused`); the model records its
+  first. `place` does not read the deployment's state, so it gives no reason for an offered or
+  stopped deployment; that reaches the model only through the `not-admitted` answer. The four
+  stay `external:`: ESS reads one related row per command and compares none of its fields with
+  the instance's or another row's, and a guard on the target's state leaves ESS no way to force
+  the other three (`a_placement_refusal_names_its_cause`).
 
 - **Targets and requests are published by views.** `InstanceState` publishes each instance's
   state, deployment, component, settings, target, request and refusal; `TargetState` publishes
@@ -260,7 +263,7 @@ and later stories of the epic serve them.
 
 | route | answer | format | noun in `spindle.observe` |
 |---|---|---|---|
-| `GET /__spindle/requests` | the totals per class since start and the last N requests, newest first; `?class=` keeps only the classes it names | `spindle-requests/1` | `RequestLog` (`RequestTotals`, `RequestRecord`, `RequestClass`, `OperationKind`, `ExternalAnswer`, `AnswerSource`) |
+| `GET /__spindle/requests` | the totals per class since start and the last N requests, newest first; `?class=` keeps only the classes it names | `spindle-requests/1` | `RequestLog` (`RequestTotals`, `RequestRecord`, `RequestClass`, `OperationKind`, `ExternalAnswer`, `AnswerSource`, `UnmetInput`) |
 | `GET /__spindle/metrics` | Prometheus text, `text/plain; version=0.0.4` | the exposition format | `MetricFamilies` (`MetricFamily`, `MetricKind`): the families exposed, by name, type and labels |
 | `GET /__spindle/ui` | the observe panel: one HTML page, script and style inline, framable by any page; its `Content-Security-Policy` allows inline script and style and `connect-src 'self'` only; it reads `./requests` beside itself; `503` from a binary built without `ui/dist-panel/panel.html` | `text/html` | none: it renders `RequestLog` |
 | `GET /__spindle/topology` | the graph of the served specifications, with live numbers per edge | `spindle-topology/1` | `Topology` (`TopologyNode`, `NodeKind`, `TopologyEdge`, `EdgeKind`, `EdgeTraffic`, `StatusCount`, `SourceCount`) |

@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.environment.Provision.schema.json",
+  "$ref": "#/$defs/spindle.environment.Provision",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "contract_digest": "slice-sha256/2:5d157f184bb58050b0d1937b0c3cb6265038265d4dac846540d4c7abb7e6d4a5",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.deployment.ImplementationName": {
+      "title": "ImplementationName",
+      "x-ess-name": "spindle.deployment.ImplementationName",
+      "x-ess-kind": "newtype",
+      "type": "string"
+    },
+    "spindle.environment.CapabilityKey": {
+      "title": "CapabilityKey",
+      "description": "A capability name, which provides exactly that capability, or a prefix ending in `.*`, which provides every capability under that prefix (README.md:101-102, crates/spindle-capability/src/environment.rs:22-23,35).",
+      "x-ess-name": "spindle.environment.CapabilityKey",
+      "x-ess-kind": "newtype",
+      "type": "string"
+    },
+    "spindle.environment.Provision": {
+      "title": "Provision",
+      "description": "One key of the environment document's `provides` and its implementations, in order of preference (README.md:101, crates/spindle-capability/src/environment.rs:35-37).",
+      "x-ess-name": "spindle.environment.Provision",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "capability": {
+          "$ref": "#/$defs/spindle.environment.CapabilityKey",
+          "description": "The capability, or the `prefix.*` key, these implementations provide (crates/spindle-capability/src/environment.rs:35)."
+        },
+        "implementations": {
+          "description": "The implementations that provide it, each named by its identifier, most preferred first (README.md:101, crates/spindle-capability/src/environment.rs:35).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/spindle.deployment.ImplementationName"
+          }
+        }
+      },
+      "required": [
+        "capability",
+        "implementations"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

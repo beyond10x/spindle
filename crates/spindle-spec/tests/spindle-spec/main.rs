@@ -3,4 +3,5 @@
 //! module path.
 
 mod adversary_manifest;
+mod adversary_w17_scenarios;
 mod load;

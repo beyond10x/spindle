@@ -1,10 +1,10 @@
 //! `conform`: a specification's conformance suite, run against every component of the system in
 //! one process.
 //!
-//! The suite is synthesised from the specification by ESS ([`spindle_conformance::synthesize`]),
-//! or read from `--suite`, and run by ESS's runner against [`HostTarget`]. Every construct the
-//! synthesis refused is printed with its code first, so a scenario the suite does not hold is not
-//! silently absent.
+//! The suite is synthesised from the specification by ESS, with the authored scenarios its
+//! `ess-inputs.yaml` lists ([`spindle_conformance::synthesize`]), or read from `--suite`, and run
+//! by ESS's runner against [`HostTarget`]. Every construct the synthesis refused is printed with
+//! its code first, so a scenario the suite does not hold is not silently absent.
 
 use std::io::Write;
 use std::path::Path;
@@ -37,9 +37,9 @@ pub(crate) struct Conform<'a> {
 }
 
 /// Runs the suite; exits 0 when every executed scenario passed, or failed as `--known-failing`
-/// declares, and the counts are held; 1 otherwise or when the suite is not one of this
-/// specification; 2 when ESS refuses the declaration, a declared scenario that passed included;
-/// and 3 when admission is refused.
+/// declares, and the counts are held; 1 otherwise, when ESS refuses an authored scenario the
+/// specification lists, or when the suite is not one of this specification; 2 when ESS refuses
+/// the declaration, a declared scenario that passed included; and 3 when admission is refused.
 pub(crate) fn conform(arguments: &Conform<'_>) -> Result<ExitCode> {
     let loaded = spindle_spec::load(arguments.spec)?;
     let text = std::fs::read_to_string(arguments.environment)
@@ -49,7 +49,14 @@ pub(crate) fn conform(arguments: &Conform<'_>) -> Result<ExitCode> {
 
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
-    let synthesis = spindle_conformance::synthesize(&loaded.ir);
+    let synthesis = match spindle_conformance::synthesize(&loaded) {
+        Ok(synthesis) => synthesis,
+        Err(refused) => {
+            writeln!(out, "{refused}")?;
+            out.flush()?;
+            return Ok(ExitCode::FAILURE);
+        }
+    };
     for refusal in &synthesis.refusals {
         writeln!(out, "refused: {}", refusal.to_string().trim_end())?;
     }

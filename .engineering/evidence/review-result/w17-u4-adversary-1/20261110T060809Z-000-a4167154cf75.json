@@ -1,0 +1,15 @@
+{
+  "at": "2026-11-10T06:08:09Z",
+  "actor": "human:timo",
+  "artifact": "review-result:w17-u4-adversary-1",
+  "kind": "review-result",
+  "revision": 2,
+  "change": {
+    "change": "redaction",
+    "literal_sha256": "d45ee78e7b19b98e7df5a9a359da866dbe2315eef7cd91cd832ea89f5fc7e710",
+    "literal_chars": 10,
+    "replacement": "~",
+    "count": 1,
+    "reason": "absolute home-directory path in a public repository"
+  }
+}

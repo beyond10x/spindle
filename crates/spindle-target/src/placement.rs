@@ -82,6 +82,18 @@ pub enum Refusal {
     },
 }
 
+impl Refusal {
+    /// Its variant of `spindle.placement.RefusalCause`, the cause a refused instance records.
+    pub fn cause(&self) -> &'static str {
+        match self {
+            Self::TargetRetired => "TargetRetired",
+            Self::EnvironmentMismatch { .. } => "EnvironmentMismatch",
+            Self::NotAdmitted { .. } => "NotAdmitted",
+            Self::AboveCeiling { .. } => "AboveCeiling",
+        }
+    }
+}
+
 impl fmt::Display for Refusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -124,7 +136,8 @@ pub enum Placement {
     /// The instance is refused and never launched.
     Refused {
         /// Every reason that applies: the target's state, then the admission's environment, then
-        /// admission, then each resource over the ceiling in [`ResourceKind::ALL`] order.
+        /// admission, then each resource over the ceiling in [`ResourceKind::ALL`] order. This is
+        /// the order of `spindle.placement.RefusalCause`; the instance records the first.
         reasons: Vec<Refusal>,
     },
 }

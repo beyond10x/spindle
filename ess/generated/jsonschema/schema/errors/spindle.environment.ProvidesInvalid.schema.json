@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/errors/spindle.environment.ProvidesInvalid.schema.json",
+  "title": "ProvidesInvalid payload",
+  "description": "A key of `provides` is listed twice, or lists no implementation, so nothing was recorded (crates/spindle-capability/src/environment.rs:37,52-57,69-77).",
+  "x-ess-name": "spindle.environment.ProvidesInvalid",
+  "x-ess-kind": "error-payload",
+  "type": "object",
+  "additionalProperties": false,
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "contract_digest": "slice-sha256/2:c4655aa90030b3205ca8bccbf0920d7a2477a28fde1fa9bc925924c88def9d58",
+    "regenerate": "ess generate"
+  }
+}

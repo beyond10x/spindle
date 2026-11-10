@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.environment.CapabilityKey.schema.json",
+  "$ref": "#/$defs/spindle.environment.CapabilityKey",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "contract_digest": "slice-sha256/2:e5e4278ff9cd32ff1488370ce2b844cdc12ff78045bb0f3cea8fc3b10e2f02c7",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.environment.CapabilityKey": {
+      "title": "CapabilityKey",
+      "description": "A capability name, which provides exactly that capability, or a prefix ending in `.*`, which provides every capability under that prefix (README.md:101-102, crates/spindle-capability/src/environment.rs:22-23,35).",
+      "x-ess-name": "spindle.environment.CapabilityKey",
+      "x-ess-kind": "newtype",
+      "type": "string"
+    }
+  }
+}
