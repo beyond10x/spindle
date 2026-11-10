@@ -25,10 +25,9 @@ fn statuses(run: &spindle_conformance::Run) -> BTreeMap<String, Status> {
 /// Every scenario whose status differs between the interpreter and the host, where the host
 /// executed it.
 fn divergent(fixture: &str) -> Vec<(String, Status, Option<Status>)> {
-    let ir = spindle_spec::load(&root().join(fixture))
-        .expect("the fixture loads")
-        .ir;
-    let synthesis = spindle_conformance::synthesize(&ir);
+    let specification = spindle_spec::load(&root().join(fixture)).expect("the fixture loads");
+    let synthesis = spindle_conformance::synthesize(&specification).expect("the suite synthesises");
+    let ir = specification.ir;
     let suite = AdmittedSuite::from_suite(&synthesis.suite).expect("the suite is admitted");
     let text = std::fs::read_to_string(root().join("examples/environments/laptop.toml"))
         .expect("the laptop environment reads");

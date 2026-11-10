@@ -97,3 +97,25 @@ fn an_unknown_manifest_format_is_refused() {
         loaded.map(|loaded| loaded.files)
     );
 }
+
+#[test]
+fn a_scenario_entry_through_a_symlink_is_refused() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+    let root = directory.path().join("spec");
+    fs::create_dir(&root).expect("the root");
+    fs::write(root.join("system.yaml"), SYSTEM).expect("write");
+    let outside = directory.path().join("outside.yaml");
+    fs::write(&outside, "type: ess-scenario/1\n").expect("write outside the root");
+    std::os::unix::fs::symlink(&outside, root.join("scenario.yaml")).expect("the symlink");
+    fs::write(
+        root.join("ess-inputs.yaml"),
+        "format: ess-inputs/2\nspecification:\n  - system.yaml\nscenarios:\n  - scenario.yaml\n",
+    )
+    .expect("write");
+    let loaded = spindle_spec::load(&root);
+    assert!(
+        loaded.is_err(),
+        "a listed scenario that is a symlink is refused by ess; spindle read {:?}",
+        loaded.map(|loaded| loaded.scenarios)
+    );
+}

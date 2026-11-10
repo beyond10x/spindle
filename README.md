@@ -68,9 +68,9 @@ page may frame and that reads `./requests` beside itself (`ui/dist-panel/panel.h
 `--observe` they answer `404`.
 
 `b10x-spindle conform ess --environment examples/environments/laptop.toml` runs the suite ESS
-synthesises from Spindle's own specification against Spindle itself; `task check:conformance`
-holds its counts against `conformance.toml`, with the scenarios known to fail declared in
-`conformance-known-failures.json` (`ess-known-failures/1`).
+synthesises from Spindle's own specification, with the scenarios `ess/ess-inputs.yaml` lists,
+against Spindle itself; `task check:conformance` holds its counts against `conformance.toml`.
+No scenario is known to fail, so the task declares none and every executed scenario must pass.
 
 ## Capabilities
 
