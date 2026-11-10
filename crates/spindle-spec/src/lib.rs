@@ -7,6 +7,9 @@
 //! [`EssIr`]: every reference checked, every guard a typed [`Predicate`](ess_primitives) — the same
 //! IR `ess specify compile` produces, because it is the same code.
 //!
+//! The authored scenarios the manifest lists under `scenarios:` are read beside it, as text, for
+//! ESS to compile against the IR ([`Specification::scenarios`]).
+//!
 //! Spindle never re-implements ESS parsing or validation. A document `ess specify validate`
 //! refuses is refused here too, with the compiler's own diagnostics.
 
@@ -24,6 +27,19 @@ pub struct Specification {
     pub ir: EssIr,
     /// The source files read, relative to the specification root, in the order read.
     pub files: Vec<String>,
+    /// The authored scenarios the directory's `ess-inputs.yaml` lists under `scenarios:`, in that
+    /// order, unparsed: ESS compiles them (`ess_conformance::authored`). Empty without a
+    /// manifest, as `ess` reads none: a specification never implies scenarios.
+    pub scenarios: Vec<Scenario>,
+}
+
+/// An authored scenario document a specification's manifest lists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Scenario {
+    /// Where it was read from, relative to the specification root.
+    pub origin: String,
+    /// The document, as read.
+    pub text: String,
 }
 
 /// Why a specification did not load.
@@ -57,23 +73,36 @@ pub enum LoadError {
 ///
 /// `root` is a directory, or a single source file for a one-file specification.
 pub fn load(root: &Path) -> Result<Specification, LoadError> {
-    let paths = discover(root)?;
+    let Discovered {
+        specification: paths,
+        scenarios: scenario_paths,
+    } = discover(root)?;
     if paths.is_empty() {
         return Err(LoadError::Empty(root.to_path_buf()));
     }
+    let read = |path: &PathBuf| {
+        fs::read_to_string(path).map_err(|source| LoadError::Io {
+            path: path.clone(),
+            source,
+        })
+    };
     let mut identities = Vec::with_capacity(paths.len());
     let mut texts = Vec::with_capacity(paths.len());
     for path in &paths {
-        let text = fs::read_to_string(path).map_err(|source| LoadError::Io {
-            path: path.clone(),
-            source,
-        })?;
+        texts.push(read(path)?);
         identities.push(identity(root, path));
-        texts.push(text);
+    }
+    let mut scenarios = Vec::with_capacity(scenario_paths.len());
+    for path in &scenario_paths {
+        scenarios.push(Scenario {
+            origin: identity(root, path),
+            text: read(path)?,
+        });
     }
     compile(&identities, &texts).map(|ir| Specification {
         ir,
         files: identities,
+        scenarios,
     })
 }
 
@@ -129,14 +158,23 @@ fn render(diagnostics: &ess_compiler::Diagnostics) -> Vec<String> {
     }
 }
 
-fn discover(root: &Path) -> Result<Vec<PathBuf>, LoadError> {
+/// The files a specification root selects: its source documents and its authored scenarios.
+struct Discovered {
+    specification: Vec<PathBuf>,
+    scenarios: Vec<PathBuf>,
+}
+
+fn discover(root: &Path) -> Result<Discovered, LoadError> {
     let io = |source| LoadError::Io {
         path: root.to_path_buf(),
         source,
     };
     let metadata = fs::metadata(root).map_err(io)?;
     if metadata.is_file() {
-        return Ok(vec![root.to_path_buf()]);
+        return Ok(Discovered {
+            specification: vec![root.to_path_buf()],
+            scenarios: Vec::new(),
+        });
     }
     let manifest = root.join(MANIFEST);
     if manifest.is_file() {
@@ -145,18 +183,22 @@ fn discover(root: &Path) -> Result<Vec<PathBuf>, LoadError> {
     let mut found = Vec::new();
     walk(root, &mut found)?;
     found.sort();
-    Ok(found)
+    Ok(Discovered {
+        specification: found,
+        scenarios: Vec::new(),
+    })
 }
 
 /// The manifest `ess` reads in a specification directory: when present, its `specification` list
-/// is the set of source documents, in that order, as `ess specify validate --path` reads them.
+/// is the set of source documents, in that order, as `ess specify validate --path` reads them, and
+/// its `scenarios` list the authored scenarios, as `ess conform synthesize --scenarios` reads them.
 /// What `ess` refuses in one is refused here: a format other than `ess-inputs/1` or
 /// `ess-inputs/2`, an entry that is absolute or has an empty, `.` or `..` segment, an entry listed
 /// twice across both lists, a root or an entry segment that is a symlink, and an entry that is
 /// not a regular file.
 const MANIFEST: &str = "ess-inputs.yaml";
 
-fn listed(root: &Path, manifest: &Path) -> Result<Vec<PathBuf>, LoadError> {
+fn listed(root: &Path, manifest: &Path) -> Result<Discovered, LoadError> {
     let refuse = |reason: String| LoadError::Manifest {
         path: manifest.to_path_buf(),
         reason,
@@ -196,8 +238,9 @@ fn listed(root: &Path, manifest: &Path) -> Result<Vec<PathBuf>, LoadError> {
             .collect()
     };
     let specification = list("specification")?;
+    let scenarios = list("scenarios")?;
     let mut seen = BTreeSet::new();
-    for entry in specification.iter().chain(&list("scenarios")?) {
+    for entry in specification.iter().chain(&scenarios) {
         if !contained(entry) {
             return Err(refuse(format!(
                 "lists {entry:?}: use a nonempty root-relative path with no empty or dot segments, \
@@ -214,27 +257,35 @@ fn listed(root: &Path, manifest: &Path) -> Result<Vec<PathBuf>, LoadError> {
             "the specification root is a symlink; select its real directory".to_owned(),
         ));
     }
-    let mut found = Vec::with_capacity(specification.len());
-    for relative in specification {
-        let mut path = root.to_path_buf();
-        for segment in relative.split('/') {
-            path.push(segment);
-            match unlinked(&path) {
-                Err(_) => return Err(refuse(format!("lists {relative}, which does not exist"))),
-                Ok(kind) if kind.is_symlink() => {
-                    return Err(refuse(format!("lists {relative}, which passes a symlink")));
+    let resolve = |entries: Vec<&str>| -> Result<Vec<PathBuf>, LoadError> {
+        let mut found = Vec::with_capacity(entries.len());
+        for relative in entries {
+            let mut path = root.to_path_buf();
+            for segment in relative.split('/') {
+                path.push(segment);
+                match unlinked(&path) {
+                    Err(_) => {
+                        return Err(refuse(format!("lists {relative}, which does not exist")));
+                    }
+                    Ok(kind) if kind.is_symlink() => {
+                        return Err(refuse(format!("lists {relative}, which passes a symlink")));
+                    }
+                    Ok(_) => {}
                 }
-                Ok(_) => {}
             }
+            if !unlinked(&path).is_ok_and(|kind| kind.is_file()) {
+                return Err(refuse(format!(
+                    "lists {relative}, which is not a regular file"
+                )));
+            }
+            found.push(path);
         }
-        if !unlinked(&path).is_ok_and(|kind| kind.is_file()) {
-            return Err(refuse(format!(
-                "lists {relative}, which is not a regular file"
-            )));
-        }
-        found.push(path);
-    }
-    Ok(found)
+        Ok(found)
+    };
+    Ok(Discovered {
+        specification: resolve(specification)?,
+        scenarios: resolve(scenarios)?,
+    })
 }
 
 /// Whether `entry` is a manifest path `ess` accepts: relative, every `/`-separated segment

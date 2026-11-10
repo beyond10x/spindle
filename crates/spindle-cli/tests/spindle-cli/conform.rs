@@ -9,8 +9,25 @@ use serde_json::Value;
 const SPEC: &str = "ess";
 const LAPTOP: &str = "examples/environments/laptop.toml";
 const COUNTS: &str = "conformance.toml";
-const KNOWN: &str = "conformance-known-failures.json";
 const OTHER: &str = "crates/spindle-cli/tests/fixtures/replay";
+
+/// The scenario `ess/ess-inputs.yaml` lists under `scenarios:`, which ESS's synthesis cannot
+/// write; the gate runs it.
+const AUTHORED: &str = "spindle.placement/authored/launch-not-admitted";
+
+/// Two scenarios wrong on purpose, each of which every correct implementation fails: each
+/// declares an environment and then expects `EnvironmentState` to hold no row for it.
+/// [`failing_spec`] lists them beside `ess/`'s own.
+const WRONG: [(&str, &str); 2] = [
+    (
+        "declared-wrongly",
+        "spindle.deployment/authored/declared-wrongly",
+    ),
+    (
+        "declared-wrongly-again",
+        "spindle.deployment/authored/declared-wrongly-again",
+    ),
+];
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -41,41 +58,116 @@ fn read_json(path: &Path) -> Value {
     serde_json::from_str(&text).expect("the report is JSON")
 }
 
-/// Runs `conform` on `ess/` with the committed known-failures declaration, writing the reports and
-/// the accounting into `dir`; returns the output, the report, the results and the accounting.
-fn run_ess(dir: &Path) -> (Output, Value, Value, Value) {
+fn utf8(path: &Path) -> &str {
+    path.to_str().expect("utf-8")
+}
+
+/// Runs `conform` on `spec` as `task check:conformance` runs it, with no known-failures
+/// declaration, writing the report and the results into `dir`; returns the output, the report
+/// and the results.
+fn run_spec(dir: &Path, spec: &str) -> (Output, Value, Value) {
     let report = dir.join("report.json");
     let results = dir.join("results.json");
-    let accounting = dir.join("accounting.json");
     let output = conform(&[
-        SPEC,
+        spec,
         "--environment",
         LAPTOP,
         "--report",
-        report.to_str().expect("utf-8"),
+        utf8(&report),
         "--results",
-        results.to_str().expect("utf-8"),
-        "--known-failing",
-        KNOWN,
-        "--accounting-out",
-        accounting.to_str().expect("utf-8"),
+        utf8(&results),
     ]);
-    (
-        output,
-        read_json(&report),
-        read_json(&results),
-        read_json(&accounting),
-    )
+    (output, read_json(&report), read_json(&results))
 }
 
-/// The scenarios the committed declaration names.
-fn declared() -> Vec<String> {
-    read_json(&root().join(KNOWN))["failures"]
-        .as_array()
-        .expect("failures")
+/// [`run_spec`] on `ess/`.
+fn run_ess(dir: &Path) -> (Output, Value, Value) {
+    run_spec(dir, SPEC)
+}
+
+/// A copy of `ess/` in `dir` whose `ess-inputs.yaml` also lists the two [`WRONG`] scenarios.
+fn failing_spec(dir: &Path) -> PathBuf {
+    let spec = dir.join("failing-ess");
+    copy(&root().join(SPEC), &spec);
+    for (name, _) in WRONG {
+        std::fs::write(
+            spec.join("scenarios").join(format!("{name}.yaml")),
+            format!(
+                "type: ess-scenario/1\n\
+                 domain: spindle.deployment\n\
+                 scenario: {name}\n\
+                 summary: Wrong on purpose; an environment declared is expected to be absent.\n\
+                 timeline:\n\
+                 \x20 - at: 2026-01-05T09:00:00Z\n\
+                 \x20   command: spindle.deployment.DeclareEnvironment\n\
+                 \x20   input:\n\
+                 \x20     environment_id: {name}\n\
+                 \x20     os: linux\n\
+                 \x20     arch: x86_64\n\
+                 \x20     provides: []\n\
+                 \x20   outcome: declared\n\
+                 assert:\n\
+                 \x20 - view: spindle.deployment.EnvironmentState\n\
+                 \x20   excludes: {{environment_id: {name}}}\n"
+            ),
+        )
+        .expect("writing a scenario");
+    }
+    let manifest = spec.join("ess-inputs.yaml");
+    let mut text = std::fs::read_to_string(&manifest).expect("the manifest");
+    assert!(
+        text.trim_end()
+            .ends_with("- scenarios/launch-not-admitted.yaml"),
+        "ess-inputs.yaml ends with its scenarios list: {text}"
+    );
+    for (name, _) in WRONG {
+        text.push_str(&format!("  - scenarios/{name}.yaml\n"));
+    }
+    std::fs::write(&manifest, text).expect("writing the manifest");
+    spec
+}
+
+/// Copies the directory `from` to `to`.
+fn copy(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).expect("creating a directory");
+    for entry in std::fs::read_dir(from).expect("reading a directory") {
+        let entry = entry.expect("a directory entry");
+        let target = to.join(entry.file_name());
+        if entry.file_type().expect("a file type").is_dir() {
+            copy(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), &target).expect("copying a file");
+        }
+    }
+}
+
+/// An `ess-known-failures/1` declaration of `scenarios` written to `dir/name`, bound to the
+/// specification and suite digests `report` records and to this build, as a release writes one.
+fn declaration(dir: &Path, name: &str, report: &Value, scenarios: &[&str]) -> PathBuf {
+    let mut failures = scenarios
         .iter()
-        .map(|failure| failure["scenario"].as_str().expect("an id").to_owned())
-        .collect()
+        .map(|scenario| {
+            serde_json::json!({
+                "reason": "declared by the test to see what the gate makes of it",
+                "scenario": scenario,
+                "tracking": "none",
+            })
+        })
+        .collect::<Vec<_>>();
+    failures.sort_by(|left, right| left["scenario"].as_str().cmp(&right["scenario"].as_str()));
+    let declaration = serde_json::json!({
+        "failures": failures,
+        "format": "ess-known-failures/1",
+        "implementation": format!("b10x-spindle {}", env!("CARGO_PKG_VERSION")),
+        "implementation_build": spindle_conformance::build(),
+        "spec_digest": report["spec_digest"].as_str().expect("the spec digest"),
+        "suite_digest": report["suite"]["digest"].as_str().expect("the suite digest"),
+    });
+    let path = dir.join(name);
+    let mut text = serde_json::to_string_pretty(&declaration).expect("JSON");
+    text.push('\n');
+    std::fs::write(&path, text).expect("writing the declaration");
+    path
 }
 
 fn scenarios(results: &Value) -> &Vec<Value> {
@@ -85,7 +177,7 @@ fn scenarios(results: &Value) -> &Vec<Value> {
 #[test]
 fn every_executed_scenario_passes() {
     let dir = scratch();
-    let (output, report, results, accounting) = run_ess(dir.path());
+    let (output, report, results) = run_ess(dir.path());
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let scenarios = scenarios(&results);
     let executed = scenarios
@@ -93,25 +185,14 @@ fn every_executed_scenario_passes() {
         .filter(|scenario| scenario["status"] != "unsupported")
         .collect::<Vec<_>>();
     assert!(!executed.is_empty(), "{results}");
-    let declared = declared();
     for scenario in &executed {
-        let id = scenario["scenario"].as_str().expect("an id");
-        let expected = if declared.iter().any(|known| known == id) {
-            "failed"
-        } else {
-            "passed"
-        };
-        assert_eq!(scenario["status"], expected, "{scenario}");
+        assert_eq!(scenario["status"], "passed", "{scenario}");
     }
-    assert_eq!(
-        accounting["unexpected_failed"].as_array().map(Vec::len),
-        Some(0),
-        "{accounting}"
-    );
-    assert_eq!(
-        accounting["known_failed"].as_array().map(Vec::len),
-        Some(declared.len()),
-        "{accounting}"
+    assert!(
+        executed
+            .iter()
+            .any(|scenario| scenario["scenario"] == AUTHORED),
+        "{AUTHORED} is run and passes: {results}"
     );
     assert_eq!(report["format"], "ess-conformance-report/2", "{report}");
     assert_eq!(
@@ -122,11 +203,10 @@ fn every_executed_scenario_passes() {
     let printed = stdout(&output);
     assert!(
         printed.contains(&format!(
-            "{} scenario(s): {} executed, {} passed, {} failed, 0 error, {} skipped",
+            "{} scenario(s): {} executed, {} passed, 0 failed, 0 error, {} skipped",
             scenarios.len(),
             executed.len(),
-            executed.len() - declared.len(),
-            declared.len(),
+            executed.len(),
             scenarios.len() - executed.len()
         )),
         "{printed}"
@@ -136,7 +216,7 @@ fn every_executed_scenario_passes() {
 #[test]
 fn every_skipped_scenario_has_a_reason() {
     let dir = scratch();
-    let (output, report, results, _) = run_ess(dir.path());
+    let (output, report, results) = run_ess(dir.path());
     let printed = stdout(&output);
     let skipped = scenarios(&results)
         .iter()
@@ -189,7 +269,7 @@ fn the_synthesis_refusals_are_listed() {
     let output = conform(&[SPEC, "--environment", LAPTOP]);
     let printed = stdout(&output);
     let loaded = spindle_spec::load(&root().join(SPEC)).expect("ess/ loads");
-    let synthesis = ess_conformance::synthesize(&loaded.ir);
+    let synthesis = spindle_conformance::synthesize(&loaded).expect("the suite synthesises");
     let listed = printed
         .lines()
         .filter(|line| line.starts_with("refused: refusal["))
@@ -260,24 +340,25 @@ fn the_target_runs_a_suite_of_another_specification() {
     assert_eq!(foreign.status.code(), Some(1), "{foreign:?}");
 }
 
-/// Runs `conform` on `ess/` as `task check:conformance` does, holding the counts in `counts` and
-/// reading the declaration `known`.
-fn gate(dir: &Path, counts: &str, known: &str) -> Output {
+/// Runs `conform` on `spec` as `task check:conformance` does, holding the counts in `counts`;
+/// with `known`, reading that declaration and writing its accounting into `dir`.
+fn gate(dir: &Path, spec: &str, counts: &str, known: Option<&Path>) -> Output {
     let report = dir.join("gate-report.json");
     let accounting = dir.join("gate-accounting.json");
-    conform(&[
-        SPEC,
+    let mut arguments = vec![
+        spec,
         "--environment",
         LAPTOP,
         "--counts",
         counts,
         "--report",
-        report.to_str().expect("utf-8"),
-        "--known-failing",
-        known,
-        "--accounting-out",
-        accounting.to_str().expect("utf-8"),
-    ])
+        utf8(&report),
+    ];
+    if let Some(known) = known {
+        arguments.extend(["--known-failing", utf8(known)]);
+        arguments.extend(["--accounting-out", utf8(&accounting)]);
+    }
+    conform(&arguments)
 }
 
 /// A counts document holding the scenarios in `executed`.
@@ -318,25 +399,55 @@ fn committed() -> (Vec<String>, i64, i64) {
     )
 }
 
-/// Runs the gate against `text` as the counts document.
-fn gate_with(dir: &Path, name: &str, text: &str) -> Output {
+/// Writes `text` to `dir/name` as a counts document; returns its path.
+fn counts_file(dir: &Path, name: &str, text: &str) -> PathBuf {
     let path = dir.join(name);
     std::fs::write(&path, text).expect("writing counts");
-    gate(dir, path.to_str().expect("utf-8"), KNOWN)
+    path
+}
+
+/// Runs the gate on `ess/` against `text` as the counts document.
+fn gate_with(dir: &Path, name: &str, text: &str) -> Output {
+    let path = counts_file(dir, name, text);
+    gate(dir, SPEC, utf8(&path), None)
+}
+
+/// The committed executed set with the [`WRONG`] scenarios added: what the gate on
+/// [`failing_spec`] executes.
+fn failing_executed() -> Vec<String> {
+    let (mut executed, _, _) = committed();
+    executed.extend(WRONG.iter().map(|(_, id)| (*id).to_owned()));
+    executed.sort();
+    executed
+}
+
+/// The report of a run of `spec`, for the digests a declaration binds.
+fn report_of(dir: &Path, spec: &str) -> Value {
+    let run = dir.join("digests");
+    std::fs::create_dir_all(&run).expect("a directory for the run");
+    run_spec(&run, spec).1
 }
 
 #[test]
 fn the_suite_counts_are_held() {
     let dir = scratch();
-    let held = gate(dir.path(), COUNTS, KNOWN);
+    let held = gate(dir.path(), SPEC, COUNTS, None);
     assert_eq!(held.status.code(), Some(0), "{held:?}");
     assert!(
         stdout(&held).contains(&format!("counts held against {COUNTS}")),
         "{held:?}"
     );
+    assert!(
+        !stdout(&held).contains("the counts moved"),
+        "the committed counts are exactly the run's: {held:?}"
+    );
 
     let (executed, skipped, known_failed) = committed();
-    assert_eq!(known_failed, declared().len() as i64);
+    assert_eq!(known_failed, 0, "the repository declares no known failure");
+    assert!(
+        executed.iter().any(|id| id == AUTHORED),
+        "{AUTHORED} is held as executed"
+    );
 
     if skipped > 0 {
         let grown = gate_with(
@@ -351,21 +462,34 @@ fn the_suite_counts_are_held() {
         );
     }
 
-    if known_failed > 0 {
-        let grown = gate_with(
-            dir.path(),
-            "fewer-known.toml",
-            &counts(&executed, skipped, known_failed - 1),
-        );
-        assert_eq!(grown.status.code(), Some(1), "{grown:?}");
-        assert!(
-            stdout(&grown).contains(&format!(
-                "known failures grew from {} to {known_failed}",
-                known_failed - 1
-            )),
-            "{grown:?}"
-        );
-    }
+    // Known failures are held too: on a specification with two scenarios that fail, both
+    // declared, counts that hold no known failure fail the gate, and counts that hold both pass.
+    let failing = failing_spec(dir.path());
+    let failing = utf8(&failing);
+    let known = declaration(
+        dir.path(),
+        "both.json",
+        &report_of(dir.path(), failing),
+        &WRONG.map(|(_, id)| id),
+    );
+    let none = counts_file(
+        dir.path(),
+        "none-known.toml",
+        &counts(&failing_executed(), 0, 0),
+    );
+    let grown = gate(dir.path(), failing, utf8(&none), Some(&known));
+    assert_eq!(grown.status.code(), Some(1), "{grown:?}");
+    assert!(
+        stdout(&grown).contains("known failures grew from 0 to 2"),
+        "{grown:?}"
+    );
+    let both = counts_file(
+        dir.path(),
+        "both-known.toml",
+        &counts(&failing_executed(), 0, 2),
+    );
+    let held = gate(dir.path(), failing, utf8(&both), Some(&known));
+    assert_eq!(held.status.code(), Some(0), "{held:?}");
 
     let taskfile = std::fs::read_to_string(root().join("Taskfile.yml")).expect("Taskfile.yml");
     let check = task(&taskfile, "check");
@@ -377,33 +501,47 @@ fn the_suite_counts_are_held() {
     );
     let steps = task(&taskfile, "check:conformance");
     assert!(
+        steps
+            .iter()
+            .any(|line| line.contains(" conform synthesize ")
+                && line.contains(&format!("--path {SPEC}"))
+                && line.contains(&format!("--scenarios {SPEC}"))),
+        "check:conformance synthesises the suite with ess/'s authored scenarios: {steps:?}"
+    );
+    assert!(
         steps.iter().any(|line| line.contains(" conform ess ")
             && line.contains(&format!("--counts {COUNTS}"))
-            && line.contains(&format!("--known-failing {KNOWN}"))),
-        "check:conformance holds the committed counts and declaration: {steps:?}"
+            && line.contains("--suite ")),
+        "check:conformance runs that suite and holds the committed counts: {steps:?}"
+    );
+    assert!(
+        steps.iter().all(|line| !line.contains("--known-failing")),
+        "check:conformance declares no known failure: {steps:?}"
     );
 }
 
-/// The gate goes red when a declared scenario passes: the committed declaration with a scenario
-/// that passes declared beside its own, bound to the same suite, specification and build.
+/// The gate goes red when a declared scenario passes: a declaration of the two scenarios that
+/// fail with a scenario that passes declared beside them, bound to the same suite, specification
+/// and build.
 #[test]
 fn a_declared_scenario_that_passes_fails_the_gate() {
     const PASSING: &str = "spindle.deployment.DeclareEnvironment/outcome/declared";
     let dir = scratch();
-    let mut declaration = read_json(&root().join(KNOWN));
-    let failures = declaration["failures"].as_array_mut().expect("failures");
-    failures.push(serde_json::json!({
-        "reason": "declared to see the gate refuse a stale declaration",
-        "scenario": PASSING,
-        "tracking": "none",
-    }));
-    failures.sort_by(|left, right| left["scenario"].as_str().cmp(&right["scenario"].as_str()));
-    let stale = dir.path().join("stale.json");
-    let mut text = serde_json::to_string_pretty(&declaration).expect("JSON");
-    text.push('\n');
-    std::fs::write(&stale, text).expect("writing the declaration");
+    let failing = failing_spec(dir.path());
+    let failing = utf8(&failing);
+    let stale = declaration(
+        dir.path(),
+        "stale.json",
+        &report_of(dir.path(), failing),
+        &[WRONG[0].1, WRONG[1].1, PASSING],
+    );
+    let counts = counts_file(
+        dir.path(),
+        "counts.toml",
+        &counts(&failing_executed(), 0, 2),
+    );
 
-    let output = gate(dir.path(), COUNTS, stale.to_str().expect("utf-8"));
+    let output = gate(dir.path(), failing, utf8(&counts), Some(&stale));
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     let printed = stdout(&output);
     assert!(
@@ -412,17 +550,58 @@ fn a_declared_scenario_that_passes_fails_the_gate() {
     );
 }
 
-/// The gate goes red when a declared scenario fails undeclared: the run without the declaration.
+/// The gate goes red when a scenario fails undeclared: the run of the failing specification
+/// without a declaration, as the task runs.
 #[test]
 fn an_undeclared_failure_fails_the_gate() {
-    let output = conform(&[SPEC, "--environment", LAPTOP]);
+    let dir = scratch();
+    let failing = failing_spec(dir.path());
+    let counts = counts_file(
+        dir.path(),
+        "counts.toml",
+        &counts(&failing_executed(), 0, 0),
+    );
+    let output = gate(dir.path(), utf8(&failing), utf8(&counts), None);
     assert_eq!(output.status.code(), Some(1), "{output:?}");
-    for known in declared() {
+    for (_, id) in WRONG {
         assert!(
-            stdout(&output).contains(&format!("failed {known}")),
+            stdout(&output).contains(&format!("failed {id}")),
             "{output:?}"
         );
     }
+}
+
+/// The gate goes red on a second failure despite a declaration: one of the two failing
+/// scenarios declared, the other is accounted unexpected.
+#[test]
+fn a_second_failure_fails_the_gate_despite_the_declaration() {
+    let dir = scratch();
+    let failing = failing_spec(dir.path());
+    let failing = utf8(&failing);
+    let one = declaration(
+        dir.path(),
+        "one.json",
+        &report_of(dir.path(), failing),
+        &[WRONG[0].1],
+    );
+    let counts = counts_file(
+        dir.path(),
+        "counts.toml",
+        &counts(&failing_executed(), 0, 1),
+    );
+    let output = gate(dir.path(), failing, utf8(&counts), Some(&one));
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let accounting = read_json(&dir.path().join("gate-accounting.json"));
+    assert_eq!(
+        accounting["unexpected_failed"],
+        serde_json::json!([WRONG[1].1]),
+        "{accounting}"
+    );
+    assert_eq!(
+        accounting["known_failed"].as_array().map(Vec::len),
+        Some(1),
+        "{accounting}"
+    );
 }
 
 /// The executed scenarios are held as a set, not a total: a scenario that stops executing while
@@ -431,19 +610,15 @@ fn an_undeclared_failure_fails_the_gate() {
 fn the_executed_set_is_held() {
     let dir = scratch();
     let (executed, skipped, known_failed) = committed();
-    let (_, report, _, _) = run_ess(dir.path());
-    let unsupported = report["outcomes"]["unsupported"]
-        .as_array()
-        .expect("the unsupported outcomes")
-        .iter()
-        .map(|id| id.as_str().expect("an id").to_owned())
-        .collect::<Vec<_>>();
-    let (Some(now_skipped), Some(dropped)) = (unsupported.first(), executed.first()) else {
-        panic!("the run skips a scenario and executes one: {report}");
+    // A scenario of another suite, which a run of `ess/` does not execute.
+    let absent = WRONG[0].1.to_owned();
+    let Some(dropped) = executed.first() else {
+        panic!("the committed counts hold an executed scenario");
     };
+    assert!(!executed.contains(&absent));
 
     let mut listed = executed.clone();
-    listed.push(now_skipped.clone());
+    listed.push(absent.clone());
     listed.sort();
     let lost = gate_with(
         dir.path(),
@@ -453,7 +628,7 @@ fn the_executed_set_is_held() {
     assert_eq!(lost.status.code(), Some(1), "{lost:?}");
     assert!(
         stdout(&lost).contains(&format!(
-            "`{now_skipped}` is held as executed and no longer executes"
+            "`{absent}` is held as executed and no longer executes"
         )),
         "{lost:?}"
     );
@@ -473,7 +648,7 @@ fn the_executed_set_is_held() {
     );
 
     let mut swapped = executed[1..].to_vec();
-    swapped.push(now_skipped.clone());
+    swapped.push(absent.clone());
     swapped.sort();
     assert_eq!(swapped.len(), executed.len());
     let swap = gate_with(
@@ -485,7 +660,7 @@ fn the_executed_set_is_held() {
     let printed = stdout(&swap);
     assert!(
         printed.contains(&format!(
-            "`{now_skipped}` is held as executed and no longer executes"
+            "`{absent}` is held as executed and no longer executes"
         )) && printed.contains(&format!("`{dropped}` executes and is not held")),
         "{printed}"
     );

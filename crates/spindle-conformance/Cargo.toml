@@ -18,8 +18,6 @@ serde_json.workspace = true
 spindle-capability.workspace = true
 spindle-host = { path = "../spindle-host" }
 spindle-kernel = { path = "../spindle-kernel" }
+spindle-spec.workspace = true
 thiserror.workspace = true
 toml.workspace = true
-
-[dev-dependencies]
-spindle-spec.workspace = true

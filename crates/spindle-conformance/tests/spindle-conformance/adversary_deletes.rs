@@ -173,8 +173,11 @@ fn deletes_in_a_bound_multi_component_run_agree_with_the_interpreter() {
 #[test]
 fn the_synthesised_delete_scenarios_answer_as_the_interpreter() {
     for fixture in [BOOKS, SHELF, STUDY] {
-        let ir = load(fixture);
-        let synthesis = spindle_conformance::synthesize(&ir);
+        let specification = spindle_spec::load(&root().join(fixture))
+            .unwrap_or_else(|error| panic!("{fixture} loads: {error}"));
+        let synthesis =
+            spindle_conformance::synthesize(&specification).expect("the suite synthesises");
+        let ir = specification.ir;
         let suite = AdmittedSuite::from_suite(&synthesis.suite).expect("the suite is admitted");
         let statuses = |run: &spindle_conformance::Run| {
             run.report()

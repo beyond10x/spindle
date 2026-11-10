@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 
 use ess_compiler::refs::{CommandRef, OutcomeRef};
 use ess_conformance::interpret::Interpreted;
-use ess_conformance::known_failures::Declaration;
 use ess_conformance::{
     AdmittedSuite, ConformanceTarget, EventObservationRequest, ExternalOutcomeControl,
     ImplementationIdentity, ObservedEvent, RedeliveryRequest, ScenarioContext, ScenarioId,
@@ -223,26 +222,19 @@ impl ConformanceTarget for Planted {
     }
 }
 
-/// Whether `task check:conformance` would pass a run against `target`: the committed declaration
-/// accounted, every executed scenario passed or declared, the committed counts held.
+/// Whether `task check:conformance` would pass a run against `target`, as the task runs it: no
+/// known-failures declaration, every executed scenario passed, and the committed counts held, the
+/// executed set and the totals both.
 fn gate_passes(target: &impl ConformanceTarget) -> bool {
     let loaded = spindle_spec::load(&root().join("ess")).expect("ess/ loads");
-    let synthesis = spindle_conformance::synthesize(&loaded.ir);
+    let synthesis = spindle_conformance::synthesize(&loaded).expect("the suite synthesises");
     let suite = AdmittedSuite::from_suite(&synthesis.suite).expect("the suite is admitted");
-    let declaration = Declaration::from_json(
-        &std::fs::read_to_string(root().join("conformance-known-failures.json"))
-            .expect("the committed declaration"),
-    )
-    .expect("the declaration reads");
     let committed = Counts::committed(
         &std::fs::read_to_string(root().join("conformance.toml")).expect("the committed counts"),
     )
     .expect("the counts read");
     let run = spindle_conformance::execute(&suite, target);
-    let Ok(known) = run.account(&suite, &declaration) else {
-        return false;
-    };
-    run.passed_with(&known) && run.counts_with(&known).drops(committed).is_empty()
+    run.passed() && run.set_drops(&committed).is_empty() && run.counts().drops(committed).is_empty()
 }
 
 fn planted(plant: Plant) -> Planted {

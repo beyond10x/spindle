@@ -53,6 +53,12 @@ are Spindle's releases.
   and `PlanInstance` refuses a deployment no one offered (`unknown-deployment`). Admitting
   `ess/` now needs `external.spindle.placement.PlaceInstance.environment-mismatch` and no
   longer `external.spindle.placement.LaunchInstance.not-admitted`.
+- `task check:conformance` declares no known failure: `conformance-known-failures.json` is
+  removed and the task passes neither `--known-failing` nor `--accounting-out`, so every executed
+  scenario must pass. `spindle.placement.LaunchInstance/outcome/not-admitted`, the one scenario it
+  declared, passes, and the authored `spindle.placement/authored/launch-not-admitted` covers the
+  outcome. `conformance.toml` holds 79 executed scenarios, 0 skipped and 0 known failed.
+  `conform --known-failing` is unchanged.
 
 ### Fixed
 
@@ -61,6 +67,13 @@ are Spindle's releases.
   guard read past an external branch is unknown: an unknown deployment sent to `PlanInstance` is
   `unknown-deployment` whatever the decider would say of `not-admitted`. Before, the look-ahead
   asked `not-admitted` first, and a decider with no answer for it made the request `Undecided`.
+- `conform` without `--suite`, and `spindle_conformance::synthesize`, run the authored scenarios
+  the specification's `ess-inputs.yaml` lists under `scenarios:`, compiled by ESS
+  (`ess_conformance::authored`) into the synthesised suite as `ess conform synthesize --scenarios`
+  files them, and print a listed scenario ESS refuses, exiting 1. `spindle_spec::load` reads them
+  (`Specification::scenarios`), refusing a missing or symlinked entry as `ess` does, and
+  `synthesize` takes the `Specification`. Before, both synthesised without them: on `ess/`, 78
+  scenarios where `task check:conformance` runs 79.
 
 ## [0.8.0] - 2026-11-08
 
