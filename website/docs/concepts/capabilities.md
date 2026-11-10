@@ -7,9 +7,8 @@ source: crates/spindle-capability/src/derive.rs, crates/spindle-capability/tests
 ---
 
 A capability is something technical a specification needs from the runtime: a durable store, a
-timer, a channel between components. Spindle reads the compiled specification and lists them. The
-author does not write a requirement list, so the list cannot claim less than the specification
-needs.
+timer, a channel between components. Spindle reads the compiled specification and lists them, so
+the list cannot claim less than the specification needs.
 
 ## The derivation rules
 
@@ -69,8 +68,8 @@ answers it per command, from these sources in order:
 
 A line that nothing answers fails with the outcome in its message, and the run goes on.
 
-A `run` serving `ingress.network` answers a request's external causes the same way, from the
-decisions file and then `--answer-default`. A request carries no `"external"` object. A request
+A `run` serving `ingress.network` answers a request's external causes from the decisions file and
+then `--answer-default`. A request carries no `"external"` object. A request
 that nothing answers is refused `501`, with the outcome in the refusal. The file answers per
 command and outcome, not per input value, so every request to one command gets the same answer.
 Without either flag, a served specification that declares an external outcome is refused before

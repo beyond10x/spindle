@@ -6,8 +6,8 @@ lede: A specification is a directory of ESS documents, compiled by ESS's own com
 source: crates/spindle-spec/src/lib.rs, crates/spindle-spec/tests/spindle-spec/load.rs, crates/spindle-kernel/src/lib.rs, crates/spindle-kernel/src/supported.rs, docs/design/spindle.md §3a
 ---
 
-A specification is a directory of [ESS](https://beyond10x.github.io/ess/)
-([GitHub](https://github.com/beyond10x/ess)) source documents with a `system.yaml` at its root.
+The directory of [ESS](https://beyond10x.github.io/ess/)
+([GitHub](https://github.com/beyond10x/ess)) source documents has a `system.yaml` at its root.
 It states **semantics** only: entities and their lifecycles, commands and their outcomes, guards,
 events, views, components and the bindings between them. It does not name a database, a protocol
 or a queue.
@@ -25,7 +25,7 @@ refuses is refused here too:
 It parses the files together, so a type declared in one file may be used in another. It
 assembles them and compiles them with `ess-compiler`. The result is the resolved IR: every
 reference checked, every guard a typed ESS predicate. It is the same IR `ess specify compile`
-produces, because it is the same code.
+produces.
 
 Spindle does not re-implement ESS parsing or validation. A document `ess specify validate` refuses
 is refused by `b10x-spindle check` too, with the compiler's own diagnostics. The ESS crates are

@@ -19,8 +19,7 @@ source: crates/spindle-telemetry/src/lib.rs, crates/spindle-target/src/process.r
 
 Recording is one atomic increment: no lock and no allocation on the command path.
 
-The **catalogue** of counters is derived from the compiled specification for one component. It is
-not written down:
+The **catalogue** of counters for one component is derived from the compiled specification:
 
 | Counter | One per |
 |---|---|
