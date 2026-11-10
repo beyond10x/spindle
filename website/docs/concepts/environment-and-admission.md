@@ -69,10 +69,44 @@ Admission binds names. The parts that run today act on these bindings:
 | `clock` | `system` |
 | `identity.mint` | `uuid-v4` |
 | `ingress.network` | `http-loopback`: `run` serves the routes and the console routes over HTTP on 127.0.0.1; `service-worker`: the Service Worker host (`spindle-wasm`, the site in `web/`) answers the specification's routes and the console routes in the browser, through the router the loopback listener calls |
-| `external.*` | answered by `run` from the line, `--decisions` or `--answer-default`, whatever the binding names; `decisions-file` in the Service Worker host: each external outcome answered from the decisions file it is opened with, as `run --decisions` answers it |
+| `external.*` | answered by `run` from the line, `--decisions` or `--answer-default`, whatever the binding names, unless it names an HTTP call the environment declares (below); `decisions-file` in the Service Worker host: each external outcome answered from the decisions file it is opened with, as `run --decisions` answers it |
 
 A host refuses, as unsupported, a binding it cannot run: the one-process host refuses a `tcp`
 channel, and a host opened with nothing to answer external causes refuses every `external.*`
 outcome. `run` serves `ingress.network` only where it is bound to `http-loopback`, and the Service
 Worker host only where it is bound to `service-worker`; any other binding of it is refused before
 anything is served.
+
+## An external cause bound to an HTTP call
+
+An environment may declare HTTP calls, each an `[http.<name>]` table, and bind an external cause
+to one by naming it as the implementation of the cause's `external.<command>.<outcome>` key:
+
+```toml
+[provides]
+"external.shop.order.Place.approved" = ["approvals"]
+"external.*" = ["operator-prompt"]
+
+[http.approvals]
+method = "POST"
+url = "http://127.0.0.1:8080/approvals"
+timeout_ms = 2000
+secret_env = "APPROVALS_TOKEN"
+```
+
+Each time `run` asks that cause, on a stdin line or a served request, it sends one request to the
+call: a `spindle-external/1` JSON body with `format`, `capability`, `command`, `outcome`, `cause`
+and the command's `input`. A `2xx` reply `{"holds": true}` or `{"holds": false}` answers the
+cause, and the outcome it selects is committed. A timeout, a failure, another status, a reply
+body over 64 KiB or another body fails the command as `undecided` and writes nothing; served, it
+answers `501`. A call holds the thread that runs every command until it is answered or times out,
+so a served run answers nothing else meanwhile.
+
+The document never holds the secret: `secret_env` names an environment variable, read when `run`
+starts and sent as `Authorization: Bearer <value>`. An unset variable stops `run` before the first
+request. A table no `external.` key names, a `timeout_ms` outside 1 to 30000, a `url` carrying
+userinfo (`user:password@`), or a `secret_env` that is not a variable name is refused when the
+document is read, naming the table and never repeating the value. This build calls `http://` URLs
+only; a served run whose every external cause is bound to a call needs neither `--decisions` nor
+`--answer-default`. With `--observe`, a cause a call answers is listed and counted with the source
+`call`, and one whose call failed as `unanswered`.

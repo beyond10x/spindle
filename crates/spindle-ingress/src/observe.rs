@@ -195,7 +195,9 @@ pub enum AnswerSource {
     File,
     /// The default branch `--answer-default` takes.
     Default,
-    /// Nothing did, and the command answered `501`.
+    /// The HTTP call the environment binds the cause to (`[http.<name>]`).
+    Call,
+    /// Nothing did, or the cause's HTTP call failed, and the command answered `501`.
     Unanswered,
 }
 
@@ -206,6 +208,7 @@ impl AnswerSource {
             Self::World => "world",
             Self::File => "file",
             Self::Default => "default",
+            Self::Call => "call",
             Self::Unanswered => "unanswered",
         }
     }

@@ -3,6 +3,7 @@
 //! module path.
 
 mod admit;
+mod adversary2_http_cause;
 mod adversary_caller;
 mod adversary_console;
 mod adversary_control;
@@ -10,6 +11,7 @@ mod adversary_delete;
 mod adversary_external_answers;
 mod adversary_fixed_caller;
 mod adversary_form_query;
+mod adversary_http_cause;
 mod adversary_ingress;
 mod adversary_outcome_bodies;
 mod adversary_outcome_scoped_refusal;
@@ -37,6 +39,7 @@ mod error_object_bodies;
 mod fixed_caller;
 mod fixed_callers;
 mod form_query;
+mod http_cause;
 mod ingress;
 mod metrics;
 mod mint;

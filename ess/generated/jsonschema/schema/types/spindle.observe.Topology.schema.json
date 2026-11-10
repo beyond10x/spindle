@@ -5,13 +5,13 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:97ee92d11275124b263fcc64ba74b7efa34317b91caa6844a1f730d1e9451e29",
+    "contract_digest": "slice-sha256/2:769db25e7d66f659607a80032c3cd4dfd872b34a09280d6296d16bc5fefbbadf",
     "regenerate": "ess generate"
   },
   "$defs": {
     "spindle.observe.AnswerSource": {
       "title": "AnswerSource",
-      "description": "What answered one external cause of a served command. `world`: the `decisions` of the world the last reset loaded, `spindle.console.World`. `file`: the decisions file. `default`: the default branch `--answer-default` takes. `unanswered`: nothing did, and the command answered `501`. Source: `crates/spindle-cli/src/decisions.rs:35-53`, `crates/spindle-ingress/src/observe.rs:186-209`.",
+      "description": "What answered one external cause of a served command. `world`: the `decisions` of the world the last reset loaded, `spindle.console.World`. `file`: the decisions file. `default`: the default branch `--answer-default` takes. `call`: the HTTP call the environment binds the cause to (`[http.<name>]`). `unanswered`: nothing did, or the cause's HTTP call failed, and the command answered `501`. Source: `crates/spindle-cli/src/decisions.rs:47-71`, `crates/spindle-ingress/src/observe.rs:186-213`.",
       "x-ess-name": "spindle.observe.AnswerSource",
       "x-ess-kind": "enum",
       "type": "string",
@@ -19,6 +19,7 @@
         "world",
         "file",
         "default",
+        "call",
         "unanswered"
       ]
     },
@@ -45,7 +46,7 @@
       "type": "object",
       "properties": {
         "count": {
-          "description": "Requests a `routes` edge handed on, events an `emits` edge emitted, envelopes a `carries` edge sent, commands an `invokes` edge invoked, questions an `asks` edge asked.",
+          "description": "Requests a `routes` edge handed on, events an `emits` edge appended, envelopes a `carries` edge sent, commands an `invokes` edge invoked, questions an `asks` edge asked.",
           "type": "integer",
           "minimum": 0
         },

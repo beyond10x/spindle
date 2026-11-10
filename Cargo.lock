@@ -1592,6 +1592,9 @@ dependencies = [
  "ess-gen",
  "ess-http",
  "ess-primitives",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "jsonschema",
  "openmetrics-parser",
  "rustix",
@@ -1610,6 +1613,7 @@ dependencies = [
  "spindle-target",
  "spindle-telemetry",
  "tempfile",
+ "tokio",
  "toml",
 ]
 

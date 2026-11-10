@@ -136,7 +136,20 @@ pub enum Command {
     /// A served request carries no `external` object: its external causes are answered by
     /// `--decisions`, then by `--answer-default`, each answer per command and outcome, never per
     /// input value. A request nothing answers is refused `501`, naming the outcome. Without either
-    /// flag, a specification that declares an external outcome exits 1 before listening.
+    /// flag, a specification that declares an external outcome exits 1 before listening, unless
+    /// the environment binds every one of them to an HTTP call.
+    ///
+    /// An external cause whose capability the environment binds to an `[http.<name>]` table
+    /// (`method`, `url`, `timeout_ms`, `secret_env`) is answered, on a stdin line or a served
+    /// request, by one request to that call before any other source: a `spindle-external/1`
+    /// JSON body (`format`, `capability`, `command`, `outcome`, `cause`, `input`), with
+    /// `Authorization: Bearer` set from the environment variable `secret_env` names. A `2xx`
+    /// reply `{"holds": true | false}` answers the cause; a timeout, a failure, a reply body over
+    /// 64 KiB or any other reply fails the command `undecided` and writes nothing (`501` when
+    /// served). An unset variable, a URL other than `http://` or carrying userinfo, or a
+    /// `timeout_ms` outside 1 to 30000 exits 1 before the first request. A call blocks every
+    /// other command until it is answered or times out. With `--observe`, each such cause is
+    /// listed and counted with the source `call`, or `unanswered` where its call failed.
     ///
     /// `POST /api/reset` may carry a world as its JSON body, each key optional: `{"rows":
     /// [{"entity", "identity", "state", "fields"}], "decisions": {...}, "mint": <seed>}`. Every

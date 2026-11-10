@@ -82,7 +82,7 @@
       "name": "spindle_external_causes_total",
       "kind": "counter",
       "labels": ["command", "outcome", "source"],
-      "summary": "External causes a served command asked about, by what answered each: world, file, default or unanswered."
+      "summary": "External causes a served command asked about, by what answered each: world, file, default, call or unanswered."
     }
   ]
 }

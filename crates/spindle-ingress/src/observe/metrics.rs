@@ -130,7 +130,7 @@ pub(crate) const FAMILIES: [Family; 14] = [
         kind: "counter",
         labels: &["command", "outcome", "source"],
         summary: "External causes a served command asked about, by what answered each: world, \
-                  file, default or unanswered.",
+                  file, default, call or unanswered.",
     },
 ];
 

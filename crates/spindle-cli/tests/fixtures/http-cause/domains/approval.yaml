@@ -1,0 +1,44 @@
+domain: probe.approval
+summary: Requests an approval desk outside the model approves or not.
+entities:
+  - name: probe.approval.Request
+    identity:
+      name: request_id
+      type: String
+    fields:
+      - name: amount
+        type: Integer
+    lifecycle:
+      initial: Approved
+      states: [Approved]
+      terminal: [Approved]
+errors:
+  - name: probe.approval.NotApproved
+    summary: The approval desk did not approve the request.
+    fields: []
+commands:
+  - name: probe.approval.Ask
+    input:
+      - name: request_id
+        type: String
+      - name: amount
+        type: Integer
+    outcomes:
+      - name: approved
+        external: the approval desk approves the request
+        creates: probe.approval.Request
+        instance: request_id
+        sets:
+          amount: input.amount
+        emits: [probe.approval.Approved]
+        payload:
+          probe.approval.Approved: {request_id: input.request_id}
+        summary: An approved request is recorded.
+      - name: not-approved
+        error: probe.approval.NotApproved
+        summary: A request the desk does not approve is refused.
+events:
+  - name: probe.approval.Approved
+    fields:
+      - name: request_id
+        type: String

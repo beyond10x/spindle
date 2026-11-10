@@ -1,5 +1,6 @@
 //! `b10x-spindle`: load an ESS specification, derive what it needs, admit it, and run or play it.
 
+mod calls;
 mod component;
 mod conform;
 mod decisions;
@@ -441,6 +442,8 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
             spindle_kernel::UuidV4::IMPLEMENTATION
         );
     }
+    let calls = calls::Calls::bind(&parsed, bindings)
+        .with_context(|| format!("in {}", environment.display()))?;
     let durable = bindings
         .iter()
         .find(|binding| binding.capability.as_str() == "store.durable")
@@ -457,7 +460,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 spindle_ingress::HTTP_LOOPBACK
             );
         }
-        let decides = decisions.is_some() || answer_default;
+        let decides = decisions.is_some() || answer_default || calls.answer_every(bindings);
         let binding = match http {
             Some(path) => match serve::binding(path, &loaded.ir)? {
                 Some(binding) => Some(binding),
@@ -478,7 +481,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 ingress: ingress.implementation.as_str(),
                 drop_retries,
                 decides,
-                answers,
+                answers: answers.calling(calls),
                 callers: callers.clone(),
                 observe,
             },
@@ -558,7 +561,13 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
             Err(error) => serde_json::json!({
                 "failure": {"kind": "invalid_request", "message": error.to_string()},
             }),
-            Ok(request) => answer(&loaded.ir, store.as_mut(), answers.answers(), &request),
+            Ok(request) => answer(
+                &loaded.ir,
+                store.as_mut(),
+                answers.answers(),
+                &calls,
+                &request,
+            ),
         };
         writeln!(out, "{result}")?;
         out.flush()?;
@@ -585,14 +594,20 @@ fn removed_on_signal(directory: &Path) -> Result<()> {
     Ok(())
 }
 
-/// The result line for one request.
+/// The result line for one request: a cause bound to an HTTP call is answered by it, any other by
+/// the line's own `external` object, then as `answers` answer it.
 fn answer(
     ir: &spindle_spec::EssIr,
     store: &mut dyn Store,
     answers: &Answers,
+    calls: &calls::Calls,
     request: &Request,
 ) -> serde_json::Value {
-    let mut decider = |question: &External<'_>| answers.decide(&request.external, question);
+    let mut decider = |question: &External<'_>| {
+        calls
+            .answer(question)
+            .unwrap_or_else(|| answers.decide(&request.external, question))
+    };
     let invocation = spindle_kernel::Invocation {
         command: &request.command,
         input: &request.input,
