@@ -1,0 +1,6 @@
+{
+  "marks": [
+    { "gate": "gate-5-keyboard", "scenario": "request-log-size", "viewport": "390x844", "theme": "*", "match": "no Tab reaches", "finding": "UXF-020" },
+    { "gate": "gate-2", "scenario": "*", "viewport": "1280x800", "theme": "*", "match": "end: docs sidebar outside the viewport", "finding": "UXF-008" }
+  ]
+}

@@ -1,12 +1,15 @@
 ---
 title: Getting started
+kicker: Start
 sidebar_position: 2
 description: Build b10x-spindle from source, then compile, derive, admit and play the rally example.
 lede: Build the binary, then take the rally example through check, capabilities, admit and play.
-source: every command below was run in a checkout of main on 2026-11-04; output pasted from that run
+source: the build was run on 2026-11-10 in a checkout of 0.9.0 (main at 244fb60e); every other command was run on 2026-11-10 with the 0.10.0 release binary (tag 0.10.0 at 2d78103e) in a checkout of 0.10.0; output pasted from those runs
 ---
 
-Spindle has no release yet. Build it from source.
+Binaries for Linux and macOS, x86_64 and aarch64 each, are attached to each
+[GitHub release](https://github.com/beyond10x/spindle/releases) with a `SHA256SUMS` file. This page
+builds `b10x-spindle` from source.
 
 ## Build
 
@@ -22,16 +25,16 @@ cargo build --locked --release -p spindle-cli
 The last lines of the build:
 
 ```text
-   Compiling spindle-cli v0.6.0 (…/spindle/crates/spindle-cli)
-    Finished `release` profile [optimized] target(s) in 37.59s
+   Compiling spindle-conformance v0.9.0 (…/spindle/crates/spindle-conformance)
+    Finished `release` profile [optimized] target(s) in 88m 23s
 ```
 
-The binary is `target/release/b10x-spindle`. The commands below call it `b10x-spindle`; put
+The binary is `target/release/b10x-spindle`, and the commands below call it `b10x-spindle`: put
 `target/release` on your `PATH` or type the path.
 
 ```console
 $ b10x-spindle --version
-b10x-spindle 0.6.0
+b10x-spindle 0.10.0
 ```
 
 ## Compile the specification
@@ -69,9 +72,9 @@ timer
   binding tick: a periodic cause invokes rally.table.Tick
 ```
 
-Nobody wrote this list down: it comes from the entities, bindings and components in the
-specification ([capabilities](/docs/concepts/capabilities)). `--component` narrows it to what one
-component needs on its own:
+The list is derived from the entities, bindings and components in the specification
+([capabilities](/docs/concepts/capabilities)). `--component` narrows it to what one component needs
+on its own:
 
 ```console
 $ b10x-spindle capabilities examples/rally/ess --component rally-player-west
@@ -138,11 +141,11 @@ Exit status 3 means refused ([environment and admission](/docs/concepts/environm
 
 ## Play it
 
-`play` runs all three rally components in one process: each is admitted on its own, the timer
+`play` runs all three rally components in one process. Each is admitted on its own, the timer
 fires the table's `Tick` once a second, and in-process channels carry `BallMoved` to the players
 and their paddle moves back to the table. The terminal is redrawn from the table's `MatchState`
-view after every tick, with the table's non-zero counters under the grid, until a side has won
-(three points by default):
+view after every tick, with the table's non-zero counters under the grid. It stops when a side has
+won, at three points by default:
 
 ```console
 $ b10x-spindle play examples/rally/ess --environment examples/environments/laptop.toml
@@ -171,7 +174,7 @@ store.rows_written 1
 store.bytes_written 359
 ```
 
-and the last, 30 seconds and 31 frames later, with exit status 0:
+and the last of its 31 frames, 30 seconds later, with exit status 0:
 
 ```text
 west needs 3    east needs 0

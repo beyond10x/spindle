@@ -1,0 +1,1973 @@
+{
+  "round": "R-00",
+  "date": "2026-11-10",
+  "commit": "244fb60e+uncommitted",
+  "adapter": "Spindle documentation site (website/, Docusaurus)",
+  "viewports": {
+    "gating": [
+      "1280x800",
+      "390x844"
+    ],
+    "measured": [
+      "1440x900",
+      "1024x768",
+      "768x1024"
+    ]
+  },
+  "themes": [
+    "light",
+    "dark"
+  ],
+  "cards": [
+    {
+      "id": "A-newcomer",
+      "anchor": true,
+      "persona": "An engineer who heard of Spindle and lands on the home page; wants to try it today and to know whether it is released.",
+      "tasks": [
+        "install",
+        "release"
+      ],
+      "twists": [
+        "reads the landing page first and expects the install command one click away",
+        "asks for a version: the site states the release state in one place only"
+      ]
+    },
+    {
+      "id": "B-integrator",
+      "anchor": true,
+      "persona": "A developer with an ESS specification who wants it served over HTTP on their laptop, and must write the environment for it.",
+      "tasks": [
+        "http",
+        "environment"
+      ],
+      "twists": [
+        "scans for HTTP, a word the navigation does not carry",
+        "knows the term environment document from the README, not where the site defines it"
+      ]
+    },
+    {
+      "id": "R00-operator",
+      "anchor": false,
+      "persona": "An operator who arrived on the rally example from a link and wants to know what a served run exposes for observation.",
+      "tasks": [
+        "observe"
+      ],
+      "twists": [
+        "starts deep in the site, on the rally page, not on the landing page",
+        "the answer is a flag row in the generated CLI reference, while the Observe concept page carries the word"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "landing",
+      "path": "",
+      "generated": false
+    },
+    {
+      "name": "docs",
+      "path": "docs",
+      "generated": false
+    },
+    {
+      "name": "concepts-capabilities",
+      "path": "docs/concepts/capabilities",
+      "generated": false
+    },
+    {
+      "name": "concepts-components-and-bindings",
+      "path": "docs/concepts/components-and-bindings",
+      "generated": false
+    },
+    {
+      "name": "concepts-deployment-targets",
+      "path": "docs/concepts/deployment-targets",
+      "generated": false
+    },
+    {
+      "name": "concepts-environment-and-admission",
+      "path": "docs/concepts/environment-and-admission",
+      "generated": false
+    },
+    {
+      "name": "concepts-observe",
+      "path": "docs/concepts/observe",
+      "generated": false
+    },
+    {
+      "name": "concepts-specification",
+      "path": "docs/concepts/specification",
+      "generated": false
+    },
+    {
+      "name": "examples-rally",
+      "path": "docs/examples/rally",
+      "generated": false
+    },
+    {
+      "name": "getting-started",
+      "path": "docs/getting-started",
+      "generated": false
+    },
+    {
+      "name": "reference-cli",
+      "path": "docs/reference/cli",
+      "generated": true
+    },
+    {
+      "name": "status",
+      "path": "docs/status",
+      "generated": true
+    }
+  ],
+  "page_checks": 48,
+  "plays": 40,
+  "gates": {
+    "gate-1": {
+      "pass": 48,
+      "fail": 0,
+      "known": 0,
+      "findings": []
+    },
+    "gate-2": {
+      "pass": 0,
+      "fail": 0,
+      "known": 48,
+      "findings": [
+        "UXF-001",
+        "UXF-002",
+        "UXF-008"
+      ]
+    },
+    "gate-4": {
+      "pass": 12,
+      "fail": 0,
+      "known": 8,
+      "findings": [
+        "UXF-004",
+        "UXF-005"
+      ]
+    },
+    "gate-5": {
+      "pass": 20,
+      "fail": 0,
+      "known": 28,
+      "findings": [
+        "UXF-003"
+      ]
+    },
+    "gate-5-keyboard": {
+      "pass": 12,
+      "fail": 0,
+      "known": 8,
+      "findings": [
+        "UXF-004",
+        "UXF-005"
+      ]
+    }
+  },
+  "measured": {
+    "install": {
+      "screen_only.actions": 2,
+      "screen_only.looks": 4,
+      "screen_only.detours": 0,
+      "glance_cost.median": 2,
+      "glance_cost.p95": 2,
+      "keyboard.tabs": 13
+    },
+    "http": {
+      "screen_only.actions": 19,
+      "screen_only.looks": 48,
+      "screen_only.detours": 2,
+      "glance_cost.median": 3,
+      "glance_cost.p95": 3,
+      "keyboard.tabs": 98
+    },
+    "observe": {
+      "screen_only.actions": 12,
+      "screen_only.looks": 20,
+      "screen_only.detours": 3,
+      "glance_cost.median": 3,
+      "glance_cost.p95": 3,
+      "keyboard.tabs": 95
+    },
+    "release": {
+      "screen_only.actions": 26,
+      "screen_only.looks": 68,
+      "screen_only.detours": 1,
+      "glance_cost.median": 3,
+      "glance_cost.p95": 3,
+      "keyboard.tabs": 132
+    },
+    "environment": {
+      "screen_only.actions": 6,
+      "screen_only.looks": 13,
+      "screen_only.detours": 0,
+      "glance_cost.median": 3,
+      "glance_cost.p95": 3,
+      "keyboard.tabs": 14
+    },
+    "page.landing": {
+      "axe.light": 0,
+      "axe.dark": 0,
+      "overflow.elements": 0,
+      "always_visible.misses": 4,
+      "reading_load.words": 2249,
+      "reading_load.long_paragraphs": 0,
+      "reading_load.max_paragraph": 51
+    },
+    "page.docs": {
+      "axe.light": 8,
+      "axe.dark": 8,
+      "overflow.elements": 0,
+      "always_visible.misses": 4,
+      "reading_load.words": 459,
+      "reading_load.long_paragraphs": 1,
+      "reading_load.max_paragraph": 84
+    },
+    "page.concepts-capabilities": {
+      "axe.light": 0,
+      "axe.dark": 0,
+      "overflow.elements": 0,
+      "always_visible.misses": 4,
+      "reading_load.words": 1049,
+      "reading_load.long_paragraphs": 2,
+      "reading_load.max_paragraph": 213
+    },
+    "page.concepts-components-and-bindings": {
+      "axe.light": 1,
+      "axe.dark": 1,
+      "overflow.elements": 0,
+      "always_visible.misses": 4,
+      "reading_load.words": 506,
+      "reading_load.long_paragraphs": 1,
+      "reading_load.max_paragraph": 83
+    },
+    "page.concepts-deployment-targets": {
+      "axe.light": 1,
+      "axe.dark": 1,
+      "overflow.elements": 0,
+      "always_visible.misses": 4,
+      "reading_load.words": 485,
+      "reading_load.long_paragraphs": 0,
+      "reading_load.max_paragraph": 59
+    },
+    "page.concepts-environment-and-admission": {
+      "axe.light": 0,
+      "axe.dark": 0,
+      "overflow.elements": 0,
+      "always_visible.misses": 4,
+      "reading_load.words": 511,
+      "reading_load.long_paragraphs": 0,
+      "reading_load.max_paragraph": 68
+    },
+    "page.concepts-observe": {
+      "axe.light": 1,
+      "axe.dark": 1,
+      "overflow.elements": 0,
+      "always_visible.misses": 4,
+      "reading_load.words": 936,
+      "reading_load.long_paragraphs": 2,
+      "reading_load.max_paragraph": 155
+    },
+    "page.concepts-specification": {
+      "axe.light": 3,
+      "axe.dark": 3,
+      "overflow.elements": 0,
+      "always_visible.misses": 4,
+      "reading_load.words": 987,
+      "reading_load.long_paragraphs": 4,
+      "reading_load.max_paragraph": 181
+    },
+    "page.examples-rally": {
+      "axe.light": 2,
+      "axe.dark": 2,
+      "overflow.elements": 0,
+      "always_visible.misses": 4,
+      "reading_load.words": 1025,
+      "reading_load.long_paragraphs": 2,
+      "reading_load.max_paragraph": 194
+    },
+    "page.getting-started": {
+      "axe.light": 7,
+      "axe.dark": 7,
+      "overflow.elements": 0,
+      "always_visible.misses": 4,
+      "reading_load.words": 1233,
+      "reading_load.long_paragraphs": 0,
+      "reading_load.max_paragraph": 74
+    },
+    "page.reference-cli": {
+      "axe.light": 0,
+      "axe.dark": 0,
+      "overflow.elements": 0,
+      "always_visible.misses": 4,
+      "reading_load.words": 3358,
+      "reading_load.long_paragraphs": 11,
+      "reading_load.max_paragraph": 322
+    },
+    "page.status": {
+      "axe.light": 0,
+      "axe.dark": 0,
+      "overflow.elements": 0,
+      "always_visible.misses": 4,
+      "reading_load.words": 2791,
+      "reading_load.long_paragraphs": 0,
+      "reading_load.max_paragraph": 51
+    }
+  },
+  "tasks": {
+    "install": {
+      "question": "Find the install command",
+      "truth": {
+        "path": "docs/getting-started",
+        "anchor": "#build",
+        "text": "cargo build --locked --release -p spindle-cli"
+      },
+      "plays": [
+        {
+          "viewport": "1280x800",
+          "theme": "dark",
+          "mode": "keyboard",
+          "reached": true,
+          "actions": 1,
+          "looks": 2,
+          "tabs": 10,
+          "detours": 0,
+          "path": [
+            "link \"Get started →\""
+          ],
+          "stuck": null
+        },
+        {
+          "viewport": "1280x800",
+          "theme": "dark",
+          "mode": "pointer",
+          "reached": true,
+          "actions": 1,
+          "looks": 2,
+          "tabs": 0,
+          "detours": 0,
+          "path": [
+            "link \"Get started →\""
+          ],
+          "stuck": null
+        },
+        {
+          "viewport": "1280x800",
+          "theme": "light",
+          "mode": "keyboard",
+          "reached": true,
+          "actions": 1,
+          "looks": 2,
+          "tabs": 10,
+          "detours": 0,
+          "path": [
+            "link \"Get started →\""
+          ],
+          "stuck": null
+        },
+        {
+          "viewport": "1280x800",
+          "theme": "light",
+          "mode": "pointer",
+          "reached": true,
+          "actions": 1,
+          "looks": 2,
+          "tabs": 0,
+          "detours": 0,
+          "path": [
+            "link \"Get started →\""
+          ],
+          "stuck": null
+        },
+        {
+          "viewport": "390x844",
+          "theme": "dark",
+          "mode": "keyboard",
+          "reached": true,
+          "actions": 5,
+          "looks": 7,
+          "tabs": 13,
+          "detours": 0,
+          "path": [
+            "link \"Get started →\"",
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)",
+            "button \"On this page\" (reveal)",
+            "link \"Build\""
+          ],
+          "stuck": null
+        },
+        {
+          "viewport": "390x844",
+          "theme": "dark",
+          "mode": "pointer",
+          "reached": true,
+          "actions": 2,
+          "looks": 4,
+          "tabs": 0,
+          "detours": 0,
+          "path": [
+            "link \"Get started →\"",
+            "link \"Direct link to Build\""
+          ],
+          "stuck": null
+        },
+        {
+          "viewport": "390x844",
+          "theme": "light",
+          "mode": "keyboard",
+          "reached": true,
+          "actions": 5,
+          "looks": 7,
+          "tabs": 13,
+          "detours": 0,
+          "path": [
+            "link \"Get started →\"",
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)",
+            "button \"On this page\" (reveal)",
+            "link \"Build\""
+          ],
+          "stuck": null
+        },
+        {
+          "viewport": "390x844",
+          "theme": "light",
+          "mode": "pointer",
+          "reached": true,
+          "actions": 2,
+          "looks": 4,
+          "tabs": 0,
+          "detours": 0,
+          "path": [
+            "link \"Get started →\"",
+            "link \"Direct link to Build\""
+          ],
+          "stuck": null
+        }
+      ]
+    },
+    "http": {
+      "question": "Find how to run a specification over HTTP",
+      "truth": {
+        "path": "docs/concepts/capabilities",
+        "anchor": "#serving-ingressnetwork-over-http",
+        "text": "over HTTP on"
+      },
+      "plays": [
+        {
+          "viewport": "1280x800",
+          "theme": "dark",
+          "mode": "keyboard",
+          "reached": false,
+          "actions": 17,
+          "looks": 48,
+          "tabs": 13,
+          "detours": 2,
+          "path": [
+            "link \"Get started →\"",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "link \"Documentation\" (explore)",
+            "scroll",
+            "scroll",
+            "scroll"
+          ],
+          "stuck": "nothing on screen carries \"HTTP\", \"serve\", \"ingress\", \"run\" at the end of /spindle/docs"
+        },
+        {
+          "viewport": "1280x800",
+          "theme": "dark",
+          "mode": "pointer",
+          "reached": false,
+          "actions": 17,
+          "looks": 48,
+          "tabs": 0,
+          "detours": 2,
+          "path": [
+            "link \"Get started →\"",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "link \"Documentation\" (explore)",
+            "scroll",
+            "scroll",
+            "scroll"
+          ],
+          "stuck": "nothing on screen carries \"HTTP\", \"serve\", \"ingress\", \"run\" at the end of /spindle/docs"
+        },
+        {
+          "viewport": "1280x800",
+          "theme": "light",
+          "mode": "keyboard",
+          "reached": false,
+          "actions": 17,
+          "looks": 48,
+          "tabs": 13,
+          "detours": 2,
+          "path": [
+            "link \"Get started →\"",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "link \"Documentation\" (explore)",
+            "scroll",
+            "scroll",
+            "scroll"
+          ],
+          "stuck": "nothing on screen carries \"HTTP\", \"serve\", \"ingress\", \"run\" at the end of /spindle/docs"
+        },
+        {
+          "viewport": "1280x800",
+          "theme": "light",
+          "mode": "pointer",
+          "reached": false,
+          "actions": 17,
+          "looks": 48,
+          "tabs": 0,
+          "detours": 2,
+          "path": [
+            "link \"Get started →\"",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "link \"Documentation\" (explore)",
+            "scroll",
+            "scroll",
+            "scroll"
+          ],
+          "stuck": "nothing on screen carries \"HTTP\", \"serve\", \"ingress\", \"run\" at the end of /spindle/docs"
+        },
+        {
+          "viewport": "390x844",
+          "theme": "dark",
+          "mode": "keyboard",
+          "reached": false,
+          "actions": 21,
+          "looks": 53,
+          "tabs": 98,
+          "detours": 1,
+          "path": [
+            "link \"Get started →\"",
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)",
+            "button \"On this page\" (reveal)",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)",
+            "scroll",
+            "scroll"
+          ],
+          "stuck": "nothing on screen carries \"HTTP\", \"serve\", \"ingress\", \"run\" at the end of /spindle/docs/getting-started"
+        },
+        {
+          "viewport": "390x844",
+          "theme": "dark",
+          "mode": "pointer",
+          "reached": false,
+          "actions": 19,
+          "looks": 47,
+          "tabs": 0,
+          "detours": 1,
+          "path": [
+            "link \"Get started →\"",
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)",
+            "button \"On this page\" (reveal)",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)"
+          ],
+          "stuck": "nothing on screen carries \"HTTP\", \"serve\", \"ingress\", \"run\" at the end of /spindle/docs/getting-started"
+        },
+        {
+          "viewport": "390x844",
+          "theme": "light",
+          "mode": "keyboard",
+          "reached": false,
+          "actions": 21,
+          "looks": 53,
+          "tabs": 98,
+          "detours": 1,
+          "path": [
+            "link \"Get started →\"",
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)",
+            "button \"On this page\" (reveal)",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)",
+            "scroll",
+            "scroll"
+          ],
+          "stuck": "nothing on screen carries \"HTTP\", \"serve\", \"ingress\", \"run\" at the end of /spindle/docs/getting-started"
+        },
+        {
+          "viewport": "390x844",
+          "theme": "light",
+          "mode": "pointer",
+          "reached": false,
+          "actions": 19,
+          "looks": 47,
+          "tabs": 0,
+          "detours": 1,
+          "path": [
+            "link \"Get started →\"",
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)",
+            "button \"On this page\" (reveal)",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)"
+          ],
+          "stuck": "nothing on screen carries \"HTTP\", \"serve\", \"ingress\", \"run\" at the end of /spindle/docs/getting-started"
+        }
+      ]
+    },
+    "observe": {
+      "question": "Find what run --observe serves",
+      "truth": {
+        "path": "docs/reference/cli",
+        "anchor": "#run",
+        "text": "Record every request the listener answers outside"
+      },
+      "plays": [
+        {
+          "viewport": "1280x800",
+          "theme": "dark",
+          "mode": "keyboard",
+          "reached": false,
+          "actions": 9,
+          "looks": 20,
+          "tabs": 95,
+          "detours": 3,
+          "path": [
+            "link \"Observe\"",
+            "link \"The observe API and UI\"",
+            "scroll",
+            "link \"docs/design/observe.md\"",
+            "scroll",
+            "link \"Documentation\" (explore)",
+            "scroll",
+            "scroll",
+            "scroll"
+          ],
+          "stuck": "nothing on screen carries \"--observe\", \"observe\", \"run\" at the end of /spindle/docs"
+        },
+        {
+          "viewport": "1280x800",
+          "theme": "dark",
+          "mode": "pointer",
+          "reached": false,
+          "actions": 9,
+          "looks": 20,
+          "tabs": 0,
+          "detours": 3,
+          "path": [
+            "link \"Observe\"",
+            "link \"The observe API and UI\"",
+            "scroll",
+            "link \"docs/design/observe.md\"",
+            "scroll",
+            "link \"Documentation\" (explore)",
+            "scroll",
+            "scroll",
+            "scroll"
+          ],
+          "stuck": "nothing on screen carries \"--observe\", \"observe\", \"run\" at the end of /spindle/docs"
+        },
+        {
+          "viewport": "1280x800",
+          "theme": "light",
+          "mode": "keyboard",
+          "reached": false,
+          "actions": 9,
+          "looks": 20,
+          "tabs": 95,
+          "detours": 3,
+          "path": [
+            "link \"Observe\"",
+            "link \"The observe API and UI\"",
+            "scroll",
+            "link \"docs/design/observe.md\"",
+            "scroll",
+            "link \"Documentation\" (explore)",
+            "scroll",
+            "scroll",
+            "scroll"
+          ],
+          "stuck": "nothing on screen carries \"--observe\", \"observe\", \"run\" at the end of /spindle/docs"
+        },
+        {
+          "viewport": "1280x800",
+          "theme": "light",
+          "mode": "pointer",
+          "reached": false,
+          "actions": 9,
+          "looks": 20,
+          "tabs": 0,
+          "detours": 3,
+          "path": [
+            "link \"Observe\"",
+            "link \"The observe API and UI\"",
+            "scroll",
+            "link \"docs/design/observe.md\"",
+            "scroll",
+            "link \"Documentation\" (explore)",
+            "scroll",
+            "scroll",
+            "scroll"
+          ],
+          "stuck": "nothing on screen carries \"--observe\", \"observe\", \"run\" at the end of /spindle/docs"
+        },
+        {
+          "viewport": "390x844",
+          "theme": "dark",
+          "mode": "keyboard",
+          "reached": false,
+          "actions": 14,
+          "looks": 26,
+          "tabs": 61,
+          "detours": 2,
+          "path": [
+            "button \"Toggle navigation bar\" (reveal)",
+            "link \"Observe\"",
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)",
+            "button \"On this page\" (reveal)",
+            "link \"The observe API and UI\"",
+            "scroll",
+            "scroll",
+            "link \"docs/design/observe.md\"",
+            "scroll",
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)",
+            "scroll",
+            "scroll"
+          ],
+          "stuck": "nothing on screen carries \"--observe\", \"observe\", \"run\" at the end of /spindle/docs/concepts/observe"
+        },
+        {
+          "viewport": "390x844",
+          "theme": "dark",
+          "mode": "pointer",
+          "reached": false,
+          "actions": 12,
+          "looks": 20,
+          "tabs": 0,
+          "detours": 2,
+          "path": [
+            "button \"Toggle navigation bar\" (reveal)",
+            "link \"Observe\"",
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)",
+            "button \"On this page\" (reveal)",
+            "link \"The observe API and UI\"",
+            "scroll",
+            "scroll",
+            "link \"docs/design/observe.md\"",
+            "scroll",
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)"
+          ],
+          "stuck": "nothing on screen carries \"--observe\", \"observe\", \"run\" at the end of /spindle/docs/concepts/observe"
+        },
+        {
+          "viewport": "390x844",
+          "theme": "light",
+          "mode": "keyboard",
+          "reached": false,
+          "actions": 14,
+          "looks": 26,
+          "tabs": 61,
+          "detours": 2,
+          "path": [
+            "button \"Toggle navigation bar\" (reveal)",
+            "link \"Observe\"",
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)",
+            "button \"On this page\" (reveal)",
+            "link \"The observe API and UI\"",
+            "scroll",
+            "scroll",
+            "link \"docs/design/observe.md\"",
+            "scroll",
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)",
+            "scroll",
+            "scroll"
+          ],
+          "stuck": "nothing on screen carries \"--observe\", \"observe\", \"run\" at the end of /spindle/docs/concepts/observe"
+        },
+        {
+          "viewport": "390x844",
+          "theme": "light",
+          "mode": "pointer",
+          "reached": false,
+          "actions": 12,
+          "looks": 20,
+          "tabs": 0,
+          "detours": 2,
+          "path": [
+            "button \"Toggle navigation bar\" (reveal)",
+            "link \"Observe\"",
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)",
+            "button \"On this page\" (reveal)",
+            "link \"The observe API and UI\"",
+            "scroll",
+            "scroll",
+            "link \"docs/design/observe.md\"",
+            "scroll",
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)"
+          ],
+          "stuck": "nothing on screen carries \"--observe\", \"observe\", \"run\" at the end of /spindle/docs/concepts/observe"
+        }
+      ]
+    },
+    "release": {
+      "question": "Find the release and version status",
+      "truth": {
+        "path": null,
+        "href": "https://github.com/beyond10x/spindle/blob/main/CHANGELOG.md",
+        "anchor": "CHANGELOG.md, the releases (0.9.0 on 2026-11-10)",
+        "text": "CHANGELOG.md"
+      },
+      "plays": [
+        {
+          "viewport": "1280x800",
+          "theme": "dark",
+          "mode": "keyboard",
+          "reached": true,
+          "actions": 17,
+          "looks": 48,
+          "tabs": 132,
+          "detours": 1,
+          "path": [
+            "link \"Status\"",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "link \"Changelog\""
+          ],
+          "stuck": null
+        },
+        {
+          "viewport": "1280x800",
+          "theme": "dark",
+          "mode": "pointer",
+          "reached": true,
+          "actions": 17,
+          "looks": 48,
+          "tabs": 0,
+          "detours": 1,
+          "path": [
+            "link \"Status\"",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "link \"Changelog\""
+          ],
+          "stuck": null
+        },
+        {
+          "viewport": "1280x800",
+          "theme": "light",
+          "mode": "keyboard",
+          "reached": true,
+          "actions": 17,
+          "looks": 48,
+          "tabs": 132,
+          "detours": 1,
+          "path": [
+            "link \"Status\"",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "link \"Changelog\""
+          ],
+          "stuck": null
+        },
+        {
+          "viewport": "1280x800",
+          "theme": "light",
+          "mode": "pointer",
+          "reached": true,
+          "actions": 17,
+          "looks": 48,
+          "tabs": 0,
+          "detours": 1,
+          "path": [
+            "link \"Status\"",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "link \"Changelog\""
+          ],
+          "stuck": null
+        },
+        {
+          "viewport": "390x844",
+          "theme": "dark",
+          "mode": "keyboard",
+          "reached": true,
+          "actions": 26,
+          "looks": 68,
+          "tabs": 120,
+          "detours": 1,
+          "path": [
+            "button \"Toggle navigation bar\" (reveal)",
+            "link \"Status\"",
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)",
+            "button \"On this page\" (reveal)",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "link \"Changelog\""
+          ],
+          "stuck": null
+        },
+        {
+          "viewport": "390x844",
+          "theme": "dark",
+          "mode": "pointer",
+          "reached": true,
+          "actions": 26,
+          "looks": 68,
+          "tabs": 0,
+          "detours": 1,
+          "path": [
+            "button \"Toggle navigation bar\" (reveal)",
+            "link \"Status\"",
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)",
+            "button \"On this page\" (reveal)",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "link \"Changelog\""
+          ],
+          "stuck": null
+        },
+        {
+          "viewport": "390x844",
+          "theme": "light",
+          "mode": "keyboard",
+          "reached": true,
+          "actions": 26,
+          "looks": 68,
+          "tabs": 120,
+          "detours": 1,
+          "path": [
+            "button \"Toggle navigation bar\" (reveal)",
+            "link \"Status\"",
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)",
+            "button \"On this page\" (reveal)",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "link \"Changelog\""
+          ],
+          "stuck": null
+        },
+        {
+          "viewport": "390x844",
+          "theme": "light",
+          "mode": "pointer",
+          "reached": true,
+          "actions": 26,
+          "looks": 68,
+          "tabs": 0,
+          "detours": 1,
+          "path": [
+            "button \"Toggle navigation bar\" (reveal)",
+            "link \"Status\"",
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)",
+            "button \"On this page\" (reveal)",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "scroll",
+            "link \"Changelog\""
+          ],
+          "stuck": null
+        }
+      ]
+    },
+    "environment": {
+      "question": "Find what an environment document is",
+      "truth": {
+        "path": "docs/concepts/environment-and-admission",
+        "anchor": "#the-environment",
+        "text": "An environment document"
+      },
+      "plays": [
+        {
+          "viewport": "1280x800",
+          "theme": "dark",
+          "mode": "keyboard",
+          "reached": true,
+          "actions": 3,
+          "looks": 8,
+          "tabs": 14,
+          "detours": 0,
+          "path": [
+            "scroll",
+            "scroll",
+            "link \"Admission or a named refusal\""
+          ],
+          "stuck": null
+        },
+        {
+          "viewport": "1280x800",
+          "theme": "dark",
+          "mode": "pointer",
+          "reached": true,
+          "actions": 3,
+          "looks": 8,
+          "tabs": 0,
+          "detours": 0,
+          "path": [
+            "scroll",
+            "scroll",
+            "link \"Admission or a named refusal\""
+          ],
+          "stuck": null
+        },
+        {
+          "viewport": "1280x800",
+          "theme": "light",
+          "mode": "keyboard",
+          "reached": true,
+          "actions": 3,
+          "looks": 8,
+          "tabs": 14,
+          "detours": 0,
+          "path": [
+            "scroll",
+            "scroll",
+            "link \"Admission or a named refusal\""
+          ],
+          "stuck": null
+        },
+        {
+          "viewport": "1280x800",
+          "theme": "light",
+          "mode": "pointer",
+          "reached": true,
+          "actions": 3,
+          "looks": 8,
+          "tabs": 0,
+          "detours": 0,
+          "path": [
+            "scroll",
+            "scroll",
+            "link \"Admission or a named refusal\""
+          ],
+          "stuck": null
+        },
+        {
+          "viewport": "390x844",
+          "theme": "dark",
+          "mode": "keyboard",
+          "reached": true,
+          "actions": 6,
+          "looks": 13,
+          "tabs": 11,
+          "detours": 0,
+          "path": [
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)",
+            "scroll",
+            "scroll",
+            "scroll",
+            "link \"Admission or a named refusal\""
+          ],
+          "stuck": null
+        },
+        {
+          "viewport": "390x844",
+          "theme": "dark",
+          "mode": "pointer",
+          "reached": true,
+          "actions": 6,
+          "looks": 13,
+          "tabs": 0,
+          "detours": 0,
+          "path": [
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)",
+            "scroll",
+            "scroll",
+            "scroll",
+            "link \"Admission or a named refusal\""
+          ],
+          "stuck": null
+        },
+        {
+          "viewport": "390x844",
+          "theme": "light",
+          "mode": "keyboard",
+          "reached": true,
+          "actions": 6,
+          "looks": 13,
+          "tabs": 11,
+          "detours": 0,
+          "path": [
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)",
+            "scroll",
+            "scroll",
+            "scroll",
+            "link \"Admission or a named refusal\""
+          ],
+          "stuck": null
+        },
+        {
+          "viewport": "390x844",
+          "theme": "light",
+          "mode": "pointer",
+          "reached": true,
+          "actions": 6,
+          "looks": 13,
+          "tabs": 0,
+          "detours": 0,
+          "path": [
+            "button \"Toggle navigation bar\" (reveal)",
+            "button \"Close navigation bar\" (dismiss)",
+            "scroll",
+            "scroll",
+            "scroll",
+            "link \"Admission or a named refusal\""
+          ],
+          "stuck": null
+        }
+      ]
+    }
+  },
+  "measured_only": [
+    {
+      "page": "concepts-capabilities",
+      "viewport": "1024x768",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 0
+    },
+    {
+      "page": "concepts-capabilities",
+      "viewport": "1024x768",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 0
+    },
+    {
+      "page": "concepts-capabilities",
+      "viewport": "1440x900",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 0
+    },
+    {
+      "page": "concepts-capabilities",
+      "viewport": "1440x900",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 0
+    },
+    {
+      "page": "concepts-capabilities",
+      "viewport": "768x1024",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 0
+    },
+    {
+      "page": "concepts-capabilities",
+      "viewport": "768x1024",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 0
+    },
+    {
+      "page": "concepts-components-and-bindings",
+      "viewport": "1024x768",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 1
+    },
+    {
+      "page": "concepts-components-and-bindings",
+      "viewport": "1024x768",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 1
+    },
+    {
+      "page": "concepts-components-and-bindings",
+      "viewport": "1440x900",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 1
+    },
+    {
+      "page": "concepts-components-and-bindings",
+      "viewport": "1440x900",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 1
+    },
+    {
+      "page": "concepts-components-and-bindings",
+      "viewport": "768x1024",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 1
+    },
+    {
+      "page": "concepts-components-and-bindings",
+      "viewport": "768x1024",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 1
+    },
+    {
+      "page": "concepts-deployment-targets",
+      "viewport": "1024x768",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 1
+    },
+    {
+      "page": "concepts-deployment-targets",
+      "viewport": "1024x768",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 1
+    },
+    {
+      "page": "concepts-deployment-targets",
+      "viewport": "1440x900",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 1
+    },
+    {
+      "page": "concepts-deployment-targets",
+      "viewport": "1440x900",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 1
+    },
+    {
+      "page": "concepts-deployment-targets",
+      "viewport": "768x1024",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 1
+    },
+    {
+      "page": "concepts-deployment-targets",
+      "viewport": "768x1024",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 1
+    },
+    {
+      "page": "concepts-environment-and-admission",
+      "viewport": "1024x768",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 0
+    },
+    {
+      "page": "concepts-environment-and-admission",
+      "viewport": "1024x768",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 0
+    },
+    {
+      "page": "concepts-environment-and-admission",
+      "viewport": "1440x900",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 0
+    },
+    {
+      "page": "concepts-environment-and-admission",
+      "viewport": "1440x900",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 0
+    },
+    {
+      "page": "concepts-environment-and-admission",
+      "viewport": "768x1024",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 0
+    },
+    {
+      "page": "concepts-environment-and-admission",
+      "viewport": "768x1024",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 0
+    },
+    {
+      "page": "concepts-observe",
+      "viewport": "1024x768",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 1
+    },
+    {
+      "page": "concepts-observe",
+      "viewport": "1024x768",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 1
+    },
+    {
+      "page": "concepts-observe",
+      "viewport": "1440x900",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 1
+    },
+    {
+      "page": "concepts-observe",
+      "viewport": "1440x900",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 1
+    },
+    {
+      "page": "concepts-observe",
+      "viewport": "768x1024",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 1
+    },
+    {
+      "page": "concepts-observe",
+      "viewport": "768x1024",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 1
+    },
+    {
+      "page": "concepts-specification",
+      "viewport": "1024x768",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 3
+    },
+    {
+      "page": "concepts-specification",
+      "viewport": "1024x768",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 3
+    },
+    {
+      "page": "concepts-specification",
+      "viewport": "1440x900",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 3
+    },
+    {
+      "page": "concepts-specification",
+      "viewport": "1440x900",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 3
+    },
+    {
+      "page": "concepts-specification",
+      "viewport": "768x1024",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 3
+    },
+    {
+      "page": "concepts-specification",
+      "viewport": "768x1024",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 3
+    },
+    {
+      "page": "docs",
+      "viewport": "1024x768",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 8
+    },
+    {
+      "page": "docs",
+      "viewport": "1024x768",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 8
+    },
+    {
+      "page": "docs",
+      "viewport": "1440x900",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 8
+    },
+    {
+      "page": "docs",
+      "viewport": "1440x900",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 8
+    },
+    {
+      "page": "docs",
+      "viewport": "768x1024",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 8
+    },
+    {
+      "page": "docs",
+      "viewport": "768x1024",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 8
+    },
+    {
+      "page": "examples-rally",
+      "viewport": "1024x768",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 2
+    },
+    {
+      "page": "examples-rally",
+      "viewport": "1024x768",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 2
+    },
+    {
+      "page": "examples-rally",
+      "viewport": "1440x900",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 2
+    },
+    {
+      "page": "examples-rally",
+      "viewport": "1440x900",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 2
+    },
+    {
+      "page": "examples-rally",
+      "viewport": "768x1024",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 2
+    },
+    {
+      "page": "examples-rally",
+      "viewport": "768x1024",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 2
+    },
+    {
+      "page": "getting-started",
+      "viewport": "1024x768",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 7
+    },
+    {
+      "page": "getting-started",
+      "viewport": "1024x768",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 7
+    },
+    {
+      "page": "getting-started",
+      "viewport": "1440x900",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 7
+    },
+    {
+      "page": "getting-started",
+      "viewport": "1440x900",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 7
+    },
+    {
+      "page": "getting-started",
+      "viewport": "768x1024",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 7
+    },
+    {
+      "page": "getting-started",
+      "viewport": "768x1024",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 7
+    },
+    {
+      "page": "landing",
+      "viewport": "1024x768",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 2,
+      "axe": 0
+    },
+    {
+      "page": "landing",
+      "viewport": "1024x768",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 2,
+      "axe": 0
+    },
+    {
+      "page": "landing",
+      "viewport": "1440x900",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 2,
+      "axe": 0
+    },
+    {
+      "page": "landing",
+      "viewport": "1440x900",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 2,
+      "axe": 0
+    },
+    {
+      "page": "landing",
+      "viewport": "768x1024",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 0
+    },
+    {
+      "page": "landing",
+      "viewport": "768x1024",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 0
+    },
+    {
+      "page": "reference-cli",
+      "viewport": "1024x768",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 0
+    },
+    {
+      "page": "reference-cli",
+      "viewport": "1024x768",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 0
+    },
+    {
+      "page": "reference-cli",
+      "viewport": "1440x900",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 0
+    },
+    {
+      "page": "reference-cli",
+      "viewport": "1440x900",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 0
+    },
+    {
+      "page": "reference-cli",
+      "viewport": "768x1024",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 0
+    },
+    {
+      "page": "reference-cli",
+      "viewport": "768x1024",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 0
+    },
+    {
+      "page": "status",
+      "viewport": "1024x768",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 0
+    },
+    {
+      "page": "status",
+      "viewport": "1024x768",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 0
+    },
+    {
+      "page": "status",
+      "viewport": "1440x900",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 0
+    },
+    {
+      "page": "status",
+      "viewport": "1440x900",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 3,
+      "axe": 0
+    },
+    {
+      "page": "status",
+      "viewport": "768x1024",
+      "theme": "dark",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 0
+    },
+    {
+      "page": "status",
+      "viewport": "768x1024",
+      "theme": "light",
+      "overflow": 0,
+      "hidden": 4,
+      "axe": 0
+    }
+  ],
+  "worst_pages": [
+    {
+      "page": "getting-started",
+      "viewport": "1280x800",
+      "theme": "light",
+      "failures": 4,
+      "file": "worst--getting-started--1280x800--light.png"
+    },
+    {
+      "page": "getting-started",
+      "viewport": "1280x800",
+      "theme": "dark",
+      "failures": 4,
+      "file": "worst--getting-started--1280x800--dark.png"
+    },
+    {
+      "page": "getting-started",
+      "viewport": "390x844",
+      "theme": "light",
+      "failures": 5,
+      "file": "worst--getting-started--390x844--light.png"
+    },
+    {
+      "page": "getting-started",
+      "viewport": "390x844",
+      "theme": "dark",
+      "failures": 5,
+      "file": "worst--getting-started--390x844--dark.png"
+    }
+  ],
+  "levels": {
+    "L0": "dropped: a docs site has no guidance cue",
+    "L1": "npm test in website/ux (core and findings)",
+    "L2": "run: every sitemap page, gating viewports gated, measured-only viewports recorded",
+    "L3": "run: every task, pointer and keyboard, at the gating viewports",
+    "L4": "not run: paid, operator-only",
+    "L5": "not run: paid, operator-only",
+    "L6": "not run: no people in R-00; the cards were played by the screen-only reader",
+    "L7": "two fresh review agents: review-heuristics.md, review-report.md",
+    "L8": "not run: per milestone"
+  }
+}

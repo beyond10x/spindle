@@ -1,0 +1,5555 @@
+{
+ "note": "Heuristic review probes, R-00. Served build at 127.0.0.1:4331/spindle/. Scripts: .out/review-1/probe*.ts (git-ignored).",
+ "pages_keyboard_anchor_404": {
+  "1280x800-light": {
+   "landing": {
+    "cls": 0,
+    "words": 2186,
+    "smallWords": 1762,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(79, 98, 93)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 25,
+      "px": "11.2px",
+      "sample": "Early \u00b7 loading, admission and in-process runs wor",
+      "color": "rgb(23, 104, 74)"
+     },
+     "p.b10x-hero__meta@12.32": {
+      "n": 7,
+      "px": "12.32px",
+      "sample": "Early \u00b7 ESS \u00b7 Rust \u00b7 Apache-2.0",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-kpi__index@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "01",
+      "color": "rgb(79, 98, 93)"
+     },
+     "dt.b10x-kpi__label@13.12": {
+      "n": 4,
+      "px": "13.12px",
+      "sample": "shipped, runs today",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-flow__label@10.4": {
+      "n": 6,
+      "px": "10.4px",
+      "sample": "check",
+      "color": "rgb(23, 104, 74)"
+     },
+     "p.b10x-flow__step@13.12": {
+      "n": 61,
+      "px": "13.12px",
+      "sample": "ess-compiler turns the specification directory int",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-status@12": {
+      "n": 53,
+      "px": "12px",
+      "sample": "Shipped",
+      "color": "rgb(15, 27, 28)"
+     },
+     "strong.b10x-status-strip__legend@13.12": {
+      "n": 2,
+      "px": "13.12px",
+      "sample": "41",
+      "color": "rgb(15, 27, 28)"
+     },
+     "p.b10x-status-strip__group-title@10.56": {
+      "n": 8,
+      "px": "10.56px",
+      "sample": "Shipped \u00b7 runs today",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-status-strip__detail@13.28": {
+      "n": 1524,
+      "px": "13.28px",
+      "sample": "A directory of ESS documents is compiled by ess-co",
+      "color": "rgb(79, 98, 93)"
+     },
+     "p.b10x-status-strip__source@11.52": {
+      "n": 3,
+      "px": "11.52px",
+      "sample": "As of 2026-11-04",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-mark@13.76": {
+      "n": 1,
+      "px": "13.76px",
+      "sample": "Es",
+      "color": "rgb(132, 61, 51)"
+     },
+     "span.b10x-related__copy@13.44": {
+      "n": 11,
+      "px": "13.44px",
+      "sample": "Executable system specifications: the contract eve",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-related__relation@12.16": {
+      "n": 13,
+      "px": "12.16px",
+      "sample": "specifies",
+      "color": "rgb(132, 61, 51)"
+     },
+     "span.b10x-related__relation@13.44": {
+      "n": 1,
+      "px": "13.44px",
+      "sample": "\u2192",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [
+     "b10x-grow",
+     "b10x-grow"
+    ],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [],
+    "extCount": 0,
+    "mermaid": 0,
+    "title": "Deploy the specification. Spindle runs it. | Spindle"
+   },
+   "docs": {
+    "cls": 0,
+    "words": 520,
+    "smallWords": 75,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.categoryLinkLabel_W154@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Concepts",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.breadcrumbs__link@12.8": {
+      "n": 1,
+      "px": "12.8px",
+      "sample": "Overview",
+      "color": "rgb(15, 27, 28)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 3,
+      "px": "11.2px",
+      "sample": "1 of 6",
+      "color": "rgb(23, 104, 74)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 6,
+      "px": "13.12px",
+      "sample": "README.md, docs/design/spindle.md, crates/spindle-",
+      "color": "rgb(79, 98, 93)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 4,
+      "px": "10.88px",
+      "sample": "Step",
+      "color": "rgb(79, 98, 93)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 6,
+      "px": "12.672px",
+      "sample": "check",
+      "color": "rgb(15, 27, 28)"
+     },
+     "div.admonitionHeading_Gvgb@12.48": {
+      "n": 1,
+      "px": "12.48px",
+      "sample": "Early",
+      "color": "rgb(138, 83, 0)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 1,
+      "px": "11.2px",
+      "sample": "Next",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.table-of-contents__link@12.8": {
+      "n": 9,
+      "px": "12.8px",
+      "sample": "What Spindle is not",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "ESS|target=_blank",
+     "GitHub|target=_blank",
+     "ESS|target=_blank",
+     "GitHub|target=_blank",
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 5,
+    "mermaid": 0,
+    "title": "Spindle"
+   },
+   "docs/getting-started": {
+    "cls": 0,
+    "words": 1049,
+    "smallWords": 604,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.categoryLinkLabel_W154@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Concepts",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.breadcrumbs__link@12.8": {
+      "n": 2,
+      "px": "12.8px",
+      "sample": "Getting started",
+      "color": "rgb(15, 27, 28)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 3,
+      "px": "11.2px",
+      "sample": "2 of 6",
+      "color": "rgb(23, 104, 74)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 17,
+      "px": "13.12px",
+      "sample": "every command below was run in a checkout of main ",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.token@13.12": {
+      "n": 517,
+      "px": "13.12px",
+      "sample": "git clone https://github.com/beyond10x/spindle",
+      "color": "rgb(29, 42, 43)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.table-of-contents__link@12.8": {
+      "n": 19,
+      "px": "12.8px",
+      "sample": "Build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 1,
+    "mermaid": 0,
+    "title": "Getting started | Spindle"
+   },
+   "docs/concepts/specification": {
+    "cls": 0,
+    "words": 1046,
+    "smallWords": 65,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.categoryLinkLabel_W154@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Concepts",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.breadcrumbs__link@12.8": {
+      "n": 3,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(29, 42, 43)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 1 of 6",
+      "color": "rgb(23, 104, 74)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 6,
+      "px": "13.12px",
+      "sample": "crates/spindle-spec/src/lib.rs, crates/spindle-spe",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-status@12": {
+      "n": 1,
+      "px": "12px",
+      "sample": "Planned",
+      "color": "rgb(15, 27, 28)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.table-of-contents__link@12.8": {
+      "n": 4,
+      "px": "12.8px",
+      "sample": "Loading",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "ESS|target=_blank",
+     "GitHub|target=_blank",
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 3,
+    "mermaid": 0,
+    "title": "The specification | Spindle"
+   },
+   "docs/concepts/capabilities": {
+    "cls": 0,
+    "words": 1075,
+    "smallWords": 208,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.categoryLinkLabel_W154@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Concepts",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.breadcrumbs__link@12.8": {
+      "n": 2,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(29, 42, 43)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 2 of 6",
+      "color": "rgb(23, 104, 74)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 7,
+      "px": "13.12px",
+      "sample": "crates/spindle-capability/src/derive.rs, crates/sp",
+      "color": "rgb(79, 98, 93)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Capability",
+      "color": "rgb(79, 98, 93)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 17,
+      "px": "12.672px",
+      "sample": "store.durable",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.b10x-chip__text@12.48": {
+      "n": 1,
+      "px": "12.48px",
+      "sample": "outcome",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.token@13.12": {
+      "n": 112,
+      "px": "13.12px",
+      "sample": "$ b10x-spindle capabilities examples/rally/ess --c",
+      "color": "rgb(29, 42, 43)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.table-of-contents__link@12.8": {
+      "n": 13,
+      "px": "12.8px",
+      "sample": "The derivation rules",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-toc-word@11.264": {
+      "n": 2,
+      "px": "11.264px",
+      "sample": "ingress",
+      "color": "rgb(15, 27, 28)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 1,
+    "mermaid": 0,
+    "title": "Capabilities | Spindle"
+   },
+   "docs/concepts/environment-and-admission": {
+    "cls": 0,
+    "words": 587,
+    "smallWords": 188,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.categoryLinkLabel_W154@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Concepts",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.breadcrumbs__link@12.8": {
+      "n": 4,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(29, 42, 43)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 3 of 6",
+      "color": "rgb(23, 104, 74)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 5,
+      "px": "13.12px",
+      "sample": "crates/spindle-capability/src/environment.rs, crat",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.token@13.12": {
+      "n": 79,
+      "px": "13.12px",
+      "sample": "format",
+      "color": "rgb(23, 104, 74)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 6,
+      "px": "10.88px",
+      "sample": "Capability",
+      "color": "rgb(79, 98, 93)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 33,
+      "px": "12.672px",
+      "sample": "store.durable",
+      "color": "rgb(15, 27, 28)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.table-of-contents__link@12.8": {
+      "n": 10,
+      "px": "12.8px",
+      "sample": "The environment",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 1,
+    "mermaid": 0,
+    "title": "Environment and admission | Spindle"
+   },
+   "docs/concepts/components-and-bindings": {
+    "cls": 0,
+    "words": 536,
+    "smallWords": 83,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.categoryLinkLabel_W154@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Concepts",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.breadcrumbs__link@12.8": {
+      "n": 4,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(29, 42, 43)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 4 of 6",
+      "color": "rgb(23, 104, 74)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 6,
+      "px": "13.12px",
+      "sample": "crates/spindle-host/src/lib.rs, crates/spindle-tim",
+      "color": "rgb(79, 98, 93)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Word",
+      "color": "rgb(79, 98, 93)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 10,
+      "px": "12.672px",
+      "sample": "anchor",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.b10x-status@12": {
+      "n": 1,
+      "px": "12px",
+      "sample": "Planned",
+      "color": "rgb(15, 27, 28)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.table-of-contents__link@12.8": {
+      "n": 8,
+      "px": "12.8px",
+      "sample": "Components",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 1,
+    "mermaid": 0,
+    "title": "Components and bindings | Spindle"
+   },
+   "docs/concepts/deployment-targets": {
+    "cls": 0,
+    "words": 525,
+    "smallWords": 82,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.categoryLinkLabel_W154@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Concepts",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.breadcrumbs__link@12.8": {
+      "n": 3,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(29, 42, 43)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 5 of 6",
+      "color": "rgb(23, 104, 74)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 10,
+      "px": "13.12px",
+      "sample": "ess/domains/placement.yaml, crates/spindle-target/",
+      "color": "rgb(79, 98, 93)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Target",
+      "color": "rgb(79, 98, 93)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 8,
+      "px": "12.672px",
+      "sample": "spindle-target",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.b10x-status@12": {
+      "n": 1,
+      "px": "12px",
+      "sample": "Planned",
+      "color": "rgb(15, 27, 28)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.table-of-contents__link@12.8": {
+      "n": 6,
+      "px": "12.8px",
+      "sample": "Placement",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "docs/design/spindle.md|target=_blank",
+     "docs/design/observe.md|target=_blank",
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 3,
+    "mermaid": 0,
+    "title": "Deployment targets | Spindle"
+   },
+   "docs/concepts/observe": {
+    "cls": 0,
+    "words": 896,
+    "smallWords": 112,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.categoryLinkLabel_W154@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Concepts",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.breadcrumbs__link@12.8": {
+      "n": 2,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(29, 42, 43)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 6 of 6",
+      "color": "rgb(23, 104, 74)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 11,
+      "px": "13.12px",
+      "sample": "crates/spindle-telemetry/src/lib.rs, crates/spindl",
+      "color": "rgb(79, 98, 93)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 5,
+      "px": "10.88px",
+      "sample": "Counter",
+      "color": "rgb(79, 98, 93)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 22,
+      "px": "12.672px",
+      "sample": "command.<Command>.<outcome>",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.token@13.12": {
+      "n": 9,
+      "px": "13.12px",
+      "sample": "task build",
+      "color": "rgb(29, 42, 43)"
+     },
+     "span.b10x-status@12": {
+      "n": 1,
+      "px": "12px",
+      "sample": "Planned",
+      "color": "rgb(15, 27, 28)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.table-of-contents__link@12.8": {
+      "n": 11,
+      "px": "12.8px",
+      "sample": "Counters",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "docs/design/observe.md|target=_blank",
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 2,
+    "mermaid": 0,
+    "title": "Observe | Spindle"
+   },
+   "docs/examples/rally": {
+    "cls": 0,
+    "words": 920,
+    "smallWords": 203,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.categoryLinkLabel_W154@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Concepts",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.breadcrumbs__link@12.8": {
+      "n": 2,
+      "px": "12.8px",
+      "sample": "Examples",
+      "color": "rgb(29, 42, 43)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 1,
+      "px": "11.2px",
+      "sample": "Examples",
+      "color": "rgb(23, 104, 74)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 9,
+      "px": "13.12px",
+      "sample": "examples/rally/ess, crates/spindle-host/tests/spin",
+      "color": "rgb(79, 98, 93)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 7,
+      "px": "10.88px",
+      "sample": "Component",
+      "color": "rgb(79, 98, 93)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 35,
+      "px": "12.672px",
+      "sample": "rally-table",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.token@13.12": {
+      "n": 89,
+      "px": "13.12px",
+      "sample": "$ b10x-spindle play examples/rally/ess --environme",
+      "color": "rgb(29, 42, 43)"
+     },
+     "span.b10x-status@12": {
+      "n": 1,
+      "px": "12px",
+      "sample": "Planned",
+      "color": "rgb(15, 27, 28)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.table-of-contents__link@12.8": {
+      "n": 13,
+      "px": "12.8px",
+      "sample": "Three components",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 1,
+    "mermaid": 0,
+    "title": "Rally | Spindle"
+   },
+   "docs/reference/cli": {
+    "cls": 0,
+    "words": 3254,
+    "smallWords": 315,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.categoryLinkLabel_W154@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Concepts",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.breadcrumbs__link@12.8": {
+      "n": 2,
+      "px": "12.8px",
+      "sample": "Reference",
+      "color": "rgb(29, 42, 43)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 36,
+      "px": "10.88px",
+      "sample": "Command",
+      "color": "rgb(79, 98, 93)"
+     },
+     "code.@12.672": {
+      "n": 8,
+      "px": "12.672px",
+      "sample": "check",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.token@13.12": {
+      "n": 46,
+      "px": "13.12px",
+      "sample": "b10x-spindle check [OPTIONS] <SPEC>",
+      "color": "rgb(29, 42, 43)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 156,
+      "px": "12.672px",
+      "sample": "<SPEC>",
+      "color": "rgb(15, 27, 28)"
+     },
+     "p.b10x-table-guidance@13.6": {
+      "n": 13,
+      "px": "13.6px",
+      "sample": "More columns: swipe horizontally, or focus the tab",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-toc-word@11.264": {
+      "n": 8,
+      "px": "11.264px",
+      "sample": "check",
+      "color": "rgb(15, 27, 28)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [],
+    "extCount": 0,
+    "mermaid": 0,
+    "title": "CLI reference | Spindle"
+   },
+   "docs/status": {
+    "cls": 0,
+    "words": 2146,
+    "smallWords": 100,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.categoryLinkLabel_W154@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Concepts",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.breadcrumbs__link@12.8": {
+      "n": 1,
+      "px": "12.8px",
+      "sample": "Status",
+      "color": "rgb(15, 27, 28)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 6,
+      "px": "10.88px",
+      "sample": "Area",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-chip__text@10.368": {
+      "n": 43,
+      "px": "10.368px",
+      "sample": "shipped",
+      "color": "rgb(15, 27, 28)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 1,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.table-of-contents__link@12.8": {
+      "n": 5,
+      "px": "12.8px",
+      "sample": "The tests that hold them",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "crates/spindle-spec/tests/spindle-spec/l|target=_blank",
+     "crates/spindle-capability/tests/spindle-|target=_blank",
+     "crates/spindle-capability/tests/spindle-|target=_blank",
+     "crates/spindle-capability/tests/spindle-|target=_blank",
+     "crates/spindle-cli/tests/spindle-cli/adm|target=_blank",
+     "crates/spindle-kernel/tests/spindle-kern|target=_blank",
+     "crates/spindle-kernel/tests/spindle-kern|target=_blank",
+     "crates/spindle-store-browser/tests/spind|target=_blank",
+     "crates/spindle-wasm/tests/spindle-wasm/s|target=_blank",
+     "crates/spindle-timer/tests/spindle-timer|target=_blank",
+     "crates/spindle-channel/tests/spindle-cha|target=_blank",
+     "crates/spindle-host/tests/spindle-host/r|target=_blank"
+    ],
+    "extCount": 41,
+    "mermaid": 0,
+    "title": "Status | Spindle"
+   }
+  },
+  "1280x800-light-tabs": [
+   "A \"Skip to main content\" outline=solid 2px rgb(138, 83, 0) shadow=rgba(0, 0, 0, 0.2) 0px 5px 40px 0px at 16,16 180x42",
+   "A \"Spindle\" outline=solid 2px rgb(138, 83, 0) shadow=none at 68,19 199x34",
+   "A \"Documentation\" outline=solid 2px rgb(138, 83, 0) shadow=none at 691,21 119x30",
+   "A \"Getting started\" outline=solid 2px rgb(138, 83, 0) shadow=rgb(23, 104, 74) 0px -1px 0px 0px inset at 810,21 117x30",
+   "A \"Rally\" outline=solid 2px rgb(138, 83, 0) shadow=none at 927,21 54x30",
+   "A \"CLI\" outline=solid 2px rgb(138, 83, 0) shadow=none at 981,21 44x30",
+   "A \"Status\" outline=solid 2px rgb(138, 83, 0) shadow=none at 1025,21 64x30",
+   "A \"GitHub\" outline=solid 2px rgb(138, 83, 0) shadow=none at 1096,21 84x30"
+  ],
+  "1280x800-light-anchor": {
+   "headingTop": 177,
+   "navBottom": 74,
+   "focus": "BODY"
+  },
+  "1280x800-light-404": {
+   "status": 404,
+   "text": "404\n\nPage not found\n\nThere is no page at this address. It may have moved, or the link that brought you here is out of date.\n\nGo to the documentation\nBack to the home page"
+  },
+  "1280x800-light-toggle": {
+   "label": "Switch between dark and light mode (currently system mode)",
+   "title": "system mode"
+  },
+  "1280x800-dark": {
+   "landing": {
+    "cls": 0,
+    "words": 2186,
+    "smallWords": 1762,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(168, 184, 179)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 25,
+      "px": "11.2px",
+      "sample": "Early \u00b7 loading, admission and in-process runs wor",
+      "color": "rgb(182, 229, 206)"
+     },
+     "p.b10x-hero__meta@12.32": {
+      "n": 7,
+      "px": "12.32px",
+      "sample": "Early \u00b7 ESS \u00b7 Rust \u00b7 Apache-2.0",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-kpi__index@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "01",
+      "color": "rgb(168, 184, 179)"
+     },
+     "dt.b10x-kpi__label@13.12": {
+      "n": 4,
+      "px": "13.12px",
+      "sample": "shipped, runs today",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-flow__label@10.4": {
+      "n": 6,
+      "px": "10.4px",
+      "sample": "check",
+      "color": "rgb(182, 229, 206)"
+     },
+     "p.b10x-flow__step@13.12": {
+      "n": 61,
+      "px": "13.12px",
+      "sample": "ess-compiler turns the specification directory int",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-status@12": {
+      "n": 53,
+      "px": "12px",
+      "sample": "Shipped",
+      "color": "rgb(241, 246, 243)"
+     },
+     "strong.b10x-status-strip__legend@13.12": {
+      "n": 2,
+      "px": "13.12px",
+      "sample": "41",
+      "color": "rgb(241, 246, 243)"
+     },
+     "p.b10x-status-strip__group-title@10.56": {
+      "n": 8,
+      "px": "10.56px",
+      "sample": "Shipped \u00b7 runs today",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-status-strip__detail@13.28": {
+      "n": 1524,
+      "px": "13.28px",
+      "sample": "A directory of ESS documents is compiled by ess-co",
+      "color": "rgb(168, 184, 179)"
+     },
+     "p.b10x-status-strip__source@11.52": {
+      "n": 3,
+      "px": "11.52px",
+      "sample": "As of 2026-11-04",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-mark@13.76": {
+      "n": 1,
+      "px": "13.76px",
+      "sample": "Es",
+      "color": "rgb(249, 198, 189)"
+     },
+     "span.b10x-related__copy@13.44": {
+      "n": 11,
+      "px": "13.44px",
+      "sample": "Executable system specifications: the contract eve",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-related__relation@12.16": {
+      "n": 13,
+      "px": "12.16px",
+      "sample": "specifies",
+      "color": "rgb(249, 198, 189)"
+     },
+     "span.b10x-related__relation@13.44": {
+      "n": 1,
+      "px": "13.44px",
+      "sample": "\u2192",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [
+     "b10x-grow",
+     "b10x-grow"
+    ],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [],
+    "extCount": 0,
+    "mermaid": 0,
+    "title": "Deploy the specification. Spindle runs it. | Spindle"
+   },
+   "docs": {
+    "cls": 0,
+    "words": 520,
+    "smallWords": 75,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.categoryLinkLabel_W154@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Concepts",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.breadcrumbs__link@12.8": {
+      "n": 1,
+      "px": "12.8px",
+      "sample": "Overview",
+      "color": "rgb(241, 246, 243)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 3,
+      "px": "11.2px",
+      "sample": "1 of 6",
+      "color": "rgb(182, 229, 206)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 6,
+      "px": "13.12px",
+      "sample": "README.md, docs/design/spindle.md, crates/spindle-",
+      "color": "rgb(168, 184, 179)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 4,
+      "px": "10.88px",
+      "sample": "Step",
+      "color": "rgb(168, 184, 179)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 6,
+      "px": "12.672px",
+      "sample": "check",
+      "color": "rgb(241, 246, 243)"
+     },
+     "div.admonitionHeading_Gvgb@12.48": {
+      "n": 1,
+      "px": "12.48px",
+      "sample": "Early",
+      "color": "rgb(239, 208, 154)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 1,
+      "px": "11.2px",
+      "sample": "Next",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.table-of-contents__link@12.8": {
+      "n": 9,
+      "px": "12.8px",
+      "sample": "What Spindle is not",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "ESS|target=_blank",
+     "GitHub|target=_blank",
+     "ESS|target=_blank",
+     "GitHub|target=_blank",
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 5,
+    "mermaid": 0,
+    "title": "Spindle"
+   },
+   "docs/getting-started": {
+    "cls": 0,
+    "words": 1049,
+    "smallWords": 604,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.categoryLinkLabel_W154@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Concepts",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.breadcrumbs__link@12.8": {
+      "n": 2,
+      "px": "12.8px",
+      "sample": "Getting started",
+      "color": "rgb(241, 246, 243)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 3,
+      "px": "11.2px",
+      "sample": "2 of 6",
+      "color": "rgb(182, 229, 206)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 17,
+      "px": "13.12px",
+      "sample": "every command below was run in a checkout of main ",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.token@13.12": {
+      "n": 517,
+      "px": "13.12px",
+      "sample": "git clone https://github.com/beyond10x/spindle",
+      "color": "rgb(231, 238, 234)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.table-of-contents__link@12.8": {
+      "n": 19,
+      "px": "12.8px",
+      "sample": "Build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 1,
+    "mermaid": 0,
+    "title": "Getting started | Spindle"
+   },
+   "docs/concepts/specification": {
+    "cls": 0,
+    "words": 1046,
+    "smallWords": 65,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.categoryLinkLabel_W154@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Concepts",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.breadcrumbs__link@12.8": {
+      "n": 3,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(231, 238, 234)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 1 of 6",
+      "color": "rgb(182, 229, 206)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 6,
+      "px": "13.12px",
+      "sample": "crates/spindle-spec/src/lib.rs, crates/spindle-spe",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-status@12": {
+      "n": 1,
+      "px": "12px",
+      "sample": "Planned",
+      "color": "rgb(241, 246, 243)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.table-of-contents__link@12.8": {
+      "n": 4,
+      "px": "12.8px",
+      "sample": "Loading",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "ESS|target=_blank",
+     "GitHub|target=_blank",
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 3,
+    "mermaid": 0,
+    "title": "The specification | Spindle"
+   },
+   "docs/concepts/capabilities": {
+    "cls": 0,
+    "words": 1075,
+    "smallWords": 208,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.categoryLinkLabel_W154@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Concepts",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.breadcrumbs__link@12.8": {
+      "n": 2,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(231, 238, 234)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 2 of 6",
+      "color": "rgb(182, 229, 206)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 7,
+      "px": "13.12px",
+      "sample": "crates/spindle-capability/src/derive.rs, crates/sp",
+      "color": "rgb(168, 184, 179)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Capability",
+      "color": "rgb(168, 184, 179)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 17,
+      "px": "12.672px",
+      "sample": "store.durable",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.b10x-chip__text@12.48": {
+      "n": 1,
+      "px": "12.48px",
+      "sample": "outcome",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.token@13.12": {
+      "n": 112,
+      "px": "13.12px",
+      "sample": "$ b10x-spindle capabilities examples/rally/ess --c",
+      "color": "rgb(231, 238, 234)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.table-of-contents__link@12.8": {
+      "n": 13,
+      "px": "12.8px",
+      "sample": "The derivation rules",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-toc-word@11.264": {
+      "n": 2,
+      "px": "11.264px",
+      "sample": "ingress",
+      "color": "rgb(241, 246, 243)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 1,
+    "mermaid": 0,
+    "title": "Capabilities | Spindle"
+   },
+   "docs/concepts/environment-and-admission": {
+    "cls": 0,
+    "words": 587,
+    "smallWords": 188,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.categoryLinkLabel_W154@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Concepts",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.breadcrumbs__link@12.8": {
+      "n": 4,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(231, 238, 234)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 3 of 6",
+      "color": "rgb(182, 229, 206)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 5,
+      "px": "13.12px",
+      "sample": "crates/spindle-capability/src/environment.rs, crat",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.token@13.12": {
+      "n": 79,
+      "px": "13.12px",
+      "sample": "format",
+      "color": "rgb(182, 229, 206)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 6,
+      "px": "10.88px",
+      "sample": "Capability",
+      "color": "rgb(168, 184, 179)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 33,
+      "px": "12.672px",
+      "sample": "store.durable",
+      "color": "rgb(241, 246, 243)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.table-of-contents__link@12.8": {
+      "n": 10,
+      "px": "12.8px",
+      "sample": "The environment",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 1,
+    "mermaid": 0,
+    "title": "Environment and admission | Spindle"
+   },
+   "docs/concepts/components-and-bindings": {
+    "cls": 0,
+    "words": 536,
+    "smallWords": 83,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.categoryLinkLabel_W154@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Concepts",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.breadcrumbs__link@12.8": {
+      "n": 4,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(231, 238, 234)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 4 of 6",
+      "color": "rgb(182, 229, 206)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 6,
+      "px": "13.12px",
+      "sample": "crates/spindle-host/src/lib.rs, crates/spindle-tim",
+      "color": "rgb(168, 184, 179)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Word",
+      "color": "rgb(168, 184, 179)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 10,
+      "px": "12.672px",
+      "sample": "anchor",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.b10x-status@12": {
+      "n": 1,
+      "px": "12px",
+      "sample": "Planned",
+      "color": "rgb(241, 246, 243)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.table-of-contents__link@12.8": {
+      "n": 8,
+      "px": "12.8px",
+      "sample": "Components",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 1,
+    "mermaid": 0,
+    "title": "Components and bindings | Spindle"
+   },
+   "docs/concepts/deployment-targets": {
+    "cls": 0,
+    "words": 525,
+    "smallWords": 82,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.categoryLinkLabel_W154@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Concepts",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.breadcrumbs__link@12.8": {
+      "n": 3,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(231, 238, 234)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 5 of 6",
+      "color": "rgb(182, 229, 206)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 10,
+      "px": "13.12px",
+      "sample": "ess/domains/placement.yaml, crates/spindle-target/",
+      "color": "rgb(168, 184, 179)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Target",
+      "color": "rgb(168, 184, 179)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 8,
+      "px": "12.672px",
+      "sample": "spindle-target",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.b10x-status@12": {
+      "n": 1,
+      "px": "12px",
+      "sample": "Planned",
+      "color": "rgb(241, 246, 243)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.table-of-contents__link@12.8": {
+      "n": 6,
+      "px": "12.8px",
+      "sample": "Placement",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "docs/design/spindle.md|target=_blank",
+     "docs/design/observe.md|target=_blank",
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 3,
+    "mermaid": 0,
+    "title": "Deployment targets | Spindle"
+   },
+   "docs/concepts/observe": {
+    "cls": 0,
+    "words": 896,
+    "smallWords": 112,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.categoryLinkLabel_W154@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Concepts",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.breadcrumbs__link@12.8": {
+      "n": 2,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(231, 238, 234)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 6 of 6",
+      "color": "rgb(182, 229, 206)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 11,
+      "px": "13.12px",
+      "sample": "crates/spindle-telemetry/src/lib.rs, crates/spindl",
+      "color": "rgb(168, 184, 179)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 5,
+      "px": "10.88px",
+      "sample": "Counter",
+      "color": "rgb(168, 184, 179)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 22,
+      "px": "12.672px",
+      "sample": "command.<Command>.<outcome>",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.token@13.12": {
+      "n": 9,
+      "px": "13.12px",
+      "sample": "task build",
+      "color": "rgb(231, 238, 234)"
+     },
+     "span.b10x-status@12": {
+      "n": 1,
+      "px": "12px",
+      "sample": "Planned",
+      "color": "rgb(241, 246, 243)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.table-of-contents__link@12.8": {
+      "n": 11,
+      "px": "12.8px",
+      "sample": "Counters",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "docs/design/observe.md|target=_blank",
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 2,
+    "mermaid": 0,
+    "title": "Observe | Spindle"
+   },
+   "docs/examples/rally": {
+    "cls": 0,
+    "words": 920,
+    "smallWords": 203,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.categoryLinkLabel_W154@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Concepts",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.breadcrumbs__link@12.8": {
+      "n": 2,
+      "px": "12.8px",
+      "sample": "Examples",
+      "color": "rgb(231, 238, 234)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 1,
+      "px": "11.2px",
+      "sample": "Examples",
+      "color": "rgb(182, 229, 206)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 9,
+      "px": "13.12px",
+      "sample": "examples/rally/ess, crates/spindle-host/tests/spin",
+      "color": "rgb(168, 184, 179)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 7,
+      "px": "10.88px",
+      "sample": "Component",
+      "color": "rgb(168, 184, 179)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 35,
+      "px": "12.672px",
+      "sample": "rally-table",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.token@13.12": {
+      "n": 89,
+      "px": "13.12px",
+      "sample": "$ b10x-spindle play examples/rally/ess --environme",
+      "color": "rgb(231, 238, 234)"
+     },
+     "span.b10x-status@12": {
+      "n": 1,
+      "px": "12px",
+      "sample": "Planned",
+      "color": "rgb(241, 246, 243)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.table-of-contents__link@12.8": {
+      "n": 13,
+      "px": "12.8px",
+      "sample": "Three components",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 1,
+    "mermaid": 0,
+    "title": "Rally | Spindle"
+   },
+   "docs/reference/cli": {
+    "cls": 0,
+    "words": 3254,
+    "smallWords": 315,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.categoryLinkLabel_W154@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Concepts",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.breadcrumbs__link@12.8": {
+      "n": 2,
+      "px": "12.8px",
+      "sample": "Reference",
+      "color": "rgb(231, 238, 234)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 36,
+      "px": "10.88px",
+      "sample": "Command",
+      "color": "rgb(168, 184, 179)"
+     },
+     "code.@12.672": {
+      "n": 8,
+      "px": "12.672px",
+      "sample": "check",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.token@13.12": {
+      "n": 46,
+      "px": "13.12px",
+      "sample": "b10x-spindle check [OPTIONS] <SPEC>",
+      "color": "rgb(231, 238, 234)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 156,
+      "px": "12.672px",
+      "sample": "<SPEC>",
+      "color": "rgb(241, 246, 243)"
+     },
+     "p.b10x-table-guidance@13.6": {
+      "n": 13,
+      "px": "13.6px",
+      "sample": "More columns: swipe horizontally, or focus the tab",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-toc-word@11.264": {
+      "n": 8,
+      "px": "11.264px",
+      "sample": "check",
+      "color": "rgb(241, 246, 243)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [],
+    "extCount": 0,
+    "mermaid": 0,
+    "title": "CLI reference | Spindle"
+   },
+   "docs/status": {
+    "cls": 0,
+    "words": 2146,
+    "smallWords": 100,
+    "small": {
+     "a.navbar__item@13.44": {
+      "n": 7,
+      "px": "13.44px",
+      "sample": "Documentation",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.categoryLinkLabel_W154@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Concepts",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.breadcrumbs__link@12.8": {
+      "n": 1,
+      "px": "12.8px",
+      "sample": "Status",
+      "color": "rgb(241, 246, 243)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 6,
+      "px": "10.88px",
+      "sample": "Area",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-chip__text@10.368": {
+      "n": 43,
+      "px": "10.368px",
+      "sample": "shipped",
+      "color": "rgb(241, 246, 243)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 1,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.table-of-contents__link@12.8": {
+      "n": 5,
+      "px": "12.8px",
+      "sample": "The tests that hold them",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "crates/spindle-spec/tests/spindle-spec/l|target=_blank",
+     "crates/spindle-capability/tests/spindle-|target=_blank",
+     "crates/spindle-capability/tests/spindle-|target=_blank",
+     "crates/spindle-capability/tests/spindle-|target=_blank",
+     "crates/spindle-cli/tests/spindle-cli/adm|target=_blank",
+     "crates/spindle-kernel/tests/spindle-kern|target=_blank",
+     "crates/spindle-kernel/tests/spindle-kern|target=_blank",
+     "crates/spindle-store-browser/tests/spind|target=_blank",
+     "crates/spindle-wasm/tests/spindle-wasm/s|target=_blank",
+     "crates/spindle-timer/tests/spindle-timer|target=_blank",
+     "crates/spindle-channel/tests/spindle-cha|target=_blank",
+     "crates/spindle-host/tests/spindle-host/r|target=_blank"
+    ],
+    "extCount": 41,
+    "mermaid": 0,
+    "title": "Status | Spindle"
+   }
+  },
+  "1280x800-dark-tabs": [
+   "A \"Skip to main content\" outline=solid 2px rgb(239, 208, 154) shadow=rgba(0, 0, 0, 0.2) 0px 5px 40px 0px at 16,16 180x42",
+   "A \"Spindle\" outline=solid 2px rgb(239, 208, 154) shadow=none at 68,19 199x34",
+   "A \"Documentation\" outline=solid 2px rgb(239, 208, 154) shadow=none at 691,21 119x30",
+   "A \"Getting started\" outline=solid 2px rgb(239, 208, 154) shadow=rgb(182, 229, 206) 0px -1px 0px 0px inse at 810,21 117x30",
+   "A \"Rally\" outline=solid 2px rgb(239, 208, 154) shadow=none at 927,21 54x30",
+   "A \"CLI\" outline=solid 2px rgb(239, 208, 154) shadow=none at 981,21 44x30",
+   "A \"Status\" outline=solid 2px rgb(239, 208, 154) shadow=none at 1025,21 64x30",
+   "A \"GitHub\" outline=solid 2px rgb(239, 208, 154) shadow=none at 1096,21 84x30"
+  ],
+  "1280x800-dark-anchor": {
+   "headingTop": 177,
+   "navBottom": 74,
+   "focus": "BODY"
+  },
+  "1280x800-dark-404": {
+   "status": 404,
+   "text": "404\n\nPage not found\n\nThere is no page at this address. It may have moved, or the link that brought you here is out of date.\n\nGo to the documentation\nBack to the home page"
+  },
+  "1280x800-dark-toggle": {
+   "label": "Switch between dark and light mode (currently system mode)",
+   "title": "system mode"
+  },
+  "390x844-light": {
+   "landing": {
+    "cls": 0,
+    "words": 2179,
+    "smallWords": 1755,
+    "small": {
+     "p.b10x-kicker@11.2": {
+      "n": 25,
+      "px": "11.2px",
+      "sample": "Early \u00b7 loading, admission and in-process runs wor",
+      "color": "rgb(23, 104, 74)"
+     },
+     "p.b10x-hero__meta@12.32": {
+      "n": 7,
+      "px": "12.32px",
+      "sample": "Early \u00b7 ESS \u00b7 Rust \u00b7 Apache-2.0",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-kpi__index@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "01",
+      "color": "rgb(79, 98, 93)"
+     },
+     "dt.b10x-kpi__label@13.12": {
+      "n": 4,
+      "px": "13.12px",
+      "sample": "shipped, runs today",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-flow__label@10.4": {
+      "n": 6,
+      "px": "10.4px",
+      "sample": "check",
+      "color": "rgb(23, 104, 74)"
+     },
+     "p.b10x-flow__step@13.12": {
+      "n": 61,
+      "px": "13.12px",
+      "sample": "ess-compiler turns the specification directory int",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-status@12": {
+      "n": 53,
+      "px": "12px",
+      "sample": "Shipped",
+      "color": "rgb(15, 27, 28)"
+     },
+     "strong.b10x-status-strip__legend@13.12": {
+      "n": 2,
+      "px": "13.12px",
+      "sample": "41",
+      "color": "rgb(15, 27, 28)"
+     },
+     "p.b10x-status-strip__group-title@10.56": {
+      "n": 8,
+      "px": "10.56px",
+      "sample": "Shipped \u00b7 runs today",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-status-strip__detail@13.28": {
+      "n": 1524,
+      "px": "13.28px",
+      "sample": "A directory of ESS documents is compiled by ess-co",
+      "color": "rgb(79, 98, 93)"
+     },
+     "p.b10x-status-strip__source@11.52": {
+      "n": 3,
+      "px": "11.52px",
+      "sample": "As of 2026-11-04",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-mark@13.76": {
+      "n": 1,
+      "px": "13.76px",
+      "sample": "Es",
+      "color": "rgb(132, 61, 51)"
+     },
+     "span.b10x-related__copy@13.44": {
+      "n": 11,
+      "px": "13.44px",
+      "sample": "Executable system specifications: the contract eve",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-related__relation@12.16": {
+      "n": 13,
+      "px": "12.16px",
+      "sample": "specifies",
+      "color": "rgb(132, 61, 51)"
+     },
+     "span.b10x-related__relation@13.44": {
+      "n": 1,
+      "px": "13.44px",
+      "sample": "\u2192",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [
+     "b10x-grow",
+     "b10x-grow"
+    ],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [],
+    "extCount": 0,
+    "mermaid": 0,
+    "title": "Deploy the specification. Spindle runs it. | Spindle"
+   },
+   "docs": {
+    "cls": 0,
+    "words": 499,
+    "smallWords": 69,
+    "small": {
+     "span.breadcrumbs__link@12.8": {
+      "n": 1,
+      "px": "12.8px",
+      "sample": "Overview",
+      "color": "rgb(15, 27, 28)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 3,
+      "px": "11.2px",
+      "sample": "1 of 6",
+      "color": "rgb(23, 104, 74)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 6,
+      "px": "13.12px",
+      "sample": "README.md, docs/design/spindle.md, crates/spindle-",
+      "color": "rgb(79, 98, 93)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 4,
+      "px": "10.88px",
+      "sample": "Step",
+      "color": "rgb(79, 98, 93)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 6,
+      "px": "12.672px",
+      "sample": "check",
+      "color": "rgb(15, 27, 28)"
+     },
+     "p.b10x-table-guidance@13.6": {
+      "n": 13,
+      "px": "13.6px",
+      "sample": "More columns: swipe horizontally, or focus the tab",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.admonitionHeading_Gvgb@12.48": {
+      "n": 1,
+      "px": "12.48px",
+      "sample": "Early",
+      "color": "rgb(138, 83, 0)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 1,
+      "px": "11.2px",
+      "sample": "Next",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "ESS|target=_blank",
+     "GitHub|target=_blank",
+     "ESS|target=_blank",
+     "GitHub|target=_blank",
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 5,
+    "mermaid": 0,
+    "title": "Spindle"
+   },
+   "docs/getting-started": {
+    "cls": 0.001,
+    "words": 1005,
+    "smallWords": 575,
+    "small": {
+     "span.breadcrumbs__link@12.8": {
+      "n": 2,
+      "px": "12.8px",
+      "sample": "Getting started",
+      "color": "rgb(15, 27, 28)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 3,
+      "px": "11.2px",
+      "sample": "2 of 6",
+      "color": "rgb(23, 104, 74)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 17,
+      "px": "13.12px",
+      "sample": "every command below was run in a checkout of main ",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.token@13.12": {
+      "n": 517,
+      "px": "13.12px",
+      "sample": "git clone https://github.com/beyond10x/spindle",
+      "color": "rgb(29, 42, 43)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 1,
+    "mermaid": 0,
+    "title": "Getting started | Spindle"
+   },
+   "docs/concepts/specification": {
+    "cls": 0,
+    "words": 1017,
+    "smallWords": 51,
+    "small": {
+     "span.breadcrumbs__link@12.8": {
+      "n": 3,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(29, 42, 43)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 1 of 6",
+      "color": "rgb(23, 104, 74)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 6,
+      "px": "13.12px",
+      "sample": "crates/spindle-spec/src/lib.rs, crates/spindle-spe",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-status@12": {
+      "n": 1,
+      "px": "12px",
+      "sample": "Planned",
+      "color": "rgb(15, 27, 28)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "ESS|target=_blank",
+     "GitHub|target=_blank",
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 3,
+    "mermaid": 0,
+    "title": "The specification | Spindle"
+   },
+   "docs/concepts/capabilities": {
+    "cls": 0,
+    "words": 1035,
+    "smallWords": 183,
+    "small": {
+     "span.breadcrumbs__link@12.8": {
+      "n": 2,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(29, 42, 43)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 2 of 6",
+      "color": "rgb(23, 104, 74)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 7,
+      "px": "13.12px",
+      "sample": "crates/spindle-capability/src/derive.rs, crates/sp",
+      "color": "rgb(79, 98, 93)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Capability",
+      "color": "rgb(79, 98, 93)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 17,
+      "px": "12.672px",
+      "sample": "store.durable",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.b10x-chip__text@12.48": {
+      "n": 1,
+      "px": "12.48px",
+      "sample": "outcome",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.token@13.12": {
+      "n": 112,
+      "px": "13.12px",
+      "sample": "$ b10x-spindle capabilities examples/rally/ess --c",
+      "color": "rgb(29, 42, 43)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 1,
+    "mermaid": 0,
+    "title": "Capabilities | Spindle"
+   },
+   "docs/concepts/environment-and-admission": {
+    "cls": 0,
+    "words": 552,
+    "smallWords": 168,
+    "small": {
+     "span.breadcrumbs__link@12.8": {
+      "n": 4,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(29, 42, 43)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 3 of 6",
+      "color": "rgb(23, 104, 74)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 5,
+      "px": "13.12px",
+      "sample": "crates/spindle-capability/src/environment.rs, crat",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.token@13.12": {
+      "n": 79,
+      "px": "13.12px",
+      "sample": "format",
+      "color": "rgb(23, 104, 74)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 6,
+      "px": "10.88px",
+      "sample": "Capability",
+      "color": "rgb(79, 98, 93)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 33,
+      "px": "12.672px",
+      "sample": "store.durable",
+      "color": "rgb(15, 27, 28)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 1,
+    "mermaid": 0,
+    "title": "Environment and admission | Spindle"
+   },
+   "docs/concepts/components-and-bindings": {
+    "cls": 0,
+    "words": 516,
+    "smallWords": 78,
+    "small": {
+     "span.breadcrumbs__link@12.8": {
+      "n": 4,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(29, 42, 43)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 4 of 6",
+      "color": "rgb(23, 104, 74)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 6,
+      "px": "13.12px",
+      "sample": "crates/spindle-host/src/lib.rs, crates/spindle-tim",
+      "color": "rgb(79, 98, 93)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Word",
+      "color": "rgb(79, 98, 93)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 10,
+      "px": "12.672px",
+      "sample": "anchor",
+      "color": "rgb(15, 27, 28)"
+     },
+     "p.b10x-table-guidance@13.6": {
+      "n": 13,
+      "px": "13.6px",
+      "sample": "More columns: swipe horizontally, or focus the tab",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-status@12": {
+      "n": 1,
+      "px": "12px",
+      "sample": "Planned",
+      "color": "rgb(15, 27, 28)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 1,
+    "mermaid": 0,
+    "title": "Components and bindings | Spindle"
+   },
+   "docs/concepts/deployment-targets": {
+    "cls": 0,
+    "words": 494,
+    "smallWords": 66,
+    "small": {
+     "span.breadcrumbs__link@12.8": {
+      "n": 3,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(29, 42, 43)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 5 of 6",
+      "color": "rgb(23, 104, 74)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 10,
+      "px": "13.12px",
+      "sample": "ess/domains/placement.yaml, crates/spindle-target/",
+      "color": "rgb(79, 98, 93)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Target",
+      "color": "rgb(79, 98, 93)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 8,
+      "px": "12.672px",
+      "sample": "spindle-target",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.b10x-status@12": {
+      "n": 1,
+      "px": "12px",
+      "sample": "Planned",
+      "color": "rgb(15, 27, 28)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "docs/design/spindle.md|target=_blank",
+     "docs/design/observe.md|target=_blank",
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 3,
+    "mermaid": 0,
+    "title": "Deployment targets | Spindle"
+   },
+   "docs/concepts/observe": {
+    "cls": 0,
+    "words": 873,
+    "smallWords": 104,
+    "small": {
+     "span.breadcrumbs__link@12.8": {
+      "n": 2,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(29, 42, 43)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 6 of 6",
+      "color": "rgb(23, 104, 74)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 11,
+      "px": "13.12px",
+      "sample": "crates/spindle-telemetry/src/lib.rs, crates/spindl",
+      "color": "rgb(79, 98, 93)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 5,
+      "px": "10.88px",
+      "sample": "Counter",
+      "color": "rgb(79, 98, 93)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 22,
+      "px": "12.672px",
+      "sample": "command.<Command>.<outcome>",
+      "color": "rgb(15, 27, 28)"
+     },
+     "p.b10x-table-guidance@13.6": {
+      "n": 13,
+      "px": "13.6px",
+      "sample": "More columns: swipe horizontally, or focus the tab",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.token@13.12": {
+      "n": 9,
+      "px": "13.12px",
+      "sample": "task build",
+      "color": "rgb(29, 42, 43)"
+     },
+     "span.b10x-status@12": {
+      "n": 1,
+      "px": "12px",
+      "sample": "Planned",
+      "color": "rgb(15, 27, 28)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "docs/design/observe.md|target=_blank",
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 2,
+    "mermaid": 0,
+    "title": "Observe | Spindle"
+   },
+   "docs/examples/rally": {
+    "cls": 0,
+    "words": 908,
+    "smallWords": 206,
+    "small": {
+     "span.breadcrumbs__link@12.8": {
+      "n": 2,
+      "px": "12.8px",
+      "sample": "Examples",
+      "color": "rgb(29, 42, 43)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 1,
+      "px": "11.2px",
+      "sample": "Examples",
+      "color": "rgb(23, 104, 74)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 9,
+      "px": "13.12px",
+      "sample": "examples/rally/ess, crates/spindle-host/tests/spin",
+      "color": "rgb(79, 98, 93)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 7,
+      "px": "10.88px",
+      "sample": "Component",
+      "color": "rgb(79, 98, 93)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 35,
+      "px": "12.672px",
+      "sample": "rally-table",
+      "color": "rgb(15, 27, 28)"
+     },
+     "p.b10x-table-guidance@13.6": {
+      "n": 26,
+      "px": "13.6px",
+      "sample": "More columns: swipe horizontally, or focus the tab",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.token@13.12": {
+      "n": 89,
+      "px": "13.12px",
+      "sample": "$ b10x-spindle play examples/rally/ess --environme",
+      "color": "rgb(29, 42, 43)"
+     },
+     "span.b10x-status@12": {
+      "n": 1,
+      "px": "12px",
+      "sample": "Planned",
+      "color": "rgb(15, 27, 28)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 1,
+    "mermaid": 0,
+    "title": "Rally | Spindle"
+   },
+   "docs/reference/cli": {
+    "cls": 0,
+    "words": 3312,
+    "smallWords": 388,
+    "small": {
+     "span.breadcrumbs__link@12.8": {
+      "n": 2,
+      "px": "12.8px",
+      "sample": "Reference",
+      "color": "rgb(29, 42, 43)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 36,
+      "px": "10.88px",
+      "sample": "Command",
+      "color": "rgb(79, 98, 93)"
+     },
+     "code.@12.672": {
+      "n": 8,
+      "px": "12.672px",
+      "sample": "check",
+      "color": "rgb(15, 27, 28)"
+     },
+     "span.token@13.12": {
+      "n": 46,
+      "px": "13.12px",
+      "sample": "b10x-spindle check [OPTIONS] <SPEC>",
+      "color": "rgb(29, 42, 43)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 156,
+      "px": "12.672px",
+      "sample": "<SPEC>",
+      "color": "rgb(15, 27, 28)"
+     },
+     "p.b10x-table-guidance@13.6": {
+      "n": 104,
+      "px": "13.6px",
+      "sample": "More columns: swipe horizontally, or focus the tab",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [],
+    "extCount": 0,
+    "mermaid": 0,
+    "title": "CLI reference | Spindle"
+   },
+   "docs/status": {
+    "cls": 0,
+    "words": 2129,
+    "smallWords": 98,
+    "small": {
+     "span.breadcrumbs__link@12.8": {
+      "n": 1,
+      "px": "12.8px",
+      "sample": "Status",
+      "color": "rgb(15, 27, 28)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 6,
+      "px": "10.88px",
+      "sample": "Area",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-chip__text@10.368": {
+      "n": 43,
+      "px": "10.368px",
+      "sample": "shipped",
+      "color": "rgb(15, 27, 28)"
+     },
+     "p.b10x-table-guidance@13.6": {
+      "n": 13,
+      "px": "13.6px",
+      "sample": "More columns: swipe horizontally, or focus the tab",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 1,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(15, 27, 28)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(79, 98, 93)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(79, 98, 93)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(79, 98, 93)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(23, 104, 74)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "crates/spindle-spec/tests/spindle-spec/l|target=_blank",
+     "crates/spindle-capability/tests/spindle-|target=_blank",
+     "crates/spindle-capability/tests/spindle-|target=_blank",
+     "crates/spindle-capability/tests/spindle-|target=_blank",
+     "crates/spindle-cli/tests/spindle-cli/adm|target=_blank",
+     "crates/spindle-kernel/tests/spindle-kern|target=_blank",
+     "crates/spindle-kernel/tests/spindle-kern|target=_blank",
+     "crates/spindle-store-browser/tests/spind|target=_blank",
+     "crates/spindle-wasm/tests/spindle-wasm/s|target=_blank",
+     "crates/spindle-timer/tests/spindle-timer|target=_blank",
+     "crates/spindle-channel/tests/spindle-cha|target=_blank",
+     "crates/spindle-host/tests/spindle-host/r|target=_blank"
+    ],
+    "extCount": 41,
+    "mermaid": 0,
+    "title": "Status | Spindle"
+   }
+  },
+  "390x844-light-tabs": [
+   "A \"Skip to main content\" outline=solid 2px rgb(138, 83, 0) shadow=rgba(0, 0, 0, 0.2) 0px 5px 40px 0px at 16,16 180x42",
+   "BUTTON \"Toggle navigation bar\" outline=solid 2px rgb(138, 83, 0) shadow=none at 320,16 40x40",
+   "A \"Spindle\" outline=solid 2px rgb(138, 83, 0) shadow=none at 24,19 115x34",
+   "A \"Home page\" outline=solid 2px rgb(138, 83, 0) shadow=none at 16,90 38x31",
+   "BUTTON \"On this page\" outline=solid 2px rgb(138, 83, 0) shadow=none at 16,137 358x33",
+   "A \"\u200b\" outline=solid 2px rgb(138, 83, 0) shadow=none at 65,660 22x29",
+   "PRE \"git clone https://github.com/b\" outline=solid 2px rgb(138, 83, 0) shadow=none at 17,404 356x132",
+   "BUTTON \"Toggle word wrap\" outline=solid 2px rgb(138, 83, 0) shadow=none at 278,361 44x42"
+  ],
+  "390x844-light-anchor": {
+   "headingTop": 178,
+   "navBottom": 74,
+   "focus": "BODY"
+  },
+  "390x844-light-404": {
+   "status": 404,
+   "text": "404\n\nPage not found\n\nThere is no page at this address. It may have moved, or the link that brought you here is out of date.\n\nGo to the documentation\nBack to the home page"
+  },
+  "390x844-light-drawer": "Spindle\nDocumentation\nGetting started\nRally\nCLI\nStatus\nGitHub\n\u2190 BACK TO MAIN MENU\nOverview\nGetting started\nCONCEPTS\nThe specification\nCapabilities\nEnvironment and admission\nComponents and bindings\nDeployment targets\nObserve\nEXAMPLES\nRally\nREFERENCE\nCLI\nStatus",
+  "390x844-light-firstscreen": {
+   "firstBodyParagraphTop": 212,
+   "vh": 844
+  },
+  "390x844-dark": {
+   "landing": {
+    "cls": 0,
+    "words": 2179,
+    "smallWords": 1755,
+    "small": {
+     "p.b10x-kicker@11.2": {
+      "n": 25,
+      "px": "11.2px",
+      "sample": "Early \u00b7 loading, admission and in-process runs wor",
+      "color": "rgb(182, 229, 206)"
+     },
+     "p.b10x-hero__meta@12.32": {
+      "n": 7,
+      "px": "12.32px",
+      "sample": "Early \u00b7 ESS \u00b7 Rust \u00b7 Apache-2.0",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-kpi__index@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "01",
+      "color": "rgb(168, 184, 179)"
+     },
+     "dt.b10x-kpi__label@13.12": {
+      "n": 4,
+      "px": "13.12px",
+      "sample": "shipped, runs today",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-flow__label@10.4": {
+      "n": 6,
+      "px": "10.4px",
+      "sample": "check",
+      "color": "rgb(182, 229, 206)"
+     },
+     "p.b10x-flow__step@13.12": {
+      "n": 61,
+      "px": "13.12px",
+      "sample": "ess-compiler turns the specification directory int",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-status@12": {
+      "n": 53,
+      "px": "12px",
+      "sample": "Shipped",
+      "color": "rgb(241, 246, 243)"
+     },
+     "strong.b10x-status-strip__legend@13.12": {
+      "n": 2,
+      "px": "13.12px",
+      "sample": "41",
+      "color": "rgb(241, 246, 243)"
+     },
+     "p.b10x-status-strip__group-title@10.56": {
+      "n": 8,
+      "px": "10.56px",
+      "sample": "Shipped \u00b7 runs today",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-status-strip__detail@13.28": {
+      "n": 1524,
+      "px": "13.28px",
+      "sample": "A directory of ESS documents is compiled by ess-co",
+      "color": "rgb(168, 184, 179)"
+     },
+     "p.b10x-status-strip__source@11.52": {
+      "n": 3,
+      "px": "11.52px",
+      "sample": "As of 2026-11-04",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-mark@13.76": {
+      "n": 1,
+      "px": "13.76px",
+      "sample": "Es",
+      "color": "rgb(249, 198, 189)"
+     },
+     "span.b10x-related__copy@13.44": {
+      "n": 11,
+      "px": "13.44px",
+      "sample": "Executable system specifications: the contract eve",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-related__relation@12.16": {
+      "n": 13,
+      "px": "12.16px",
+      "sample": "specifies",
+      "color": "rgb(249, 198, 189)"
+     },
+     "span.b10x-related__relation@13.44": {
+      "n": 1,
+      "px": "13.44px",
+      "sample": "\u2192",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [
+     "b10x-grow",
+     "b10x-grow"
+    ],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [],
+    "extCount": 0,
+    "mermaid": 0,
+    "title": "Deploy the specification. Spindle runs it. | Spindle"
+   },
+   "docs": {
+    "cls": 0,
+    "words": 499,
+    "smallWords": 69,
+    "small": {
+     "span.breadcrumbs__link@12.8": {
+      "n": 1,
+      "px": "12.8px",
+      "sample": "Overview",
+      "color": "rgb(241, 246, 243)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 3,
+      "px": "11.2px",
+      "sample": "1 of 6",
+      "color": "rgb(182, 229, 206)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 6,
+      "px": "13.12px",
+      "sample": "README.md, docs/design/spindle.md, crates/spindle-",
+      "color": "rgb(168, 184, 179)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 4,
+      "px": "10.88px",
+      "sample": "Step",
+      "color": "rgb(168, 184, 179)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 6,
+      "px": "12.672px",
+      "sample": "check",
+      "color": "rgb(241, 246, 243)"
+     },
+     "p.b10x-table-guidance@13.6": {
+      "n": 13,
+      "px": "13.6px",
+      "sample": "More columns: swipe horizontally, or focus the tab",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.admonitionHeading_Gvgb@12.48": {
+      "n": 1,
+      "px": "12.48px",
+      "sample": "Early",
+      "color": "rgb(239, 208, 154)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 1,
+      "px": "11.2px",
+      "sample": "Next",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "ESS|target=_blank",
+     "GitHub|target=_blank",
+     "ESS|target=_blank",
+     "GitHub|target=_blank",
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 5,
+    "mermaid": 0,
+    "title": "Spindle"
+   },
+   "docs/getting-started": {
+    "cls": 0.001,
+    "words": 1005,
+    "smallWords": 575,
+    "small": {
+     "span.breadcrumbs__link@12.8": {
+      "n": 2,
+      "px": "12.8px",
+      "sample": "Getting started",
+      "color": "rgb(241, 246, 243)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 3,
+      "px": "11.2px",
+      "sample": "2 of 6",
+      "color": "rgb(182, 229, 206)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 17,
+      "px": "13.12px",
+      "sample": "every command below was run in a checkout of main ",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.token@13.12": {
+      "n": 517,
+      "px": "13.12px",
+      "sample": "git clone https://github.com/beyond10x/spindle",
+      "color": "rgb(231, 238, 234)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 1,
+    "mermaid": 0,
+    "title": "Getting started | Spindle"
+   },
+   "docs/concepts/specification": {
+    "cls": 0,
+    "words": 1017,
+    "smallWords": 51,
+    "small": {
+     "span.breadcrumbs__link@12.8": {
+      "n": 3,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(231, 238, 234)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 1 of 6",
+      "color": "rgb(182, 229, 206)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 6,
+      "px": "13.12px",
+      "sample": "crates/spindle-spec/src/lib.rs, crates/spindle-spe",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-status@12": {
+      "n": 1,
+      "px": "12px",
+      "sample": "Planned",
+      "color": "rgb(241, 246, 243)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "ESS|target=_blank",
+     "GitHub|target=_blank",
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 3,
+    "mermaid": 0,
+    "title": "The specification | Spindle"
+   },
+   "docs/concepts/capabilities": {
+    "cls": 0,
+    "words": 1035,
+    "smallWords": 183,
+    "small": {
+     "span.breadcrumbs__link@12.8": {
+      "n": 2,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(231, 238, 234)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 2 of 6",
+      "color": "rgb(182, 229, 206)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 7,
+      "px": "13.12px",
+      "sample": "crates/spindle-capability/src/derive.rs, crates/sp",
+      "color": "rgb(168, 184, 179)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Capability",
+      "color": "rgb(168, 184, 179)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 17,
+      "px": "12.672px",
+      "sample": "store.durable",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.b10x-chip__text@12.48": {
+      "n": 1,
+      "px": "12.48px",
+      "sample": "outcome",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.token@13.12": {
+      "n": 112,
+      "px": "13.12px",
+      "sample": "$ b10x-spindle capabilities examples/rally/ess --c",
+      "color": "rgb(231, 238, 234)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 1,
+    "mermaid": 0,
+    "title": "Capabilities | Spindle"
+   },
+   "docs/concepts/environment-and-admission": {
+    "cls": 0,
+    "words": 552,
+    "smallWords": 168,
+    "small": {
+     "span.breadcrumbs__link@12.8": {
+      "n": 4,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(231, 238, 234)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 3 of 6",
+      "color": "rgb(182, 229, 206)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 5,
+      "px": "13.12px",
+      "sample": "crates/spindle-capability/src/environment.rs, crat",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.token@13.12": {
+      "n": 79,
+      "px": "13.12px",
+      "sample": "format",
+      "color": "rgb(182, 229, 206)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 6,
+      "px": "10.88px",
+      "sample": "Capability",
+      "color": "rgb(168, 184, 179)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 33,
+      "px": "12.672px",
+      "sample": "store.durable",
+      "color": "rgb(241, 246, 243)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 1,
+    "mermaid": 0,
+    "title": "Environment and admission | Spindle"
+   },
+   "docs/concepts/components-and-bindings": {
+    "cls": 0,
+    "words": 516,
+    "smallWords": 78,
+    "small": {
+     "span.breadcrumbs__link@12.8": {
+      "n": 4,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(231, 238, 234)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 4 of 6",
+      "color": "rgb(182, 229, 206)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 6,
+      "px": "13.12px",
+      "sample": "crates/spindle-host/src/lib.rs, crates/spindle-tim",
+      "color": "rgb(168, 184, 179)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Word",
+      "color": "rgb(168, 184, 179)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 10,
+      "px": "12.672px",
+      "sample": "anchor",
+      "color": "rgb(241, 246, 243)"
+     },
+     "p.b10x-table-guidance@13.6": {
+      "n": 13,
+      "px": "13.6px",
+      "sample": "More columns: swipe horizontally, or focus the tab",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-status@12": {
+      "n": 1,
+      "px": "12px",
+      "sample": "Planned",
+      "color": "rgb(241, 246, 243)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 1,
+    "mermaid": 0,
+    "title": "Components and bindings | Spindle"
+   },
+   "docs/concepts/deployment-targets": {
+    "cls": 0,
+    "words": 494,
+    "smallWords": 66,
+    "small": {
+     "span.breadcrumbs__link@12.8": {
+      "n": 3,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(231, 238, 234)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 5 of 6",
+      "color": "rgb(182, 229, 206)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 10,
+      "px": "13.12px",
+      "sample": "ess/domains/placement.yaml, crates/spindle-target/",
+      "color": "rgb(168, 184, 179)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 3,
+      "px": "10.88px",
+      "sample": "Target",
+      "color": "rgb(168, 184, 179)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 8,
+      "px": "12.672px",
+      "sample": "spindle-target",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.b10x-status@12": {
+      "n": 1,
+      "px": "12px",
+      "sample": "Planned",
+      "color": "rgb(241, 246, 243)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "docs/design/spindle.md|target=_blank",
+     "docs/design/observe.md|target=_blank",
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 3,
+    "mermaid": 0,
+    "title": "Deployment targets | Spindle"
+   },
+   "docs/concepts/observe": {
+    "cls": 0,
+    "words": 873,
+    "smallWords": 104,
+    "small": {
+     "span.breadcrumbs__link@12.8": {
+      "n": 2,
+      "px": "12.8px",
+      "sample": "Concepts",
+      "color": "rgb(231, 238, 234)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 5,
+      "px": "11.2px",
+      "sample": "Concepts \u00b7 6 of 6",
+      "color": "rgb(182, 229, 206)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 11,
+      "px": "13.12px",
+      "sample": "crates/spindle-telemetry/src/lib.rs, crates/spindl",
+      "color": "rgb(168, 184, 179)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 5,
+      "px": "10.88px",
+      "sample": "Counter",
+      "color": "rgb(168, 184, 179)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 22,
+      "px": "12.672px",
+      "sample": "command.<Command>.<outcome>",
+      "color": "rgb(241, 246, 243)"
+     },
+     "p.b10x-table-guidance@13.6": {
+      "n": 13,
+      "px": "13.6px",
+      "sample": "More columns: swipe horizontally, or focus the tab",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.token@13.12": {
+      "n": 9,
+      "px": "13.12px",
+      "sample": "task build",
+      "color": "rgb(231, 238, 234)"
+     },
+     "span.b10x-status@12": {
+      "n": 1,
+      "px": "12px",
+      "sample": "Planned",
+      "color": "rgb(241, 246, 243)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "docs/design/observe.md|target=_blank",
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 2,
+    "mermaid": 0,
+    "title": "Observe | Spindle"
+   },
+   "docs/examples/rally": {
+    "cls": 0,
+    "words": 908,
+    "smallWords": 206,
+    "small": {
+     "span.breadcrumbs__link@12.8": {
+      "n": 2,
+      "px": "12.8px",
+      "sample": "Examples",
+      "color": "rgb(231, 238, 234)"
+     },
+     "p.b10x-kicker@11.2": {
+      "n": 1,
+      "px": "11.2px",
+      "sample": "Examples",
+      "color": "rgb(182, 229, 206)"
+     },
+     "span.b10x-doc-header__source@13.12": {
+      "n": 9,
+      "px": "13.12px",
+      "sample": "examples/rally/ess, crates/spindle-host/tests/spin",
+      "color": "rgb(168, 184, 179)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 7,
+      "px": "10.88px",
+      "sample": "Component",
+      "color": "rgb(168, 184, 179)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 35,
+      "px": "12.672px",
+      "sample": "rally-table",
+      "color": "rgb(241, 246, 243)"
+     },
+     "p.b10x-table-guidance@13.6": {
+      "n": 26,
+      "px": "13.6px",
+      "sample": "More columns: swipe horizontally, or focus the tab",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.token@13.12": {
+      "n": 89,
+      "px": "13.12px",
+      "sample": "$ b10x-spindle play examples/rally/ess --environme",
+      "color": "rgb(231, 238, 234)"
+     },
+     "span.b10x-status@12": {
+      "n": 1,
+      "px": "12px",
+      "sample": "Planned",
+      "color": "rgb(241, 246, 243)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "Edit this page|target=_blank"
+    ],
+    "extCount": 1,
+    "mermaid": 0,
+    "title": "Rally | Spindle"
+   },
+   "docs/reference/cli": {
+    "cls": 0,
+    "words": 3312,
+    "smallWords": 388,
+    "small": {
+     "span.breadcrumbs__link@12.8": {
+      "n": 2,
+      "px": "12.8px",
+      "sample": "Reference",
+      "color": "rgb(231, 238, 234)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 36,
+      "px": "10.88px",
+      "sample": "Command",
+      "color": "rgb(168, 184, 179)"
+     },
+     "code.@12.672": {
+      "n": 8,
+      "px": "12.672px",
+      "sample": "check",
+      "color": "rgb(241, 246, 243)"
+     },
+     "span.token@13.12": {
+      "n": 46,
+      "px": "13.12px",
+      "sample": "b10x-spindle check [OPTIONS] <SPEC>",
+      "color": "rgb(231, 238, 234)"
+     },
+     "code.b10x-table-wrap@12.672": {
+      "n": 156,
+      "px": "12.672px",
+      "sample": "<SPEC>",
+      "color": "rgb(241, 246, 243)"
+     },
+     "p.b10x-table-guidance@13.6": {
+      "n": 104,
+      "px": "13.6px",
+      "sample": "More columns: swipe horizontally, or focus the tab",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 2,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [],
+    "extCount": 0,
+    "mermaid": 0,
+    "title": "CLI reference | Spindle"
+   },
+   "docs/status": {
+    "cls": 0,
+    "words": 2129,
+    "smallWords": 98,
+    "small": {
+     "span.breadcrumbs__link@12.8": {
+      "n": 1,
+      "px": "12.8px",
+      "sample": "Status",
+      "color": "rgb(241, 246, 243)"
+     },
+     "th.b10x-table-wrap@10.88": {
+      "n": 6,
+      "px": "10.88px",
+      "sample": "Area",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-chip__text@10.368": {
+      "n": 43,
+      "px": "10.368px",
+      "sample": "shipped",
+      "color": "rgb(241, 246, 243)"
+     },
+     "p.b10x-table-guidance@13.6": {
+      "n": 13,
+      "px": "13.6px",
+      "sample": "More columns: swipe horizontally, or focus the tab",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.pagination-nav__sublabel@11.2": {
+      "n": 1,
+      "px": "11.2px",
+      "sample": "Previous",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__title@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "Documentation",
+      "color": "rgb(241, 246, 243)"
+     },
+     "a.footer__link-item@13.12": {
+      "n": 22,
+      "px": "13.12px",
+      "sample": "Overview",
+      "color": "rgb(168, 184, 179)"
+     },
+     "div.footer__copyright@11.52": {
+      "n": 6,
+      "px": "11.52px",
+      "sample": "A beyond10x project. Spindle \u00b7 Apache-2.0.",
+      "color": "rgb(168, 184, 179)"
+     },
+     "span.b10x-build-line__label@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "This build",
+      "color": "rgb(168, 184, 179)"
+     },
+     "a.b10x-build-line@11.52": {
+      "n": 2,
+      "px": "11.52px",
+      "sample": "docs-system 5fd348a",
+      "color": "rgb(182, 229, 206)"
+     }
+    },
+    "anims": [],
+    "badges": [],
+    "codeTitles": [],
+    "ext": [
+     "crates/spindle-spec/tests/spindle-spec/l|target=_blank",
+     "crates/spindle-capability/tests/spindle-|target=_blank",
+     "crates/spindle-capability/tests/spindle-|target=_blank",
+     "crates/spindle-capability/tests/spindle-|target=_blank",
+     "crates/spindle-cli/tests/spindle-cli/adm|target=_blank",
+     "crates/spindle-kernel/tests/spindle-kern|target=_blank",
+     "crates/spindle-kernel/tests/spindle-kern|target=_blank",
+     "crates/spindle-store-browser/tests/spind|target=_blank",
+     "crates/spindle-wasm/tests/spindle-wasm/s|target=_blank",
+     "crates/spindle-timer/tests/spindle-timer|target=_blank",
+     "crates/spindle-channel/tests/spindle-cha|target=_blank",
+     "crates/spindle-host/tests/spindle-host/r|target=_blank"
+    ],
+    "extCount": 41,
+    "mermaid": 0,
+    "title": "Status | Spindle"
+   }
+  },
+  "390x844-dark-tabs": [
+   "A \"Skip to main content\" outline=solid 2px rgb(239, 208, 154) shadow=rgba(0, 0, 0, 0.2) 0px 5px 40px 0px at 16,16 180x42",
+   "BUTTON \"Toggle navigation bar\" outline=solid 2px rgb(239, 208, 154) shadow=none at 320,16 40x40",
+   "A \"Spindle\" outline=solid 2px rgb(239, 208, 154) shadow=none at 24,19 115x34",
+   "A \"Home page\" outline=solid 2px rgb(239, 208, 154) shadow=none at 16,90 38x31",
+   "BUTTON \"On this page\" outline=solid 2px rgb(239, 208, 154) shadow=none at 16,137 358x33",
+   "A \"\u200b\" outline=solid 2px rgb(239, 208, 154) shadow=none at 65,660 22x29",
+   "PRE \"git clone https://github.com/b\" outline=solid 2px rgb(239, 208, 154) shadow=none at 17,404 356x132",
+   "BUTTON \"Toggle word wrap\" outline=solid 2px rgb(239, 208, 154) shadow=none at 278,361 44x42"
+  ],
+  "390x844-dark-anchor": {
+   "headingTop": 178,
+   "navBottom": 74,
+   "focus": "BODY"
+  },
+  "390x844-dark-404": {
+   "status": 404,
+   "text": "404\n\nPage not found\n\nThere is no page at this address. It may have moved, or the link that brought you here is out of date.\n\nGo to the documentation\nBack to the home page"
+  },
+  "390x844-dark-drawer": "Spindle\nDocumentation\nGetting started\nRally\nCLI\nStatus\nGitHub\n\u2190 BACK TO MAIN MENU\nOverview\nGetting started\nCONCEPTS\nThe specification\nCapabilities\nEnvironment and admission\nComponents and bindings\nDeployment targets\nObserve\nEXAMPLES\nRally\nREFERENCE\nCLI\nStatus",
+  "390x844-dark-firstscreen": {
+   "firstBodyParagraphTop": 212,
+   "vh": 844
+  }
+ },
+ "kickers_motion": {
+  "kick": {
+   "landing": {
+    "kicker": [
+     "EARLY \u00b7 LOADING, ADMISSION AND IN-PROCESS RUNS WORK",
+     "01 / HOW IT RUNS",
+     "02 / WHAT IT DOES",
+     "03 / STATUS",
+     "04 / BUILT ON"
+    ],
+    "codeLabels": [],
+    "statusWords": [
+     "shipped",
+     "planned"
+    ],
+    "tableGuidance": 0,
+    "pagination": []
+   },
+   "docs": {
+    "kicker": [
+     "1 OF 6"
+    ],
+    "codeLabels": [],
+    "statusWords": [],
+    "tableGuidance": 1,
+    "pagination": [
+     "NEXT Getting started"
+    ]
+   },
+   "docs/getting-started": {
+    "kicker": [
+     "2 OF 6"
+    ],
+    "codeLabels": [
+     "git clone https://github.com/beyond10x/spindle",
+     "   Compiling spindle-cli v0.6.0 (\u2026/spindle/crates/spindle-cli)",
+     "$ b10x-spindle --version",
+     "$ b10x-spindle check examples/rally/ess",
+     "$ b10x-spindle capabilities examples/rally/ess"
+    ],
+    "statusWords": [],
+    "tableGuidance": 0,
+    "pagination": [
+     "PREVIOUS Overview",
+     "NEXT The specification"
+    ]
+   },
+   "docs/concepts/specification": {
+    "kicker": [
+     "CONCEPTS \u00b7 1 OF 6"
+    ],
+    "codeLabels": [],
+    "statusWords": [
+     "planned"
+    ],
+    "tableGuidance": 0,
+    "pagination": [
+     "PREVIOUS Getting started",
+     "NEXT Capabilities"
+    ]
+   },
+   "docs/concepts/capabilities": {
+    "kicker": [
+     "CONCEPTS \u00b7 2 OF 6"
+    ],
+    "codeLabels": [
+     "$ b10x-spindle capabilities examples/rally/ess --component rally-table",
+     "{"
+    ],
+    "statusWords": [
+     "outcome"
+    ],
+    "tableGuidance": 1,
+    "pagination": [
+     "PREVIOUS The specification",
+     "NEXT Environment and admission"
+    ]
+   },
+   "docs/concepts/environment-and-admission": {
+    "kicker": [
+     "CONCEPTS \u00b7 3 OF 6"
+    ],
+    "codeLabels": [
+     "format = \"spindle-environment/1\"",
+     "$ b10x-spindle admit examples/rally/ess --environment examples/environments/microvm.toml"
+    ],
+    "statusWords": [],
+    "tableGuidance": 1,
+    "pagination": [
+     "PREVIOUS Capabilities",
+     "NEXT Components and bindings"
+    ]
+   },
+   "docs/concepts/components-and-bindings": {
+    "kicker": [
+     "CONCEPTS \u00b7 4 OF 6"
+    ],
+    "codeLabels": [],
+    "statusWords": [
+     "planned"
+    ],
+    "tableGuidance": 1,
+    "pagination": [
+     "PREVIOUS Environment and admission",
+     "NEXT Deployment targets"
+    ]
+   },
+   "docs/concepts/deployment-targets": {
+    "kicker": [
+     "CONCEPTS \u00b7 5 OF 6"
+    ],
+    "codeLabels": [],
+    "statusWords": [
+     "planned"
+    ],
+    "tableGuidance": 1,
+    "pagination": [
+     "PREVIOUS Components and bindings",
+     "NEXT Observe"
+    ]
+   },
+   "docs/concepts/observe": {
+    "kicker": [
+     "CONCEPTS \u00b7 6 OF 6"
+    ],
+    "codeLabels": [
+     "task build"
+    ],
+    "statusWords": [
+     "planned"
+    ],
+    "tableGuidance": 2,
+    "pagination": [
+     "PREVIOUS Deployment targets",
+     "NEXT Rally"
+    ]
+   },
+   "docs/examples/rally": {
+    "kicker": [
+     "EXAMPLES"
+    ],
+    "codeLabels": [
+     "$ b10x-spindle play examples/rally/ess --environment examples/environments/laptop.toml",
+     "{\"command\": \"rally.table.OpenMatch\", \"input\": {\"match_id\": \"m1\", \"target_score\": 2}}",
+     "$ b10x-spindle run examples/rally/ess --environment examples/environments/laptop.toml --state rally.sqlite < requests.jsonl",
+     "$ SPINDLE_COMPONENT=rally-player-west SPINDLE_LISTEN=127.0.0.1:7101 SPINDLE_PEER_RALLY_TABLE=127.0.0.1:7100 \\"
+    ],
+    "statusWords": [
+     "planned"
+    ],
+    "tableGuidance": 2,
+    "pagination": [
+     "PREVIOUS Observe",
+     "NEXT CLI"
+    ]
+   },
+   "docs/reference/cli": {
+    "kicker": [],
+    "codeLabels": [
+     "b10x-spindle check [OPTIONS] <SPEC>",
+     "b10x-spindle capabilities [OPTIONS] <SPEC>",
+     "b10x-spindle metrics [OPTIONS] --component <COMPONENT> <SPEC>",
+     "b10x-spindle admit [OPTIONS] --environment <ENVIRONMENT> <SPEC>",
+     "b10x-spindle run [OPTIONS] --environment <ENVIRONMENT> <SPEC>"
+    ],
+    "statusWords": [],
+    "tableGuidance": 9,
+    "pagination": [
+     "PREVIOUS Rally",
+     "NEXT Status"
+    ]
+   },
+   "docs/status": {
+    "kicker": [],
+    "codeLabels": [],
+    "statusWords": [
+     "shipped",
+     "planned"
+    ],
+    "tableGuidance": 1,
+    "pagination": [
+     "PREVIOUS CLI"
+    ]
+   }
+  },
+  "anims": [
+   {
+    "name": "b10x-grow",
+    "dur": {},
+    "iter": 1,
+    "target": "b10x-status-strip__segment b10x-status-strip__segment--shipp"
+   },
+   {
+    "name": "b10x-grow",
+    "dur": {},
+    "iter": 1,
+    "target": "b10x-status-strip__segment b10x-status-strip__segment--plann"
+   }
+  ],
+  "landingTopActions": [
+   "Get started\n\u2192",
+   "The rally example \u2192",
+   "Source \u2197\n(opens in new tab)"
+  ],
+  "animsReduced": 0
+ },
+ "tables_390": {
+  "light": {
+   "docs": [
+    {
+     "cols": "STEP | COMMAND | WHAT HAPPENS [past view: 222px]",
+     "rows": 4
+    }
+   ],
+   "docs/getting-started": [],
+   "docs/concepts/specification": [],
+   "docs/concepts/capabilities": [
+    {
+     "cols": "CAPABILITY | DERIVED FROM",
+     "rows": 8
+    }
+   ],
+   "docs/concepts/environment-and-admission": [
+    {
+     "cols": "CAPABILITY | IMPLEMENTATIONS THE RUNTIME RUNS TODAY",
+     "rows": 7
+    }
+   ],
+   "docs/concepts/components-and-bindings": [
+    {
+     "cols": "WORD | VALUE | MEANING [past view: 318px]",
+     "rows": 5
+    }
+   ],
+   "docs/concepts/deployment-targets": [
+    {
+     "cols": "TARGET | CRATE | STATE",
+     "rows": 3
+    }
+   ],
+   "docs/concepts/observe": [
+    {
+     "cols": "COUNTER | ONE PER",
+     "rows": 8
+    },
+    {
+     "cols": "TARGET | ENDPOINT [past view: 107px]",
+     "rows": 3
+    }
+   ],
+   "docs/examples/rally": [
+    {
+     "cols": "COMPONENT | OWNS | ACCEPTS [past view: 249px] | PUBLISHES [past view: 377px]",
+     "rows": 3
+    },
+    {
+     "cols": "BINDING | CAUSE [past view: 91px] | INVOKES [past view: 370px]",
+     "rows": 5
+    }
+   ],
+   "docs/reference/cli": [
+    {
+     "cols": "COMMAND | WHAT IT DOES",
+     "rows": 8
+    },
+    {
+     "cols": "ARGUMENT | REQUIRED | DEFAULT | MEANING [past view: 296px]",
+     "rows": 2
+    },
+    {
+     "cols": "ARGUMENT | REQUIRED | DEFAULT | MEANING [past view: 311px]",
+     "rows": 3
+    },
+    {
+     "cols": "ARGUMENT | REQUIRED | DEFAULT | MEANING [past view: 311px]",
+     "rows": 3
+    },
+    {
+     "cols": "ARGUMENT | REQUIRED | DEFAULT | MEANING [past view: 327px]",
+     "rows": 4
+    },
+    {
+     "cols": "ARGUMENT | REQUIRED | DEFAULT [past view: 278px] | MEANING [past view: 367px]",
+     "rows": 13
+    },
+    {
+     "cols": "ARGUMENT | REQUIRED | DEFAULT | MEANING [past view: 335px]",
+     "rows": 7
+    },
+    {
+     "cols": "ARGUMENT | REQUIRED | DEFAULT | MEANING [past view: 327px]",
+     "rows": 4
+    },
+    {
+     "cols": "ARGUMENT | REQUIRED | DEFAULT | MEANING [past view: 351px]",
+     "rows": 8
+    }
+   ],
+   "docs/status": [
+    {
+     "cols": "AREA | CAPABILITY | STATUS [past view: 245px] | WHAT IT MEANS [past view: 365px]",
+     "rows": 43
+    }
+   ]
+  },
+  "light-observeRow": [
+   "--observe @x=16..195 visible=true",
+   "no @x=195..294 visible=true",
+   " @x=294..383 visible=true",
+   "Record every request the listener answers outside  @x=383..762 visible=false"
+  ],
+  "dark": {
+   "docs": [
+    {
+     "cols": "STEP | COMMAND | WHAT HAPPENS [past view: 222px]",
+     "rows": 4
+    }
+   ],
+   "docs/getting-started": [],
+   "docs/concepts/specification": [],
+   "docs/concepts/capabilities": [
+    {
+     "cols": "CAPABILITY | DERIVED FROM",
+     "rows": 8
+    }
+   ],
+   "docs/concepts/environment-and-admission": [
+    {
+     "cols": "CAPABILITY | IMPLEMENTATIONS THE RUNTIME RUNS TODAY",
+     "rows": 7
+    }
+   ],
+   "docs/concepts/components-and-bindings": [
+    {
+     "cols": "WORD | VALUE | MEANING [past view: 318px]",
+     "rows": 5
+    }
+   ],
+   "docs/concepts/deployment-targets": [
+    {
+     "cols": "TARGET | CRATE | STATE",
+     "rows": 3
+    }
+   ],
+   "docs/concepts/observe": [
+    {
+     "cols": "COUNTER | ONE PER",
+     "rows": 8
+    },
+    {
+     "cols": "TARGET | ENDPOINT [past view: 107px]",
+     "rows": 3
+    }
+   ],
+   "docs/examples/rally": [
+    {
+     "cols": "COMPONENT | OWNS | ACCEPTS [past view: 249px] | PUBLISHES [past view: 377px]",
+     "rows": 3
+    },
+    {
+     "cols": "BINDING | CAUSE [past view: 91px] | INVOKES [past view: 370px]",
+     "rows": 5
+    }
+   ],
+   "docs/reference/cli": [
+    {
+     "cols": "COMMAND | WHAT IT DOES",
+     "rows": 8
+    },
+    {
+     "cols": "ARGUMENT | REQUIRED | DEFAULT | MEANING [past view: 296px]",
+     "rows": 2
+    },
+    {
+     "cols": "ARGUMENT | REQUIRED | DEFAULT | MEANING [past view: 311px]",
+     "rows": 3
+    },
+    {
+     "cols": "ARGUMENT | REQUIRED | DEFAULT | MEANING [past view: 311px]",
+     "rows": 3
+    },
+    {
+     "cols": "ARGUMENT | REQUIRED | DEFAULT | MEANING [past view: 327px]",
+     "rows": 4
+    },
+    {
+     "cols": "ARGUMENT | REQUIRED | DEFAULT [past view: 278px] | MEANING [past view: 367px]",
+     "rows": 13
+    },
+    {
+     "cols": "ARGUMENT | REQUIRED | DEFAULT | MEANING [past view: 335px]",
+     "rows": 7
+    },
+    {
+     "cols": "ARGUMENT | REQUIRED | DEFAULT | MEANING [past view: 327px]",
+     "rows": 4
+    },
+    {
+     "cols": "ARGUMENT | REQUIRED | DEFAULT | MEANING [past view: 351px]",
+     "rows": 8
+    }
+   ],
+   "docs/status": [
+    {
+     "cols": "AREA | CAPABILITY | STATUS [past view: 245px] | WHAT IT MEANS [past view: 365px]",
+     "rows": 43
+    }
+   ]
+  },
+  "dark-observeRow": [
+   "--observe @x=16..195 visible=true",
+   "no @x=195..294 visible=true",
+   " @x=294..383 visible=true",
+   "Record every request the listener answers outside  @x=383..762 visible=false"
+  ]
+ },
+ "header_vs_body": {
+  "390x844 docs": {
+   "sourceLines": 3,
+   "sourceHeight": 65,
+   "headerBottom": 456,
+   "firstBodyTop": 514,
+   "firstBody": "Spindle runs ESS (GitHub) specifications"
+  },
+  "390x844 docs/getting-started": {
+   "sourceLines": 3,
+   "sourceHeight": 65,
+   "headerBottom": 456,
+   "firstBodyTop": 514,
+   "firstBody": "Spindle has no release yet. Build it fro"
+  },
+  "390x844 docs/concepts/specification": {
+   "sourceLines": 5,
+   "sourceHeight": 108,
+   "headerBottom": 528,
+   "firstBodyTop": 586,
+   "firstBody": "A specification is a directory of ESS (G"
+  },
+  "390x844 docs/concepts/capabilities": {
+   "sourceLines": 8,
+   "sourceHeight": 173,
+   "headerBottom": 564,
+   "firstBodyTop": 622,
+   "firstBody": "A capability is something technical a sp"
+  },
+  "390x844 docs/concepts/environment-and-admission": {
+   "sourceLines": 6,
+   "sourceHeight": 130,
+   "headerBottom": 614,
+   "firstBodyTop": 772,
+   "firstBody": "An environment document (spindle-environ"
+  },
+  "390x844 docs/concepts/components-and-bindings": {
+   "sourceLines": 7,
+   "sourceHeight": 152,
+   "headerBottom": 578,
+   "firstBodyTop": 736,
+   "firstBody": "An ESS system declares components. Each "
+  },
+  "390x844 docs/concepts/deployment-targets": {
+   "sourceLines": 7,
+   "sourceHeight": 152,
+   "headerBottom": 600,
+   "firstBodyTop": 658,
+   "firstBody": "Spindle's own specification has a domain"
+  },
+  "390x844 docs/concepts/observe": {
+   "sourceLines": 9,
+   "sourceHeight": 195,
+   "headerBottom": 643,
+   "firstBodyTop": 802,
+   "firstBody": "spindle-telemetry counts what an instanc"
+  },
+  "390x844 docs/examples/rally": {
+   "sourceLines": 9,
+   "sourceHeight": 195,
+   "headerBottom": 615,
+   "firstBodyTop": 672,
+   "firstBody": "Rally is an original two-player paddle-a"
+  },
+  "390x844 docs/reference/cli": {
+   "sourceLines": 0,
+   "sourceHeight": 0,
+   "headerBottom": null,
+   "firstBodyTop": 243,
+   "firstBody": "b10x-spindle: Run ESS specifications on "
+  },
+  "390x844 docs/status": {
+   "sourceLines": 0,
+   "sourceHeight": 0,
+   "headerBottom": null,
+   "firstBodyTop": 243,
+   "firstBody": "Checked against main and the planning st"
+  },
+  "1280x800 docs": {
+   "sourceLines": 2,
+   "sourceHeight": 43,
+   "headerBottom": 366,
+   "firstBodyTop": 424,
+   "firstBody": "Spindle runs ESS (GitHub) specifications"
+  },
+  "1280x800 docs/getting-started": {
+   "sourceLines": 1,
+   "sourceHeight": 22,
+   "headerBottom": 344,
+   "firstBodyTop": 402,
+   "firstBody": "Spindle has no release yet. Build it fro"
+  },
+  "1280x800 docs/concepts/specification": {
+   "sourceLines": 2,
+   "sourceHeight": 43,
+   "headerBottom": 366,
+   "firstBodyTop": 424,
+   "firstBody": "A specification is a directory of ESS (G"
+  },
+  "1280x800 docs/concepts/capabilities": {
+   "sourceLines": 3,
+   "sourceHeight": 65,
+   "headerBottom": 387,
+   "firstBodyTop": 445,
+   "firstBody": "A capability is something technical a sp"
+  },
+  "1280x800 docs/concepts/environment-and-admission": {
+   "sourceLines": 3,
+   "sourceHeight": 65,
+   "headerBottom": 387,
+   "firstBodyTop": 556,
+   "firstBody": "An environment document (spindle-environ"
+  },
+  "1280x800 docs/concepts/components-and-bindings": {
+   "sourceLines": 3,
+   "sourceHeight": 65,
+   "headerBottom": 387,
+   "firstBodyTop": 556,
+   "firstBody": "An ESS system declares components. Each "
+  },
+  "1280x800 docs/concepts/deployment-targets": {
+   "sourceLines": 3,
+   "sourceHeight": 65,
+   "headerBottom": 387,
+   "firstBodyTop": 445,
+   "firstBody": "Spindle's own specification has a domain"
+  },
+  "1280x800 docs/concepts/observe": {
+   "sourceLines": 4,
+   "sourceHeight": 87,
+   "headerBottom": 409,
+   "firstBodyTop": 577,
+   "firstBody": "spindle-telemetry counts what an instanc"
+  },
+  "1280x800 docs/examples/rally": {
+   "sourceLines": 4,
+   "sourceHeight": 87,
+   "headerBottom": 409,
+   "firstBodyTop": 467,
+   "firstBody": "Rally is an original two-player paddle-a"
+  },
+  "1280x800 docs/reference/cli": {
+   "sourceLines": 0,
+   "sourceHeight": 0,
+   "headerBottom": null,
+   "firstBodyTop": 209,
+   "firstBody": "b10x-spindle: Run ESS specifications on "
+  },
+  "1280x800 docs/status": {
+   "sourceLines": 0,
+   "sourceHeight": 0,
+   "headerBottom": null,
+   "firstBodyTop": 209,
+   "firstBody": "Checked against main and the planning st"
+  }
+ }
+}
