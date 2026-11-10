@@ -41,10 +41,10 @@ are Spindle's releases.
 ### Fixed
 
 - `spindle-kernel` asks no decider before a related row the request names and no store holds is
-  answered, unless its answer decides whether the addressed row's held state answers first: an
-  unknown deployment sent to `PlanInstance` is `unknown-deployment` whatever the decider would say
-  of `not-admitted`. Before, the look-ahead asked `not-admitted` first, and a decider with no
-  answer for it made the request `Undecided`.
+  answered, unless a branch it could select has a held-state answer for the addressed row, or a
+  guard read past an external branch is unknown: an unknown deployment sent to `PlanInstance` is
+  `unknown-deployment` whatever the decider would say of `not-admitted`. Before, the look-ahead
+  asked `not-admitted` first, and a decider with no answer for it made the request `Undecided`.
 
 ## [0.8.0] - 2026-11-08
 

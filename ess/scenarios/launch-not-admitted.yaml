@@ -183,6 +183,44 @@ timeline:
     error:
       name: spindle.placement.DeploymentNotAdmitted
       fields: {deployment_id: stopped}
+  - at: 2026-01-05T09:00:25Z
+    command: spindle.deployment.OfferBundle
+    input:
+      deployment_id: refused
+      bundle: sha256:0f
+      environment_id: laptop
+    outcome: offered
+  - at: 2026-01-05T09:00:26Z
+    command: spindle.placement.PlanInstance
+    input:
+      instance_id: of-refused
+      deployment_id: refused
+      component: spindle-control
+      settings: []
+      target_id: laptop-host
+      request: {vcpus: 1, memory_mib: 64, disk_mib: 0}
+    outcome: planned
+  - at: 2026-01-05T09:00:27Z
+    command: spindle.placement.PlaceInstance
+    input:
+      instance_id: of-refused
+    outcome: placed
+  - at: 2026-01-05T09:00:28Z
+    command: spindle.deployment.DecideAdmission
+    input:
+      deployment_id: refused
+      requires: [store.durable]
+      bindings: []
+      missing: [store.durable]
+    outcome: refused
+  - at: 2026-01-05T09:00:29Z
+    command: spindle.placement.LaunchInstance
+    input:
+      instance_id: of-refused
+    outcome: not-admitted
+    error:
+      name: spindle.placement.DeploymentNotAdmitted
+      fields: {deployment_id: refused}
 assert:
   - view: spindle.placement.InstanceState
     contains: {instance_id: of-offered, state: Placed}
@@ -192,3 +230,5 @@ assert:
     contains: {instance_id: of-running, state: Running}
   - view: spindle.placement.InstanceState
     contains: {instance_id: of-stopped, state: Placed}
+  - view: spindle.placement.InstanceState
+    contains: {instance_id: of-refused, state: Placed}

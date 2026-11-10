@@ -922,7 +922,8 @@ impl<'a, 'ir> Run<'a, 'ir> {
     /// Whether a related row the command reads, through the input or a stored reference, is named
     /// and no store holds it: the request is then the model's to answer, by that row's
     /// `exists: false` branch or as undecidable, unless the held state answers first, and a
-    /// decider is asked only where its answer decides that ([`Self::look_ahead`]).
+    /// decider is asked only where a branch it could select has a held-state answer, or a guard
+    /// past an external branch is unknown ([`Self::look_ahead`]).
     fn missing_reference(&mut self) -> Result<bool, ExecuteError> {
         let spec = self.spec;
         let ir = self.ir;
@@ -1017,10 +1018,11 @@ impl<'a, 'ir> Run<'a, 'ir> {
     /// selection goes on to the related rows.
     ///
     /// `ask: false` is the look-ahead beside a missing related row ([`Self::missing_reference`]),
-    /// which the model answers itself once the held state has. The decider is asked there only
-    /// where its answer decides whether the held state answers: where no branch the look-ahead
-    /// could select, whatever the decider answers, has a held-state answer, nothing is asked and
-    /// the missing row answers.
+    /// which the model answers itself once the held state has. A first walk asks no decider and
+    /// reads past each external branch. Where no branch it could select, the external ones passed
+    /// included, has a held-state answer, nothing is asked and the missing row answers. The
+    /// decider is asked, by the walk that asks, wherever any branch it could select has a
+    /// held-state answer, and where a guard read past an external branch is unknown.
     fn look_ahead(
         &mut self,
         plan: &PrecedencePlan<'ir>,
@@ -1029,13 +1031,20 @@ impl<'a, 'ir> Run<'a, 'ir> {
     ) -> Result<Option<Executed>, ExecuteError> {
         if !ask {
             let mut passed = Vec::new();
-            let selected = self.select_ahead(plan, subjects, Some(&mut passed))?;
-            if selected
-                .into_iter()
-                .chain(passed)
-                .all(|outcome| self.ahead_answer(outcome).is_none())
-            {
-                return Ok(None);
+            match self.select_ahead(plan, subjects, Some(&mut passed)) {
+                Ok(selected) => {
+                    if selected
+                        .into_iter()
+                        .chain(passed)
+                        .all(|outcome| self.ahead_answer(outcome).is_none())
+                    {
+                        return Ok(None);
+                    }
+                }
+                // A guard read past an external branch is unknown: a decider that takes that
+                // branch stops the reading before it, so the walk that asks decides.
+                Err(ExecuteError::Undecidable { .. }) if !passed.is_empty() => {}
+                Err(error) => return Err(error),
             }
         }
         let Some(outcome) = self.select_ahead(plan, subjects, None)? else {
