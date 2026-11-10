@@ -264,6 +264,24 @@ fn run(
             other => Answer::unfinished(other.to_string(), false),
         },
         Err(error @ HostError::NotAccepted(_)) => Answer::unfinished(error.to_string(), false),
+        // What ran before the stop is committed, and so is what it reported as not executed: the
+        // unmet binding inputs among it are the request's ([`crate::observe::UnmetInput::of`]).
+        Err(HostError::Runaway {
+            deliveries,
+            bindings,
+            failed,
+        }) => {
+            let error = HostError::Runaway {
+                deliveries,
+                bindings,
+                failed: Vec::new(),
+            };
+            return (
+                Answer::unfinished(error.to_string(), true),
+                failed,
+                Answered::ingress(),
+            );
+        }
         Err(error) => Answer::unfinished(error.to_string(), true),
     };
     (answer, Vec::new(), Answered::ingress())

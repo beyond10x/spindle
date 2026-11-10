@@ -6,6 +6,76 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- `ess/` specifies the reset and the world it loads, in a new domain `spindle.console`
+  (`ess/domains/console.yaml`): `World` and `WorldRow` (the body of `POST /api/reset`: rows, a
+  decision table and a mint seed, every member optional, no other read), `ResetAnswer`
+  (`{"emptied": [...]}`, `200`) and `ResetRefusal` (`{"refused"}`, `400` before anything changed,
+  `500` once a store could not be emptied or written). `AnswerSource`'s `world` names the world's
+  `decisions`. No behaviour changes.
+- `GET /api/deployment` answers `delivery` for each event binding: `guarantee`, ESS's
+  `at_least_once` or `at_most_once` as the binding declares it, and `attempts`, the most times
+  Spindle invokes its command for one event (5 where the binding retries a failure, 1 otherwise;
+  `spindle.observe.BindingDelivery`). A periodic binding answers none.
+- `run --observe` lists in each request's `unmet` every event binding whose input an event
+  published while the request was answered did not fill, so its command was not invoked: the
+  binding, the component that accepts the command, the command and why
+  (`spindle.observe.UnmetInput`). `spindle.observe.RequestRecord` gains a required `unmet`, empty
+  when every input was met. Before, such a binding was only a line on stderr.
+
+### Changed
+
+- `spindle.deployment` checks an admission decision itself. `DecideAdmission` takes `requires`
+  beside `bindings` and `missing`, all three the admitter's answer, and `OfferBundle` no longer
+  takes `requires`; an offer to an environment nobody declared is `unknown-environment`
+  (`EnvironmentUnknown`). A decision inconsistent with its own `requires` is `not-decided` before
+  the deployment's state is read, a binding the environment's `provides` does not list is
+  `not-provided`, a refusal naming missing a capability `provides` lists is `missing-provided`,
+  and a consistent refusal its external cause does not confirm is `unconfirmed`,
+  each `AdmissionDecisionInvalid`. `Deployment`'s `requires`, `bindings` and `missing` are
+  `Optional`, absent until a decision sets them; `DeploymentState` publishes them with `bundle`
+  and `environment_id`, and `EnvironmentState` is new. Before, `requires` was the offer's caller's, `admitted`
+  never read `provides`, and `refused` took a refusal naming a capability that was not required.
+- Spindle's own specification types what an environment provides as the environment document
+  states it: a new domain `spindle.environment` declares `Provision`, a capability or `prefix.*`
+  key (`CapabilityKey`) with its implementations, most preferred first, and
+  `spindle.deployment.Environment.provides` and `DeclareEnvironment`'s `provides` input are a list
+  of them instead of `Binding`s. `DeclareEnvironment` refuses a key listed twice (`key-twice`) or
+  one with no implementation (`no-implementation`) as `ProvidesInvalid`. That an exact key wins
+  over a prefix, and the longest prefix over a shorter one, is stated on `provides`.
+- `spindle.placement` names every refusal `spindle-target` returns: `RefusalCause` gains
+  `EnvironmentMismatch`, recorded by `PlaceInstance`'s own `environment-mismatch` outcome, and
+  `not-admitted` no longer covers an admission decided for another environment. An instance
+  refused for several reasons records the first in `RefusalCause`'s order, the order
+  `spindle_target::place` reports them in (`Refusal::cause` names each). `LaunchInstance`'s
+  `not-admitted` is decided by the deployment's state instead of asked as an external cause,
+  and `PlanInstance` refuses a deployment no one offered (`unknown-deployment`). Admitting
+  `ess/` now needs `external.spindle.placement.PlaceInstance.environment-mismatch` and no
+  longer `external.spindle.placement.LaunchInstance.not-admitted`.
+- `task check:conformance` declares no known failure: `conformance-known-failures.json` is
+  removed and the task passes neither `--known-failing` nor `--accounting-out`, so every executed
+  scenario must pass. `spindle.placement.LaunchInstance/outcome/not-admitted`, the one scenario it
+  declared, is no longer synthesised: ESS's synthesis refuses it (`ESS-SYNTH-001`). The outcome
+  is covered by the authored scenario `spindle.placement/authored/launch-not-admitted`, which
+  passes. `conformance.toml` holds 79 executed scenarios, 0 skipped and 0 known failed.
+  `conform --known-failing` is unchanged.
+
+### Fixed
+
+- `spindle-kernel` asks no decider before a related row the request names and no store holds is
+  answered, unless a branch it could select has a held-state answer for the addressed row, or a
+  guard read past an external branch is unknown: an unknown deployment sent to `PlanInstance` is
+  `unknown-deployment` whatever the decider would say of `not-admitted`. Before, the look-ahead
+  asked `not-admitted` first, and a decider with no answer for it made the request `Undecided`.
+- `conform` without `--suite`, and `spindle_conformance::synthesize`, run the authored scenarios
+  the specification's `ess-inputs.yaml` lists under `scenarios:`, compiled by ESS
+  (`ess_conformance::authored`) into the synthesised suite as `ess conform synthesize --scenarios`
+  files them, and print a listed scenario ESS refuses, exiting 1. `spindle_spec::load` reads them
+  (`Specification::scenarios`), refusing a missing or symlinked entry as `ess` does, and
+  `synthesize` takes the `Specification`. Before, both synthesised without them: on `ess/`, 78
+  scenarios where `task check:conformance` runs 79.
+
 ## [0.8.0] - 2026-11-08
 
 ### Added

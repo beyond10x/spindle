@@ -1,0 +1,120 @@
+format: ess/34
+system: relay
+version: v1
+summary: A sender whose events reach a relay, an echo and a notices context that bounds a reader reference.
+domains:
+  - relay.left
+  - relay.right
+  - relay.notices
+conversions:
+  - from: relay.left.Handle
+    to: relay.right.Handle
+    because: >-
+      The relay addresses the sender's handle as its own, unbounded on both sides.
+  - from: relay.right.Handle
+    to: relay.notices.ReaderRef
+    because: >-
+      A relayed handle is a reader the notices context may address; it bounds a reader reference
+      itself and checks that bound on the way in.
+  - from: relay.left.Handle
+    to: relay.notices.ReaderRef
+    because: >-
+      A looping sender's handle is a reader the notices context may address, bounded on the way in.
+components:
+  - component: left
+    summary: Sends, loops and bounces.
+    owns:
+      domains:
+        - relay.left
+    accepts:
+      commands:
+        - relay.left.Send
+        - relay.left.Loop
+        - relay.left.Bounce
+    publishes:
+      events:
+        - relay.left.Sent
+        - relay.left.Looped
+        - relay.left.Bounced
+    reached_by: network
+  - component: right
+    summary: Relays and echoes.
+    owns:
+      domains:
+        - relay.right
+    accepts:
+      commands:
+        - relay.right.Relay
+        - relay.right.Echo
+    publishes:
+      events:
+        - relay.right.Relayed
+        - relay.right.Echoed
+    reached_by: in_process
+  - component: notices
+    summary: Thanks readers.
+    owns:
+      domains:
+        - relay.notices
+    accepts:
+      commands:
+        - relay.notices.Thank
+    publishes:
+      events:
+        - relay.notices.Thanked
+    reached_by: in_process
+bindings:
+  - id: relay
+    when:
+      event: relay.left.Sent
+    invoke:
+      command: relay.right.Relay
+    mapping:
+      member: event.member
+    delivery: at_most_once
+    on_failure: drop
+  - id: thank-relayed
+    when:
+      event: relay.right.Relayed
+    invoke:
+      command: relay.notices.Thank
+    mapping:
+      reader_id: event.member
+    delivery: at_most_once
+    on_failure: drop
+  - id: thank-looped
+    when:
+      event: relay.left.Looped
+    invoke:
+      command: relay.notices.Thank
+    mapping:
+      reader_id: event.member
+    delivery: at_most_once
+    on_failure: drop
+  - id: ping
+    when:
+      event: relay.left.Looped
+    invoke:
+      command: relay.right.Echo
+    mapping:
+      n: event.n
+    delivery: at_most_once
+    on_failure: drop
+  - id: pong
+    when:
+      event: relay.right.Echoed
+    invoke:
+      command: relay.left.Bounce
+    mapping:
+      n: event.n
+    delivery: at_most_once
+    on_failure: drop
+  - id: ping-again
+    when:
+      event: relay.left.Bounced
+    invoke:
+      command: relay.right.Echo
+    mapping:
+      n: event.n
+    delivery: at_most_once
+    on_failure: drop

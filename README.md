@@ -53,6 +53,8 @@ lists every external cause asked while it was answered, by its command or by one
 binding invoked, with the command that asked and what answered: `world` (the last reset's
 decision table), `file` (`--decisions`), `default` (`--answer-default`) or `unanswered`; a cause
 asked outside any request, by a timer-fired command, is counted and listed in no record.
+Each record also lists under `unmet` every event binding whose input an event published on the way
+did not fill, so its command was not invoked: the binding, the component, the command and why.
 `GET /__spindle/metrics` answers the run's metrics in the Prometheus text format
 (`text/plain; version=0.0.4`), the families of `ess/fixtures/observe/metrics/families.json`:
 requests by method, route template, operation, kind, class and status class, their durations,
@@ -66,9 +68,9 @@ page may frame and that reads `./requests` beside itself (`ui/dist-panel/panel.h
 `--observe` they answer `404`.
 
 `b10x-spindle conform ess --environment examples/environments/laptop.toml` runs the suite ESS
-synthesises from Spindle's own specification against Spindle itself; `task check:conformance`
-holds its counts against `conformance.toml`, with the scenarios known to fail declared in
-`conformance-known-failures.json` (`ess-known-failures/1`).
+synthesises from Spindle's own specification, with the scenarios `ess/ess-inputs.yaml` lists,
+against Spindle itself; `task check:conformance` holds its counts against `conformance.toml`.
+No scenario is known to fail, so the task declares none and every executed scenario must pass.
 
 ## Capabilities
 

@@ -115,37 +115,57 @@ never by the bundle. This is the domain Spindle specifies about itself: `ess/dom
 
 What `spindle.deployment` declares, and what stays a runtime rule outside the model:
 
-- **Exactly one binding per requirement is declared.** `DecideAdmission` admits only when every
-  capability in the deployment's `requires` has a binding, no binding names a capability outside
-  `requires`, and `missing` is empty; a capability bound twice is refused before the deployment is
-  read (`bound-twice`), any other mismatch is refused as `not-decided`. Both answer
-  `AdmissionDecisionInvalid` and change nothing. ESS answers input refusals first, then whether
-  the deployment exists, and answers the state conflict only when the branch the decision selects
-  moves the deployment: an invalid decision on a deployment already decided selects `not-decided`,
-  which does not move it, so only a valid one answers `wrong-state`.
-- **A refusal names what is missing.** `refused` is eligible only when `missing` names at least one
-  capability and none of them among the decision's own bindings; `DeploymentRefused` carries that
-  list. Any other refusal is `not-decided`.
-- **That `missing` names only required capabilities is a runtime rule.** `spindle_capability::admit`
-  builds `missing` from the requirements it admits, so the runtime never refuses naming a
-  capability outside `requires`. The model does not guard it: ESS synthesis cannot witness a
-  forced external outcome whose guard relates an input list to a stored list, and the guard cost
-  the `refused` scenario and every scenario through `Refused`
-  (`crates/spindle-kernel/tests/spindle-kernel/adversary_admission.rs::adversary_admission_names_only_required_capabilities_missing_at_runtime`).
-- **That the environment provides each binding is a runtime rule.** `admitted` does not read the
-  environment's `provides`: the kernel does not yet evaluate a guard over a related row. The
-  check is `spindle_capability::admit`, which binds only an implementation the environment
-  document lists for the capability, and names every required capability it lists none for as
-  missing (`crates/spindle-capability/tests/spindle-capability/admission.rs`).
-- **Preference order is a runtime rule.** The model holds the bindings admission chose, not their
-  rank. The rank is the order of each capability's list in the environment document, most
-  preferred first, and `spindle_capability::admit` takes the first
+- **The decision is the admitter's answer, checked by the model.** `DecideAdmission` carries
+  `requires`, `bindings` and `missing`, all three answered by admission
+  (`spindle_capability::derive` and `admit`); the offer names no capability. A capability bound
+  twice is refused first (`bound-twice`). A decision that binds a capability outside `requires`,
+  names missing one outside `requires` or one it binds, or leaves a required capability neither
+  bound nor missing is refused from the request alone (`not-decided`), whatever the deployment's
+  state. A consistent decision on a deployment already decided answers `wrong-state`.
+- **The environment provides each binding.** `OfferBundle` refuses an environment nobody declared
+  (`unknown-environment`), and `DecideAdmission` reads the deployment's environment.
+  `Environment.provides` holds each capability or `prefix.*` key with its implementations
+  (`spindle.environment.Provision`), and `DeclareEnvironment` refuses a key listed twice
+  (`key-twice`) or one with no implementation (`no-implementation`). A binding is `not-provided`
+  when its capability's exact key does not list its implementation, or when it has no exact key
+  and `provides` holds no `prefix.*` key at all
+  (`crates/spindle-kernel/tests/spindle-kernel/deployment.rs::a_binding_the_environment_does_not_provide_is_not_admitted`).
+  Once `provides` holds any `prefix.*` key, no binding whose capability has no exact key is
+  guarded, whether or not a prefix key covers it: `laptop.toml` lists `external.*`, so the model
+  admits `net.http` bound to `tcp`, which no key of it covers
+  (`crates/spindle-kernel/tests/spindle-kernel/adversary_environment.rs::adversary_a_binding_no_key_covers_beside_a_prefix_key_is_left_to_the_runtime`).
+  Whether a key covers a capability is a prefix match against a list element, and an ESS 0.90
+  string operator compares only with a literal, a view parameter or one command input. The
+  runtime decides it: the exact key, else the longest `prefix.*` key that covers the capability
+  (`Environment::implementations`). The kernel's admission cases declare the environment expanded
+  to the capabilities the bundle requires (`declare_for`), so every binding there is checked by
+  its exact key.
+- **A refusal names what is missing.** `refused` is eligible only for a consistent decision whose
+  `missing` is not empty, and its external cause confirms it; `DeploymentRefused` carries that
+  list. A consistent refusal the cause does not confirm is `unconfirmed`. Every invalid answer is
+  `AdmissionDecisionInvalid` and changes nothing. The model reads `provides` for `missing` too: a
+  refusal naming missing a capability the environment provides by its exact key is
+  `missing-provided`
+  (`crates/spindle-kernel/tests/spindle-kernel/deployment.rs::a_refusal_naming_a_provided_capability_missing_is_not_refused`),
+  so where `provides` holds no `prefix.*` key, a refusal the model takes names exactly the
+  required capabilities the environment lacks. A capability named missing that has no exact key
+  is never `missing-provided`: once any `prefix.*` key is present, whether the environment lacks
+  it is left to the runtime.
+  ESS 0.90 synthesises neither the forced `refused` scenario beside a `when_related:` refusal
+  over a stored reference (ESS-SYNTH-003, "such a reference is not arranged for an external
+  branch") nor `missing-provided` (ESS-SYNTH-003), and an `external:` branch may not carry
+  `when_related:` (ESS-COMMAND-004); the kernel tests above decide both.
+- **The ranking is declared; taking the first is a runtime rule.** `provides` lists each key's
+  implementations most preferred first, as the environment document does. The model holds the
+  bindings admission chose, and `spindle_capability::admit` takes the first implementation of
+  the key that provides each capability
   (`crates/spindle-kernel/tests/spindle-kernel/deployment.rs::preference_order_is_declared`).
-- **`requires` is an input, and its value is derived.** ESS cannot compute a list from a bundle
-  digest, so `OfferBundle` takes `requires` from its caller. The caller passes exactly what
-  `spindle_capability::derive` computes from the bundle's compiled specification; nothing else may
-  write it (`requires_is_tied_to_the_bundle`). No runtime path issues `OfferBundle` yet; the rule
-  binds the one that will.
+- **`requires` is the admitter's answer, and its value is derived.** ESS cannot compute a list
+  from a bundle digest, so `DecideAdmission` takes `requires` from the admitter, which passes
+  exactly what `spindle_capability::derive` computes from the bundle's compiled specification;
+  the bundle's author never writes it (`requires_is_tied_to_the_bundle`). ESS 0.90 has no actor
+  `summary:`, so this is stated on the input and the outcomes. No runtime path issues
+  `DecideAdmission` yet; the rule binds the one that will.
 - **A stop ends an admitted or running deployment.** `StopDeployment` moves `Admitted` and
   `Running` to `Stopped`: an admitted deployment that never started can be stopped. On an
   `Offered`, `Refused` or `Stopped` deployment it is accepted and changes nothing; it does not

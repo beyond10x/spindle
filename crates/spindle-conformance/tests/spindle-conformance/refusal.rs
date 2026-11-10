@@ -239,8 +239,10 @@ fn refusal_policies_agree_with_the_interpreter() {
 /// interpreter answers it.
 #[test]
 fn the_synthesised_refusal_scenarios_answer_as_the_interpreter() {
-    let ir = library();
-    let synthesis = spindle_conformance::synthesize(&ir);
+    let specification =
+        spindle_spec::load(&root().join(LIBRARY)).expect("the refusal fixture loads");
+    let synthesis = spindle_conformance::synthesize(&specification).expect("the suite synthesises");
+    let ir = specification.ir;
     let suite = AdmittedSuite::from_suite(&synthesis.suite).expect("the suite is admitted");
     let statuses = |run: &spindle_conformance::Run| {
         run.report()

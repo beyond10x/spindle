@@ -27,11 +27,11 @@ tasks:
       - cargo test --workspace --locked --no-fail-fast
 
   check:conformance:
-    desc: Spindle runs the suite ESS synthesises from ess/, its counts and known failures held
+    desc: Spindle runs the suite ESS synthesises from ess/ with the scenarios ess-inputs.yaml lists, every executed scenario passing and its counts held
     cmds:
       - mkdir -p target/conformance
-      - ess conform synthesize --path ess --out target/conformance/suite.json
-      - cargo run -q --locked -p spindle-cli -- conform ess --environment examples/environments/laptop.toml --suite target/conformance/suite.json --counts conformance.toml --known-failing conformance-known-failures.json --accounting-out target/conformance/accounting.json --report target/conformance/report.json --results target/conformance/results.json
+      - ess conform synthesize --path ess --scenarios ess --out target/conformance/suite.json
+      - cargo run -q --locked -p spindle-cli -- conform ess --environment examples/environments/laptop.toml --suite target/conformance/suite.json --counts conformance.toml --report target/conformance/report.json --results target/conformance/results.json
 
   check:the_wasm_build_of_the_host_succeeds:
     desc: spindle-spec, spindle-kernel, spindle-host and the spindle-ingress router build for wasm32-unknown-unknown without SQLite or the listener, and nothing they compile there reads std's clock

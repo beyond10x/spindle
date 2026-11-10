@@ -18,6 +18,7 @@ use std::time::{Duration, SystemTime};
 
 use ess_gen::http::NOT_GRANTED;
 use serde_json::{Map, Value, json};
+use spindle_host::{Cause, Failed};
 use spindle_telemetry::DURATION_BOUNDS_US;
 
 use crate::answer::Answer;
@@ -241,14 +242,51 @@ impl ExternalAnswer {
     }
 }
 
+/// One event binding whose input the event did not fill, so its command was not invoked
+/// (`spindle.observe.UnmetInput`, `docs/design/spindle.md` § 11, unmet binding input).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UnmetInput {
+    binding: String,
+    component: String,
+    command: String,
+    reason: String,
+}
+
+impl UnmetInput {
+    /// The unmet input `failed` reports, if it is one: a binding's command that was never sent,
+    /// zero attempts ([`spindle_host::Failed::attempts`]).
+    pub(crate) fn of(failed: &Failed) -> Option<Self> {
+        match &failed.cause {
+            Cause::Delivered { binding } if failed.attempts == 0 => Some(Self {
+                binding: binding.clone(),
+                component: failed.component.clone(),
+                command: failed.command.clone(),
+                reason: failed.error.clone(),
+            }),
+            _ => None,
+        }
+    }
+
+    fn json(&self) -> Value {
+        json!({
+            "binding": self.binding,
+            "component": self.component,
+            "command": self.command,
+            "reason": self.reason,
+        })
+    }
+}
+
 /// What the model answered a request with, beside its status and body: who answered, the outcome
-/// it selected, the events it published and every external cause asked while it was answered.
+/// it selected, the events it published, every external cause asked while it was answered and
+/// every event binding whose input was unmet on the way.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Answered {
     pub(crate) by: By,
     pub(crate) outcome: Option<String>,
     pub(crate) events: Vec<String>,
     pub(crate) externals: Vec<ExternalAnswer>,
+    pub(crate) unmet: Vec<UnmetInput>,
 }
 
 impl Answered {
@@ -259,6 +297,7 @@ impl Answered {
             outcome: None,
             events: Vec::new(),
             externals: Vec::new(),
+            unmet: Vec::new(),
         }
     }
 
@@ -269,6 +308,7 @@ impl Answered {
             outcome,
             events,
             externals: Vec::new(),
+            unmet: Vec::new(),
         }
     }
 
@@ -328,6 +368,7 @@ struct Record {
     duration: Duration,
     events: Vec<String>,
     externals: Vec<ExternalAnswer>,
+    unmet: Vec<UnmetInput>,
 }
 
 impl Record {
@@ -369,6 +410,10 @@ impl Record {
         record.insert(
             "externals".to_owned(),
             Value::Array(self.externals.iter().map(ExternalAnswer::json).collect()),
+        );
+        record.insert(
+            "unmet".to_owned(),
+            Value::Array(self.unmet.iter().map(UnmetInput::json).collect()),
         );
         Value::Object(record)
     }
@@ -507,6 +552,7 @@ impl Recorder {
                 duration,
                 events: note.answered.events,
                 externals: note.answered.externals,
+                unmet: note.answered.unmet,
             };
             ring.recorded += 1;
             ring.totals[class.index()] += 1;

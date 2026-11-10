@@ -144,8 +144,10 @@ fn command_grants_agree_with_the_interpreter() {
 
 #[test]
 fn the_synthesised_grant_denied_scenarios_pass_on_the_host() {
-    let ir = ir();
-    let synthesis = spindle_conformance::synthesize(&ir);
+    let specification =
+        spindle_spec::load(&root().join(SPEC)).expect("the grants fixture compiles");
+    let synthesis = spindle_conformance::synthesize(&specification).expect("the suite synthesises");
+    let ir = specification.ir;
     let suite = AdmittedSuite::from_suite(&synthesis.suite).expect("the suite is admitted");
     let statuses = |run: &spindle_conformance::Run| {
         run.report()

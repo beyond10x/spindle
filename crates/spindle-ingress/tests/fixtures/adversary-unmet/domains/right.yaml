@@ -1,0 +1,37 @@
+domain: relay.right
+summary: A relay that passes a handle on, and an echo.
+types:
+  - name: relay.right.Handle
+    kind: newtype
+    of: String
+errors: []
+commands:
+  - name: relay.right.Relay
+    input:
+      - name: member
+        type: relay.right.Handle
+    outcomes:
+      - name: relayed
+        emits: [relay.right.Relayed]
+        payload:
+          relay.right.Relayed: {member: input.member}
+        summary: The handle is relayed.
+  - name: relay.right.Echo
+    input:
+      - name: n
+        type: Integer
+    outcomes:
+      - name: echoed
+        emits: [relay.right.Echoed]
+        payload:
+          relay.right.Echoed: {n: input.n}
+        summary: The number is echoed.
+events:
+  - name: relay.right.Relayed
+    fields:
+      - name: member
+        type: relay.right.Handle
+  - name: relay.right.Echoed
+    fields:
+      - name: n
+        type: Integer

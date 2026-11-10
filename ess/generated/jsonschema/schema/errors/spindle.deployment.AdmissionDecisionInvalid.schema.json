@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://beyond10x.github.io/spindle/schema/errors/spindle.deployment.AdmissionDecisionInvalid.schema.json",
   "title": "AdmissionDecisionInvalid payload",
-  "description": "The decision binds a capability twice, leaves a required one unbound, binds one that is not required, or refuses naming no capability or one it binds, so nothing moved.",
+  "description": "The decision binds a capability twice, binds one that is not required or to an implementation the environment does not provide for it, names missing one that is not required, that it binds or that the environment provides, leaves a required one neither bound nor missing, or refuses where no capability it names missing is confirmed missing, so nothing moved.",
   "x-ess-name": "spindle.deployment.AdmissionDecisionInvalid",
   "x-ess-kind": "error-payload",
   "type": "object",
@@ -10,7 +10,7 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:b53deb5f6b002e575342684d59c9776d44b0cd2624813c54a7e3cb1afce355c4",
+    "contract_digest": "slice-sha256/2:a3538433669cb930609e21a723cb92240db96d342c7f4ac5a319cd1df2be95ab",
     "regenerate": "ess generate"
   }
 }

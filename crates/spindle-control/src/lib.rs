@@ -5,13 +5,13 @@
 //!
 //! [`Control::start`] takes a compiled specification, the environment its targets provide and a
 //! [`PlacementDocument`]. Each instance is placed on its target as `spindle.placement.PlaceInstance`
-//! decides ([`spindle_target::place`]: retired target, admission, ceiling) and, once placed,
-//! launched through its target's [`Launcher`](spindle_target::Launcher) with the placed request,
-//! its own loopback address to listen on and every other component's as its peers. This build
-//! launches `Process` targets ([`spindle_target::ProcessLauncher`]); an instance on another kind is
-//! not run and is named by [`Control::not_run`]. An instance of a component reached over the
-//! network (one that requires `ingress.network`) is given a loopback address for its ingress as
-//! the setting [`INGRESS_SETTING`], and a token for it, one per deployment, as
+//! decides ([`spindle_target::place`]: retired target, environment mismatch, admission, ceiling)
+//! and, once placed, launched through its target's [`Launcher`](spindle_target::Launcher) with
+//! the placed request, its own loopback address to listen on and every other component's as its
+//! peers. This build launches `Process` targets ([`spindle_target::ProcessLauncher`]); an instance
+//! on another kind is not run and is named by [`Control::not_run`]. An instance of a component
+//! reached over the network (one that requires `ingress.network`) is given a loopback address for
+//! its ingress as the setting [`INGRESS_SETTING`], and a token for it, one per deployment, as
 //! [`INGRESS_TOKEN_SETTING`]: the ingress refuses a request without it or with a foreign `Host`,
 //! and the view proxy sends it.
 //!

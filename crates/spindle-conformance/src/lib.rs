@@ -1,7 +1,8 @@
 //! Running an ESS conformance suite against Spindle's executor, in one process.
 //!
-//! The suite is ESS's: synthesised from a specification by [`synthesize`] (what `ess conform
-//! synthesize` writes) or read from a file, and admitted by [`AdmittedSuite`]. Its steps are run
+//! The suite is ESS's: synthesised from a specification, with the authored scenarios its
+//! `ess-inputs.yaml` lists, by [`synthesize`] (what `ess conform synthesize --scenarios` writes)
+//! or read from a file, and admitted by [`AdmittedSuite`]. Its steps are run
 //! and compared by ESS's own [`Runner`] against [`HostTarget`], every component of the system in
 //! one [`Host`](spindle_host::Host) on empty in-memory stores. Spindle compares nothing itself;
 //! what holds is the runner's answer.
@@ -20,7 +21,7 @@ mod target;
 use std::collections::BTreeSet;
 use std::io::{self, Write};
 
-use ess_compiler::EssIr;
+use ess_conformance::authored::Source;
 use ess_conformance::counts::CountReport;
 use ess_conformance::known_failures::{self, Accounting, Declaration, Refusal as KnownRefusal};
 use ess_conformance::{
@@ -28,6 +29,7 @@ use ess_conformance::{
     ExecutedRun, Ids, Runner, RunnerConfig, ScenarioResult, Status, Synthesis,
 };
 use spindle_capability::Environment;
+use spindle_spec::Specification;
 
 pub use target::HostTarget;
 
@@ -37,14 +39,64 @@ pub const COUNTS_FORMAT: &str = "spindle-conformance-counts/1";
 /// The store implementation every run keeps its state in.
 const MEMORY: &str = "memory";
 
-/// The suite `ir` obliges, and every construct it could not write a scenario for.
+/// The suite `specification` obliges with the authored scenarios it lists, and every construct
+/// ESS could not write a scenario for.
 ///
-/// The suite's format is the newest the specification's constructs need, as `ess conform
-/// synthesize` writes it.
-pub fn synthesize(ir: &EssIr) -> Synthesis {
+/// This is the suite `ess conform synthesize --path <dir> --scenarios <dir>` writes: the
+/// synthesised scenarios, each authored one `ess-inputs.yaml` lists compiled against the IR by
+/// ESS ([`ess_conformance::authored::compile`]) and filed beside them, a refusal an authored
+/// scenario witnesses withdrawn, and the format the newest the constructs need. A specification
+/// that lists no scenario is the synthesised suite alone: the authored path is not run, so the
+/// model check ESS makes on it cannot report a refused listed scenario where none is listed.
+///
+/// # Errors
+/// When ESS refuses a listed scenario, or one has the id of a scenario already in the suite.
+pub fn synthesize(specification: &Specification) -> Result<Synthesis, SynthesisError> {
+    let ir = &specification.ir;
     let mut synthesis = ess_conformance::synthesize(ir);
+    if specification.scenarios.is_empty() {
+        synthesis.suite.select_fresh_format_for(ir);
+        return Ok(synthesis);
+    }
+    let sources = specification
+        .scenarios
+        .iter()
+        .map(|scenario| Source::new(scenario.origin.clone(), scenario.text.clone()))
+        .collect::<Vec<_>>();
+    let authoring = ess_conformance::authored::compile(ir, &sources);
+    if !authoring.is_complete() {
+        return Err(SynthesisError::Authored(
+            authoring
+                .refusals
+                .iter()
+                .map(|refusal| refusal.to_string().trim_end().to_owned())
+                .collect(),
+        ));
+    }
+    ess_conformance::synthesize::withdraw_witnessed_children(
+        ir,
+        &mut synthesis.refusals,
+        authoring.scenarios.values(),
+    );
+    for (id, scenario) in authoring.scenarios {
+        synthesis
+            .suite
+            .insert(id, scenario)
+            .map_err(|id| SynthesisError::Twice(id.to_string()))?;
+    }
     synthesis.suite.select_fresh_format_for(ir);
-    synthesis
+    Ok(synthesis)
+}
+
+/// Why [`synthesize`] wrote no suite.
+#[derive(Debug, thiserror::Error)]
+pub enum SynthesisError {
+    /// ESS refused authored scenarios the specification lists; each refusal as ESS renders it.
+    #[error("ESS refused the listed scenarios:\n{}", .0.join("\n"))]
+    Authored(Vec<String>),
+    /// An authored scenario has the id of one already in the suite.
+    #[error("`{0}` is already in the suite")]
+    Twice(String),
 }
 
 /// `environment` with every store capability it provides bound to memory only.

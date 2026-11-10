@@ -36,11 +36,13 @@ fn run_admits_then_answers_each_command_line() {
     let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
     let state = directory.path().join("state.sqlite");
     let lines = concat!(
-        r#"{"command": "spindle.deployment.OfferBundle", "input": {"deployment_id": "d1", "bundle": "sha256:0f", "environment_id": "laptop", "requires": []}}"#,
+        r#"{"command": "spindle.deployment.DeclareEnvironment", "input": {"environment_id": "laptop", "os": "linux", "arch": "x86_64", "provides": [{"capability": "store.durable", "implementations": ["sqlite"]}]}}"#,
         "\n",
-        r#"{"command": "spindle.deployment.DecideAdmission", "input": {"deployment_id": "d1", "bindings": [], "missing": []}, "external": {"refused": false}}"#,
+        r#"{"command": "spindle.deployment.OfferBundle", "input": {"deployment_id": "d1", "bundle": "sha256:0f", "environment_id": "laptop"}}"#,
         "\n",
-        r#"{"command": "spindle.deployment.DecideAdmission", "input": {"deployment_id": "d1", "bindings": [], "missing": []}, "external": {"refused": false}}"#,
+        r#"{"command": "spindle.deployment.DecideAdmission", "input": {"deployment_id": "d1", "requires": ["store.durable"], "bindings": [{"capability": "store.durable", "implementation": "sqlite"}], "missing": []}, "external": {"refused": false}}"#,
+        "\n",
+        r#"{"command": "spindle.deployment.DecideAdmission", "input": {"deployment_id": "d1", "requires": ["store.durable"], "bindings": [{"capability": "store.durable", "implementation": "sqlite"}], "missing": []}, "external": {"refused": false}}"#,
         "\n",
         r#"{"command": "spindle.deployment.Nothing", "input": {}}"#,
         "\n",
@@ -58,19 +60,20 @@ fn run_admits_then_answers_each_command_line() {
     );
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let results = results(&output);
-    assert_eq!(results.len(), 4, "{results:?}");
-    assert_eq!(results[0]["outcome"], "offered");
+    assert_eq!(results.len(), 5, "{results:?}");
+    assert_eq!(results[0]["outcome"], "declared");
+    assert_eq!(results[1]["outcome"], "offered");
     assert_eq!(
-        results[0]["events"][0]["event"],
+        results[1]["events"][0]["event"],
         "spindle.deployment.BundleOffered"
     );
-    assert_eq!(results[1]["outcome"], "admitted");
-    assert_eq!(results[2]["outcome"], "wrong-state");
+    assert_eq!(results[2]["outcome"], "admitted");
+    assert_eq!(results[3]["outcome"], "wrong-state");
     assert_eq!(
-        results[2]["error"]["error"],
+        results[3]["error"]["error"],
         "spindle.deployment.DeploymentStateConflict"
     );
-    assert_eq!(results[3]["failure"]["kind"], "unknown_command");
+    assert_eq!(results[4]["failure"]["kind"], "unknown_command");
 }
 
 #[test]
@@ -119,7 +122,9 @@ fn run_refuses_a_state_file_when_the_store_is_memory() {
 #[test]
 fn run_keeps_memory_state_for_the_length_of_one_run() {
     let lines = concat!(
-        r#"{"command": "spindle.deployment.OfferBundle", "input": {"deployment_id": "d1", "bundle": "sha256:0f", "environment_id": "scratchpad", "requires": []}}"#,
+        r#"{"command": "spindle.deployment.DeclareEnvironment", "input": {"environment_id": "scratchpad", "os": "linux", "arch": "x86_64", "provides": []}}"#,
+        "\n",
+        r#"{"command": "spindle.deployment.OfferBundle", "input": {"deployment_id": "d1", "bundle": "sha256:0f", "environment_id": "scratchpad"}}"#,
         "\n",
         r#"{"command": "spindle.deployment.StartDeployment", "input": {"deployment_id": "d1"}}"#,
         "\n",
@@ -135,9 +140,10 @@ fn run_keeps_memory_state_for_the_length_of_one_run() {
     );
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let results = results(&output);
-    assert_eq!(results[0]["outcome"], "offered");
+    assert_eq!(results[0]["outcome"], "declared");
+    assert_eq!(results[1]["outcome"], "offered");
     assert_eq!(
-        results[1]["outcome"], "wrong-state",
+        results[2]["outcome"], "wrong-state",
         "an offered deployment is not admitted"
     );
 }

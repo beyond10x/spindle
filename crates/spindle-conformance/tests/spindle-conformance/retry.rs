@@ -28,10 +28,9 @@ fn statuses(run: &spindle_conformance::Run) -> BTreeMap<String, Status> {
 
 #[test]
 fn the_retry_scenario_passes_on_the_host_as_on_the_interpreter() {
-    let ir = spindle_spec::load(&root().join(FILING))
-        .expect("the filing fixture loads")
-        .ir;
-    let synthesis = spindle_conformance::synthesize(&ir);
+    let specification = spindle_spec::load(&root().join(FILING)).expect("the filing fixture loads");
+    let synthesis = spindle_conformance::synthesize(&specification).expect("the suite synthesises");
+    let ir = specification.ir;
     let suite = AdmittedSuite::from_suite(&synthesis.suite).expect("the suite is admitted");
     let text = std::fs::read_to_string(root().join("examples/environments/laptop.toml"))
         .expect("the laptop environment reads");

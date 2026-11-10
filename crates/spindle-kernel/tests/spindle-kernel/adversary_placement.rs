@@ -72,6 +72,7 @@ fn declare(ir: &EssIr, store: &mut dyn Store, ceiling: Value) {
 }
 
 fn plan(ir: &EssIr, store: &mut dyn Store, instance: &str, request: Value) {
+    admitted(ir, store);
     let planned = run(
         ir,
         store,
@@ -87,6 +88,63 @@ fn plan(ir: &EssIr, store: &mut dyn Store, instance: &str, request: Value) {
         }),
     );
     assert_eq!(planned.outcome, "planned", "{planned:?}");
+}
+
+/// Offers deployment `d1` and admits it, unless it is already held: `PlanInstance` refuses an
+/// instance of a deployment no one offered (`unknown-deployment`).
+fn admitted(ir: &EssIr, store: &mut dyn Store) {
+    if store
+        .load("spindle.deployment.Deployment", &json!("d1"))
+        .expect("the store reads")
+        .is_some()
+    {
+        return;
+    }
+    let declared = deployment(
+        ir,
+        store,
+        "DeclareEnvironment",
+        json!({"environment_id": "laptop", "os": "linux", "arch": "x86_64", "provides": []}),
+    );
+    assert_eq!(declared.outcome, "declared", "{declared:?}");
+    let offered = deployment(
+        ir,
+        store,
+        "OfferBundle",
+        json!({"deployment_id": "d1", "bundle": "sha256:0f", "environment_id": "laptop"}),
+    );
+    assert_eq!(offered.outcome, "offered", "{offered:?}");
+    let admitted = deployment(
+        ir,
+        store,
+        "DecideAdmission",
+        json!({"deployment_id": "d1", "requires": [], "bindings": [], "missing": []}),
+    );
+    assert_eq!(admitted.outcome, "admitted", "{admitted:?}");
+}
+
+/// Runs `spindle.deployment.<command>`, which asks no external cause on these inputs.
+fn deployment(ir: &EssIr, store: &mut dyn Store, command: &str, request: Value) -> Executed {
+    let Value::Object(map) = request else {
+        panic!("an input is an object");
+    };
+    execute(
+        ir,
+        store,
+        &mut NoExternal,
+        &format!("spindle.deployment.{command}"),
+        &map,
+    )
+    .unwrap_or_else(|error| panic!("{command} executes: {error}"))
+}
+
+/// Answers every external cause `false`.
+struct NoExternal;
+
+impl Decider for NoExternal {
+    fn decide(&mut self, _question: &External<'_>) -> Result<bool, String> {
+        Ok(false)
+    }
 }
 
 /// observe.md § 5a: the model records the request as the instance asked for it, a zero left as
@@ -149,10 +207,17 @@ fn a_launch_refused_for_admission_names_its_deployment() {
         json!({"instance_id": "i1"}),
     );
     assert_eq!(placed.outcome, "placed", "{placed:?}");
+    let stopped = deployment(
+        &ir,
+        &mut store,
+        "StopDeployment",
+        json!({"deployment_id": "d1"}),
+    );
+    assert_eq!(stopped.outcome, "stopped", "{stopped:?}");
     let launched = run(
         &ir,
         &mut store,
-        &mut Holds::only("LaunchInstance", "not-admitted"),
+        &mut Holds::default(),
         "LaunchInstance",
         json!({"instance_id": "i1"}),
     );
@@ -208,10 +273,17 @@ fn a_launch_of_a_refused_instance_answers_its_state_before_admission() {
         "{again:?}"
     );
 
+    let stopped = deployment(
+        &ir,
+        &mut store,
+        "StopDeployment",
+        json!({"deployment_id": "d1"}),
+    );
+    assert_eq!(stopped.outcome, "stopped", "{stopped:?}");
     let launched = run(
         &ir,
         &mut store,
-        &mut Holds::only("LaunchInstance", "not-admitted"),
+        &mut Holds::default(),
         "LaunchInstance",
         json!({"instance_id": "i1"}),
     );

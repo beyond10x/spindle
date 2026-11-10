@@ -41,7 +41,7 @@ another:
 - A sender maps each event into one envelope per binding and holds it in an **outbox** until the
   state that produced the event is durable; only then is it sent.
 - `at_most_once` envelopes are sent once. `at_least_once` envelopes are acknowledged by the
-  receiver and redelivered when an acknowledgement is overdue.
+  receiver; nothing resends one whose acknowledgement is overdue.
 - Two channels implement the port: `in-process`, a pair of queues, and `tcp`, length-prefixed JSON
   frames over a TCP stream.
 

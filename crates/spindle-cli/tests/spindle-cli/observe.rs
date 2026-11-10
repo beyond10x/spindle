@@ -572,6 +572,53 @@ fn the_request_log_reads_as_its_specified_type() {
     assert!(errors.is_empty(), "{answered}: {errors:?}");
 }
 
+/// `spindle-channel`'s library, with `lending` reached over the network: `CloseLoan` publishes
+/// `LoanClosed`, which `thank-on-close` maps into `SendThanks` across a declared conversion.
+const LIBRARY: &str = "crates/spindle-ingress/tests/fixtures/library";
+
+/// `story:binding-delivery-specified`: `member-0042` is no `ReaderRef`, so `thank-on-close`'s
+/// input is unmet and `SendThanks` is not invoked. The request that closed the loan lists it under
+/// `unmet`; one whose binding mapped lists none. The log reads as its specified type and the
+/// schema admits it.
+#[test]
+fn an_unmet_binding_input_is_listed_in_the_served_request() {
+    let served = serve(LIBRARY, &["--observe"]);
+    let (method, path) = route(LIBRARY, "lending", "library.lending.CloseLoan");
+    for (loan, member) in [("loan-1", "m-7"), ("loan-2", "member-0042")] {
+        let body = json!({ "loan_id": loan, "member_id": member });
+        let (status, answer) = exchange(served.address, &method, &path, Some(&body));
+        assert!((200..300).contains(&status), "{status} {answer}");
+    }
+    let answered = log(&served, "");
+    let typed: spindle_observe_api::RequestLog = serde_json::from_value(answered.clone())
+        .unwrap_or_else(|error| panic!("{error}: {answered}"));
+    assert_eq!(typed.requests.len(), 2, "{answered}");
+    assert!(typed.requests[1].unmet.is_empty(), "{answered}");
+    assert_eq!(typed.requests[0].unmet.len(), 1, "{answered}");
+    assert_eq!(
+        answered["requests"][0]["unmet"][0]["binding"], "thank-on-close",
+        "{answered}"
+    );
+    assert_eq!(
+        answered["requests"][0]["unmet"][0]["component"], "notices",
+        "{answered}"
+    );
+    assert_eq!(
+        answered["requests"][0]["unmet"][0]["command"], "library.notices.SendThanks",
+        "{answered}"
+    );
+    let schema: Value = serde_json::from_str(
+        &std::fs::read_to_string(root().join(SCHEMA)).expect("the schema is read"),
+    )
+    .expect("the schema is JSON");
+    let validator = jsonschema::draft202012::new(&schema).expect("the schema compiles");
+    let errors = validator
+        .iter_errors(&answered)
+        .map(|error| format!("{error} at {}", error.instance_path()))
+        .collect::<Vec<_>>();
+    assert!(errors.is_empty(), "{answered}: {errors:?}");
+}
+
 #[test]
 fn observe_where_run_serves_no_http_is_refused() {
     let (code, stdout, stderr) = refused(REPLAY, &["--observe"]);

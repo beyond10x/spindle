@@ -320,8 +320,10 @@ pub enum Command {
     },
     /// Run a specification's conformance suite against every component in one process.
     ///
-    /// The suite is the one ESS synthesises from the specification (`ess conform synthesize`), or
-    /// the `--suite` file, which must be a suite of this specification. Its scenarios are run by
+    /// The suite is the one ESS synthesises from the specification with the authored scenarios
+    /// its `ess-inputs.yaml` lists under `scenarios:` compiled in by ESS (`ess conform synthesize
+    /// --scenarios`), or the `--suite` file, which must be a suite of this specification. A listed
+    /// scenario ESS refuses is printed and exits 1, running nothing. Its scenarios are run by
     /// ESS's conformance runner on empty in-memory stores; an `external:` cause holds only where a
     /// scenario forces it. Prints every construct the synthesis refused (`refused:
     /// refusal[<code>]: ...`) and how many, then `failed <id>` or `error <id>` with what was

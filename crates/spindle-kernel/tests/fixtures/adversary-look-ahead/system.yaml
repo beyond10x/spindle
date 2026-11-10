@@ -1,0 +1,32 @@
+format: ess/34
+system: probe
+version: v1
+summary: Desks and shelves that open and close, and books lent from a desk and returned to the desk they store.
+domains:
+  - probe.ahead
+components:
+  - component: room
+    summary: Opens and closes desks, and shelves, lends and returns books.
+    owns:
+      domains:
+        - probe.ahead
+    accepts:
+      commands:
+        - probe.ahead.OpenDesk
+        - probe.ahead.CloseDesk
+        - probe.ahead.ShelveBook
+        - probe.ahead.LendPlain
+        - probe.ahead.LendQuiet
+        - probe.ahead.ReturnQuiet
+        - probe.ahead.LendApproved
+        - probe.ahead.LendTwo
+    publishes:
+      events:
+        - probe.ahead.DeskOpened
+        - probe.ahead.DeskClosed
+        - probe.ahead.BookShelved
+        - probe.ahead.BookLent
+        - probe.ahead.BookLentQuietly
+        - probe.ahead.BookReturned
+        - probe.ahead.BookReturnedQuietly
+    reached_by: in_process

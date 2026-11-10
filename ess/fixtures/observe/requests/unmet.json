@@ -1,0 +1,54 @@
+{
+  "format": "spindle-requests/1",
+  "capacity": 256,
+  "recorded": 2,
+  "totals": {
+    "served": 2,
+    "refused": 0,
+    "not_granted": 0,
+    "not_served": 0,
+    "failed": 0,
+    "unrouted": 0
+  },
+  "requests": [
+    {
+      "sequence": 1,
+      "at": "2026-11-09T23:21:51.957Z",
+      "method": "POST",
+      "path": "/lending/commands/CloseLoan",
+      "route": "/lending/commands/CloseLoan",
+      "operation": "library.lending.CloseLoan",
+      "kind": "command",
+      "status": 202,
+      "class": "served",
+      "outcome": "closed",
+      "duration_us": 387161,
+      "events": ["library.lending.LoanClosed"],
+      "externals": [],
+      "unmet": [
+        {
+          "binding": "thank-on-close",
+          "component": "notices",
+          "command": "library.notices.SendThanks",
+          "reason": "binding thank-on-close: the input reader_id is unmet: \"member-0042\" is not a library.notices.ReaderRef: its invariant `value.count <= 8` is false"
+        }
+      ]
+    },
+    {
+      "sequence": 0,
+      "at": "2026-11-09T23:21:51.400Z",
+      "method": "POST",
+      "path": "/lending/commands/CloseLoan",
+      "route": "/lending/commands/CloseLoan",
+      "operation": "library.lending.CloseLoan",
+      "kind": "command",
+      "status": 202,
+      "class": "served",
+      "outcome": "closed",
+      "duration_us": 552653,
+      "events": ["library.lending.LoanClosed"],
+      "externals": [],
+      "unmet": []
+    }
+  ]
+}

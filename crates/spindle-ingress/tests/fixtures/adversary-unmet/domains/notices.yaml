@@ -1,0 +1,25 @@
+domain: relay.notices
+summary: Thanks sent to readers, each under a bounded reader reference.
+types:
+  - name: relay.notices.ReaderRef
+    kind: newtype
+    of: String
+    invariants:
+      - 'value.count <= 8'
+errors: []
+commands:
+  - name: relay.notices.Thank
+    input:
+      - name: reader_id
+        type: relay.notices.ReaderRef
+    outcomes:
+      - name: thanked
+        emits: [relay.notices.Thanked]
+        payload:
+          relay.notices.Thanked: {reader_id: input.reader_id}
+        summary: The reader is thanked.
+events:
+  - name: relay.notices.Thanked
+    fields:
+      - name: reader_id
+        type: relay.notices.ReaderRef
