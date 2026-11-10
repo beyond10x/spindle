@@ -1,0 +1,68 @@
+{
+  "cards": [
+    {
+      "id": "A-newcomer",
+      "anchor": true,
+      "persona": "An engineer who heard of Spindle and lands on the home page; wants to try it today and to know whether it is released.",
+      "tasks": [
+        "install",
+        "release"
+      ],
+      "twists": [
+        "reads the landing page first and expects the install command one click away",
+        "asks for a version: the site states the release state in one place only"
+      ]
+    },
+    {
+      "id": "B-integrator",
+      "anchor": true,
+      "persona": "A developer with an ESS specification who wants it served over HTTP on their laptop, and must write the environment for it.",
+      "tasks": [
+        "http",
+        "environment"
+      ],
+      "twists": [
+        "scans for HTTP, a word the navigation does not carry",
+        "knows the term environment document from the README, not where the site defines it"
+      ]
+    },
+    {
+      "id": "R00-operator",
+      "anchor": false,
+      "persona": "An operator who arrived on the rally example from a link and wants to know what a served run exposes for observation.",
+      "tasks": [
+        "observe"
+      ],
+      "twists": [
+        "starts deep in the site, on the rally page, not on the landing page",
+        "the answer is a flag row in the generated CLI reference, while the Observe concept page carries the word"
+      ]
+    },
+    {
+      "id": "R01-caller",
+      "anchor": false,
+      "persona": "An integrator whose approvals live in their own HTTP service, back after wave 18 shipped outbound HTTP calls and the topology of an observed run.",
+      "tasks": [
+        "http-call",
+        "topology"
+      ],
+      "twists": [
+        "scans for HTTP, which the sidebar carries only in the R-00 link to serving over HTTP; the call is a section of Environment and admission",
+        "starts on the Observe concept page, whose one mention of topology is a screen of the fixture UI; the answer is a clause of the --observe row of the generated CLI reference"
+      ]
+    },
+    {
+      "id": "R02-phone-operator",
+      "anchor": false,
+      "persona": "An operator on a phone, mid-incident, who has the getting-started page open and needs the size of the request log an observed run keeps.",
+      "tasks": [
+        "request-log-size"
+      ],
+      "twists": [
+        "reads on a 390 px screen, where a reference table shows its first columns only",
+        "scans for request records, words of the answer cell, before the flag name --observe-requests"
+      ]
+    }
+  ],
+  "rotation": "R-00 rotated R00-operator in, R-01 R01-caller, R-02 R02-phone-operator. A rotated-out card keeps its tasks as regression scenarios of the ratchet."
+}

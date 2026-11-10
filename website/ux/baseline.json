@@ -1,0 +1,680 @@
+{
+  "about": "UX ratchet of the documentation site (website/ux/). Scenarios: each findability task (screen-only reader, worst over the gating viewports and themes) and each page of the sitemap (page.<name>: axe serious and critical nodes per theme, elements past their box, always-visible misses, reading load). Every key lower-is-better. Tolerances: counts 0, glance_cost steps 5 % relative, layout_shift 0.01 absolute, keyboard.tabs a 30 % band both ways (Tab counts vary run to run). Rewrite with `task ux:docs:baseline`; a worse value needs DECISION=<id>.",
+  "scenarios": {
+    "environment": {
+      "glance_cost.median": {
+        "value": 1,
+        "tolerance": 0.05
+      },
+      "glance_cost.p95": {
+        "value": 1,
+        "tolerance": 0.05
+      },
+      "keyboard.tabs": {
+        "value": 90,
+        "tolerance": 0.3,
+        "decision": "R-02"
+      },
+      "screen_only.actions": {
+        "value": 5,
+        "tolerance": 0
+      },
+      "screen_only.detours": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "screen_only.looks": {
+        "value": 5,
+        "tolerance": 0
+      }
+    },
+    "http": {
+      "glance_cost.median": {
+        "value": 1.5,
+        "tolerance": 0.05
+      },
+      "glance_cost.p95": {
+        "value": 2,
+        "tolerance": 0.05
+      },
+      "keyboard.tabs": {
+        "value": 29,
+        "tolerance": 0.3,
+        "decision": "R-02-unslop"
+      },
+      "screen_only.actions": {
+        "value": 3,
+        "tolerance": 0
+      },
+      "screen_only.detours": {
+        "value": 1,
+        "tolerance": 0
+      },
+      "screen_only.looks": {
+        "value": 4,
+        "tolerance": 0
+      }
+    },
+    "http-call": {
+      "glance_cost.median": {
+        "value": 1,
+        "tolerance": 0.05
+      },
+      "glance_cost.p95": {
+        "value": 1,
+        "tolerance": 0.05
+      },
+      "keyboard.tabs": {
+        "value": 93,
+        "tolerance": 0.3,
+        "decision": "R-02"
+      },
+      "screen_only.actions": {
+        "value": 5,
+        "tolerance": 0
+      },
+      "screen_only.detours": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "screen_only.looks": {
+        "value": 5,
+        "tolerance": 0
+      }
+    },
+    "install": {
+      "glance_cost.median": {
+        "value": 1.5,
+        "tolerance": 0.05
+      },
+      "glance_cost.p95": {
+        "value": 2,
+        "tolerance": 0.05
+      },
+      "keyboard.tabs": {
+        "value": 85,
+        "tolerance": 0.3,
+        "decision": "R-02-release-0.10.0"
+      },
+      "screen_only.actions": {
+        "value": 5,
+        "tolerance": 0
+      },
+      "screen_only.detours": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "screen_only.looks": {
+        "value": 7,
+        "tolerance": 0
+      }
+    },
+    "observe": {
+      "glance_cost.median": {
+        "value": 1,
+        "tolerance": 0.05
+      },
+      "glance_cost.p95": {
+        "value": 1,
+        "tolerance": 0.05
+      },
+      "keyboard.tabs": {
+        "value": 28,
+        "tolerance": 0.3,
+        "decision": "R-02-unslop"
+      },
+      "screen_only.actions": {
+        "value": 2,
+        "tolerance": 0
+      },
+      "screen_only.detours": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "screen_only.looks": {
+        "value": 2,
+        "tolerance": 0
+      }
+    },
+    "page.concepts-capabilities": {
+      "always_visible.misses": {
+        "value": 1,
+        "tolerance": 0
+      },
+      "axe.dark": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "axe.light": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "layout_shift.score": {
+        "value": 0,
+        "tolerance": 0.01
+      },
+      "overflow.elements": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "reading_load.long_paragraphs": {
+        "value": 1,
+        "tolerance": 0
+      },
+      "reading_load.max_paragraph": {
+        "value": 82,
+        "tolerance": 0
+      },
+      "reading_load.words": {
+        "value": 1042,
+        "tolerance": 0
+      }
+    },
+    "page.concepts-components-and-bindings": {
+      "always_visible.misses": {
+        "value": 1,
+        "tolerance": 0
+      },
+      "axe.dark": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "axe.light": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "layout_shift.score": {
+        "value": 0,
+        "tolerance": 0.01
+      },
+      "overflow.elements": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "reading_load.long_paragraphs": {
+        "value": 1,
+        "tolerance": 0
+      },
+      "reading_load.max_paragraph": {
+        "value": 83,
+        "tolerance": 0
+      },
+      "reading_load.words": {
+        "value": 511,
+        "tolerance": 0,
+        "decision": "R-02-unslop"
+      }
+    },
+    "page.concepts-deployment-targets": {
+      "always_visible.misses": {
+        "value": 1,
+        "tolerance": 0
+      },
+      "axe.dark": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "axe.light": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "layout_shift.score": {
+        "value": 0,
+        "tolerance": 0.01
+      },
+      "overflow.elements": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "reading_load.long_paragraphs": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "reading_load.max_paragraph": {
+        "value": 59,
+        "tolerance": 0
+      },
+      "reading_load.words": {
+        "value": 480,
+        "tolerance": 0
+      }
+    },
+    "page.concepts-environment-and-admission": {
+      "always_visible.misses": {
+        "value": 1,
+        "tolerance": 0
+      },
+      "axe.dark": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "axe.light": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "layout_shift.score": {
+        "value": 0,
+        "tolerance": 0.01
+      },
+      "overflow.elements": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "reading_load.long_paragraphs": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "reading_load.max_paragraph": {
+        "value": 67,
+        "tolerance": 0
+      },
+      "reading_load.words": {
+        "value": 840,
+        "tolerance": 0,
+        "decision": "R-02-unslop"
+      }
+    },
+    "page.concepts-observe": {
+      "always_visible.misses": {
+        "value": 1,
+        "tolerance": 0
+      },
+      "axe.dark": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "axe.light": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "layout_shift.score": {
+        "value": 0,
+        "tolerance": 0.01
+      },
+      "overflow.elements": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "reading_load.long_paragraphs": {
+        "value": 1,
+        "tolerance": 0
+      },
+      "reading_load.max_paragraph": {
+        "value": 82,
+        "tolerance": 0
+      },
+      "reading_load.words": {
+        "value": 933,
+        "tolerance": 0,
+        "decision": "R-02-unslop"
+      }
+    },
+    "page.concepts-specification": {
+      "always_visible.misses": {
+        "value": 1,
+        "tolerance": 0
+      },
+      "axe.dark": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "axe.light": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "layout_shift.score": {
+        "value": 0,
+        "tolerance": 0.01
+      },
+      "overflow.elements": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "reading_load.long_paragraphs": {
+        "value": 2,
+        "tolerance": 0
+      },
+      "reading_load.max_paragraph": {
+        "value": 84,
+        "tolerance": 0
+      },
+      "reading_load.words": {
+        "value": 1089,
+        "tolerance": 0,
+        "decision": "R-02-unslop"
+      }
+    },
+    "page.docs": {
+      "always_visible.misses": {
+        "value": 1,
+        "tolerance": 0
+      },
+      "axe.dark": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "axe.light": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "layout_shift.score": {
+        "value": 0,
+        "tolerance": 0.01
+      },
+      "overflow.elements": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "reading_load.long_paragraphs": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "reading_load.max_paragraph": {
+        "value": 75,
+        "tolerance": 0
+      },
+      "reading_load.words": {
+        "value": 461,
+        "tolerance": 0,
+        "decision": "R-02-unslop"
+      }
+    },
+    "page.examples-rally": {
+      "always_visible.misses": {
+        "value": 1,
+        "tolerance": 0
+      },
+      "axe.dark": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "axe.light": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "layout_shift.score": {
+        "value": 0,
+        "tolerance": 0.01
+      },
+      "overflow.elements": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "reading_load.long_paragraphs": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "reading_load.max_paragraph": {
+        "value": 80,
+        "tolerance": 0
+      },
+      "reading_load.words": {
+        "value": 1058,
+        "tolerance": 0,
+        "decision": "R-02-unslop"
+      }
+    },
+    "page.getting-started": {
+      "always_visible.misses": {
+        "value": 1,
+        "tolerance": 0
+      },
+      "axe.dark": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "axe.light": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "layout_shift.score": {
+        "value": 0,
+        "tolerance": 0.01
+      },
+      "overflow.elements": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "reading_load.long_paragraphs": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "reading_load.max_paragraph": {
+        "value": 77,
+        "tolerance": 0,
+        "decision": "R-02-unslop"
+      },
+      "reading_load.words": {
+        "value": 1284,
+        "tolerance": 0,
+        "decision": "R-02-release-0.10.0"
+      }
+    },
+    "page.landing": {
+      "always_visible.misses": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "axe.dark": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "axe.light": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "layout_shift.score": {
+        "value": 0,
+        "tolerance": 0.01
+      },
+      "overflow.elements": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "reading_load.long_paragraphs": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "reading_load.max_paragraph": {
+        "value": 51,
+        "tolerance": 0
+      },
+      "reading_load.words": {
+        "value": 2263,
+        "tolerance": 0,
+        "decision": "R-02-unslop"
+      }
+    },
+    "page.reference-cli": {
+      "always_visible.misses": {
+        "value": 1,
+        "tolerance": 0
+      },
+      "axe.dark": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "axe.light": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "layout_shift.score": {
+        "value": 0,
+        "tolerance": 0.01
+      },
+      "overflow.elements": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "reading_load.long_paragraphs": {
+        "value": 12,
+        "tolerance": 0,
+        "decision": "R-01-base-82faeb87"
+      },
+      "reading_load.max_paragraph": {
+        "value": 322,
+        "tolerance": 0
+      },
+      "reading_load.words": {
+        "value": 3445,
+        "tolerance": 0
+      }
+    },
+    "page.search": {
+      "always_visible.misses": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "axe.dark": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "axe.light": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "layout_shift.score": {
+        "value": 0,
+        "tolerance": 0.01
+      },
+      "overflow.elements": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "reading_load.long_paragraphs": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "reading_load.max_paragraph": {
+        "value": 5,
+        "tolerance": 0
+      },
+      "reading_load.words": {
+        "value": 53,
+        "tolerance": 0
+      }
+    },
+    "page.status": {
+      "always_visible.misses": {
+        "value": 1,
+        "tolerance": 0
+      },
+      "axe.dark": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "axe.light": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "layout_shift.score": {
+        "value": 0,
+        "tolerance": 0.01
+      },
+      "overflow.elements": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "reading_load.long_paragraphs": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "reading_load.max_paragraph": {
+        "value": 51,
+        "tolerance": 0
+      },
+      "reading_load.words": {
+        "value": 2792,
+        "tolerance": 0,
+        "decision": "R-02-unslop"
+      }
+    },
+    "release": {
+      "glance_cost.median": {
+        "value": 3,
+        "tolerance": 0.05
+      },
+      "glance_cost.p95": {
+        "value": 3,
+        "tolerance": 0.05
+      },
+      "keyboard.tabs": {
+        "value": 170,
+        "tolerance": 0.3
+      },
+      "screen_only.actions": {
+        "value": 25,
+        "tolerance": 0,
+        "decision": "R-02-release-0.10.0"
+      },
+      "screen_only.detours": {
+        "value": 2,
+        "tolerance": 0,
+        "decision": "R-01"
+      },
+      "screen_only.looks": {
+        "value": 59,
+        "tolerance": 0,
+        "decision": "R-02-release-0.10.0"
+      }
+    },
+    "request-log-size": {
+      "glance_cost.median": {
+        "value": 1,
+        "tolerance": 0.05
+      },
+      "glance_cost.p95": {
+        "value": 3,
+        "tolerance": 0.05
+      },
+      "keyboard.tabs": {
+        "value": 400,
+        "tolerance": 0.3
+      },
+      "screen_only.actions": {
+        "value": 14,
+        "tolerance": 0
+      },
+      "screen_only.detours": {
+        "value": 1,
+        "tolerance": 0
+      },
+      "screen_only.looks": {
+        "value": 24,
+        "tolerance": 0
+      }
+    },
+    "topology": {
+      "glance_cost.median": {
+        "value": 1,
+        "tolerance": 0.05
+      },
+      "glance_cost.p95": {
+        "value": 1,
+        "tolerance": 0.05
+      },
+      "keyboard.tabs": {
+        "value": 21,
+        "tolerance": 0.3
+      },
+      "screen_only.actions": {
+        "value": 2,
+        "tolerance": 0
+      },
+      "screen_only.detours": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "screen_only.looks": {
+        "value": 2,
+        "tolerance": 0
+      }
+    }
+  },
+  "tolerances": {
+    "counts": 0,
+    "steps": 0.05,
+    "layout_shift": 0.01,
+    "tabs": 0.3
+  }
+}
