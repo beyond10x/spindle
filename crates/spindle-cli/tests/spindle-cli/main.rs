@@ -56,6 +56,7 @@ mod run;
 mod served_decisions;
 mod served_world;
 mod topology;
+mod trusted_caller;
 mod unserved;
 mod view_field_filters;
 mod view_list_parameter;

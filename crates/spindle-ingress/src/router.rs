@@ -9,7 +9,7 @@ use spindle_host::{Failed, Host};
 use crate::answer::Answer;
 use crate::console::{Console, Worlds};
 use crate::observe::{Answered, By, Recorder, Reserved, UnmetInput};
-use crate::surface::{Resolved, Route, Surface};
+use crate::surface::{Caller, Resolved, Route, Surface};
 
 /// The largest request body read, in bytes: [`route`] refuses a larger one `413`, and the
 /// listener one announced larger before it is read.
@@ -82,7 +82,9 @@ pub struct Routed {
 /// Each refusal is `{"refused": <why>}`, as ESS's served application writes it: a path no route
 /// has `404`; a served path under another method `405` with [`Response::allow`], the method
 /// compared exactly; a path variable that does not decode `400`; a body over [`BODY_LIMIT`]
-/// `413`.
+/// `413`. A [`Request`] carries no header, so on a surface made [`Surface::proving_callers`] it
+/// proves no caller, and every command or view is refused `403`
+/// `{"refused": "not granted", "actor": null}`.
 pub fn route(surface: &Surface, host: &mut Host, request: Request) -> Routed {
     routing(surface, host, request, None)
 }
@@ -146,6 +148,7 @@ fn routing(
         content_type: request.content_type,
         body: request.body,
         recorder: surface.recorder().cloned(),
+        proven: None,
     }
     .serve(host, worlds);
     Routed { response, failed }
@@ -218,6 +221,10 @@ pub(crate) struct Pending {
     pub(crate) body: Vec<u8>,
     /// The surface's recorder, where it observes: what the metrics read, and what counts a reset.
     pub(crate) recorder: Option<Recorder>,
+    /// The caller the request proves in the header a surface made
+    /// [`Surface::proving_callers`] reads ([`Caller::proven`]); `None` where it proves none, and
+    /// for every request a [`Request`] value carries, which holds no header.
+    pub(crate) proven: Option<Caller>,
 }
 
 impl Pending {
@@ -256,6 +263,7 @@ impl Pending {
                 let (answer, failed, answered) = crate::answer::answering(
                     host,
                     route,
+                    self.proven.as_ref(),
                     &self.carried,
                     &self.query,
                     self.content_type.as_deref(),

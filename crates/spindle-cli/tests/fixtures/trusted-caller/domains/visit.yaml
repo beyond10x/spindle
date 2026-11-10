@@ -1,0 +1,64 @@
+domain: porch.visit
+summary: A visit recorded for the person who sent it, and a log of them only an auditor may read.
+types:
+  - name: porch.visit.VisitId
+    kind: newtype
+    of: Uuid
+  - name: porch.visit.PersonId
+    kind: newtype
+    of: Uuid
+actors:
+  - name: porch.visit.Member
+    attributes:
+      - name: person_id
+        type: porch.visit.PersonId
+    may:
+      - porch.visit.RecordVisit
+  - name: porch.visit.Auditor
+    may:
+      - porch.visit.VisitLog
+entities:
+  - name: porch.visit.Visit
+    identity:
+      name: visit_id
+      type: porch.visit.VisitId
+    fields:
+      - name: person_id
+        type: porch.visit.PersonId
+    lifecycle:
+      initial: Recorded
+      states: [Recorded]
+      terminal: [Recorded]
+commands:
+  - name: porch.visit.RecordVisit
+    input:
+      - name: visit_id
+        type: porch.visit.VisitId
+    outcomes:
+      - name: recorded
+        creates: porch.visit.Visit
+        instance: visit_id
+        sets:
+          person_id: {caller: person_id}
+        emits: [porch.visit.VisitRecorded]
+        payload:
+          porch.visit.VisitRecorded:
+            visit_id: input.visit_id
+            person_id: {caller: person_id}
+        summary: The visit is recorded for the person the request proves.
+events:
+  - name: porch.visit.VisitRecorded
+    fields:
+      - name: visit_id
+        type: porch.visit.VisitId
+      - name: person_id
+        type: porch.visit.PersonId
+views:
+  - name: porch.visit.VisitLog
+    source: porch.visit.Visit
+    consistency: read_your_writes
+    fields:
+      - name: visit_id
+        type: porch.visit.VisitId
+      - name: person_id
+        type: porch.visit.PersonId

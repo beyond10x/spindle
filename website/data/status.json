@@ -269,6 +269,13 @@
       "status": "shipped"
     },
     {
+      "area": "Execution",
+      "detail": "run --trusted-caller-header reads each request's actor and caller attributes from one JSON header a proxy in front of the ingress sets once it has authenticated the request, so a command that reads its caller runs for that caller and a read-granted view is read as it. The proxy is trusted by a shared secret: --trusted-caller-secret names the file holding it, and the proxy presents it on every request in the Spindle-Proxy-Secret header. A request without a valid caller header or the right secret is refused 403 not granted naming no actor and writes nothing; the secret is never printed. The ingress must be reachable only through the proxy, which must remove both headers from client requests.",
+      "href": "/docs/concepts/capabilities",
+      "label": "Caller proven by a trusted proxy header",
+      "status": "shipped"
+    },
+    {
       "area": "Conformance",
       "detail": "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: an entity it arranges with setup is written into the store of the component that owns it, captures feed later steps, view asserts are checked, and the first divergent step is named and ends the run.",
       "href": "/docs/concepts/specification",
