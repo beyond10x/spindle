@@ -1,0 +1,19 @@
+format: ess/34
+system: probe
+version: v1
+summary: Requests an approval desk outside the model approves or not.
+domains:
+  - probe.approval
+components:
+  - component: probe
+    summary: Holds approved requests.
+    owns:
+      domains:
+        - probe.approval
+    accepts:
+      commands:
+        - probe.approval.Ask
+    publishes:
+      events:
+        - probe.approval.Approved
+    reached_by: in_process

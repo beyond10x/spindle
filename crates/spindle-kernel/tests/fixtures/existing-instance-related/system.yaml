@@ -1,0 +1,20 @@
+format: ess/26
+system: stock
+version: v1
+summary: Items added once per identity, one of them onto a shelf the input names, read before the one rule.
+domains:
+  - stock.items
+components:
+  - component: shelf
+    summary: Adds and stows items.
+    owns:
+      domains:
+        - stock.items
+    accepts:
+      commands:
+        - stock.items.AddItem
+        - stock.items.StowItem
+    publishes:
+      events:
+        - stock.items.ItemAdded
+    reached_by: in_process

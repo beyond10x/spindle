@@ -1,5 +1,6 @@
 //! One command, from input to committed change.
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::time::SystemTime;
 
@@ -272,7 +273,7 @@ pub fn execute_refusing(
         held,
         related,
         generator: Generator::new(mint, now, command),
-        instant: None,
+        instant: Cell::new(None),
         minted: None,
         answered: BTreeMap::new(),
         scanned: Vec::new(),
@@ -452,9 +453,10 @@ struct Run<'a, 'ir> {
     /// The rows the command's related values name, read before anything else ([`crate::values::related`]).
     related: crate::values::Related,
     generator: Generator<'a>,
-    /// The decision's instant, as a row-set selector reads `now`: read from the clock once per
-    /// run, on the first read, and `None` inside where the clock spells no instant.
-    instant: Option<Option<Rfc3339Instant>>,
+    /// The decision's instant, as every guard and row-set selector reads `now`: read from the
+    /// clock once per run, on the first read, and `None` inside where the clock spells no instant
+    /// ([`Self::now`]).
+    instant: Cell<Option<Option<Rfc3339Instant>>>,
     /// The identity this run minted: the creating event that publishes it, and the identity
     /// field's name.
     minted: Option<(&'ir EventHandle, String, Value)>,
@@ -493,13 +495,21 @@ impl<'a, 'ir> Run<'a, 'ir> {
         let mut looked_ahead = false;
         for planned in plan.phases() {
             match planned.phase {
-                Phase::RelatedRow if !stored && reads_missing(&plan, planned.phase) => {
-                    if let Some(outcome) = self.missing_related(&plan, planned.phase)? {
+                Phase::RelatedRow => {
+                    if let Some(answered) = self.existing(&plan, planned.phase)? {
+                        return Ok(Selected::Answered(answered));
+                    }
+                    if !stored
+                        && reads_missing(&plan, planned.phase)
+                        && let Some(outcome) = self.missing_related(&plan, planned.phase)?
+                    {
                         return Ok(Selected::Outcome(outcome));
                     }
                 }
-                Phase::RelatedRow => {}
                 Phase::Existence => {
+                    if let Some(answered) = self.existing(&plan, planned.phase)? {
+                        return Ok(Selected::Answered(answered));
+                    }
                     if let Some(addressed) = &self.held
                         && addressed.stored.is_none()
                         && (stored || !self.creation_takes_absent(addressed))
@@ -693,14 +703,26 @@ impl<'a, 'ir> Run<'a, 'ir> {
     }
 
     /// An input guard over the command's input, read at the input fields' own names as `when:`
-    /// reads them, and the caller under `caller.`; no guard holds.
+    /// reads them, the caller under `caller.` and the decision's instant as `now`; no guard holds.
     fn guard(&self, predicate: Option<&Predicate>) -> Truth {
         predicate.map_or(Truth::True, |predicate| {
             predicate.evaluate(
                 &Facts::values(self.ir, &self.spec.input, self.input)
-                    .with_caller(self.attributes, self.caller),
+                    .with_caller(self.attributes, self.caller)
+                    .at(self.now()),
             )
         })
+    }
+
+    /// The decision's one instant, which every guard and row-set selector of this run reads as
+    /// `now` (ESS `Context::now`): read from the clock on the first read and kept for the run.
+    fn now(&self) -> Option<Rfc3339Instant> {
+        if let Some(now) = self.instant.get() {
+            return now;
+        }
+        let now = self.generator.instant();
+        self.instant.set(Some(now));
+        now
     }
 
     /// The row `via` names among `entity`'s, as the store holds it before selection: an input
@@ -762,10 +784,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
             });
         }
         let input = Facts::values(ir, &self.spec.input, self.input);
-        let now = match self.instant {
-            Some(now) => now,
-            None => *self.instant.insert(self.generator.instant()),
-        };
+        let now = self.now();
         let mut members = Vec::new();
         let name = entity.name.to_string();
         let scan = self.store.scan(&name)?;
@@ -794,6 +813,50 @@ impl<'a, 'ir> Run<'a, 'ir> {
             });
         }
         Ok(test.decide(&members))
+    }
+
+    /// The `existing_instance:` answer where the plan places that branch in `phase`, step 1 on a
+    /// command reading a related row or a row set before the one rule and the existence step
+    /// otherwise: a row already carries the identity a creation of the command takes from the
+    /// input. `None` where `phase` holds no such branch or no row carries the identity, and
+    /// selection goes on (ESS `interpret::execute::existence::existing`). Every creation shares
+    /// one address, since admission refuses the branch beside creations of different addresses
+    /// ([`crate::selects`]). The branch is answered as ESS answers it: its declared error, read
+    /// with no row, and nothing written or emitted.
+    fn existing(
+        &mut self,
+        plan: &PrecedencePlan<'ir>,
+        phase: Phase,
+    ) -> Result<Option<Executed>, ExecuteError> {
+        let Some(refused) = plan
+            .branches(phase)
+            .iter()
+            .copied()
+            .find(|outcome| outcome.condition == ResolvedCondition::ExistingInstance)
+        else {
+            return Ok(None);
+        };
+        let ir = self.ir;
+        for creation in &self.spec.outcomes {
+            let Some((entity, Some(field))) = crate::supported::creation_address(creation) else {
+                continue;
+            };
+            // The source reads a field or a nested member (`wrap.id`), as ESS `read_input` does.
+            let Some(identity) = crate::values::read_input(self.input, field) else {
+                continue;
+            };
+            let entity = ir.entity(entity).name.to_string();
+            if self.store.load(&entity, &identity)?.is_some() {
+                self.runs(refused)?;
+                return Ok(Some(Executed {
+                    outcome: refused.name.as_str().to_owned(),
+                    events: Vec::new(),
+                    error: self.declared_error(refused, None)?,
+                    response: self.response(refused)?,
+                }));
+            }
+        }
+        Ok(None)
     }
 
     /// Whether the absent `addressed` row is a creation's to take rather than an unknown instance:
@@ -868,15 +931,18 @@ impl<'a, 'ir> Run<'a, 'ir> {
             })
     }
 
-    /// The facts a guard over a related row reads: the row, the input under `input.` and the
-    /// caller under `caller.`, as [`Self::subject_facts`] reads the addressed one.
+    /// The facts a guard over a related row reads: the row, the input under `input.`, the caller
+    /// under `caller.` and the decision's instant as `now`, as [`Self::subject_facts`] reads the
+    /// addressed one.
     fn related_facts(&self, entity: &'ir ResolvedEntity, identity: &Value, row: &Row) -> Facts<'_> {
         let shadowed = entity
             .fields
             .iter()
             .any(|field| field.name == crate::facts::INPUT);
         let input = (!shadowed).then_some((self.spec.input.as_slice(), self.input));
-        Facts::row(self.ir, entity, identity, row, input).with_caller(self.attributes, self.caller)
+        Facts::row(self.ir, entity, identity, row, input)
+            .with_caller(self.attributes, self.caller)
+            .at(self.now())
     }
 
     /// The `exists: false` branch answering the first missing row the input names, the rows read
@@ -1163,7 +1229,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
 
     /// The facts a guard over the subject reads: the held instance, the input under `input.` and
     /// the caller under `caller.`, each unless the entity declares a field of that name, which
-    /// keeps being read as itself.
+    /// keeps being read as itself, and the decision's instant as `now`.
     fn subject_facts(&self, outcome: &ResolvedOutcome) -> Result<Facts<'_>, ExecuteError> {
         let row = self.held_row(outcome)?;
         let Some(held) = &self.held else {
@@ -1176,7 +1242,8 @@ impl<'a, 'ir> Run<'a, 'ir> {
             .any(|field| field.name == crate::facts::INPUT);
         let input = (!shadowed).then_some((self.spec.input.as_slice(), self.input));
         Ok(Facts::row(self.ir, held.entity, &held.identity, row, input)
-            .with_caller(self.attributes, self.caller))
+            .with_caller(self.attributes, self.caller)
+            .at(self.now()))
     }
 
     /// The held instance a guard over the subject reads.

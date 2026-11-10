@@ -68,6 +68,7 @@ fn runtime(document: &BTreeMap<String, Vec<String>>) -> spindle_capability::Envi
         os: "linux".to_owned(),
         arch: "x86_64".to_owned(),
         provides: document.clone(),
+        http: BTreeMap::new(),
     }
 }
 

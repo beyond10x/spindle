@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import Banner from './Banner.vue';
+import TopologyPanel from './TopologyPanel.vue';
 import { requestsUrl } from './requests';
 import type { RequestLog } from '../api/types';
 
@@ -12,6 +13,7 @@ const props = withDefaults(defineProps<{ fetch?: typeof fetch; every?: number }>
 const fetcher: typeof fetch = props.fetch ?? ((input, init) => globalThis.fetch(input, init));
 const log = shallowRef<RequestLog | null>(null);
 const notServedOnly = ref(false);
+const screen = ref<'requests' | 'topology'>('requests');
 const error = ref<string | null>(null);
 let polling: ReturnType<typeof setInterval> | undefined;
 
@@ -53,9 +55,22 @@ onBeforeUnmount(() => clearInterval(polling));
       <p v-else class="banner">no request log yet</p>
       <label><input v-model="notServedOnly" type="checkbox" data-test="not-served-only" /> not served only</label>
       <button type="button" data-test="refresh" @click="load">refresh</button>
+      <nav>
+        <button
+          v-for="name in ['requests', 'topology'] as const"
+          :key="name"
+          type="button"
+          :class="{ active: screen === name }"
+          :data-test="`screen-${name}`"
+          @click="screen = name"
+        >
+          {{ name }}
+        </button>
+      </nav>
     </header>
     <p v-if="error" class="error" data-test="error">{{ error }}</p>
-    <table v-if="log">
+    <TopologyPanel v-if="screen === 'topology'" :fetch="props.fetch" :every="props.every" />
+    <table v-else-if="log">
       <thead>
         <tr>
           <th>#</th>

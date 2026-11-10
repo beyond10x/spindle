@@ -1,6 +1,7 @@
 //! The reserved prefix `/__spindle/`, the request log answered under it
-//! (`GET /__spindle/requests`, a `spindle.observe.RequestLog`) and the metrics
-//! (`GET /__spindle/metrics`, [`metrics`]).
+//! (`GET /__spindle/requests`, a `spindle.observe.RequestLog`), the metrics
+//! (`GET /__spindle/metrics`, [`metrics`]) and the topology (`GET /__spindle/topology`,
+//! [`topology`]).
 //!
 //! A surface records requests only where it was made [`Surface::observing`](crate::Surface::observing):
 //! it then holds a [`Recorder`], a ring of the last requests and the totals per [`Class`] since
@@ -25,6 +26,7 @@ use crate::answer::Answer;
 use crate::router::Response;
 
 pub(crate) mod metrics;
+pub(crate) mod topology;
 
 /// The first path segment every route of spindle's own is under, and no specification route is.
 pub const RESERVED_SEGMENT: &str = "__spindle";
@@ -62,7 +64,7 @@ pub enum Reserved {
     /// `/__spindle/ui`, the observe panel ([`crate::Surface::with_panel`]), and every path under
     /// it, which answers `404`.
     Ui,
-    /// `/__spindle/topology`, answered `404` until its story lands.
+    /// `/__spindle/topology`: the topology, a `spindle.observe.Topology` ([`topology`]).
     Topology,
     /// Any other path under the prefix: `404`.
     Other,
@@ -193,7 +195,9 @@ pub enum AnswerSource {
     File,
     /// The default branch `--answer-default` takes.
     Default,
-    /// Nothing did, and the command answered `501`.
+    /// The HTTP call the environment binds the cause to (`[http.<name>]`).
+    Call,
+    /// Nothing did, or the cause's HTTP call failed, and the command answered `501`.
     Unanswered,
 }
 
@@ -204,6 +208,7 @@ impl AnswerSource {
             Self::World => "world",
             Self::File => "file",
             Self::Default => "default",
+            Self::Call => "call",
             Self::Unanswered => "unanswered",
         }
     }
@@ -441,6 +446,8 @@ struct Ring {
     /// The external causes asked since the request being answered began, in the order asked;
     /// empty while none is.
     answers: Vec<ExternalAnswer>,
+    /// The routes of the surface it records for, each a `routes` edge of the topology.
+    routes: Vec<topology::Routed>,
 }
 
 /// The labels a request is counted by: method, route template, operation, kind, class and status
@@ -491,7 +498,33 @@ impl Recorder {
             externals: BTreeMap::new(),
             serving: false,
             answers: Vec::new(),
+            routes: Vec::new(),
         })))
+    }
+
+    /// This recorder recording for the surface whose routes are `routes`.
+    #[must_use]
+    pub(crate) fn routing(self, routes: Vec<topology::Routed>) -> Self {
+        self.ring(|ring| ring.routes = routes);
+        self
+    }
+
+    /// The routes of the surface it records for ([`Recorder::routing`]).
+    pub(crate) fn routes(&self) -> Vec<topology::Routed> {
+        self.ring(|ring| ring.routes.clone())
+    }
+
+    /// The sequences of the newest records the ring holds for `method` at the route template
+    /// `route`, newest first, at most `most`.
+    pub(crate) fn latest(&self, method: &str, route: &str, most: usize) -> Vec<u64> {
+        self.ring(|ring| {
+            ring.records
+                .iter()
+                .filter(|record| record.method == method && record.route.as_deref() == Some(route))
+                .take(most)
+                .map(|record| record.sequence)
+                .collect()
+        })
     }
 
     /// How many requests it keeps at most.
@@ -681,10 +714,11 @@ fn refused(body: &str) -> Option<String> {
 /// the `?`, still percent-encoded): without a recorder every path under the prefix answers `404`;
 /// with one, `GET /__spindle/requests` answers the request log, each `class=<class>` pair of the
 /// query keeping only that class, and any other method `405`; `GET /__spindle/ui` answers the
-/// panel's page `panel`, `503` naming it without one; `GET /__spindle/metrics` is answered on the
-/// host's thread, since it reads the stores ([`metrics::exposition`]), so it answers `None` here,
-/// and any other method `405`. Every other reserved path answers `404`. A query pair other than a
-/// known `class` is refused `400`.
+/// panel's page `panel`, `503` naming it without one; `GET /__spindle/metrics` and
+/// `GET /__spindle/topology` are answered on the host's thread, since they read the stores and
+/// the host's counters ([`hosted`]), so they answer `None` here, and any other method `405`.
+/// Every other reserved path answers `404`. A query pair other than a known `class` is refused
+/// `400`.
 pub(crate) fn reserved(
     recorder: Option<&Recorder>,
     panel: Option<&'static str>,
@@ -713,16 +747,37 @@ pub(crate) fn reserved(
             },
             Err(why) => Answer::refusal(400, why).into(),
         },
-        Reserved::Requests | Reserved::Metrics if method != "GET" => only_get(),
-        Reserved::Metrics => return None,
+        Reserved::Requests | Reserved::Metrics | Reserved::Topology if method != "GET" => {
+            only_get()
+        }
+        Reserved::Metrics | Reserved::Topology => return None,
         Reserved::Ui => self::panel(panel, method, path).unwrap_or_else(not_found),
-        Reserved::Requests | Reserved::Topology | Reserved::Other => not_found(),
+        Reserved::Requests | Reserved::Other => not_found(),
     })
+}
+
+/// The answer to the reserved route `reserved` on the host's thread, which [`reserved`] answered
+/// `None` for: the topology for [`Reserved::Topology`], the metrics otherwise.
+pub(crate) fn hosted(
+    reserved: Reserved,
+    recorder: &Recorder,
+    host: &mut spindle_host::Host,
+) -> Response {
+    match reserved {
+        Reserved::Topology => Response {
+            status: 200,
+            allow: None,
+            panel: false,
+            metrics: false,
+            body: topology::topology(recorder, host).to_string(),
+        },
+        _ => metrics(recorder, host),
+    }
 }
 
 /// The answer to `GET /__spindle/metrics` on `host`, the requests `recorder` counted: `200` with
 /// the text exposition ([`metrics::METRICS_MEDIA`]), `500` naming why a store could not be read.
-pub(crate) fn metrics(recorder: &Recorder, host: &mut spindle_host::Host) -> Response {
+fn metrics(recorder: &Recorder, host: &mut spindle_host::Host) -> Response {
     match metrics::exposition(recorder, host) {
         Ok(body) => Response {
             status: 200,

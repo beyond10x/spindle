@@ -21,6 +21,9 @@ ess-domain.workspace = true
 ess-gen.workspace = true
 ess-http.workspace = true
 ess-primitives.workspace = true
+http-body-util = "0.1"
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 serde.workspace = true
 serde_json.workspace = true
 spindle-capability.workspace = true
@@ -34,6 +37,7 @@ spindle-target = { path = "../spindle-target" }
 spindle-telemetry = { path = "../spindle-telemetry" }
 signal-hook = "0.3"
 tempfile = "3"
+tokio = { version = "1", default-features = false, features = ["net", "rt", "time"] }
 toml.workspace = true
 
 [dev-dependencies]

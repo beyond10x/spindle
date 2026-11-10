@@ -324,10 +324,11 @@ types:
       summary: >-
         What answered one external cause of a served command. `world`: the `decisions` of the
         world the last reset loaded, `spindle.console.World`. `file`: the decisions file.
-        `default`: the default branch `--answer-default` takes. `unanswered`: nothing did, and the
-        command answered `501`. Source: `crates/spindle-cli/src/decisions.rs:35-53`,
-        `crates/spindle-ingress/src/observe.rs:186-209`.
-    variants: [world, file, default, unanswered]
+        `default`: the default branch `--answer-default` takes. `call`: the HTTP call the
+        environment binds the cause to (`[http.<name>]`). `unanswered`: nothing did, or the
+        cause's HTTP call failed, and the command answered `501`. Source:
+        `crates/spindle-cli/src/decisions.rs:47-71`, `crates/spindle-ingress/src/observe.rs:186-213`.
+    variants: [world, file, default, call, unanswered]
 
   - name: spindle.observe.ExternalAnswer
     kind: struct
@@ -542,13 +543,14 @@ types:
       - name: id
         type: String
         summary: >-
-          Unique within one specification's topology: `ingress`; the specification's system
-          identifier; a domain, command, view or event by its qualified name prefixed by its
-          kind, such as `command:tasks.board.OpenTask`; an external cause by its command and
-          outcome, such as `external:tasks.ledger.Settle/settled`; a binding by its binding id,
-          not a qualified name, as `binding:<binding id>`, such as `binding:record-closure`. A
-          binding id is unique only within its specification; how ids stay unique across
-          several specifications behind one ingress is for
+          Unique within one specification's topology: `ingress`; the specification by its system
+          identifier prefixed by its kind, such as `specification:tasks`, so a system called
+          `ingress` is not the ingress; a domain, command, view or event by its qualified name
+          prefixed by its kind, such as `command:tasks.board.OpenTask`; an external cause by its
+          command and outcome, such as `external:tasks.ledger.Settle/settled`; a binding by its
+          binding id, not a qualified name, as `binding:<binding id>`, such as
+          `binding:record-closure`. A binding id is unique only within its specification; how ids
+          stay unique across several specifications behind one ingress is for
           `story:one-ingress-several-specifications` to settle.
       - name: kind
         type: spindle.observe.NodeKind
@@ -601,7 +603,7 @@ types:
       - name: count
         type: Integer
         summary: >-
-          Requests a `routes` edge handed on, events an `emits` edge emitted, envelopes a
+          Requests a `routes` edge handed on, events an `emits` edge appended, envelopes a
           `carries` edge sent, commands an `invokes` edge invoked, questions an `asks` edge asked.
       - name: statuses
         type: List<spindle.observe.StatusCount>

@@ -14,8 +14,9 @@
 //!
 //! The declared types answer how text is ordered, as ESS's typed fact sources answer it: a
 //! `Timestamp` by the instant it names, a `Duration` not at all, any other text by its UTF-8
-//! bytes. No current time is supplied, so a comparison with `now` stays `Unknown`, except in a
-//! row-set selector ([`Selector`]), which reads the decision's instant.
+//! bytes. A command guard reads the decision's one instant as `now` ([`Facts::at`]), and so does a
+//! row-set selector ([`Selector`]). An invariant is read with no current time, as ESS's
+//! interpreter reads one at rest, so a comparison with `now` there stays `Unknown`.
 
 use std::collections::BTreeSet;
 
@@ -48,6 +49,8 @@ pub(crate) struct Facts<'a> {
     input: Option<&'a [ResolvedField]>,
     /// The caller's attributes read under `caller.`, where they are.
     caller: Option<&'a [ResolvedField]>,
+    /// The instant `now` reads, where a guard of a command decision reads these facts.
+    now: Option<Rfc3339Instant>,
 }
 
 impl<'a> Facts<'a> {
@@ -59,7 +62,17 @@ impl<'a> Facts<'a> {
             fields,
             input: None,
             caller: None,
+            now: None,
         }
+    }
+
+    /// These facts read by a guard of a command decision at `now`, the decision's one instant, as
+    /// ESS's interpreter reads `when:`, `when_subject:` and a `when_related:` row
+    /// (`interpret::execute::caller::Facts::new(.., context.now)`). `None` binds no instant, so a
+    /// comparison with `now` is `Unknown`.
+    pub(crate) fn at(mut self, now: Option<Rfc3339Instant>) -> Self {
+        self.now = now;
+        self
     }
 
     /// These facts with the attributes of the caller the command is sent as, each at
@@ -288,5 +301,9 @@ impl FactSource for Facts<'_> {
 
     fn orders_text_by_bytes(&self, path: &FactPath) -> bool {
         self.declared(path) != Some(Primitive::Duration)
+    }
+
+    fn now(&self) -> Option<Rfc3339Instant> {
+        self.now
     }
 }

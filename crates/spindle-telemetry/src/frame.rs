@@ -173,14 +173,14 @@ fn truncate(text: &str, limit: usize) -> &str {
 /// The current civil time: the operating system's, or on `wasm32-unknown-unknown`, where the
 /// standard library has no clock, the browser's `Date.now()` (through `web-time`).
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-fn civil_now() -> SystemTime {
+pub fn civil_now() -> SystemTime {
     SystemTime::now()
 }
 
 /// The current civil time: the operating system's, or on `wasm32-unknown-unknown`, where the
 /// standard library has no clock, the browser's `Date.now()` (through `web-time`).
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-fn civil_now() -> SystemTime {
+pub fn civil_now() -> SystemTime {
     let since = web_time::SystemTime::now()
         .duration_since(web_time::SystemTime::UNIX_EPOCH)
         .unwrap_or_default();

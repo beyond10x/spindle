@@ -82,11 +82,13 @@ pub(crate) struct Serving<'a> {
     pub ingress: &'a str,
     /// `--drop-retries`: run each `on_failure: retry` binding as a `drop` binding.
     pub drop_retries: bool,
-    /// With `--decisions` or `--answer-default`: `answers` answer every request's external causes
-    /// ([`decisions::deciding`]); without either, the host answers none and refuses a
-    /// specification that declares one.
+    /// With `--decisions` or `--answer-default`, or where every external cause is bound to an
+    /// HTTP call: `answers` and their calls answer every request's external causes
+    /// ([`decisions::deciding`]); otherwise the host answers none and refuses a specification
+    /// that declares one.
     pub decides: bool,
-    /// The run's own answers, beneath the decision table a reset's world carries.
+    /// The run's own answers, beneath the decision table a reset's world carries, and the HTTP
+    /// calls the environment binds causes to above both ([`Run::calling`]).
     pub answers: Run,
     /// `--fixed-actor` with `--fixed-caller`, in the order given: each served operation is sent
     /// or read as the first its grant names ([`Surface::fixing_callers`]), a test-backend switch,
@@ -169,8 +171,9 @@ fn fixed(ir: &EssIr, caller: &Caller) -> Result<()> {
 /// command a binding invoked that did not execute is printed on stderr as it is dropped, after
 /// its last attempt where the binding retries it ([`spindle_host::RETRY_ATTEMPTS`]).
 ///
-/// The `external:` causes of every request are answered by `serving.answers` where
-/// `serving.decides`; otherwise a specification that declares an external outcome is refused
+/// The `external:` causes of every request are answered where `serving.decides`: a cause the
+/// environment binds to an HTTP call by one request to it ([`Run::calling`]), any other by
+/// `serving.answers`; otherwise a specification that declares an external outcome is refused
 /// before listening.
 ///
 /// A `POST /api/reset` may carry a world ([`crate::world`]): rows written once every store is

@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-10T14:42:21Z",
+  "actor": "human:timo",
+  "artifact": "story:external-cause-bound-to-http-call",
+  "kind": "story",
+  "revision": 6,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "cargo test -p spindle-cli http_cause, adversary_http_cause, adversary2_http_cause; spindle-capability 7 + 16",
+    "reference": "unit f2446927, fixes 594016f7 and 5e11f44e, merge 68661ada; review-result:w18-u3-adversary-1 and -2 fixed"
+  }
+}

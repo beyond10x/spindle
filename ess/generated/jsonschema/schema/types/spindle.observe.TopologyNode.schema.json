@@ -5,7 +5,7 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:a82620253b2b64e74ed6732e314aef5a65019a8a776fd8d4061f9ae8e3415aa0",
+    "contract_digest": "slice-sha256/2:72ece7c98337fe2b54c2494c648696382459139d393ae50915c3c1198917fbcb",
     "regenerate": "ess generate"
   },
   "$defs": {
@@ -34,7 +34,7 @@
       "type": "object",
       "properties": {
         "id": {
-          "description": "Unique within one specification's topology: `ingress`; the specification's system identifier; a domain, command, view or event by its qualified name prefixed by its kind, such as `command:tasks.board.OpenTask`; an external cause by its command and outcome, such as `external:tasks.ledger.Settle/settled`; a binding by its binding id, not a qualified name, as `binding:<binding id>`, such as `binding:record-closure`. A binding id is unique only within its specification; how ids stay unique across several specifications behind one ingress is for `story:one-ingress-several-specifications` to settle.",
+          "description": "Unique within one specification's topology: `ingress`; the specification by its system identifier prefixed by its kind, such as `specification:tasks`, so a system called `ingress` is not the ingress; a domain, command, view or event by its qualified name prefixed by its kind, such as `command:tasks.board.OpenTask`; an external cause by its command and outcome, such as `external:tasks.ledger.Settle/settled`; a binding by its binding id, not a qualified name, as `binding:<binding id>`, such as `binding:record-closure`. A binding id is unique only within its specification; how ids stay unique across several specifications behind one ingress is for `story:one-ingress-several-specifications` to settle.",
           "type": "string"
         },
         "kind": {

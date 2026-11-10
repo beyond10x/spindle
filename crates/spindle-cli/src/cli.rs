@@ -136,7 +136,20 @@ pub enum Command {
     /// A served request carries no `external` object: its external causes are answered by
     /// `--decisions`, then by `--answer-default`, each answer per command and outcome, never per
     /// input value. A request nothing answers is refused `501`, naming the outcome. Without either
-    /// flag, a specification that declares an external outcome exits 1 before listening.
+    /// flag, a specification that declares an external outcome exits 1 before listening, unless
+    /// the environment binds every one of them to an HTTP call.
+    ///
+    /// An external cause whose capability the environment binds to an `[http.<name>]` table
+    /// (`method`, `url`, `timeout_ms`, `secret_env`) is answered, on a stdin line or a served
+    /// request, by one request to that call before any other source: a `spindle-external/1`
+    /// JSON body (`format`, `capability`, `command`, `outcome`, `cause`, `input`), with
+    /// `Authorization: Bearer` set from the environment variable `secret_env` names. A `2xx`
+    /// reply `{"holds": true | false}` answers the cause; a timeout, a failure, a reply body over
+    /// 64 KiB or any other reply fails the command `undecided` and writes nothing (`501` when
+    /// served). An unset variable, a URL other than `http://` or carrying userinfo, or a
+    /// `timeout_ms` outside 1 to 30000 exits 1 before the first request. A call blocks every
+    /// other command until it is answered or times out. With `--observe`, each such cause is
+    /// listed and counted with the source `call`, or `unanswered` where its call failed.
     ///
     /// `POST /api/reset` may carry a world as its JSON body, each key optional: `{"rows":
     /// [{"entity", "identity", "state", "fields"}], "decisions": {...}, "mint": <seed>}`. Every
@@ -206,8 +219,10 @@ pub enum Command {
         /// `not-granted`, `not-served`, `failed`, `unrouted`) and the last records, newest first;
         /// `?class=<class>`, repeatable, keeps only those classes; answer `GET /__spindle/metrics`
         /// with the run's metrics in the Prometheus text format (`text/plain; version=0.0.4`),
-        /// the families of `ess/fixtures/observe/metrics/families.json`; a `POST /api/reset`
-        /// keeps every count and the log. Without it every path under
+        /// the families of `ess/fixtures/observe/metrics/families.json`; answer
+        /// `GET /__spindle/topology` with a `spindle-topology/1` graph derived from the
+        /// specification, each edge but `contains` with live numbers from the same counters and
+        /// log; a `POST /api/reset` keeps every count and the log. Without it every path under
         /// `/__spindle/` answers `404`; with it or without, a binding route under that prefix
         /// exits 1 before listening. The listening line is the same either way. Only where `run`
         /// serves HTTP.

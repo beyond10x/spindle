@@ -1,0 +1,24 @@
+format: ess/34
+system: stock
+version: v1
+summary: Items added once per identity, read from a nested input or a flat one, retired and removed.
+domains:
+  - stock.items
+components:
+  - component: shelf
+    summary: Adds, retires and removes items.
+    owns:
+      domains:
+        - stock.items
+    accepts:
+      commands:
+        - stock.items.AddItem
+        - stock.items.AddWrapped
+        - stock.items.RetireItem
+        - stock.items.RemoveItem
+    publishes:
+      events:
+        - stock.items.ItemAdded
+        - stock.items.ItemRetired
+        - stock.items.ItemRemoved
+    reached_by: in_process

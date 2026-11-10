@@ -1,11 +1,12 @@
 {
   "$defs": {
     "spindle.observe.AnswerSource": {
-      "description": "What answered one external cause of a served command. `world`: the `decisions` of the world the last reset loaded, `spindle.console.World`. `file`: the decisions file. `default`: the default branch `--answer-default` takes. `unanswered`: nothing did, and the command answered `501`. Source: `crates/spindle-cli/src/decisions.rs:35-53`, `crates/spindle-ingress/src/observe.rs:186-209`.",
+      "description": "What answered one external cause of a served command. `world`: the `decisions` of the world the last reset loaded, `spindle.console.World`. `file`: the decisions file. `default`: the default branch `--answer-default` takes. `call`: the HTTP call the environment binds the cause to (`[http.<name>]`). `unanswered`: nothing did, or the cause's HTTP call failed, and the command answered `501`. Source: `crates/spindle-cli/src/decisions.rs:47-71`, `crates/spindle-ingress/src/observe.rs:186-213`.",
       "enum": [
         "world",
         "file",
         "default",
+        "call",
         "unanswered"
       ],
       "title": "AnswerSource",
@@ -366,7 +367,7 @@
       "description": "The live numbers of one edge since the run started, read from the counters `GET /__spindle/metrics` exposes and the ring `GET /__spindle/requests` holds.",
       "properties": {
         "count": {
-          "description": "Requests a `routes` edge handed on, events an `emits` edge emitted, envelopes a `carries` edge sent, commands an `invokes` edge invoked, questions an `asks` edge asked.",
+          "description": "Requests a `routes` edge handed on, events an `emits` edge appended, envelopes a `carries` edge sent, commands an `invokes` edge invoked, questions an `asks` edge asked.",
           "minimum": 0,
           "type": "integer"
         },
@@ -1109,7 +1110,7 @@
       "description": "One node of the topology, derived from the loaded specifications, never authored.",
       "properties": {
         "id": {
-          "description": "Unique within one specification's topology: `ingress`; the specification's system identifier; a domain, command, view or event by its qualified name prefixed by its kind, such as `command:tasks.board.OpenTask`; an external cause by its command and outcome, such as `external:tasks.ledger.Settle/settled`; a binding by its binding id, not a qualified name, as `binding:<binding id>`, such as `binding:record-closure`. A binding id is unique only within its specification; how ids stay unique across several specifications behind one ingress is for `story:one-ingress-several-specifications` to settle.",
+          "description": "Unique within one specification's topology: `ingress`; the specification by its system identifier prefixed by its kind, such as `specification:tasks`, so a system called `ingress` is not the ingress; a domain, command, view or event by its qualified name prefixed by its kind, such as `command:tasks.board.OpenTask`; an external cause by its command and outcome, such as `external:tasks.ledger.Settle/settled`; a binding by its binding id, not a qualified name, as `binding:<binding id>`, such as `binding:record-closure`. A binding id is unique only within its specification; how ids stay unique across several specifications behind one ingress is for `story:one-ingress-several-specifications` to settle.",
           "type": "string"
         },
         "kind": {
@@ -1232,8 +1233,8 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-ess-provenance": {
-    "contract_digest": "slice-sha256/2:06eab1d3817bcb83553e5322ffbe1d3b8ca8b3ff29f3e61742a5b54d7c5ea44a",
-    "source_digest": "23c1eedf2589f72ca2d9c4fd22e42a37d17d172c5d06e5f0f9bb198108c6e5b8",
+    "contract_digest": "slice-sha256/2:b90fe1f54ceda24cd981d31bd5aa4ad48f6f03cce7599a033d0d914dbdef6233",
+    "source_digest": "2a6e06f3f85f284455d8a509aa3c9fdca3754041212193e9074e0240eaabb3e8",
     "specification_version": "v1",
     "system": "spindle"
   }

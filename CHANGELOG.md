@@ -6,6 +6,50 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- An environment can bind an external cause to an HTTP call: `spindle-environment/1` takes
+  optional `[http.<name>]` tables (`method`, `url`, `timeout_ms`, `secret_env`), and an
+  `external.<command>.<outcome>` key of `provides` bound to `<name>` is answered by one request to
+  that call each time `run` asks the cause, on stdin and served. The request is a
+  `spindle-external/1` JSON body (capability, command, outcome, cause, the command's input); a
+  `2xx` reply `{"holds": true | false}` answers it, and a timeout, a failure or any other reply
+  fails the command `undecided` with nothing written (`501` when served). The secret is read from
+  the environment variable `secret_env` names and sent as `Authorization: Bearer`; an unset
+  variable exits 1 before the first request. `http://` only; a URL carrying userinfo and a
+  `timeout_ms` outside 1 to 30000 are refused when the document is read, and a reply body is read
+  up to 64 KiB. A call blocks the served run's one command thread until its reply or its timeout.
+  A served run whose every external cause is bound to a call needs neither `--decisions` nor
+  `--answer-default`. Under `--observe` a cause a call answers is listed and counted with the new
+  `AnswerSource` `call` (`spindle.observe`), and one whose call failed as `unanswered`. A document
+  without `[http]` reads as before.
+
+- `run --observe` answers `GET /__spindle/topology` with a `spindle.observe.Topology`
+  (`spindle-topology/1`), derived from the loaded specification: the ingress, the specification,
+  its domains, their commands, views and events, each external cause and each binding, joined by
+  `routes`, `contains`, `asks`, `emits`, `carries` and `invokes` edges. Every route has its
+  `routes` edge, one answered `501` too. Each edge but `contains` carries live numbers read from
+  the counters `GET /__spindle/metrics` exposes and the ring `GET /__spindle/requests` holds: a
+  route's requests by status class and the sequences of its latest five, a cause's answers by
+  source, the events a command appended, the envelopes a binding sent and the commands it invoked.
+  Without `--observe` the route answers `404`. The panel at `GET /__spindle/ui` gains a topology
+  screen that draws the graph top-down as SVG, the ingress first, and polls it.
+
+- The kernel runs an `existing_instance:` outcome, which it refused before for every request of
+  its command. Where the precedence plan places the branch, a creation whose identity the input
+  names and a row already carries answers the branch's declared error and writes nothing;
+  otherwise the creation takes the identity, as ESS 0.90.0's interpreter selects it. A command
+  whose creations take their identities from different input fields beside `existing_instance:`
+  stays refused by name: ESS reads such a command only after selecting the accepting branch.
+
+### Fixed
+
+- A command guard ordering a timestamp against `now` (`when: due_at < now`, `due_at < now -
+  3600s`) is decided on the kernel's clock, in `when:`, `when_subject:` and a `when_related:`
+  over one row, as ESS's interpreter decides it. The run reads its clock once, the same instant a
+  row-set selector reads. Before, such a guard was `Unknown` and the command answered
+  `Undecidable`. An invariant is still read with no current time, as ESS reads it at rest.
+
 ## [0.9.0] - 2026-11-10
 
 ### Added

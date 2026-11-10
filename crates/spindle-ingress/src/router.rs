@@ -114,7 +114,7 @@ fn routing(
         );
         let response = match (answered, surface.recorder()) {
             (Some(response), _) => response,
-            (None, Some(recorder)) => crate::observe::metrics(recorder, host),
+            (None, Some(recorder)) => crate::observe::hosted(reserved, recorder, host),
             (None, None) => {
                 Answer::refusal(404, format!("no route serves {}", request.path)).into()
             }
@@ -164,10 +164,11 @@ pub(crate) enum Asked {
     Route(Box<Route>),
     /// A console route.
     Console(Console),
-    /// `GET /__spindle/metrics`, on an observing surface, handed to the host's thread by the
-    /// listener; [`route`] answers it directly.
+    /// `GET /__spindle/metrics` or `GET /__spindle/topology`, on an observing surface, handed to
+    /// the host's thread by the listener ([`crate::observe::hosted`]); [`route`] answers it
+    /// directly.
     #[cfg_attr(not(feature = "listener"), allow(dead_code))]
-    Metrics,
+    Hosted(Reserved),
 }
 
 /// A refusal, who gave it, and the route it was for where the path matched one.
@@ -287,10 +288,12 @@ impl Pending {
                 }
                 (answer.into(), Vec::new(), Answered::ingress())
             }
-            Asked::Metrics => (
+            Asked::Hosted(reserved) => (
                 match &self.recorder {
-                    Some(recorder) => crate::observe::metrics(recorder, host),
-                    None => Answer::refusal(404, "no route serves /__spindle/metrics").into(),
+                    Some(recorder) => crate::observe::hosted(*reserved, recorder, host),
+                    None => {
+                        Answer::refusal(404, "no route serves this path under /__spindle/").into()
+                    }
                 },
                 Vec::new(),
                 Answered::ingress(),

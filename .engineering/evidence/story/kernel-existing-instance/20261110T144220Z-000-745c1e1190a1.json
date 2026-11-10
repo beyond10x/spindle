@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-10T14:42:20Z",
+  "actor": "human:timo",
+  "artifact": "story:kernel-existing-instance",
+  "kind": "story",
+  "revision": 6,
+  "change": {
+    "change": "evidence",
+    "kind": "verification",
+    "source": "cargo test -p spindle-kernel existing_instance",
+    "reference": "unit fe90c61e + fix 72947d9f, merge 69a6781d; review-result:w18-u2-adversary-1 fixed"
+  }
+}

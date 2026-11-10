@@ -3,9 +3,10 @@
 //! [`spindle_host::Answers`] reads them.
 //!
 //! A served run's decider is [`Answers::served`], or [`Answers::over`] once a reset's world
-//! carries a decision table. With `--observe`, and only then, it is wrapped ([`Observed`]): each
-//! cause is answered the same way, and noted on the surface's recorder with what answered it
-//! ([`AnswerSource`]).
+//! carries a decision table, beneath the HTTP calls the environment binds causes to
+//! ([`Calls::over`]). With `--observe`, and only then, it is wrapped ([`Observed`]): each cause is
+//! answered the same way, and noted on the surface's recorder with what answered it
+//! ([`AnswerSource`]): `call` for a call's answer, `unanswered` for a call that failed.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -14,6 +15,8 @@ use anyhow::{Context, Result, anyhow};
 use ess_compiler::EssIr;
 use spindle_ingress::{AnswerSource, ExternalAnswer, Recorder};
 use spindle_kernel::{Decider, External};
+
+use crate::calls::Calls;
 
 pub use spindle_host::Answers;
 
@@ -24,12 +27,19 @@ pub struct Run {
     file: Answers,
     /// The decisions file, then, with `--answer-default`, each command's default branch.
     answers: Answers,
+    /// The causes the environment binds to an HTTP call, each answered by its call first.
+    calls: Calls,
 }
 
 impl Run {
     /// Every source of the run's answers, as a request line's are answered after its own.
     pub fn answers(&self) -> &Answers {
         &self.answers
+    }
+
+    /// These answers beneath `calls`: a cause bound to an HTTP call is answered by it.
+    pub(crate) fn calling(self, calls: Calls) -> Self {
+        Self { calls, ..self }
     }
 
     /// Answers `question` as the served decider does, `world` (a reset's decision table) before
@@ -39,6 +49,14 @@ impl Run {
         world: Option<&Answers>,
         question: &External<'_>,
     ) -> (Result<bool, String>, AnswerSource) {
+        if let Some(answer) = self.calls.answer(question) {
+            let source = if answer.is_ok() {
+                AnswerSource::Call
+            } else {
+                AnswerSource::Unanswered
+            };
+            return (answer, source);
+        }
         let request = BTreeMap::new();
         if let Some(Ok(holds)) = world.map(|world| world.decide(&request, question)) {
             return (Ok(holds), AnswerSource::World);
@@ -74,7 +92,11 @@ pub fn load(ir: &EssIr, decisions: Option<&Path>, answer_default: bool) -> Resul
     } else {
         file.clone()
     };
-    Ok(Run { file, answers })
+    Ok(Run {
+        file,
+        answers,
+        calls: Calls::default(),
+    })
 }
 
 /// What answers a served run's external causes.
@@ -95,15 +117,16 @@ impl Deciding {
     }
 }
 
-/// The decider of a served run: `world`, a reset's decision table, laid over `run`'s answers
-/// ([`Answers::over`]), or `run`'s answers alone ([`Answers::served`]); with `recorder`
-/// (`--observe`) the same answers, each noted on it ([`Observed`]).
+/// The decider of a served run: `run`'s HTTP calls ([`Calls::over`]) over `world`, a reset's
+/// decision table, laid over `run`'s answers ([`Answers::over`]), or over `run`'s answers alone
+/// ([`Answers::served`]); with `recorder` (`--observe`) the same answers, each noted on it
+/// ([`Observed`]).
 pub(crate) fn deciding(run: &Run, world: Option<Answers>, recorder: Option<&Recorder>) -> Deciding {
     match recorder {
-        None => Deciding::Plain(match world {
+        None => Deciding::Plain(run.calls.over(match world {
             None => run.answers.clone().served(),
             Some(world) => world.over(run.answers.clone()),
-        }),
+        })),
         Some(recorder) => Deciding::Observed(Box::new(Observed {
             run: run.clone(),
             world,
@@ -112,8 +135,8 @@ pub(crate) fn deciding(run: &Run, world: Option<Answers>, recorder: Option<&Reco
     }
 }
 
-/// A served run's decider under `--observe`: answers as [`Answers::served`] and [`Answers::over`]
-/// do, and notes each answer on the recorder ([`Recorder::answered`]).
+/// A served run's decider under `--observe`: answers as [`Calls::over`], [`Answers::served`] and
+/// [`Answers::over`] do, and notes each answer on the recorder ([`Recorder::answered`]).
 pub(crate) struct Observed {
     run: Run,
     world: Option<Answers>,

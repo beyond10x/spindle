@@ -284,9 +284,11 @@ and later stories of the epic serve them.
   split into labels.
 - **The topology is derived, never authored**: from the loaded specifications and the routes the
   ingress serves. A `contains` edge carries no traffic. Node ids are unique within one
-  specification's topology: `ingress`; the system identifier; a domain, command, view or event by
-  its qualified name prefixed by its kind (`command:tasks.board.OpenTask`); an external cause by
-  its command and outcome (`external:tasks.ledger.Settle/settled`); a binding by its binding id,
+  specification's topology: `ingress`; the specification by its system identifier prefixed by
+  its kind (`specification:tasks`), so a system called `ingress` is not the ingress; a domain,
+  command, view or event by its qualified name prefixed by its kind
+  (`command:tasks.board.OpenTask`); an external cause by its command and outcome
+  (`external:tasks.ledger.Settle/settled`); a binding by its binding id,
   which is not a qualified name (`binding:record-closure`). A binding id is unique only within its
   specification, so ids across several specifications behind one ingress are
   `story:one-ingress-several-specifications`'s to settle.

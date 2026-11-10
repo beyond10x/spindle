@@ -9,7 +9,34 @@ tags:
 relations:
 - serves: vision:spindle
 - informed_by: story:unauthenticated-grant-refusals
-revision: 4
+scope:
+- confidence: inferred
+  path: crates/spindle-cli/src/cli.rs
+- confidence: inferred
+  path: crates/spindle-cli/src/main.rs
+- confidence: inferred
+  path: crates/spindle-cli/src/serve.rs
+- confidence: inferred
+  path: crates/spindle-cli/tests/fixtures
+- confidence: inferred
+  path: crates/spindle-cli/tests/spindle-cli
+- confidence: cited
+  path: crates/spindle-ingress/src/answer.rs
+- confidence: inferred
+  path: crates/spindle-ingress/src/listener.rs
+- confidence: inferred
+  path: crates/spindle-ingress/src/router.rs
+- confidence: cited
+  path: crates/spindle-ingress/src/surface.rs
+- confidence: cited
+  path: docs/design/spindle.md
+- confidence: inferred
+  path: ess/components.yaml
+- confidence: inferred
+  path: website/docs/reference/cli.md
+- confidence: inferred
+  path: website/docs/status.md
+revision: 8
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-09T22:14:34Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-09T22:14:34Z", actor: "human:timo", revision: 3}
@@ -45,3 +72,44 @@ refusal the design names.
 A request without the proof is refused and never mapped to a default actor. The trusted source of
 the proof is configured explicitly; with nothing configured, a command that reads its caller is
 refused as today. (Required by the accepting coordinator, `approval-record:downstream-gaps-acceptance`.)
+
+## Scope
+
+Derived 2026-11-10 by `story-scoper`. Every line is **cited** (read from the story or the tree) or
+**inferred** (a reading that could be wrong).
+
+- **Primary surface:** `crates/spindle-ingress` — cited
+- **Files:** `crates/spindle-ingress/src/surface.rs:1083-1094` (the 501 "which no HTTP caller proves here" gate, `route.caller.is_none()`), `:103-117` (`Caller`, `Route::caller`) — cited
+- **Files:** `crates/spindle-ingress/src/answer.rs:91,225-230` (command sent as `route.caller()` into `host.submit_refusing`) — cited, via `story:unauthenticated-grant-refusals` and the tree
+- **Symbols:** `spindle_ingress::Caller`, `Route::caller`, `Surface::fixing_caller`, `Surface::fixing_callers`, `spindle_kernel::caller_reads` — cited
+- **Also likely:** `crates/spindle-ingress/src/router.rs:22-33` (`Request` carries no headers today; a proof carried by the request has to enter here) — inferred
+- **Also likely:** `crates/spindle-ingress/src/listener.rs` (hyper request → `Request`; already reads `AUTHORIZATION`/`HOST` for the console guard, `:125-164`) — inferred
+- **Also likely:** `crates/spindle-cli/src/cli.rs:186-202`, `crates/spindle-cli/src/serve.rs:91-151,221-240`, `crates/spindle-cli/src/main.rs:186-200` (configuring the trusted proof source next to `--fixed-actor`/`--fixed-caller`) — inferred
+- **Also likely:** `crates/spindle-cli/tests/spindle-cli/` plus a new fixture under `crates/spindle-cli/tests/fixtures/` — inferred
+- **Documents:** `docs/design/spindle.md` §11, the "undecided" row at `:422` (the story cites `:402`, which has drifted) and the fixed-caller row at `:407` — cited
+- **Documents:** `website/docs/reference/cli.md` (generated from clap), `website/docs/status.md:53,99` — inferred
+- **Documents:** `ess/components.yaml:37-43` (`UNMAPPED:` "how a caller proves which actor it is … Open question for the owner") — inferred, revisited once the design decides
+- **Confidence:** medium — the defect site and the 501 gate are cited; where the proof enters and how it is configured depend on a §11 decision not yet made
+- **Would collide with:** units touching `spindle-ingress`'s route/caller surface (`surface.rs`, `answer.rs`, `router.rs::Request`), `spindle-cli`'s `run` HTTP flags (`cli.rs`/`serve.rs`), or design §11; notably `story:unauthenticated-grant-refusals` (same `answer.rs` caller path)
+- **Safety fact:** today no request content reaches the caller: `router::Request` carries no headers (`router.rs:22-33`), and the kernel gets a caller only from the route fixed at start (`answer.rs:225-230`). Keeping the 501 at `surface.rs:1086` when no trusted source is configured keeps it fail-closed — unproven
+- **Not established:** wave 17 did not specify the proof: `ess/components.yaml:37-43` holds it as `UNMAPPED:` and §11 says "undecided". The status and body of a request with no proof (401, or ESS's 403 with `actor: null`) are undecided. Whether the trusted source is a CLI flag, the environment or an overlay is undecided.
+
+## Carrier
+
+Decided by `architecture-decision-record:http-caller-proof` (option A, accepted 2026-11-10). A
+downstream consumer that runs an authenticating proxy beside the runtime proposed this shape on
+2026-11-10, and the story builds it:
+
+1. One request header, set by a proxy the runtime is configured to trust explicitly: by its
+   source address, or by a shared secret the runtime reads from a file. A request from any other
+   source that carries the header is refused.
+2. The header carries the qualified actor name and the caller attributes as JSON, the shape
+   `--fixed-caller` takes, per request. The attributes are bound against the model as
+   `--fixed-caller` binds them.
+3. Fail closed: with the trusted-proxy option on, a request without the header is refused and no
+   default actor is taken. `--fixed-actor` and the option are mutually exclusive, and `run` exits 1
+   when both are given.
+4. A view the specification scopes to the caller (ESS-VIEW-003) is read as the same caller.
+
+The header name, its encoding and the refusal's status and body are written to
+`docs/design/spindle.md` § 11 by this story.
