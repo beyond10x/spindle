@@ -1,0 +1,19 @@
+domain: parcels.dispatch
+summary: Parcels sent on.
+errors: []
+commands:
+  - name: parcels.dispatch.SendOn
+    input:
+      - name: parcel_id
+        type: String
+    outcomes:
+      - name: sent
+        emits: [parcels.dispatch.SentOn]
+        payload:
+          parcels.dispatch.SentOn: {parcel_id: input.parcel_id}
+        summary: The parcel is sent on.
+events:
+  - name: parcels.dispatch.SentOn
+    fields:
+      - name: parcel_id
+        type: String

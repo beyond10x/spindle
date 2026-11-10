@@ -1,10 +1,10 @@
 //! Carrying an event published by one component to the command it binds to in another.
 //!
 //! Routing comes from the compiled IR only: a [`ResolvedBinding`](ess_compiler::ir::ResolvedBinding)
-//! with an event cause names the event, the command, the mapping between them, its `delivery` and
-//! its `on_failure`; the component that publishes the event is the route's source and the component
-//! that accepts the command its destination. [`Router::from_ir`] reads every such binding once;
-//! periodic bindings are the timer's and are not routed here.
+//! with an event cause names the event, its `where` condition, the command, the mapping between
+//! them, its `delivery` and its `on_failure`; the component that publishes the event is the route's
+//! source and the component that accepts the command its destination. [`Router::from_ir`] reads
+//! every such binding once; periodic bindings are the timer's and are not routed here.
 //!
 //! An event and a command are plain data, `{name, fields}`, with `fields` a JSON object keyed by
 //! the declared field names. A [`Sender`] maps each event it is given into one [`Envelope`] per
