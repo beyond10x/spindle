@@ -78,8 +78,9 @@ pub(crate) struct Serving<'a> {
     pub binding: Option<Binding>,
     /// The port, `0` for one the system chooses.
     pub port: u16,
-    /// `--address`: the IP address the listener binds, 127.0.0.1 by default; no check is added
-    /// on any other ([`Listener::bind_reading_on`]).
+    /// `--address`: the IP address the listener binds, 127.0.0.1 by default; off loopback only
+    /// with `caller_header`, every request without the proxy's secret refused before it is read
+    /// ([`Listener::bind_reading_on`]).
     pub address: std::net::IpAddr,
     /// What `ingress.network` is bound to; `http-loopback` adds the console routes.
     pub ingress: &'a str,

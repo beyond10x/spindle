@@ -33,6 +33,10 @@ use spindle_kernel::{External, MemoryStore, SqliteStore, Store};
 /// Exit status of an `admit` the environment refused.
 const REFUSED: u8 = 3;
 
+/// The exit status of a command line `run` refuses before anything else, as clap exits on one it
+/// cannot parse.
+const USAGE: u8 = 2;
+
 /// One command line read by `run`.
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -447,6 +451,16 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         caller_header,
         caller_secret,
     } = *arguments;
+    if let Some(address) = address.filter(|address| spindle_ingress::exposed(*address))
+        && (caller_header.is_none() || caller_secret.is_none())
+    {
+        eprintln!(
+            "b10x-spindle: --address {address} is not loopback, so every request must come \
+             through an authenticating proxy: give --trusted-caller-header <NAME> with \
+             --trusted-caller-secret <FILE> (--fixed-actor proves nobody)"
+        );
+        return Ok(ExitCode::from(USAGE));
+    }
     if let (Some(header), Some(caller)) = (caller_header, callers.first()) {
         bail!(
             "--trusted-caller-header {header} and --fixed-actor {} are given together: each \

@@ -87,11 +87,14 @@ default, `0`, lets the system choose one. It serves until SIGINT or SIGTERM.
 `--address <IP>` serves on that IPv4 or IPv6 address instead, such as the address a container
 port forwards to, and the start line names it (`[::1]:<port>` for `--address ::1`). Without it
 `run` binds `127.0.0.1` only. A value that is not an IP address, such as a host name or one with
-a port, exits 2 before anything listens. No check is added off loopback: every check `run`
-makes on `127.0.0.1` stays in force on any address, and `run` makes no `Host` or token check on
-any address. On a non-loopback address every route, `POST /api/reset` included, answers whoever
-can reach it; put a proxy in front (`--trusted-caller-header`) or keep the address on a network
-only you reach.
+a port, exits 2 before anything listens. An address off loopback, anything but `127.0.0.0/8`
+and `::1`, is served only behind an authenticating proxy: it requires `--trusted-caller-header`
+with `--trusted-caller-secret`, and without both `run` exits 2 before listening. `--fixed-actor`
+is not enough, since it proves nobody. On such an address every request that does not carry the
+proxy's secret is refused `403` `{"refused": "not granted", "actor": null}` before anything of it
+is read: every command and view, `GET /api/model`, `GET /api/events`, `POST /api/reset` and every
+route under `/__spindle/`, and also a path no route has, a method a route does not take and a
+body of any size. On a loopback address `run` answers exactly as without `--address`.
 
 What is served is what ESS derives: each command the component accepts and, for a
 `reached_by: network` component, each view of a domain it owns. Each is served exactly where

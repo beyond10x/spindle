@@ -11,11 +11,12 @@ are Spindle's releases.
 - `run --address <IP>` serves HTTP on the IPv4 or IPv6 address given instead of `127.0.0.1`, so a
   container port can reach it; without it `run` still binds `127.0.0.1` only. A value that is not
   an IP address (a host name, a port, brackets) exits 2 before anything listens. The start line
-  names the address bound, `{"listening": "<address>:<port>", ...}`. No check is added off
-  loopback: every check `run` makes on `127.0.0.1` stays in force, and `run` makes no `Host` or
-  token check on any address, so on a non-loopback address every route, the console's
-  `POST /api/reset` included, answers whoever reaches it. Instances `deploy` starts still bind
-  loopback.
+  names the address bound, `{"listening": "<address>:<port>", ...}`. An address off loopback
+  (anything but `127.0.0.0/8` and `::1`) requires `--trusted-caller-header` with
+  `--trusted-caller-secret`, and without both exits 2 before listening; `--fixed-actor` is not
+  enough. There every request without the proxy's secret is refused `403` before anything of it
+  is read, on every route, the console routes and `/__spindle/` included. On loopback `run`
+  answers as before. Instances `deploy` starts still bind loopback.
 
 ## [0.14.0] - 2026-11-11
 

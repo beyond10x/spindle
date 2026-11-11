@@ -187,6 +187,13 @@ impl Guard {
     }
 }
 
+/// Whether `ip` is off loopback: anything but `127.0.0.0/8` and `::1`, the unspecified addresses
+/// and `::ffff:127.0.0.1` included. A listener bound to one requires the proxy's secret on every
+/// request ([`Listener::bind_reading_on`]).
+pub fn exposed(ip: IpAddr) -> bool {
+    !ip.is_loopback()
+}
+
 /// `127.0.0.1:<port>`.
 fn loopback(port: u16) -> SocketAddr {
     SocketAddr::from((Ipv4Addr::LOCALHOST, port))
@@ -266,18 +273,25 @@ impl Listener {
         Self::bind_reading_on(IpAddr::V4(Ipv4Addr::LOCALHOST), port, surface, reader)
     }
 
-    /// As [`Listener::bind_reading`], bound to `ip`, IPv4 or IPv6, instead of 127.0.0.1. No
-    /// `Host` or token check is added on any address: each request is checked exactly as on
-    /// 127.0.0.1.
+    /// As [`Listener::bind_reading`], bound to `ip`, IPv4 or IPv6, instead of 127.0.0.1. Off
+    /// loopback ([`exposed`]) the surface must be made [`Surface::proving_callers`], and is served
+    /// [`Surface::requiring_secret`]: every request without the proxy's secret is refused `403`
+    /// before anything else of it is read. On loopback each request is checked as on 127.0.0.1.
     ///
     /// # Errors
-    /// As [`Listener::bind`].
+    /// [`io::ErrorKind::InvalidInput`], before anything is bound, for a surface without the
+    /// proxy's secret off loopback; otherwise as [`Listener::bind`].
     pub fn bind_reading_on(
         ip: IpAddr,
         port: u16,
         surface: Surface,
         reader: Reader,
     ) -> io::Result<Self> {
+        let surface = if exposed(ip) {
+            surface.requiring_secret()
+        } else {
+            surface
+        };
         Self::serve(SocketAddr::new(ip, port), surface, None, Some(reader))
     }
 
@@ -287,6 +301,15 @@ impl Listener {
         token: Option<String>,
         reader: Option<Reader>,
     ) -> io::Result<Self> {
+        if surface.secret_required() && surface.caller_secret().is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "{address} requires the proxy's secret on every request, and the surface has \
+                     none: serve it proving callers"
+                ),
+            ));
+        }
         let socket = std::net::TcpListener::bind(address)?;
         socket.set_nonblocking(true)?;
         let address = socket.local_addr()?;
@@ -407,6 +430,11 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         .surface
         .caller_secret()
         .is_some_and(|secret| !presents(request.headers(), secret.expose()));
+    // Off loopback, or wherever the surface requires it, nothing of a request without the secret
+    // is read: not its route, its method, its body or its caller.
+    if unproxied && served.surface.secret_required() {
+        return (Answer::not_proven().into(), unrouted(By::Ingress));
+    }
     if reserved.is_some() && unproxied {
         return (Answer::not_proven().into(), None);
     }

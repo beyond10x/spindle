@@ -200,9 +200,13 @@ pub enum Command {
         port: Option<u16>,
         /// The IP address to serve HTTP on, IPv4 or IPv6 (`::1`, no brackets), instead of
         /// 127.0.0.1, the default; a host name or a value with a port exits 2 before listening.
-        /// No check is added off loopback: `run` makes the same checks on every address, and no
-        /// `Host` or token check on any, so on a non-loopback address every route, the console's
-        /// included, answers whoever reaches it. Only where `run` serves HTTP.
+        /// An address off loopback (anything but 127.0.0.0/8 and `::1`) requires
+        /// `--trusted-caller-header` with `--trusted-caller-secret`, and without both exits 2
+        /// before listening; `--fixed-actor` is not enough, since it proves nobody. There every
+        /// request without the proxy's secret is refused `403` `{"refused": "not granted",
+        /// "actor": null}` before anything of it is read, on every route, the console routes and
+        /// `/__spindle/` included. On loopback `run` serves as without `--address`. Only where
+        /// `run` serves HTTP.
         #[arg(long, value_name = "IP", conflicts_with = "scenario")]
         address: Option<std::net::IpAddr>,
         /// A TOML file of answers, `<outcome> = true | false`, at the top level for every command
