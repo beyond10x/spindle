@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-11
+
 ### Added
 
 - `run` serving HTTP proves each request's caller with `--trusted-caller-header <name>`: a proxy
