@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-11T19:05:33Z",
+  "actor": "human:timo",
+  "artifact": "story:view-read-without-log-scan",
+  "kind": "story",
+  "revision": 4,
+  "change": {
+    "change": "evidence",
+    "kind": "metric_observation",
+    "source": "downstream consumer, dev, SQLite state of about 183,000 events: 7 view reads on 0.14.0 took 1.3 to 1.7 ms each, 51 s after start; on 0.13.0 2.5 to 4.3 s"
+  }
+}
