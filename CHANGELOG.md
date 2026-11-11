@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-12
+
 ### Added
 
 - A view that declares computed fields (`expr:`) answers each row with the value ESS's
