@@ -253,8 +253,10 @@ instances it left, so a scan of the moved tables reads the entity's own stream. 
 writes of a release before 0.7.0, which recorded no entity version, arrives with its log marked, so
 its scans read the whole log and miss no row.
 
-Stop Spindle first: the move does not keep a running Spindle off the directory or the tables.
-Another move is kept off: a move holds a PostgreSQL advisory lock on its schema (any role may take
+The move takes the directory's lock, `spindle.lock`, the one `run --state` holds, before it reads
+a file, and holds it to its end. While a run holds it, the move exits 1 naming the directory and the
+run's process id, before it connects. Stop a Spindle running on PostgreSQL first: the move does not
+keep it off the tables. Another move is kept off: a move holds a PostgreSQL advisory lock on its schema (any role may take
 one) from before it reads the tables to after its last append, and a second move into the same
 schema waits up to 5 seconds, then exits 1 naming the other move, writing nothing. A move exits 1,
 writing nothing, naming the component, when:

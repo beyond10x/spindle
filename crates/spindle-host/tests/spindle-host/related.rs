@@ -10,7 +10,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 use ess_conformance::interpret::Interpreted;
 use ess_conformance::target::{
@@ -23,7 +24,7 @@ use ess_primitives::time::Timestamp;
 use serde_json::{Map, Value, json};
 use spindle_capability::Environment;
 use spindle_host::{Host, ManualClock, Stores};
-use spindle_kernel::{Change, MemoryStore, Removal, Store, StoreError, Stored};
+use spindle_kernel::{Change, MemoryStore, Removal, SqliteStore, Store, StoreError, Stored};
 
 const GRANTS: &str = "access.grants.Grants";
 const RESOURCE: &str = "access.resources.Resource";
@@ -404,12 +405,168 @@ fn a_list_loads_each_distinct_resource_once_and_scans_none() {
     assert_eq!(loaded.len(), 4, "each resource loaded once: {loaded:?}");
 }
 
-/// A view with a field read through a reference is read on the host's thread, where the row a
-/// reference names is loaded by its identity: the reader beside it does not claim it.
+/// Whether the writes of [`Holding`] stores wait, and whether one waits now.
+#[derive(Default)]
+struct Hold {
+    state: Mutex<(bool, bool)>,
+    changed: Condvar,
+}
+
+impl Hold {
+    fn close(&self) {
+        self.state.lock().expect("the hold").0 = true;
+    }
+
+    fn open(&self) {
+        self.state.lock().expect("the hold").0 = false;
+        self.changed.notify_all();
+    }
+
+    /// Waits while the hold is closed, noting that a write waits.
+    fn pass(&self) {
+        let mut state = self.state.lock().expect("the hold");
+        while state.0 {
+            state.1 = true;
+            self.changed.notify_all();
+            state = self.changed.wait(state).expect("the hold");
+        }
+        state.1 = false;
+    }
+
+    /// Waits until a write waits at the closed hold, or `within` passed: whether one does.
+    fn held(&self, within: Duration) -> bool {
+        let state = self.state.lock().expect("the hold");
+        let (state, _) = self
+            .changed
+            .wait_timeout_while(state, within, |state| !state.1)
+            .expect("the hold");
+        state.1
+    }
+}
+
+/// A store whose writes wait at a [`Hold`]: the host's thread held inside a write. It reads, and
+/// gives its reading handle, as the store it wraps.
+struct Holding<S> {
+    store: S,
+    hold: Arc<Hold>,
+}
+
+impl<S: Store> Store for Holding<S> {
+    fn load(&mut self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
+        self.store.load(entity, identity)
+    }
+
+    fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
+        self.hold.pass();
+        self.store.commit(change)
+    }
+
+    fn remove(&mut self, removal: &Removal) -> Result<(), StoreError> {
+        self.hold.pass();
+        self.store.remove(removal)
+    }
+
+    fn commit_all(&mut self, writes: &[spindle_kernel::Write]) -> Result<(), StoreError> {
+        self.hold.pass();
+        self.store.commit_all(writes)
+    }
+
+    fn scan(&mut self, entity: &str) -> Result<spindle_kernel::Scan, StoreError> {
+        self.store.scan(entity)
+    }
+
+    fn counts(&mut self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
+        self.store.counts(entities)
+    }
+
+    fn reading(&mut self) -> Option<Arc<dyn spindle_kernel::Reading>> {
+        self.store.reading()
+    }
+}
+
+/// How long a read beside a held writer may take before the test calls it waiting for the writer.
+const READ_WITHIN: Duration = Duration::from_secs(20);
+
+/// `story:view-related-fields`, `story:concurrent-reads`: a view with a field read through a
+/// reference is read beside the host's thread like any other view, the rows its references name
+/// loaded through the reading handles. With the host's thread held inside the write of a
+/// rename, on the memory and on the SQLite store, the reader answers `Grants` as it stood before
+/// that write, and once the write landed, as the host answers it.
 #[test]
-fn the_reader_leaves_a_related_view_to_the_hosts_thread() {
-    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
-    let host = host(state.path());
-    assert!(spindle_host::reads(host.ir(), GRANTS).is_ok());
-    assert!(!host.reader().reads(GRANTS));
+fn a_related_view_is_read_beside_a_held_writer() {
+    for store in ["memory", "sqlite"] {
+        let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
+        let hold = Arc::new(Hold::default());
+        let open = |component: &str| -> Box<dyn Store> {
+            let hold = Arc::clone(&hold);
+            match store {
+                "memory" => Box::new(Holding {
+                    store: MemoryStore::default(),
+                    hold,
+                }),
+                _ => Box::new(Holding {
+                    store: SqliteStore::open(&state.path().join(format!("{component}.sqlite")))
+                        .expect("the SQLite file opens"),
+                    hold,
+                }),
+            }
+        };
+        let stores = Stores::from([
+            ("catalogue".to_owned(), open("catalogue")),
+            ("grants".to_owned(), open("grants")),
+        ]);
+        let ir = spindle_spec::load(&fixture())
+            .expect("the related fixture compiles")
+            .ir;
+        let mut host = Host::supplied(ir, &supplied(), Arc::new(ManualClock::new()), None, stores)
+            .unwrap_or_else(|error| panic!("{store}: the host opens: {error}"));
+        run(&mut host);
+        let before = host
+            .list(GRANTS)
+            .unwrap_or_else(|error| panic!("{store}: {GRANTS} answers: {error}"));
+        let reader = host.reader();
+        assert!(
+            reader.reads(GRANTS),
+            "{store}: the reader answers {GRANTS} beside the host's thread"
+        );
+
+        hold.close();
+        let beside = {
+            let (hold, reader) = (Arc::clone(&hold), reader.clone());
+            std::thread::spawn(move || {
+                let held = hold.held(READ_WITHIN);
+                let (sender, receiver) = std::sync::mpsc::channel();
+                std::thread::spawn(move || {
+                    let _ = sender.send(reader.list(GRANTS).map_err(|error| error.to_string()));
+                });
+                let read = receiver.recv_timeout(READ_WITHIN);
+                hold.open();
+                (held, read)
+            })
+        };
+        host.submit(
+            "access.resources.RenameResource",
+            object(json!({"resource_id": "r1", "name": "laser printer"})),
+        )
+        .unwrap_or_else(|error| panic!("{store}: the rename runs: {error}"));
+        let (held, read) = beside.join().expect("the reading thread ends");
+        assert!(held, "{store}: the host's thread waited inside the write");
+        let read = read
+            .unwrap_or_else(|_| {
+                panic!("{store}: the read waited {READ_WITHIN:?} for the held writer")
+            })
+            .unwrap_or_else(|error| panic!("{store}: {GRANTS} is read beside the host: {error}"));
+        assert_eq!(
+            read, before,
+            "{store}: the read beside the held write answers the rows before it"
+        );
+
+        let after = host.list(GRANTS).expect("the host answers");
+        assert_ne!(after, before, "{store}: the rename shows in the view");
+        assert_eq!(
+            reader.list(GRANTS).expect("the reader answers"),
+            after,
+            "{store}: once the write landed, the reader answers as the host"
+        );
+    }
 }

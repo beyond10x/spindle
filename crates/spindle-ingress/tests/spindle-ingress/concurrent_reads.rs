@@ -22,7 +22,8 @@ use spindle_capability::Environment;
 use spindle_host::{Host, ManualClock, Stores};
 use spindle_ingress::{Exchange, Listener, Surface};
 use spindle_kernel::{
-    Change, MemoryStore, Reading, Removal, Scan, Store, StoreError, Stored, Write as Written,
+    Change, MemoryStore, Position, Reading, Removal, Scan, Store, StoreError, Stored,
+    Write as Written,
 };
 
 /// How long every scan of the slow store takes.
@@ -100,6 +101,11 @@ impl Reading for SlowReading {
     fn scan(&self, entity: &str) -> Result<Scan, StoreError> {
         thread::sleep(SLOW);
         self.0.scan(entity)
+    }
+
+    fn at(&self, entities: &[String]) -> Result<Box<dyn Position + '_>, StoreError> {
+        thread::sleep(SLOW);
+        self.0.at(entities)
     }
 }
 
