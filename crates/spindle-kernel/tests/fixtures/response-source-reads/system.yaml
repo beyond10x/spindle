@@ -1,0 +1,23 @@
+format: ess/34
+system: parcels
+version: v1
+summary: Parcels registered and relabelled at a desk, each answer read back by the outcome that returns it.
+domains:
+  - parcels.desk
+components:
+  - component: desk
+    summary: Registers, relabels and copies parcels for callers outside the process.
+    owns:
+      domains:
+        - parcels.desk
+    accepts:
+      commands:
+        - parcels.desk.RegisterParcel
+        - parcels.desk.RelabelParcel
+        - parcels.desk.CopyParcel
+    publishes:
+      events:
+        - parcels.desk.ParcelRegistered
+        - parcels.desk.ParcelRelabelled
+        - parcels.desk.ParcelCopied
+    reached_by: network

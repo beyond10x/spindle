@@ -61,6 +61,14 @@ are Spindle's releases.
   the host's thread, through its reader and by identity. A value ESS determines none of (an
   `Integer` past `i64`) refuses the read, as the interpreter refuses it. Before, such a view
   answered `501` "declares computed fields".
+- An event payload that reads the command's own response (`{response: <field>}`), which the
+  kernel refused as unsupported (`501`) "the value source response field", publishes the value the
+  same request answers in that field, a struct member too. A creation whose identity reads it
+  creates its row under the answered value, so a view lists the row under the id the request
+  returned. The response is prepared where ESS's interpreter prepares it: before a creation takes
+  its identity and its `sets:`, and after an existing row's `sets:` and `affects:`, before the
+  events. A `sets:` value read through `{payload: <Event>.<field>}` from a published value that
+  reads the response stays refused, as ESS's interpreter does not interpret it.
 
 ### Changed
 

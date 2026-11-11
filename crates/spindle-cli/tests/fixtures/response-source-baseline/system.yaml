@@ -1,0 +1,19 @@
+format: ess/34
+system: parcels
+version: v1
+summary: Parcels registered at a desk; each registration answers an id it neither publishes nor stores.
+domains:
+  - parcels.desk
+components:
+  - component: desk
+    summary: Registers parcels for callers outside the process and lists them.
+    owns:
+      domains:
+        - parcels.desk
+    accepts:
+      commands:
+        - parcels.desk.RegisterParcel
+    publishes:
+      events:
+        - parcels.desk.ParcelRegistered
+    reached_by: network
