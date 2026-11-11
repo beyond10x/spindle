@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:refusal-reason-bounded
 kind: story
-status: draft
+status: active
 title: A refused command's logged reason is bounded and holds no input value
 relations:
 - decomposes: epic:runtime-observability-depth
@@ -14,7 +14,10 @@ scope:
   path: ess/domains/observe.yaml
 - confidence: cited
   path: website/docs/concepts/observe.md
-revision: 2
+revision: 4
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-11T09:40:09Z", actor: "human:timo", revision: 3}
+- {from: "proposed", to: "active", at: "2026-11-11T09:40:09Z", actor: "human:timo", revision: 4}
 ---
 ## Outcome
 
