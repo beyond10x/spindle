@@ -1,8 +1,9 @@
 //! What the kernel runs, checked before a command runs.
 //!
 //! The kernel runs the conditions, effects and value sources Spindle's own specification and the
-//! `rally` example use, a value read from the row an input field names, a guard over a row set,
-//! and a set outcome (`instances:`) with the rows it changed. Every other construct is refused by
+//! `rally` example use, a value read from the row an input field names, a value an expression
+//! computes outside an error, a guard over a row set, and a set outcome (`instances:`) with the
+//! rows it changed. Every other construct is refused by
 //! name, as
 //! [`ExecuteError::Unsupported`], before anything is written; what it refuses depends on what
 //! reads the construct.
@@ -123,17 +124,18 @@ pub fn takes(
         {
             continue;
         }
-        if let Some(what) = value(ir, field, set) {
+        if let Some(what) = value(ir, field, set, false) {
             return refuse(&what);
         }
     }
-    for field in outcome
+    let fields = outcome
         .sets
         .iter()
         .chain(other_fields)
-        .chain(&outcome.error_payload)
-    {
-        if let Some(what) = value(ir, field, set) {
+        .map(|field| (field, false));
+    let errors = outcome.error_payload.iter().map(|field| (field, true));
+    for (field, error) in fields.chain(errors) {
+        if let Some(what) = value(ir, field, set, error) {
             return refuse(&what);
         }
     }
@@ -398,8 +400,9 @@ fn response(ir: &EssIr, command: &ResolvedCommand, outcome: &ResolvedOutcome) ->
 /// The value source, named, when the kernel does not read it. A generated value is read where
 /// its type is one the runtime mints ([`crate::mint::minted`]), and the refusal of one that is
 /// not names the field and its type. What a set outcome changed (`{count: changed}`,
-/// `{changed: …}`) is read where `set`, the outcome being one.
-fn value(ir: &EssIr, field: &ResolvedPayloadField, set: bool) -> Option<String> {
+/// `{changed: …}`) is read where `set`, the outcome being one. A computed value (`{expr: …}`) is
+/// read outside an `error`'s fields, where ESS's interpreter computes none.
+fn value(ir: &EssIr, field: &ResolvedPayloadField, set: bool, error: bool) -> Option<String> {
     let mintable = |present: bool| {
         (!crate::mint::absent(&field.target_type, present)
             && crate::mint::generated(ir, &field.target_type, present).is_none())
@@ -429,13 +432,17 @@ fn value(ir: &EssIr, field: &ResolvedPayloadField, set: bool) -> Option<String> 
         {
             None
         }
+        // Computed by ESS's own evaluator ([`crate::values`]); ESS's interpreter computes no
+        // expression in an error's fields (`interpret::execute::error_value`), so neither does
+        // the kernel.
+        ResolvedPayloadValue::Expression { .. } if !error => None,
         ResolvedPayloadValue::Generated { present } => mintable(*present),
         ResolvedPayloadValue::InputOrGenerated {
             otherwise: None, ..
         } => mintable(false),
-        ResolvedPayloadValue::Struct { fields } => {
-            fields.iter().find_map(|member| value(ir, member, set))
-        }
+        ResolvedPayloadValue::Struct { fields } => fields
+            .iter()
+            .find_map(|member| value(ir, member, set, error)),
         // The field or the held state of the row an input field names (ess/16, ess/28), read as
         // the store held it before the outcome ([`crate::values::related`]). A reference stored on
         // the subject, a chain through a further reference, and a list of references stay

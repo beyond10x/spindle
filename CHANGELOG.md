@@ -68,6 +68,16 @@ are Spindle's releases.
   `unnamed-writes`, before its first write), so its scans read the whole log and miss no row. It
   prints one line per component (`component`, `streams`, `events`). Spindle is stopped first; a
   move that fails partway leaves a partial copy the next move refuses.
+- The kernel computes a value written as `{expr: "<expression>"}` in `sets:` and in an event's
+  `payload:` (ess/27, `story:kernel-value-expressions`). Such an outcome was refused as an
+  unsupported value source and answered 501; a downstream consumer's specification had 7. The value
+  is computed by ESS's own evaluator over `input.<path>` and `subject.<field>` as the row held it
+  before the outcome, so Integer arithmetic, a Decimal quotient and `round(…, half_even)`, a
+  Timestamp moved by a Duration, and `coalesce` answer exactly as ESS's interpreter does. A zero
+  divisor or an absent `Optional` leaves the field absent unless `coalesce` supplies a value; a
+  result past a bound (an Integer past 64 bits, an instant past the year 9999) is never wrapped:
+  the command determines no value and commits nothing. An expression in an error's fields stays
+  refused by name, as ESS's interpreter computes none there.
 
 ### Changed
 
@@ -87,6 +97,7 @@ are Spindle's releases.
   that name no instances (0.10.0's, which name none, and those before 0.7.0, which record no
   entity version) is scanned whole when its stream `spindle:log` `unnamed-writes` exists, or
   when the entity's stream holds such a write.
+
 ### Fixed
 
 - A second `run` on the same SQLite state is refused (`story:state-directory-lock`). Two runs

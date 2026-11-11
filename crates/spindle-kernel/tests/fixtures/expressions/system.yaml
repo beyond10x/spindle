@@ -1,0 +1,21 @@
+format: ess/34
+system: relay
+version: v1
+summary: Tickets whose attempt count, expiry and share are computed from the request and the ticket.
+domains:
+  - relay.ticket
+components:
+  - component: desk
+    summary: Opens and retries tickets.
+    owns:
+      domains:
+        - relay.ticket
+    accepts:
+      commands:
+        - relay.ticket.OpenTicket
+        - relay.ticket.RetryTicket
+    publishes:
+      events:
+        - relay.ticket.TicketOpened
+        - relay.ticket.TicketRetried
+    reached_by: in_process
