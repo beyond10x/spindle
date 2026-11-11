@@ -128,6 +128,14 @@ are Spindle's releases.
 
 ### Changed
 
+- A page of `GET /api/events?after=<cursor>&limit=<n>` reads at most about `n` events from each
+  store (`story:events-read-bounded`), where it read every event after the cursor's position and
+  dropped all but `n`, so paging through a long log re-read the rest of it on every page.
+  `Store::events_after` and `Reading::events_after` take a limit: the memory, SQLite, PostgreSQL
+  and IndexedDB stores answer the first events after the position, write by write up to the write
+  that brings them to the limit, which is read whole (`whole_writes`). A store that implements
+  `events_after` adds the parameter. The range reads each store until it has `n` events after the
+  cursor or none is left, so the pages still list every event in the order of the whole list.
 - `GET /api/events` answers the events each component's store committed, read through the
   store's reading handle beside the host's thread, instead of a list the host kept in memory: a
   served run no longer grows with every event it publishes, and with `store.durable` bound to

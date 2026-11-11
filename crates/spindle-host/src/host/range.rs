@@ -200,10 +200,22 @@ struct Keyed {
     published: Published,
 }
 
+/// Whether `keyed` was answered by a range whose last event is `last`.
+fn answered(keyed: &Keyed, last: Option<&Key>) -> bool {
+    last.is_some_and(|last| keyed.key <= *last)
+}
+
 /// The events after `after`, at most `limit`, of the stores `stores` names, each by its
 /// component and the generation of the store held for it, in the order published, read by
-/// `read`, which answers a component's events after a position; and the cursor after them.
-/// `run` is the host's run.
+/// `read`, which answers a component's events after a position, up to a limit, as
+/// [`spindle_kernel::Store::events_after`] does; and the cursor after them. `run` is the host's
+/// run.
+///
+/// Each store is read only until it answered `limit` events after the cursor, or every one it
+/// holds: the events a page answers are the first `limit` of those, in the order published, and
+/// an event a store was not read as far as follows `limit` of that store's own, so no page of
+/// the whole list skips it. A store whose first events after its mark were answered already,
+/// in part of a write or before a restart, is read on past them.
 ///
 /// # Errors
 /// [`HostError::Cursor`] where `after` names a component `stores` does not, before anything is
@@ -213,7 +225,7 @@ pub(super) fn range(
     stores: &[(String, u64)],
     after: &Cursor,
     limit: usize,
-    mut read: impl FnMut(&str, u64) -> Result<Vec<Committed>, HostError>,
+    mut read: impl FnMut(&str, u64, usize) -> Result<Vec<Committed>, HostError>,
 ) -> Result<Page, HostError> {
     let runs = |name: &str| stores.iter().any(|(component, _)| component == name);
     if after
@@ -236,37 +248,50 @@ pub(super) fn range(
             .unwrap_or_else(|| Mark::start(*generation));
         let mut sequence = start.sequence;
         let mut ordinal = start.ordinal;
-        let committed = read(component, start.position)?;
-        let mut keyed = Vec::with_capacity(committed.len());
-        for committed in committed {
-            let command = match committed.origin {
-                Some(origin) => {
-                    if origin.sequence > sequence {
-                        sequence = origin.sequence;
-                        ordinal = 0;
+        let mut keyed: Vec<Keyed> = Vec::new();
+        let mut position = start.position;
+        let mut fresh = 0;
+        while fresh < limit {
+            let wanted = limit - fresh;
+            let committed = read(component, position, wanted)?;
+            let answered_all = committed.len() < wanted;
+            for committed in committed {
+                let command = match committed.origin {
+                    Some(origin) => {
+                        if origin.sequence > sequence {
+                            sequence = origin.sequence;
+                            ordinal = 0;
+                        }
+                        origin.command
                     }
-                    origin.command
+                    None => String::new(),
+                };
+                ordinal = ordinal.saturating_add(1);
+                position = committed.position;
+                let next = Keyed {
+                    key: Key {
+                        sequence,
+                        component: component.clone(),
+                        ordinal,
+                    },
+                    position,
+                    published: Published {
+                        component: component.clone(),
+                        command,
+                        event: committed.event,
+                    },
+                };
+                if !answered(&next, after.last.as_ref()) {
+                    fresh += 1;
                 }
-                None => String::new(),
-            };
-            ordinal = ordinal.saturating_add(1);
-            keyed.push(Keyed {
-                key: Key {
-                    sequence,
-                    component: component.clone(),
-                    ordinal,
-                },
-                position: committed.position,
-                published: Published {
-                    component: component.clone(),
-                    command,
-                    event: committed.event,
-                },
-            });
+                keyed.push(next);
+            }
+            if answered_all {
+                break;
+            }
         }
         read_from.push((start, keyed));
     }
-    let answered = |keyed: &Keyed, last: Option<&Key>| last.is_some_and(|last| keyed.key <= *last);
     let mut after_cursor = read_from
         .iter()
         .flat_map(|(_, keyed)| keyed.iter())

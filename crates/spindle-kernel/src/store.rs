@@ -330,15 +330,19 @@ pub trait Store {
         Ok(())
     }
 
-    /// Every event committed by a write after the one at `position`, in commit order, each with
-    /// its write's position and origin; `0` reads every event. The events of one write are read
-    /// together or not at all, and a refused write committed none.
+    /// The events committed by the writes after the one at `position`, in commit order, each
+    /// with its write's position and origin, write by write up to the one that brings them to
+    /// `limit` ([`whole_writes`]); `0` reads from the first event, and `usize::MAX` reads every
+    /// one. The events of one write are read together or not at all, so a write of more than
+    /// `limit` events is read whole, and a refused write committed none. Fewer than `limit` are
+    /// answered only where no event is left after them, so a caller reads on from the last
+    /// position answered until it has as many as it needs.
     ///
     /// # Errors
     /// [`StoreError::Backend`] when the store cannot be read, or, this default, does not read back
     /// the events it commits.
-    fn events_after(&mut self, position: u64) -> Result<Vec<Committed>, StoreError> {
-        let _ = position;
+    fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
+        let _ = (position, limit);
         Err(no_events())
     }
 }
@@ -369,13 +373,14 @@ pub trait Reading: Send + Sync {
             .collect()
     }
 
-    /// The events committed after `position`, as [`Store::events_after`] answers them.
+    /// The events committed after `position`, up to `limit`, as [`Store::events_after`] answers
+    /// them.
     ///
     /// # Errors
     /// [`StoreError::Backend`] when the store cannot be read, or, this default, does not read back
     /// the events it commits.
-    fn events_after(&self, position: u64) -> Result<Vec<Committed>, StoreError> {
-        let _ = position;
+    fn events_after(&self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
+        let _ = (position, limit);
         Err(no_events())
     }
     /// One position of the store for reads of `entities` together ([`Position`]): a scan of
@@ -605,20 +610,43 @@ impl Events {
     }
 }
 
-/// Every event `held` holds past `position`: its chunks taken under its lock, read without it.
-fn committed_after(held: &RwLock<Held>, position: u64) -> Vec<Committed> {
+/// The first events of `committed`, events in commit order, write by write up to the write that
+/// brings them to `limit`, which is taken whole: what [`Store::events_after`] answers out of
+/// every event after its position. None for a limit of 0; all of them where they are fewer than
+/// `limit`.
+pub fn whole_writes<'a>(
+    committed: impl IntoIterator<Item = &'a Committed>,
+    limit: usize,
+) -> Vec<Committed> {
+    let mut taken: Vec<Committed> = Vec::new();
+    for committed in committed {
+        let same_write = taken
+            .last()
+            .is_some_and(|last| last.position == committed.position);
+        if taken.len() >= limit && !same_write {
+            break;
+        }
+        taken.push(committed.clone());
+    }
+    taken
+}
+
+/// The events `held` holds past `position`, up to `limit` ([`whole_writes`]): its chunks taken
+/// under its lock, read without it.
+fn committed_after(held: &RwLock<Held>, position: u64, limit: usize) -> Vec<Committed> {
     let chunks = held
         .read()
         .unwrap_or_else(PoisonError::into_inner)
         .events
         .chunks();
-    chunks
-        .iter()
-        .filter(|chunk| chunk.last().is_some_and(|last| last.position > position))
-        .flat_map(|chunk| chunk.iter())
-        .filter(|committed| committed.position > position)
-        .cloned()
-        .collect()
+    whole_writes(
+        chunks
+            .iter()
+            .filter(|chunk| chunk.last().is_some_and(|last| last.position > position))
+            .flat_map(|chunk| chunk.iter())
+            .filter(|committed| committed.position > position),
+        limit,
+    )
 }
 
 /// The instances of one entity in a [`MemoryStore`].
@@ -816,7 +844,7 @@ fn scanned(held: &RwLock<Held>, entity: &str) -> Result<Scan, StoreError> {
 impl MemoryStore {
     /// Every event committed so far, in commit order.
     pub fn events(&self) -> Vec<Event> {
-        committed_after(&self.held, 0)
+        committed_after(&self.held, 0, usize::MAX)
             .into_iter()
             .map(|committed| committed.event)
             .collect()
@@ -901,8 +929,8 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    fn events_after(&mut self, position: u64) -> Result<Vec<Committed>, StoreError> {
-        Ok(committed_after(&self.held, position))
+    fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
+        Ok(committed_after(&self.held, position, limit))
     }
 }
 
@@ -914,8 +942,8 @@ impl Reading for MemoryReading {
         scanned(&self.0, entity)
     }
 
-    fn events_after(&self, position: u64) -> Result<Vec<Committed>, StoreError> {
-        Ok(committed_after(&self.0, position))
+    fn events_after(&self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
+        Ok(committed_after(&self.0, position, limit))
     }
 
     /// Every entity's count as one write left them all: taken under one lock.

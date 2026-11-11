@@ -140,7 +140,7 @@ impl Reader {
             let reading = read.shared.reading().ok_or_else(|| {
                 HostError::Unsupported(format!("{name} is read on the host's thread only"))
             })?;
-            committed.push((name.clone(), reading.events_after(0)?));
+            committed.push((name.clone(), reading.events_after(0, usize::MAX)?));
         }
         Ok(super::merged(committed))
     }
@@ -166,11 +166,11 @@ impl Reader {
             stores.push((name.clone(), generation));
             handles.insert(name.as_str(), reading);
         }
-        super::range::range(self.run, &stores, after, limit, |name, position| {
+        super::range::range(self.run, &stores, after, limit, |name, position, wanted| {
             let reading = handles
                 .get(name)
                 .ok_or_else(|| HostError::Unsupported(format!("{name} is not running")))?;
-            Ok(reading.events_after(position)?)
+            Ok(reading.events_after(position, wanted)?)
         })
     }
 

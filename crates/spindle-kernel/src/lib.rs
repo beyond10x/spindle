@@ -87,7 +87,7 @@ pub use sqlite::SqliteStore;
 pub use state_move::{Lock as StateLock, Moved, Source as StateSource, Target as StateTarget};
 pub use store::{
     Change, Committed, EVERY_INSTANCE, MemoryStore, Origin, Position, Reading, Removal, Row, Scan,
-    Scanned, Store, StoreError, Stored, Write,
+    Scanned, Store, StoreError, Stored, Write, whole_writes,
 };
 pub use supported::{check as runs, selects, takes};
 

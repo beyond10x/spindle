@@ -147,8 +147,8 @@ impl Store for Counting {
         self.store.forget_events()
     }
 
-    fn events_after(&mut self, position: u64) -> Result<Vec<Committed>, StoreError> {
-        let committed = self.store.events_after(position)?;
+    fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
+        let committed = self.store.events_after(position, limit)?;
         self.read.fetch_add(committed.len(), Ordering::SeqCst);
         Ok(committed)
     }
@@ -163,8 +163,8 @@ impl Reading for CountingReading {
         self.reading.counts(entities)
     }
 
-    fn events_after(&self, position: u64) -> Result<Vec<Committed>, StoreError> {
-        let committed = self.reading.events_after(position)?;
+    fn events_after(&self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
+        let committed = self.reading.events_after(position, limit)?;
         self.read.fetch_add(committed.len(), Ordering::SeqCst);
         Ok(committed)
     }
@@ -223,6 +223,108 @@ fn counted(events: usize) -> (Host, Arc<AtomicUsize>) {
     )
     .expect("the host on counting stores opens");
     (host, read)
+}
+
+/// A host on counting memory stores holding `events` events between them, one write and one
+/// command each, every third the ledger's and the rest the board's, so their sequences
+/// interleave; and how many events each store's reads have answered, the board's first.
+fn counted_apart(events: usize) -> (Host, [Arc<AtomicUsize>; 2]) {
+    let reads = [Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0))];
+    let (mut board, mut ledger) = (MemoryStore::default(), MemoryStore::default());
+    for index in 0..events {
+        let sequence = u64::try_from(index).expect("an index fits") + 1;
+        let store = if index % 3 == 0 {
+            &mut ledger
+        } else {
+            &mut board
+        };
+        store.attribute(Some(Origin {
+            command: "tasks.board.OpenTask".to_owned(),
+            sequence,
+        }));
+        store
+            .commit_events(
+                &[Event {
+                    name: "tasks.board.TaskOpened".to_owned(),
+                    payload: object(json!({"task_id": format!("t{index}"), "title": "Old"})),
+                }],
+                &[],
+            )
+            .expect("the store records the event");
+    }
+    board.attribute(None);
+    ledger.attribute(None);
+    let given: Stores = [("board", board, &reads[0]), ("ledger", ledger, &reads[1])]
+        .into_iter()
+        .map(|(name, store, read)| {
+            (
+                name.to_owned(),
+                Box::new(Counting {
+                    store,
+                    read: Arc::clone(read),
+                }) as Box<dyn Store>,
+            )
+        })
+        .collect();
+    let host = Host::supplied(
+        tasks(),
+        &bound("elsewhere"),
+        Arc::new(ManualClock::new()),
+        None,
+        given,
+    )
+    .expect("the host on counting stores opens");
+    (host, reads)
+}
+
+/// `story:events-read-bounded` acceptance 2: paging through 10,000 events at `limit=100`, each
+/// page reads at most 100 events from each store, on the host's thread and beside it, and the
+/// pages list the whole list's events in its order, though each store answers only a part of
+/// what it holds after its mark and the two stores' events interleave.
+#[test]
+fn a_page_reads_at_most_its_limit_from_each_store() {
+    const LIMIT: usize = 100;
+    let (mut host, reads) = counted_apart(LONG);
+    let whole = host.published().expect("the whole list reads");
+    assert_eq!(whole.len(), LONG);
+    let reader = host.reader();
+    for beside in [false, true] {
+        let mut events = Vec::new();
+        let mut cursor = Cursor::start();
+        let mut pages = 0;
+        loop {
+            for read in &reads {
+                read.store(0, Ordering::SeqCst);
+            }
+            let page = if beside {
+                reader.published_after(&cursor, LIMIT)
+            } else {
+                host.published_after(&cursor, LIMIT)
+            }
+            .unwrap_or_else(|error| panic!("page {pages} reads: {error}"));
+            let read = reads
+                .iter()
+                .map(|read| read.load(Ordering::SeqCst))
+                .collect::<Vec<_>>();
+            assert!(
+                read.iter().all(|read| *read <= LIMIT),
+                "page {pages} (beside: {beside}) read {read:?} events from the board and the \
+                 ledger, more than {LIMIT} from one"
+            );
+            if page.events.is_empty() {
+                break;
+            }
+            assert!(page.events.len() <= LIMIT);
+            events.extend(page.events);
+            cursor = page.next;
+            pages += 1;
+        }
+        assert_eq!(pages, LONG / LIMIT, "beside: {beside}");
+        assert!(
+            events == whole,
+            "beside: {beside}: the pages list the whole list in order"
+        );
+    }
 }
 
 /// Every page from `after` on, `limit` at most each, until one answers nothing: the events in

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use spindle_kernel::{
     Change, Committed, EVERY_INSTANCE, Event, Origin, Removal, Row, Scan, Scanned, Store,
-    StoreError, Stored, Write,
+    StoreError, Stored, Write, whole_writes,
 };
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
@@ -750,15 +750,15 @@ impl Store for BrowserStore {
         Ok(())
     }
 
-    /// The events committed after `position`, read from memory: those the database held when this
-    /// global scope opened it, and those it committed since.
-    fn events_after(&mut self, position: u64) -> Result<Vec<Committed>, StoreError> {
+    /// The events committed after `position`, up to `limit` ([`whole_writes`]), read from memory:
+    /// those the database held when this global scope opened it, and those it committed since.
+    fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
         let shared = self.shared.borrow();
         shared.healthy()?;
         let from = shared
             .events
             .partition_point(|committed| committed.position <= position);
-        Ok(shared.events[from..].to_vec())
+        Ok(whole_writes(&shared.events[from..], limit))
     }
 }
 

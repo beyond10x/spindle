@@ -422,8 +422,8 @@ impl Store for Tallied<'_> {
         self.store.attribute(origin);
     }
 
-    fn events_after(&mut self, position: u64) -> Result<Vec<Committed>, StoreError> {
-        self.store.events_after(position)
+    fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
+        self.store.events_after(position, limit)
     }
 
     /// Kept for [`Host::published`], tallied as no write's: an event no write carries counts
@@ -506,8 +506,8 @@ impl Store for Supplied {
         self.0.forget_events()
     }
 
-    fn events_after(&mut self, position: u64) -> Result<Vec<Committed>, StoreError> {
-        self.0.events_after(position)
+    fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
+        self.0.events_after(position, limit)
     }
 }
 
@@ -1025,7 +1025,7 @@ impl Host {
     pub fn published(&mut self) -> Result<Vec<Published>, HostError> {
         let mut committed = Vec::with_capacity(self.components.len());
         for (name, component) in &mut self.components {
-            committed.push((name.clone(), component.store.events_after(0)?));
+            committed.push((name.clone(), component.store.events_after(0, usize::MAX)?));
         }
         Ok(merged(committed))
     }
@@ -1047,8 +1047,8 @@ impl Host {
             .map(|(name, component)| (name.clone(), component.store.generation()))
             .collect::<Vec<_>>();
         let components = &mut self.components;
-        range::range(self.run, &stores, after, limit, |name, position| {
-            Ok(store_of(components, name)?.events_after(position)?)
+        range::range(self.run, &stores, after, limit, |name, position, wanted| {
+            Ok(store_of(components, name)?.events_after(position, wanted)?)
         })
     }
 
