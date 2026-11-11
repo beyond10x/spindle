@@ -216,8 +216,9 @@ fn a_killed_holder_does_not_block() {
     assert_eq!(status(address), 200);
 }
 
-/// `run` reading stdin locks its state file itself: a second one given a hard link to the file the
-/// first holds, a path that resolves to no other, exits 1 naming the path it was given.
+/// `run` reading stdin locks its state file itself, on Linux: a second one given a hard link to the
+/// file the first holds, a path that resolves to no other, exits 1 naming the path it was given.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_second_stdin_run_on_a_hard_link_to_the_held_state_file_exits_1() {
     let scratch = scratch();

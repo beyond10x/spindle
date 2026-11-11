@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:kernel-secondary-effects
 kind: story
-status: active
+status: implemented
 title: Secondary effects
 relations:
 - serves: vision:spindle
@@ -17,10 +17,11 @@ scope:
   path: crates/spindle-kernel/src/supported.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/secondary_effects.rs
-revision: 7
+revision: 8
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-05T12:00:33Z", actor: "human:timo", revision: 6}
 - {from: "proposed", to: "active", at: "2026-11-05T12:00:33Z", actor: "human:timo", revision: 7}
+- {from: "active", to: "implemented", at: "2026-11-11T20:31:04Z", actor: "human:timo", revision: 8, decided_on: {"recorded":{"test_result":1}}}
 ---
 # Secondary effects
 

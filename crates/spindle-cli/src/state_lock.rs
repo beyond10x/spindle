@@ -36,9 +36,12 @@ pub(crate) fn directory(directory: &Path) -> Result<StateLock> {
 /// `<path>.lock` beside the path it resolves to, symbolic links followed, into which this
 /// process writes its id, so a second run reached through a link names the holder too (one
 /// reached through a hard link, which resolves to a path of its own, names "another process").
-/// The database's lock is a whole-file `flock`, of another kind than SQLite's byte-range locks
-/// on the file, so neither waits on the other. Drop the lock after the store: closing the file
-/// releases this process's byte-range locks on it.
+/// The database's lock is a whole-file `flock`, which on Linux is of another kind than SQLite's
+/// byte-range locks on the file, so neither waits on the other. Drop the lock after the store:
+/// closing the file releases this process's byte-range locks on it. On macOS an `flock` and a
+/// byte-range lock on one file exclude each other, so SQLite would find its own database locked:
+/// there only `<path>.lock` is taken, and a run reached through a hard link takes a lock file of
+/// its own.
 pub(crate) fn file(file: &Path) -> Result<StateLock> {
     let database = OpenOptions::new()
         .read(true)
@@ -53,22 +56,27 @@ pub(crate) fn file(file: &Path) -> Result<StateLock> {
     let mut lock = resolved.clone().into_os_string();
     lock.push(".lock");
     let lock = PathBuf::from(lock);
-    match database.try_lock() {
-        Ok(()) => {}
-        Err(TryLockError::WouldBlock) => bail!(
-            "the state {} is in use by {}, which holds {}: one state is run by one process at a \
-             time",
-            file.display(),
-            holder(&lock),
-            resolved.display()
-        ),
-        Err(TryLockError::Error(error)) => {
-            return Err(error).with_context(|| format!("locking {}", resolved.display()));
+    let database = if cfg!(target_os = "linux") {
+        match database.try_lock() {
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => bail!(
+                "the state {} is in use by {}, which holds {}: one state is run by one process \
+                 at a time",
+                file.display(),
+                holder(&lock),
+                resolved.display()
+            ),
+            Err(TryLockError::Error(error)) => {
+                return Err(error).with_context(|| format!("locking {}", resolved.display()));
+            }
         }
-    }
+        Some(database)
+    } else {
+        None
+    };
     Ok(StateLock {
         _file: acquire(file, lock)?,
-        _database: Some(database),
+        _database: database,
     })
 }
 

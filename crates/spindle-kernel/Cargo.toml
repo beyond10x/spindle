@@ -19,9 +19,9 @@ ess-conformance.workspace = true
 ess-domain.workspace = true
 ess-primitives.workspace = true
 spindle-capability.workspace = true
-eventlog-core = { git = "https://github.com/beyond10x/eventlog", tag = "0.9.3", optional = true }
-eventlog-postgres = { git = "https://github.com/beyond10x/eventlog", tag = "0.9.3", optional = true }
-eventlog-sqlite = { git = "https://github.com/beyond10x/eventlog", tag = "0.9.3", optional = true }
+eventlog-core = { git = "https://github.com/beyond10x/eventlog", tag = "0.9.4", optional = true }
+eventlog-postgres = { git = "https://github.com/beyond10x/eventlog", tag = "0.9.4", optional = true }
+eventlog-sqlite = { git = "https://github.com/beyond10x/eventlog", tag = "0.9.4", optional = true }
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:state-moves-to-postgres
 kind: story
-status: active
+status: implemented
 title: A state directory's streams move into a PostgreSQL store
 relations:
 - serves: vision:spindle
@@ -37,10 +37,11 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 9
+revision: 10
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-10T15:08:57Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-10T15:08:57Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-11T20:31:02Z", actor: "human:timo", revision: 10, decided_on: {"recorded":{"test_result":1,"review_outcome":2}}}
 ---
 # A state directory's streams move into a PostgreSQL store
 

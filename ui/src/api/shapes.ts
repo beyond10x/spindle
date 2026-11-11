@@ -191,6 +191,7 @@ export const requestLogShape: Shape<RequestLog> = {
         at: text,
         method: text,
         path: text,
+        query: { ...text, optional: true },
         route: { ...text, optional: true },
         operation: { ...text, optional: true },
         kind: { ...oneOf(OperationKind), optional: true },

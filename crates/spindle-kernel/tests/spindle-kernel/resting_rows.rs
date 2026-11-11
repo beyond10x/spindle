@@ -24,9 +24,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use eventlog_core::{
-    CommandMeta, EventStore, Expected, NewEvent, StreamId, TenantId, new_event_id, request_hash,
-};
+#[cfg(target_os = "linux")]
+use eventlog_core::{CommandMeta, Expected, NewEvent, new_event_id, request_hash};
+use eventlog_core::{EventStore, StreamId, TenantId};
 use eventlog_sqlite::SqliteEventStore;
 use serde_json::{Map, Value, json};
 use spindle_kernel::{
@@ -722,17 +722,22 @@ fn resident() -> (u64, u64) {
     (field("VmRSS:"), field("VmHWM:"))
 }
 
+#[cfg(target_os = "linux")]
 const LARGE: &str = "probe.rest.Page";
 /// How many rows of 1 MiB the large state writes, and how many of them rest at 1 MiB once the
 /// rest are written again small.
+#[cfg(target_os = "linux")]
 const LARGE_ROWS: usize = 1_300;
+#[cfg(target_os = "linux")]
 const LARGE_RESTING: usize = 100;
+#[cfg(target_os = "linux")]
 const MIB: u64 = 1 << 20;
 
 /// Writes the large state at `path` as the store writes a row, one `spindle.row` event on the
 /// instance's stream, straight to the log: each request hashed by its instance and round rather
 /// than its 1 MiB body, which a debug build hashes at a few MiB a second. 1,300 rows of 1 MiB,
 /// then 1,200 of them again as small rows.
+#[cfg(target_os = "linux")]
 fn write_large_rows(path: &Path) {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()

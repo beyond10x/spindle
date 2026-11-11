@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:postgres-store
 kind: story
-status: active
+status: implemented
 title: store.durable bound to postgres keeps state in an operator's PostgreSQL
 relations:
 - serves: vision:spindle
@@ -32,10 +32,11 @@ scope:
   path: crates/spindle-kernel/src/sqlite.rs
 - confidence: inferred
   path: examples/environments/postgres.toml
-revision: 10
+revision: 11
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-10T15:08:56Z", actor: "human:timo", revision: 6}
 - {from: "proposed", to: "active", at: "2026-11-10T15:08:57Z", actor: "human:timo", revision: 7}
+- {from: "active", to: "implemented", at: "2026-11-11T20:31:01Z", actor: "human:timo", revision: 11, decided_on: {"recorded":{"test_result":1,"review_outcome":2}}}
 ---
 # store.durable bound to postgres keeps state in an operator's PostgreSQL
 
