@@ -146,7 +146,7 @@ jobs:
           docker run -d --name postgres -p 127.0.0.1:5432:5432 \
             -e POSTGRES_USER=owner -e POSTGRES_PASSWORD=owner -e POSTGRES_DB=spindle \
             -v "$dir:/certs:ro" --entrypoint sh postgres:17 -c \
-            'install -o postgres -g postgres -m 600 /certs/server.key /tmp/server.key && install -o postgres -g postgres -m 644 /certs/server.pem /tmp/server.pem && exec docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=/tmp/server.pem -c ssl_key_file=/tmp/server.key'
+            'install -o postgres -g postgres -m 600 /certs/server.key /tmp/server.key && install -o postgres -g postgres -m 644 /certs/server.pem /tmp/server.pem && exec docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=/tmp/server.pem -c ssl_key_file=/tmp/server.key -c max_locks_per_transaction=256'
           for attempt in $(seq 1 60); do
             if docker exec postgres pg_isready -h 127.0.0.1 -U owner -d spindle >/dev/null 2>&1; then
               break

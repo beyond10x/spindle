@@ -90,6 +90,7 @@ tasks:
       - 'cargo test --locked -p spindle-kernel --test spindle-kernel -- --include-ignored postgres::'
       - 'cargo test --locked -p spindle-kernel --test spindle-kernel -- --include-ignored state_move::'
       - 'cargo test --locked -p spindle-kernel --test spindle-kernel -- --include-ignored on_postgres adversary_w21_store::'
+      - 'cargo test --locked -p spindle-kernel --test spindle-kernel -- --include-ignored adversary_postgres_named:: adversary_postgres_scan:: --skip adv2_sqlite_scans_the_same_long_logs --skip adv3_a_scan_of_1300_rows_of_a_mebibyte_each'
       - 'cargo test --locked -p spindle-host --test spindle-host -- --include-ignored postgres::'
       - 'cargo test --locked -p spindle-cli --test spindle-cli -- --include-ignored postgres::'
       - 'cargo test --locked -p spindle-cli --test spindle-cli -- --include-ignored state_move::'
