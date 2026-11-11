@@ -3,12 +3,12 @@
 //! reset of every store, which may load a world.
 
 use ess_compiler::EssIr;
-use ess_http::Method;
+use ess_http::{Method, Operation};
 use serde_json::{Value, json};
 use spindle_host::{Cursor, Host, HostError, Page, Published, Reader, World};
 
 use crate::answer::Answer;
-use crate::surface::form_decoded;
+use crate::surface::{Surface, form_decoded};
 
 /// One console route.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,16 +20,19 @@ pub enum Console {
     Events,
     /// `POST /api/reset`: empty every store of the run, then load the world its body carries.
     Reset,
+    /// `GET /api/served`: every command and view the surface routes, whether it serves it, and
+    /// why not ([`served`]).
+    Served,
 }
 
 impl Console {
     /// Every console route.
-    pub const ALL: [Self; 3] = [Self::Model, Self::Events, Self::Reset];
+    pub const ALL: [Self; 4] = [Self::Model, Self::Events, Self::Reset, Self::Served];
 
     /// The method it answers.
     pub fn method(self) -> Method {
         match self {
-            Self::Model | Self::Events => Method::Get,
+            Self::Model | Self::Events | Self::Served => Method::Get,
             Self::Reset => Method::Post,
         }
     }
@@ -40,6 +43,7 @@ impl Console {
             Self::Model => "/api/model",
             Self::Events => "/api/events",
             Self::Reset => "/api/reset",
+            Self::Served => "/api/served",
         }
     }
 }
@@ -233,6 +237,40 @@ fn listed(published: &[Published]) -> Answer {
         status: 200,
         body: Some(json!({"events": events})),
     }
+}
+
+/// The body `GET /api/served` answers, `spindle.observe.ServedOperations`:
+/// `{"operations": [...]}`, one row per route of `surface` in the order its start log names them
+/// ([`Surface::operations`]), each `{"component", "name", "kind", "method", "path", "served"}`,
+/// `kind` `command` or `view`, and for one not served `reason`, the text [`Route::not_served`]
+/// gives it ([`Route::unserved`]). The surface computes it once, when the console routes are
+/// added ([`Surface::with_console`]).
+///
+/// [`Route::not_served`]: crate::Route::not_served
+/// [`Route::unserved`]: crate::Route::unserved
+pub fn served(surface: &Surface) -> Value {
+    let operations = surface
+        .operations()
+        .into_iter()
+        .map(|route| {
+            let mut row = json!({
+                "component": route.component,
+                "name": route.operation.name().to_string(),
+                "kind": match route.operation {
+                    Operation::Command(_) => "command",
+                    Operation::View(_) => "view",
+                },
+                "method": route.method.as_str().to_uppercase(),
+                "path": route.path,
+                "served": route.unserved().is_none(),
+            });
+            if let (Some(why), Value::Object(row)) = (route.unserved(), &mut row) {
+                row.insert("reason".to_owned(), Value::String(why.to_string()));
+            }
+            row
+        })
+        .collect::<Vec<_>>();
+    json!({"operations": operations})
 }
 
 /// Reads the world a `POST /api/reset` body carries, as JSON, against the model the host runs;

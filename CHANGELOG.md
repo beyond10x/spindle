@@ -31,6 +31,15 @@ are Spindle's releases.
   enough. There every request without the proxy's secret is refused `403` before anything of it
   is read, on every route, the console routes and `/__spindle/` included. On loopback `run`
   answers as before. Instances `deploy` starts still bind loopback.
+- A served `run` answers `GET /api/served`, a console route beside `/api/model`, with one row per
+  command and view it routes: `component`, `name`, `kind`, `method`, `path`, `served` and, for
+  one not served, the `reason` its start log prints, from the same place. The answer is
+  `spindle.observe.ServedOperations`, with its schema and generated types. It is granted as
+  `GET /api/model` is: a guarded listener asks for its token, and behind a trusted-caller proxy
+  only a request that carries the proxy's secret is answered. The Service Worker answers it too.
+  `admit` now prints, without serving, each view `run` would not serve, in the start log's words;
+  it printed command refusals only. On one downstream specification that is 62 of 366 views
+  (48 aggregations, 6 computed fields, 8 filters); all 520 of its commands are served.
 
 ## [0.14.0] - 2026-11-11
 

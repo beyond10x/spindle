@@ -264,6 +264,10 @@ async fn the_worker_answers_its_own_origins_routes_and_nothing_else() {
         "a console route of the worker's own origin is answered"
     );
     assert!(
+        spindle.serves(&own("/api/served"), "GET"),
+        "what the worker serves is answered as a console route"
+    );
+    assert!(
         !spindle.serves(&own("/elsewhere/index.html"), "GET"),
         "a path outside the routes goes to the network"
     );

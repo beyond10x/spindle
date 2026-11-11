@@ -329,17 +329,8 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         (None, _) => surface,
     };
     let unserved = surface.unserved();
-    for route in &unserved {
-        eprintln!(
-            "b10x-spindle: not served: {} at {} {}: {}",
-            route.operation,
-            route.method.as_str().to_uppercase(),
-            route.path,
-            route
-                .unserved()
-                .map(ToString::to_string)
-                .unwrap_or_default()
-        );
+    for line in unserved.iter().filter_map(|route| route.not_served()) {
+        eprintln!("b10x-spindle: {line}");
     }
     for route in surface.routes() {
         for (outcome, why) in route.refused() {

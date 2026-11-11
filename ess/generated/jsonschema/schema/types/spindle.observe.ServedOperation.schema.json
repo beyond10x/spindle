@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.ServedOperation.schema.json",
+  "$ref": "#/$defs/spindle.observe.ServedOperation",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "contract_digest": "slice-sha256/2:613b3bc3e002ea2f88680150126033ba00712b59878065896fb84b70a4ffbf18",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.ServedKind": {
+      "title": "ServedKind",
+      "description": "What one operation of the model a served run routes is.",
+      "x-ess-name": "spindle.observe.ServedKind",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "command",
+        "view"
+      ]
+    },
+    "spindle.observe.ServedOperation": {
+      "title": "ServedOperation",
+      "description": "One command or view a served run routes, and whether it serves it. An operation not served keeps its route and answers `501` naming the construct; `reason` is the text the run prints for it at startup (`b10x-spindle: not served: <kind> <name> at <method> <path>: <reason>`) and `admit` prints for a view, read from one place (`spindle_ingress::Route::not_served`). A served command may still refuse an outcome, which the startup line `unsupported outcome` names; it is served here.",
+      "x-ess-name": "spindle.observe.ServedOperation",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "component": {
+          "description": "The component whose route it is.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The qualified name of the command or view.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/spindle.observe.ServedKind"
+        },
+        "method": {
+          "description": "The route's method, uppercase, as the binding or ESS publishes it.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The route's path template, as the binding or ESS publishes it.",
+          "type": "string"
+        },
+        "served": {
+          "description": "Whether a request for it is answered by the model.",
+          "type": "boolean"
+        },
+        "reason": {
+          "description": "Why it is not served; absent for one that is.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "component",
+        "name",
+        "kind",
+        "method",
+        "path",
+        "served"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -58,8 +58,10 @@ pub enum Command {
     /// Prints on stderr one line per outcome the kernel does not run, naming the outcome and what
     /// it lacks: a request that selects it is refused, and every other outcome of its command
     /// runs. A command the kernel refuses whole (one it cannot select among, or none of whose
-    /// outcomes runs) is named once instead, as not served. Exits 0 when admitted and 3 when
-    /// refused.
+    /// outcomes runs) is named once instead, as not served. Then one line per view `run` would not
+    /// serve over HTTP on ESS's derived routes, as `run` prints it at startup
+    /// (`not served: view <name> at GET <path>: <reason>`), without serving. Exits 0 when
+    /// admitted and 3 when refused.
     Admit {
         /// The specification directory.
         spec: PathBuf,
@@ -117,12 +119,14 @@ pub enum Command {
     /// either parameter optional: no `after` reads from the first event, `limit` is 100 by
     /// default and 1,000 at most, a larger one answered with 1,000, and a malformed `after` or
     /// `limit` refused `400`; the cursor is opaque, still resumes after a restart or a reset, and
-    /// with it at the end the answer is no event and the same cursor) and `POST /api/reset`
+    /// with it at the end the answer is no event and the same cursor), `GET /api/served`
+    /// (`{"operations": [...]}`, one row per command and view routed, `served` true or false and,
+    /// for one not served, the `reason` the startup line below prints) and `POST /api/reset`
     /// (empties every store, `{"emptied": [...]}`); a
     /// route the binding or ESS publishes at one of those paths exits 1 before listening.
     /// Commands and the reset run one at a time, in arrival order. Reads are answered beside
     /// them, each on a thread of its own, from the state the last finished command left: a view,
-    /// `GET /api/model`, `GET /api/events` and every `GET /__spindle/` route.
+    /// `GET /api/model`, `GET /api/events`, `GET /api/served` and every `GET /__spindle/` route.
     ///
     /// A command or view this ingress cannot route (such as a view a binding answers other than
     /// as `rows`, or one whose parameter no single query value carries), a command the kernel does

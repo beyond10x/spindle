@@ -1,12 +1,12 @@
 {
   "format": "ess-types-report/3",
-  "source_digest": "ec1572f6d953c4c777f76b6f5502e4990bddd0a7db0e62b030980d6a923209bb",
+  "source_digest": "c13f24dff1d905b526d145df54ca2cc25618a9406f7177b59ea6e583acf9516a",
   "input": {
     "kind": "model",
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:15b6d1987b4f7ad06e11551f56307a57fbe9af860e9933fbccb8dc8496eeb3ea",
-    "projection_digest": "6bc035bd96a126a2e148089ff9648d3d3d7720ccb2dec35fca56a4c932564ae6"
+    "contract_digest": "slice-sha256/2:a606a0470e57188466428844f8d967159bcad5f54d5651704fbbbb0f004332f8",
+    "projection_digest": "90d8f55d265c85a582278d2ca07b2180911a4da37bbc8ce2a324a2e74f1eb658"
   },
   "generator_version": "0.92.0",
   "target": "typescript",
@@ -19,6 +19,7 @@
     "spindle.observe.MetricFamilies",
     "spindle.observe.RequestLog",
     "spindle.observe.Sample",
+    "spindle.observe.ServedOperations",
     "spindle.observe.StateChange",
     "spindle.observe.Topology"
   ],
@@ -54,6 +55,9 @@
     "spindle.observe.RequestTotals": "RequestTotals",
     "spindle.observe.ResourceReading": "ResourceReading",
     "spindle.observe.Sample": "Sample",
+    "spindle.observe.ServedKind": "ServedKind",
+    "spindle.observe.ServedOperation": "ServedOperation",
+    "spindle.observe.ServedOperations": "ServedOperations",
     "spindle.observe.SourceCount": "SourceCount",
     "spindle.observe.StateChange": "StateChange",
     "spindle.observe.StatusClass": "StatusClass",
@@ -931,6 +935,96 @@
       "detail": "model identity and wire mapping retained in source.schema.json"
     },
     {
+      "pointer": "/$defs/spindle.observe.ServedKind/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.ServedKind/title",
+      "rule": "title",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.ServedKind/x-ess-kind",
+      "rule": "x-ess-kind",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.ServedKind/x-ess-name",
+      "rule": "x-ess-name",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.ServedOperation/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.ServedOperation/properties/component/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.ServedOperation/properties/method/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.ServedOperation/properties/name/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.ServedOperation/properties/path/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.ServedOperation/properties/reason/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.ServedOperation/properties/served/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.ServedOperation/title",
+      "rule": "title",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.ServedOperation/x-ess-kind",
+      "rule": "x-ess-kind",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.ServedOperation/x-ess-name",
+      "rule": "x-ess-name",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.ServedOperations/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.ServedOperations/title",
+      "rule": "title",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.ServedOperations/x-ess-kind",
+      "rule": "x-ess-kind",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.ServedOperations/x-ess-name",
+      "rule": "x-ess-name",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
       "pointer": "/$defs/spindle.observe.SourceCount/description",
       "rule": "description",
       "detail": "retained in source.schema.json; no decoder behavior inferred"
@@ -1751,6 +1845,16 @@
       "pointer": "/$defs/spindle.observe.Sample/x-ess-invariants",
       "rule": "model_invariants",
       "detail": "enforce the retained model invariant statements; structural codecs do not evaluate predicates"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.ServedOperation",
+      "rule": "closed_object",
+      "detail": "TypeScript structural assignability does not enforce exact object keys; validate additionalProperties at runtime"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.ServedOperations",
+      "rule": "closed_object",
+      "detail": "TypeScript structural assignability does not enforce exact object keys; validate additionalProperties at runtime"
     },
     {
       "pointer": "/$defs/spindle.observe.SourceCount",

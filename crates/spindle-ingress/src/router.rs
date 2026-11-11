@@ -3,6 +3,8 @@
 //! socket or async runtime in it. The loopback listener calls it for every request it reads, and a
 //! host with no socket, such as a Service Worker, calls [`route`] itself.
 
+use std::sync::Arc;
+
 use ess_http::Operation;
 use serde_json::{Map, Value};
 use spindle_host::{Failed, Host, Reader};
@@ -163,6 +165,7 @@ fn routing(
         content_type: request.content_type,
         body: request.body,
         recorder: surface.recorder().cloned(),
+        served: surface.served(),
         proven: None,
     }
     .serve(host, worlds);
@@ -240,6 +243,9 @@ pub(crate) struct Pending {
     pub(crate) body: Vec<u8>,
     /// The surface's recorder, where it observes: what the metrics read, and what counts a reset.
     pub(crate) recorder: Option<Recorder>,
+    /// The body `GET /api/served` answers, the surface's ([`Surface::with_console`]); `None` for
+    /// a request no console route serves.
+    pub(crate) served: Option<Arc<str>>,
     /// The caller the request proves in the header a surface made
     /// [`Surface::proving_callers`] reads ([`Caller::proven`]); `None` where it proves none, and
     /// for every request a [`Request`] value carries, which holds no header.
@@ -247,6 +253,21 @@ pub(crate) struct Pending {
 }
 
 impl Pending {
+    /// What `GET /api/served` answers: `200` with the body the surface computed; `404`, as for a
+    /// path no route has, where it has none.
+    fn served_answer(&self) -> Response {
+        match &self.served {
+            Some(body) => Response {
+                status: 200,
+                allow: None,
+                panel: false,
+                metrics: false,
+                body: body.to_string(),
+            },
+            None => Answer::refusal(404, format!("no route serves {}", self.path)).into(),
+        }
+    }
+
     /// The input the path carries for `route`: what the router read, or on a route whose
     /// requests prove their caller the path itself, still unread.
     fn carried<'a>(&'a self, route: &Route) -> Carried<'a> {
@@ -258,9 +279,9 @@ impl Pending {
     }
 
     /// Whether the request is a read `reader` answers beside the host's thread: a view whose
-    /// owning store it reads ([`Reader::reads`]), `GET /api/model`, `GET /api/events` where every
-    /// store gives a reading handle ([`Reader::reads_events`]), and on an
-    /// observing surface the metrics and the topology. A command, `POST /api/reset` and a view
+    /// owning store it reads ([`Reader::reads`]), `GET /api/model`, `GET /api/served`,
+    /// `GET /api/events` where every store gives a reading handle ([`Reader::reads_events`]), and
+    /// on an observing surface the metrics and the topology. A command, `POST /api/reset` and a view
     /// read on the host's thread only are answered there, one at a time in arrival order.
     #[cfg_attr(not(feature = "listener"), allow(dead_code))]
     pub(crate) fn reads(&self, reader: &Reader) -> bool {
@@ -269,7 +290,7 @@ impl Pending {
                 Operation::View(view) => reader.reads(view),
                 Operation::Command(_) => false,
             },
-            Asked::Console(Console::Model) => true,
+            Asked::Console(Console::Model | Console::Served) => true,
             Asked::Console(Console::Events) => reader.reads_events(),
             Asked::Console(Console::Reset) => false,
             Asked::Hosted(_) => self.recorder.is_some(),
@@ -308,6 +329,9 @@ impl Pending {
                 crate::console::events_read_queried(reader, &self.query).into(),
                 Answered::ingress(),
             )),
+            (Asked::Console(Console::Served), _) => {
+                Some((self.served_answer(), Answered::ingress()))
+            }
             (Asked::Hosted(reserved), Some(recorder)) => Some((
                 crate::observe::read_hosted(*reserved, recorder, reader),
                 Answered::ingress(),
@@ -376,6 +400,9 @@ impl Pending {
                 Vec::new(),
                 Answered::ingress(),
             ),
+            Asked::Console(Console::Served) => {
+                (self.served_answer(), Vec::new(), Answered::ingress())
+            }
             Asked::Console(Console::Reset) => {
                 let answer = crate::console::reset(host, &self.body, worlds);
                 if answer.status == 200

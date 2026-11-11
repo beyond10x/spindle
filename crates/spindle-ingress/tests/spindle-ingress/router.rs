@@ -189,6 +189,7 @@ fn requests(surface: &Surface) -> Vec<(String, String, Option<String>, String)> 
         ("GET".into(), "/no/such/route".into(), None, String::new()),
         ("GET".into(), "/api/model".into(), None, String::new()),
         ("GET".into(), "/api/events".into(), None, String::new()),
+        ("GET".into(), "/api/served".into(), None, String::new()),
         ("GET".into(), "/api/reset".into(), None, String::new()),
         ("POST".into(), "/api/reset".into(), json, String::new()),
         ("GET".into(), view, None, String::new()),

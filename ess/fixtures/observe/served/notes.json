@@ -1,0 +1,81 @@
+{
+  "operations": [
+    {
+      "component": "pad",
+      "name": "notes.pad.DiscardNote",
+      "kind": "command",
+      "method": "POST",
+      "path": "/pad/commands/DiscardNote",
+      "served": false,
+      "reason": "unsupported: `input_absent:`, in `notes.pad.DiscardNote/body-missing`"
+    },
+    {
+      "component": "pad",
+      "name": "notes.pad.WriteNote",
+      "kind": "command",
+      "method": "POST",
+      "path": "/pad/commands/WriteNote",
+      "served": true
+    },
+    {
+      "component": "pad",
+      "name": "notes.pad.AllNotes",
+      "kind": "view",
+      "method": "GET",
+      "path": "/pad/views/AllNotes",
+      "served": true
+    },
+    {
+      "component": "pad",
+      "name": "notes.pad.DoubledCounts",
+      "kind": "view",
+      "method": "GET",
+      "path": "/pad/views/DoubledCounts",
+      "served": false,
+      "reason": "unsupported: view notes.pad.DoubledCounts declares computed fields"
+    },
+    {
+      "component": "pad",
+      "name": "notes.pad.KeptNotes",
+      "kind": "view",
+      "method": "GET",
+      "path": "/pad/views/KeptNotes",
+      "served": false,
+      "reason": "unsupported: view notes.pad.KeptNotes declares the filter `text starts_with \"kept\"`; only a field compared with a literal of its type or ordered against `now`, or listed `in:` or `none_of:` literals, a parameter compared with a field by `==` or `!=`, and `defined`, combined by `any`, `all` and `not` or quantified over a list parameter or a list field by `exists` or `forall`, are read"
+    },
+    {
+      "component": "pad",
+      "name": "notes.pad.NoteById",
+      "kind": "view",
+      "method": "GET",
+      "path": "/pad/views/NoteById",
+      "served": false,
+      "reason": "unsupported: view notes.pad.NoteById declares a default row for an absent identity"
+    },
+    {
+      "component": "pad",
+      "name": "notes.pad.NoteCount",
+      "kind": "view",
+      "method": "GET",
+      "path": "/pad/views/NoteCount",
+      "served": true
+    },
+    {
+      "component": "pad",
+      "name": "notes.pad.NotePages",
+      "kind": "view",
+      "method": "GET",
+      "path": "/pad/views/NotePages",
+      "served": false,
+      "reason": "unsupported: view notes.pad.NotePages declares paging"
+    },
+    {
+      "component": "pad",
+      "name": "notes.pad.NotesWithText",
+      "kind": "view",
+      "method": "GET",
+      "path": "/pad/views/NotesWithText",
+      "served": true
+    }
+  ]
+}

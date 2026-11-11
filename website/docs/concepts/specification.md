@@ -3,7 +3,7 @@ title: The specification
 sidebar_position: 1
 description: What Spindle reads, how it compiles it, and what the kernel executes from it.
 lede: A specification is a directory of ESS documents, compiled by ESS's own compiler into the program Spindle runs.
-source: crates/spindle-spec/src/lib.rs, crates/spindle-spec/tests/spindle-spec/load.rs, crates/spindle-kernel/src/lib.rs, crates/spindle-kernel/src/supported.rs, crates/spindle-cli/src/conform.rs, crates/spindle-cli/tests/spindle-cli/conform.rs, docs/design/spindle.md §3a
+source: crates/spindle-spec/src/lib.rs, crates/spindle-spec/tests/spindle-spec/load.rs, crates/spindle-ingress/src/console.rs, crates/spindle-cli/tests/spindle-cli/served_operations.rs, crates/spindle-kernel/src/lib.rs, crates/spindle-kernel/src/supported.rs, crates/spindle-cli/src/conform.rs, crates/spindle-cli/tests/spindle-cli/conform.rs, docs/design/spindle.md §3a
 ---
 
 The directory of [ESS](https://beyond10x.github.io/ess/)
@@ -105,6 +105,12 @@ field read through a reference is refused.
 
 Computed fields, a default row for an absent identity, paging and any other filter are refused as
 unsupported, and the refusal names the construct.
+
+`run` prints each view and command it does not serve at startup, as
+``not served: view `<name>` at GET <path>: <reason>``. `admit` prints the same line for each view
+without serving. A served `run` also answers `GET /api/served`: one row per command and view it
+routes, with `served` and, for one it does not serve, the same `reason`
+(`spindle.observe.ServedOperations`).
 
 ## Scenarios
 
