@@ -411,6 +411,7 @@ fn continue_on(store: &mut dyn Store, round: u32) {
             identity: shelf,
             expected: shelved.version,
             events: Vec::new(),
+            scanned: Vec::new(),
         }),
     ];
     writes.push(Write::Commit(Change {

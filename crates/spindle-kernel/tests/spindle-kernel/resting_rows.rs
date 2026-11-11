@@ -521,6 +521,7 @@ fn drawn_write(draw: &mut Draw, store: &mut SqliteStore, entity: &str, identity:
                 stored.version
             },
             events: emitted,
+            scanned: Vec::new(),
         }),
         held => {
             let expected = match (held, wrong) {

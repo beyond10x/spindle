@@ -112,6 +112,7 @@ impl Driven<'_> {
                         identity: identity.clone(),
                         expected: version,
                         events,
+                        scanned: Vec::new(),
                     }),
                 )
             }

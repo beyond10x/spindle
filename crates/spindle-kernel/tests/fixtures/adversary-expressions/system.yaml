@@ -1,0 +1,21 @@
+format: ess/34
+system: gauge
+version: v1
+summary: Meters whose readings are computed from the request and the meter.
+domains:
+  - gauge.meters
+components:
+  - component: bench
+    summary: Sets and steps meters.
+    owns:
+      domains:
+        - gauge.meters
+    accepts:
+      commands:
+        - gauge.meters.SetMeter
+        - gauge.meters.StepMeter
+    publishes:
+      events:
+        - gauge.meters.MeterSet
+        - gauge.meters.MeterStepped
+    reached_by: in_process

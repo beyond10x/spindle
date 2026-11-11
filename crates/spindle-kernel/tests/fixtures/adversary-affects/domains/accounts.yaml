@@ -1,0 +1,195 @@
+domain: tenancy.accounts
+summary: An account holds sessions. Closing the account removes it and every session of it; bumping it raises its level, sets each of its sessions to the new level and ends every session that had no hits, and lowers every other account below it.
+types:
+  - name: tenancy.accounts.AccountId
+    kind: newtype
+    of: String
+entities:
+  - name: tenancy.accounts.Account
+    identity:
+      name: account_id
+      type: tenancy.accounts.AccountId
+    fields:
+      - name: level
+        type: Integer
+    lifecycle:
+      initial: Active
+      states: [Active]
+      terminal: [Active]
+  - name: tenancy.accounts.Session
+    identity:
+      name: session_id
+      type: String
+    fields:
+      - name: account_id
+        type: tenancy.accounts.AccountId
+      - name: hits
+        type: Integer
+      - name: note
+        type: Optional<String>
+    invariants:
+      - hits <= 100
+    lifecycle:
+      initial: Live
+      states: [Live, Ended]
+      terminal: [Ended]
+      transitions:
+        - {name: end, from: [Live], to: Ended}
+errors:
+  - name: tenancy.accounts.NoAccount
+    summary: No account carries the id.
+    fields: []
+commands:
+  - name: tenancy.accounts.OpenAccount
+    input:
+      - name: account_id
+        type: tenancy.accounts.AccountId
+      - name: level
+        type: Integer
+    outcomes:
+      - name: opened
+        creates: tenancy.accounts.Account
+        instance: account_id
+        sets:
+          level: input.level
+        emits: [tenancy.accounts.AccountOpened]
+        payload:
+          tenancy.accounts.AccountOpened:
+            account_id: input.account_id
+        summary: The account is opened.
+  - name: tenancy.accounts.OpenSession
+    input:
+      - name: session_id
+        type: String
+      - name: account_id
+        type: tenancy.accounts.AccountId
+      - name: hits
+        type: Integer
+    outcomes:
+      - name: no-account
+        when_related:
+          via: input.account_id
+          exists: false
+        error: tenancy.accounts.NoAccount
+        summary: No account carries the id.
+      - name: opened
+        creates: tenancy.accounts.Session
+        instance: session_id
+        sets:
+          account_id: input.account_id
+          hits: input.hits
+        emits: [tenancy.accounts.SessionOpened]
+        payload:
+          tenancy.accounts.SessionOpened:
+            session_id: input.session_id
+        summary: A session of an existing account is opened.
+  - name: tenancy.accounts.HitSession
+    input:
+      - name: session_id
+        type: String
+    outcomes:
+      - name: hit
+        updates: tenancy.accounts.Session
+        instance: session_id
+        sets:
+          hits: {increment: 1}
+        emits: [tenancy.accounts.SessionHit]
+        payload:
+          tenancy.accounts.SessionHit:
+            session_id: input.session_id
+        summary: The session takes one more hit.
+  - name: tenancy.accounts.CloseAccount
+    input:
+      - name: account_id
+        type: tenancy.accounts.AccountId
+    outcomes:
+      - name: closed
+        deletes: tenancy.accounts.Account
+        instance: account_id
+        affects:
+          - entity: tenancy.accounts.Session
+            where: account_id == input.account_id
+            deletes: tenancy.accounts.Session
+        emits: [tenancy.accounts.AccountClosed]
+        payload:
+          tenancy.accounts.AccountClosed:
+            account_id: input.account_id
+        summary: The account and every session of it are removed.
+  - name: tenancy.accounts.BumpAccount
+    input:
+      - name: account_id
+        type: tenancy.accounts.AccountId
+      - name: by
+        type: Integer
+    outcomes:
+      - name: bumped
+        updates: tenancy.accounts.Account
+        instance: account_id
+        sets:
+          level: {expr: "subject.level + input.by"}
+        affects:
+          - entity: tenancy.accounts.Session
+            where: account_id == input.account_id
+            sets:
+              hits: input.by
+              note: bumped
+          - entity: tenancy.accounts.Session
+            where: hits == 0
+            moves: tenancy.accounts.Session.end
+            sets:
+              note: idle
+          - entity: tenancy.accounts.Account
+            where: level < subject.level
+            sets:
+              level: input.by
+        emits: [tenancy.accounts.AccountBumped]
+        payload:
+          tenancy.accounts.AccountBumped:
+            account_id: input.account_id
+        summary: The account's level rises, its sessions take the amount, idle sessions end and every lower account takes the amount.
+events:
+  - name: tenancy.accounts.AccountOpened
+    fields:
+      - name: account_id
+        type: tenancy.accounts.AccountId
+  - name: tenancy.accounts.SessionOpened
+    fields:
+      - name: session_id
+        type: String
+  - name: tenancy.accounts.AccountClosed
+    fields:
+      - name: account_id
+        type: tenancy.accounts.AccountId
+  - name: tenancy.accounts.SessionHit
+    fields:
+      - name: session_id
+        type: String
+  - name: tenancy.accounts.AccountBumped
+    fields:
+      - name: account_id
+        type: tenancy.accounts.AccountId
+views:
+  - name: tenancy.accounts.AccountCard
+    source: tenancy.accounts.Account
+    consistency: read_your_writes
+    fields:
+      - name: account_id
+        type: tenancy.accounts.AccountId
+      - name: level
+        type: Integer
+      - name: state
+        type: tenancy.accounts.Account.State
+  - name: tenancy.accounts.SessionCard
+    source: tenancy.accounts.Session
+    consistency: read_your_writes
+    fields:
+      - name: session_id
+        type: String
+      - name: account_id
+        type: tenancy.accounts.AccountId
+      - name: hits
+        type: Integer
+      - name: note
+        type: Optional<String>
+      - name: state
+        type: tenancy.accounts.Session.State

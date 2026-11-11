@@ -466,7 +466,7 @@ struct Run<'a, 'ir> {
     /// asked once per run, whether the look-ahead or selection reads the branch first.
     answered: BTreeMap<String, bool>,
     /// Each entity a row-set guard scanned, at the version its first scan answered: the change
-    /// the selected outcome commits is conditioned on them ([`Change::scanned`]).
+    /// the selected outcome commits is conditioned on them ([`crate::Write::scanned`]).
     scanned: Vec<Scanned>,
     /// The outcomes the caller does not serve, by name, each with why ([`execute_refusing`]).
     refused: &'a BTreeMap<String, String>,

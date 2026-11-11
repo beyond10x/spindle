@@ -94,6 +94,10 @@ pub struct Removal {
     pub expected: u64,
     /// The events the command emitted, in order.
     pub events: Vec<Event>,
+    /// Each entity the command decided on by scanning it, at the version the scan answered, as
+    /// [`Change::scanned`]: a store refuses the removal when another write of that entity landed
+    /// in between.
+    pub scanned: Vec<Scanned>,
 }
 
 /// One write of several a command makes together ([`Store::commit_all`]): a set outcome's change
@@ -128,7 +132,7 @@ impl Write {
     pub fn scanned(&self) -> &[Scanned] {
         match self {
             Self::Commit(change) => &change.scanned,
-            Self::Remove(_) => &[],
+            Self::Remove(removal) => &removal.scanned,
         }
     }
 }
@@ -151,7 +155,7 @@ pub(crate) fn moved(scanned: &Scanned, actual: u64) -> StoreError {
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     /// The instance moved between the read and the commit, or, with the identity
-    /// [`EVERY_INSTANCE`], an entity the write was conditioned on ([`Change::scanned`]) moved
+    /// [`EVERY_INSTANCE`], an entity the write was conditioned on ([`Write::scanned`]) moved
     /// between its scan and the commit; the versions are then the entity's.
     #[error("{entity} {identity} is at version {actual:?}, not {expected:?}")]
     Conflict {
@@ -190,15 +194,16 @@ pub trait Store {
     /// [`Change`] with `expected: None` may create it again.
     ///
     /// # Errors
-    /// [`StoreError::Conflict`] when the instance is absent or not at `removal.expected`, and
-    /// [`StoreError::Backend`] when the store cannot be written.
+    /// [`StoreError::Conflict`] when the instance is absent or not at `removal.expected`, or an
+    /// entity of `removal.scanned` is not at the version it names, and [`StoreError::Backend`]
+    /// when the store cannot be written.
     fn remove(&mut self, removal: &Removal) -> Result<(), StoreError>;
 
     /// Records every write of `writes`, in order, each with its events, atomically: all of them,
     /// or, where one is refused, none. Each names the version it read, as [`Store::commit`] and
     /// [`Store::remove`] do, and a later write of an instance an earlier one wrote names the
-    /// version that one left. A write's scanned entities ([`Change::scanned`]) are checked
-    /// against their versions before any write lands.
+    /// version that one left. A write's scanned entities ([`Write::scanned`]), a removal's as a
+    /// change's, are checked against their versions before any write lands.
     ///
     /// The memory, SQLite and IndexedDB stores write them in one transaction. This default, for a
     /// store that can write one instance at a time only, first refuses a write that names a
@@ -339,6 +344,10 @@ fn one_at_a_time<S: Store + ?Sized>(store: &mut S, writes: &[Write]) -> Result<(
                 scanned: Vec::new(),
                 ..change.clone()
             }),
+            Write::Remove(removal) if !removal.scanned.is_empty() => Write::Remove(Removal {
+                scanned: Vec::new(),
+                ..removal.clone()
+            }),
             other => other.clone(),
         })
         .collect();
@@ -411,6 +420,7 @@ fn restore<S: Store + ?Sized>(
             identity: identity.clone(),
             expected,
             events: Vec::new(),
+            scanned: Vec::new(),
         }),
         (None, None) => Ok(()),
     }
@@ -671,7 +681,10 @@ impl Store for MemoryStore {
     }
 
     fn remove(&mut self, removal: &Removal) -> Result<(), StoreError> {
-        self.write(|held, events| held.remove(removal, events))
+        self.write(|held, events| {
+            held.unmoved(&removal.scanned)?;
+            held.remove(removal, events)
+        })
     }
 
     /// Checks every write's scanned entities, then writes each in turn, keeping what each

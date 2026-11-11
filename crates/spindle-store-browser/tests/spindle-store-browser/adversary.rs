@@ -71,6 +71,7 @@ fn apply(
             identity: identity.clone(),
             expected: version,
             events,
+            scanned: Vec::new(),
         }),
     })
 }
