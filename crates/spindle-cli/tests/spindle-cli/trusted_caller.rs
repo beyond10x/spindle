@@ -445,15 +445,10 @@ fn without_the_option_the_header_proves_nothing() {
         &[(HEADER, &proof)],
         Some(&json!({"visit_id": VISIT})),
     );
-    assert_eq!(status, 501, "{body}");
-    assert_eq!(body["committed"], false, "{body}");
-    assert!(
-        body["refused"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("the caller attributes it reads (`person_id`)"),
-        "{body}"
-    );
+    // The command a grant names is refused as ESS refuses a request authenticated as no caller,
+    // before the ingress names the attributes it reads.
+    assert_eq!(status, 403, "{body}");
+    assert_eq!(body, json!({"refused": "not granted", "actor": null}));
     assert_eq!(events(&served), json!([]), "nothing is published");
 }
 

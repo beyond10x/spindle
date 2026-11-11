@@ -9,8 +9,11 @@
 //!   true of no rows).
 //! - `tests/fixtures/shelf`: ESS's own upsert fixture (`row-set-upsert.yaml`, beyond10x/ess#462).
 //!   `Shelve` creates a book that is absent or replaces one that is held, and is refused while a
-//!   library of the curator is open.
+//!   library of the curator is open. `Unshelve` removes a book under the same guard, here under a
+//!   store another writer commits to.
 //! - `tests/fixtures/library`: the unit's own fixture, under a store another writer commits to.
+//! - `tests/fixtures/guarded-purge`: a set outcome removing a team's tickets behind a row-set
+//!   guard, under a store another writer commits to.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -209,6 +212,10 @@ impl Store for Racing {
         self.inner.remove(removal)
     }
 
+    fn commit_all(&mut self, writes: &[spindle_kernel::Write]) -> Result<(), StoreError> {
+        self.inner.commit_all(writes)
+    }
+
     fn scan(&mut self, entity: &str) -> Result<spindle_kernel::Scan, StoreError> {
         let scan = self.inner.scan(entity)?;
         if entity == self.entity
@@ -313,5 +320,146 @@ fn a_row_committed_between_the_scan_and_the_commit_does_not_slip_past_the_guard(
         active,
         [json!(THEIRS)],
         "only the reservation committed first is active"
+    );
+}
+
+/// `Unshelve` removes a book unless a library of the curator is open (`exists:`). Another writer
+/// opens such a library after the kernel scanned the libraries and before it removes the book.
+/// The removal, conditioned on the version of the libraries it scanned, is refused as a conflict
+/// and the book stays shelved, as with no race the guard would have refused it.
+#[test]
+fn a_row_committed_between_the_scan_and_a_removal_does_not_slip_past_the_guard() {
+    const LIBRARY: &str = "demo.shelf.Library";
+    const BOOK_ENTITY: &str = "demo.shelf.Book";
+    let ir = load("shelf");
+    let mut store = Racing {
+        inner: MemoryStore::default(),
+        entity: LIBRARY,
+        raced: None,
+    };
+    store
+        .inner
+        .commit(&Change {
+            entity: BOOK_ENTITY.to_owned(),
+            identity: json!("b1"),
+            expected: None,
+            row: Row {
+                state: "Shelved".to_owned(),
+                fields: BTreeMap::new(),
+            },
+            events: Vec::new(),
+            scanned: Vec::new(),
+        })
+        .expect("the book is shelved");
+    store.raced = Some(Change {
+        entity: LIBRARY.to_owned(),
+        identity: json!("l1"),
+        expected: None,
+        row: Row {
+            state: "Open".to_owned(),
+            fields: [("curator".to_owned(), json!("ann"))].into_iter().collect(),
+        },
+        events: Vec::new(),
+        scanned: Vec::new(),
+    });
+    let removed = execute(
+        &ir,
+        &mut store,
+        &mut NoExternals,
+        "demo.shelf.Unshelve",
+        &object(json!({"book": "b1", "curator": "ann"})),
+    );
+    let answered = match &removed {
+        Ok(executed) => format!("Ok({})", executed.outcome),
+        Err(error) => format!("Err({error:?})"),
+    };
+    assert!(
+        matches!(
+            removed,
+            Err(spindle_kernel::ExecuteError::Store(
+                StoreError::Conflict { .. }
+            ))
+        ),
+        "the Unshelve decided before the library opened is refused as a store conflict, not \
+         {answered}"
+    );
+    assert!(
+        store
+            .inner
+            .load(BOOK_ENTITY, &json!("b1"))
+            .expect("the store loads")
+            .is_some(),
+        "the book stays shelved"
+    );
+}
+
+/// `tests/fixtures/guarded-purge`: `Purge` removes every ticket of a team (a set outcome) unless
+/// a freeze of the team stands (`exists:`). Another writer freezes the team after the kernel
+/// scanned the freezes and before it removes the tickets. The removals, conditioned on the
+/// version of the freezes the guard scanned, are refused as a conflict and every ticket stays.
+#[test]
+fn a_row_committed_between_the_scan_and_a_set_removal_does_not_slip_past_the_guard() {
+    const FREEZE: &str = "probe.purge.Freeze";
+    const TICKET: &str = "probe.purge.Ticket";
+    let ir = load("guarded-purge");
+    let mut store = Racing {
+        inner: MemoryStore::default(),
+        entity: FREEZE,
+        raced: None,
+    };
+    let row = |state: &str, team: &str| Row {
+        state: state.to_owned(),
+        fields: [("team".to_owned(), json!(team))].into_iter().collect(),
+    };
+    for ticket in ["k1", "k2"] {
+        store
+            .inner
+            .commit(&Change {
+                entity: TICKET.to_owned(),
+                identity: json!(ticket),
+                expected: None,
+                row: row("Open", "red"),
+                events: Vec::new(),
+                scanned: Vec::new(),
+            })
+            .expect("the ticket is filed");
+    }
+    store.raced = Some(Change {
+        entity: FREEZE.to_owned(),
+        identity: json!("f1"),
+        expected: None,
+        row: row("Standing", "red"),
+        events: Vec::new(),
+        scanned: Vec::new(),
+    });
+    let purged = execute(
+        &ir,
+        &mut store,
+        &mut NoExternals,
+        "probe.purge.Purge",
+        &object(json!({"team": "red"})),
+    );
+    let answered = match &purged {
+        Ok(executed) => format!("Ok({})", executed.outcome),
+        Err(error) => format!("Err({error:?})"),
+    };
+    assert!(
+        matches!(
+            purged,
+            Err(spindle_kernel::ExecuteError::Store(
+                StoreError::Conflict { .. }
+            ))
+        ),
+        "the Purge decided before the freeze is refused as a store conflict, not {answered}"
+    );
+    assert_eq!(
+        store
+            .inner
+            .scan(TICKET)
+            .expect("the store scans")
+            .rows
+            .len(),
+        2,
+        "every ticket stays"
     );
 }

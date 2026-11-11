@@ -166,6 +166,7 @@ impl<'ir> Run<'_, 'ir> {
                     identity: row.identity,
                     expected: row.expected,
                     events: Vec::new(),
+                    scanned: Vec::new(),
                 })),
             }
         }
@@ -243,9 +244,9 @@ impl<'ir> Run<'_, 'ir> {
     /// The outcome's writes as one group: the subject's own write, where it has one, then every
     /// row its secondary effects write, `events` on the last, so a store that writes one instance
     /// at a time records them only once every write landed ([`crate::Store::commit_all`]). The
-    /// group is conditioned on every entity the run scanned ([`Change::scanned`]), carried by its
-    /// first change: a row of one written after the scan refuses it. A group of removals only
-    /// carries no condition, since a [`Removal`] names none.
+    /// group is conditioned on every entity the run scanned ([`crate::Write::scanned`]), carried
+    /// by its first write, a change or a removal alike: a row of one written after the scan
+    /// refuses the whole group, whatever its writes are.
     pub(super) fn grouped(
         &self,
         subject: Option<Write>,
@@ -259,12 +260,7 @@ impl<'ir> Run<'_, 'ir> {
                 Write::Remove(removal) => removal.events.clear(),
             }
         }
-        if let Some(Write::Commit(change)) = writes
-            .iter_mut()
-            .find(|write| matches!(write, Write::Commit(_)))
-        {
-            change.scanned.clone_from(&self.scanned);
-        }
+        self.condition(&mut writes);
         if let Some(last) = writes.last_mut() {
             match last {
                 Write::Commit(change) => change.events = events.to_vec(),
@@ -272,5 +268,16 @@ impl<'ir> Run<'_, 'ir> {
             }
         }
         writes
+    }
+
+    /// Conditions a write group on every entity the run scanned, carried by its first write,
+    /// whether a change or a removal: every store checks a group's conditions before any of its
+    /// writes lands, in the transaction that writes them ([`crate::Store::commit_all`]).
+    pub(super) fn condition(&self, writes: &mut [Write]) {
+        match writes.first_mut() {
+            Some(Write::Commit(change)) => change.scanned.clone_from(&self.scanned),
+            Some(Write::Remove(removal)) => removal.scanned.clone_from(&self.scanned),
+            None => {}
+        }
     }
 }

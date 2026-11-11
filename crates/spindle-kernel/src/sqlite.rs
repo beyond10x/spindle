@@ -9,8 +9,8 @@
 //! writes together ([`Store::commit_all`]) are one append group: every stream's append in one
 //! transaction. Every write is one append group, which also appends one `spindle.written` event to
 //! the stream of each entity it writes: that stream's version is the entity's version a scan
-//! answers and a change decided on a scan names ([`crate::Change::scanned`]), so a row of the
-//! entity written after the scan refuses the change. The event names the instances the write
+//! answers and a write decided on a scan names ([`crate::Write::scanned`]), so a row of the
+//! entity written after the scan refuses the write. The event names the instances the write
 //! left, each at its stream's version after it (schema 2: `{"rows": {stream: version},
 //! "removed": {stream: version}}`), so a scan can read the entity's stream and one event per
 //! instance rather than the whole log. The store of 0.10.0 wrote it empty (schema 1), and before
@@ -440,7 +440,7 @@ impl<L: Log> Store for LogStore<L> {
     /// write naming a version its instance does not stand at is refused before anything is
     /// appended, naming that instance; a stream moved in between refuses the whole group. The
     /// group appends one `spindle.written` event to the stream of each entity it writes, and of
-    /// each entity a write was conditioned on ([`Change::scanned`]), that one at the version the
+    /// each entity a write was conditioned on ([`Write::scanned`]), that one at the version the
     /// scan answered: a write of the entity landed since refuses the group. Each names the
     /// instances of its entity the group writes, at the version each stream stands at once the
     /// group lands ([`Written`]).
@@ -1889,6 +1889,7 @@ mod tests {
                 identity: json!("a"),
                 expected: 1,
                 events: Vec::new(),
+                scanned: Vec::new(),
             })
             .expect("a is removed");
         assert_eq!(

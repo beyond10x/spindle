@@ -17,6 +17,7 @@
 //! it written `…`, at most [`REASON_MOST`] bytes, so a refused value is never recorded. Each
 //! unmet binding input it lists keeps its reason bounded the same way ([`UnmetInput::of`]).
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -27,8 +28,9 @@ use serde_json::{Map, Value, json};
 use spindle_host::{Cause, Failed};
 use spindle_telemetry::DURATION_BOUNDS_US;
 
-use crate::answer::Answer;
+use crate::answer::{Answer, NO_INPUT_FIELD};
 use crate::router::Response;
+use crate::surface::NO_FIELD_NAMED;
 
 pub(crate) mod metrics;
 pub(crate) mod topology;
@@ -47,6 +49,9 @@ const FORMAT: &str = "spindle-requests/1";
 
 /// The most bytes of a record's reason (`spindle.observe.RequestRecord.reason`).
 pub(crate) const REASON_MOST: usize = 512;
+
+/// The most bytes of a record's path (`spindle.observe.RequestRecord.path`).
+pub(crate) const PATH_MOST: usize = 2_048;
 
 /// The longest name in backticks a reason keeps; a longer one is written `…`.
 const NAME_MOST: usize = 64;
@@ -559,7 +564,8 @@ impl Recorder {
         self.ring(|ring| ring.capacity)
     }
 
-    /// Records one request: `method` and `path` (without the query string), its head read `at`,
+    /// Records one request: `method` and `path` (without the query string, cut to
+    /// [`PATH_MOST`] bytes with `…` where longer: [`recorded_path`]), its head read `at`,
     /// answered with `response` after `duration`, for what `note` says. Its class is read from
     /// the answer ([`Class::of`]); its reason is the answer's `refused` text with every value in
     /// it elided and cut to [`REASON_MOST`] bytes ([`reason`]), for every class but
@@ -607,7 +613,7 @@ impl Recorder {
                 sequence: ring.recorded,
                 at,
                 method: method.to_owned(),
-                path: path.to_owned(),
+                path: recorded_path(path),
                 route: note.route,
                 operation: note.operation,
                 kind: note.kind,
@@ -776,12 +782,16 @@ fn refused(body: &str) -> Option<String> {
 
 /// The reason a record keeps of the `refused` text: its words and the names it gives, with every
 /// value in it written `…`, at most [`REASON_MOST`] bytes, cut with `…` where longer. A value is
-/// a quoted string (`"…"`, `'…'`), a bracketed list but a list index (`[0]`), a braced object, a
-/// name in backticks after `found`, longer than [`NAME_MOST`] or not a plain name, and a number,
-/// `true`, `false` or `null` where a refusal names a value: before `is not`, `names no` or
-/// `does not`, or last. So `invalid input: \`name\`: ["…"] is not a String` is kept as
-/// `invalid input: \`name\`: … is not a String`.
+/// a quoted string (`"…"`, `'…'`), a bracketed list but a list index (`[0]` before `: `), a
+/// braced object, a name in backticks after `found`, longer than [`NAME_MOST`] or not a plain
+/// name, and a number, `true`, `false` or `null` where a refusal names a value: before `is not`,
+/// `names no` or `does not`, or last. So `invalid input: \`name\`: ["…"] is not a String` is kept
+/// as `invalid input: \`name\`: … is not a String`. The kernel quotes every map key and struct
+/// member the caller sent, and the ingress every text it could not decode, so each is a quoted
+/// string; a key the caller sent that no input field declares ([`NO_INPUT_FIELD`],
+/// [`NO_FIELD_NAMED`]) is written `…` too.
 pub(crate) fn reason(refused: &str) -> String {
+    let refused = &*unknown_keys_elided(refused);
     let mut kept = String::with_capacity(REASON_MOST + ELIDED.len());
     let mut rest = refused;
     while let Some(first) = rest.chars().next() {
@@ -794,8 +804,9 @@ pub(crate) fn reason(refused: &str) -> String {
             '{' => (balanced(rest), None),
             '[' => {
                 let end = balanced(rest);
-                let index = enclosed(&rest[..end], ']')
-                    .is_some_and(|inner| inner.bytes().all(|byte| byte.is_ascii_digit()));
+                let index = rest[end..].starts_with(": ")
+                    && enclosed(&rest[..end], ']')
+                        .is_some_and(|inner| inner.bytes().all(|byte| byte.is_ascii_digit()));
                 (end, index.then(|| &rest[..end]))
             }
             '`' => {
@@ -838,15 +849,49 @@ pub(crate) fn reason(refused: &str) -> String {
         }
         rest = &rest[taken..];
     }
-    if kept.len() > REASON_MOST {
-        let mut end = REASON_MOST - ELIDED.len();
-        while !kept.is_char_boundary(end) {
+    cut(&mut kept, REASON_MOST);
+    kept
+}
+
+/// The path a record keeps of the request's `path`: at most [`PATH_MOST`] bytes, cut on a
+/// character boundary with `…` where longer.
+fn recorded_path(path: &str) -> String {
+    let mut end = path.len().min(PATH_MOST + 1);
+    while !path.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut kept = path[..end].to_owned();
+    cut(&mut kept, PATH_MOST);
+    kept
+}
+
+/// Cuts `text`, where longer than `most` bytes, to at most `most` on a character boundary,
+/// ending `…`.
+fn cut(text: &mut String, most: usize) {
+    if text.len() > most {
+        let mut end = most - ELIDED.len();
+        while !text.is_char_boundary(end) {
             end -= 1;
         }
-        kept.truncate(end);
-        kept.push_str(ELIDED);
+        text.truncate(end);
+        text.push_str(ELIDED);
     }
-    kept
+}
+
+/// `refused` with the key the caller sent written `…` where it is the ingress's refusal of a key
+/// no input field declares: a JSON body's, after [`NO_INPUT_FIELD`] to the end, or a `form` or
+/// `query` key, between `{at}.` and [`NO_FIELD_NAMED`]. Either may hold any text, so all of it
+/// goes.
+fn unknown_keys_elided(refused: &str) -> Cow<'_, str> {
+    if let Some(at) = refused.find(NO_INPUT_FIELD) {
+        return Cow::Owned(format!("{}{NO_INPUT_FIELD}{ELIDED}", &refused[..at]));
+    }
+    if let Some(place) = refused.strip_suffix(NO_FIELD_NAMED)
+        && let Some((at, _)) = place.split_once('.')
+    {
+        return Cow::Owned(format!("{at}.{ELIDED}{NO_FIELD_NAMED}"));
+    }
+    Cow::Borrowed(refused)
 }
 
 /// The length of the span `text` opens with `quote`, through the next unescaped `quote`; all of
@@ -1270,6 +1315,50 @@ mod tests {
                 "query: a key is not percent-encoded UTF-8: …",
             ),
             (
+                r#"body.title: expected percent-encoded UTF-8 text, found "%ZZ`Zq\"Zq""#,
+                "body.title: expected percent-encoded UTF-8 text, found …",
+            ),
+            (
+                r#"query: a key is not percent-encoded UTF-8: "%FF`Zq""#,
+                "query: a key is not percent-encoded UTF-8: …",
+            ),
+            (
+                "body.Zq: no field of this request is named so",
+                "body.…: no field of this request is named so",
+            ),
+            (
+                "query.Zq`.x: y: no field of this request is named so",
+                "query.…: no field of this request is named so",
+            ),
+            (
+                "tasks.board.OpenTask declares no input field Zq",
+                "tasks.board.OpenTask declares no input field …",
+            ),
+            (
+                "tasks.board.OpenTask declares no input field `Zq` is not [0]: x",
+                "tasks.board.OpenTask declares no input field …",
+            ),
+            (
+                r#"invalid input: `by_number`: "Zq" is not a Integer map key"#,
+                "invalid input: `by_number`: … is not a Integer map key",
+            ),
+            (
+                r#"invalid input: `by_name`: "4111111111111111": "a" is not a Integer"#,
+                "invalid input: `by_name`: …: … is not a Integer",
+            ),
+            (
+                r#"invalid input: `by_name`: "x]: [0": "a" is not a Integer"#,
+                "invalid input: `by_name`: …: … is not a Integer",
+            ),
+            (
+                "invalid input: `tags`: [4111111111111111] is not a String",
+                "invalid input: `tags`: … is not a String",
+            ),
+            (
+                r#"invalid input: `at`: a.b.Spot declares no member "Zq""#,
+                "invalid input: `at`: a.b.Spot declares no member …",
+            ),
+            (
                 "the body is not a JSON object: 42",
                 "the body is not a JSON object: …",
             ),
@@ -1292,7 +1381,7 @@ mod tests {
         }
         for unchanged in [
             "the body is not JSON: expected value at line 1 column 5",
-            "tasks.board.OpenTask declares no input field priority",
+            "invalid input: `tags`: [0]: [1]: … is not a String",
             "query.page: expected one value, found 2",
             "neither the request nor a decisions file answers `external.vetoed`, and \
              `tasks.ledger.Review` declares no default branch for --answer-default to take",
@@ -1302,6 +1391,20 @@ mod tests {
         ] {
             assert_eq!(super::reason(unchanged), unchanged);
         }
+    }
+
+    #[test]
+    fn a_path_is_cut_to_its_bound_on_a_character_boundary() {
+        for long in ["/p".repeat(40_000), format!("/{}", "é".repeat(30_000))] {
+            let kept = super::recorded_path(&long);
+            assert!(kept.len() <= super::PATH_MOST, "{} bytes", kept.len());
+            assert!(kept.len() > super::PATH_MOST - 8, "{} bytes", kept.len());
+            assert!(kept.ends_with('…'), "{kept}");
+            assert!(long.starts_with(kept.trim_end_matches('…')));
+        }
+        let exact = format!("/{}", "p".repeat(super::PATH_MOST - 1));
+        assert_eq!(super::recorded_path(&exact), exact);
+        assert_eq!(super::recorded_path("/a/b"), "/a/b");
     }
 
     #[test]

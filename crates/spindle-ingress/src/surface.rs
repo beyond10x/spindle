@@ -13,6 +13,10 @@ use crate::console::Console;
 use crate::observe::topology::Routed;
 use crate::observe::{Recorder, Reserved};
 
+/// What the refusal of a `form` or `query` key no field of the request declares says after
+/// `{at}.{key}`: the request log elides the key, which the caller sent ([`crate::observe`]).
+pub(crate) const NO_FIELD_NAMED: &str = ": no field of this request is named so";
+
 /// One path variable of a route: the input field it carries and how its text is read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Variable {
@@ -319,7 +323,7 @@ impl Route {
             let place = format!("query.{}", queried.wire);
             let text = |raw: &str| {
                 form_decoded(raw).ok_or_else(|| {
-                    format!("{place}: expected percent-encoded UTF-8 text, found `{raw}`")
+                    format!("{place}: expected percent-encoded UTF-8 text, found {raw:?}")
                 })
             };
             if queried.list {
@@ -386,7 +390,7 @@ impl Route {
                 if ignore {
                     continue;
                 }
-                return Err(format!("{at}: a key is not percent-encoded UTF-8: `{key}`"));
+                return Err(format!("{at}: a key is not percent-encoded UTF-8: {key:?}"));
             };
             let place = format!("{at}.{key}");
             let index = self
@@ -401,11 +405,11 @@ impl Route {
                 return Err(if carried {
                     format!("{place}: the path carries this field, so it is not a parameter here")
                 } else {
-                    format!("{place}: no field of this request is named so")
+                    format!("{place}{NO_FIELD_NAMED}")
                 });
             };
             let value = form_decoded(value).ok_or_else(|| {
-                format!("{place}: expected percent-encoded UTF-8 text, found `{value}`")
+                format!("{place}: expected percent-encoded UTF-8 text, found {value:?}")
             })?;
             found[index].push(value);
         }
@@ -1185,6 +1189,12 @@ fn route(
         not_granted: false,
         proves,
     };
+    route.not_granted = match (&route.operation, caller) {
+        (Operation::Command(command), Some(caller)) => !may_run(ir, &caller.actor, command),
+        (Operation::Command(command), None) => !proves && run_granted(ir, command),
+        (Operation::View(view), Some(caller)) => !may_read(ir, &caller.actor, view),
+        (Operation::View(view), None) => !proves && read_granted(ir, view),
+    };
     match (served(ir, bound, &mut route), &route.operation) {
         (Err(what), _) => {
             route.variables.clear();
@@ -1195,11 +1205,7 @@ fn route(
             route.refused.clear();
             route.unserved = Some(Unserved::Ingress(what));
         }
-        (Ok(()), Operation::Command(command)) => {
-            route.not_granted = match caller {
-                Some(caller) => !may_run(ir, &caller.actor, command),
-                None => !proves && run_granted(ir, command),
-            };
+        (Ok(()), Operation::Command(_)) => {
             if let ess_gen::http::Served::Command(handle) = bound.serves {
                 refuse(ir, ir.command(handle), &mut route);
             }
@@ -1208,10 +1214,6 @@ fn route(
             if let Err(refused) = spindle_host::reads(ir, view) {
                 route.unserved = Some(Unserved::Host(refused.to_string()));
             }
-            route.not_granted = match caller {
-                Some(caller) => !may_read(ir, &caller.actor, view),
-                None => !proves && read_granted(ir, view),
-            };
         }
     }
     Ok(route)

@@ -1,0 +1,27 @@
+format: ess/34
+system: tenancy
+version: v1
+summary: Accounts and their sessions; closing an account removes it and its sessions, bumping it ranks its sessions.
+domains:
+  - tenancy.accounts
+components:
+  - component: desk
+    summary: Opens, bumps and closes accounts and opens their sessions.
+    owns:
+      domains:
+        - tenancy.accounts
+    accepts:
+      commands:
+        - tenancy.accounts.OpenAccount
+        - tenancy.accounts.OpenSession
+        - tenancy.accounts.HitSession
+        - tenancy.accounts.CloseAccount
+        - tenancy.accounts.BumpAccount
+    publishes:
+      events:
+        - tenancy.accounts.AccountOpened
+        - tenancy.accounts.SessionOpened
+        - tenancy.accounts.SessionHit
+        - tenancy.accounts.AccountClosed
+        - tenancy.accounts.AccountBumped
+    reached_by: in_process

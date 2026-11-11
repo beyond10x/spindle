@@ -1,0 +1,21 @@
+format: ess/34
+system: tally
+version: v1
+summary: Sheets a clerk stamps from the desk it sits at, and tallies anyone sends with maps of counts.
+domains:
+  - tally.sheet
+components:
+  - component: sheet
+    summary: Stamps and tallies sheets.
+    owns:
+      domains:
+        - tally.sheet
+    accepts:
+      commands:
+        - tally.sheet.Stamp
+        - tally.sheet.Tally
+    publishes:
+      events:
+        - tally.sheet.Stamped
+        - tally.sheet.Tallied
+    reached_by: network

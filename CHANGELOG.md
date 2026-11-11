@@ -15,9 +15,10 @@ are Spindle's releases.
   writes its `sets:` into them, entries in the order written. Every row left in place is checked
   against its entity's invariants, and the subject and every row land in one write group on every
   store, or nothing is written. A row of an entity an entry selected from, written by another
-  command between the selection and the write, refuses the command as a conflict, unless every
-  write of the group removes a row. An entry over an input list (`each:`) and a filter walking
-  another entity's rows stay refused.
+  command between the selection and the write, refuses the command as a conflict and writes
+  nothing, whatever the group's writes are: removals only, or the subject's removal alone where
+  no row was selected. An entry over an input list (`each:`) and a filter walking another
+  entity's rows stay refused.
 
 - `store.durable` bound to `postgres` keeps each component's state in an operator's PostgreSQL
   (13 or later), through `eventlog-postgres` at the pinned eventlog tag, rows and events encoded as
@@ -109,7 +110,9 @@ are Spindle's releases.
   finds a runtime crate of `spindle-cli`, the workspace crates and `eventlog-postgres` included,
   missing from the list. Each release page also carries one CycloneDX 1.5 SBOM,
   `b10x-spindle-<version>.cdx.json`, made by `cargo-cyclonedx` 0.5.9 for the four targets and listed
-  in `SHA256SUMS`.
+  in `SHA256SUMS`. Each job that builds an archive or the SBOM hashes it, and the publish job
+  checks every file against that hash before it writes `SHA256SUMS` from them, so a file changed
+  between its build and the release page fails the release.
 
 ### Changed
 
@@ -152,10 +155,22 @@ are Spindle's releases.
 - A request log record's `reason` never holds a value the caller sent
   (`story:refusal-reason-bounded`). One refused command with an 800 KB mistyped field grew
   `GET /__spindle/requests` by 804,364 bytes. Now every value in the refusal text is written `…`,
-  the field and the type it expected kept, and the reason is at most 512 bytes. The answer the
-  caller receives is unchanged.
+  the field and the type it expected kept, and the reason is at most 512 bytes. A map key, struct
+  member or input field name the caller sent is written `…` too, and a record's `path` is at most
+  2,048 bytes, cut with `…`: a ring of 10,000 records of 404s for paths near 64 KiB held about
+  640 MiB. The answer the caller receives keeps an unknown field's name; the kernel now quotes a
+  map key or struct member the caller sent (`"key"` where it wrote `` `key` `` or `[key]`), and the
+  ingress text it could not percent-decode (`found "…"` where it wrote ``found `…` ``).
 
 ### Fixed
+
+- A removal decided on a scan is conditioned on it as a change is: an outcome that `deletes:` its
+  instance behind a `when_related:` guard over a row set, and a set outcome (`instances:`) behind
+  one, is refused as a conflict and writes nothing where another writer wrote a row of the
+  scanned entity between the scan and the write. `Removal` carries the scanned entities
+  (`Removal::scanned`), which `remove` and `commit_all` check in the transaction that writes, on
+  the memory, SQLite, PostgreSQL and IndexedDB stores alike. A set outcome's writes are still not
+  conditioned on the scan that selected its rows.
 
 - A second `run` on the same SQLite state is refused (`story:state-directory-lock`). Two runs
   given one `--state` each kept their own outbox and event list over one database. Now `run
@@ -163,7 +178,9 @@ are Spindle's releases.
   exits: on `spindle.lock` inside the directory where it serves HTTP, on `<file>.lock` beside the
   file where it reads stdin. A second run on the same state exits 1 before opening anything,
   naming the state and the id of the process that holds it. The operating system releases the
-  lock with the process, after a SIGKILL too.
+  lock with the process, after a SIGKILL too. Reading stdin, `run` also locks the database file
+  itself and names its lock file after the path the state resolves to, so a second run given a
+  symbolic or hard link to a held state file exits 1 too.
 - A served command checks its caller's grant before it reads the request
   (`story:command-grant-before-request`), as ESS's served application does. A fixed actor whose
   `may:` does not name the command, or a proven one, is refused `403` "not granted" naming that
@@ -177,7 +194,13 @@ are Spindle's releases.
   authenticated as no caller, `403` `{"refused": "not granted", "actor": null}`
   (`story:unauthenticated-grant-refusals`). Such a view was read for anyone and such a command run
   as no actor. Nothing is read or written. A view and a command no actor's grant names are served
-  as before.
+  as before. The grant is checked before anything else this ingress does not serve, so a granted
+  command that reads its caller answers this `403` too, not a `501` naming the attributes it reads.
+  The same holds wherever a model is served over HTTP with no caller: the Service Worker
+  (`spindle-wasm`) and each deployed component process's ingress refuse every such view and
+  command `403`. Neither takes `--fixed-actor` or a trusted-caller header, so neither can grant
+  one; serve a model whose commands and views a caller must be granted with `b10x-spindle run`
+  and `--fixed-actor` or `--trusted-caller-header` (behind a proxy that sets it).
 - A view read on a SQLite state costs the rows of its entity, not the whole log
   (`story:view-read-without-log-scan`). Every `Store::scan` of a SQLite store read the tenant's
   whole feed and kept the events of the entity asked for, and 0.13.0 only moved that read beside

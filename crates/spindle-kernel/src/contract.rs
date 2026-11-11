@@ -94,6 +94,10 @@ pub const CASES: &[Case] = &[
         run: a_commit_conditioned_on_a_scanned_entity_is_refused_after_another_write,
     },
     Case {
+        name: "a_removal_conditioned_on_a_scanned_entity_is_refused_after_another_write",
+        run: a_removal_conditioned_on_a_scanned_entity_is_refused_after_another_write,
+    },
+    Case {
         name: "the_counts_are_the_rows_each_scan_answers",
         run: the_counts_are_the_rows_each_scan_answers,
     },
@@ -144,6 +148,7 @@ fn removal(identity: &Value, expected: u64) -> Removal {
         identity: identity.clone(),
         expected,
         events: events(1),
+        scanned: Vec::new(),
     }
 }
 
@@ -673,20 +678,25 @@ fn writes_committed_together_one_refused_write_none(store: &mut dyn Store) {
     );
 }
 
-/// Commits `change`, conditioned on `scanned`, by itself and as the one write of a group; the
-/// store must refuse both as a conflict naming the entity, the version the scan answered and the
-/// one the store holds now, and must leave every instance as it was.
-fn refused_scanned(case: &str, store: &mut dyn Store, change: &Change, condition: &Scanned) {
+/// Writes `write`, conditioned on `scanned`, by itself ([`Store::commit`] or [`Store::remove`])
+/// and as the one write of a group; the store must refuse both as a conflict naming the entity,
+/// the version the scan answered and the one the store holds now, and must leave every instance
+/// as it was.
+fn refused_scanned(case: &str, store: &mut dyn Store, write: &Write, condition: &Scanned) {
+    refused_group(case, store, std::slice::from_ref(write), condition);
+}
+
+/// [`refused_scanned`] for a group: each write of `writes` by itself where the group is one
+/// write, then the group as one [`Store::commit_all`].
+fn refused_group(case: &str, store: &mut dyn Store, writes: &[Write], condition: &Scanned) {
     let before = everything(case, store);
     let now = scanned(case, store, &condition.entity).version;
     for grouped in [false, true] {
-        let (what, result) = if grouped {
-            (
-                "the commit as a group",
-                store.commit_all(&[Write::Commit(change.clone())]),
-            )
-        } else {
-            ("the commit", store.commit(change))
+        let (what, result) = match (grouped, writes) {
+            (true, _) => ("the writes as a group", store.commit_all(writes)),
+            (false, [Write::Commit(change)]) => ("the commit", store.commit(change)),
+            (false, [Write::Remove(removal)]) => ("the removal", store.remove(removal)),
+            (false, _) => continue,
         };
         if let Err(StoreError::Conflict {
             entity, identity, ..
@@ -736,13 +746,13 @@ fn a_commit_conditioned_on_a_scanned_entity_is_refused_after_another_write(store
         scanned: vec![at_scan.clone()],
         ..change(TASK, &json!("t3"), None, row("Open", "3"))
     };
-    refused_scanned(case, store, &created, &at_scan);
+    refused_scanned(case, store, &Write::Commit(created), &at_scan);
     let t1 = held(case, store, &json!("t1"));
     let moved = Change {
         scanned: vec![at_scan.clone()],
         ..change(TASK, &json!("t1"), Some(t1.version), row("Done", "1"))
     };
-    refused_scanned(case, store, &moved, &at_scan);
+    refused_scanned(case, store, &Write::Commit(moved), &at_scan);
     assert_eq!(
         scan(case, store, TASK),
         left,
@@ -768,7 +778,7 @@ fn a_commit_conditioned_on_a_scanned_entity_is_refused_after_another_write(store
         scanned: vec![at_fresh.clone()],
         ..change(TASK, &json!("t3"), None, row("Open", "3"))
     };
-    refused_scanned(case, store, &after_removal, &at_fresh);
+    refused_scanned(case, store, &Write::Commit(after_removal), &at_fresh);
     // A write of another entity does not move the scanned one, and a condition that still
     // holds lets the change land.
     let current = scanned(case, store, TASK);
@@ -797,7 +807,94 @@ fn a_commit_conditioned_on_a_scanned_entity_is_refused_after_another_write(store
         scanned: vec![at_others.clone()],
         ..change(TASK, &json!("t4"), None, row("Open", "4"))
     };
-    refused_scanned(case, store, &stale_other, &at_others);
+    refused_scanned(case, store, &Write::Commit(stale_other), &at_others);
+}
+
+/// A removal conditioned on a scanned entity is refused once another write of the entity
+/// landed after the scan: by itself, and in a group whose every write is a removal, which
+/// carries the condition on its first. A condition that still holds lets it land.
+fn a_removal_conditioned_on_a_scanned_entity_is_refused_after_another_write(store: &mut dyn Store) {
+    let case = "a_removal_conditioned_on_a_scanned_entity_is_refused_after_another_write";
+    for identity in ["t1", "t2"] {
+        commit(
+            case,
+            store,
+            &change(TASK, &json!(identity), None, row("Open", identity)),
+        );
+    }
+    let tasks = scanned(case, store, TASK);
+    // A second writer creates a row of the scanned entity.
+    commit(
+        case,
+        store,
+        &change(TASK, &json!("t3"), None, row("Open", "3")),
+    );
+    let at_scan = Scanned {
+        entity: TASK.to_owned(),
+        version: tasks.version,
+    };
+    let (t1, t2) = (
+        held(case, store, &json!("t1")),
+        held(case, store, &json!("t2")),
+    );
+    let removed = Removal {
+        scanned: vec![at_scan.clone()],
+        ..removal(&json!("t1"), t1.version)
+    };
+    refused_scanned(case, store, &Write::Remove(removed.clone()), &at_scan);
+    let removals = [
+        Write::Remove(removed),
+        Write::Remove(removal(&json!("t2"), t2.version)),
+    ];
+    refused_group(case, store, &removals, &at_scan);
+    // A condition on another entity that moved refuses it too.
+    let others = scanned(case, store, OTHER);
+    commit(
+        case,
+        store,
+        &change(OTHER, &json!("o1"), None, row("Open", "o")),
+    );
+    let at_others = Scanned {
+        entity: OTHER.to_owned(),
+        version: others.version,
+    };
+    let stale_other = Removal {
+        scanned: vec![at_others.clone()],
+        ..removal(&json!("t1"), t1.version)
+    };
+    refused_scanned(case, store, &Write::Remove(stale_other), &at_others);
+    // A condition that still holds lets the removal land, by itself and as a group.
+    let current = Scanned {
+        entity: TASK.to_owned(),
+        version: scanned(case, store, TASK).version,
+    };
+    commit_removal(
+        case,
+        store,
+        &Removal {
+            scanned: vec![current],
+            ..removal(&json!("t1"), t1.version)
+        },
+    );
+    let current = Scanned {
+        entity: TASK.to_owned(),
+        version: scanned(case, store, TASK).version,
+    };
+    let t3 = held(case, store, &json!("t3"));
+    store
+        .commit_all(&[
+            Write::Remove(Removal {
+                scanned: vec![current],
+                ..removal(&json!("t2"), t2.version)
+            }),
+            Write::Remove(removal(&json!("t3"), t3.version)),
+        ])
+        .unwrap_or_else(|error| panic!("{case}: the removals land together: {error}"));
+    assert_eq!(
+        scan(case, store, TASK),
+        Vec::new(),
+        "{case}: every row is removed"
+    );
 }
 
 fn commit_removal(case: &str, store: &mut dyn Store, removal: &Removal) {

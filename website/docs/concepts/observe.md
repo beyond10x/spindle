@@ -60,10 +60,11 @@ not a series for every declared command:
 `spindle_http_request_duration_seconds` is labelled by `method` and `route`, the route template,
 so a slow route shows in its own series. An unrouted request has an empty `route`.
 
-A record's `reason` is the refusal text with every value the caller sent written `…`: a refused
-field is named with the type it expected, never with what was sent. It is at most 512 bytes, so
-the record of a refused request holds its method, its path and the names of its route, and under
-1 KiB besides, whatever its body held. The `reason` of each binding listed under `unmet` is bounded
+A record's `reason` is the refusal text with every value the caller sent written `…`, and every
+map key, struct member or input field name the caller sent too: a refused field is named with the
+type it expected, never with what was sent. It is at most 512 bytes, and a record's `path` at most
+2,048 bytes, each cut with `…` where longer, so the record of a refused request holds its method,
+its path and the names of its route, and under 1 KiB besides, whatever its body held. The `reason` of each binding listed under `unmet` is bounded
 the same way: it names the binding, the input and the type it expected, never the value the event
 carried.
 

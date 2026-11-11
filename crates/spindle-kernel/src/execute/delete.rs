@@ -15,7 +15,10 @@ impl<'ir> Run<'_, 'ir> {
     /// ([`Run::unknown_instance`]).
     ///
     /// The outcome's secondary effects (`affects:`, from ess/23) are applied after the removal,
-    /// reading the subject as it was ([`Run::affect`]), and land with it in one write group.
+    /// reading the subject as it was ([`Run::affect`]), and land with it in one write group. Where
+    /// the run scanned an entity (an `affects:` entry or a row-set guard), the group is
+    /// conditioned on it ([`Run::grouped`]) even where no row was selected: a row of it written
+    /// after the scan refuses the removal.
     pub(super) fn delete(
         &mut self,
         outcome: &'ir ResolvedOutcome,
@@ -41,8 +44,9 @@ impl<'ir> Run<'_, 'ir> {
             identity,
             expected: stored.version,
             events: events.clone(),
+            scanned: Vec::new(),
         };
-        if affected.is_empty() {
+        if affected.is_empty() && self.scanned.is_empty() {
             self.store.remove(&removal)?;
         } else {
             let writes = self.grouped(Some(Write::Remove(removal)), affected, &events);

@@ -1858,6 +1858,7 @@ fn removed_all(ir: &EssIr, store: &mut dyn Store) -> Result<(), String> {
                     identity: identity.clone(),
                     expected: stored.version,
                     events: Vec::new(),
+                    scanned: Vec::new(),
                 })
                 .map_err(|error| format!("removing {entity} {identity}: {error}"))?;
         }

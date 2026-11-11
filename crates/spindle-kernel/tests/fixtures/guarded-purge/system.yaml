@@ -1,0 +1,21 @@
+format: ess/34
+system: probe
+version: v1
+summary: A team's tickets purged together unless the team is frozen, behind a row-set guard.
+domains:
+  - probe.purge
+components:
+  - component: desk
+    summary: Freezes teams and purges their tickets.
+    owns:
+      domains:
+        - probe.purge
+    accepts:
+      commands:
+        - probe.purge.FreezeTeam
+        - probe.purge.Purge
+    publishes:
+      events:
+        - probe.purge.Frozen
+        - probe.purge.Purged
+    reached_by: in_process

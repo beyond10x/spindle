@@ -386,6 +386,7 @@ fn a_log_written_before_writes_named_their_instances_scans_the_same() {
             identity: json!("b"),
             expected: 1,
             events: Vec::new(),
+            scanned: Vec::new(),
         })
         .expect("b is removed");
     store
