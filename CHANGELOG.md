@@ -195,6 +195,12 @@ are Spindle's releases.
   lock, SQLite takes them from its resting rows at one position of the feed, and PostgreSQL reads
   through the store's own pool, within `database_pool`, and holds only where no entity it read
   moved meanwhile, the view read again from a new position otherwise, up to 8 times.
+- The `reason` of an unmet binding input in the request log (`unmet[].reason`,
+  `spindle.observe.UnmetInput`) is bounded as a record's `reason` is
+  (`story:refusal-reason-bounded`). It copied the host's text verbatim, so the value the event
+  carried was logged (`"member-0042" is not a library.notices.ReaderRef`) and an 800 KB value grew
+  one record by 800 KB. Every value in it is now written `…`, and it is at most 512 bytes, the
+  binding, the input and the type kept.
 
 ## [0.13.0] - 2026-11-11
 

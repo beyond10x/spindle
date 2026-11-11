@@ -14,7 +14,8 @@
 //! ([`clock`]), never in the browser's build.
 //!
 //! A record keeps a bounded reason ([`reason`]): the answer's `refused` text with every value in
-//! it written `…`, at most [`REASON_MOST`] bytes, so a refused value is never recorded.
+//! it written `…`, at most [`REASON_MOST`] bytes, so a refused value is never recorded. Each
+//! unmet binding input it lists keeps its reason bounded the same way ([`UnmetInput::of`]).
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
@@ -273,14 +274,16 @@ pub(crate) struct UnmetInput {
 
 impl UnmetInput {
     /// The unmet input `failed` reports, if it is one: a binding's command that was never sent,
-    /// zero attempts ([`spindle_host::Failed::attempts`]).
+    /// zero attempts ([`spindle_host::Failed::attempts`]). Its reason is the host's with every
+    /// value in it elided and cut to [`REASON_MOST`] bytes ([`reason`]), as a record's is: the
+    /// value the event carried is never recorded.
     pub(crate) fn of(failed: &Failed) -> Option<Self> {
         match &failed.cause {
             Cause::Delivered { binding } if failed.attempts == 0 => Some(Self {
                 binding: binding.clone(),
                 component: failed.component.clone(),
                 command: failed.command.clone(),
-                reason: failed.error.clone(),
+                reason: reason(&failed.error),
             }),
             _ => None,
         }
@@ -1277,6 +1280,11 @@ mod tests {
             (
                 "the caller's `owner`: invalid type: integer `7`, expected a string",
                 "the caller's `owner`: invalid type: integer …, expected a string",
+            ),
+            (
+                r#"binding thank-on-close: the input reader_id is unmet: "member-0042" is not a library.notices.ReaderRef: its invariant `value.count <= 8` is false"#,
+                "binding thank-on-close: the input reader_id is unmet: … is not a \
+                 library.notices.ReaderRef: its invariant … is false",
             ),
         ];
         for (refused, kept) in cases {

@@ -334,6 +334,70 @@ fn an_unmet_binding_input_is_listed_in_the_request_that_published_the_event() {
     assert!(reason.contains("the input reader_id is unmet"), "{reason}");
 }
 
+/// `story:refusal-reason-bounded`, for an unmet input as for a record's reason
+/// (`spindle.observe.UnmetInput.reason`): the value that did not map is never recorded, and the
+/// reason is at most 512 bytes. A member id of 800 KB is no `ReaderRef`; the record's unmet
+/// input names the input and the newtype, holds `…` where the value was, and nothing of it.
+#[test]
+fn an_unmet_inputs_reason_records_no_value_and_is_bounded() {
+    let ir = spindle_spec::load(&fixtures().join("library"))
+        .expect("the library fixture compiles")
+        .ir;
+    let surface = Surface::new(&ir, &["lending".to_owned()], None)
+        .expect("the lending surface is served")
+        .observing(16);
+    let close = surface
+        .routes()
+        .iter()
+        .find(|route| route.operation.name() == "library.lending.CloseLoan")
+        .expect("the surface serves CloseLoan");
+    let (method, path) = (close.method.to_string().to_uppercase(), close.path.clone());
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let mut host = Host::new(ir, &in_memory(), Arc::new(ManualClock::new()), state.path())
+        .unwrap_or_else(|error| panic!("the host admits the library: {error}"));
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+
+    for (loan, member) in [
+        ("loan-1", "member-0042".to_owned()),
+        ("loan-2", format!("m{}", "q".repeat(800_000))),
+    ] {
+        let (method, path) = (method.clone(), path.clone());
+        let body = serde_json::json!({ "loan_id": loan, "member_id": member });
+        let asked = thread::spawn(move || send_json(address, &method, &path, &body));
+        listener
+            .next(ARRIVAL)
+            .expect("the request arrives as an exchange")
+            .serve(&mut host);
+        let (status, answer) = asked.join().expect("the request thread ends");
+        assert!((200..300).contains(&status), "{status} {answer}");
+    }
+
+    let (status, log) = send(address, "GET", "/__spindle/requests");
+    assert_eq!(status, 200, "{log}");
+    let records = log["requests"].as_array().expect("requests");
+    assert_eq!(records.len(), 2, "{log}");
+    for (record, value) in records.iter().zip(["qqq", "member-0042"]) {
+        let listed = record["unmet"].as_array().expect("unmet is a list");
+        assert_eq!(listed.len(), 1, "{log}");
+        let reason = listed[0]["reason"].as_str().expect("a reason");
+        assert!(reason.len() <= 512, "{} bytes: {reason}", reason.len());
+        assert!(
+            reason.contains("the input reader_id is unmet"),
+            "the input is named: {reason}"
+        );
+        assert!(
+            reason.contains("library.notices.ReaderRef"),
+            "the newtype is named: {reason}"
+        );
+        assert!(reason.contains('…'), "the value is elided: {reason}");
+        assert!(
+            !reason.contains(value),
+            "no part of the value {value:?} is recorded: {reason}"
+        );
+    }
+}
+
 /// The desk surface, observed, and a host for it on memory stores, with the listener bound.
 fn served_desk() -> (Listener, Host, Surface, tempfile::TempDir) {
     let ir = spindle_spec::load(&fixtures().join("desk"))
