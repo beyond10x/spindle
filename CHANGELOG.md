@@ -6,6 +6,18 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- Released binaries carry their dependency list (`story:release-dependency-list`). A downstream
+  consumer's image scan found no Rust crates in the 0.13.0 binary, so no dependency of Spindle was
+  checked for a known vulnerability. The release workflow now builds the four binaries with
+  `cargo auditable` 0.7.7, which embeds the crate list in a `.dep-v0` section that `trivy`, `grype`
+  and `cargo audit bin` read; each build fails when the tool is missing or when `rust-audit-info`
+  finds a runtime crate of `spindle-cli`, the workspace crates and `eventlog-postgres` included,
+  missing from the list. Each release page also carries one CycloneDX 1.5 SBOM,
+  `b10x-spindle-<version>.cdx.json`, made by `cargo-cyclonedx` 0.5.9 for the four targets and listed
+  in `SHA256SUMS`.
+
 ## [0.13.0] - 2026-11-11
 
 ### Fixed
