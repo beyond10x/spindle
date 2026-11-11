@@ -273,7 +273,7 @@ fn a_close_refused_on_one_session_removes_nothing_on_sqlite() {
 }
 
 #[cfg(feature = "postgres")]
-fn postgres_pair() -> (spindle_kernel::PostgresStore, spindle_kernel::PostgresStore) {
+pub(super) fn postgres_pair() -> (spindle_kernel::PostgresStore, spindle_kernel::PostgresStore) {
     let url = std::env::var("SPINDLE_TEST_DATABASE_URL")
         .expect("SPINDLE_TEST_DATABASE_URL names a loopback PostgreSQL (task check:postgres)");
     let database = spindle_kernel::Database::new(url);

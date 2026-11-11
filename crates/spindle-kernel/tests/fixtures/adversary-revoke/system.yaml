@@ -1,0 +1,21 @@
+format: ess/34
+system: probe
+version: v1
+summary: Grants given to people one at a time and revoked together by a set outcome.
+domains:
+  - probe.access
+components:
+  - component: access
+    summary: Gives grants and revokes every grant of a person.
+    owns:
+      domains:
+        - probe.access
+    accepts:
+      commands:
+        - probe.access.GiveGrant
+        - probe.access.RevokeAll
+    publishes:
+      events:
+        - probe.access.Given
+        - probe.access.Revoked
+    reached_by: in_process
