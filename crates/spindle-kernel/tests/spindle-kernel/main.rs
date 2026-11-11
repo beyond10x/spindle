@@ -24,6 +24,8 @@ mod adversary_placement;
 #[cfg(feature = "postgres")]
 mod adversary_postgres;
 #[cfg(feature = "postgres")]
+mod adversary_postgres_named;
+#[cfg(feature = "postgres")]
 mod adversary_postgres_scan;
 mod adversary_rally;
 mod adversary_related_guards;

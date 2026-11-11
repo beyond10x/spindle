@@ -174,8 +174,9 @@ $ SPINDLE_SETTING_DATABASE_URL=postgres://serving:...@db.internal:5432/app \
 ```
 
 `run` exits 1 before listening when the database or the settings would not be admitted:
-`database_url` unset, not a PostgreSQL URL, naming no host, or holding more than one `@` before
-its host (percent-encode an `@` in the password as `%40`); `database_schema` not a schema name
+`database_url` unset, not a PostgreSQL URL, naming no host, or holding an `@` other than the one
+ending its user info before the host (percent-encode an `@` in the user name, the password or the
+query string as `%40`); `database_schema` not a schema name
 (lowercase ASCII, digits and underscores, not starting with a digit); a host off loopback without
 `database_ca`; `database_connections` below components x `database_pool` + 1 (one connection
 reserved); a role that can run DDL (`CREATE` on the schema, an object it owns there, membership of
@@ -193,12 +194,20 @@ certificate the bundle did not issue, or one that does not name the host, fails 
 `run --state` and `run` reading stdin refuse `postgres`; `run` serves it over HTTP.
 
 A scan of an entity (a list view, a reset, a command decided on a scan) reads that entity's own
-stream, where each write names the instances it left, and then one event per instance: every read
-a bounded statement of committed events, so it takes no lock, a transaction left open elsewhere on
-the server does not delay it, another process's commits on the same tables (a rolling deploy) do
-not wait for it, and it holds the entity's rows in memory, not the log. Only a log `state move`
-marked, holding writes of a release before 0.7.0, which record no entity version, is read whole,
-at one snapshot, instead. The SQLite store keeps reading a scan from its file's whole log, page by page.
+stream, where each write names the instances it left, and then one event per instance, up to
+1,000 instances and about 32 MiB of rows to one batch of reads: every read a bounded statement
+of committed events, so it takes no lock, a transaction left open elsewhere on the server does
+not delay it, another process's commits on the same tables (a rolling deploy) do not wait for it,
+and it holds the entity's rows in memory, not the log. Only a log `state move` marked, holding
+writes of a release before 0.7.0, which record no entity version, is read whole, at one snapshot,
+instead. The SQLite store keeps reading a scan from its file's whole log, page by page.
+
+One command's writes land in one transaction, which locks each instance it writes, so they stay
+all or nothing. PostgreSQL's lock table is sized by its `max_locks_per_transaction` (64 by
+default) times `max_connections` (100): with those defaults a command that writes more than about
+7,000 instances at once, such as a set outcome over a large entity, is refused with SQLSTATE
+53200 (out of shared memory) and writes nothing. Raise `max_locks_per_transaction` on the server
+for such commands (it takes a restart): at 256, one command writing 20,000 instances lands.
 
 ### Moving a state directory into PostgreSQL
 
