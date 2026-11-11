@@ -21,6 +21,8 @@ mod adversary_launch_refused;
 mod adversary_look_ahead;
 mod adversary_mint_text;
 mod adversary_placement;
+#[cfg(feature = "postgres")]
+mod adversary_postgres;
 mod adversary_rally;
 mod adversary_related_guards;
 mod adversary_related_values;

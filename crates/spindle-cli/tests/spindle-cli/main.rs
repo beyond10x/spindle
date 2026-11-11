@@ -15,6 +15,7 @@ mod adversary_http_cause;
 mod adversary_ingress;
 mod adversary_outcome_bodies;
 mod adversary_outcome_scoped_refusal;
+mod adversary_postgres;
 mod adversary_processes;
 mod adversary_processes2;
 mod adversary_prometheus;

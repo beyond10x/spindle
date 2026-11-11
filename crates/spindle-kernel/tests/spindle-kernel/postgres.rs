@@ -99,11 +99,11 @@ fn two_components_share_a_database_apart() {
     assert_eq!(side(&loaded), &json!("west"));
 }
 
-/// PostgreSQL's feed shows a commit only once every older write transaction has ended; a scan
-/// right after a commit waits for it rather than answer the entity's version without its row.
+/// A write transaction older than a commit, still open on the same database, does not hide the
+/// commit from a scan: the scan right after it holds the row its version counts, without waiting.
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
-fn a_scan_waits_for_a_commit_an_older_transaction_holds_back() {
+fn a_scan_holds_a_commit_while_an_older_transaction_is_open() {
     let database = database();
     let mut store = open(&database, &fresh("lagging"));
     let url = database.url.clone();
@@ -134,11 +134,18 @@ fn a_scan_waits_for_a_commit_an_older_transaction_holds_back() {
     store
         .commit(&created("west"))
         .expect("the match is created");
+    let started = std::time::Instant::now();
     let scan = store.scan("apart.match.Match").expect("the store scans");
+    let took = started.elapsed();
     assert_eq!(
         scan.rows.len(),
         1,
         "the scan holds the row its version counts"
+    );
+    assert_eq!(scan.version, 1, "the version counts the one write");
+    assert!(
+        took < std::time::Duration::from_millis(1000),
+        "the scan waited {took:?} for the older transaction"
     );
     holder.join().expect("the older transaction ends");
 }

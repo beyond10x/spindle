@@ -13,17 +13,18 @@
 //! entity written after the scan refuses the change.
 //!
 //! The encoding is the store's, not SQLite's: [`LogStore`] keeps it on any eventlog event store
-//! that appends groups, and the PostgreSQL store (`PostgresStore`, the `postgres` feature) is the
-//! same store on PostgreSQL.
+//! that appends groups and answers the tenant's whole log ([`Log`]), and the PostgreSQL store
+//! (`PostgresStore`, the `postgres` feature) is the same store on PostgreSQL.
 
 use std::collections::BTreeMap;
 #[cfg(feature = "sqlite")]
 use std::path::Path;
-use std::time::{Duration, Instant};
 
+#[cfg(feature = "sqlite")]
+use eventlog_core::EventStore;
 use eventlog_core::{
-    AppendGroup, AtomicEventStore, CommandMeta, EventLogError, Expected, NewEvent, RecordedEvent,
-    StreamAppend, StreamId, TenantId, new_event_id, request_hash,
+    AppendGroup, CommandMeta, EventLogError, Expected, NewEvent, RecordedEvent, StreamAppend,
+    StreamId, TenantId, new_event_id, request_hash,
 };
 #[cfg(feature = "sqlite")]
 use eventlog_sqlite::SqliteEventStore;
@@ -52,12 +53,39 @@ const ENTITY: &str = "spindle:entity";
 const ACTOR: &str = "spindle-kernel";
 /// The schema version of every event Spindle appends.
 const SCHEMA: u32 = 1;
-/// How many feed events one read of a scan asks for.
+/// How many feed events one read of a SQLite scan asks for.
+#[cfg(feature = "sqlite")]
 const FEED_PAGE: usize = 500;
-/// How long a scan waits for the feed to show every write the entity's version counts.
-const SETTLE: Duration = Duration::from_secs(10);
-/// How long a scan waits before it reads a lagging feed again.
-const SETTLE_POLL: Duration = Duration::from_millis(20);
+
+/// What a scan reads the log through: every event of the tenant, in commit order.
+pub(crate) type Visit<'a> = dyn FnMut(RecordedEvent) -> Result<(), StoreError> + 'a;
+
+mod sealed {
+    use eventlog_core::{AtomicEventStore, TenantId};
+
+    use super::Visit;
+    use crate::store::StoreError;
+
+    /// An eventlog event store a [`super::LogStore`] keeps instances in: it appends groups, and
+    /// hands every event of a tenant to `visit` in commit order, from one consistent point of
+    /// the log, so that every write it holds is whole and the entity versions it counts are the
+    /// versions of the rows it holds.
+    pub trait Log: AtomicEventStore {
+        /// Every event of `tenant`, in commit order, to `visit`, blocking on `runtime`.
+        ///
+        /// # Errors
+        /// The first error `visit` returns, or [`StoreError::Backend`] when the log cannot be
+        /// read.
+        fn each_event(
+            &self,
+            runtime: &tokio::runtime::Runtime,
+            tenant: &TenantId,
+            visit: &mut Visit<'_>,
+        ) -> Result<(), StoreError>;
+    }
+}
+
+pub(crate) use sealed::Log;
 
 /// Instances in an eventlog event store: one SQLite database file ([`SqliteStore`]) or one
 /// component's tables of a PostgreSQL database (`PostgresStore`).
@@ -100,7 +128,7 @@ impl LogStore<SqliteEventStore> {
     }
 }
 
-impl<L: AtomicEventStore> LogStore<L> {
+impl<L: Log> LogStore<L> {
     /// The store on `log`, every call blocking on `runtime`.
     pub(crate) fn on(log: L, runtime: tokio::runtime::Runtime) -> Result<Self, StoreError> {
         let tenant = TenantId::new(TENANT).map_err(backend)?;
@@ -176,7 +204,7 @@ impl<L: AtomicEventStore> LogStore<L> {
     }
 }
 
-impl<L: AtomicEventStore> Store for LogStore<L> {
+impl<L: Log> Store for LogStore<L> {
     fn load(&mut self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
         let stream = self.stream(entity, identity)?;
         let Some((version, last)) = self.last(&stream)? else {
@@ -292,65 +320,30 @@ impl<L: AtomicEventStore> Store for LogStore<L> {
         }
     }
 
-    /// Reads the tenant's feed in commit order and keeps, for each stream of `entity`, its last
-    /// `spindle.row` event: the row as it rests and the stream version a later commit names. A
-    /// `spindle.removed` event after it leaves the stream out, until a later row.
-    /// Every page moves the position forward, or the read stops as a backend error. The entity's
-    /// version is read first, so a write landing during the read leaves it behind the rows.
-    ///
-    /// A feed may lag a commit: PostgreSQL's shows an event only once every transaction older
-    /// than it has ended. So the feed is read again, for up to [`SETTLE`], until it holds as many
-    /// of the entity's `spindle.written` events as the version read first: each write appends one
-    /// in the transaction of its rows, so then every row written up to that version is in it.
+    /// Reads the tenant's log in commit order ([`Log::each_event`]) and keeps, for each stream of
+    /// `entity`, its last `spindle.row` event: the row as it rests and the stream version a later
+    /// commit names. A `spindle.removed` event after it leaves the stream out, until a later row.
+    /// The entity's version is the version of its last `spindle.written` event in the same read:
+    /// each write appends one in the append group of its rows, so the version counts exactly the
+    /// writes whose rows the scan holds.
     fn scan(&mut self, entity: &str) -> Result<Scan, StoreError> {
-        let version = self.entity_version(entity)?;
-        let deadline = Instant::now() + SETTLE;
-        loop {
-            let (latest, written) = self.feed(entity)?;
-            if written >= version {
-                let rows = latest
-                    .into_iter()
-                    .map(|(identity, stored)| Ok((identity_from_key(&identity)?, stored)))
-                    .collect::<Result<_, StoreError>>()?;
-                return Ok(Scan { rows, version });
-            }
-            if Instant::now() >= deadline {
-                return Err(StoreError::Backend(format!(
-                    "the feed shows {written} of the {version} writes of {entity} after \
-                     {SETTLE:?}: a transaction older than the last of them is still open"
-                )));
-            }
-            std::thread::sleep(SETTLE_POLL);
-        }
-    }
-}
-
-impl<L: AtomicEventStore> LogStore<L> {
-    /// The last row of every stream of `entity` the feed holds, by identity key, and how many of
-    /// the entity's `spindle.written` events it holds.
-    fn feed(&self, entity: &str) -> Result<(BTreeMap<String, Stored>, u64), StoreError> {
         let mut latest = BTreeMap::<String, Stored>::new();
-        let mut written = 0;
-        let mut position = 0;
-        loop {
-            let page = self
-                .runtime
-                .block_on(self.log.read_feed(&self.tenant, position, FEED_PAGE))
-                .map_err(backend)?;
-            for event in page.events {
+        let mut version = 0;
+        self.log
+            .each_event(&self.runtime, &self.tenant, &mut |event: RecordedEvent| {
                 if event.stream_type == ENTITY && event.stream_id == entity {
-                    written += 1;
-                    continue;
+                    version = event.version;
+                    return Ok(());
                 }
                 if event.stream_type != entity {
-                    continue;
+                    return Ok(());
                 }
                 if event.name == REMOVED {
                     latest.remove(&event.stream_id);
-                    continue;
+                    return Ok(());
                 }
                 if event.name != ROW {
-                    continue;
+                    return Ok(());
                 }
                 let row = serde_json::from_value::<Row>(event.data)
                     .map_err(|error| StoreError::Backend(format!("a stored row: {error}")))?;
@@ -361,9 +354,36 @@ impl<L: AtomicEventStore> LogStore<L> {
                         version: event.version,
                     },
                 );
+                Ok(())
+            })?;
+        let rows = latest
+            .into_iter()
+            .map(|(identity, stored)| Ok((identity_from_key(&identity)?, stored)))
+            .collect::<Result<_, StoreError>>()?;
+        Ok(Scan { rows, version })
+    }
+}
+
+/// SQLite has one writer, so its feed holds every committed event: a scan reads it page by page,
+/// every page moving the position forward or the read stopping as a backend error.
+#[cfg(feature = "sqlite")]
+impl Log for SqliteEventStore {
+    fn each_event(
+        &self,
+        runtime: &tokio::runtime::Runtime,
+        tenant: &TenantId,
+        visit: &mut Visit<'_>,
+    ) -> Result<(), StoreError> {
+        let mut position = 0;
+        loop {
+            let page = runtime
+                .block_on(self.read_feed(tenant, position, FEED_PAGE))
+                .map_err(backend)?;
+            for event in page.events {
+                visit(event)?;
             }
             if !page.has_more {
-                break;
+                return Ok(());
             }
             if page.next_position <= position {
                 return Err(StoreError::Backend(format!(
@@ -372,7 +392,6 @@ impl<L: AtomicEventStore> LogStore<L> {
             }
             position = page.next_position;
         }
-        Ok((latest, written))
     }
 }
 

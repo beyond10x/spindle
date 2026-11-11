@@ -126,7 +126,7 @@ from settings, read as `SPINDLE_SETTING_<NAME>`:
 | `database_ca` | a PEM CA bundle; the server is reached over TLS (`sslmode=require`) and verified against it. Required for a host that is not loopback or a Unix socket |
 | `database_schema` | the schema holding the tables; `public` by default |
 | `database_pool` | connections per component; 4 by default |
-| `database_connections` | the connection budget of the serving role; required with `database_ca` |
+| `database_connections` | the database's connection budget available to this deployment: at least components x `database_pool` + 1. Not the serving role's `CONNECTION LIMIT`. Required with `database_ca` |
 
 Without `database_ca`, a loopback or Unix-socket database is opened isolated, over plaintext, and
 its tables are created when `run` opens it: for tests and a local database. With `database_ca` the
@@ -152,22 +152,46 @@ database is hosted, and two roles take part:
   GRANT USAGE ON ALL SEQUENCES IN SCHEMA app TO serving;
   ```
 
-`run` exits 1 before listening when the database or the settings would not be admitted:
-`database_url` unset; a host off loopback without `database_ca`; `database_connections` below
-components x `database_pool` + 1 (one connection reserved); a role that can run DDL (`CREATE` on
-the schema, an object it owns there, membership of another role, `SUPERUSER`, `CREATEROLE`,
-`CREATEDB`, `REPLICATION` or `BYPASSRLS`), such as the owner role; and a role whose `CONNECTION
-LIMIT` is not between 1 and components x `database_pool`. The last is eventlog's rule: a serving
-role may open no more connections than its pools admit. With one component and the default pool of
-4, a role limited to 8 connections is refused:
+Two numbers bound the connections, and they are different numbers:
 
-```text
-b10x-spindle: opening the PostgreSQL store of probe: store: PostgreSQL refused the serving role for the tables spindle_probe_*: hosted application role requires a finite connection limit within its admitted replica pool share. A serving role holds no DDL right (no CREATE on the schema downstream_1794331581, no object it owns there, no membership of another role, none of SUPERUSER, CREATEROLE, CREATEDB, REPLICATION and BYPASSRLS: the owner role's URL is for `store migrate`, never `run`); has a CONNECTION LIMIT from 1 to 4 (components 1 x database_pool 4); holds SELECT, INSERT, UPDATE and DELETE on every spindle_probe_* table, USAGE on the sequence of spindle_probe_events and TEMP on the database; and finds the tables `store migrate` created
+- The serving role's `CONNECTION LIMIT`, set on the role in PostgreSQL: from 1 to components x
+  `database_pool`. This is eventlog's rule: a serving role may open no more connections than its
+  pools admit.
+- `database_connections`, a setting: the database's connection budget available to this
+  deployment. It must hold every component's pool and one reserved connection, at least
+  components x `database_pool` + 1, so it is always above the role's limit.
+
+For one component and the default pool of 4, the role above has `CONNECTION LIMIT 4` and `run`
+gets `database_connections` 8:
+
+```console
+$ SPINDLE_SETTING_DATABASE_URL=postgres://serving:...@db.internal:5432/app \
+  SPINDLE_SETTING_DATABASE_CA=/etc/spindle/db-ca.pem \
+  SPINDLE_SETTING_DATABASE_SCHEMA=app \
+  SPINDLE_SETTING_DATABASE_POOL=4 \
+  SPINDLE_SETTING_DATABASE_CONNECTIONS=8 \
+  b10x-spindle run <spec> --environment examples/environments/postgres.toml
 ```
 
-The same role limited to 4, with `database_connections` 8, is admitted and served. `run --state`
-and `run` reading stdin refuse `postgres`; `run` serves it over HTTP.
+`run` exits 1 before listening when the database or the settings would not be admitted:
+`database_url` unset or not a PostgreSQL URL; `database_schema` not a schema name (lowercase
+ASCII, digits and underscores, not starting with a digit); a host off loopback without
+`database_ca`; `database_connections` below components x `database_pool` + 1 (one connection
+reserved); a role that can run DDL (`CREATE` on the schema, an object it owns there, membership of
+another role, `SUPERUSER`, `CREATEROLE`, `CREATEDB`, `REPLICATION` or `BYPASSRLS`), such as the
+owner role; and a role whose `CONNECTION LIMIT` is not between 1 and components x `database_pool`.
+A role limited to 8 connections, the same number as `database_connections`, is refused at the
+default pool of 4:
 
-PostgreSQL shows a committed row to a reader of the log only once every older write transaction
-on the server has ended. A scan of an entity (a list view, a reset, a command decided on a scan)
-waits for that, up to 10 s, and fails when an older write transaction stays open longer.
+```text
+b10x-spindle: opening the PostgreSQL store of probe: store: PostgreSQL refused the serving role for the tables spindle_probe_*: hosted application role requires a finite connection limit within its admitted replica pool share. A serving role holds no DDL right (no CREATE on the schema app, no object it owns there, no membership of another role, none of SUPERUSER, CREATEROLE, CREATEDB, REPLICATION and BYPASSRLS: the owner role's URL is for `store migrate`, never `run`); has a CONNECTION LIMIT from 1 to 4 (components 1 x database_pool 4), which is not database_connections, the database's budget for this deployment, at least 5; holds SELECT, INSERT, UPDATE and DELETE on every spindle_probe_* table, USAGE on the sequence of spindle_probe_events and TEMP on the database; and finds the tables `store migrate` created
+```
+
+A server that cannot be reached names its host and port and, with `database_ca`, that a
+certificate the bundle did not issue, or one that does not name the host, fails the same way.
+`run --state` and `run` reading stdin refuse `postgres`; `run` serves it over HTTP.
+
+A scan of an entity (a list view, a reset, a command decided on a scan) reads the component's whole
+log at one snapshot, once the component's own writes in flight have committed. A transaction left
+open elsewhere on the server, in another database or by another application, does not delay it,
+and its cost grows with the log.

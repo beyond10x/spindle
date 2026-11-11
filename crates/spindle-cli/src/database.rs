@@ -3,7 +3,8 @@
 //!
 //! Settings are read as every setting is, `SPINDLE_SETTING_<NAME>`: `database_url` (required),
 //! `database_ca`, `database_schema` (`public`), `database_pool` (4) and `database_connections`
-//! (required with `database_ca`). A URL is never printed: it holds a password.
+//! (required with `database_ca`: the database's connection budget available to this deployment,
+//! not the serving role's `CONNECTION LIMIT`). A URL is never printed: it holds a password.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -87,30 +88,33 @@ fn components(ir: &EssIr, environment: &Environment) -> Result<Vec<String>, spin
 
 /// One store per component of `ir` bound to `postgres` on `environment`, by component, for
 /// [`spindle_host::Host::with_stores`]. The settings and the connection budget are checked before
-/// anything connects: `database_connections`, where given, must hold every component's
-/// `database_pool` and one reserved connection.
+/// anything connects: `database_connections`, the database's connection budget available to this
+/// deployment, where given, must hold every component's `database_pool` and one reserved
+/// connection. The serving role's `CONNECTION LIMIT` is another number, from 1 to components x
+/// `database_pool`, which the database checks when a store opens.
 ///
 /// # Errors
 /// A setting missing or malformed, a budget too small, or a store the database refused, naming it.
 pub(crate) fn stores(ir: &EssIr, environment: &Environment) -> Result<Stores> {
     let database = database()?;
     let components = components(ir, environment).map_err(|refusal| anyhow::anyhow!("{refusal}"))?;
-    let needed = components
-        .len()
-        .saturating_mul(database.pool)
-        .saturating_add(spindle_kernel::POSTGRES_RESERVED);
+    let share = components.len().saturating_mul(database.pool);
+    let needed = share.saturating_add(spindle_kernel::POSTGRES_RESERVED);
     match database.connections {
         Some(connections) if needed > connections => bail!(
             "database_connections is {connections}, below the {needed} connections run needs: {} \
-             components x database_pool {} + {} reserved",
+             components x database_pool {} + {} reserved. database_connections is the \
+             database's connection budget available to this deployment; the serving role's \
+             CONNECTION LIMIT is separate, from 1 to {share}",
             components.len(),
             database.pool,
             spindle_kernel::POSTGRES_RESERVED
         ),
         None if database.ca.is_some() => bail!(
             "a hosted PostgreSQL (database_ca given) needs database_connections ({}), the \
-             connection budget of the serving role: at least {needed}, {} components x \
-             database_pool {} + {} reserved",
+             database's connection budget available to this deployment: at least {needed}, {} \
+             components x database_pool {} + {} reserved. The serving role's CONNECTION LIMIT \
+             is separate, from 1 to {share}",
             variable("database_connections"),
             components.len(),
             database.pool,

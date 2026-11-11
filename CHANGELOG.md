@@ -14,14 +14,20 @@ are Spindle's releases.
   share one database apart. `run` (served) reads the settings `database_url` (required, never
   printed), `database_ca` (a PEM CA bundle: TLS with `sslmode=require`, the server verified
   against it; required off loopback), `database_schema` (`public`), `database_pool` (4 per
-  component) and `database_connections` (required with `database_ca`) from
-  `SPINDLE_SETTING_<NAME>`. Without `database_ca` a loopback or Unix-socket database is opened
-  isolated and its tables created; with it, `run` opens with a DML-only serving role and exits 1
-  before listening on an owner role (naming the DDL rights it refuses), a role whose
-  `CONNECTION LIMIT` is outside 1 to components x `database_pool`, and a budget below components
-  x `database_pool` + 1. The new `b10x-spindle store migrate <spec> --environment <env>` creates
-  every postgres-bound component's tables with the owner role, idempotent, one JSON line per
-  component. `examples/environments/postgres.toml`; `task check:postgres` runs the database cases
+  component) and `database_connections` (required with `database_ca`: the database's connection
+  budget available to this deployment, at least components x `database_pool` + 1, and not the
+  serving role's `CONNECTION LIMIT`) from `SPINDLE_SETTING_<NAME>`. Without `database_ca` a
+  loopback or Unix-socket database is opened isolated and its tables created; with it, `run`
+  opens with a DML-only serving role and exits 1 before listening on an owner role (naming the
+  DDL rights it refuses), a role whose `CONNECTION LIMIT` is outside 1 to components x
+  `database_pool`, and a budget below components x `database_pool` + 1: one component at pool 4
+  takes a role limited to 4 and `database_connections` 8. A malformed `database_url` or
+  `database_schema` is refused naming that setting, and a server that cannot be reached is named
+  by host and port, with `database_ca` and the certificate as a cause where it is set. A scan
+  reads the component's log at one snapshot, so a transaction left open elsewhere on the server
+  never delays it and its cost grows with the log. The new `b10x-spindle store migrate <spec>
+  --environment <env>` creates every postgres-bound component's tables with the owner role,
+  idempotent (a second one started meanwhile waits for the first), one JSON line per component. `examples/environments/postgres.toml`; `task check:postgres` runs the database cases
   against `SPINDLE_TEST_DATABASE_URL` and `SPINDLE_TEST_DATABASE_CA`, and CI's `PostgreSQL` job
   runs it on PostgreSQL 17 with TLS. `run` reading stdin refuses `postgres`.
 
