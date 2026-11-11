@@ -22,14 +22,29 @@ are Spindle's releases.
   DDL rights it refuses), a role whose `CONNECTION LIMIT` is outside 1 to components x
   `database_pool`, and a budget below components x `database_pool` + 1: one component at pool 4
   takes a role limited to 4 and `database_connections` 8. A malformed `database_url` or
-  `database_schema` is refused naming that setting, and a server that cannot be reached is named
-  by host and port, with `database_ca` and the certificate as a cause where it is set. A scan
-  reads the component's log at one snapshot, so a transaction left open elsewhere on the server
-  never delays it and its cost grows with the log. The new `b10x-spindle store migrate <spec>
+  `database_schema` is refused naming that setting, as is a `database_url` naming no host or
+  holding more than one `@` before its host (an `@` in the password not percent-encoded as
+  `%40`), printing none of it; a server that cannot be reached is named by host and port, with
+  `database_ca` and the certificate as a cause where it is set. A scan reads the entity's own
+  stream and one event per instance, each a bounded read that takes no lock, so a transaction
+  left open elsewhere on the server never delays it, another process's commits on the same tables
+  never wait for it, and it holds the entity's rows in memory, not the log. The new `b10x-spindle store migrate <spec>
   --environment <env>` creates every postgres-bound component's tables with the owner role,
   idempotent (a second one started meanwhile waits for the first), one JSON line per component. `examples/environments/postgres.toml`; `task check:postgres` runs the database cases
   against `SPINDLE_TEST_DATABASE_URL` and `SPINDLE_TEST_DATABASE_CA`, and CI's `PostgreSQL` job
   runs it on PostgreSQL 17 with TLS. `run` reading stdin refuses `postgres`.
+
+### Changed
+
+- Store format, in the SQLite store as in the PostgreSQL one: each write's `spindle.written`
+  event names the instances it leaves, each at its stream's version after the write (event schema
+  2, `{"rows": {stream: version}, "removed": {stream: version}}`), so a scan of the PostgreSQL
+  store reads the entity's stream and one event per instance rather than the whole log. The
+  SQLite store reads and scans a file of any earlier release as before, its scan still reading
+  the whole file page by page, and adds writes in the new form. A PostgreSQL log holding writes
+  that name no instances (0.10.0's, which name none, and those before 0.7.0, which record no
+  entity version) is scanned whole when its stream `spindle:log` `unnamed-writes` exists, or
+  when the entity's stream holds such a write.
 
 ## [0.10.0] - 2026-11-10
 

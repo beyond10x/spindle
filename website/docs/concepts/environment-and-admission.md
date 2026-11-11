@@ -174,8 +174,9 @@ $ SPINDLE_SETTING_DATABASE_URL=postgres://serving:...@db.internal:5432/app \
 ```
 
 `run` exits 1 before listening when the database or the settings would not be admitted:
-`database_url` unset or not a PostgreSQL URL; `database_schema` not a schema name (lowercase
-ASCII, digits and underscores, not starting with a digit); a host off loopback without
+`database_url` unset, not a PostgreSQL URL, naming no host, or holding more than one `@` before
+its host (percent-encode an `@` in the password as `%40`); `database_schema` not a schema name
+(lowercase ASCII, digits and underscores, not starting with a digit); a host off loopback without
 `database_ca`; `database_connections` below components x `database_pool` + 1 (one connection
 reserved); a role that can run DDL (`CREATE` on the schema, an object it owns there, membership of
 another role, `SUPERUSER`, `CREATEROLE`, `CREATEDB`, `REPLICATION` or `BYPASSRLS`), such as the
@@ -191,7 +192,10 @@ A server that cannot be reached names its host and port and, with `database_ca`,
 certificate the bundle did not issue, or one that does not name the host, fails the same way.
 `run --state` and `run` reading stdin refuse `postgres`; `run` serves it over HTTP.
 
-A scan of an entity (a list view, a reset, a command decided on a scan) reads the component's whole
-log at one snapshot, once the component's own writes in flight have committed. A transaction left
-open elsewhere on the server, in another database or by another application, does not delay it,
-and its cost grows with the log.
+A scan of an entity (a list view, a reset, a command decided on a scan) reads that entity's own
+stream, where each write names the instances it left, and then one event per instance: every read
+a bounded statement of committed events, so it takes no lock, a transaction left open elsewhere on
+the server does not delay it, another process's commits on the same tables (a rolling deploy) do
+not wait for it, and it holds the entity's rows in memory, not the log. A log holding writes of
+the SQLite store of 0.10.0 or earlier, which name no instances, is read whole, at one snapshot,
+instead. The SQLite store keeps reading a scan from its file's whole log, page by page.

@@ -10,7 +10,13 @@
 //! transaction. Every write is one append group, which also appends one `spindle.written` event to
 //! the stream of each entity it writes: that stream's version is the entity's version a scan
 //! answers and a change decided on a scan names ([`crate::Change::scanned`]), so a row of the
-//! entity written after the scan refuses the change.
+//! entity written after the scan refuses the change. The event names the instances the write
+//! left, each at its stream's version after it (schema 2: `{"rows": {stream: version},
+//! "removed": {stream: version}}`), so a scan can read the entity's stream and one event per
+//! instance rather than the whole log. The store of 0.10.0 wrote it empty (schema 1), and before
+//! 0.7.0 wrote none. A scan of a SQLite file, which any release may have written, reads the whole
+//! log ([`Log::each_event`]); a scan of a PostgreSQL store reads the entity's stream, unless the
+//! log is marked as holding such writes ([`MARKS`]) or the entity's stream holds one.
 //!
 //! The encoding is the store's, not SQLite's: [`LogStore`] keeps it on any eventlog event store
 //! that appends groups and answers the tenant's whole log ([`Log`]), and the PostgreSQL store
@@ -23,8 +29,8 @@ use std::path::Path;
 #[cfg(feature = "sqlite")]
 use eventlog_core::EventStore;
 use eventlog_core::{
-    AppendGroup, CommandMeta, EventLogError, Expected, NewEvent, RecordedEvent, StreamAppend,
-    StreamId, TenantId, new_event_id, request_hash,
+    AppendGroup, CommandMeta, EventLogError, Expected, MAX_READ_LIMIT, NewEvent, RecordedEvent,
+    StreamAppend, StreamId, TenantId, new_event_id, request_hash,
 };
 #[cfg(feature = "sqlite")]
 use eventlog_sqlite::SqliteEventStore;
@@ -43,15 +49,23 @@ const TENANT: &str = "local";
 /// The event that carries an instance's row after a change.
 const ROW: &str = "spindle.row";
 /// The event that ends the stream of a removed instance (`deletes:`).
-const REMOVED: &str = "spindle.removed";
+pub(crate) const REMOVED: &str = "spindle.removed";
 /// The event each write appends to the stream of an entity it writes.
-const WRITTEN: &str = "spindle.written";
+pub(crate) const WRITTEN: &str = "spindle.written";
+/// The schema of a `spindle.written` event that names the instances its write left
+/// ([`Written`]). One of schema [`SCHEMA`], as the store of 0.10.0 wrote it, names none.
+pub(crate) const WRITTEN_SCHEMA: u32 = 2;
 /// The stream type of the streams carrying an entity's version, one per entity: no qualified
 /// entity name holds a colon.
-const ENTITY: &str = "spindle:entity";
+pub(crate) const ENTITY: &str = "spindle:entity";
+/// The stream type and id of the stream whose presence marks a log holding writes that name no
+/// instances (written before 0.7.0, or by 0.10.0 and earlier): `state move` appends an event to
+/// it before it copies such a write into a PostgreSQL store. A scan of a marked log reads the
+/// whole log.
+pub(crate) const MARKS: (&str, &str) = ("spindle:log", "unnamed-writes");
 /// Who records the change: the runtime itself.
 const ACTOR: &str = "spindle-kernel";
-/// The schema version of every event Spindle appends.
+/// The schema version of every event Spindle appends but `spindle.written` ([`WRITTEN_SCHEMA`]).
 const SCHEMA: u32 = 1;
 /// How many feed events one read of a SQLite scan asks for.
 #[cfg(feature = "sqlite")]
@@ -71,6 +85,10 @@ mod sealed {
     /// the log, so that every write it holds is whole and the entity versions it counts are the
     /// versions of the rows it holds.
     pub trait Log: AtomicEventStore {
+        /// Whether the log may hold writes that name no instances with no mark saying so
+        /// ([`super::MARKS`]): then every scan reads the whole log ([`Log::each_event`]).
+        const UNMARKED: bool;
+
         /// Every event of `tenant`, in commit order, to `visit`, blocking on `runtime`.
         ///
         /// # Errors
@@ -240,7 +258,9 @@ impl<L: Log> Store for LogStore<L> {
     /// appended, naming that instance; a stream moved in between refuses the whole group. The
     /// group appends one `spindle.written` event to the stream of each entity it writes, and of
     /// each entity a write was conditioned on ([`Change::scanned`]), that one at the version the
-    /// scan answered: a write of the entity landed since refuses the group.
+    /// scan answered: a write of the entity landed since refuses the group. Each names the
+    /// instances of its entity the group writes, at the version each stream stands at once the
+    /// group lands ([`Written`]).
     fn commit_all(&mut self, writes: &[Write]) -> Result<(), StoreError> {
         if writes.is_empty() {
             return Ok(());
@@ -264,17 +284,8 @@ impl<L: Log> Store for LogStore<L> {
         for write in writes {
             marks.entry(write.instance().0).or_insert(Expected::Any);
         }
-        let mut appends = Vec::with_capacity(writes.len() + marks.len());
-        for (entity, expected) in marks {
-            appends.push(StreamAppend {
-                stream: self.entity_stream(entity)?,
-                expected,
-                events: vec![
-                    NewEvent::new(WRITTEN, SCHEMA, Value::Object(serde_json::Map::new()))
-                        .map_err(backend)?,
-                ],
-            });
-        }
+        let mut written = BTreeMap::<&str, Written>::new();
+        let mut instances = Vec::with_capacity(writes.len());
         for write in writes {
             let (entity, identity) = write.instance();
             let stream = self.stream(entity, identity)?;
@@ -285,16 +296,37 @@ impl<L: Log> Store for LogStore<L> {
                     _ => Expected::NoStream,
                 },
             };
-            let (events, end) = match write {
-                Write::Commit(change) => (&change.events, row_event(&change.row)?),
-                Write::Remove(removal) => (&removal.events, removed_event()?),
+            let (events, end, removed) = match write {
+                Write::Commit(change) => (&change.events, row_event(&change.row)?, false),
+                Write::Remove(removal) => (&removal.events, removed_event()?, true),
             };
-            appends.push(StreamAppend {
+            let events = recorded(events, end)?;
+            // The append lands at the version it names, or the group is refused.
+            let before = match expected {
+                Expected::Exact(version) => version,
+                _ => 0,
+            };
+            let after = before.saturating_add(events.len() as u64);
+            written
+                .entry(entity)
+                .or_default()
+                .note(stream.stream_id(), after, removed);
+            instances.push(StreamAppend {
                 stream,
                 expected,
-                events: recorded(events, end)?,
+                events,
             });
         }
+        let mut appends = Vec::with_capacity(instances.len() + marks.len());
+        for (entity, expected) in marks {
+            let body = written.remove(entity).unwrap_or_default().body();
+            appends.push(StreamAppend {
+                stream: self.entity_stream(entity)?,
+                expected,
+                events: vec![NewEvent::new(WRITTEN, WRITTEN_SCHEMA, body).map_err(backend)?],
+            });
+        }
+        appends.extend(instances);
         let entries: Vec<&Vec<NewEvent>> = appends.iter().map(|append| &append.events).collect();
         let group = AppendGroup {
             tenant: self.tenant.clone(),
@@ -320,13 +352,106 @@ impl<L: Log> Store for LogStore<L> {
         }
     }
 
+    /// Reads the entity's stream and one event per instance ([`LogStore::scan_named`]), or, on a
+    /// log that may hold writes naming no instances, the whole log ([`LogStore::scan_log`]): a
+    /// SQLite file, or a PostgreSQL store marked as holding them ([`MARKS`]).
+    fn scan(&mut self, entity: &str) -> Result<Scan, StoreError> {
+        if L::UNMARKED || self.marked()? {
+            return self.scan_log(entity);
+        }
+        self.scan_named(entity)
+    }
+}
+
+impl<L: Log> LogStore<L> {
+    /// Whether the log is marked as holding writes that name no instances ([`MARKS`]).
+    fn marked(&self) -> Result<bool, StoreError> {
+        let (kind, id) = MARKS;
+        let mark = StreamId::new(self.tenant.clone(), kind, id).map_err(backend)?;
+        Ok(self
+            .runtime
+            .block_on(self.log.stream_version(&mark))
+            .map_err(backend)?
+            .is_some())
+    }
+
+    /// Reads the entity's stream, page by page, to its end: its last version is the entity's
+    /// version the scan answers, and its `spindle.written` events, in order, name each instance
+    /// whose row rests after them and the version of its stream there ([`Written`]). Then reads
+    /// each such instance's event at exactly that version: its `spindle.row` event, the row as it
+    /// rested once the write the version counts last landed.
+    ///
+    /// Every read is one statement of its own and holds no lock. It is consistent all the same:
+    /// a stream's events never change once appended and its versions land in order, so the pages
+    /// read are the stream's first versions however many writes land meanwhile; and the write a
+    /// `spindle.written` event belongs to appended the instance's events in the same group, so
+    /// the event at the version it names is there to read, and later writes of the instance are
+    /// at later versions, which the scan does not read. So the rows are exactly the rows of the
+    /// writes the version counts. What a scan holds grows with the instances whose row rests,
+    /// never with the log.
+    ///
+    /// An entity whose stream holds a `spindle.written` event that names no instances (schema
+    /// 1, as the store of 0.10.0 wrote it) is scanned from the whole log instead
+    /// ([`LogStore::scan_log`]).
+    fn scan_named(&self, entity: &str) -> Result<Scan, StoreError> {
+        let stream = self.entity_stream(entity)?;
+        let mut resting = BTreeMap::<String, u64>::new();
+        let mut version = 0;
+        loop {
+            let page = self
+                .runtime
+                .block_on(self.log.read_stream(&stream, version, MAX_READ_LIMIT))
+                .map_err(backend)?;
+            let read = page.events.len();
+            for event in page.events {
+                if event.version != version + 1 {
+                    return Err(StoreError::Backend(format!(
+                        "the stream of {entity} skips from version {version} to {}",
+                        event.version
+                    )));
+                }
+                version = event.version;
+                let Some(written) = Written::read(&event, entity)? else {
+                    return self.scan_log(entity);
+                };
+                written.apply(&mut resting);
+            }
+            if page.end_of_stream || read == 0 {
+                break;
+            }
+        }
+        let mut rows = Vec::with_capacity(resting.len());
+        for (key, at) in resting {
+            let instance = StreamId::new(self.tenant.clone(), entity, &key).map_err(backend)?;
+            let event = self
+                .runtime
+                .block_on(self.log.read_stream(&instance, at.saturating_sub(1), 1))
+                .map_err(backend)?
+                .events
+                .into_iter()
+                .next()
+                .filter(|event| event.version == at && event.name == ROW)
+                .ok_or_else(|| {
+                    StoreError::Backend(format!(
+                        "the stream of {entity} {key} holds no row at version {at}, which the \
+                         entity's stream names"
+                    ))
+                })?;
+            let row = serde_json::from_value::<Row>(event.data)
+                .map_err(|error| StoreError::Backend(format!("a stored row: {error}")))?;
+            rows.push((identity_from_key(&key)?, Stored { row, version: at }));
+        }
+        Ok(Scan { rows, version })
+    }
+
     /// Reads the tenant's log in commit order ([`Log::each_event`]) and keeps, for each stream of
     /// `entity`, its last `spindle.row` event: the row as it rests and the stream version a later
     /// commit names. A `spindle.removed` event after it leaves the stream out, until a later row.
     /// The entity's version is the version of its last `spindle.written` event in the same read:
     /// each write appends one in the append group of its rows, so the version counts exactly the
-    /// writes whose rows the scan holds.
-    fn scan(&mut self, entity: &str) -> Result<Scan, StoreError> {
+    /// writes whose rows the scan holds. The scan of a log that may hold writes naming no
+    /// instances.
+    fn scan_log(&self, entity: &str) -> Result<Scan, StoreError> {
         let mut latest = BTreeMap::<String, Stored>::new();
         let mut version = 0;
         self.log
@@ -365,9 +490,13 @@ impl<L: Log> Store for LogStore<L> {
 }
 
 /// SQLite has one writer, so its feed holds every committed event: a scan reads it page by page,
-/// every page moving the position forward or the read stopping as a backend error.
+/// every page moving the position forward or the read stopping as a backend error. A file may
+/// hold writes of any release, back to those before 0.7.0 recorded no entity's version, and none
+/// is marked: every scan reads the feed.
 #[cfg(feature = "sqlite")]
 impl Log for SqliteEventStore {
+    const UNMARKED: bool = true;
+
     fn each_event(
         &self,
         runtime: &tokio::runtime::Runtime,
@@ -392,6 +521,94 @@ impl Log for SqliteEventStore {
             }
             position = page.next_position;
         }
+    }
+}
+
+/// What one write's `spindle.written` event names (schema [`WRITTEN_SCHEMA`]): each instance of
+/// the entity whose row the write left, and each it removed, by stream id, at the version its
+/// stream stands at after the write. An instance the write left nothing of, or only
+/// conditioned the write on, is in neither.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Written {
+    rows: BTreeMap<String, u64>,
+    removed: BTreeMap<String, u64>,
+}
+
+impl Written {
+    /// Notes that the write leaves the instance on stream `id` at `version`, removed or holding
+    /// a row: a later note of the same stream in one write replaces an earlier one.
+    pub(crate) fn note(&mut self, id: &str, version: u64, removed: bool) {
+        let (to, from) = if removed {
+            (&mut self.removed, &mut self.rows)
+        } else {
+            (&mut self.rows, &mut self.removed)
+        };
+        from.remove(id);
+        to.insert(id.to_owned(), version);
+    }
+
+    /// The body of the `spindle.written` event: `{"rows": {id: version}, "removed": {id:
+    /// version}}`.
+    pub(crate) fn body(self) -> Value {
+        let object = |entries: BTreeMap<String, u64>| {
+            Value::Object(
+                entries
+                    .into_iter()
+                    .map(|(id, version)| (id, Value::from(version)))
+                    .collect(),
+            )
+        };
+        let mut body = serde_json::Map::new();
+        body.insert("rows".to_owned(), object(self.rows));
+        body.insert("removed".to_owned(), object(self.removed));
+        Value::Object(body)
+    }
+
+    /// What `event` of `entity`'s stream names, or `None` for one of the store of 0.10.0, which
+    /// names no instances.
+    fn read(event: &RecordedEvent, entity: &str) -> Result<Option<Self>, StoreError> {
+        if event.schema_version < WRITTEN_SCHEMA {
+            return Ok(None);
+        }
+        let malformed = || {
+            StoreError::Backend(format!(
+                "the event {} at version {} of the stream of {entity} does not name its \
+                 instances as schema {} does",
+                event.name, event.version, event.schema_version
+            ))
+        };
+        if event.name != WRITTEN {
+            return Err(malformed());
+        }
+        let entries = |key: &str| -> Result<BTreeMap<String, u64>, StoreError> {
+            event
+                .data
+                .get(key)
+                .and_then(Value::as_object)
+                .ok_or_else(malformed)?
+                .iter()
+                .map(|(id, version)| {
+                    version
+                        .as_u64()
+                        .filter(|version| *version > 0)
+                        .map(|version| (id.clone(), version))
+                        .ok_or_else(malformed)
+                })
+                .collect()
+        };
+        Ok(Some(Self {
+            rows: entries("rows")?,
+            removed: entries("removed")?,
+        }))
+    }
+
+    /// Applies the write to `resting`, each instance whose row rests by stream id at its
+    /// version.
+    fn apply(self, resting: &mut BTreeMap<String, u64>) {
+        for id in self.removed.into_keys() {
+            resting.remove(&id);
+        }
+        resting.extend(self.rows);
     }
 }
 
@@ -442,4 +659,146 @@ fn meta(request_hash: String) -> CommandMeta {
 
 pub(crate) fn backend(error: EventLogError) -> StoreError {
     StoreError::Backend(error.to_string())
+}
+
+#[cfg(all(test, feature = "sqlite"))]
+mod tests {
+    use eventlog_core::AtomicEventStore;
+    use serde_json::json;
+
+    use super::*;
+
+    const TASK: &str = "a.Task";
+
+    /// A store on a SQLite database in memory.
+    fn store() -> SqliteStore {
+        SqliteStore::open(Path::new(":memory:")).expect("the store opens")
+    }
+
+    fn change(identity: &str, expected: Option<u64>, state: &str) -> Change {
+        Change {
+            entity: TASK.to_owned(),
+            identity: json!(identity),
+            expected,
+            row: Row {
+                state: state.to_owned(),
+                fields: BTreeMap::new(),
+            },
+            events: Vec::new(),
+            scanned: Vec::new(),
+        }
+    }
+
+    /// The last `spindle.written` event of `entity`'s stream: its schema and body.
+    fn last_written(store: &SqliteStore, entity: &str) -> (u32, Value) {
+        let stream = store.entity_stream(entity).expect("a stream id");
+        let (_, event) = store.last(&stream).expect("reads").expect("written");
+        assert_eq!(event.name, WRITTEN);
+        (event.schema_version, event.data)
+    }
+
+    #[test]
+    fn a_write_names_each_instance_it_leaves_at_its_streams_version() {
+        let mut store = store();
+        store
+            .commit_all(&[
+                Write::Commit(change("a", None, "Open")),
+                Write::Commit(change("b", None, "Open")),
+                Write::Commit(change("b", Some(1), "Done")),
+            ])
+            .expect("a group");
+        assert_eq!(
+            last_written(&store, TASK),
+            (
+                WRITTEN_SCHEMA,
+                json!({"rows": {"\"a\"": 1, "\"b\"": 2}, "removed": {}})
+            )
+        );
+        store
+            .remove(&Removal {
+                entity: TASK.to_owned(),
+                identity: json!("a"),
+                expected: 1,
+                events: Vec::new(),
+            })
+            .expect("a is removed");
+        assert_eq!(
+            last_written(&store, TASK),
+            (WRITTEN_SCHEMA, json!({"rows": {}, "removed": {"\"a\"": 2}}))
+        );
+        let mut conditioned = change("c", None, "Open");
+        conditioned.entity = "b.Other".to_owned();
+        conditioned.scanned = vec![Scanned {
+            entity: TASK.to_owned(),
+            version: 2,
+        }];
+        store.commit(&conditioned).expect("a conditioned write");
+        assert_eq!(
+            last_written(&store, TASK),
+            (WRITTEN_SCHEMA, json!({"rows": {}, "removed": {}})),
+            "an entity a write is conditioned on names no instance"
+        );
+        let scan = store.scan_named(TASK).expect("scans");
+        assert_eq!(scan.version, 3);
+        assert_eq!(scan, store.scan_log(TASK).expect("reads the log"));
+        assert_eq!(scan.rows.len(), 1);
+        assert_eq!(scan.rows[0].0, json!("b"));
+        assert_eq!(scan.rows[0].1.version, 2);
+    }
+
+    /// A write as the store of 0.10.0 appended it: its `spindle.written` event names nothing.
+    fn write_as_before(store: &SqliteStore, identity: &str) {
+        let appends = vec![
+            StreamAppend {
+                stream: store.entity_stream(TASK).expect("a stream id"),
+                expected: Expected::Any,
+                events: vec![
+                    NewEvent::new(WRITTEN, SCHEMA, Value::Object(serde_json::Map::new()))
+                        .expect("an event"),
+                ],
+            },
+            StreamAppend {
+                stream: store.stream(TASK, &json!(identity)).expect("a stream id"),
+                expected: Expected::NoStream,
+                events: vec![row_event(&change(identity, None, "Old").row).expect("a row")],
+            },
+        ];
+        let entries: Vec<&Vec<NewEvent>> = appends.iter().map(|append| &append.events).collect();
+        let group = AppendGroup {
+            tenant: store.tenant.clone(),
+            meta: meta(request_hash(&entries).expect("a hash")),
+            appends,
+        };
+        store
+            .runtime
+            .block_on(store.log.append_group(&group))
+            .expect("appended");
+    }
+
+    #[test]
+    fn an_entity_holding_a_write_that_names_no_instances_is_scanned_from_the_log() {
+        let mut store = store();
+        write_as_before(&store, "old");
+        store
+            .commit(&change("new", None, "Open"))
+            .expect("a write after it");
+        store
+            .commit(&change("old", Some(1), "Moved"))
+            .expect("the older instance moves");
+        let scan = store.scan_named(TASK).expect("scans");
+        assert_eq!(scan, store.scan_log(TASK).expect("reads the log"));
+        assert_eq!(scan.version, 3);
+        let rows: Vec<_> = scan
+            .rows
+            .iter()
+            .map(|(identity, stored)| (identity.clone(), stored.row.state.clone(), stored.version))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                (json!("new"), "Open".to_owned(), 1),
+                (json!("old"), "Moved".to_owned(), 2)
+            ]
+        );
+    }
 }

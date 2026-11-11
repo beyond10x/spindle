@@ -23,6 +23,8 @@ mod adversary_mint_text;
 mod adversary_placement;
 #[cfg(feature = "postgres")]
 mod adversary_postgres;
+#[cfg(feature = "postgres")]
+mod adversary_postgres_scan;
 mod adversary_rally;
 mod adversary_related_guards;
 mod adversary_related_values;

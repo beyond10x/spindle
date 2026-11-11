@@ -16,9 +16,12 @@
 //!   DDL and whose `CONNECTION LIMIT` its pools can use, within the database's connection budget
 //!   ([`Database::connections`]).
 //!
-//! A scan reads the component's whole log at one snapshot, through eventlog's consistent tenant
-//! capture: it waits only for this component's own appends in flight, never for a transaction
-//! elsewhere on the server, and costs in proportion to the log.
+//! A scan reads the entity's own stream page by page and then each instance's row at the version
+//! that stream names ([`LogStore`]'s `scan`): plain reads of committed events, each one bounded
+//! statement, so it takes no lock, never waits on a transaction anywhere on the server, and holds
+//! in memory the instances whose row rests, not the log. Only a log holding writes that name no
+//! instances (those of a SQLite file of 0.10.0 or earlier, copied in by `state move`) is read
+//! whole, at one snapshot.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -204,11 +207,17 @@ impl LogStore<PostgresEventStore> {
 /// statements.
 const MIGRATION_WAIT: Duration = Duration::from_secs(60);
 
-/// A scan reads the whole log at one snapshot taken once this component's appends in flight have
-/// committed ([`ConsistentTenantCapture`]). Unlike eventlog's feed, which hides a commit until
-/// every older write transaction on the server has ended, it holds every committed event, so it
-/// never waits on a transaction of another component or database, and it reads each event once.
+/// The whole log, read only to scan a log holding writes that name no instances (marked so, or
+/// found in the entity's stream), at one snapshot taken once this component's appends in flight
+/// have committed ([`ConsistentTenantCapture`]). Unlike eventlog's feed, which hides a commit
+/// until every older write transaction on the server has ended, it holds every committed event,
+/// so it never waits on a transaction of another component or database. It holds the log in
+/// memory and eventlog's publication lock while it reads.
 impl Log for PostgresEventStore {
+    /// Only this release and `state move` write a PostgreSQL store, and the move marks a log it
+    /// copies writes naming no instances into.
+    const UNMARKED: bool = false;
+
     fn each_event(
         &self,
         runtime: &tokio::runtime::Runtime,
@@ -244,13 +253,7 @@ impl Log for PostgresEventStore {
 /// names one, isolated otherwise. Each setting eventlog would refuse is refused here first,
 /// naming it.
 fn config(database: &Database, prefix: &str) -> Result<PostgresConfig, StoreError> {
-    if database.url.parse::<tokio_postgres::Config>().is_err() {
-        return Err(StoreError::Backend(
-            "database_url is not a PostgreSQL connection URL: \
-             postgres://user:password@host:port/database"
-                .to_owned(),
-        ));
-    }
+    admitted(&database.url)?;
     validate_identifier("a schema name", &database.schema).map_err(|error| {
         StoreError::Backend(format!(
             "database_schema {:?} is not admitted: {error}",
@@ -273,13 +276,44 @@ fn config(database: &Database, prefix: &str) -> Result<PostgresConfig, StoreErro
     }
 }
 
-/// The hosts and ports `database_url` names, as `host:port`: never its user or password.
+/// `url` parsed, where it is a PostgreSQL connection URL naming a host, printing no part of it.
+///
+/// An authority (between `://` and the next `/`, `?` or `#`) holding more than one `@` is
+/// refused before it is parsed: a password holding an `@` that is not percent-encoded, whose
+/// rest a parser would take for the host.
+fn admitted(url: &str) -> Result<tokio_postgres::Config, StoreError> {
+    const FORM: &str = "postgres://user:password@host:port/database";
+    if let Some((_, rest)) = url.split_once("://") {
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+        if authority.matches('@').count() > 1 {
+            return Err(StoreError::Backend(format!(
+                "database_url holds more than one @ before its host: percent-encode each @ in \
+                 the user name and password as %40 ({FORM})"
+            )));
+        }
+    }
+    let parsed = url.parse::<tokio_postgres::Config>().map_err(|_| {
+        StoreError::Backend(format!(
+            "database_url is not a PostgreSQL connection URL: {FORM}"
+        ))
+    })?;
+    if parsed.get_hosts().is_empty() && parsed.get_hostaddrs().is_empty() {
+        return Err(StoreError::Backend(format!(
+            "database_url names no host: {FORM}"
+        )));
+    }
+    Ok(parsed)
+}
+
+/// The hosts and ports `database_url` names, as `host:port`: never its user or password, nor a
+/// host holding an `@`, which may be the rest of a password.
 fn hosts(database: &Database) -> String {
-    let Ok(config) = database.url.parse::<tokio_postgres::Config>() else {
-        return "the host database_url names".to_owned();
+    const UNNAMED: &str = "the host database_url names";
+    let Ok(config) = admitted(&database.url) else {
+        return UNNAMED.to_owned();
     };
     let ports = config.get_ports();
-    config
+    let named = config
         .get_hosts()
         .iter()
         .enumerate()
@@ -289,15 +323,19 @@ fn hosts(database: &Database) -> String {
                 #[cfg(unix)]
                 tokio_postgres::config::Host::Unix(path) => path.display().to_string(),
             };
+            if host.contains('@') {
+                return None;
+            }
             let port = ports
                 .get(index)
                 .or_else(|| ports.first())
                 .copied()
                 .unwrap_or(5432);
-            format!("{host}:{port}")
+            Some(format!("{host}:{port}"))
         })
-        .collect::<Vec<_>>()
-        .join(", ")
+        .collect::<Option<Vec<_>>>()
+        .filter(|named| !named.is_empty());
+    named.map_or_else(|| UNNAMED.to_owned(), |named| named.join(", "))
 }
 
 /// `error` from opening or migrating `database`, and where no connection was made, where it
