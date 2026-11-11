@@ -357,6 +357,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "crates/spindle-cli/tests/spindle-cli/trusted_caller.rs::a_command_reading_the_caller_runs_for_the_caller_the_request_proves",
     ),
     shipped(
+        "Execution",
+        "Reads beside commands",
+        "An HTTP run answers every read while a command runs: a view, GET /api/model, GET /api/events and every GET /__spindle/ route are each answered on a thread of their own, from the state the last finished command left, never part of a command, on the memory and SQLite stores. Commands and the reset still run one at a time in arrival order; a slow external call holds the next command, never a read.",
+        "/docs/concepts/environment-and-admission",
+        "crates/spindle-cli/tests/spindle-cli/concurrent_reads.rs::reads_are_answered_from_the_last_committed_write_while_a_command_is_held",
+    ),
+    shipped(
         "Conformance",
         "Scenario replay",
         "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: an entity it arranges with setup is written into the store of the component that owns it, captures feed later steps, view asserts are checked, and the first divergent step is named and ends the run.",

@@ -192,7 +192,7 @@ fn unnamed(events: &[RecordedEvent]) -> bool {
 pub struct Target {
     log: PostgresEventStore,
     tenant: TenantId,
-    runtime: tokio::runtime::Runtime,
+    runtime: std::sync::Arc<tokio::runtime::Runtime>,
 }
 
 impl std::fmt::Debug for Target {
@@ -234,7 +234,7 @@ impl Target {
                 other => break other?,
             }
         };
-        let (log, runtime) = opened.into_parts();
+        let (log, runtime) = opened.into_parts()?;
         Ok(Self {
             log,
             tenant: TenantId::new(TENANT).map_err(backend)?,

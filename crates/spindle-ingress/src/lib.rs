@@ -31,7 +31,11 @@
 //! `Listener::bind` (feature `listener`) owns the socket and a hyper HTTP/1.1 server on a thread
 //! of its own; every request for a route of the [`Surface`] arrives as an `Exchange` on
 //! `Listener::next`, so the [`spindle_host::Host`] that answers it stays on the caller's thread
-//! (`Exchange::serve`, which answers it through the router).
+//! (`Exchange::serve`, which answers it through the router). `Listener::bind_reading` is given
+//! the host's [`spindle_host::Reader`] as well, and answers every read through it on a thread of
+//! its own instead (a view whose store the reader reads, `GET /api/model`, `GET /api/events`, the
+//! metrics and the topology), so a read never waits for a command; commands and the reset still
+//! arrive on `Listener::next`, one at a time in arrival order.
 //!
 //! Beside those, a surface bound to `http-loopback` serves the routes a generic model console
 //! reads ([`Surface::with_console`], [`Console`]): `GET /api/model`, the IR as
@@ -48,9 +52,10 @@
 //! panel's page ([`Surface::with_panel`], [`PANEL_MEDIA`] with [`PANEL_POLICY`]), `503` where it
 //! was given none; `GET /__spindle/metrics` answers the run's metrics as the Prometheus text
 //! format ([`METRICS_MEDIA`]): the requests counted, the host's counters per component, the rows
-//! each entity holds, the resets and the external causes answered, read on the host's thread as
-//! an `Exchange` (`Exchange::metrics`). The run's decider notes each external cause it answers on
-//! the recorder ([`Recorder::answered`], an [`ExternalAnswer`] with its [`AnswerSource`]); the
+//! each entity holds, the resets and the external causes answered, read through the host's reader
+//! beside its thread, or on it as an `Exchange` (`Exchange::metrics`). The run's decider notes
+//! each external cause it answers on the recorder ([`Recorder::answered`], an [`ExternalAnswer`]
+//! with its [`AnswerSource`]); the
 //! record of a request lists every one asked while it was answered, with the command that
 //! asked. A reset clears no count and no record. Without a recorder every path under the prefix
 //! answers `404`.

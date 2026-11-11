@@ -24,6 +24,7 @@
 //! `state move` marks when it copies them in (it copies those of 0.7.0 to 0.10.0 naming theirs).
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use eventlog_core::{
@@ -35,7 +36,8 @@ use rustls::RootCertStore;
 use rustls::pki_types::CertificateDer;
 use rustls::pki_types::pem::PemObject;
 
-use crate::sqlite::{Log, LogStore, PREFIX, Visit, backend};
+use crate::sqlite::{Log, LogStore, PREFIX, SharedReading, Visit, backend};
+use crate::store::Reading;
 use crate::store::StoreError;
 
 /// Instances in one component's tables of a PostgreSQL database.
@@ -199,7 +201,7 @@ impl LogStore<PostgresEventStore> {
                 .block_on(PostgresEventStore::local(config, options))
                 .map_err(|error| unreachable_hint(error, database))?
         };
-        LogStore::on(log, runtime)
+        LogStore::on(log, Arc::new(runtime), None)
     }
 }
 
@@ -247,6 +249,14 @@ impl Log for PostgresEventStore {
             visit(event)?;
         }
         Ok(())
+    }
+
+    /// Reads through the store's own pool and runtime ([`LogStore::shared`]): each read takes a
+    /// connection of the pool for one statement, as the writer does between its statements, so
+    /// a read holds no lock and never the writer, and the store opens no connection beyond its
+    /// pool's `database_pool`.
+    fn reading(store: &LogStore<Self>) -> Option<Arc<dyn Reading>> {
+        Some(Arc::new(SharedReading(store.shared())))
     }
 }
 

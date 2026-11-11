@@ -25,6 +25,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 #[cfg(feature = "sqlite")]
 use std::path::Path;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(feature = "sqlite")]
+use std::sync::{Condvar, Mutex, PoisonError};
 
 #[cfg(feature = "sqlite")]
 use eventlog_core::EventStore;
@@ -38,7 +43,7 @@ use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::store::{
-    Change, Removal, Row, Scan, Scanned, Store, StoreError, Stored, Write, first_writes,
+    Change, Reading, Removal, Row, Scan, Scanned, Store, StoreError, Stored, Write, first_writes,
     identity_from_key, moved,
 };
 
@@ -83,10 +88,12 @@ const FEED_PAGE: usize = 500;
 pub(crate) type Visit<'a> = dyn FnMut(RecordedEvent) -> Result<(), StoreError> + 'a;
 
 mod sealed {
+    use std::sync::Arc;
+
     use eventlog_core::{AtomicEventStore, TenantId};
 
-    use super::Visit;
-    use crate::store::StoreError;
+    use super::{LogStore, Visit};
+    use crate::store::{Reading, StoreError};
 
     /// An eventlog event store a [`super::LogStore`] keeps instances in: it appends groups, and
     /// hands every event of a tenant to `visit` in commit order, from one consistent point of
@@ -108,6 +115,13 @@ mod sealed {
             tenant: &TenantId,
             visit: &mut Visit<'_>,
         ) -> Result<(), StoreError>;
+
+        /// A new reading handle on `store` ([`crate::Store::reading`]), or `None` where none
+        /// can be had: SQLite reads on connections of its own ([`super::SqliteReading`]), a
+        /// PostgreSQL store through its own pool ([`LogStore::shared`]).
+        fn reading(store: &LogStore<Self>) -> Option<Arc<dyn Reading>>
+        where
+            Self: Sized;
     }
 }
 
@@ -116,9 +130,26 @@ pub(crate) use sealed::Log;
 /// Instances in an eventlog event store: one SQLite database file ([`SqliteStore`]) or one
 /// component's tables of a PostgreSQL database (`PostgresStore`).
 pub struct LogStore<L> {
-    log: L,
+    /// The event store, shared with the store's reading handle where that reads through it.
+    log: Arc<L>,
     tenant: TenantId,
-    runtime: tokio::runtime::Runtime,
+    /// What drives the log's calls: the store's own, shared with its reading handle.
+    runtime: Arc<tokio::runtime::Runtime>,
+    /// The file a SQLite store keeps, which its reading handle opens connections to.
+    #[cfg_attr(not(feature = "sqlite"), allow(dead_code))]
+    path: Option<PathBuf>,
+    /// Its reading handle, once one was asked for.
+    reading: Option<Arc<dyn Reading>>,
+    /// Set when the store is closed ([`Drop`]): a SQLite reading handle then opens no further
+    /// connection by its path, which a reset may move aside and open again empty.
+    retired: Arc<AtomicBool>,
+}
+
+/// The store is closed: its reading handle opens no further connection by its path.
+impl<L> Drop for LogStore<L> {
+    fn drop(&mut self) {
+        self.retired.store(true, Ordering::SeqCst);
+    }
 }
 
 /// Instances in one SQLite database file.
@@ -141,34 +172,94 @@ impl LogStore<SqliteEventStore> {
     /// # Errors
     /// [`StoreError::Backend`] when the file cannot be opened or provisioned.
     pub fn open(path: &Path) -> Result<Self, StoreError> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .map_err(|error| StoreError::Backend(error.to_string()))?;
+        Self::opening(path, true, sqlite_runtime()?)
+    }
+
+    /// Opens the database at `path`, which a store opened before provisioned, on a connection of
+    /// its own driven by `runtime`: what a reading handle reads through.
+    fn open_existing(
+        path: &Path,
+        runtime: Arc<tokio::runtime::Runtime>,
+    ) -> Result<Self, StoreError> {
+        Self::opening(path, false, runtime)
+    }
+
+    fn opening(
+        path: &Path,
+        create: bool,
+        runtime: Arc<tokio::runtime::Runtime>,
+    ) -> Result<Self, StoreError> {
         let location = path.to_str().ok_or_else(|| {
             StoreError::Backend(format!("{} is not a UTF-8 path", path.display()))
         })?;
-        let log = runtime
-            .block_on(SqliteEventStore::open(location, PREFIX))
-            .map_err(backend)?;
-        Self::on(log, runtime)
+        let log = if create {
+            runtime.block_on(SqliteEventStore::open(location, PREFIX))
+        } else {
+            runtime.block_on(SqliteEventStore::open_existing(location, PREFIX))
+        }
+        .map_err(backend)?;
+        Self::on(log, runtime, Some(path.to_owned()))
     }
 }
 
+/// A runtime of its own for a SQLite store's log calls: one thread, no driver, so it holds no
+/// descriptor.
+#[cfg(feature = "sqlite")]
+fn sqlite_runtime() -> Result<Arc<tokio::runtime::Runtime>, StoreError> {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .map(Arc::new)
+        .map_err(|error| StoreError::Backend(error.to_string()))
+}
+
 impl<L: Log> LogStore<L> {
-    /// The store on `log`, every call blocking on `runtime`.
-    pub(crate) fn on(log: L, runtime: tokio::runtime::Runtime) -> Result<Self, StoreError> {
+    /// The store on `log`, every call blocking on `runtime`; `path` is the file a SQLite store
+    /// keeps.
+    pub(crate) fn on(
+        log: L,
+        runtime: Arc<tokio::runtime::Runtime>,
+        path: Option<PathBuf>,
+    ) -> Result<Self, StoreError> {
         let tenant = TenantId::new(TENANT).map_err(backend)?;
         Ok(Self {
-            log,
+            log: Arc::new(log),
             tenant,
             runtime,
+            path,
+            reading: None,
+            retired: Arc::default(),
         })
     }
 
+    /// Another store on the same event store, tenant and runtime, as the reading handle of a
+    /// store whose event store reads from any thread through a pool of its own (PostgreSQL):
+    /// its reads take the pool's connections one statement at a time beside the writer's, and
+    /// open none of their own.
+    #[cfg(feature = "postgres")]
+    pub(crate) fn shared(&self) -> Self {
+        Self {
+            log: Arc::clone(&self.log),
+            tenant: self.tenant.clone(),
+            runtime: Arc::clone(&self.runtime),
+            path: None,
+            reading: None,
+            retired: Arc::default(),
+        }
+    }
+
     /// The event store and the runtime its calls block on: what a state move appends through.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] where a reading handle still reads the event store.
     #[cfg(all(feature = "sqlite", feature = "postgres"))]
-    pub(crate) fn into_parts(self) -> (L, tokio::runtime::Runtime) {
-        (self.log, self.runtime)
+    pub(crate) fn into_parts(self) -> Result<(L, Arc<tokio::runtime::Runtime>), StoreError> {
+        let log = Arc::clone(&self.log);
+        let runtime = Arc::clone(&self.runtime);
+        drop(self);
+        let log = Arc::try_unwrap(log).map_err(|_| {
+            StoreError::Backend("the store is still read through a reading handle".to_owned())
+        })?;
+        Ok((log, runtime))
     }
 
     fn stream(&self, entity: &str, identity: &Value) -> Result<StreamId, StoreError> {
@@ -391,10 +482,46 @@ impl<L: Log> Store for LogStore<L> {
         }
     }
 
+    fn scan(&mut self, entity: &str) -> Result<Scan, StoreError> {
+        self.scanned(entity)
+    }
+
+    fn counts(&mut self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
+        self.counted(entities)
+    }
+
+    /// Asked once, and the same handle answered after: a SQLite store's reads on connections
+    /// of its own ([`SqliteReading`]), a PostgreSQL store's through its own pool
+    /// ([`LogStore::shared`]).
+    fn reading(&mut self) -> Option<Arc<dyn Reading>> {
+        if self.reading.is_none() {
+            self.reading = L::reading(self);
+        }
+        self.reading.clone()
+    }
+}
+
+/// The reading handle of a store whose event store reads from any thread through a pool of its
+/// own: another [`LogStore`] on the same event store and runtime ([`LogStore::shared`]).
+#[cfg(feature = "postgres")]
+pub(crate) struct SharedReading<L>(pub(crate) LogStore<L>);
+
+#[cfg(feature = "postgres")]
+impl<L: Log> Reading for SharedReading<L> {
+    fn scan(&self, entity: &str) -> Result<Scan, StoreError> {
+        self.0.scanned(entity)
+    }
+
+    fn counts(&self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
+        self.0.counted(entities)
+    }
+}
+
+impl<L: Log> LogStore<L> {
     /// Reads the entity's stream and one event per instance ([`LogStore::scan_named`]), or, on a
     /// log that may hold writes naming no instances, the whole log ([`LogStore::scan_log`]): a
     /// SQLite file, or a PostgreSQL store marked as holding them ([`MARKS`]).
-    fn scan(&mut self, entity: &str) -> Result<Scan, StoreError> {
+    fn scanned(&self, entity: &str) -> Result<Scan, StoreError> {
         if L::UNMARKED || self.marked()? {
             return self.scan_log(entity);
         }
@@ -406,7 +533,7 @@ impl<L: Log> Store for LogStore<L> {
     /// hold writes naming no instances and for an entity whose stream holds one, from one read
     /// of the whole log for all of them ([`LogStore::count_log`]), where a scan of each reads the
     /// whole log again.
-    fn counts(&mut self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
+    fn counted(&self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
         if L::UNMARKED || self.marked()? {
             return self.count_log(entities);
         }
@@ -667,6 +794,176 @@ impl Log for SqliteEventStore {
             }
             position = page.next_position;
         }
+    }
+
+    /// Reads the same file on connections of its own, which share one runtime: one opened with
+    /// the handle, more as reads that run at once need them, up to as many as the machine runs
+    /// threads at once (at least 2). `None` where no connection could be opened.
+    fn reading(store: &LogStore<Self>) -> Option<Arc<dyn Reading>> {
+        let path = store.path.clone()?;
+        let runtime = sqlite_runtime().ok()?;
+        let first = SqliteStore::open_existing(&path, Arc::clone(&runtime)).ok()?;
+        let cap = std::thread::available_parallelism()
+            .map_or(2, std::num::NonZero::get)
+            .max(2);
+        Some(Arc::new(SqliteReading {
+            path,
+            runtime,
+            cap,
+            connections: Mutex::new(Connections {
+                idle: vec![first],
+                live: 1,
+                waiting: 0,
+            }),
+            returned: Condvar::new(),
+            retired: Arc::clone(&store.retired),
+        }))
+    }
+}
+
+/// How many connections a [`SqliteReading`] keeps open beyond those its reads hold, when no read
+/// waits for one.
+#[cfg(feature = "sqlite")]
+const IDLE: usize = 2;
+
+/// The reading handle of a [`SqliteStore`]: the file, and its connections. Reads that run at
+/// once each read on a connection of their own, up to `cap` of them; a read beyond that waits for
+/// one handed back. Once no read waits, at most [`IDLE`] are kept for the next reads and the rest
+/// closed.
+#[cfg(feature = "sqlite")]
+struct SqliteReading {
+    path: PathBuf,
+    /// What drives every connection's log calls.
+    runtime: Arc<tokio::runtime::Runtime>,
+    /// How many connections may be open at once.
+    cap: usize,
+    connections: Mutex<Connections>,
+    /// Signalled whenever a connection is handed back or given up.
+    returned: Condvar,
+    /// The store this handle reads was closed ([`Drop`]): the file at its path may be another
+    /// now, so reads take turns on the connections already open.
+    retired: Arc<AtomicBool>,
+}
+
+/// The connections of a [`SqliteReading`].
+#[cfg(feature = "sqlite")]
+struct Connections {
+    /// Those no read holds now.
+    idle: Vec<SqliteStore>,
+    /// How many are open, idle or held, or being opened.
+    live: usize,
+    /// How many reads wait for one.
+    waiting: usize,
+}
+
+#[cfg(feature = "sqlite")]
+impl SqliteReading {
+    /// Runs `read` on a connection no other read holds ([`SqliteReading::connection`]); hands it
+    /// back for a read that waits, or keeps it idle up to [`IDLE`], and closes it otherwise or
+    /// where the read failed.
+    fn with<T>(
+        &self,
+        read: impl FnOnce(&mut SqliteStore) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        let mut connection = self.connection()?;
+        let read = read(&mut connection);
+        let mut connections = self.lock();
+        let mut closed = Vec::new();
+        if read.is_ok() {
+            connections.idle.push(connection);
+        } else {
+            connections.live -= 1;
+            closed.push(connection);
+        }
+        // A read woken for a connection counts as waiting until it runs again, so a burst can
+        // leave more idle than any read waits for: the last read of a burst closes them.
+        let kept = IDLE.max(connections.waiting);
+        while connections.idle.len() > kept {
+            if let Some(connection) = connections.idle.pop() {
+                connections.live -= 1;
+                closed.push(connection);
+            }
+        }
+        drop(connections);
+        self.returned.notify_all();
+        drop(closed);
+        read
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Connections> {
+        self.connections
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Waits for a connection to be handed back or given up.
+    fn wait<'a>(
+        &self,
+        mut connections: std::sync::MutexGuard<'a, Connections>,
+    ) -> std::sync::MutexGuard<'a, Connections> {
+        connections.waiting += 1;
+        let mut connections = self
+            .returned
+            .wait(connections)
+            .unwrap_or_else(PoisonError::into_inner);
+        connections.waiting -= 1;
+        connections
+    }
+
+    /// A connection no other read holds: an idle one, else a new one while fewer than `cap` are
+    /// open, else the next one handed back. A new one is opened only while the store is open, and
+    /// kept only where it still was once the connection opened: the path names the store's own
+    /// file until the store is closed, and the file is moved aside only after that.
+    fn connection(&self) -> Result<SqliteStore, StoreError> {
+        let mut connections = self.lock();
+        loop {
+            if let Some(connection) = connections.idle.pop() {
+                return Ok(connection);
+            }
+            if self.retired.load(Ordering::SeqCst) {
+                if connections.live == 0 {
+                    return Err(StoreError::Backend(
+                        "the store was closed while it was read".to_owned(),
+                    ));
+                }
+                connections = self.wait(connections);
+                continue;
+            }
+            if connections.live >= self.cap {
+                connections = self.wait(connections);
+                continue;
+            }
+            connections.live += 1;
+            drop(connections);
+            let opened = SqliteStore::open_existing(&self.path, Arc::clone(&self.runtime));
+            let open = !self.retired.load(Ordering::SeqCst);
+            connections = self.lock();
+            match opened {
+                Ok(connection) if open => return Ok(connection),
+                Ok(_) => {
+                    connections.live -= 1;
+                    self.returned.notify_all();
+                }
+                Err(error) => {
+                    connections.live -= 1;
+                    self.returned.notify_all();
+                    if open {
+                        return Err(error);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "sqlite")]
+impl Reading for SqliteReading {
+    fn scan(&self, entity: &str) -> Result<Scan, StoreError> {
+        self.with(|connection| connection.scan(entity))
+    }
+
+    fn counts(&self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
+        self.with(|connection| connection.counts(entities))
     }
 }
 

@@ -86,8 +86,8 @@ pub use sqlite::SqliteStore;
 #[cfg(all(feature = "sqlite", feature = "postgres"))]
 pub use state_move::{Lock as StateLock, Moved, Source as StateSource, Target as StateTarget};
 pub use store::{
-    Change, EVERY_INSTANCE, MemoryStore, Removal, Row, Scan, Scanned, Store, StoreError, Stored,
-    Write,
+    Change, EVERY_INSTANCE, MemoryStore, Reading, Removal, Row, Scan, Scanned, Store, StoreError,
+    Stored, Write,
 };
 pub use supported::{check as runs, selects, takes};
 

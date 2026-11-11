@@ -96,6 +96,10 @@ pub const CASES: &[Case] = &[
         name: "the_counts_are_the_rows_each_scan_answers",
         run: the_counts_are_the_rows_each_scan_answers,
     },
+    Case {
+        name: "a_reading_handle_reads_each_write_whole_as_it_lands",
+        run: a_reading_handle_reads_each_write_whole_as_it_lands,
+    },
 ];
 
 fn row(state: &str, title: &str) -> Row {
@@ -857,4 +861,60 @@ fn the_counts_are_the_rows_each_scan_answers(store: &mut dyn Store) {
         &change(TASK, &gone, None, row("Open", "again")),
     );
     assert_eq!(counted(store)[TASK], 2, "{case}");
+}
+
+/// Where the store gives a reading handle ([`Store::reading`]), it reads what the store holds as
+/// each write lands, a group of writes whole, and nothing of a group the store refused; it counts
+/// as the store counts. A store that gives none passes as it is.
+fn a_reading_handle_reads_each_write_whole_as_it_lands(store: &mut dyn Store) {
+    let case = "a_reading_handle_reads_each_write_whole_as_it_lands";
+    let Some(reading) = store.reading() else {
+        return;
+    };
+    let entities = ENTITIES
+        .iter()
+        .map(|entity| (*entity).to_owned())
+        .collect::<Vec<_>>();
+    let same = |store: &mut dyn Store, what: &str| {
+        for entity in ENTITIES {
+            let read = reading
+                .scan(entity)
+                .unwrap_or_else(|error| panic!("{case}: {what}: the handle reads: {error}"));
+            assert_eq!(
+                read,
+                scanned(case, store, entity),
+                "{case}: {what}: the handle reads {entity} as the store holds it"
+            );
+        }
+        let counts = reading
+            .counts(&entities)
+            .unwrap_or_else(|error| panic!("{case}: {what}: the handle counts: {error}"));
+        let held = store
+            .counts(&entities)
+            .unwrap_or_else(|error| panic!("{case}: {what}: the store counts: {error}"));
+        assert_eq!(
+            counts, held,
+            "{case}: {what}: the handle counts as the store"
+        );
+    };
+    same(store, "empty");
+    let (first, second, other) = (json!("t1"), json!("t2"), json!("o1"));
+    commit(case, store, &change(TASK, &first, None, row("Open", "1")));
+    same(store, "a creation");
+    store
+        .commit_all(&[
+            Write::Commit(change(TASK, &second, None, row("Open", "2"))),
+            Write::Commit(change(OTHER, &other, None, row("Open", "o"))),
+        ])
+        .unwrap_or_else(|error| panic!("{case}: the writes commit together: {error}"));
+    same(store, "writes committed together");
+    let one = held(case, store, &first);
+    let refused = store.commit_all(&[
+        Write::Commit(change(TASK, &first, Some(one.version), row("Done", "1"))),
+        Write::Commit(change(TASK, &second, None, row("Open", "again"))),
+    ]);
+    assert!(refused.is_err(), "{case}: a creation of a held identity");
+    same(store, "a refused group");
+    commit_removal(case, store, &removal(&first, one.version));
+    same(store, "a removal");
 }

@@ -114,6 +114,9 @@ pub enum Command {
     /// and each outcome's subject), `GET /api/events` (`{"events": [...]}`, every event published
     /// so far, in order) and `POST /api/reset` (empties every store, `{"emptied": [...]}`); a
     /// route the binding or ESS publishes at one of those paths exits 1 before listening.
+    /// Commands and the reset run one at a time, in arrival order. Reads are answered beside
+    /// them, each on a thread of its own, from the state the last finished command left: a view,
+    /// `GET /api/model`, `GET /api/events` and every `GET /__spindle/` route.
     ///
     /// A command or view this ingress cannot route (such as a view a binding answers other than
     /// as `rows`, or one whose parameter no single query value carries), a command the kernel does
@@ -148,8 +151,9 @@ pub enum Command {
     /// 64 KiB or any other reply fails the command `undecided` and writes nothing (`501` when
     /// served). An unset variable, a URL other than `http://` or carrying userinfo, or a
     /// `timeout_ms` outside 1 to 30000 exits 1 before the first request. A call blocks every
-    /// other command until it is answered or times out. With `--observe`, each such cause is
-    /// listed and counted with the source `call`, or `unanswered` where its call failed.
+    /// other command until it is answered or times out; a served read does not wait for it. With
+    /// `--observe`, each such cause is listed and counted with the source `call`, or
+    /// `unanswered` where its call failed.
     ///
     /// `POST /api/reset` may carry a world as its JSON body, each key optional: `{"rows":
     /// [{"entity", "identity", "state", "fields"}], "decisions": {...}, "mint": <seed>}`. Every

@@ -11,14 +11,14 @@
 //! `emits` from a command to each event its outcomes emit; `carries` from an event to each event
 //! binding it travels; `invokes` from a binding to the command it invokes.
 //!
-//! Read when asked, on the host's thread, from the same numbers as the metrics ([`super::metrics`])
-//! and the request log: a `routes` edge counts the requests of its route by status class from the
-//! [`Recorder`], with the sequences of its latest five records still in the ring; an `asks` edge
-//! the answers to its cause by source, from the recorder; an `emits` edge the events of that kind
-//! its command appended, counted where the store commits them ([`Host::emitted`]): a set
-//! outcome that publishes once per changed row counts every row, an event that no write carries,
-//! as one of an outcome without a subject or of a set outcome that selected no row, counts
-//! nothing, and the edges into one event add up to `spindle_events_appended_total`; from the
+//! Read when asked, beside the host's thread or on it, from the same numbers as the metrics
+//! ([`super::metrics`]) and the request log: a `routes` edge counts the requests of its route by
+//! status class from the [`Recorder`], with the sequences of its latest five records still in the
+//! ring; an `asks` edge the answers to its cause by source, from the recorder; an `emits` edge the
+//! events of that kind its command appended, counted where the store commits them
+//! ([`Reader::emitted`]): a set outcome that publishes once per changed row counts every row, an
+//! event that no write carries, as one of an outcome without a subject or of a set outcome that
+//! selected no row, counts nothing, and the edges into one event add up to `spindle_events_appended_total`; from the
 //! host's counters, a `carries` edge the envelopes its binding sent, and an `invokes` edge the
 //! envelopes its binding delivered or, for a periodic binding, the ticks its timer fired. A
 //! `contains` edge carries nothing. Reading it counts nothing.
@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 
 use ess_compiler::ir::{ResolvedCondition, ResolvedOutcome};
 use serde_json::{Map, Value, json};
-use spindle_host::Host;
+use spindle_host::Reader;
 use spindle_telemetry::{Carried, Key, Kind, Timed};
 
 use super::{AnswerSource, Recorder, Traffic};
@@ -72,7 +72,7 @@ struct Counted {
 }
 
 impl Counted {
-    fn of(host: &Host) -> Self {
+    fn of(host: &Reader) -> Self {
         let mut counted = Self::default();
         for component in host.placements().keys() {
             let Some(counters) = host.counters(component) else {
@@ -109,10 +109,11 @@ fn add<K: Ord>(map: &mut BTreeMap<K, u64>, key: K, value: u64) {
 
 /// The topology of the run `host` runs behind the routes `recorder` counts, with the numbers
 /// read now.
-pub(crate) fn topology(recorder: &Recorder, host: &Host) -> Value {
+pub(crate) fn topology(recorder: &Recorder, host: &Reader) -> Value {
     let ir = host.ir();
     let traffic = recorder.traffic();
     let counted = Counted::of(host);
+    let emitted = host.emitted();
     let specification = ir.system().to_string();
     let mut graph = Graph::default();
 
@@ -190,8 +191,7 @@ pub(crate) fn topology(recorder: &Recorder, host: &Host) -> Value {
             }
         }
         for event in events {
-            let count = host
-                .emitted()
+            let count = emitted
                 .get(&(name.to_string(), event.clone()))
                 .copied()
                 .unwrap_or_default();

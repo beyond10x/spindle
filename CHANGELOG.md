@@ -32,7 +32,12 @@ are Spindle's releases.
   left open elsewhere on the server never delays it, another process's commits on the same tables
   never wait for it, and it holds the entity's rows in memory, not the log. The rows the host
   counts when the store opens (`Store::counts`, for `spindle_entity_rows`) are read from each
-  entity's own stream alone, no row read. The new `b10x-spindle store migrate <spec>
+  entity's own stream alone, no row read. Its reading handle (`Store::reading`) reads through the
+  store's own pool beside the writer, one statement per connection taken and no lock held, and
+  opens no connection beyond `database_pool`, so the connection budget is unchanged and `GET`
+  views, `/api/model`, `/api/events` and `/__spindle/*` read a postgres-bound component off the
+  host's thread as they read a SQLite one; a reset, which empties its tables in place, waits for
+  the reads already running, and reads wait for the reset. The new `b10x-spindle store migrate <spec>
   --environment <env>` creates every postgres-bound component's tables with the owner role,
   idempotent (a second one started meanwhile waits for the first), one JSON line per component.
   The example environment is `examples/environments/postgres.toml`. `task check:postgres` runs the
@@ -82,6 +87,37 @@ are Spindle's releases.
   that name no instances (0.10.0's, which name none, and those before 0.7.0, which record no
   entity version) is scanned whole when its stream `spindle:log` `unnamed-writes` exists, or
   when the entity's stream holds such a write.
+
+## [0.13.0] - 2026-11-11
+
+### Fixed
+
+- A served `run` answers reads while a command runs (`story:concurrent-reads`). Every request was
+  handed to the host's thread and answered one at a time, so a view read, the readiness probe
+  `GET /api/model` and `GET /__spindle/metrics` waited behind any command, a slow external call
+  included; a downstream consumer's probe got no answer during one slow request. Now commands, the
+  reset, binding deliveries and ticks still run on the host's thread, one at a time in arrival
+  order, and every read is answered beside it on a thread of its own: a view, `GET /api/model`,
+  `GET /api/events`, `GET /__spindle/metrics` and `GET /__spindle/topology`
+  (`GET /__spindle/requests` and `/__spindle/ui` were already answered by the listener). A view
+  reads its store through the store's new reading handle (`Store::reading`): SQLite reads the file
+  on connections of its own under its write-ahead log, at most one per processor (at least 2), at
+  most 2 kept idle, all driven by one runtime; the memory store keeps each entity's rows as one
+  value a write replaces, copying only an entity a read still holds. So a read sees the store as
+  the last write that landed left it, never part of one, and neither waits for the other. The row
+  counts a reader reads move a whole write group at once, and the events it lists are kept in
+  chunks of 256, so a command never copies more than one chunk for a read. A reset hands readers
+  the emptied stores, and their counts, only once its world is loaded. The trusted-caller proof and the read
+  grants are checked on the read path as on the host's thread. A store with no reading handle, the
+  browser's IndexedDB store, is still read on the host's thread. `spindle_host::Reader` reads a
+  host from any thread, and `Listener::bind_reading` serves through one; the store contract gains
+  a case every reading handle passes. `Clock` is now `Send + Sync`, and `Host::published` and
+  `Host::emitted` answer owned values. Measured in debug builds on a machine at load 30 to 40, with
+  a command held 2 s by its external call: a view read and `GET /api/model` took 2.0 s at the median
+  before (each waited for the command) and 2.7 ms and 3.3 ms after on the memory store, 5.1 ms and
+  5.4 ms on SQLite; `GET /__spindle/requests` took 0.9 ms before and 2.2 ms after. Two view reads
+  of a store whose every scan takes 600 ms, sent together, answered the slower of the two in
+  1.20 s at the median with every read on the host's thread, as before, and 602 ms after.
 
 ## [0.12.1] - 2026-11-11
 

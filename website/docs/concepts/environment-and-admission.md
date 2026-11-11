@@ -106,7 +106,10 @@ call. The body is `spindle-external/1` JSON with `format`, `capability`, `comman
 | a timeout, a failure, another status, a body over 64 KiB or another body | the command fails as `undecided` and writes nothing; a served request is answered `501` |
 
 A call holds the thread that runs every command until it is answered or times out. A served run
-answers nothing else meanwhile.
+runs no other command meanwhile: commands, and the reset, run one at a time in arrival order.
+Reads do not wait for it. A view read, `GET /api/model`, `GET /api/events` and every
+`GET /__spindle/` route are answered beside that thread, from the state the last finished command
+left.
 
 The document never holds the secret. `secret_env` is the name of an environment variable, read
 when `run` starts and sent as `Authorization: Bearer <value>`. An unset variable stops `run` before
@@ -173,6 +176,10 @@ Two numbers bound the connections, and they are different numbers:
 - `database_connections`, a setting: the database's connection budget available to this
   deployment. It must hold every component's pool and one reserved connection, at least
   components x `database_pool` + 1, so it is always above the role's limit.
+
+Reads served beside the commands take no connection of their own: they take one from the
+component's pool for each statement and give it back, so a pool of 4 is shared by the writer and
+every read, and both numbers stay as above.
 
 For one component and the default pool of 4, the role above has `CONNECTION LIMIT 4` and `run`
 gets `database_connections` 8:
