@@ -235,10 +235,12 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     let signalled = signals()?;
     let environment = serving.environment;
     let scratch;
+    let _lock;
     let directory = match (serving.durable, serving.state) {
         (Some("sqlite"), Some(directory)) => {
             std::fs::create_dir_all(directory)
                 .with_context(|| format!("creating the state directory {}", directory.display()))?;
+            _lock = crate::state_lock::directory(directory)?;
             directory
         }
         (Some("sqlite"), None) => {

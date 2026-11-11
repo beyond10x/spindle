@@ -64,6 +64,7 @@ mod route_precedence;
 mod run;
 mod served_decisions;
 mod served_world;
+mod state_lock;
 mod state_move;
 mod topology;
 mod trusted_caller;
