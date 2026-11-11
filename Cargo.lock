@@ -1554,7 +1554,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-capability"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -1567,7 +1567,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-channel"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -1583,7 +1583,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-cli"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1620,7 +1620,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-conformance"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "ess-compiler",
  "ess-conformance",
@@ -1638,7 +1638,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-control"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "ess-compiler",
  "http-body-util",
@@ -1663,7 +1663,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-docs"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1673,7 +1673,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-firecracker"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "clap",
  "libc",
@@ -1690,7 +1690,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-host"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "ess-compiler",
  "ess-conformance",
@@ -1711,7 +1711,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-ingress"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "ess-compiler",
  "ess-conformance",
@@ -1734,7 +1734,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-kernel"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "ess-compiler",
  "ess-conformance",
@@ -1765,7 +1765,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-qemu"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "clap",
  "libc",
@@ -1782,7 +1782,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-spec"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -1794,7 +1794,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-store-browser"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "js-sys",
  "serde",
@@ -1810,7 +1810,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-target"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "ess-compiler",
  "rustix",
@@ -1825,7 +1825,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-telemetry"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "ess-compiler",
  "libc",
@@ -1840,7 +1840,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-timer"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -1852,7 +1852,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-wasm"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "ess-compiler",
  "ess-gen",
