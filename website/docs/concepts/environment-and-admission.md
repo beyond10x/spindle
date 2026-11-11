@@ -141,7 +141,7 @@ from settings, read as `SPINDLE_SETTING_<NAME>`:
 | `database_url` | `postgres://user:password@host:port/database`; required, never printed |
 | `database_ca` | a PEM CA bundle; the server is reached over TLS (`sslmode=require`) and verified against it. Required for a host that is not loopback or a Unix socket |
 | `database_schema` | the schema holding the tables; `public` by default |
-| `database_pool` | connections per component; 4 by default |
+| `database_pool` | connections per component; 4 by default. Reads run at most `database_pool` - 1 at a time (1 with a pool of 1), so one connection is always left for writes; a read over that waits its turn |
 | `database_connections` | the database's connection budget available to this deployment: at least components x `database_pool` + 1. Not the serving role's `CONNECTION LIMIT`. Required with `database_ca` |
 
 Without `database_ca`, a loopback or Unix-socket database is opened isolated, over plaintext, and
