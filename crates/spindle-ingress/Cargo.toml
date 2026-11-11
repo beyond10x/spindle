@@ -30,5 +30,6 @@ tokio = { version = "1", default-features = false, features = ["macros", "net", 
 ess-conformance.workspace = true
 jsonschema = { version = "0.52.1", default-features = false }
 spindle-capability = { path = "../spindle-capability" }
+spindle-host = { path = "../spindle-host" }
 spindle-spec = { path = "../spindle-spec" }
 tempfile = "3"

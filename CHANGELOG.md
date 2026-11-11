@@ -6,6 +6,30 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-11-11
+
+### Fixed
+
+- `GET /__spindle/metrics` no longer scans any store, and requests are no longer held behind it
+  (`story:metrics-read-without-scan`). Since 0.10.0 every read counted `spindle_entity_rows` by
+  scanning each entity's store, and a scan of a SQLite store reads its whole log, so one read
+  cost the log once per entity, on the host's thread, while every request waited. A downstream
+  consumer measured 42 s per read (504 commands, 125 entities, a few thousand rows) and its
+  readiness probe timed out during each. The host now keeps each entity's rows: counted once when
+  a store opens (one read of a SQLite store's log for all its entities, `Store::counts`), then
+  moved by each write that lands, so the gauge answers what it did, a reset included, without a
+  read. The kept counts see only the writes this process lands: one Spindle process writes a state
+  directory, and a second writer on the same store (another process on the same SQLite files)
+  moves rows the gauge shows only once the store is next opened. The gauge's `# HELP` line now
+  says so ("kept from the writes this process lands and taken once from its store when the store
+  opens"), the one line of the exposition whose bytes change. A family's series are found by an
+  index instead of a search of every series, and each sample's labels are escaped once; every
+  other byte of the exposition is as before. The regression test (500
+  commands, 100 entities, 5,000 events on SQLite, a debug build on a heavily loaded machine)
+  measured a read at 41.7 s to 56.3 s and a command sent during it at 53.4 s to 57.0 s before;
+  after, five reads took 31 ms to 45 ms and the commands 40 ms to 73 ms. The read still runs on
+  the host's thread, so a request that arrives during it waits for it, now for milliseconds.
+
 ## [0.12.0] - 2026-11-11
 
 ### Changed

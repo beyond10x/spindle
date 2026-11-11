@@ -92,6 +92,10 @@ pub const CASES: &[Case] = &[
         name: "a_commit_conditioned_on_a_scanned_entity_is_refused_after_another_write",
         run: a_commit_conditioned_on_a_scanned_entity_is_refused_after_another_write,
     },
+    Case {
+        name: "the_counts_are_the_rows_each_scan_answers",
+        run: the_counts_are_the_rows_each_scan_answers,
+    },
 ];
 
 fn row(state: &str, title: &str) -> Row {
@@ -790,4 +794,67 @@ fn commit_removal(case: &str, store: &mut dyn Store, removal: &Removal) {
             removal.entity, removal.identity
         )
     });
+}
+
+/// [`Store::counts`] for every entity of [`ENTITIES`] and one never written: as many as a scan of
+/// each answers rows, through creations, a change, a removal and a creation again.
+fn the_counts_are_the_rows_each_scan_answers(store: &mut dyn Store) {
+    let case = "the_counts_are_the_rows_each_scan_answers";
+    let never = "contract.tasks.Never".to_owned();
+    let mut entities = ENTITIES
+        .iter()
+        .map(|entity| (*entity).to_owned())
+        .collect::<Vec<_>>();
+    entities.push(never.clone());
+    let counted = |store: &mut dyn Store| {
+        let counts = store
+            .counts(&entities)
+            .unwrap_or_else(|error| panic!("{case}: the store counts: {error}"));
+        let scanned = entities
+            .iter()
+            .map(|entity| (entity.clone(), scan(case, store, entity).len()))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(counts, scanned, "{case}");
+        counts
+    };
+    assert_eq!(
+        counted(store),
+        BTreeMap::from([
+            (TASK.to_owned(), 0),
+            (OTHER.to_owned(), 0),
+            (never.clone(), 0)
+        ]),
+        "{case}"
+    );
+    let (kept, gone, other) = (json!("t1"), json!("t2"), json!("o1"));
+    commit(case, store, &change(TASK, &kept, None, row("Open", "kept")));
+    commit(case, store, &change(TASK, &gone, None, row("Open", "gone")));
+    commit(
+        case,
+        store,
+        &change(OTHER, &other, None, row("Open", "other")),
+    );
+    let version = held(case, store, &kept).version;
+    commit(
+        case,
+        store,
+        &change(TASK, &kept, Some(version), row("Done", "kept")),
+    );
+    let version = held(case, store, &gone).version;
+    commit_removal(case, store, &removal(&gone, version));
+    assert_eq!(
+        counted(store),
+        BTreeMap::from([
+            (TASK.to_owned(), 1),
+            (OTHER.to_owned(), 1),
+            (never.clone(), 0)
+        ]),
+        "{case}"
+    );
+    commit(
+        case,
+        store,
+        &change(TASK, &gone, None, row("Open", "again")),
+    );
+    assert_eq!(counted(store)[TASK], 2, "{case}");
 }

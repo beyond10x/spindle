@@ -1,0 +1,277 @@
+domain: lending.loans
+summary: A member joins and leaves; a loan is out until it is returned or forgotten; once its due time has passed it may be marked overdue. A borrower's loans are renewed together, and their returned loans purged together.
+entities:
+  - name: lending.loans.Loan
+    identity:
+      name: loan_id
+      type: String
+    fields:
+      - name: borrower
+        type: String
+      - name: due
+        type: Timestamp
+    lifecycle:
+      initial: Out
+      states: [Out, Overdue, Returned]
+      terminal: [Returned]
+      transitions:
+        - {name: mark_overdue, from: [Out], to: Overdue}
+        - {name: return, from: [Out, Overdue], to: Returned}
+  - name: lending.loans.Member
+    identity:
+      name: member_id
+      type: String
+    fields:
+      - name: name
+        type: String
+    lifecycle:
+      initial: Active
+      states: [Active, Lapsed]
+      terminal: [Lapsed]
+      transitions:
+        - {name: lapse, from: [Active], to: Lapsed}
+errors:
+  - name: lending.loans.NotOut
+    summary: The loan is already returned.
+    fields: []
+  - name: lending.loans.NoSuchLoan
+    summary: No loan carries the id.
+    fields: []
+  - name: lending.loans.NoSuchMember
+    summary: No member carries the id.
+    fields: []
+commands:
+  - name: lending.loans.Lend
+    input:
+      - name: loan_id
+        type: String
+      - name: borrower
+        type: String
+      - name: due
+        type: Timestamp
+    outcomes:
+      - name: lent
+        creates: lending.loans.Loan
+        instance: loan_id
+        sets:
+          borrower: input.borrower
+          due: input.due
+        emits: [lending.loans.Lent]
+        payload:
+          lending.loans.Lent:
+            loan_id: input.loan_id
+        summary: The book is lent until the due time.
+  - name: lending.loans.Return
+    input:
+      - name: loan_id
+        type: String
+    outcomes:
+      - name: returned
+        moves: lending.loans.Loan.return
+        instance: loan_id
+        emits: [lending.loans.Returned]
+        payload:
+          lending.loans.Returned:
+            loan_id: input.loan_id
+        summary: The book comes back.
+      - name: not-out
+        wrong_state: true
+        error: lending.loans.NotOut
+        summary: The loan is already returned.
+  - name: lending.loans.MarkOverdue
+    input:
+      - name: as_of
+        type: Timestamp
+    outcomes:
+      - name: marked
+        moves: lending.loans.Loan.mark_overdue
+        instances: {where: due <= input.as_of}
+        emits:
+          - lending.loans.LoansMarked
+          - {event: lending.loans.LoanMarked, each: changed}
+        payload:
+          lending.loans.LoansMarked:
+            count: {count: changed}
+          lending.loans.LoanMarked:
+            loan_id: {changed: loan_id}
+            borrower: {changed: borrower}
+            due: {changed: due}
+            was: {changed: state}
+        summary: Every loan still out whose due time is at or before the time given is marked overdue.
+  - name: lending.loans.Renew
+    input:
+      - name: borrower
+        type: String
+      - name: until
+        type: Timestamp
+    outcomes:
+      - name: renewed
+        updates: lending.loans.Loan
+        instances: {where: borrower == input.borrower}
+        sets:
+          due: input.until
+        emits: [lending.loans.Renewed]
+        payload:
+          lending.loans.Renewed:
+            borrower: input.borrower
+            count: {count: changed}
+        summary: Every loan of the borrower is due at the new time.
+  - name: lending.loans.Purge
+    input:
+      - name: borrower
+        type: String
+    outcomes:
+      - name: purged
+        deletes: lending.loans.Loan
+        instances:
+          where:
+            all:
+              - borrower == input.borrower
+              - state == Returned
+        emits:
+          - lending.loans.LoansPurged
+          - {event: lending.loans.LoanPurged, each: changed}
+        payload:
+          lending.loans.LoansPurged:
+            count: {count: changed}
+          lending.loans.LoanPurged:
+            loan_id: {changed: loan_id}
+        summary: Every returned loan of the borrower is removed.
+  - name: lending.loans.Forget
+    input:
+      - name: loan_id
+        type: String
+    outcomes:
+      - name: no-such-loan
+        unknown_instance: true
+        error: lending.loans.NoSuchLoan
+        summary: No loan carries the id.
+      - name: forgotten
+        deletes: lending.loans.Loan
+        instance: loan_id
+        emits: [lending.loans.Forgotten]
+        payload:
+          lending.loans.Forgotten: {loan_id: input.loan_id}
+        summary: The loan is forgotten, whatever its state.
+  - name: lending.loans.Join
+    input:
+      - name: member_id
+        type: String
+      - name: name
+        type: String
+    outcomes:
+      - name: joined
+        creates: lending.loans.Member
+        instance: member_id
+        sets:
+          name: input.name
+        emits: [lending.loans.Joined]
+        payload:
+          lending.loans.Joined: {member_id: input.member_id}
+        summary: The member joins.
+  - name: lending.loans.Leave
+    input:
+      - name: member_id
+        type: String
+    outcomes:
+      - name: no-such-member
+        unknown_instance: true
+        error: lending.loans.NoSuchMember
+        summary: No member carries the id.
+      - name: left
+        deletes: lending.loans.Member
+        instance: member_id
+        emits: [lending.loans.Left]
+        payload:
+          lending.loans.Left: {member_id: input.member_id}
+        summary: The member leaves.
+  - name: lending.loans.Lapse
+    input:
+      - name: member_id
+        type: String
+    outcomes:
+      - name: no-such-member
+        unknown_instance: true
+        error: lending.loans.NoSuchMember
+        summary: No member carries the id.
+      - name: lapsed
+        moves: lending.loans.Member.lapse
+        instance: member_id
+        emits: [lending.loans.Lapsed]
+        payload:
+          lending.loans.Lapsed: {member_id: input.member_id}
+        summary: The membership lapses.
+events:
+  - name: lending.loans.Lapsed
+    fields:
+      - name: member_id
+        type: String
+  - name: lending.loans.Forgotten
+    fields:
+      - name: loan_id
+        type: String
+  - name: lending.loans.Joined
+    fields:
+      - name: member_id
+        type: String
+  - name: lending.loans.Left
+    fields:
+      - name: member_id
+        type: String
+  - name: lending.loans.Lent
+    fields:
+      - name: loan_id
+        type: String
+  - name: lending.loans.Returned
+    fields:
+      - name: loan_id
+        type: String
+  - name: lending.loans.LoansMarked
+    fields:
+      - name: count
+        type: Integer
+  - name: lending.loans.LoanMarked
+    fields:
+      - name: loan_id
+        type: String
+      - name: borrower
+        type: String
+      - name: due
+        type: Timestamp
+      - name: was
+        type: lending.loans.Loan.State
+  - name: lending.loans.Renewed
+    fields:
+      - name: borrower
+        type: String
+      - name: count
+        type: Integer
+  - name: lending.loans.LoansPurged
+    fields:
+      - name: count
+        type: Integer
+  - name: lending.loans.LoanPurged
+    fields:
+      - name: loan_id
+        type: String
+views:
+  - name: lending.loans.MemberCard
+    source: lending.loans.Member
+    consistency: read_your_writes
+    fields:
+      - name: member_id
+        type: String
+      - name: name
+        type: String
+  - name: lending.loans.LoanCard
+    source: lending.loans.Loan
+    consistency: read_your_writes
+    fields:
+      - name: loan_id
+        type: String
+      - name: borrower
+        type: String
+      - name: due
+        type: Timestamp
+      - name: state
+        type: lending.loans.Loan.State

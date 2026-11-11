@@ -12,7 +12,7 @@
 //! answers and a change decided on a scan names ([`crate::Change::scanned`]), so a row of the
 //! entity written after the scan refuses the change.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use eventlog_core::{
@@ -150,6 +150,34 @@ impl SqliteStore {
         }
         Err(moved(scanned, actual))
     }
+
+    /// Hands every event of the tenant's feed to `each`, in commit order, a page of
+    /// [`FEED_PAGE`] at a time. Every page moves the position forward, or the read stops as a
+    /// backend error.
+    fn feed(
+        &self,
+        mut each: impl FnMut(RecordedEvent) -> Result<(), StoreError>,
+    ) -> Result<(), StoreError> {
+        let mut position = 0;
+        loop {
+            let page = self
+                .runtime
+                .block_on(self.log.read_feed(&self.tenant, position, FEED_PAGE))
+                .map_err(backend)?;
+            for event in page.events {
+                each(event)?;
+            }
+            if !page.has_more {
+                return Ok(());
+            }
+            if page.next_position <= position {
+                return Err(StoreError::Backend(format!(
+                    "the feed did not move past position {position}"
+                )));
+            }
+            position = page.next_position;
+        }
+    }
 }
 
 impl Store for SqliteStore {
@@ -276,48 +304,61 @@ impl Store for SqliteStore {
     fn scan(&mut self, entity: &str) -> Result<Scan, StoreError> {
         let version = self.entity_version(entity)?;
         let mut latest = BTreeMap::<String, Stored>::new();
-        let mut position = 0;
-        loop {
-            let page = self
-                .runtime
-                .block_on(self.log.read_feed(&self.tenant, position, FEED_PAGE))
-                .map_err(backend)?;
-            for event in page.events {
-                if event.stream_type != entity {
-                    continue;
-                }
-                if event.name == REMOVED {
-                    latest.remove(&event.stream_id);
-                    continue;
-                }
-                if event.name != ROW {
-                    continue;
-                }
-                let row = serde_json::from_value::<Row>(event.data)
-                    .map_err(|error| StoreError::Backend(format!("a stored row: {error}")))?;
-                latest.insert(
-                    event.stream_id,
-                    Stored {
-                        row,
-                        version: event.version,
-                    },
-                );
+        self.feed(|event| {
+            if event.stream_type != entity {
+                return Ok(());
             }
-            if !page.has_more {
-                break;
+            if event.name == REMOVED {
+                latest.remove(&event.stream_id);
+                return Ok(());
             }
-            if page.next_position <= position {
-                return Err(StoreError::Backend(format!(
-                    "the feed did not move past position {position}"
-                )));
+            if event.name != ROW {
+                return Ok(());
             }
-            position = page.next_position;
-        }
+            let row = serde_json::from_value::<Row>(event.data)
+                .map_err(|error| StoreError::Backend(format!("a stored row: {error}")))?;
+            latest.insert(
+                event.stream_id,
+                Stored {
+                    row,
+                    version: event.version,
+                },
+            );
+            Ok(())
+        })?;
         let rows = latest
             .into_iter()
             .map(|(identity, stored)| Ok((identity_from_key(&identity)?, stored)))
             .collect::<Result<_, StoreError>>()?;
         Ok(Scan { rows, version })
+    }
+
+    /// Reads the tenant's feed once, as [`Store::scan`] reads it, and keeps for each stream of
+    /// every entity of `entities` only whether its last `spindle.row` or `spindle.removed` event
+    /// is a row: one read for every entity, where a scan of each reads the whole feed again.
+    fn counts(&mut self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
+        let counted = entities.iter().collect::<BTreeSet<_>>();
+        let mut rests = BTreeMap::<(String, String), bool>::new();
+        self.feed(|event| {
+            if (event.name == ROW || event.name == REMOVED) && counted.contains(&event.stream_type)
+            {
+                rests.insert((event.stream_type, event.stream_id), event.name == ROW);
+            }
+            Ok(())
+        })?;
+        let mut counts = entities
+            .iter()
+            .map(|entity| (entity.clone(), 0))
+            .collect::<BTreeMap<_, _>>();
+        for ((entity, _), rests) in rests {
+            if !rests {
+                continue;
+            }
+            if let Some(count) = counts.get_mut(&entity) {
+                *count += 1;
+            }
+        }
+        Ok(counts)
     }
 }
 
