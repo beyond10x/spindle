@@ -72,3 +72,7 @@ mod trusted_caller;
 mod unserved;
 mod view_field_filters;
 mod view_list_parameter;
+
+/// The PostgreSQL advisory lock a case holds while it runs `GRANT … ON DATABASE`: cases granting
+/// on the one test database at once fail with "tuple concurrently updated".
+const DATABASE_GRANT_LOCK: i64 = 5_312_021_917;

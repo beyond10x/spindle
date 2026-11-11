@@ -404,7 +404,9 @@ fn adv_the_documented_serving_role_limit_and_budget_are_served() {
             "CREATE ROLE {role} LOGIN PASSWORD '{PASSWORD}' CONNECTION LIMIT 4; GRANT USAGE ON \
              SCHEMA {schema} TO {role}; GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN \
              SCHEMA {schema} TO {role}; GRANT USAGE ON ALL SEQUENCES IN SCHEMA {schema} TO \
-             {role}; GRANT TEMPORARY ON DATABASE spindle TO {role}"
+             {role}; SELECT pg_advisory_xact_lock({}); GRANT TEMPORARY ON DATABASE spindle TO \
+             {role}",
+            crate::DATABASE_GRANT_LOCK
         ),
     );
     let serving = as_role(&url, &role, PASSWORD);

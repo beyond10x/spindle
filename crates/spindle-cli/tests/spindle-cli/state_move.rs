@@ -723,7 +723,10 @@ fn serving_role(schema: &str, limit: u32) -> String {
         format!("GRANT USAGE ON SCHEMA {schema} TO {role}"),
         format!("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {schema} TO {role}"),
         format!("GRANT USAGE ON ALL SEQUENCES IN SCHEMA {schema} TO {role}"),
-        format!("GRANT TEMPORARY ON DATABASE {database} TO {role}"),
+        format!(
+            "SELECT pg_advisory_xact_lock({}); GRANT TEMPORARY ON DATABASE {database} TO {role}",
+            crate::DATABASE_GRANT_LOCK
+        ),
     ]);
     role
 }

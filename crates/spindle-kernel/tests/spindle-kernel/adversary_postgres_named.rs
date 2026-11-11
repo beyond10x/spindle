@@ -10,8 +10,8 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Once};
 use std::time::{Duration, Instant};
 
 use eventlog_core::{
@@ -53,8 +53,12 @@ fn sql(statement: &str) {
     });
 }
 
+/// Created once per test process: cases running in parallel on a fresh database race their
+/// `CREATE SCHEMA IF NOT EXISTS` into a unique violation.
+static SCHEMA_CREATED: Once = Once::new();
+
 fn database() -> Database {
-    sql(&format!("CREATE SCHEMA IF NOT EXISTS {SCHEMA}"));
+    SCHEMA_CREATED.call_once(|| sql(&format!("CREATE SCHEMA IF NOT EXISTS {SCHEMA}")));
     let mut database = Database::new(url());
     database.schema = SCHEMA.to_owned();
     database

@@ -7,7 +7,7 @@
 //! component names no earlier run used.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Barrier, mpsc};
+use std::sync::{Arc, Barrier, Once, mpsc};
 use std::time::{Duration, Instant};
 
 use serde_json::json;
@@ -62,8 +62,12 @@ fn sql(url: &str, statement: &str) {
     });
 }
 
+/// Created once per test process: cases running in parallel on a fresh database race their
+/// `CREATE SCHEMA IF NOT EXISTS` into a unique violation.
+static SCHEMA_CREATED: Once = Once::new();
+
 fn database() -> Database {
-    sql(&url(), &format!("CREATE SCHEMA IF NOT EXISTS {SCHEMA}"));
+    SCHEMA_CREATED.call_once(|| sql(&url(), &format!("CREATE SCHEMA IF NOT EXISTS {SCHEMA}")));
     let mut database = Database::new(url());
     database.schema = SCHEMA.to_owned();
     database

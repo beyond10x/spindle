@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Barrier};
+use std::sync::{Arc, Barrier, Once};
 use std::time::{Duration, Instant};
 
 use serde_json::json;
@@ -50,8 +50,17 @@ fn sql(url: &str, statement: &str) {
     });
 }
 
+/// The PostgreSQL advisory lock a case holds while it runs `GRANT … ON DATABASE`, the one
+/// `spindle-cli`'s tests take: cases granting on the one test database at once fail with "tuple
+/// concurrently updated".
+const DATABASE_GRANT_LOCK: i64 = 5_312_021_917;
+
+/// Created once per test process: cases running in parallel on a fresh database race their
+/// `CREATE SCHEMA IF NOT EXISTS` into a unique violation.
+static SCHEMA_CREATED: Once = Once::new();
+
 fn database() -> Database {
-    sql(&url(), &format!("CREATE SCHEMA IF NOT EXISTS {SCHEMA}"));
+    SCHEMA_CREATED.call_once(|| sql(&url(), &format!("CREATE SCHEMA IF NOT EXISTS {SCHEMA}")));
     let mut database = Database::new(url());
     database.schema = SCHEMA.to_owned();
     database
@@ -541,7 +550,8 @@ fn adv2_a_serving_role_scans_a_log_it_never_scanned() {
                 "CREATE ROLE {role} LOGIN PASSWORD 'adv2' CONNECTION LIMIT 4; GRANT USAGE ON \
                  SCHEMA {schema} TO {role}; GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES \
                  IN SCHEMA {schema} TO {role}; GRANT USAGE ON ALL SEQUENCES IN SCHEMA {schema} \
-                 TO {role}; GRANT TEMPORARY ON DATABASE spindle TO {role}"
+                 TO {role}; SELECT pg_advisory_xact_lock({DATABASE_GRANT_LOCK}); GRANT \
+                 TEMPORARY ON DATABASE spindle TO {role}"
             ),
         );
         if let Some(revoke) = &revoke {
