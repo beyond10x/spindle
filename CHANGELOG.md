@@ -106,7 +106,9 @@ are Spindle's releases.
   finds a runtime crate of `spindle-cli`, the workspace crates and `eventlog-postgres` included,
   missing from the list. Each release page also carries one CycloneDX 1.5 SBOM,
   `b10x-spindle-<version>.cdx.json`, made by `cargo-cyclonedx` 0.5.9 for the four targets and listed
-  in `SHA256SUMS`.
+  in `SHA256SUMS`. Each job that builds an archive or the SBOM hashes it, and the publish job
+  checks every file against that hash before it writes `SHA256SUMS` from them, so a file changed
+  between its build and the release page fails the release.
 
 ### Changed
 
