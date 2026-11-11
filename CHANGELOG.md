@@ -6,6 +6,32 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- A served `run` answers reads while a command runs (`story:concurrent-reads`). Every request was
+  handed to the host's thread and answered one at a time, so a view read, the readiness probe
+  `GET /api/model` and `GET /__spindle/metrics` waited behind any command, a slow external call
+  included; a downstream consumer's probe got no answer during one slow request. Now commands, the
+  reset, binding deliveries and ticks still run on the host's thread, one at a time in arrival
+  order, and every read is answered beside it on a thread of its own: a view, `GET /api/model`,
+  `GET /api/events`, `GET /__spindle/metrics` and `GET /__spindle/topology`
+  (`GET /__spindle/requests` and `/__spindle/ui` were already answered by the listener). A view
+  reads its store through the store's new reading handle (`Store::reading`): SQLite reads the file
+  on connections of its own under its write-ahead log, and the memory store keeps its rows as one
+  value a write replaces, copied only while a read still holds it, so a read sees the store as the
+  last write that landed left it, never part of one, and neither waits for the other. A reset hands
+  readers the emptied stores only once its world is loaded. The trusted-caller proof and the read
+  grants are checked on the read path as on the host's thread. A store with no reading handle, the
+  browser's IndexedDB store, is still read on the host's thread. `spindle_host::Reader` reads a
+  host from any thread, and `Listener::bind_reading` serves through one; the store contract gains
+  a case every reading handle passes. `Clock` is now `Send + Sync`, and `Host::published` and
+  `Host::emitted` answer owned values. Measured in debug builds on a machine at load 30 to 40, with
+  a command held 2 s by its external call: a view read and `GET /api/model` took 2.0 s at the median
+  before (each waited for the command) and 2.7 ms and 3.3 ms after on the memory store, 5.1 ms and
+  5.4 ms on SQLite; `GET /__spindle/requests` took 0.9 ms before and 2.2 ms after. Two view reads
+  of a store whose every scan takes 600 ms, sent together, answered the slower of the two in
+  1.20 s at the median with every read on the host's thread, as before, and 602 ms after.
+
 ## [0.12.1] - 2026-11-11
 
 ### Fixed

@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
 use ess_compiler::EssIr;
@@ -17,7 +17,7 @@ use spindle_channel::{
 };
 use spindle_kernel::{
     Change, Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, Mint, NoExternals,
-    Row, Seeded, Store, StoreError, Uuid, UuidV4,
+    Reading, Row, Seeded, Store, StoreError, Uuid, UuidV4,
 };
 use spindle_telemetry::{Counters, CountingStore, Retried, Sink};
 use spindle_timer::{BindingName, Clock, CompleteError, Instant, LifetimeError, Timer};
@@ -25,8 +25,10 @@ use spindle_timer::{BindingName, Clock, CompleteError, Instant, LifetimeError, T
 use crate::admission::{Placements, Refusal, admit};
 
 mod component;
+mod reader;
 mod rows;
 
+pub use reader::Reader;
 use rows::Counted;
 
 /// The channel implementation this host carries bindings on.
@@ -406,6 +408,10 @@ impl Store for Tallied<'_> {
         self.store.counts(entities)
     }
 
+    fn reading(&mut self) -> Option<Arc<dyn Reading>> {
+        self.store.reading()
+    }
+
     fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
         self.store.commit(change)?;
         self.tally(&change.events);
@@ -459,6 +465,10 @@ impl Store for Supplied {
     fn counts(&mut self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
         self.0.counts(entities)
     }
+
+    fn reading(&mut self) -> Option<Arc<dyn Reading>> {
+        self.0.reading()
+    }
 }
 
 struct Component {
@@ -492,16 +502,18 @@ struct Periodic {
 pub struct Host {
     ir: Arc<EssIr>,
     clock: Arc<dyn Clock>,
-    placements: Placements,
+    placements: Arc<Placements>,
     components: BTreeMap<String, Component>,
     receivers: Vec<Receiver>,
     timer: Timer,
     periodic: BTreeMap<String, Periodic>,
     remote: Option<component::Remote>,
-    published: Vec<Published>,
+    /// Every event published, as one value its readers share: a command extends it in place where
+    /// no read holds it, else a copy that then stands in its place.
+    published: Arc<RwLock<Arc<Vec<Published>>>>,
     /// Every event a store appended since the host started, by the command whose write carried it
     /// and the event: a reset keeps the counts, as it keeps the counters.
-    emitted: BTreeMap<(String, String), u64>,
+    emitted: Arc<Mutex<BTreeMap<(String, String), u64>>>,
     /// Answers the `external:` causes of every command any component runs, unless the world of
     /// the last reset carries its own answers.
     decider: Box<dyn Decider + Send>,
@@ -845,14 +857,14 @@ impl Host {
         Ok(Self {
             ir,
             clock,
-            placements,
+            placements: Arc::new(placements),
             components,
             receivers,
             timer,
             periodic,
             remote: None,
-            published: Vec::new(),
-            emitted: BTreeMap::new(),
+            published: Arc::default(),
+            emitted: Arc::default(),
             decider: decider.unwrap_or_else(|| Box::new(NoExternals)),
             answers: None,
             mint: Box::new(UuidV4),
@@ -923,8 +935,14 @@ impl Host {
     /// in the order published: a command's own events in emit order, then those of the commands
     /// they led to. A refused command publishes none. Held in memory: the events of an earlier
     /// process that kept its state in SQLite are not among them.
-    pub fn published(&self) -> &[Published] {
-        &self.published
+    pub fn published(&self) -> Vec<Published> {
+        let published = Arc::clone(
+            &self
+                .published
+                .read()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        published.as_ref().clone()
     }
 
     /// How many events each command appended since the host started, by command and event,
@@ -933,8 +951,39 @@ impl Host {
     /// event no write carries, one of an outcome without a subject or of a set outcome that
     /// selected no row, counts nothing. Its counts add up to each event's appended counter; a
     /// [reset](Self::reset) keeps them.
-    pub fn emitted(&self) -> &BTreeMap<(String, String), u64> {
-        &self.emitted
+    pub fn emitted(&self) -> BTreeMap<(String, String), u64> {
+        self.emitted
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// What reads this host's committed state from any thread while this one runs commands
+    /// ([`Reader`]): its views, where a store gives a reading handle, its events published, its
+    /// rows, counters and events appended. Every reader of a host reads the same state, through
+    /// every reset.
+    pub fn reader(&self) -> Reader {
+        Reader {
+            ir: Arc::clone(&self.ir),
+            clock: Arc::clone(&self.clock),
+            placements: Arc::clone(&self.placements),
+            components: Arc::new(
+                self.components
+                    .iter()
+                    .map(|(name, component)| {
+                        (
+                            name.clone(),
+                            reader::Read {
+                                counters: Arc::clone(&component.counters),
+                                shared: component.store.shared(),
+                            },
+                        )
+                    })
+                    .collect(),
+            ),
+            published: Arc::clone(&self.published),
+            emitted: Arc::clone(&self.emitted),
+        }
     }
 
     /// Empties every component's store and forgets every published event; returns the
@@ -1004,8 +1053,25 @@ impl Host {
                 Uuid::parse_str(tail).ok()
             })
             .collect::<Vec<_>>();
+        let loaded = self.load(world.rows, owners);
+        // Its readers read the emptied stores, and the world in them, only now: until here they
+        // read every store as the last command left it.
+        for component in self.components.values_mut() {
+            component.store.publish();
+        }
+        let emptied = loaded?;
+        self.answers = world.answers;
+        self.mint = world.mint.map_or_else(
+            || Box::new(UuidV4) as Box<dyn Mint + Send>,
+            |seed| Box::new(Seeded::new(seed).avoiding(held)),
+        );
+        Ok(emptied)
+    }
+
+    /// Empties every store, then writes each row of a world into the store of its owner.
+    fn load(&mut self, rows: Vec<Seed>, owners: Vec<String>) -> Result<Vec<String>, HostError> {
         let emptied = self.empty()?;
-        for (seed, owner) in world.rows.into_iter().zip(owners) {
+        for (seed, owner) in rows.into_iter().zip(owners) {
             store_of(&mut self.components, &owner)?.commit(&Change {
                 entity: seed.entity,
                 identity: seed.identity,
@@ -1015,11 +1081,6 @@ impl Host {
                 scanned: Vec::new(),
             })?;
         }
-        self.answers = world.answers;
-        self.mint = world.mint.map_or_else(
-            || Box::new(UuidV4) as Box<dyn Mint + Send>,
-            |seed| Box::new(Seeded::new(seed).avoiding(held)),
-        );
         Ok(emptied)
     }
 
@@ -1074,7 +1135,10 @@ impl Host {
             }
             emptied.push(name.clone());
         }
-        self.published.clear();
+        *self
+            .published
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Arc::default();
         Ok(emptied)
     }
 
@@ -1392,33 +1456,9 @@ impl Host {
         view: &str,
         parameters: &Map<String, Value>,
     ) -> Result<Vec<Map<String, Value>>, HostError> {
-        let (declared, owner) = readable(&self.ir, view)?;
-        let parameters =
-            crate::view::parameters(&self.ir, declared, parameters).map_err(|detail| {
-                HostError::Parameters {
-                    view: view.to_owned(),
-                    detail,
-                }
-            })?;
-        let entity = self.ir.entity(&declared.source).name.to_string();
-        let now = read_instant(declared, self.clock.as_ref());
-        let mut rows = Vec::new();
-        for (identity, stored) in store_of(&mut self.components, &owner)?.scan(&entity)? {
-            if held(
-                &self.ir,
-                view,
-                declared,
-                &identity,
-                &stored.row,
-                &parameters,
-                now,
-            )? {
-                let row = crate::view::project(&self.ir, declared, &identity, &stored.row);
-                rows.push((identity, row));
-            }
-        }
-        crate::view::order(&self.ir, declared, &mut rows);
-        Ok(rows.into_iter().map(|(_, row)| row).collect())
+        let listing = listing(&self.ir, self.clock.as_ref(), view, parameters)?;
+        let scan = store_of(&mut self.components, &listing.owner)?.scan(&listing.entity)?;
+        listing.rows(&self.ir, view, scan)
     }
 
     /// Executes one command on `component` and sends the events it emitted, refusing each outcome
@@ -1463,20 +1503,27 @@ impl Host {
         );
         let appended = tallied.appended;
         held.sink.executed(command, &result, started.elapsed());
+        let mut emitted = self.emitted.lock().unwrap_or_else(PoisonError::into_inner);
         for event in appended {
-            let count = self.emitted.entry((command.to_owned(), event)).or_default();
+            let count = emitted.entry((command.to_owned(), event)).or_default();
             *count = count.saturating_add(1);
         }
+        drop(emitted);
         let executed = match result {
             Ok(executed) => executed,
             Err(error) => return Ok(Err(error)),
         };
-        self.published
-            .extend(executed.events.iter().map(|event| Published {
+        if !executed.events.is_empty() {
+            let mut published = self
+                .published
+                .write()
+                .unwrap_or_else(PoisonError::into_inner);
+            Arc::make_mut(&mut published).extend(executed.events.iter().map(|event| Published {
                 component: component.to_owned(),
                 command: command.to_owned(),
                 event: event.clone(),
             }));
+        }
         if !executed.events.is_empty() {
             held.position += 1;
             for event in &executed.events {
@@ -1847,6 +1894,69 @@ fn readable<'ir>(ir: &'ir EssIr, view: &str) -> Result<(&'ir ResolvedView, Strin
         .map(|component| component.name.as_str().to_owned())
         .ok_or_else(|| HostError::Unsupported(format!("no component owns {}", entity.domain)))?;
     Ok((declared, owner))
+}
+
+/// A read of a view, checked before any store is read: the view, the component that owns its
+/// source, the source entity, the parameter values read, and the instant its filter holds rows
+/// against. [`Host::list_with`] and [`Reader::list_with`] read through it.
+struct Listing<'ir> {
+    declared: &'ir ResolvedView,
+    owner: String,
+    entity: String,
+    parameters: ess_primitives::FactStore,
+    now: Option<ess_primitives::Rfc3339Instant>,
+}
+
+/// The read of `view` with `parameters` on a host running `ir` on `clock`, as
+/// [`Host::list_with`] checks it before anything is read.
+fn listing<'ir>(
+    ir: &'ir EssIr,
+    clock: &dyn Clock,
+    view: &str,
+    parameters: &Map<String, Value>,
+) -> Result<Listing<'ir>, HostError> {
+    let (declared, owner) = readable(ir, view)?;
+    let parameters = crate::view::parameters(ir, declared, parameters).map_err(|detail| {
+        HostError::Parameters {
+            view: view.to_owned(),
+            detail,
+        }
+    })?;
+    Ok(Listing {
+        declared,
+        owner,
+        entity: ir.entity(&declared.source).name.to_string(),
+        parameters,
+        now: read_instant(declared, clock),
+    })
+}
+
+impl Listing<'_> {
+    /// Every row of `scan`, the source's instances, the view holds: projected, in its order.
+    fn rows(
+        &self,
+        ir: &EssIr,
+        view: &str,
+        scan: spindle_kernel::Scan,
+    ) -> Result<Vec<Map<String, Value>>, HostError> {
+        let mut rows = Vec::new();
+        for (identity, stored) in scan {
+            if held(
+                ir,
+                view,
+                self.declared,
+                &identity,
+                &stored.row,
+                &self.parameters,
+                self.now,
+            )? {
+                let row = crate::view::project(ir, self.declared, &identity, &stored.row);
+                rows.push((identity, row));
+            }
+        }
+        crate::view::order(ir, self.declared, &mut rows);
+        Ok(rows.into_iter().map(|(_, row)| row).collect())
+    }
 }
 
 /// Whether `declared`, the view `view`, holds `row` for `parameters` ([`crate::view::holds`]); a

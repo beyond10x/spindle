@@ -74,8 +74,8 @@ pub use mint::{Identity, Mint, Seeded, Uuid, UuidV4};
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteStore;
 pub use store::{
-    Change, EVERY_INSTANCE, MemoryStore, Removal, Row, Scan, Scanned, Store, StoreError, Stored,
-    Write,
+    Change, EVERY_INSTANCE, MemoryStore, Reading, Removal, Row, Scan, Scanned, Store, StoreError,
+    Stored, Write,
 };
 pub use supported::{check as runs, selects, takes};
 

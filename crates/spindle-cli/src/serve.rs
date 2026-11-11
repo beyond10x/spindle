@@ -96,7 +96,7 @@ pub(crate) struct Serving<'a> {
     pub callers: Vec<Caller>,
     /// `--observe`, with how many request records to keep: the surface records every request
     /// outside `/__spindle/` and answers `GET /__spindle/requests` ([`Surface::observing`]) and
-    /// `GET /__spindle/metrics`, on this thread as every exchange is, and
+    /// `GET /__spindle/metrics`, beside this thread as every read is, and
     /// `GET /__spindle/ui` with the panel this build embeds ([`PANEL`]).
     pub observe: Option<usize>,
     /// `--trusted-caller-header`: each request proves its caller in this header, which a proxy in
@@ -191,7 +191,10 @@ fn fixed(ir: &EssIr, caller: &Caller) -> Result<()> {
 /// `127.0.0.1:<port>` until SIGINT or SIGTERM, exiting 130 or 143.
 ///
 /// Prints one JSON line once listening, `{"listening": "<address>", "components": [...]}`, then
-/// answers each request in arrival order. Beside the routes ESS publishes it serves the console
+/// runs each command and reset on this thread in arrival order, and answers each read beside it
+/// through the host's reader ([`spindle_ingress::Listener::bind_reading`]): a view,
+/// `GET /api/model`, `GET /api/events` and every `GET /__spindle/` route, so none waits for a
+/// command, a slow external call included. Beside the routes ESS publishes it serves the console
 /// routes ([`spindle_ingress::Console`]) where `ingress.network` is bound to `http-loopback`. State
 /// bound to `sqlite` is kept in the directory `state`, one file per component, or without one in
 /// a temporary directory, printed on stderr and removed when the run ends; state bound to
@@ -384,7 +387,8 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             );
         }
     }
-    let listener = Listener::bind(serving.port, surface).context("binding the HTTP listener")?;
+    let listener = Listener::bind_reading(serving.port, surface, host.reader())
+        .context("binding the HTTP listener")?;
     let worlds = |ir: &EssIr, body: &serde_json::Value| {
         crate::world::read(ir, body, |table| {
             decisions::deciding(&answers, Some(table), recorder.as_ref()).boxed()

@@ -3,8 +3,9 @@
 //! socket or async runtime in it. The loopback listener calls it for every request it reads, and a
 //! host with no socket, such as a Service Worker, calls [`route`] itself.
 
+use ess_http::Operation;
 use serde_json::{Map, Value};
-use spindle_host::{Failed, Host};
+use spindle_host::{Failed, Host, Reader};
 
 use crate::answer::Answer;
 use crate::console::{Console, Worlds};
@@ -241,6 +242,64 @@ pub(crate) struct Pending {
 }
 
 impl Pending {
+    /// Whether the request is a read `reader` answers beside the host's thread: a view whose
+    /// owning store it reads ([`Reader::reads`]), `GET /api/model`, `GET /api/events`, and on an
+    /// observing surface the metrics and the topology. A command, `POST /api/reset` and a view
+    /// read on the host's thread only are answered there, one at a time in arrival order.
+    #[cfg_attr(not(feature = "listener"), allow(dead_code))]
+    pub(crate) fn reads(&self, reader: &Reader) -> bool {
+        match &self.asked {
+            Asked::Route(route) => match &route.operation {
+                Operation::View(view) => reader.reads(view),
+                Operation::Command(_) => false,
+            },
+            Asked::Console(Console::Model | Console::Events) => true,
+            Asked::Console(Console::Reset) => false,
+            Asked::Hosted(_) => self.recorder.is_some(),
+        }
+    }
+
+    /// Answers the request through `reader`, beside the host's thread, as [`Pending::serve`]
+    /// answers it on that thread, the caller proven and the grants checked alike; the request
+    /// back where it is no read [`Pending::reads`] names. A read asks no external cause and runs
+    /// no binding, so none is noted and nothing is dropped.
+    #[cfg_attr(not(feature = "listener"), allow(dead_code))]
+    pub(crate) fn read(self, reader: &Reader) -> Result<(Response, Answered), Box<Self>> {
+        if !self.reads(reader) {
+            return Err(Box::new(self));
+        }
+        let read = match (&self.asked, &self.recorder) {
+            (Asked::Route(route), _) => crate::answer::reading(
+                reader,
+                route,
+                self.proven.as_ref(),
+                &self.carried,
+                &self.query,
+            )
+            .map(|(answer, answered)| (answer.into(), answered)),
+            (Asked::Console(Console::Model), _) => Some((
+                Response {
+                    status: 200,
+                    allow: None,
+                    panel: false,
+                    metrics: false,
+                    body: crate::console::model(reader.ir()),
+                },
+                Answered::ingress(),
+            )),
+            (Asked::Console(Console::Events), _) => Some((
+                crate::console::events_read(reader).into(),
+                Answered::ingress(),
+            )),
+            (Asked::Hosted(reserved), Some(recorder)) => Some((
+                crate::observe::read_hosted(*reserved, recorder, reader),
+                Answered::ingress(),
+            )),
+            (Asked::Console(Console::Reset) | Asked::Hosted(_), _) => None,
+        };
+        read.ok_or_else(|| Box::new(self))
+    }
+
     /// Answers the request on `host`, a reset's world read by `worlds` where given, and says who
     /// answered it. Where the surface observes, every external cause asked from the request's
     /// start to its end, as the run's decider noted them ([`Recorder::answered`]), is answered
