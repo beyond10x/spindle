@@ -1,20 +1,23 @@
 //! `state move`: a `--state` directory's streams moved into the PostgreSQL store of every
 //! component bound to `postgres`, versions kept ([`spindle_kernel::StateTarget::copy`]).
 //!
-//! Spindle is stopped first: nothing here keeps another process off the directory or the tables.
+//! Spindle is stopped first: nothing here keeps a running Spindle off the directory or the
+//! tables. Another `state move` into the same schema is kept off by the lock this one holds
+//! ([`spindle_kernel::StateLock`]).
 
 use std::path::Path;
 use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
 use spindle_capability::Environment;
-use spindle_kernel::{StateSource, StateTarget, postgres_prefix};
+use spindle_kernel::{StateLock, StateSource, StateTarget, postgres_prefix};
 
 /// `state move --from <directory> <spec> --environment <env>`: refuses, writing nothing, a
 /// directory without the file of every component bound to `postgres`, a file holding a value
-/// PostgreSQL refuses ([`StateSource::check`], before any connection) and a component whose
-/// tables already hold a stream; then moves each component's file into its tables, printing one
-/// JSON line per component.
+/// PostgreSQL refuses ([`StateSource::check`], before any connection), a schema another move
+/// holds ([`StateLock::take`]) and a component whose tables already hold a stream; then moves
+/// each component's file into its tables, printing one JSON line per component, and releases
+/// the schema.
 pub(crate) fn move_from(from: &Path, spec: &Path, environment: &Path) -> Result<ExitCode> {
     let loaded = spindle_spec::load(spec)?;
     let text = std::fs::read_to_string(environment)
@@ -62,7 +65,14 @@ pub(crate) fn move_from(from: &Path, spec: &Path, environment: &Path) -> Result<
         })?;
         sources.push(source);
     }
+    let declared: Vec<String> = loaded
+        .ir
+        .entities()
+        .keys()
+        .map(ToString::to_string)
+        .collect();
     let database = crate::database::database()?;
+    let lock = StateLock::take(&database).context("nothing was moved")?;
     let mut targets = Vec::with_capacity(components.len());
     for component in &components {
         targets.push(
@@ -71,8 +81,8 @@ pub(crate) fn move_from(from: &Path, spec: &Path, environment: &Path) -> Result<
         );
     }
     let mut held = Vec::new();
-    for (component, target) in components.iter().zip(&targets) {
-        if !target.is_empty()? {
+    for ((component, source), target) in components.iter().zip(&sources).zip(&targets) {
+        if !target.is_empty(&declared, source)? {
             held.push(format!("{component} ({}_*)", postgres_prefix(component)));
         }
     }
@@ -100,5 +110,6 @@ pub(crate) fn move_from(from: &Path, spec: &Path, environment: &Path) -> Result<
             })
         );
     }
+    lock.release()?;
     Ok(ExitCode::SUCCESS)
 }

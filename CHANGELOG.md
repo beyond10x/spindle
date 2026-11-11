@@ -42,7 +42,16 @@ are Spindle's releases.
   writing nothing, when the directory lacks a component's file, when a file holds a JSON string or
   key with U+0000, which the SQLite store keeps and PostgreSQL refuses (every file is read before
   connecting; the refusal names the component, the stream and where), or when a component's
-  tables already hold a stream, also while a transaction is open elsewhere on the server. It
+  tables already hold the stream of an entity the specification declares or the file holds, or
+  the mark of a partial move: one read of each stream's last version, which writes nothing and
+  does not grow with the log, also while a transaction is open elsewhere on the server. One move
+  at a time writes into a schema: a move holds a PostgreSQL advisory lock on its schema from
+  before that check to after its last append, and a second move into the schema waits up to 5 s,
+  then exits 1 naming the other move, writing nothing. A file written by 0.7.0 to 0.10.0 arrives
+  in this release's form, each write's `spindle.written` event naming the instances it left
+  (event schema 2), so its scans read the entity's stream; a file holding writes of a release
+  before 0.7.0, which recorded no entity version, arrives with its log marked (`spindle:log`
+  `unnamed-writes`, before its first write), so its scans read the whole log and miss no row. It
   prints one line per component (`component`, `streams`, `events`). Spindle is stopped first; a
   move that fails partway leaves a partial copy the next move refuses.
 

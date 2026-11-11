@@ -396,3 +396,213 @@ fn a_long_log_with_groups_across_pages_arrives_whole() {
         .expect("the moved store scans");
     assert_eq!(after, before);
 }
+
+// Adversary pass 2 (story state-moves-to-postgres, revision 8): what a refused move leaves in the
+// prefixes, and two moves into one empty database at once.
+
+/// How many rows `component`'s table `suffix` in `schema` holds.
+fn rows(schema: &str, component: &str, suffix: &str) -> u64 {
+    let table = format!("{}_{suffix}", spindle_kernel::postgres_prefix(component));
+    sql(&[format!("SELECT count(*) FROM {schema}.{table}")])[0]
+        .parse()
+        .expect("a count")
+}
+
+/// The acceptance's "exits 1 before writing to any prefix" and the command's "Exits 1, writing
+/// nothing": a move refused because one prefix holds a stream leaves every prefix's tables as it
+/// found them, the tenant identity table among them.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_refused_move_writes_no_row_into_any_prefix() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    one_row_each(directory.path());
+    let schema = Schema::new("ident");
+    let url = owner_url();
+    let settings = [
+        ("database_url", url.as_str()),
+        ("database_schema", &schema.0),
+    ];
+    migrate(&settings);
+    PostgresStore::open(&database(&schema.0), "rally-table", 1)
+        .expect("the store opens")
+        .commit(&change(&json!("already-here"), None, BTreeMap::new()))
+        .expect("a row is written");
+    let held = || -> Vec<(u64, u64)> {
+        COMPONENTS
+            .iter()
+            .map(|component| {
+                (
+                    rows(&schema.0, component, "events"),
+                    rows(&schema.0, component, "identity"),
+                )
+            })
+            .collect()
+    };
+    let before = held();
+    let refused = state_move(directory.path(), &settings);
+    let after = held();
+    assert_eq!(refused.status.code(), Some(1), "{}", text(&refused));
+    assert_eq!(
+        after,
+        before,
+        "(events, identity rows) per component: a refused move writes nothing into any \
+         prefix: {}",
+        text(&refused)
+    );
+}
+
+/// Two moves of two directories started at once into one empty database. The emptiness check of
+/// each passes before the other's first append, so both copy: the second directory's first group
+/// (an entity the first directory does not hold) lands, its next group conflicts with the first
+/// directory's, and the move that exits 0 leaves a database holding another directory's streams
+/// besides its own. Made deterministic by holding the schema's state move lock until both moves
+/// wait on it: by then neither has read the tables or written anything. (Pass 2 held rally-table's
+/// publication gate shared, which the emptiness check of fix pass 1 took exclusively; the check
+/// of fix pass 2 takes no gate, and the move's lock is taken before it.)
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn two_moves_at_once_into_one_empty_database_leave_one_directory_or_none() {
+    let first = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let second = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    for component in COMPONENTS {
+        drop(SqliteStore::open(&file(first.path(), component)).expect("the file opens"));
+        drop(SqliteStore::open(&file(second.path(), component)).expect("the file opens"));
+    }
+    let mut rally = change(&json!("from-second"), None, BTreeMap::new());
+    rally.entity = "rally.player.Rally".to_owned();
+    SqliteStore::open(&file(second.path(), "rally-player-east"))
+        .expect("the file opens")
+        .commit(&rally)
+        .expect("a row is written");
+    for (directory, identity) in [(&first, "from-first"), (&second, "from-second")] {
+        SqliteStore::open(&file(directory.path(), "rally-table"))
+            .expect("the file opens")
+            .commit(&change(&json!(identity), None, BTreeMap::new()))
+            .expect("a row is written");
+    }
+    let schema = Schema::new("race");
+    let url = owner_url();
+    let settings = [
+        ("database_url", url.as_str()),
+        ("database_schema", &schema.0),
+    ];
+    migrate(&settings);
+    // A scan records each log's tenant identity, as `run`'s first scan does, so each emptiness
+    // check takes the gate once: without it, the check records the identity between two
+    // captures and the faster move can append before the slower one's second capture.
+    for component in COMPONENTS {
+        PostgresStore::open(&database(&schema.0), component, 1)
+            .expect("the store opens")
+            .scan(MATCH)
+            .expect("the empty store scans");
+    }
+    let holder = spindle_kernel::StateLock::take(&database(&schema.0))
+        .expect("the schema's lock is held");
+    let waiting = format!(
+        "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND objsubid \
+         = 2 AND objid::bigint = (hashtext('{}')::bigint & 4294967295)",
+        schema.0
+    );
+    let start = |directory: &Path| {
+        spindle(
+            &[
+                "state",
+                "move",
+                "--from",
+                directory.to_str().expect("a UTF-8 path"),
+                RALLY,
+                "--environment",
+                POSTGRES,
+            ],
+            &settings,
+        )
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("state move starts")
+    };
+    let one = start(first.path());
+    let two = start(second.path());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    loop {
+        let waiting: i64 = sql(std::slice::from_ref(&waiting))[0]
+            .parse()
+            .expect("a count");
+        if waiting >= 2 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "both moves wait on the schema's lock"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    holder.release().expect("the schema's lock is released");
+    let one = one.wait_with_output().expect("the first move ends");
+    let two = two.wait_with_output().expect("the second move ends");
+    let landed: Vec<u64> = COMPONENTS
+        .iter()
+        .map(|component| events(&schema.0, component))
+        .collect();
+    let report = format!(
+        "events per component {landed:?}\nfirst {}\nsecond {}",
+        text(&one),
+        text(&two)
+    );
+    for (moved, directory) in [(&one, [0, 0, 3]), (&two, [3, 0, 3])] {
+        if moved.status.code() == Some(0) {
+            assert_eq!(
+                landed, directory,
+                "a move that exits 0 leaves its directory's streams and no other: {report}"
+            );
+        }
+    }
+}
+
+/// What the U+0000 pass must not refuse, and the numbers PostgreSQL's `jsonb` keeps as `numeric`:
+/// an identity holding U+0000 reaches PostgreSQL only as the stream's id, JSON text with the
+/// character escaped, and a row field holding the six characters `\u0000` is no U+0000 at all.
+/// Both move, and every row scans as the directory answered it.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn an_escaped_or_identity_only_nul_and_extreme_numbers_move_and_scan_alike() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    one_row_each(directory.path());
+    let mut table = SqliteStore::open(&file(directory.path(), "rally-table")).expect("opens");
+    let mut quiet = change(&json!("a\u{0}b"), None, BTreeMap::new());
+    quiet.events.clear();
+    table
+        .commit(&quiet)
+        .expect("an identity holding U+0000 is kept");
+    table
+        .commit(&change(
+            &json!("edges"),
+            None,
+            BTreeMap::from([
+                ("escaped".to_owned(), json!("\\u0000")),
+                ("largest".to_owned(), json!(f64::MAX)),
+                ("smallest".to_owned(), json!(5e-324_f64)),
+                ("negative_zero".to_owned(), json!(-0.0_f64)),
+                ("unsigned".to_owned(), json!(u64::MAX)),
+                ("signed".to_owned(), json!(i64::MIN)),
+                ("astral".to_owned(), json!("\u{1F600}\u{FFFF}\u{7F}\u{1}")),
+            ]),
+        ))
+        .expect("the row is kept");
+    let before = table.scan(MATCH).expect("the directory scans");
+    drop(table);
+    let schema = Schema::new("edge");
+    let url = owner_url();
+    let settings = [
+        ("database_url", url.as_str()),
+        ("database_schema", &schema.0),
+    ];
+    migrate(&settings);
+    let moved = state_move(directory.path(), &settings);
+    assert_eq!(moved.status.code(), Some(0), "{}", text(&moved));
+    let after = PostgresStore::open(&database(&schema.0), "rally-table", 1)
+        .expect("the store opens")
+        .scan(MATCH)
+        .expect("the moved store scans");
+    assert_eq!(after, before);
+}

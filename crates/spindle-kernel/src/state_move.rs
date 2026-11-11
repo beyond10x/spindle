@@ -8,31 +8,47 @@
 //! Event ids, `recorded_at` and the feed's positions are new; Spindle reads none of them. The
 //! command's actor, subject, request, trace, cause and `occurred_at` are kept.
 //!
+//! A write of 0.7.0 to 0.10.0, whose `spindle.written` event names no instances (schema 1), is
+//! copied with that event naming the instances the write left (schema [`WRITTEN_SCHEMA`]), as
+//! this release writes it, so a scan reads the entity's stream rather than the whole log. A file
+//! holding a write of a release before 0.7.0, which recorded no entity's version, has its log
+//! marked ([`MARKS`]) before the first group is copied, so every scan of it reads the whole log.
+//!
 //! Every group is built and checked from the file ([`Source::check`]) before anything is written:
 //! eventlog's own check of an append group, and the one value PostgreSQL refuses that the SQLite
-//! store keeps, U+0000 in a JSON string ([`nul`]).
+//! store keeps, U+0000 in a JSON string ([`nul`]). One move holds its schema ([`Lock`]) from
+//! before it finds the tables empty ([`Target::is_empty`]) to after its last append.
 
-use std::collections::BTreeSet;
+use std::cell::OnceCell;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::time::Duration;
 
 use eventlog_core::{
-    AppendGroup, AtomicEventStore, CaptureError, CaptureLimits, CaptureResource, CommandMeta,
-    Expected, NewEvent, RecordedEvent, StreamAppend, StreamId, TenantId, new_event_id,
-    request_hash,
+    AppendGroup, AtomicEventStore, CommandMeta, EventStore, Expected, NewEvent, RecordedEvent,
+    StreamAppend, StreamId, TenantId, new_event_id, request_hash,
 };
 use eventlog_postgres::PostgresEventStore;
 use eventlog_sqlite::SqliteEventStore;
 use serde_json::Value;
+use tokio_postgres::error::SqlState;
 
-use crate::postgres::{Database, PostgresStore, capture};
-use crate::sqlite::{Log, PREFIX, TENANT, backend};
+use crate::postgres::{Database, PostgresStore, session};
+use crate::sqlite::{
+    ENTITY, Log, MARKS, PREFIX, REMOVED, TENANT, WRITTEN, WRITTEN_SCHEMA, Written, backend, meta,
+};
 use crate::store::StoreError;
+
+/// The event a move appends to the stream [`MARKS`] before it copies a write that recorded no
+/// entity's version.
+const UNNAMED: &str = "spindle.unnamed";
 
 /// One component's SQLite file, opened to be read: nothing is created.
 pub struct Source {
     log: SqliteEventStore,
     tenant: TenantId,
     runtime: tokio::runtime::Runtime,
+    read: OnceCell<Read>,
 }
 
 impl std::fmt::Debug for Source {
@@ -46,8 +62,20 @@ impl std::fmt::Debug for Source {
 pub struct Moved {
     /// The streams written: one per instance, one per entity written.
     pub streams: usize,
-    /// The events appended.
+    /// The events appended, the file's: the mark of a file holding writes that recorded no
+    /// entity's version is not counted.
     pub events: usize,
+}
+
+/// What a whole read of a file found.
+#[derive(Debug)]
+struct Read {
+    moved: Moved,
+    /// Whether a group writes an instance of an entity and no `spindle.written` event of it: a
+    /// write of a release before 0.7.0.
+    unnamed: bool,
+    /// Every entity the file holds a stream of.
+    entities: BTreeSet<String>,
 }
 
 impl Source {
@@ -69,17 +97,45 @@ impl Source {
             log,
             tenant: TenantId::new(TENANT).map_err(backend)?,
             runtime,
+            read: OnceCell::new(),
         })
     }
 
     /// Reads the whole file and builds every append group a move of it appends, writing
-    /// nothing: what a move would append.
+    /// nothing: what a move would append. The file is read once; a move reads it again only to
+    /// copy it.
     ///
     /// # Errors
     /// [`StoreError::Backend`] when the file cannot be read, or a group would be refused by
     /// PostgreSQL or by eventlog: a JSON string holding U+0000, naming the stream and where.
     pub fn check(&self) -> Result<Moved, StoreError> {
-        self.each_group(&mut |events| group(&self.tenant, events).map(|_| ()))
+        self.read().map(|read| read.moved)
+    }
+
+    /// The file read whole, once.
+    fn read(&self) -> Result<&Read, StoreError> {
+        if let Some(read) = self.read.get() {
+            return Ok(read);
+        }
+        let mut any_unnamed = false;
+        let mut entities = BTreeSet::new();
+        let moved = self.each_group(&mut |events| {
+            group(&self.tenant, events)?;
+            any_unnamed |= unnamed(events);
+            for event in events {
+                if event.stream_type == ENTITY {
+                    entities.insert(event.stream_id.clone());
+                } else if event.stream_type != MARKS.0 {
+                    entities.insert(event.stream_type.clone());
+                }
+            }
+            Ok(())
+        })?;
+        Ok(self.read.get_or_init(|| Read {
+            moved,
+            unnamed: any_unnamed,
+            entities,
+        }))
     }
 
     /// Every group the file recorded, in commit order, to `visit`: the events of one
@@ -115,6 +171,21 @@ impl Source {
     }
 }
 
+/// Whether the group `events` writes an instance of an entity without a `spindle.written` event
+/// of that entity, as every write before 0.7.0 did.
+fn unnamed(events: &[RecordedEvent]) -> bool {
+    let written: BTreeSet<&str> = events
+        .iter()
+        .filter(|event| event.stream_type == ENTITY && event.name == WRITTEN)
+        .map(|event| event.stream_id.as_str())
+        .collect();
+    events.iter().any(|event| {
+        event.stream_type != ENTITY
+            && event.stream_type != MARKS.0
+            && !written.contains(event.stream_type.as_str())
+    })
+}
+
 /// One component's PostgreSQL tables, opened to be moved into.
 pub struct Target {
     log: PostgresEventStore,
@@ -143,43 +214,54 @@ impl Target {
         })
     }
 
-    /// Whether the tables hold no event of Spindle's tenant: no stream is there to move onto.
+    /// Whether the tables hold no stream a move of `source` could land on: neither the stream
+    /// of any entity in `declared` (those the specification declares) or in the file, nor the
+    /// mark of a log holding writes that recorded no entity's version ([`MARKS`]).
     ///
-    /// Read at one snapshot of every committed event, as a scan reads ([`capture`]), not
-    /// through the feed, which hides an event while an older write transaction anywhere on the
-    /// server is open. A log no scan has read gets its tenant's stream identity recorded, as the
-    /// first scan of `run` records it; no event is written.
+    /// Every write of a PostgreSQL store appends to the stream of each entity it writes, and a
+    /// move to the mark before anything else, so tables holding any of Spindle's writes hold
+    /// one of these. One read of each stream's last version, a committed event whatever
+    /// transaction is open elsewhere on the server: it takes no lock, writes nothing and does
+    /// not grow with the log.
     ///
     /// # Errors
-    /// [`StoreError::Backend`] when the log cannot be read.
-    pub fn is_empty(&self) -> Result<bool, StoreError> {
-        let limits = CaptureLimits {
-            max_events: 0,
-            max_blobs: u64::MAX,
-            max_projection_rows: u64::MAX,
-            max_payload_bytes: u64::MAX,
-        };
-        match capture(&self.log, &self.runtime, &self.tenant, limits) {
-            Ok(captured) => Ok(captured.events.is_empty()),
-            Err(
-                CaptureError::LimitExceeded {
-                    resource: CaptureResource::Events,
-                    ..
-                }
-                | CaptureError::RedactedHistory,
-            ) => Ok(false),
-            Err(error) => Err(StoreError::Backend(format!("reading the log: {error}"))),
+    /// [`StoreError::Backend`] when the file or the tables cannot be read.
+    pub fn is_empty(&self, declared: &[String], source: &Source) -> Result<bool, StoreError> {
+        let entities: BTreeSet<&str> = declared
+            .iter()
+            .chain(&source.read()?.entities)
+            .map(String::as_str)
+            .collect();
+        let mut streams = Vec::with_capacity(entities.len() + 1);
+        for entity in entities {
+            streams.push(StreamId::new(self.tenant.clone(), ENTITY, entity).map_err(backend)?);
         }
+        let (kind, id) = MARKS;
+        streams.push(StreamId::new(self.tenant.clone(), kind, id).map_err(backend)?);
+        for stream in &streams {
+            let version = self
+                .runtime
+                .block_on(self.log.stream_version(stream))
+                .map_err(|error| StoreError::Backend(format!("reading the tables: {error}")))?;
+            if version.is_some() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Appends every event of `source`, in its order, one append group per group the file
-    /// recorded, each stream at the version it held there.
+    /// recorded, each stream at the version it held there; first, where the file holds a write
+    /// that recorded no entity's version, one event to [`MARKS`].
     ///
     /// # Errors
     /// [`StoreError::Backend`] when the file cannot be read, a group cannot be built
     /// ([`Source::check`]), or the database refuses an append: a stream already there refuses
     /// its group as a conflict. The groups appended before it stay.
     pub fn copy(&self, source: &Source) -> Result<Moved, StoreError> {
+        if source.read()?.unnamed {
+            self.mark()?;
+        }
         source.each_group(&mut |events| {
             let group = group(&self.tenant, events)?;
             self.runtime
@@ -188,10 +270,133 @@ impl Target {
                 .map_err(backend)
         })
     }
+
+    /// Appends the mark of a log holding writes that recorded no entity's version.
+    fn mark(&self) -> Result<(), StoreError> {
+        let (kind, id) = MARKS;
+        let appends = vec![StreamAppend {
+            stream: StreamId::new(self.tenant.clone(), kind, id).map_err(backend)?,
+            expected: Expected::NoStream,
+            events: vec![
+                NewEvent::new(UNNAMED, 1, Value::Object(serde_json::Map::new()))
+                    .map_err(backend)?,
+            ],
+        }];
+        let entries: Vec<&Vec<NewEvent>> = appends.iter().map(|append| &append.events).collect();
+        let group = AppendGroup {
+            tenant: self.tenant.clone(),
+            meta: meta(request_hash(&entries).map_err(backend)?),
+            appends,
+        };
+        self.runtime
+            .block_on(self.log.append_group(&group))
+            .map(|_| ())
+            .map_err(|error| StoreError::Backend(format!("marking the log: {error}")))
+    }
+}
+
+/// The lock one `state move` holds on its target schema while it runs, a PostgreSQL
+/// session-level advisory lock on a connection of its own: the key is [`LOCK_CLASS`] and the
+/// schema's name hashed, a pair of keys eventlog's own locks, each one 64-bit key, never take.
+pub struct Lock {
+    client: tokio_postgres::Client,
+    schema: String,
+    runtime: tokio::runtime::Runtime,
+}
+
+impl std::fmt::Debug for Lock {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Lock")
+            .field("schema", &self.schema)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The first key of a move's lock: `SPMV`.
+const LOCK_CLASS: i32 = 0x5350_4D56;
+
+/// How long a move waits for another move's lock on its schema before it is refused.
+const LOCK_WAIT: Duration = Duration::from_secs(5);
+
+impl Lock {
+    /// Takes the lock on `database`'s schema, waiting up to [`LOCK_WAIT`] for another move to
+    /// end. The session has no statement or idle timeout, so it keeps the lock while the move's
+    /// appends run on other connections.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when another move holds the schema past the wait, naming it, or
+    /// the database cannot be reached as a store reaches it.
+    pub fn take(database: &Database) -> Result<Self, StoreError> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| StoreError::Backend(error.to_string()))?;
+        let client = session(database, &runtime)?;
+        let schema = database.schema.clone();
+        let taken = runtime.block_on(async {
+            client
+                .batch_execute(&format!(
+                    "SELECT set_config(name, '0', false) FROM pg_settings WHERE name IN \
+                     ('statement_timeout', 'idle_session_timeout', \
+                     'idle_in_transaction_session_timeout'); SET lock_timeout = {}",
+                    LOCK_WAIT.as_millis()
+                ))
+                .await?;
+            client
+                .execute(
+                    "SELECT pg_advisory_lock($1, hashtext($2))",
+                    &[&LOCK_CLASS, &schema],
+                )
+                .await
+        });
+        match taken {
+            Ok(_) => Ok(Self {
+                client,
+                schema,
+                runtime,
+            }),
+            Err(error) if error.code() == Some(&SqlState::LOCK_NOT_AVAILABLE) => {
+                Err(StoreError::Backend(format!(
+                    "another state move into the schema {schema} holds it, still after {} s: \
+                     one move at a time writes into a schema",
+                    LOCK_WAIT.as_secs()
+                )))
+            }
+            Err(error) => Err(StoreError::Backend(format!(
+                "taking the lock of a state move on the schema {schema}: {error}"
+            ))),
+        }
+    }
+
+    /// Releases the lock, after the move's last append.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the session ended before: the lock was not held to the end.
+    pub fn release(self) -> Result<(), StoreError> {
+        let released = self
+            .runtime
+            .block_on(self.client.query_one(
+                "SELECT pg_advisory_unlock($1, hashtext($2))",
+                &[&LOCK_CLASS, &self.schema],
+            ))
+            .map(|row| row.get::<_, bool>(0));
+        match released {
+            Ok(true) => Ok(()),
+            Ok(false) | Err(_) => Err(StoreError::Backend(format!(
+                "the lock of this state move on the schema {} ended before the move did: another \
+                 move may have written into it",
+                self.schema
+            ))),
+        }
+    }
 }
 
 /// `events`, one group of the file, as one append group, checked as eventlog checks it before
-/// appending: each stream expected at the version before its first event.
+/// appending: each stream expected at the version before its first event. A `spindle.written`
+/// event that names no instances (schema 1, of 0.7.0 to 0.10.0) names, as one of this release
+/// does ([`Written`]), each instance of its entity the group leaves, at the group's last event
+/// of the instance's stream.
 ///
 /// # Errors
 /// [`StoreError::Backend`] when an event's body holds U+0000 in a JSON string ([`nul`]), or
@@ -202,9 +407,23 @@ fn group(tenant: &TenantId, events: &[RecordedEvent]) -> Result<AppendGroup, Sto
             "a group of the file holds no event".to_owned(),
         ));
     };
+    let mut named: BTreeMap<&str, Written> = events
+        .iter()
+        .filter(|event| {
+            event.stream_type == ENTITY
+                && event.name == WRITTEN
+                && event.schema_version < WRITTEN_SCHEMA
+        })
+        .map(|event| (event.stream_id.as_str(), Written::default()))
+        .collect();
+    for event in events {
+        if let Some(written) = named.get_mut(event.stream_type.as_str()) {
+            written.note(&event.stream_id, event.version, event.name == REMOVED);
+        }
+    }
     let mut appends: Vec<StreamAppend> = Vec::new();
     for event in events {
-        let named = || {
+        let described = || {
             format!(
                 "the event {} at version {} of the stream {} {}",
                 event.name, event.version, event.stream_type, event.stream_id
@@ -214,16 +433,23 @@ fn group(tenant: &TenantId, events: &[RecordedEvent]) -> Result<AppendGroup, Sto
             return Err(StoreError::Backend(format!(
                 "{} holds U+0000 in {path}, which the SQLite store keeps and PostgreSQL refuses \
                  in a JSON string",
-                named()
+                described()
             )));
         }
         let invalid = |error: eventlog_core::EventLogError| {
-            StoreError::Backend(format!("{}: {error}", named()))
+            StoreError::Backend(format!("{}: {error}", described()))
         };
         let stream =
             StreamId::new(tenant.clone(), &event.stream_type, &event.stream_id).map_err(invalid)?;
-        let new = NewEvent::new(event.name.clone(), event.schema_version, event.data.clone())
-            .map_err(invalid)?;
+        let rewritten = (event.stream_type == ENTITY
+            && event.name == WRITTEN
+            && event.schema_version < WRITTEN_SCHEMA)
+            .then(|| named.remove(event.stream_id.as_str()).unwrap_or_default());
+        let new = match rewritten {
+            Some(written) => NewEvent::new(WRITTEN, WRITTEN_SCHEMA, written.body()),
+            None => NewEvent::new(event.name.clone(), event.schema_version, event.data.clone()),
+        }
+        .map_err(invalid)?;
         match appends.iter_mut().find(|append| append.stream == stream) {
             Some(append) => append.events.push(new),
             None => appends.push(StreamAppend {
@@ -290,7 +516,151 @@ fn nul(value: &Value, at: &str) -> Option<String> {
 mod tests {
     use serde_json::json;
 
-    use super::nul;
+    use super::*;
+
+    /// An event of `stream_type` `stream_id` at `version`, of the group `request`.
+    fn recorded(
+        request: &str,
+        stream: (&str, &str),
+        version: u64,
+        name: &str,
+        schema_version: u32,
+        data: Value,
+    ) -> RecordedEvent {
+        RecordedEvent {
+            global_seq: 0,
+            tenant: TenantId::new(TENANT).expect("a tenant"),
+            stream_type: stream.0.to_owned(),
+            stream_id: stream.1.to_owned(),
+            version,
+            event_id: new_event_id(),
+            name: name.to_owned(),
+            schema_version,
+            occurred_at: time::OffsetDateTime::UNIX_EPOCH,
+            recorded_at: time::OffsetDateTime::UNIX_EPOCH,
+            subject: "s".to_owned(),
+            actor: "a".to_owned(),
+            request_id: request.to_owned(),
+            trace_id: "t".to_owned(),
+            causation_id: None,
+            causation_depth: 0,
+            redacted_at: None,
+            data,
+            digest: None,
+            parents: Vec::new(),
+        }
+    }
+
+    const TASK: &str = "a.Task";
+
+    /// The events `group` copies to `stream`: name, schema and body.
+    fn copied(group: &AppendGroup, stream: (&str, &str)) -> Vec<(String, u32, Value)> {
+        group
+            .appends
+            .iter()
+            .filter(|append| {
+                append.stream.stream_type() == stream.0 && append.stream.stream_id() == stream.1
+            })
+            .flat_map(|append| &append.events)
+            .map(|event| (event.name.clone(), event.schema_version, event.data.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn a_written_event_naming_no_instances_is_copied_naming_each_the_group_left() {
+        let tenant = TenantId::new(TENANT).expect("a tenant");
+        let events = [
+            recorded("r", (ENTITY, TASK), 4, WRITTEN, 1, json!({})),
+            recorded("r", (ENTITY, "b.Other"), 2, WRITTEN, 1, json!({})),
+            recorded("r", (TASK, "\"a\""), 3, "a.Touched", 1, json!({"n": 1})),
+            recorded(
+                "r",
+                (TASK, "\"a\""),
+                4,
+                "spindle.row",
+                1,
+                json!({"state": "x"}),
+            ),
+            recorded(
+                "r",
+                (TASK, "\"b\""),
+                1,
+                "spindle.row",
+                1,
+                json!({"state": "y"}),
+            ),
+            recorded("r", (TASK, "\"b\""), 2, REMOVED, 1, json!({})),
+            recorded("r", (TASK, "\"c\""), 6, REMOVED, 1, json!({})),
+        ];
+        let group = group(&tenant, &events).expect("the group is built");
+        assert_eq!(
+            copied(&group, (ENTITY, TASK)),
+            [(
+                WRITTEN.to_owned(),
+                WRITTEN_SCHEMA,
+                json!({"rows": {"\"a\"": 4}, "removed": {"\"b\"": 2, "\"c\"": 6}})
+            )]
+        );
+        assert_eq!(
+            copied(&group, (ENTITY, "b.Other")),
+            [(
+                WRITTEN.to_owned(),
+                WRITTEN_SCHEMA,
+                json!({"rows": {}, "removed": {}})
+            )],
+            "an entity the write was only conditioned on names no instance"
+        );
+        assert_eq!(
+            copied(&group, (TASK, "\"a\"")),
+            [
+                ("a.Touched".to_owned(), 1, json!({"n": 1})),
+                ("spindle.row".to_owned(), 1, json!({"state": "x"}))
+            ],
+            "every other event is copied as it is"
+        );
+        let current = json!({"rows": {"\"z\"": 9}, "removed": {}});
+        let events = [
+            recorded(
+                "s",
+                (ENTITY, TASK),
+                5,
+                WRITTEN,
+                WRITTEN_SCHEMA,
+                current.clone(),
+            ),
+            recorded(
+                "s",
+                (TASK, "\"z\""),
+                9,
+                "spindle.row",
+                1,
+                json!({"state": "z"}),
+            ),
+        ];
+        assert_eq!(
+            copied(&group_of(&tenant, &events), (ENTITY, TASK)),
+            [(WRITTEN.to_owned(), WRITTEN_SCHEMA, current)],
+            "a written event that names its instances is copied as it is"
+        );
+    }
+
+    fn group_of(tenant: &TenantId, events: &[RecordedEvent]) -> AppendGroup {
+        group(tenant, events).expect("the group is built")
+    }
+
+    #[test]
+    fn a_group_writing_an_instance_with_no_written_event_of_its_entity_is_unnamed() {
+        let written = recorded("r", (ENTITY, TASK), 1, WRITTEN, 1, json!({}));
+        let row = recorded("r", (TASK, "\"a\""), 1, "spindle.row", 1, json!({}));
+        let other = recorded("r", ("b.Other", "\"b\""), 1, "spindle.row", 1, json!({}));
+        assert!(!unnamed(&[written.clone(), row.clone()]));
+        assert!(!unnamed(std::slice::from_ref(&written)));
+        assert!(unnamed(std::slice::from_ref(&row)), "a write before 0.7.0");
+        assert!(
+            unnamed(&[written, row, other]),
+            "an entity of the group with no written event"
+        );
+    }
 
     #[test]
     fn nul_finds_u0000_in_any_string_or_key_and_nothing_else() {

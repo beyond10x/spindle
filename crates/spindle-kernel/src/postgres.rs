@@ -20,15 +20,15 @@
 //! that stream names ([`LogStore`]'s `scan`): plain reads of committed events, each one bounded
 //! statement, so it takes no lock, never waits on a transaction anywhere on the server, and holds
 //! in memory the instances whose row rests, not the log. Only a log holding writes that name no
-//! instances (those of a SQLite file of 0.10.0 or earlier, copied in by `state move`) is read
-//! whole, at one snapshot.
+//! instances is read whole, at one snapshot: those of a SQLite file written before 0.7.0, which
+//! `state move` marks when it copies them in (it copies those of 0.7.0 to 0.10.0 naming theirs).
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use eventlog_core::{
-    CaptureError, CaptureLimits, ConsistentTenantCapture, EventLogError, EventStore, TenantCapture,
-    TenantId, validate_identifier,
+    CaptureError, CaptureLimits, ConsistentTenantCapture, EventLogError, EventStore, TenantId,
+    validate_identifier,
 };
 use eventlog_postgres::{PoolOptions, PostgresConfig, PostgresEventStore};
 use rustls::RootCertStore;
@@ -214,8 +214,9 @@ const MIGRATION_WAIT: Duration = Duration::from_secs(60);
 /// so it never waits on a transaction of another component or database. It holds the log in
 /// memory and eventlog's publication lock while it reads.
 impl Log for PostgresEventStore {
-    /// Only this release and `state move` write a PostgreSQL store, and the move marks a log it
-    /// copies writes naming no instances into.
+    /// Only this release and `state move` write a PostgreSQL store: the move copies a write of
+    /// 0.7.0 to 0.10.0 naming its instances, and marks a log it copies a write from before 0.7.0
+    /// into.
     const UNMARKED: bool = false;
 
     fn each_event(
@@ -230,8 +231,18 @@ impl Log for PostgresEventStore {
             max_projection_rows: u64::MAX,
             max_payload_bytes: u64::MAX,
         };
-        let captured = capture(self, runtime, tenant, limits)
-            .map_err(|error| StoreError::Backend(format!("reading the log: {error}")))?;
+        let captured = match runtime.block_on(self.capture_tenant(tenant, &[], limits)) {
+            // Appends do not record the tenant's stream identity, and a capture needs one: the
+            // first scan of a log records it, once, and captures again.
+            Err(CaptureError::TenantIdentityMissing) => {
+                runtime
+                    .block_on(self.stream_identity(tenant))
+                    .map_err(backend)?;
+                runtime.block_on(self.capture_tenant(tenant, &[], limits))
+            }
+            other => other,
+        }
+        .map_err(|error| StoreError::Backend(format!("reading the log: {error}")))?;
         for event in captured.events {
             visit(event)?;
         }
@@ -239,27 +250,52 @@ impl Log for PostgresEventStore {
     }
 }
 
-/// `tenant`'s log in `log` at one snapshot, within `limits` ([`ConsistentTenantCapture`]): every
-/// committed event, whatever transaction is open elsewhere on the server.
+/// A connection of its own to `database`, made as its stores make theirs: TLS with
+/// `sslmode=require`, the server verified against `database_ca`, where it names one; plaintext to
+/// a loopback or Unix-socket host otherwise. Its settings are refused as a store's are. The
+/// connection is driven on `runtime`, while a call blocks on it.
 ///
 /// # Errors
-/// As [`ConsistentTenantCapture::capture_tenant`], and [`CaptureError::Store`] when the tenant's
-/// stream identity cannot be recorded.
-pub(crate) fn capture(
-    log: &PostgresEventStore,
+/// [`StoreError::Backend`] naming the setting refused, or the server that cannot be reached or
+/// refused the connection.
+#[cfg(feature = "sqlite")]
+pub(crate) fn session(
+    database: &Database,
     runtime: &tokio::runtime::Runtime,
-    tenant: &TenantId,
-    limits: CaptureLimits,
-) -> Result<TenantCapture, CaptureError> {
-    match runtime.block_on(log.capture_tenant(tenant, &[], limits)) {
-        // Appends do not record the tenant's stream identity, and a capture needs one: the first
-        // capture of a log records it, once, and captures again.
-        Err(CaptureError::TenantIdentityMissing) => {
-            runtime.block_on(log.stream_identity(tenant))?;
-            runtime.block_on(log.capture_tenant(tenant, &[], limits))
+) -> Result<tokio_postgres::Client, StoreError> {
+    config(database, PREFIX)?;
+    let mut connection = admitted(&database.url)?;
+    connection.connect_timeout(PoolOptions::default().connect_timeout);
+    let failed = |error: tokio_postgres::Error| match error.as_db_error() {
+        Some(refused) => StoreError::Backend(format!(
+            "PostgreSQL refused the connection: {} (SQLSTATE {})",
+            refused.message(),
+            refused.code().code()
+        )),
+        None => unreachable_hint(EventLogError::Backend(error.to_string()), database),
+    };
+    let client = match &database.ca {
+        Some(ca) => {
+            connection.ssl_mode(tokio_postgres::config::SslMode::Require);
+            let tls = rustls::ClientConfig::builder()
+                .with_root_certificates(roots(ca)?)
+                .with_no_client_auth();
+            let (client, driver) = runtime
+                .block_on(connection.connect(tokio_postgres_rustls::MakeRustlsConnect::new(tls)))
+                .map_err(failed)?;
+            runtime.spawn(driver);
+            client
         }
-        other => other,
-    }
+        None => {
+            connection.ssl_mode(tokio_postgres::config::SslMode::Disable);
+            let (client, driver) = runtime
+                .block_on(connection.connect(tokio_postgres::NoTls))
+                .map_err(failed)?;
+            runtime.spawn(driver);
+            client
+        }
+    };
+    Ok(client)
 }
 
 /// The configuration eventlog admits `database` with: verified against its CA bundle where it

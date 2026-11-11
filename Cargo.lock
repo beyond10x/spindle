@@ -2065,6 +2065,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-postgres",
+ "tokio-postgres-rustls",
  "uuid",
  "web-time",
 ]

@@ -88,6 +88,7 @@ tasks:
       vars: [SPINDLE_TEST_DATABASE_URL, SPINDLE_TEST_DATABASE_CA]
     cmds:
       - 'cargo test --locked -p spindle-kernel --test spindle-kernel -- --include-ignored postgres::'
+      - 'cargo test --locked -p spindle-kernel --test spindle-kernel -- --include-ignored state_move::'
       - 'cargo test --locked -p spindle-cli --test spindle-cli -- --include-ignored postgres::'
       - 'cargo test --locked -p spindle-cli --test spindle-cli -- --include-ignored state_move::'
 

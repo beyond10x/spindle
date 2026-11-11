@@ -196,9 +196,9 @@ A scan of an entity (a list view, a reset, a command decided on a scan) reads th
 stream, where each write names the instances it left, and then one event per instance: every read
 a bounded statement of committed events, so it takes no lock, a transaction left open elsewhere on
 the server does not delay it, another process's commits on the same tables (a rolling deploy) do
-not wait for it, and it holds the entity's rows in memory, not the log. A log holding writes of
-the SQLite store of 0.10.0 or earlier, which name no instances, is read whole, at one snapshot,
-instead. The SQLite store keeps reading a scan from its file's whole log, page by page.
+not wait for it, and it holds the entity's rows in memory, not the log. Only a log `state move`
+marked, holding writes of a release before 0.7.0, which record no entity version, is read whole,
+at one snapshot, instead. The SQLite store keeps reading a scan from its file's whole log, page by page.
 
 ### Moving a state directory into PostgreSQL
 
@@ -218,15 +218,25 @@ $ b10x-spindle state move --from target/rally-state examples/rally/ess --environ
 {"component":"rally-table","events":12,"streams":2}
 ```
 
-Stop Spindle first: the move does not keep another process off the directory. It exits 1, writing
-nothing, naming the component, when:
+A directory written by 0.7.0 to 0.10.0 arrives in this release's form, each write naming the
+instances it left, so a scan of the moved tables reads the entity's own stream. A directory holding
+writes of a release before 0.7.0, which recorded no entity version, arrives with its log marked, so
+its scans read the whole log and miss no row.
+
+Stop Spindle first: the move does not keep a running Spindle off the directory or the tables.
+Another move is kept off: a move holds a PostgreSQL advisory lock on its schema (any role may take
+one) from before it reads the tables to after its last append, and a second move into the same
+schema waits up to 5 seconds, then exits 1 naming the other move, writing nothing. A move exits 1,
+writing nothing, naming the component, when:
 
 - the directory lacks a component's file;
 - a file holds a JSON string or object key with U+0000, which the SQLite store keeps and
   PostgreSQL refuses. Every file is read before the move connects, and the refusal names the
   stream, the event and where in its body the value is;
-- a component's tables already hold a stream, read at one snapshot, so also while a transaction
-  is open elsewhere on the server.
+- a component's tables already hold the stream of an entity the specification declares or the
+  directory holds, or the mark of a partial move: each read is of a stream's last committed
+  version, so it writes nothing, does not grow with the log and sees every commit while a
+  transaction is open elsewhere on the server.
 
 A move that fails partway leaves a partial copy, which the next move refuses: drop the component's
 tables (or the schema), run `store migrate` and move again.

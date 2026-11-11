@@ -648,7 +648,7 @@ fn recorded(events: &[crate::Event], end: NewEvent) -> Result<Vec<NewEvent>, Sto
 
 /// What every append records about the command it is for: the runtime as actor, a fresh
 /// idempotency key, and `request_hash`.
-fn meta(request_hash: String) -> CommandMeta {
+pub(crate) fn meta(request_hash: String) -> CommandMeta {
     CommandMeta {
         idempotency_key: new_event_id(),
         request_hash,

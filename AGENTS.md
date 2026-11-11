@@ -108,7 +108,7 @@ unprivileged user namespaces. `task check:vm` runs them on a host with `/dev/kvm
 `SPINDLE_FIRECRACKER` (the binary) and `SPINDLE_FIRECRACKER_KERNEL` (an uncompressed guest
 `vmlinux`).
 
-PostgreSQL tests (`postgres::` in the kernel and CLI test binaries, `state_move::` in the CLI's) that reach a database are
+PostgreSQL tests (`postgres::` in the kernel and CLI test binaries, `state_move::` in both) that reach a database are
 `#[ignore]`d too. `task check:postgres` runs them against `SPINDLE_TEST_DATABASE_URL` (a loopback
 PostgreSQL 13 or later, a role that may create schemas, roles and tables) and
 `SPINDLE_TEST_DATABASE_CA` (the PEM CA of that server's TLS certificate, for the hosted cases); CI's

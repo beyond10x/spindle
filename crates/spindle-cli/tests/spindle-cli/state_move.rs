@@ -617,3 +617,260 @@ fn a_move_of_a_string_postgresql_refuses_exits_1_before_connecting() {
         text(&refused)
     );
 }
+
+/// A directory of rally's three files, each holding one match.
+fn one_match_each(directory: &Path) {
+    for component in COMPONENTS {
+        SqliteStore::open(&directory.join(format!("{component}.sqlite")))
+            .expect("the file opens")
+            .commit(&Change {
+                entity: MATCH.to_owned(),
+                identity: json!("first"),
+                expected: None,
+                row: Row {
+                    state: "Serving".to_owned(),
+                    fields: BTreeMap::new(),
+                },
+                events: Vec::new(),
+                scanned: Vec::new(),
+            })
+            .expect("a row is written");
+    }
+}
+
+/// While another move holds the schema, a move waits a little, then exits 1 naming the other
+/// move and the schema, writing nothing; once that move ends, the same move succeeds.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_move_into_a_schema_another_move_holds_exits_1_naming_it_and_writes_nothing() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    one_match_each(directory.path());
+    let schema = schema();
+    let url = owner_url();
+    let settings = settings(&url, &schema);
+    migrate(&settings);
+    let other =
+        spindle_kernel::StateLock::take(&database(&schema)).expect("another move takes the schema");
+    let refused = state_move(directory.path(), &settings);
+    assert_eq!(refused.status.code(), Some(1), "{}", text(&refused));
+    assert!(refused.stdout.is_empty(), "{}", text(&refused));
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    for named in ["another state move", schema.as_str(), "nothing was moved"] {
+        assert!(
+            stderr.contains(named),
+            "the refusal names {named}: {}",
+            text(&refused)
+        );
+    }
+    let held: Vec<u64> = COMPONENTS
+        .iter()
+        .map(|component| events(&schema, component))
+        .collect();
+    assert_eq!(held, [0, 0, 0], "nothing is written to any prefix");
+    other.release().expect("the other move ends");
+    let moved = state_move(directory.path(), &settings);
+    assert_eq!(moved.status.code(), Some(0), "{}", text(&moved));
+}
+
+/// The tables of a component hold a row of an entity the component declares and the directory
+/// does not hold: the move exits 1 naming the component, nothing written.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_move_into_tables_holding_an_entity_the_directory_does_not_exits_1() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    one_match_each(directory.path());
+    let schema = schema();
+    let url = owner_url();
+    let settings = settings(&url, &schema);
+    migrate(&settings);
+    PostgresStore::open(&database(&schema), "rally-player-east", 1)
+        .expect("the store opens")
+        .commit(&Change {
+            entity: "rally.east.Player".to_owned(),
+            identity: json!("already-here"),
+            expected: None,
+            row: Row {
+                state: "Serving".to_owned(),
+                fields: BTreeMap::new(),
+            },
+            events: Vec::new(),
+            scanned: Vec::new(),
+        })
+        .expect("a row is written");
+    let refused = state_move(directory.path(), &settings);
+    assert_eq!(refused.status.code(), Some(1), "{}", text(&refused));
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("rally-player-east"),
+        "the refusal names the component: {}",
+        text(&refused)
+    );
+    let after: Vec<u64> = COMPONENTS
+        .iter()
+        .map(|component| events(&schema, component))
+        .collect();
+    assert_eq!(after, [2, 0, 0], "nothing is written to any prefix");
+}
+
+const PASSWORD: &str = "serving-password";
+
+/// A role that may log in and run DML on `schema`'s tables, as `run` serves with on a hosted
+/// database.
+fn serving_role(schema: &str) -> String {
+    let role = format!("spindle_move_serving_{}", &schema["spindle_move_".len()..]);
+    let database = sql(&["SELECT current_database()".to_owned()]).remove(0);
+    sql(&[
+        format!("CREATE ROLE {role} LOGIN PASSWORD '{PASSWORD}' CONNECTION LIMIT 12"),
+        format!("GRANT USAGE ON SCHEMA {schema} TO {role}"),
+        format!("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {schema} TO {role}"),
+        format!("GRANT USAGE ON ALL SEQUENCES IN SCHEMA {schema} TO {role}"),
+        format!("GRANT TEMPORARY ON DATABASE {database} TO {role}"),
+    ]);
+    role
+}
+
+/// On a hosted database, over TLS, the serving role `run` takes moves the directory: it takes
+/// its schema's lock as any role may.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL and SPINDLE_TEST_DATABASE_CA: task check:postgres"]
+fn a_move_with_the_serving_role_on_a_hosted_database_moves_the_directory() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    one_match_each(directory.path());
+    let schema = schema();
+    let url = owner_url();
+    let ca = std::env::var("SPINDLE_TEST_DATABASE_CA").expect(
+        "SPINDLE_TEST_DATABASE_CA names the PEM CA of the test server's TLS certificate (task \
+         check:postgres)",
+    );
+    migrate(&[
+        ("database_url", url.as_str()),
+        ("database_ca", &ca),
+        ("database_schema", &schema),
+    ]);
+    let role = serving_role(&schema);
+    let (scheme, rest) = url.split_once("://").expect("a URL with a scheme");
+    let (_, location) = rest.split_once('@').expect("a URL with user and password");
+    let serving = format!("{scheme}://{role}:{PASSWORD}@{location}");
+    let moved = state_move(
+        directory.path(),
+        &[
+            ("database_url", serving.as_str()),
+            ("database_ca", &ca),
+            ("database_schema", &schema),
+            ("database_connections", "13"),
+        ],
+    );
+    assert_eq!(moved.status.code(), Some(0), "{}", text(&moved));
+    let landed: Vec<u64> = COMPONENTS
+        .iter()
+        .map(|component| events(&schema, component))
+        .collect();
+    assert_eq!(landed, [2, 2, 2], "{}", text(&moved));
+}
+
+/// Two moves of two directories started together into one empty schema, both waiting on its
+/// lock before either has read the tables: one moves its directory, the other exits 1, and the
+/// schema holds one directory's streams, never a mix.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn two_moves_started_together_into_one_schema_leave_one_directory() {
+    let first = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let second = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let row = |entity: &str, identity: &str| Change {
+        entity: entity.to_owned(),
+        identity: json!(identity),
+        expected: None,
+        row: Row {
+            state: "Serving".to_owned(),
+            fields: BTreeMap::new(),
+        },
+        events: Vec::new(),
+        scanned: Vec::new(),
+    };
+    for directory in [first.path(), second.path()] {
+        for component in COMPONENTS {
+            drop(
+                SqliteStore::open(&directory.join(format!("{component}.sqlite")))
+                    .expect("the file opens"),
+            );
+        }
+    }
+    let write = |directory: &Path, component: &str, change: &Change| {
+        SqliteStore::open(&directory.join(format!("{component}.sqlite")))
+            .expect("the file opens")
+            .commit(change)
+            .expect("a row is written");
+    };
+    write(first.path(), "rally-table", &row(MATCH, "from-first"));
+    write(
+        second.path(),
+        "rally-player-east",
+        &row("rally.east.Player", "from-second"),
+    );
+    write(second.path(), "rally-table", &row(MATCH, "from-second"));
+    let schema = schema();
+    let url = owner_url();
+    let settings = settings(&url, &schema);
+    migrate(&settings);
+    let held = spindle_kernel::StateLock::take(&database(&schema)).expect("the schema is held");
+    let start = |directory: &Path| {
+        spindle(
+            &[
+                "state",
+                "move",
+                "--from",
+                directory.to_str().expect("a UTF-8 path"),
+                RALLY,
+                "--environment",
+                POSTGRES,
+            ],
+            &settings,
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("state move starts")
+    };
+    let one = start(first.path());
+    let two = start(second.path());
+    let waiting = format!(
+        "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objsubid = 2 AND NOT \
+         granted AND objid::bigint = (hashtext('{schema}')::bigint & 4294967295)"
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(4);
+    while sql(std::slice::from_ref(&waiting))[0] != "2" {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "both moves wait on the schema's lock"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    held.release().expect("the schema is released");
+    let one = one.wait_with_output().expect("the first move ends");
+    let two = two.wait_with_output().expect("the second move ends");
+    let landed: Vec<u64> = COMPONENTS
+        .iter()
+        .map(|component| events(&schema, component))
+        .collect();
+    let report = format!(
+        "events per component {landed:?}\nfirst {}\nsecond {}",
+        text(&one),
+        text(&two)
+    );
+    let exited = [one.status.code(), two.status.code()];
+    assert!(
+        exited.iter().all(|code| matches!(code, Some(0 | 1)))
+            && exited.iter().filter(|code| **code == Some(0)).count() <= 1,
+        "at most one move moves, the other exits 1: {report}"
+    );
+    // The second waits on the lock while the first moves: it is refused for the tables the
+    // first filled, or for the lock it still holds after the wait.
+    let expected = match exited {
+        [Some(0), _] => [0, 0, 2],
+        [_, Some(0)] => [2, 0, 2],
+        _ => [0, 0, 0],
+    };
+    assert_eq!(
+        landed, expected,
+        "the schema holds the directory of the move that exited 0, or nothing: {report}"
+    );
+}

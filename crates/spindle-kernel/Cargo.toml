@@ -11,7 +11,7 @@ publish.workspace = true
 [features]
 default = ["sqlite", "postgres"]
 sqlite = ["dep:eventlog-core", "dep:eventlog-sqlite", "dep:tokio"]
-postgres = ["dep:eventlog-core", "dep:eventlog-postgres", "dep:rustls", "dep:tokio", "dep:tokio-postgres", "tokio/net", "tokio/time"]
+postgres = ["dep:eventlog-core", "dep:eventlog-postgres", "dep:rustls", "dep:tokio", "dep:tokio-postgres", "dep:tokio-postgres-rustls", "tokio/net", "tokio/time"]
 
 [dependencies]
 ess-compiler.workspace = true
@@ -28,7 +28,8 @@ serde_json = "1"
 thiserror = "2"
 time = { version = "0.3", features = ["formatting"] }
 tokio = { version = "1", default-features = false, features = ["rt"], optional = true }
-tokio-postgres = { version = "0.7", default-features = false, optional = true }
+tokio-postgres = { version = "0.7", default-features = false, features = ["runtime"], optional = true }
+tokio-postgres-rustls = { version = "0.14", default-features = false, features = ["ring"], optional = true }
 uuid = { version = "1.29", features = ["v4"] }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
