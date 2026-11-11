@@ -338,6 +338,13 @@ pub trait Store {
     /// answered only where no event is left after them, so a caller reads on from the last
     /// position answered until it has as many as it needs.
     ///
+    /// The read answers every event this store committed before it, as its reading handle's
+    /// does. An event another writer committed to the same tables may be answered later than its
+    /// commit (PostgreSQL publishes an event only once every transaction older than its write
+    /// has ended), but never after an event committed later: a caller reading on from the last
+    /// position answered never passes one. A store that cannot answer its own writes within a
+    /// bound fails the read rather than answer fewer.
+    ///
     /// # Errors
     /// [`StoreError::Backend`] when the store cannot be read, or, this default, does not read back
     /// the events it commits.
@@ -348,7 +355,9 @@ pub trait Store {
 
     /// A position at or past every write that committed an event so far, read without reading
     /// any event: [`Store::events_after`] it answers none of the events committed so far and
-    /// every one committed after. `0` for a store that never committed one.
+    /// every one committed after. `0` for a store that never committed one. "So far" holds as
+    /// [`Store::events_after`] answers: every write of this store before the call, and those of
+    /// another writer of the same tables once the store answers them.
     ///
     /// # Errors
     /// [`StoreError::Backend`] when the store cannot be read, or, this default, does not read back
