@@ -241,7 +241,9 @@ runs every command, event binding delivery, tick and reset on the host's thread,
 arrival order, and answers each read on a thread of its own beside it: a view read, `GET /api/*`
 and `GET /__spindle/*` (§ 11, 2026-11-11). A view is read through its store's reading handle
 (`spindle_kernel::Store::reading`): SQLite reads the file on connections of its own under its
-write-ahead log on a capped pool of connections, the memory store hands out each entity's rows as
+write-ahead log on a capped pool of connections, and answers from each entity's resting rows,
+folded from one read of its log when it opens and from the events appended since, so a view read
+costs the rows of its entity, not the log; the memory store hands out each entity's rows as
 one value a write replaces, copying only an entity a read still holds. Either way a read sees the
 store as the last write that landed left it, never part of one, and never waits for a command, a
 slow external call included; the writer never copies more for a read than the entity it writes or

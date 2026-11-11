@@ -58,6 +58,7 @@ mod rally;
 mod related_guards;
 mod related_values;
 mod responses;
+mod resting_rows;
 mod row_set_guards;
 mod scan;
 mod set_outcomes;

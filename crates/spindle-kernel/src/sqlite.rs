@@ -14,9 +14,11 @@
 //! left, each at its stream's version after it (schema 2: `{"rows": {stream: version},
 //! "removed": {stream: version}}`), so a scan can read the entity's stream and one event per
 //! instance rather than the whole log. The store of 0.10.0 wrote it empty (schema 1), and before
-//! 0.7.0 wrote none. A scan of a SQLite file, which any release may have written, reads the whole
-//! log ([`Log::each_event`]); a scan of a PostgreSQL store reads the entity's stream, unless the
-//! log is marked as holding such writes ([`MARKS`]) or the entity's stream holds one.
+//! 0.7.0 wrote none. A SQLite file, which any release may have written, is read whole once, when
+//! the store opens, into each entity's rows as they rest ([`RestingRows`]), which its scans and
+//! counts answer from, folding in only the events appended since; a scan of a PostgreSQL store
+//! reads the entity's stream, unless the log is marked as holding such writes ([`MARKS`]) or the
+//! entity's stream holds one.
 //!
 //! The encoding is the store's, not SQLite's: [`LogStore`] keeps it on any eventlog event store
 //! that appends groups and answers the tenant's whole log ([`Log`]), and the PostgreSQL store
@@ -27,6 +29,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+#[cfg(feature = "sqlite")]
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(feature = "sqlite")]
 use std::sync::{Condvar, Mutex, PoisonError};
@@ -143,6 +147,11 @@ pub struct LogStore<L> {
     /// Set when the store is closed ([`Drop`]): a SQLite reading handle then opens no further
     /// connection by its path, which a reset may move aside and open again empty.
     retired: Arc<AtomicBool>,
+    /// The rows each entity rests with, folded from the feed of a SQLite file: what the store and
+    /// every connection of its reading handle scan and count. Set by [`SqliteStore::open`] alone,
+    /// since the fold relies on SQLite's single writer ([`RestingRows`]); `None` on PostgreSQL.
+    #[cfg(feature = "sqlite")]
+    rows: Option<Arc<RestingRows>>,
 }
 
 /// The store is closed: its reading handle opens no further connection by its path.
@@ -167,27 +176,52 @@ impl<L> std::fmt::Debug for LogStore<L> {
 
 #[cfg(feature = "sqlite")]
 impl LogStore<SqliteEventStore> {
-    /// Opens the database at `path`, creating it and its tables when absent.
+    /// Opens the database at `path`, creating it and its tables when absent, and reads its log
+    /// once for the rows that rest in it.
     ///
     /// # Errors
-    /// [`StoreError::Backend`] when the file cannot be opened or provisioned.
+    /// [`StoreError::Backend`] when the file cannot be opened, provisioned or read.
     pub fn open(path: &Path) -> Result<Self, StoreError> {
-        Self::opening(path, true, sqlite_runtime()?)
+        let mut store = Self::opening(path, true, sqlite_runtime()?, None)?;
+        let rows = Arc::new(RestingRows::default());
+        // No other handle holds the rows yet: the whole log folds into them as it is read, a page
+        // at a time, so no more than one page of it is held at once.
+        let mut folded = Folded::default();
+        folded.position = store.feed(&rows, 0, |event| {
+            if let Some(fold) = Fold::of(event) {
+                folded.apply(fold);
+            }
+        })?;
+        *rows.folded() = folded;
+        store.rows = Some(rows);
+        Ok(store)
+    }
+
+    /// How many events of its log this store and its reading handle have read for their scans
+    /// and counts: the whole log once when it opened, then only the events appended since.
+    #[must_use]
+    pub fn events_read(&self) -> u64 {
+        self.rows
+            .as_ref()
+            .map_or(0, |rows| rows.read.load(Ordering::SeqCst))
     }
 
     /// Opens the database at `path`, which a store opened before provisioned, on a connection of
-    /// its own driven by `runtime`: what a reading handle reads through.
+    /// its own driven by `runtime`, sharing that store's `rows`: what a reading handle reads
+    /// through.
     fn open_existing(
         path: &Path,
         runtime: Arc<tokio::runtime::Runtime>,
+        rows: Option<Arc<RestingRows>>,
     ) -> Result<Self, StoreError> {
-        Self::opening(path, false, runtime)
+        Self::opening(path, false, runtime, rows)
     }
 
     fn opening(
         path: &Path,
         create: bool,
         runtime: Arc<tokio::runtime::Runtime>,
+        rows: Option<Arc<RestingRows>>,
     ) -> Result<Self, StoreError> {
         let location = path.to_str().ok_or_else(|| {
             StoreError::Backend(format!("{} is not a UTF-8 path", path.display()))
@@ -198,7 +232,9 @@ impl LogStore<SqliteEventStore> {
             runtime.block_on(SqliteEventStore::open_existing(location, PREFIX))
         }
         .map_err(backend)?;
-        Self::on(log, runtime, Some(path.to_owned()))
+        let mut store = Self::on(log, runtime, Some(path.to_owned()))?;
+        store.rows = rows;
+        Ok(store)
     }
 }
 
@@ -228,6 +264,8 @@ impl<L: Log> LogStore<L> {
             path,
             reading: None,
             retired: Arc::default(),
+            #[cfg(feature = "sqlite")]
+            rows: None,
         })
     }
 
@@ -244,6 +282,8 @@ impl<L: Log> LogStore<L> {
             path: None,
             reading: None,
             retired: Arc::default(),
+            #[cfg(feature = "sqlite")]
+            rows: None,
         }
     }
 
@@ -455,7 +495,15 @@ impl<L: Log> Store for LogStore<L> {
             appends,
         };
         match self.runtime.block_on(self.log.append_group(&group)) {
-            Ok(_) => Ok(()),
+            Ok(_) => {
+                // The group landed: its rows are folded in now, so a read finds no more to fold.
+                // Where that read fails, the next scan or count folds them in or fails itself.
+                #[cfg(feature = "sqlite")]
+                if let Some(rows) = &self.rows {
+                    drop(self.caught_up(rows));
+                }
+                Ok(())
+            }
             Err(EventLogError::Conflict { .. }) => {
                 // Another writer moved a stream between the check above and the append: name
                 // the first entity or instance no longer where its write found it.
@@ -520,8 +568,16 @@ impl<L: Log> Reading for SharedReading<L> {
 impl<L: Log> LogStore<L> {
     /// Reads the entity's stream and one event per instance ([`LogStore::scan_named`]), or, on a
     /// log that may hold writes naming no instances, the whole log ([`LogStore::scan_log`]): a
-    /// SQLite file, or a PostgreSQL store marked as holding them ([`MARKS`]).
+    /// SQLite file, or a PostgreSQL store marked as holding them ([`MARKS`]). A store holding its
+    /// resting rows (SQLite, [`RestingRows`]) answers from them, the events appended since its
+    /// last read folded in; only the entity is taken under their lock, its rows copied out
+    /// without it.
     fn scanned(&self, entity: &str) -> Result<Scan, StoreError> {
+        #[cfg(feature = "sqlite")]
+        if let Some(rows) = &self.rows {
+            let standing = self.caught_up(rows)?.entities.get(entity).cloned();
+            return standing.map_or_else(|| Ok(Scan::default()), |entity| entity.scan());
+        }
         if L::UNMARKED || self.marked()? {
             return self.scan_log(entity);
         }
@@ -532,8 +588,17 @@ impl<L: Log> LogStore<L> {
     /// entity's own stream alone ([`LogStore::resting`]), reading no row, or, for a log that may
     /// hold writes naming no instances and for an entity whose stream holds one, from one read
     /// of the whole log for all of them ([`LogStore::count_log`]), where a scan of each reads the
-    /// whole log again.
+    /// whole log again. A store holding its resting rows counts them, every entity at one
+    /// position of the feed.
     fn counted(&self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
+        #[cfg(feature = "sqlite")]
+        if let Some(rows) = &self.rows {
+            let folded = self.caught_up(rows)?;
+            return Ok(entities
+                .iter()
+                .map(|entity| (entity.clone(), folded.count(entity)))
+                .collect());
+        }
         if L::UNMARKED || self.marked()? {
             return self.count_log(entities);
         }
@@ -765,7 +830,8 @@ impl<L: Log> LogStore<L> {
 /// SQLite has one writer, so its feed holds every committed event: a scan reads it page by page,
 /// every page moving the position forward or the read stopping as a backend error. A file may
 /// hold writes of any release, back to those before 0.7.0 recorded no entity's version, and none
-/// is marked: every scan reads the feed.
+/// is marked: a store reads the feed whole once, when it opens, into its resting rows
+/// ([`RestingRows`]), and scans and counts from them.
 #[cfg(feature = "sqlite")]
 impl Log for SqliteEventStore {
     const UNMARKED: bool = true;
@@ -796,19 +862,22 @@ impl Log for SqliteEventStore {
         }
     }
 
-    /// Reads the same file on connections of its own, which share one runtime: one opened with
-    /// the handle, more as reads that run at once need them, up to as many as the machine runs
-    /// threads at once (at least 2). `None` where no connection could be opened.
+    /// Reads the same file on connections of its own, which share one runtime and the store's
+    /// resting rows: one opened with the handle, more as reads that run at once need them, up to
+    /// as many as the machine runs threads at once (at least 2). `None` where no connection could
+    /// be opened.
     fn reading(store: &LogStore<Self>) -> Option<Arc<dyn Reading>> {
         let path = store.path.clone()?;
         let runtime = sqlite_runtime().ok()?;
-        let first = SqliteStore::open_existing(&path, Arc::clone(&runtime)).ok()?;
+        let rows = store.rows.clone();
+        let first = SqliteStore::open_existing(&path, Arc::clone(&runtime), rows.clone()).ok()?;
         let cap = std::thread::available_parallelism()
             .map_or(2, std::num::NonZero::get)
             .max(2);
         Some(Arc::new(SqliteReading {
             path,
             runtime,
+            rows,
             cap,
             connections: Mutex::new(Connections {
                 idle: vec![first],
@@ -818,6 +887,216 @@ impl Log for SqliteEventStore {
             returned: Condvar::new(),
             retired: Arc::clone(&store.retired),
         }))
+    }
+}
+
+#[cfg(feature = "sqlite")]
+impl<L: Log> LogStore<L> {
+    /// Hands every event of the tenant's feed past `position` to `each`, in commit order, a page
+    /// of [`FEED_PAGE`] at a time, to the feed's end, counting each on `rows`; answers the
+    /// position past the last event read. Every page moves the position forward, or the read
+    /// stops as a backend error.
+    fn feed(
+        &self,
+        rows: &RestingRows,
+        mut position: u64,
+        mut each: impl FnMut(RecordedEvent),
+    ) -> Result<u64, StoreError> {
+        loop {
+            let page = self
+                .runtime
+                .block_on(self.log.read_feed(&self.tenant, position, FEED_PAGE))
+                .map_err(backend)?;
+            let read = u64::try_from(page.events.len()).unwrap_or(u64::MAX);
+            rows.read.fetch_add(read, Ordering::SeqCst);
+            for event in page.events {
+                each(event);
+            }
+            if !page.has_more {
+                return Ok(page.next_position.max(position));
+            }
+            if page.next_position <= position {
+                return Err(StoreError::Backend(format!(
+                    "the feed did not move past position {position}"
+                )));
+            }
+            position = page.next_position;
+        }
+    }
+
+    /// The resting `rows`, under their lock, once every event appended past those they hold is
+    /// folded in. The events are read and their rows decoded outside the lock, to the feed's
+    /// end; under it, only those past the position another read may have folded to meanwhile are
+    /// applied (SQLite's feed position is the event's `global_seq`). An append group commits
+    /// whole and the read runs to the feed's end, so the rows hold each write group whole or not
+    /// at all, and the lock is held only to apply what was read and to hand out the rows as they
+    /// stand.
+    fn caught_up<'a>(
+        &self,
+        rows: &'a RestingRows,
+    ) -> Result<std::sync::MutexGuard<'a, Folded>, StoreError> {
+        let start = rows.folded().position;
+        let mut folds = Vec::new();
+        let end = self.feed(rows, start, |event| {
+            let position = event.global_seq;
+            if let Some(fold) = Fold::of(event) {
+                folds.push((position, fold));
+            }
+        })?;
+        let mut held = rows.folded();
+        if end > held.position {
+            let past = held.position;
+            for (position, fold) in folds {
+                if position > past {
+                    held.apply(fold);
+                }
+            }
+            held.position = end;
+        }
+        Ok(held)
+    }
+}
+
+/// The rows of every entity of a SQLite store as they rest in its log, folded from its feed:
+/// what the store and every connection of its reading handle scan and count. Memory holds each
+/// entity's resting rows, never the events that led to them.
+///
+/// Only a SQLite file is folded so: SQLite has one writer at a time, so an event never commits
+/// behind a feed position a read has already passed, and a read from the last position folded
+/// misses nothing. A PostgreSQL store, whose transactions commit out of the order of their
+/// positions, scans the entity's stream instead ([`LogStore::scan_named`]).
+#[cfg(feature = "sqlite")]
+#[derive(Debug, Default)]
+pub(crate) struct RestingRows {
+    folded: Mutex<Folded>,
+    /// How many feed events were read for it ([`SqliteStore::events_read`]).
+    read: AtomicU64,
+}
+
+#[cfg(feature = "sqlite")]
+impl RestingRows {
+    fn folded(&self) -> std::sync::MutexGuard<'_, Folded> {
+        self.folded.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// The feed folded up to a position: each entity's rows as one value a read takes as it stands,
+/// so a fold changes an entity in place unless a read still holds it, and then a copy of that
+/// entity alone.
+#[cfg(feature = "sqlite")]
+#[derive(Debug, Default)]
+struct Folded {
+    /// The feed position past the last event folded.
+    position: u64,
+    entities: BTreeMap<String, Arc<Entity>>,
+}
+
+/// One entity's rows in a [`Folded`] feed.
+#[cfg(feature = "sqlite")]
+#[derive(Debug, Clone, Default)]
+struct Entity {
+    /// Each instance's last `spindle.row` event, by its stream id, unless a `spindle.removed`
+    /// event followed it.
+    rows: BTreeMap<String, Arc<Stored>>,
+    /// The streams whose last such event carried no row it could read: counted, never scanned.
+    unreadable: BTreeSet<String>,
+    /// Why a `spindle.row` event of the entity did not read, if one did not: a scan of the
+    /// entity fails, as a read of the whole log did.
+    malformed: Option<String>,
+    /// The version of the entity's `spindle:entity` stream: how many writes of it landed.
+    version: u64,
+}
+
+/// What one feed event changes in the resting rows, decoded from it.
+#[cfg(feature = "sqlite")]
+enum Fold {
+    /// The entity's `spindle:entity` stream stands at this version.
+    Version(String, u64),
+    /// The instance of the entity rests holding this row, or why its row event did not read.
+    Row(String, String, Result<Arc<Stored>, String>),
+    /// The instance of the entity was removed.
+    Removed(String, String),
+}
+
+#[cfg(feature = "sqlite")]
+impl Fold {
+    /// What `event` changes: `None` for an event that is no row, removal or entity version.
+    fn of(event: RecordedEvent) -> Option<Self> {
+        if event.stream_type == ENTITY {
+            return Some(Self::Version(event.stream_id, event.version));
+        }
+        if event.name == REMOVED {
+            return Some(Self::Removed(event.stream_type, event.stream_id));
+        }
+        if event.name != ROW {
+            return None;
+        }
+        let version = event.version;
+        let row = serde_json::from_value::<Row>(event.data)
+            .map(|row| Arc::new(Stored { row, version }))
+            .map_err(|error| format!("a stored row: {error}"));
+        Some(Self::Row(event.stream_type, event.stream_id, row))
+    }
+}
+
+#[cfg(feature = "sqlite")]
+impl Folded {
+    fn entity(&mut self, entity: &str) -> &mut Entity {
+        if !self.entities.contains_key(entity) {
+            self.entities.insert(entity.to_owned(), Arc::default());
+        }
+        Arc::make_mut(
+            self.entities
+                .get_mut(entity)
+                .expect("the entity was inserted"),
+        )
+    }
+
+    fn apply(&mut self, fold: Fold) {
+        match fold {
+            Fold::Version(entity, version) => self.entity(&entity).version = version,
+            Fold::Removed(entity, identity) => {
+                let entity = self.entity(&entity);
+                entity.rows.remove(&identity);
+                entity.unreadable.remove(&identity);
+            }
+            Fold::Row(entity, identity, Ok(stored)) => {
+                let entity = self.entity(&entity);
+                entity.unreadable.remove(&identity);
+                entity.rows.insert(identity, stored);
+            }
+            Fold::Row(entity, identity, Err(error)) => {
+                let entity = self.entity(&entity);
+                entity.rows.remove(&identity);
+                entity.unreadable.insert(identity);
+                entity.malformed.get_or_insert(error);
+            }
+        }
+    }
+
+    /// How many instances of `entity` rest.
+    fn count(&self, entity: &str) -> usize {
+        self.entities
+            .get(entity)
+            .map_or(0, |entity| entity.rows.len() + entity.unreadable.len())
+    }
+}
+
+#[cfg(feature = "sqlite")]
+impl Entity {
+    fn scan(&self) -> Result<Scan, StoreError> {
+        if let Some(malformed) = &self.malformed {
+            return Err(StoreError::Backend(malformed.clone()));
+        }
+        let rows = self
+            .rows
+            .iter()
+            .map(|(identity, stored)| Ok((identity_from_key(identity)?, Stored::clone(stored))))
+            .collect::<Result<_, StoreError>>()?;
+        Ok(Scan {
+            rows,
+            version: self.version,
+        })
     }
 }
 
@@ -835,6 +1114,8 @@ struct SqliteReading {
     path: PathBuf,
     /// What drives every connection's log calls.
     runtime: Arc<tokio::runtime::Runtime>,
+    /// The store's resting rows, which every connection reads and folds the feed into.
+    rows: Option<Arc<RestingRows>>,
     /// How many connections may be open at once.
     cap: usize,
     connections: Mutex<Connections>,
@@ -935,7 +1216,11 @@ impl SqliteReading {
             }
             connections.live += 1;
             drop(connections);
-            let opened = SqliteStore::open_existing(&self.path, Arc::clone(&self.runtime));
+            let opened = SqliteStore::open_existing(
+                &self.path,
+                Arc::clone(&self.runtime),
+                self.rows.clone(),
+            );
             let open = !self.retired.load(Ordering::SeqCst);
             connections = self.lock();
             match opened {

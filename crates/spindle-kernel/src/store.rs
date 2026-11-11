@@ -225,8 +225,8 @@ pub trait Store {
     fn scan(&mut self, entity: &str) -> Result<Scan, StoreError>;
 
     /// How many instances each of `entities` holds, by entity: as many as [`Store::scan`] answers
-    /// rows for. This default scans each entity in turn; a store that reads every entity at once
-    /// (SQLite reads its whole feed for one scan) counts them in one read.
+    /// rows for. This default scans each entity in turn; a store that holds every entity's rows
+    /// at once (SQLite folds its feed into them) counts them in one read.
     ///
     /// # Errors
     /// [`StoreError::Backend`] when the store cannot be read.
