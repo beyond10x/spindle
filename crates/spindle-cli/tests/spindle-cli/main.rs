@@ -43,6 +43,7 @@ mod error_object_bodies;
 mod fixed_caller;
 mod fixed_callers;
 mod form_query;
+mod format_range;
 mod http_cause;
 mod ingress;
 mod metrics;
