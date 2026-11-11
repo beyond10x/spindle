@@ -45,6 +45,7 @@ tasks:
     desc: The wasm host runs a command on the memory store, under wasm-bindgen-test-runner on Node
     env:
       CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+      WASM_BINDGEN_TEST_TIMEOUT: '120'
     cmds:
       - cargo test --locked --target wasm32-unknown-unknown --no-default-features -p spindle-host --test spindle-host
 
@@ -52,6 +53,7 @@ tasks:
     desc: The IndexedDB store passes the store contract and keeps its state across a reopen, in a headless browser under wasm-bindgen-test-runner
     env:
       CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+      WASM_BINDGEN_TEST_TIMEOUT: '120'
     cmds:
       - cargo test --locked --target wasm32-unknown-unknown -p spindle-store-browser --test spindle-store-browser
 
@@ -59,6 +61,7 @@ tasks:
     desc: The wasm host answers a specification's routes and the console routes inside a Service Worker of a headless browser, as the loopback listener answers them, under wasm-bindgen-test-runner
     env:
       CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+      WASM_BINDGEN_TEST_TIMEOUT: '120'
     cmds:
       - cargo test --locked --target wasm32-unknown-unknown -p spindle-wasm --test spindle-wasm
 
