@@ -1,9 +1,10 @@
 //! Where instances rest between commands.
 //!
 //! The kernel reads one instance, decides, and commits one [`Change`] to that instance: the
-//! runtime default of § 3a, one command on one instance. A set outcome (`instances:`) writes every
-//! row it changes in one [`Store::commit_all`]. A store never decides anything; it holds rows and
-//! the events that changed them.
+//! runtime default of § 3a, one command on one instance. A set outcome (`instances:`), and an
+//! outcome with secondary effects (`affects:`) with its subject, writes every row it changes in one
+//! [`Store::commit_all`]. A store never decides anything; it holds rows and the events that
+//! changed them.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, PoisonError, RwLock};
@@ -96,7 +97,8 @@ pub struct Removal {
 }
 
 /// One write of several a command makes together ([`Store::commit_all`]): a set outcome's change
-/// or removal of one row it selected.
+/// or removal of one row it selected, or an outcome's own subject or a row its secondary effects
+/// (`affects:`) selected.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Write {
     /// The instance rests on, holding this.
