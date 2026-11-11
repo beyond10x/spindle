@@ -61,6 +61,7 @@ mod provides;
 mod rally;
 mod related_guards;
 mod related_values;
+mod response_source;
 mod responses;
 mod resting_rows;
 mod row_set_guards;

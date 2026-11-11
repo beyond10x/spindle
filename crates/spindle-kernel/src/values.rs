@@ -4,8 +4,9 @@
 //! Only the sources Spindle's own specification and the `rally` example use,
 //! `{append: input.<path>}`, and a field or the state of the row an input field names
 //! (`{related: {via: input.<field>, field: …}}`), and what a set outcome changed
-//! (`{count: changed}`, `{changed: …}`), and a value an expression computes (`{expr: …}`, outside
-//! an error), are read here; the rest are refused by [`crate::supported`] before a command runs.
+//! (`{count: changed}`, `{changed: …}`), a value an expression computes (`{expr: …}`, outside
+//! an error), and a field of the response the run answers (`{response: …}`, in an event payload),
+//! are read here; the rest are refused by [`crate::supported`] before a command runs.
 //! Numbers are ESS's own [`Number`], so `{increment: N}` adds exactly as ESS adds, an expression
 //! is computed by ESS's own evaluator ([`Expr::evaluate`]), and a literal is typed by
 //! [`EssIr::literal_primitive`], the one question every ESS consumer asks of a literal.
@@ -131,6 +132,9 @@ pub(crate) struct Sources<'a, 'm> {
     /// reads. A `{changed: …}` field reads [`Self::before`], the changed row as it was before the
     /// outcome with its identity among its fields.
     pub(crate) changed: Option<usize>,
+    /// The response this run answers, once it is prepared: what `{response: <field>}` reads.
+    /// `None` before it is prepared and where the outcome answers none.
+    pub(crate) response: Option<&'a Map<String, Value>>,
 }
 
 impl<'a> Sources<'a, '_> {
@@ -244,6 +248,10 @@ impl<'a> Sources<'a, '_> {
                 entity,
                 ..
             } if through.is_empty() => self.related(field, via, entity, None),
+            ResolvedPayloadValue::ResponseField {
+                field: read,
+                type_ref,
+            } => self.response_field(field, read, type_ref),
             ResolvedPayloadValue::EmptyList => Ok(Some(Value::Array(Vec::new()))),
             ResolvedPayloadValue::Cleared => Ok(None),
             ResolvedPayloadValue::Struct { fields } => {
@@ -359,6 +367,40 @@ impl<'a> Sources<'a, '_> {
                 .filter(|value| !value.is_null())
                 .cloned(),
         })
+    }
+
+    /// `{response: <read>}`, as ESS reads it (`interpret::execute::determined::response`): the
+    /// value this run answers in the response field `read`, a value of the field's type and of
+    /// the target's. A field the answer leaves absent is absent where its type admits absence, as
+    /// ESS reads an input's presence, and determines nothing where it does not; a response not
+    /// prepared determines nothing either. No message names an answered value: a one-time one
+    /// must reach none.
+    fn response_field(
+        &self,
+        field: &ResolvedPayloadField,
+        read: &str,
+        type_ref: &ResolvedTypeRef,
+    ) -> Result<Option<Value>, ExecuteError> {
+        let no_value = |why: &str| ExecuteError::NoValue {
+            what: format!(
+                "`{}`, which reads the response field `{read}`, {why}",
+                field.target
+            ),
+        };
+        let answer = self
+            .response
+            .ok_or_else(|| no_value("and the outcome answers no response"))?;
+        match answer.get(read).filter(|value| !value.is_null()) {
+            Some(value) => {
+                for kind in [type_ref, &field.target_type] {
+                    crate::typed::validate(self.ir, kind, value)
+                        .map_err(|_| no_value("whose answered value is not one of its type"))?;
+                }
+                Ok(Some(value.clone()))
+            }
+            None if crate::typed::validate(self.ir, type_ref, &Value::Null).is_ok() => Ok(None),
+            None => Err(no_value("which the answer leaves absent")),
+        }
     }
 
     fn before(&self, field: &ResolvedPayloadField) -> Result<&'a Row, ExecuteError> {

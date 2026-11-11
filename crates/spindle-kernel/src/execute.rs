@@ -281,6 +281,7 @@ pub fn execute_refusing(
         minted: None,
         answered: BTreeMap::new(),
         scanned: Vec::new(),
+        answer: None,
         refused,
     };
     match run.select()? {
@@ -471,6 +472,9 @@ struct Run<'a, 'ir> {
     /// selection), at the version its first scan answered: every write group the selected
     /// outcome commits is conditioned on them ([`crate::Write::scanned`]).
     scanned: Vec<Scanned>,
+    /// The response this run answers, prepared before the creation and the events of an outcome
+    /// whose payload reads it ([`Self::prepare`]); `None` until then.
+    answer: Option<Map<String, Value>>,
     /// The outcomes the caller does not serve, by name, each with why ([`execute_refusing`]).
     refused: &'a BTreeMap<String, String>,
 }
@@ -1414,6 +1418,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
         let Some(subject) = &outcome.subject else {
             self.runs(outcome)?;
             self.publish_reads(outcome, None)?;
+            self.prepare(outcome)?;
             let before = self.before();
             let executed = Executed {
                 outcome: outcome.name.as_str().to_owned(),
@@ -1435,6 +1440,8 @@ impl<'a, 'ir> Run<'a, 'ir> {
             (ResolvedEffect::Creates, ResolvedInstance::Observed { event, field }) => {
                 self.runs(outcome)?;
                 self.publish_reads(outcome, None)?;
+                // The creation's identity may itself read the response, so it is prepared first.
+                self.prepare(outcome)?;
                 if let Some((created, named)) = crate::mint::slot(self.ir, outcome) {
                     let minted = self.mint_identity(outcome, created, named)?;
                     self.minted = Some((event, named.name.clone(), minted));
@@ -1509,6 +1516,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 let sources = self.sources(outcome, &entity.name, None, Some(&stored.row));
                 write(&sources, &outcome.sets, &mut after.fields)?;
                 let affected = self.affect(outcome, entity, &identity, &stored.row)?;
+                self.prepare(outcome)?;
                 let events = self.emit(outcome, Some(&stored.row))?;
                 let change = (!matches!(effect, ResolvedEffect::Preserves)).then(|| Change {
                     entity: entity.name.to_string(),
@@ -1714,6 +1722,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
             owner,
             generator: &self.generator,
             changed: None,
+            response: self.answer.as_ref(),
         }
     }
 
@@ -1878,14 +1887,40 @@ impl<'a, 'ir> Run<'a, 'ir> {
         Ok(())
     }
 
+    /// Prepares the response `outcome` answers where an event payload of it reads the response
+    /// (`{response: <field>}`, [`crate::supported::reads_response`]), so the payload reads the
+    /// value the run answers: where ESS's interpreter prepares it (`interpret::execute::take`),
+    /// before a creation takes its identity and its `sets:`, and after an existing row's `sets:`
+    /// and secondary effects, before the events. Where no payload reads it, the response is drawn
+    /// after everything else the outcome draws ([`Self::response`]), as before.
+    fn prepare(&mut self, outcome: &ResolvedOutcome) -> Result<(), ExecuteError> {
+        if self.answer.is_none() && crate::supported::reads_response(outcome) {
+            self.answer = self.draw_response(outcome)?;
+        }
+        Ok(())
+    }
+
+    /// The command's response, where `outcome` answers it ([`crate::mint::answers`]): the one
+    /// [`Self::prepare`] drew, else drawn now ([`Self::draw_response`]). `None` for every other
+    /// outcome.
+    fn response(
+        &self,
+        outcome: &ResolvedOutcome,
+    ) -> Result<Option<Map<String, Value>>, ExecuteError> {
+        match &self.answer {
+            Some(answer) if crate::mint::answers(outcome) => Ok(Some(answer.clone())),
+            _ => self.draw_response(outcome),
+        }
+    }
+
     /// The command's response, where `outcome` answers it ([`crate::mint::answers`]): each
-    /// declared field chosen from its type through the [`Generator`] ([`crate::mint::response`]),
-    /// drawn after everything else the outcome draws. `None` for every other outcome.
+    /// declared field chosen from its type through the [`Generator`] ([`crate::mint::response`]).
+    /// `None` for every other outcome.
     ///
     /// A one-time field's value is checked to appear in no other field and no field name of this
     /// answer, as ESS's interpreter checks the one it originates; a refusal names the field, never
     /// the value.
-    fn response(
+    fn draw_response(
         &self,
         outcome: &ResolvedOutcome,
     ) -> Result<Option<Map<String, Value>>, ExecuteError> {

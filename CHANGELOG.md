@@ -22,6 +22,14 @@ are Spindle's releases.
   same one scan of the source's resting rows as any view, on the host's thread and beside it.
   Before, such a view answered `501` "declares an aggregation". A read of one row by identity of
   an aggregate view, and an aggregation beside a field read through a reference, stay refused.
+- An event payload that reads the command's own response (`{response: <field>}`), which the
+  kernel refused as unsupported (`501`) "the value source response field", publishes the value the
+  same request answers in that field, a struct member too. A creation whose identity reads it
+  creates its row under the answered value, so a view lists the row under the id the request
+  returned. The response is prepared where ESS's interpreter prepares it: before a creation takes
+  its identity and its `sets:`, and after an existing row's `sets:` and `affects:`, before the
+  events. A `sets:` value read through `{payload: <Event>.<field>}` from a published value that
+  reads the response stays refused, as ESS's interpreter does not interpret it.
 
 ## [0.14.0] - 2026-11-11
 
