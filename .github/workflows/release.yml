@@ -161,15 +161,21 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-24.04
+            cargo-auditable-sha256: 4c8d3b08c3c34e9f2333367224dbbfb4aab68067698b43de59fe19aded3416dd
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
+            cargo-auditable-sha256: bcb2d46002a8dd8e94d0d669cb39d38c9651db2ae5d1f3f1f1bab516ee1e212c
           - target: aarch64-apple-darwin
             os: macos-15
+            cargo-auditable-sha256: a66ad6392861ca1abfe0b02b522622d91edf63e5d7b60f4d3088b5c23d240c72
           - target: x86_64-apple-darwin
             os: macos-15-intel
+            cargo-auditable-sha256: 4b87f06ea13d32466bbc68b1f5715ac11753a052d9935245380bddce8a3f0e50
     env:
       TARGET: ${{ matrix.target }}
       VERSION: ${{ needs.provenance.outputs.version }}
+      CARGO_AUDITABLE_VERSION: '0.7.7'
+      RUST_AUDIT_INFO_VERSION: '0.5.4'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -191,13 +197,33 @@ jobs:
           name: ui-panel
           path: ui/dist-panel
 
-      - name: Build b10x-spindle with the UI embedded
+      - name: Install cargo-auditable and rust-audit-info
+        shell: bash
+        env:
+          CARGO_AUDITABLE_SHA256: ${{ matrix.cargo-auditable-sha256 }}
+        run: |
+          set -euo pipefail
+          archive="cargo-auditable-${TARGET}"
+          curl --fail --silent --show-error --location --retry 3 --output "$RUNNER_TEMP/$archive.tar.xz" \
+            "https://github.com/rust-secure-code/cargo-auditable/releases/download/v${CARGO_AUDITABLE_VERSION}/$archive.tar.xz"
+          echo "$CARGO_AUDITABLE_SHA256  $RUNNER_TEMP/$archive.tar.xz" | shasum -a 256 --check --strict
+          tar -xJf "$RUNNER_TEMP/$archive.tar.xz" -C "$RUNNER_TEMP"
+          mkdir -p "$RUNNER_TEMP/bin"
+          install -m 755 "$RUNNER_TEMP/$archive/cargo-auditable" "$RUNNER_TEMP/bin/cargo-auditable"
+          cargo install --locked --version "$RUST_AUDIT_INFO_VERSION" --root "$RUNNER_TEMP" rust-audit-info
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Build b10x-spindle with the UI embedded and its dependency list
         shell: bash
         run: |
           set -euo pipefail
           test -s ui/dist/index.html
           test -s ui/dist-panel/panel.html
-          cargo build --locked --release -p spindle-cli --target "$TARGET" 2>&1 | tee "$RUNNER_TEMP/build.log"
+          if ! command -v cargo-auditable >/dev/null; then
+            echo "cargo-auditable is missing: the binary would carry no dependency list." >&2
+            exit 1
+          fi
+          cargo auditable build --locked --release -p spindle-cli --target "$TARGET" 2>&1 | tee "$RUNNER_TEMP/build.log"
           if grep -Fq "ui/dist is missing" "$RUNNER_TEMP/build.log"; then
             echo "The build embedded no UI." >&2
             exit 1
@@ -212,6 +238,28 @@ jobs:
         run: |
           set -euo pipefail
           test "$("target/${TARGET}/release/b10x-spindle" --version)" = "b10x-spindle ${VERSION}"
+
+      - name: The binary carries its dependency list
+        shell: bash
+        env:
+          LC_ALL: C
+        run: |
+          set -euo pipefail
+          rust-audit-info "target/${TARGET}/release/b10x-spindle" > "$RUNNER_TEMP/audit.json"
+          jq -r '.packages[].name' "$RUNNER_TEMP/audit.json" | sort -u > "$RUNNER_TEMP/embedded.txt"
+          cargo tree --locked -p spindle-cli --target "$TARGET" -e normal --prefix none --format '{p}' \
+            | awk 'NF { print $1 }' | sort -u > "$RUNNER_TEMP/expected.txt"
+          cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[].name' | sort -u > "$RUNNER_TEMP/members.txt"
+          comm -12 "$RUNNER_TEMP/members.txt" "$RUNNER_TEMP/expected.txt" > "$RUNNER_TEMP/workspace.txt"
+          missing="$(comm -23 "$RUNNER_TEMP/expected.txt" "$RUNNER_TEMP/embedded.txt")"
+          if [ -n "$missing" ]; then
+            echo "The binary's dependency list lacks: $(tr '\n' ' ' <<< "$missing")" >&2
+            exit 1
+          fi
+          for crate in spindle-cli spindle-kernel eventlog-postgres; do
+            grep -Fxq "$crate" "$RUNNER_TEMP/embedded.txt" || { echo "The binary's dependency list lacks $crate." >&2; exit 1; }
+          done
+          echo "${TARGET}: the binary lists $(wc -l < "$RUNNER_TEMP/embedded.txt" | tr -d ' ') crates, $(wc -l < "$RUNNER_TEMP/workspace.txt" | tr -d ' ') of them workspace crates ($(tr '\n' ' ' < "$RUNNER_TEMP/workspace.txt")), and eventlog-postgres." | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Package
         shell: bash
@@ -237,10 +285,82 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  sbom:
+    name: CycloneDX SBOM
+    needs: provenance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.provenance.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ needs.provenance.outputs.commit }}
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: '1.98.1'
+
+      - name: Install cargo-cyclonedx
+        env:
+          CARGO_CYCLONEDX_VERSION: '0.5.9'
+          CARGO_CYCLONEDX_SHA256: fb8dbee9f182173e062a64a387b21a0badc6fab8b2abf9294973f012972bf6d8
+        run: |
+          set -euo pipefail
+          archive="cargo-cyclonedx-x86_64-unknown-linux-gnu"
+          curl --fail --silent --show-error --location --retry 3 --output "$RUNNER_TEMP/$archive.tar.xz" \
+            "https://github.com/CycloneDX/cyclonedx-rust-cargo/releases/download/cargo-cyclonedx-${CARGO_CYCLONEDX_VERSION}/$archive.tar.xz"
+          echo "$CARGO_CYCLONEDX_SHA256  $RUNNER_TEMP/$archive.tar.xz" | sha256sum --check --strict
+          tar -xJf "$RUNNER_TEMP/$archive.tar.xz" -C "$RUNNER_TEMP"
+          install -D -m 755 "$RUNNER_TEMP/$archive/cargo-cyclonedx" "$RUNNER_TEMP/bin/cargo-cyclonedx"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: One SBOM for the four release targets
+        run: |
+          set -euo pipefail
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          export SOURCE_DATE_EPOCH
+          targets="x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-apple-darwin x86_64-apple-darwin"
+          mkdir -p "$RUNNER_TEMP/sbom" dist
+          for target in $targets; do
+            cargo cyclonedx --quiet --manifest-path crates/spindle-cli/Cargo.toml --format json --spec-version 1.5 \
+              --target "$target" --override-filename "sbom-${target}"
+            mv "crates/spindle-cli/sbom-${target}.json" "$RUNNER_TEMP/sbom/"
+          done
+          git diff --exit-code -- Cargo.lock
+          sbom="dist/b10x-spindle-${VERSION}.cdx.json"
+          jq -s '
+            . as $boms
+            | $boms[0]
+            | .metadata.properties = ([$boms[].metadata.properties[]?] | unique)
+            | .components = ([$boms[].components[]] | unique_by(."bom-ref"))
+            | .dependencies = ([$boms[].dependencies[]] | group_by(.ref)
+                | map({ref: .[0].ref, dependsOn: ([.[].dependsOn[]?] | unique)}))
+          ' $(for target in $targets; do printf '%s ' "$RUNNER_TEMP/sbom/sbom-${target}.json"; done) > "$sbom"
+          if ! jq -e --arg version "$VERSION" '
+            .bomFormat == "CycloneDX"
+            and .metadata.component.name == "spindle-cli"
+            and .metadata.component.version == $version
+            and ([.metadata.properties[] | select(.name == "cdx:rustc:sbom:target:triple")] | length) == 4
+            and ([.components[].name] | index("eventlog-postgres")) != null
+          ' "$sbom" > /dev/null; then
+            echo "The SBOM is not CycloneDX for spindle-cli $VERSION on the four targets with eventlog-postgres." >&2
+            exit 1
+          fi
+          echo "SBOM $(basename "$sbom"): $(jq '.components | length' "$sbom") components for $(wc -w <<< "$targets") targets." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom
+          path: dist/*.cdx.json
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
     name: Upload binaries to the release page
     if: ${{ github.event_name != 'pull_request' }}
-    needs: [provenance, gate, build]
+    needs: [provenance, gate, build, sbom]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -257,6 +377,11 @@ jobs:
           pattern: "*-*-*"
           merge-multiple: true
 
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: sbom
+          path: dist
+
       - name: Create the checksum manifest
         working-directory: dist
         run: |
@@ -265,8 +390,9 @@ jobs:
           for target in $targets; do
             test -s "b10x-spindle-${VERSION}-${target}.tar.gz"
           done
-          test "$(ls | wc -l)" -eq "$(wc -w <<< "$targets")"
-          sha256sum *.tar.gz > SHA256SUMS
+          test -s "b10x-spindle-${VERSION}.cdx.json"
+          test "$(ls | wc -l)" -eq "$(( $(wc -w <<< "$targets") + 1 ))"
+          sha256sum *.tar.gz "b10x-spindle-${VERSION}.cdx.json" > SHA256SUMS
           sha256sum --check --strict SHA256SUMS
 
       - name: Wait for the release page of the tag
@@ -282,18 +408,18 @@ jobs:
           echo "No release page for $TAG after 30 minutes; nothing uploaded. Create the page through the bot and re-run this job." | tee -a "$GITHUB_STEP_SUMMARY"
           exit 1
 
-      - name: Upload the archives and SHA256SUMS
+      - name: Upload the archives, the SBOM and SHA256SUMS
         working-directory: dist
         run: |
           set -euo pipefail
           existing="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
           conflict=0
-          for file in *.tar.gz SHA256SUMS; do
+          for file in *.tar.gz *.cdx.json SHA256SUMS; do
             if printf '%s\n' "$existing" | grep -Fxq "$file"; then
               echo "Asset $file is already on the release page of $TAG; refusing to replace it." | tee -a "$GITHUB_STEP_SUMMARY"
               conflict=1
             fi
           done
           test "$conflict" -eq 0
-          gh release upload "$TAG" *.tar.gz SHA256SUMS
+          gh release upload "$TAG" *.tar.gz *.cdx.json SHA256SUMS
           gh release view "$TAG" --json assets --jq '.assets[].name' | tee -a "$GITHUB_STEP_SUMMARY"
