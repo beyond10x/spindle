@@ -14,6 +14,13 @@
 //! A duration histogram has a bucket per bound of [`DURATION_BOUNDS_US`], in seconds, and `+Inf`.
 //! The request histogram also has `_sum` and `_count`; a command's has its buckets only, since its
 //! counters keep no sum, and its `+Inf` bucket is its count.
+//!
+//! A series is written only once something was counted in it, and from then on, since no count
+//! falls (`story:metrics-observed-series`): a labelled counter or histogram from its first count,
+//! an entity's rows from the first scrape that finds it holding one ([`Recorder::observed_rows`]),
+//! the last scrape's duration from the second scrape. Only `spindle_resets_total` is written from
+//! the start. So a scrape of a model of hundreds of commands that has run none writes one series,
+//! not about 33 per command.
 
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
@@ -38,7 +45,7 @@ pub(crate) struct Family {
 
 /// Every family the metrics expose, in the order `ess/fixtures/observe/metrics/families.json`
 /// lists them; a unit test holds the two equal.
-pub(crate) const FAMILIES: [Family; 14] = [
+pub(crate) const FAMILIES: [Family; 15] = [
     Family {
         name: "spindle_http_requests_total",
         kind: "counter",
@@ -57,9 +64,10 @@ pub(crate) const FAMILIES: [Family; 14] = [
     Family {
         name: "spindle_http_request_duration_seconds",
         kind: "histogram",
-        labels: &[],
+        labels: &["method", "route"],
         summary: "From a request's head read to its answer handed back, on the listener thread, \
-                  for every request counted by spindle_http_requests_total.",
+                  for every request counted by spindle_http_requests_total, by method and route \
+                  template; an unrouted request has an empty route.",
     },
     Family {
         name: "spindle_commands_total",
@@ -121,7 +129,8 @@ pub(crate) const FAMILIES: [Family; 14] = [
         kind: "gauge",
         labels: &["entity"],
         summary: "Rows each entity holds now, kept from the writes this process lands and taken \
-                  once from its store when the store opens; falls on a reset.",
+                  once from its store when the store opens; written from the first scrape that \
+                  finds the entity holding a row, and falls on a reset.",
     },
     Family {
         name: "spindle_resets_total",
@@ -136,6 +145,13 @@ pub(crate) const FAMILIES: [Family; 14] = [
         summary: "External causes a served command asked about, by what answered each: world, \
                   file, default, call or unanswered.",
     },
+    Family {
+        name: "spindle_metrics_scrape_duration_seconds",
+        kind: "gauge",
+        labels: &[],
+        summary: "How long the last GET /__spindle/metrics before this one took to read the \
+                  counts and write them; absent until one was answered.",
+    },
 ];
 
 /// One sample's value.
@@ -143,6 +159,8 @@ pub(crate) const FAMILIES: [Family; 14] = [
 enum Value {
     /// A counter's or a gauge's value.
     Number(u64),
+    /// A gauge of a duration, kept in microseconds and written in seconds.
+    Seconds(u64),
     /// A histogram: one count per bucket of [`DURATION_BOUNDS_US`] and one above the last, each
     /// counting only its own bucket; the sum of the values in microseconds, where it is kept.
     Buckets {
@@ -152,6 +170,15 @@ enum Value {
 }
 
 impl Value {
+    /// Whether nothing was counted in it: a counter of 0, a histogram with every bucket empty.
+    fn uncounted(&self) -> bool {
+        match self {
+            Self::Number(value) => *value == 0,
+            Self::Seconds(_) => false,
+            Self::Buckets { counts, .. } => counts.iter().all(|count| *count == 0),
+        }
+    }
+
     /// `self` with `other` added, sample by sample: two counters of one series are one count.
     fn add(&mut self, other: Self) {
         match (self, other) {
@@ -241,6 +268,11 @@ fn write_sample(text: &mut String, name: &str, labels: &str, value: &Value, boun
             text.push_str(name);
             braced(text, labels, None);
             let _ = writeln!(text, " {value}");
+        }
+        Value::Seconds(micros) => {
+            text.push_str(name);
+            braced(text, labels, None);
+            let _ = writeln!(text, " {}", seconds(*micros));
         }
         Value::Buckets { counts, sum_us } => {
             let mut cumulative = 0u64;
@@ -341,28 +373,30 @@ pub(crate) fn exposition(recorder: &Recorder, host: &Reader, rows: Vec<(String, 
     let Traffic {
         requests,
         durations,
-        duration_sum_us,
+        scraped_us,
         resets,
         externals,
     } = recorder.traffic();
     for (labels, count) in requests {
         samples.add("spindle_http_requests_total", &labels, Value::Number(count));
     }
-    samples.add(
-        "spindle_http_request_duration_seconds",
-        &[] as &[&str],
-        Value::Buckets {
-            counts: durations,
-            sum_us: Some(duration_sum_us),
-        },
-    );
+    for (labels, timed) in durations {
+        samples.add(
+            "spindle_http_request_duration_seconds",
+            &labels,
+            Value::Buckets {
+                counts: timed.counts,
+                sum_us: Some(timed.sum_us),
+            },
+        );
+    }
     let components = host.placements().keys().cloned().collect::<Vec<_>>();
     for component in &components {
         if let Some(counters) = host.counters(component) {
             counted(&mut samples, component, counters);
         }
     }
-    for (entity, rows) in rows {
+    for (entity, rows) in recorder.observed_rows(rows) {
         samples.add(
             "spindle_entity_rows",
             &[entity],
@@ -381,11 +415,19 @@ pub(crate) fn exposition(recorder: &Recorder, host: &Reader, rows: Vec<(String, 
             Value::Number(count),
         );
     }
+    if let Some(micros) = scraped_us {
+        samples.add(
+            "spindle_metrics_scrape_duration_seconds",
+            &[] as &[&str],
+            Value::Seconds(micros),
+        );
+    }
     samples.text()
 }
 
-/// Adds every counter and histogram of `component`'s `counters` to `samples`, each catalogue
-/// entry as one sample of its family.
+/// Adds every counter and histogram of `component`'s `counters` that counted anything to
+/// `samples`, each catalogue entry as one sample of its family; one that counted nothing is not
+/// written.
 fn counted(samples: &mut Samples, component: &str, counters: &Counters) {
     let snapshot = counters.snapshot();
     let mut values = snapshot.counters.into_iter();
@@ -404,6 +446,9 @@ fn counted(samples: &mut Samples, component: &str, counters: &Counters) {
                 None => continue,
             },
         };
+        if value.uncounted() {
+            continue;
+        }
         let (family, labels): (&'static str, Vec<&str>) = match &counter.key {
             Key::Outcome { command, outcome } => (
                 "spindle_commands_total",
@@ -523,6 +568,9 @@ mod tests {
             match value {
                 Value::Number(value) => {
                     let _ = writeln!(text, "{name}{} {value}", series(labels, None));
+                }
+                Value::Seconds(micros) => {
+                    let _ = writeln!(text, "{name}{} {}", series(labels, None), seconds(*micros));
                 }
                 Value::Buckets { counts, sum_us } => {
                     let mut cumulative = 0u64;

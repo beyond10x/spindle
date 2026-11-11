@@ -3,7 +3,7 @@ title: Observe
 sidebar_position: 6
 description: What a running Spindle instance counts without the specification saying anything about metrics, the observe API contract and the observe UI.
 lede: Every effect of an instance passes through the runtime, so the runtime counts it, and the counters are derived from the specification like capabilities.
-source: crates/spindle-telemetry/src/lib.rs, crates/spindle-target/src/process.rs, crates/spindle-qemu/src/lib.rs, crates/spindle-firecracker/src/lib.rs, crates/spindle-telemetry/tests, crates/spindle-target/src/sample.rs, crates/spindle-target/tests/spindle-target/sampling.rs, ess/domains/observe.yaml, Taskfile.yml, ui/, docs/design/observe.md
+source: crates/spindle-telemetry/src/lib.rs, crates/spindle-ingress/src/observe.rs, crates/spindle-ingress/src/observe/metrics.rs, crates/spindle-target/src/process.rs, crates/spindle-qemu/src/lib.rs, crates/spindle-firecracker/src/lib.rs, crates/spindle-telemetry/tests, crates/spindle-target/src/sample.rs, crates/spindle-target/tests/spindle-target/sampling.rs, ess/domains/observe.yaml, Taskfile.yml, ui/, docs/design/observe.md
 ---
 
 ## Counters
@@ -36,6 +36,34 @@ Names use the ESS handles as written, so a name in the catalogue is the name in 
 `b10x-spindle metrics <spec> --component <name>` prints the catalogue, and `b10x-spindle play`
 prints the table's non-zero counters under the grid
 ([getting started](/docs/getting-started#see-what-it-counts)).
+
+## A served run's metrics and request log
+
+`b10x-spindle run --observe` answers `GET /__spindle/metrics` in the Prometheus text format and
+`GET /__spindle/requests` with the last requests it answered.
+
+A scrape writes a series only once something was counted in it, and keeps writing it after that.
+So a model of hundreds of commands that has run none writes one series, `spindle_resets_total`,
+not a series for every declared command:
+
+| Family | Written from |
+|---|---|
+| `spindle_commands_total`, `spindle_command_failures_total`, `spindle_command_duration_seconds` | the first command of that name counted with that outcome or failure |
+| `spindle_events_appended_total` | the first event of that type appended |
+| `spindle_bindings_total`, `spindle_binding_retries_total`, `spindle_timer_ticks_total` | the first envelope, retry or tick of that binding |
+| `spindle_store_rows_written_total`, `spindle_store_bytes_written_total` | the component's first write |
+| `spindle_entity_rows` | the first scrape that finds the entity holding a row; it stays, at 0, after a reset |
+| `spindle_http_requests_total`, `spindle_http_request_duration_seconds`, `spindle_external_causes_total` | the first request or cause counted with those labels |
+| `spindle_metrics_scrape_duration_seconds` | the second scrape; it reports how long the scrape before it took |
+| `spindle_resets_total` | the first scrape |
+
+`spindle_http_request_duration_seconds` is labelled by `method` and `route`, the route template,
+so a slow route shows in its own series. An unrouted request has an empty `route`.
+
+A record's `reason` is the refusal text with every value the caller sent written `…`: a refused
+field is named with the type it expected, never with what was sent. It is at most 512 bytes, so
+the record of a refused request holds its method, its path and the names of its route, and under
+1 KiB besides, whatever its body held.
 
 ## Resources
 

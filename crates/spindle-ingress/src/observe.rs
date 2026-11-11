@@ -9,10 +9,14 @@
 //! class, their durations, and the resets of the run's stores. The listener records every request
 //! it answers outside the prefix, timed on its own thread from the head read to the answer handed
 //! back; a request under the prefix is neither recorded nor counted. The transport-free
-//! [`route`](crate::route) reads no clock, so it records nothing; it answers the prefix as the
-//! listener does.
+//! [`route`](crate::route) reads no request clock, so it records nothing; it answers the prefix
+//! as the listener does. A metrics scrape is timed where the crate is built with its listener
+//! ([`clock`]), never in the browser's build.
+//!
+//! A record keeps a bounded reason ([`reason`]): the answer's `refused` text with every value in
+//! it written `…`, at most [`REASON_MOST`] bytes, so a refused value is never recorded.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
@@ -39,6 +43,15 @@ pub const REQUESTS_MOST: usize = 10_000;
 
 /// The format of the request log.
 const FORMAT: &str = "spindle-requests/1";
+
+/// The most bytes of a record's reason (`spindle.observe.RequestRecord.reason`).
+pub(crate) const REASON_MOST: usize = 512;
+
+/// The longest name in backticks a reason keeps; a longer one is written `…`.
+const NAME_MOST: usize = 64;
+
+/// What a reason writes in place of a value.
+const ELIDED: &str = "…";
 
 /// The media type of the observe panel's page, `GET /__spindle/ui`.
 pub const PANEL_MEDIA: &str = "text/html; charset=utf-8";
@@ -433,11 +446,12 @@ struct Ring {
     records: VecDeque<Record>,
     /// Every request recorded, by its labels ([`Series`]).
     requests: BTreeMap<Series, u64>,
-    /// The durations of every request recorded, one count per bucket of [`DURATION_BOUNDS_US`]
-    /// and one above the last.
-    durations: Vec<u64>,
-    /// The sum of those durations, in microseconds.
-    duration_sum_us: u64,
+    /// The durations of every request recorded, by method and route template ([`Timed`]).
+    durations: BTreeMap<[String; 2], Timed>,
+    /// How long the last metrics scrape took, in microseconds; `None` before the first.
+    scraped_us: Option<u64>,
+    /// Every entity a scrape found holding a row: its row count is written from then on.
+    rows_seen: BTreeSet<String>,
     /// Resets of the run's stores through `POST /api/reset`.
     resets: u64,
     /// Every external cause answered, by command, outcome and source.
@@ -455,6 +469,15 @@ struct Ring {
 /// class (`2xx`), the route, operation and kind empty for an unrouted request.
 pub(crate) type Series = [String; 6];
 
+/// The durations of the requests of one method and route template: one count per bucket of
+/// [`DURATION_BOUNDS_US`] and one above the last, each counting only its own bucket, and their
+/// sum in microseconds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Timed {
+    pub(crate) counts: Vec<u64>,
+    pub(crate) sum_us: u64,
+}
+
 /// The methods RFC 9110 registers. Any other method is counted as `other`, so a client cannot
 /// add a series by inventing one; every route has one of them.
 const METHODS: [&str; 9] = [
@@ -466,11 +489,10 @@ const METHODS: [&str; 9] = [
 pub(crate) struct Traffic {
     /// Every request, by its labels, in label order.
     pub(crate) requests: Vec<(Series, u64)>,
-    /// One count per duration bucket of [`DURATION_BOUNDS_US`] and one above the last, each
-    /// counting only its own bucket.
-    pub(crate) durations: Vec<u64>,
-    /// The sum of every duration, in microseconds.
-    pub(crate) duration_sum_us: u64,
+    /// The durations of every request, by method and route template, in label order.
+    pub(crate) durations: Vec<([String; 2], Timed)>,
+    /// How long the last metrics scrape took, in microseconds; `None` before the first.
+    pub(crate) scraped_us: Option<u64>,
     /// Resets of the run's stores.
     pub(crate) resets: u64,
     /// Every external cause answered, by command, outcome and source, in label order.
@@ -493,8 +515,9 @@ impl Recorder {
             totals: [0; 6],
             records: VecDeque::with_capacity(capacity),
             requests: BTreeMap::new(),
-            durations: vec![0; DURATION_BOUNDS_US.len() + 1],
-            duration_sum_us: 0,
+            durations: BTreeMap::new(),
+            scraped_us: None,
+            rows_seen: BTreeSet::new(),
             resets: 0,
             externals: BTreeMap::new(),
             serving: false,
@@ -535,9 +558,10 @@ impl Recorder {
 
     /// Records one request: `method` and `path` (without the query string), its head read `at`,
     /// answered with `response` after `duration`, for what `note` says. Its class is read from
-    /// the answer ([`Class::of`]); its reason is the answer's `refused` text, for every class but
+    /// the answer ([`Class::of`]); its reason is the answer's `refused` text with every value in
+    /// it elided and cut to [`REASON_MOST`] bytes ([`reason`]), for every class but
     /// [`Class::Served`]. The oldest record is dropped beyond the capacity; the request stays
-    /// counted by its labels and its duration.
+    /// counted by its labels and its duration, by method and route template.
     pub(crate) fn record(
         &self,
         at: SystemTime,
@@ -550,13 +574,14 @@ impl Recorder {
         let refused = refused(&response.body);
         let class = Class::of(response.status, refused.as_deref(), note.answered.by);
         let micros = u64::try_from(duration.as_micros()).unwrap_or(u64::MAX);
+        let counted = if METHODS.contains(&method) {
+            method
+        } else {
+            "other"
+        };
+        let timed = [counted.to_owned(), note.route.clone().unwrap_or_default()];
         let series: Series = [
-            if METHODS.contains(&method) {
-                method
-            } else {
-                "other"
-            }
-            .to_owned(),
+            counted.to_owned(),
             note.route.clone().unwrap_or_default(),
             note.operation.clone().unwrap_or_default(),
             note.kind.unwrap_or_default().to_owned(),
@@ -569,8 +594,12 @@ impl Recorder {
                 .iter()
                 .position(|bound| micros <= *bound)
                 .unwrap_or(DURATION_BOUNDS_US.len());
-            ring.durations[bucket] += 1;
-            ring.duration_sum_us = ring.duration_sum_us.saturating_add(micros);
+            let durations = ring.durations.entry(timed).or_insert_with(|| Timed {
+                counts: vec![0; DURATION_BOUNDS_US.len() + 1],
+                sum_us: 0,
+            });
+            durations.counts[bucket] += 1;
+            durations.sum_us = durations.sum_us.saturating_add(micros);
             let record = Record {
                 sequence: ring.recorded,
                 at,
@@ -582,7 +611,9 @@ impl Recorder {
                 status: response.status,
                 class,
                 outcome: note.answered.outcome,
-                reason: refused.filter(|_| class != Class::Served),
+                reason: refused
+                    .filter(|_| class != Class::Served)
+                    .map(|refused| reason(&refused)),
                 duration,
                 events: note.answered.events,
                 externals: note.answered.externals,
@@ -671,14 +702,43 @@ impl Recorder {
                 .iter()
                 .map(|(series, count)| (series.clone(), *count))
                 .collect(),
-            durations: ring.durations.clone(),
-            duration_sum_us: ring.duration_sum_us,
+            durations: ring
+                .durations
+                .iter()
+                .map(|(series, timed)| (series.clone(), timed.clone()))
+                .collect(),
+            scraped_us: ring.scraped_us,
             resets: ring.resets,
             externals: ring
                 .externals
                 .iter()
                 .map(|(series, count)| (series.clone(), *count))
                 .collect(),
+        })
+    }
+
+    /// Notes that a metrics scrape took `took`: the next scrape writes it.
+    pub(crate) fn scraped(&self, took: Duration) {
+        let micros = u64::try_from(took.as_micros()).unwrap_or(u64::MAX);
+        self.ring(|ring| ring.scraped_us = Some(micros));
+    }
+
+    /// The rows of `rows` a scrape writes: each entity holding a row now, and each a scrape
+    /// found holding one before, whatever it holds now. An entity that never held a row is not
+    /// written.
+    pub(crate) fn observed_rows(&self, rows: Vec<(String, usize)>) -> Vec<(String, usize)> {
+        self.ring(|ring| {
+            rows.into_iter()
+                .filter(|(entity, held)| {
+                    if ring.rows_seen.contains(entity) {
+                        return true;
+                    }
+                    if *held > 0 {
+                        ring.rows_seen.insert(entity.clone());
+                    }
+                    *held > 0
+                })
+                .collect()
         })
     }
 
@@ -709,6 +769,163 @@ impl Eq for Recorder {}
 fn refused(body: &str) -> Option<String> {
     let body: Value = serde_json::from_str(body).ok()?;
     body.get("refused")?.as_str().map(str::to_owned)
+}
+
+/// The reason a record keeps of the `refused` text: its words and the names it gives, with every
+/// value in it written `…`, at most [`REASON_MOST`] bytes, cut with `…` where longer. A value is
+/// a quoted string (`"…"`, `'…'`), a bracketed list but a list index (`[0]`), a braced object, a
+/// name in backticks after `found`, longer than [`NAME_MOST`] or not a plain name, and a number,
+/// `true`, `false` or `null` where a refusal names a value: before `is not`, `names no` or
+/// `does not`, or last. So `invalid input: \`name\`: ["…"] is not a String` is kept as
+/// `invalid input: \`name\`: … is not a String`.
+pub(crate) fn reason(refused: &str) -> String {
+    let mut kept = String::with_capacity(REASON_MOST + ELIDED.len());
+    let mut rest = refused;
+    while let Some(first) = rest.chars().next() {
+        if kept.len() > REASON_MOST {
+            break;
+        }
+        let (taken, written) = match first {
+            '"' => (quoted(rest, '"'), None),
+            '\'' if char_literal(rest) => (quoted(rest, '\''), None),
+            '{' => (balanced(rest), None),
+            '[' => {
+                let end = balanced(rest);
+                let index = enclosed(&rest[..end], ']')
+                    .is_some_and(|inner| inner.bytes().all(|byte| byte.is_ascii_digit()));
+                (end, index.then(|| &rest[..end]))
+            }
+            '`' => {
+                let end = quoted(rest, '`');
+                let name = enclosed(&rest[..end], '`').is_some_and(|inner| {
+                    inner.len() <= NAME_MOST
+                        && plain(inner)
+                        && scalar(inner).is_none()
+                        && !kept.ends_with("found ")
+                });
+                (end, name.then(|| &rest[..end]))
+            }
+            _ if starts_word(&kept) => {
+                let end = rest
+                    .find(|character: char| character.is_whitespace() || ",;)".contains(character))
+                    .unwrap_or(rest.len());
+                let word = &rest[..end];
+                let after = &rest[end..];
+                let named = scalar(word).is_some()
+                    && ((after.is_empty() && kept.ends_with(": "))
+                        || [" is not", " names no", " does not"]
+                            .iter()
+                            .any(|lead| after.starts_with(lead)));
+                if named {
+                    (end, None)
+                } else {
+                    let end = first.len_utf8();
+                    (end, Some(&rest[..end]))
+                }
+            }
+            _ => {
+                let end = first.len_utf8();
+                (end, Some(&rest[..end]))
+            }
+        };
+        match written {
+            Some(text) => kept.push_str(text),
+            None if !kept.ends_with(ELIDED) => kept.push_str(ELIDED),
+            None => {}
+        }
+        rest = &rest[taken..];
+    }
+    if kept.len() > REASON_MOST {
+        let mut end = REASON_MOST - ELIDED.len();
+        while !kept.is_char_boundary(end) {
+            end -= 1;
+        }
+        kept.truncate(end);
+        kept.push_str(ELIDED);
+    }
+    kept
+}
+
+/// The length of the span `text` opens with `quote`, through the next unescaped `quote`; all of
+/// `text` where none closes it.
+fn quoted(text: &str, quote: char) -> usize {
+    let mut escaped = false;
+    for (at, character) in text.char_indices().skip(1) {
+        match character {
+            '\\' if quote != '`' => escaped = !escaped,
+            found if found == quote && !escaped => return at + found.len_utf8(),
+            _ => escaped = false,
+        }
+    }
+    text.len()
+}
+
+/// What `span` holds between its opening character and its closing `close`; `None` where it
+/// holds nothing or does not close.
+fn enclosed(span: &str, close: char) -> Option<&str> {
+    let inner = span.get(1..)?.strip_suffix(close)?;
+    (!inner.is_empty()).then_some(inner)
+}
+
+/// Whether `text` opens with a character written as Rust writes one: `'x'` or `'\n'`.
+fn char_literal(text: &str) -> bool {
+    let mut characters = text.chars().skip(1);
+    match characters.next() {
+        Some('\\') => text[1..]
+            .chars()
+            .take(12)
+            .skip(1)
+            .any(|found| found == '\''),
+        Some('\'') | None => false,
+        Some(_) => characters.next() == Some('\''),
+    }
+}
+
+/// The length of the bracketed or braced span `text` opens with, through its closing bracket,
+/// quoted strings skipped; all of `text` where it does not close.
+fn balanced(text: &str) -> usize {
+    let mut depth = 0usize;
+    let mut at = 0;
+    while let Some(character) = text[at..].chars().next() {
+        match character {
+            '"' => {
+                at += quoted(&text[at..], '"');
+                continue;
+            }
+            '[' | '{' => depth += 1,
+            ']' | '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return at + 1;
+                }
+            }
+            _ => {}
+        }
+        at += character.len_utf8();
+    }
+    text.len()
+}
+
+/// Whether `text` is a plain name: letters, digits, `_`, `-`, `.` and `:`.
+fn plain(text: &str) -> bool {
+    !text.is_empty()
+        && text
+            .chars()
+            .all(|character| character.is_alphanumeric() || "_-.:".contains(character))
+}
+
+/// `text` as a JSON number, `true`, `false` or `null`, where it is one.
+fn scalar(text: &str) -> Option<Value> {
+    serde_json::from_str::<Value>(text)
+        .ok()
+        .filter(|value| !value.is_string() && !value.is_array() && !value.is_object())
+}
+
+/// Whether a word starts after `kept`: at the start or after a space, `:` or `(`.
+fn starts_word(kept: &str) -> bool {
+    kept.chars()
+        .next_back()
+        .is_none_or(|last| last.is_whitespace() || ":(".contains(last))
 }
 
 /// Answers a request for the reserved route `reserved` with `method`, `path` and `query` (after
@@ -766,12 +983,32 @@ pub(crate) fn hosted(
     recorder: &Recorder,
     host: &mut spindle_host::Host,
 ) -> Response {
+    let started = clock();
     let reader = host.reader();
     let rows = match reserved {
         Reserved::Topology => Ok(Vec::new()),
         _ => host.rows(),
     };
-    answered(reserved, recorder, &reader, rows)
+    let response = answered(reserved, recorder, &reader, rows);
+    timed(reserved, recorder, started);
+    response
+}
+
+/// Where this build reads a clock, the listener's: the instant a scrape started. The
+/// transport-free [`route`](crate::route), built without the listener for the browser, reads
+/// none.
+fn clock() -> Option<std::time::Instant> {
+    #[cfg(feature = "listener")]
+    return Some(std::time::Instant::now());
+    #[cfg(not(feature = "listener"))]
+    None
+}
+
+/// Notes on `recorder` how long the metrics scrape `started` took, for a metrics scrape.
+fn timed(reserved: Reserved, recorder: &Recorder, started: Option<std::time::Instant>) {
+    if let Some(started) = started.filter(|_| reserved != Reserved::Topology) {
+        recorder.scraped(started.elapsed());
+    }
 }
 
 /// The answer to the reserved route `reserved` beside the host's thread, through its `reader`,
@@ -782,11 +1019,14 @@ pub(crate) fn read_hosted(
     recorder: &Recorder,
     reader: &spindle_host::Reader,
 ) -> Response {
+    let started = clock();
     let rows = match reserved {
         Reserved::Topology => Ok(Vec::new()),
         _ => reader.rows(),
     };
-    answered(reserved, recorder, reader, rows)
+    let response = answered(reserved, recorder, reader, rows);
+    timed(reserved, recorder, started);
+    response
 }
 
 /// The topology for [`Reserved::Topology`]; otherwise the metrics, `rows` the rows each entity
@@ -974,6 +1214,107 @@ mod tests {
             serde_json::json!([])
         );
         let _ = Answered::ingress();
+    }
+
+    /// `story:refusal-reason-bounded`: every shape in which a refusal text carries a value the
+    /// caller sent (the kernel's input check, `typed.rs`, and the ingress's own refusals) is
+    /// elided, the words and the names around it kept.
+    #[test]
+    fn a_reason_elides_every_value_and_keeps_the_names() {
+        let cases = [
+            (
+                r#"invalid input: `name`: ["Zq"] is not a String"#,
+                "invalid input: `name`: … is not a String",
+            ),
+            (
+                "invalid input: `count`: 5 is not a String",
+                "invalid input: `count`: … is not a String",
+            ),
+            (
+                r#"invalid input: `kind`: "red" is not a variant of a.b.Colour"#,
+                "invalid input: `kind`: … is not a variant of a.b.Colour",
+            ),
+            (
+                "invalid input: `tags`: [0]: true is not a String",
+                "invalid input: `tags`: [0]: … is not a String",
+            ),
+            (
+                "invalid input: `marks`: [Zq]: 3.5 is not a Integer",
+                "invalid input: `marks`: …: … is not a Integer",
+            ),
+            (
+                r#"invalid input: `id`: "Zq" does not start with "x-", as a.b.Id does"#,
+                "invalid input: `id`: … does not start with …, as a.b.Id does",
+            ),
+            (
+                r#"invalid input: `id`: '!' in "Zq!" is not in the alphabet of a.b.Id"#,
+                "invalid input: `id`: … in … is not in the alphabet of a.b.Id",
+            ),
+            (
+                r#"invalid input: `at`: {"Zq":1} is not a a.b.Spot: its invariant `value.x > 0` is false"#,
+                "invalid input: `at`: … is not a a.b.Spot: its invariant … is false",
+            ),
+            (
+                r#"invalid input: `pick`: {"tag":"Zq"} names no variant of a.b.Pick in `tag`"#,
+                "invalid input: `pick`: … names no variant of a.b.Pick in `tag`",
+            ),
+            (
+                "query.q: expected percent-encoded UTF-8 text, found `Zq`",
+                "query.q: expected percent-encoded UTF-8 text, found …",
+            ),
+            (
+                "query: a key is not percent-encoded UTF-8: `%FFZq`",
+                "query: a key is not percent-encoded UTF-8: …",
+            ),
+            (
+                "the body is not a JSON object: 42",
+                "the body is not a JSON object: …",
+            ),
+            (
+                r#"the body is not a JSON object: ["Zq"]"#,
+                "the body is not a JSON object: …",
+            ),
+            (
+                "the caller's `owner`: invalid type: integer `7`, expected a string",
+                "the caller's `owner`: invalid type: integer …, expected a string",
+            ),
+        ];
+        for (refused, kept) in cases {
+            assert_eq!(super::reason(refused), kept, "{refused}");
+        }
+        for unchanged in [
+            "the body is not JSON: expected value at line 1 column 5",
+            "tasks.board.OpenTask declares no input field priority",
+            "query.page: expected one value, found 2",
+            "neither the request nor a decisions file answers `external.vetoed`, and \
+             `tasks.ledger.Review` declares no default branch for --answer-default to take",
+            "the command reads the caller attribute `owner_id`, and it is sent as no caller \
+             that carries it",
+            "held back by the test",
+        ] {
+            assert_eq!(super::reason(unchanged), unchanged);
+        }
+    }
+
+    #[test]
+    fn a_reason_is_cut_to_its_bound() {
+        for long in [
+            "x".repeat(1_000),
+            "é".repeat(500),
+            format!("a {}", "`b` ".repeat(300)),
+        ] {
+            let kept = super::reason(&long);
+            assert!(kept.len() <= super::REASON_MOST, "{} bytes", kept.len());
+            assert!(kept.ends_with('…'), "{kept}");
+        }
+        let sent = format!(
+            r#"invalid input: `name`: ["{}"] is not a String"#,
+            "Zq".repeat(400_000)
+        );
+        assert_eq!(
+            super::reason(&sent),
+            "invalid input: `name`: … is not a String"
+        );
     }
 
     #[test]
