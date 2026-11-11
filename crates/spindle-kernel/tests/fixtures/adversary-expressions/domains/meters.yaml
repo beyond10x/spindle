@@ -1,0 +1,129 @@
+domain: gauge.meters
+summary: A meter set from a request and stepped from what it holds.
+types:
+  - name: gauge.meters.Window
+    kind: struct
+    fields:
+      - {name: hours, type: Integer}
+      - {name: extra, type: Optional<Integer>}
+entities:
+  - name: gauge.meters.Meter
+    identity:
+      name: meter_id
+      type: String
+    fields:
+      - name: count
+        type: Integer
+      - name: ratio
+        type: Decimal
+      - name: scaled
+        type: Decimal
+      - name: until
+        type: Timestamp
+      - name: total
+        type: Integer
+      - name: widened
+        type: Optional<Integer>
+      - name: rate
+        type: Decimal
+    lifecycle:
+      initial: Ready
+      states: [Ready]
+      terminal: [Ready]
+commands:
+  - name: gauge.meters.SetMeter
+    input:
+      - name: meter_id
+        type: String
+      - name: n
+        type: Integer
+      - name: d
+        type: Decimal
+      - name: at
+        type: Timestamp
+      - name: span
+        type: Duration
+      - name: a
+        type: Optional<Integer>
+      - name: b
+        type: Optional<Integer>
+      - name: window
+        type: Optional<gauge.meters.Window>
+    outcomes:
+      - name: set
+        creates: gauge.meters.Meter
+        instance: meter_id
+        sets:
+          count: {expr: "input.n * 3 - 7"}
+          ratio: {expr: "coalesce(round(input.d / 3, 4, half_even), 0)"}
+          scaled: {expr: "input.d * input.n"}
+          until: {expr: "input.at + input.span"}
+          total: {expr: "coalesce(input.a, coalesce(input.b, -1))"}
+          widened: {expr: "input.window.hours + coalesce(input.window.extra, 0)"}
+          rate: {expr: "coalesce(round(input.n / -8, 2, half_even), 0)"}
+        emits: [gauge.meters.MeterSet]
+        payload:
+          gauge.meters.MeterSet:
+            meter_id: input.meter_id
+            count: {expr: "input.n * 3 - 7"}
+            until: {expr: "input.at + input.span"}
+        summary: The meter is set from the request.
+  - name: gauge.meters.StepMeter
+    input:
+      - name: meter_id
+        type: String
+      - name: span
+        type: Duration
+    outcomes:
+      - name: stepped
+        updates: gauge.meters.Meter
+        instance: meter_id
+        sets:
+          count: {expr: "subject.count * subject.count"}
+          ratio: {expr: "subject.ratio * subject.scaled"}
+          until: {expr: "subject.until + input.span"}
+          rate: {expr: "coalesce(round(subject.rate / 3, 5, half_up), 0)"}
+        emits: [gauge.meters.MeterStepped]
+        payload:
+          gauge.meters.MeterStepped:
+            meter_id: input.meter_id
+            until: {expr: "subject.until + input.span"}
+        summary: The meter is stepped from what it holds.
+events:
+  - name: gauge.meters.MeterSet
+    fields:
+      - name: meter_id
+        type: String
+      - name: count
+        type: Integer
+      - name: until
+        type: Timestamp
+  - name: gauge.meters.MeterStepped
+    fields:
+      - name: meter_id
+        type: String
+      - name: until
+        type: Timestamp
+views:
+  - name: gauge.meters.MeterCard
+    source: gauge.meters.Meter
+    consistency: read_your_writes
+    fields:
+      - name: meter_id
+        type: String
+      - name: count
+        type: Integer
+      - name: ratio
+        type: Decimal
+      - name: scaled
+        type: Decimal
+      - name: until
+        type: Timestamp
+      - name: total
+        type: Integer
+      - name: widened
+        type: Optional<Integer>
+      - name: rate
+        type: Decimal
+      - name: state
+        type: gauge.meters.Meter.State

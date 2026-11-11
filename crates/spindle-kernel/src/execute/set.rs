@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use super::{Run, write};
 use crate::facts::{Facts, Selector};
-use crate::store::{Change, Removal, Row, Stored, Write};
+use crate::store::{Change, Removal, Row, Scanned, Stored, Write};
 use crate::{Event, ExecuteError, Executed};
 
 impl Run<'_, '_> {
@@ -32,8 +32,12 @@ impl Run<'_, '_> {
     /// Every row is decided before any is written. All are then written in one
     /// [`Store::commit_all`](crate::Store::commit_all), each naming the version it was selected
     /// at, the outcome's events with the last: every row and every event, or, where one row is
-    /// refused, none. With no row selected the events are answered and no store records them, as
-    /// for an outcome without a subject.
+    /// refused, none. The group is conditioned on the scan that selected the rows, and on every
+    /// entity a row-set guard scanned ([`Run::condition`]): a row of one written after its scan,
+    /// a row the filter would have selected among them, refuses the group as a conflict and
+    /// nothing is written. With no row selected the events are a write of their own
+    /// ([`Store::commit_events`](crate::Store::commit_events)), as for an outcome without a
+    /// subject, conditioned alike: a row written after the scan that selected none refuses them.
     pub(super) fn take_set(
         &mut self,
         outcome: &ResolvedOutcome,
@@ -57,6 +61,7 @@ impl Run<'_, '_> {
                     identity,
                     expected: stored.version,
                     events: Vec::new(),
+                    scanned: Vec::new(),
                 }));
                 continue;
             }
@@ -67,7 +72,7 @@ impl Run<'_, '_> {
             self.generator.rewind(published);
             write(
                 &self.sources(outcome, &entity.name, None, None),
-                outcome,
+                &outcome.sets,
                 &mut after.fields,
             )?;
             let change = Change {
@@ -76,8 +81,7 @@ impl Run<'_, '_> {
                 expected: Some(stored.version),
                 row: after,
                 events: Vec::new(),
-                // Not conditioned on the scan that selected the rows: a row of the entity
-                // created after it is left out unrefused, an open gap no story covers yet.
+                // The group's condition is set on its first write below.
                 scanned: Vec::new(),
             };
             self.at_rest(entity, &change)?;
@@ -91,7 +95,13 @@ impl Run<'_, '_> {
                 Write::Commit(change) => change.events.clone_from(&events),
                 Write::Remove(removal) => removal.events.clone_from(&events),
             }
+            // Conditioned on the scan that selected the rows and on every entity a row-set guard
+            // scanned, carried by the first write, a change or a removal alike: a row of one
+            // written after its scan refuses the whole group.
+            self.condition(&mut writes);
             self.store.commit_all(&writes)?;
+        } else {
+            self.store.commit_events(&events, &self.scanned)?;
         }
         Ok(Executed {
             outcome: outcome.name.as_str().to_owned(),
@@ -117,7 +127,15 @@ impl Run<'_, '_> {
         let ir = self.ir;
         let input = Facts::values(ir, &self.spec.input, self.input);
         let mut selected = Vec::new();
-        for (identity, stored) in self.store.scan(&entity.name.to_string())? {
+        let name = entity.name.to_string();
+        let scan = self.store.scan(&name)?;
+        if !self.scanned.iter().any(|scanned| scanned.entity == name) {
+            self.scanned.push(Scanned {
+                entity: name,
+                version: scan.version,
+            });
+        }
+        for (identity, stored) in scan {
             if let ResolvedEffect::Moves { transition } = &set.effect
                 && !transition
                     .from
@@ -136,7 +154,7 @@ impl Run<'_, '_> {
             match set.filter.evaluate(&facts) {
                 Truth::True => selected.push((identity, stored)),
                 Truth::False => {}
-                Truth::Unknown if only_absent(&set.filter, entity, &stored.row) => {}
+                Truth::Unknown if only_absent(&set.filter, entity, &stored.row, None) => {}
                 Truth::Unknown => {
                     return Err(ExecuteError::Undecidable {
                         outcome: format!("{}/{}", self.command, outcome.name.as_str()),
@@ -182,32 +200,42 @@ impl Run<'_, '_> {
     }
 }
 
-/// Whether every value `filter` reads of `row` that holds nothing is an `Optional` field of
-/// `entity` holding nothing: what leaves an `Unknown` filter a row not selected rather than an
-/// undecidable outcome (ESS `set_effects::only_absent`). An `input.` operand is supplied or
-/// absent, never unknown, and a set outcome reads no subject; the identity is always held. A
-/// required field the row does not hold keeps the filter undecidable.
-fn only_absent(filter: &Predicate, entity: &ResolvedEntity, row: &Row) -> bool {
+/// Whether every value `filter` reads of `row`, or under `subject.` of `subject` (an entity and
+/// its row as it was before the outcome), that holds nothing is an `Optional` field holding
+/// nothing: what leaves an `Unknown` filter a row not selected rather than an undecidable outcome
+/// (ESS `set_effects::only_absent`). An `input.` operand is supplied or absent, never unknown, and
+/// a set outcome reads no subject (`subject: None`); the identity is always held. A required field
+/// the row does not hold keeps the filter undecidable.
+pub(super) fn only_absent(
+    filter: &Predicate,
+    entity: &ResolvedEntity,
+    row: &Row,
+    subject: Option<(&ResolvedEntity, &Row)>,
+) -> bool {
     filter.fact_paths().into_iter().all(|path| {
         let segments = path.segments();
         let Some((first, rest)) = segments.split_first() else {
             return true;
         };
-        if !rest.is_empty()
-            && (first == crate::facts::INPUT
-                || first == ess_domain::command::set_effects::SUBJECT_NAMESPACE)
-        {
-            return true;
-        }
+        let (owner, held, field) = match rest.first() {
+            Some(_) if first == crate::facts::INPUT => return true,
+            Some(field) if first == ess_domain::command::set_effects::SUBJECT_NAMESPACE => {
+                match subject {
+                    Some((owner, held)) => (owner, held, field),
+                    None => return true,
+                }
+            }
+            _ => (entity, row, first),
+        };
         // A value the row holds was observed when it was written, and a held `null` is absent.
-        match row.fields.get(first) {
+        match held.fields.get(field) {
             Some(_) => true,
             None => {
-                entity.identity.name == *first
-                    || entity
+                owner.identity.name == *field
+                    || owner
                         .fields
                         .iter()
-                        .any(|declared| declared.name == *first && declared.type_ref.is_optional())
+                        .any(|declared| declared.name == *field && declared.type_ref.is_optional())
             }
         }
     })
@@ -215,7 +243,7 @@ fn only_absent(filter: &Predicate, entity: &ResolvedEntity, row: &Row) -> bool {
 
 /// Identities in ascending order as ESS orders them ([`Node`]'s order: text by its characters,
 /// numbers by value), the canonical JSON text where one is no [`Node`].
-fn identity_order(left: &Value, right: &Value) -> Ordering {
+pub(super) fn identity_order(left: &Value, right: &Value) -> Ordering {
     match (
         serde_json::from_value::<Node>(left.clone()),
         serde_json::from_value::<Node>(right.clone()),

@@ -21,10 +21,11 @@ use spindle_capability::mint::Unsourced;
 use crate::decider::{Decider, External};
 use crate::facts::{Facts, Selector};
 use crate::mint::{Generator, IDENTITY_MINT, Identity, Mint, UuidV4};
-use crate::store::{Change, Row, Scanned, Store, Stored};
+use crate::store::{Change, Row, Scanned, Store, Stored, Write};
 use crate::values::Sources;
 use crate::{DeclaredError, Event, ExecuteError, Executed};
 
+mod affects;
 mod delete;
 mod set;
 
@@ -74,9 +75,12 @@ fn rests(
 /// Executes `command` with `input` against the instances in `store`.
 ///
 /// Reads the instance the command addresses, selects the outcome, and commits that outcome's
-/// change in one [`Store::commit`]. A refusal, a `preserves:` outcome and a `refuses: false`
-/// outcome commit nothing; a set outcome (`instances:`) writes every row it changes, with its
-/// events, in one [`Store::commit_all`]. An identity the runtime mints is a random UUIDv4 ([`UuidV4`]).
+/// change in one [`Store::commit`]. A refusal commits nothing; the events of an outcome that
+/// writes no row (no subject, `preserves:`, a set outcome that selected no row) are a write of
+/// their own ([`Store::commit_events`]), conditioned on the run's scans as a write group is; a
+/// set outcome (`instances:`), and an outcome with secondary effects (`affects:`), writes every
+/// row it changes, with its events, in one [`Store::commit_all`]. An
+/// identity the runtime mints is a random UUIDv4 ([`UuidV4`]).
 ///
 /// # Errors
 /// [`ExecuteError`] where the command does not run; the store is then unchanged.
@@ -463,8 +467,9 @@ struct Run<'a, 'ir> {
     /// What the decider answered for each external branch it was asked about, by outcome name:
     /// asked once per run, whether the look-ahead or selection reads the branch first.
     answered: BTreeMap<String, bool>,
-    /// Each entity a row-set guard scanned, at the version its first scan answered: the change
-    /// the selected outcome commits is conditioned on them ([`Change::scanned`]).
+    /// Each entity the run scanned (a row-set guard, an `affects:` entry, a set outcome's
+    /// selection), at the version its first scan answered: every write group the selected
+    /// outcome commits is conditioned on them ([`crate::Write::scanned`]).
     scanned: Vec<Scanned>,
     /// The outcomes the caller does not serve, by name, each with why ([`execute_refusing`]).
     refused: &'a BTreeMap<String, String>,
@@ -1395,12 +1400,14 @@ impl<'a, 'ir> Run<'a, 'ir> {
             self.runs(outcome)?;
             self.publish_reads(outcome, None)?;
             let before = self.before();
-            return Ok(Executed {
+            let executed = Executed {
                 outcome: outcome.name.as_str().to_owned(),
                 events: self.emit(outcome, before)?,
                 error: self.declared_error(outcome, before)?,
                 response: self.response(outcome)?,
-            });
+            };
+            self.store.commit_events(&executed.events, &self.scanned)?;
+            return Ok(executed);
         };
         let entity = self.ir.entity(&subject.entity);
         if let (ResolvedEffect::Deletes, ResolvedInstance::Supplied { .. }) =
@@ -1409,7 +1416,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
             self.runs(outcome)?;
             return self.delete(outcome, entity);
         }
-        let (change, events) = match (&subject.effect, &subject.instance) {
+        let (change, affected, events) = match (&subject.effect, &subject.instance) {
             (ResolvedEffect::Creates, ResolvedInstance::Observed { event, field }) => {
                 self.runs(outcome)?;
                 self.publish_reads(outcome, None)?;
@@ -1444,7 +1451,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 let mut fields = BTreeMap::new();
                 write(
                     &self.sources(outcome, &entity.name, None, None),
-                    outcome,
+                    &outcome.sets,
                     &mut fields,
                 )?;
                 let events = self.emit(outcome, None)?;
@@ -1457,6 +1464,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                         events: events.clone(),
                         scanned: self.scanned.clone(),
                     }),
+                    Vec::new(),
                     events,
                 )
             }
@@ -1469,6 +1477,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 else {
                     return self.unknown_instance(outcome);
                 };
+                let (identity, stored) = (identity.clone(), stored.clone());
                 let mut after = stored.row.clone();
                 if let ResolvedEffect::Moves { transition } = effect {
                     if !transition
@@ -1483,17 +1492,18 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 self.runs(outcome)?;
                 self.publish_reads(outcome, Some(&stored.row))?;
                 let sources = self.sources(outcome, &entity.name, None, Some(&stored.row));
-                write(&sources, outcome, &mut after.fields)?;
+                write(&sources, &outcome.sets, &mut after.fields)?;
+                let affected = self.affect(outcome, entity, &identity, &stored.row)?;
                 let events = self.emit(outcome, Some(&stored.row))?;
                 let change = (!matches!(effect, ResolvedEffect::Preserves)).then(|| Change {
                     entity: entity.name.to_string(),
-                    identity: identity.clone(),
+                    identity,
                     expected: Some(stored.version),
                     row: after,
                     events: events.clone(),
                     scanned: self.scanned.clone(),
                 });
-                (change, events)
+                (change, affected, events)
             }
             (effect, _) => {
                 return Err(ExecuteError::Unsupported {
@@ -1510,7 +1520,17 @@ impl<'a, 'ir> Run<'a, 'ir> {
         let response = self.response(outcome)?;
         if let Some(change) = &change {
             self.at_rest(entity, change)?;
-            self.store.commit(change)?;
+        }
+        if affected.is_empty() {
+            match &change {
+                Some(change) => self.store.commit(change)?,
+                // An outcome that preserves its subject writes no row: its events are a write of
+                // their own, conditioned on the run's scans as a group is.
+                None => self.store.commit_events(&events, &self.scanned)?,
+            }
+        } else {
+            let writes = self.grouped(change.map(Write::Commit), affected, &events);
+            self.store.commit_all(&writes)?;
         }
         Ok(Executed {
             outcome: outcome.name.as_str().to_owned(),
@@ -1966,15 +1986,16 @@ fn payload_reads<'f>(
     }
 }
 
-/// Writes `outcome`'s `sets:` into `fields`, reading the instance as it was before. Each value is
-/// checked against the type its target declares, as ESS checks a sum or a written value.
+/// Writes `sets`, an outcome's or an `affects:` entry's, into `fields`, reading the instance as it
+/// was before. Each value is checked against the type its target declares, as ESS checks a sum or
+/// a written value.
 fn write(
     sources: &Sources<'_, '_>,
-    outcome: &ResolvedOutcome,
+    sets: &[ResolvedPayloadField],
     fields: &mut BTreeMap<String, Value>,
 ) -> Result<(), ExecuteError> {
-    let mut written = Vec::with_capacity(outcome.sets.len());
-    for set in &outcome.sets {
+    let mut written = Vec::with_capacity(sets.len());
+    for set in sets {
         let value = sources.value(set)?;
         if let Some(value) = &value {
             crate::typed::validate(sources.ir, &set.target_type, value).map_err(|error| {

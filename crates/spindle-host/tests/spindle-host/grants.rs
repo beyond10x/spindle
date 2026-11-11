@@ -63,8 +63,9 @@ fn rows(host: &mut Host) -> Vec<Value> {
         .collect()
 }
 
-fn events(host: &Host) -> Vec<String> {
+fn events(host: &mut Host) -> Vec<String> {
     host.published()
+        .expect("the events read")
         .iter()
         .map(|published| published.event.name.clone())
         .collect()
@@ -75,7 +76,7 @@ fn a_command_the_actor_may_not_send_is_refused() {
     let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
     let mut host = shelved(state.path());
     let before_rows = rows(&mut host);
-    let before_events = events(&host);
+    let before_events = events(&mut host);
 
     let refused = host.submit_as(DELETE, object(json!({"book_id": BOOK})), Some(READER), None);
 
@@ -92,7 +93,7 @@ fn a_command_the_actor_may_not_send_is_refused() {
         "the refusal says it: {error}"
     );
     assert_eq!(rows(&mut host), before_rows, "no row is written");
-    assert_eq!(events(&host), before_events, "no event is written");
+    assert_eq!(events(&mut host), before_events, "no event is written");
 }
 
 #[test]
@@ -120,7 +121,7 @@ fn a_command_the_actor_may_send_runs() {
         ]
     );
     assert_eq!(
-        events(&host),
+        events(&mut host),
         vec![
             "shelf.books.BookAdded".to_owned(),
             "shelf.books.BookRead".to_owned()

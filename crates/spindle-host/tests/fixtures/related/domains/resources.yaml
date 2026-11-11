@@ -1,0 +1,104 @@
+domain: access.resources
+summary: Resources, each with a name, that are renamed, retired and dropped.
+types:
+  - name: access.resources.ResourceId
+    kind: newtype
+    of: String
+entities:
+  - name: access.resources.Resource
+    identity:
+      name: resource_id
+      type: access.resources.ResourceId
+    fields:
+      - name: name
+        type: String
+      - name: label
+        type: Optional<String>
+    lifecycle:
+      initial: Active
+      states: [Active, Retired]
+      terminal: [Retired]
+      transitions:
+        - {name: retire, from: [Active], to: Retired}
+errors:
+  - name: access.resources.WrongState
+    summary: The resource is retired.
+    fields: []
+commands:
+  - name: access.resources.AddResource
+    input:
+      - name: resource_id
+        type: access.resources.ResourceId
+      - name: name
+        type: String
+      - name: label
+        type: Optional<String>
+    outcomes:
+      - name: added
+        creates: access.resources.Resource
+        instance: resource_id
+        sets:
+          name: input.name
+          label: input.label
+        emits: [access.resources.ResourceAdded]
+        payload:
+          access.resources.ResourceAdded: {resource_id: input.resource_id}
+        summary: The resource is kept.
+  - name: access.resources.RenameResource
+    input:
+      - name: resource_id
+        type: access.resources.ResourceId
+      - name: name
+        type: String
+    outcomes:
+      - name: renamed
+        updates: access.resources.Resource
+        instance: resource_id
+        sets:
+          name: input.name
+        emits: [access.resources.ResourceRenamed]
+        payload:
+          access.resources.ResourceRenamed: {resource_id: input.resource_id}
+        summary: The resource carries the new name.
+  - name: access.resources.RetireResource
+    input:
+      - name: resource_id
+        type: access.resources.ResourceId
+    outcomes:
+      - name: retired
+        moves: access.resources.Resource.retire
+        instance: resource_id
+        emits: [access.resources.ResourceRetired]
+        payload:
+          access.resources.ResourceRetired: {resource_id: input.resource_id}
+        summary: The resource is retired.
+      - {name: wrong-state, wrong_state: true, error: access.resources.WrongState}
+  - name: access.resources.DropResource
+    input:
+      - name: resource_id
+        type: access.resources.ResourceId
+    outcomes:
+      - name: dropped
+        deletes: access.resources.Resource
+        instance: resource_id
+        emits: [access.resources.ResourceDropped]
+        payload:
+          access.resources.ResourceDropped: {resource_id: input.resource_id}
+        summary: The resource is gone.
+events:
+  - name: access.resources.ResourceAdded
+    fields:
+      - name: resource_id
+        type: access.resources.ResourceId
+  - name: access.resources.ResourceRenamed
+    fields:
+      - name: resource_id
+        type: access.resources.ResourceId
+  - name: access.resources.ResourceRetired
+    fields:
+      - name: resource_id
+        type: access.resources.ResourceId
+  - name: access.resources.ResourceDropped
+    fields:
+      - name: resource_id
+        type: access.resources.ResourceId

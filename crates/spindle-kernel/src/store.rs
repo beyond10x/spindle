@@ -1,9 +1,10 @@
 //! Where instances rest between commands.
 //!
 //! The kernel reads one instance, decides, and commits one [`Change`] to that instance: the
-//! runtime default of § 3a, one command on one instance. A set outcome (`instances:`) writes every
-//! row it changes in one [`Store::commit_all`]. A store never decides anything; it holds rows and
-//! the events that changed them.
+//! runtime default of § 3a, one command on one instance. A set outcome (`instances:`), and an
+//! outcome with secondary effects (`affects:`) with its subject, writes every row it changes in one
+//! [`Store::commit_all`]. A store never decides anything; it holds rows and the events that
+//! changed them.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, PoisonError, RwLock};
@@ -93,10 +94,15 @@ pub struct Removal {
     pub expected: u64,
     /// The events the command emitted, in order.
     pub events: Vec<Event>,
+    /// Each entity the command decided on by scanning it, at the version the scan answered, as
+    /// [`Change::scanned`]: a store refuses the removal when another write of that entity landed
+    /// in between.
+    pub scanned: Vec<Scanned>,
 }
 
 /// One write of several a command makes together ([`Store::commit_all`]): a set outcome's change
-/// or removal of one row it selected.
+/// or removal of one row it selected, or an outcome's own subject or a row its secondary effects
+/// (`affects:`) selected.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Write {
     /// The instance rests on, holding this.
@@ -126,9 +132,39 @@ impl Write {
     pub fn scanned(&self) -> &[Scanned] {
         match self {
             Self::Commit(change) => &change.scanned,
-            Self::Remove(_) => &[],
+            Self::Remove(removal) => &removal.scanned,
         }
     }
+}
+
+/// The command the writes a store commits are made for, as a writer attributes them
+/// ([`Store::attribute`]) and each event it committed answers it ([`Committed::origin`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Origin {
+    /// The command, by qualified name.
+    pub command: String,
+    /// Where the command falls among every command its writer ran: a host numbers the commands
+    /// of every component in one order, so the events of its components' stores merge back into
+    /// the order it published them.
+    pub sequence: u64,
+}
+
+/// One event a store committed, as [`Store::events_after`] answers it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Committed {
+    /// Where the write that committed it stands in the store's commit order: every event of one
+    /// write carries the same position, and a later write's is greater.
+    pub position: u64,
+    /// The command its write was attributed to, or `None` for a write attributed to none.
+    pub origin: Option<Origin>,
+    /// The event and its payload.
+    pub event: Event,
+}
+
+/// What a store that does not read back the events it commits answers to
+/// [`Store::events_after`].
+fn no_events() -> StoreError {
+    StoreError::Backend("this store does not read back the events it commits".to_owned())
 }
 
 /// The identity a [`StoreError::Conflict`] names where a scanned entity moved, rather than one
@@ -149,7 +185,7 @@ pub(crate) fn moved(scanned: &Scanned, actual: u64) -> StoreError {
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     /// The instance moved between the read and the commit, or, with the identity
-    /// [`EVERY_INSTANCE`], an entity the write was conditioned on ([`Change::scanned`]) moved
+    /// [`EVERY_INSTANCE`], an entity the write was conditioned on ([`Write::scanned`]) moved
     /// between its scan and the commit; the versions are then the entity's.
     #[error("{entity} {identity} is at version {actual:?}, not {expected:?}")]
     Conflict {
@@ -188,15 +224,16 @@ pub trait Store {
     /// [`Change`] with `expected: None` may create it again.
     ///
     /// # Errors
-    /// [`StoreError::Conflict`] when the instance is absent or not at `removal.expected`, and
-    /// [`StoreError::Backend`] when the store cannot be written.
+    /// [`StoreError::Conflict`] when the instance is absent or not at `removal.expected`, or an
+    /// entity of `removal.scanned` is not at the version it names, and [`StoreError::Backend`]
+    /// when the store cannot be written.
     fn remove(&mut self, removal: &Removal) -> Result<(), StoreError>;
 
     /// Records every write of `writes`, in order, each with its events, atomically: all of them,
     /// or, where one is refused, none. Each names the version it read, as [`Store::commit`] and
     /// [`Store::remove`] do, and a later write of an instance an earlier one wrote names the
-    /// version that one left. A write's scanned entities ([`Change::scanned`]) are checked
-    /// against their versions before any write lands.
+    /// version that one left. A write's scanned entities ([`Write::scanned`]), a removal's as a
+    /// change's, are checked against their versions before any write lands.
     ///
     /// The memory, SQLite and IndexedDB stores write them in one transaction. This default, for a
     /// store that can write one instance at a time only, first refuses a write that names a
@@ -225,8 +262,8 @@ pub trait Store {
     fn scan(&mut self, entity: &str) -> Result<Scan, StoreError>;
 
     /// How many instances each of `entities` holds, by entity: as many as [`Store::scan`] answers
-    /// rows for. This default scans each entity in turn; a store that reads every entity at once
-    /// (SQLite reads its whole feed for one scan) counts them in one read.
+    /// rows for. This default scans each entity in turn; a store that holds every entity's rows
+    /// at once (SQLite folds its feed into them) counts them in one read.
     ///
     /// # Errors
     /// [`StoreError::Backend`] when the store cannot be read.
@@ -242,6 +279,67 @@ pub trait Store {
     /// wait for the writer. The memory and SQLite stores give one.
     fn reading(&mut self) -> Option<Arc<dyn Reading>> {
         None
+    }
+
+    /// Attributes the writes that follow to `origin`, until attributed again: each event they
+    /// commit is read back with it ([`Committed::origin`]). `None` attributes them to no command.
+    /// This default, for a store that does not read back its events, keeps nothing; a store that
+    /// wraps another hands it on.
+    fn attribute(&mut self, origin: Option<Origin>) {
+        let _ = origin;
+    }
+
+    /// Records `events`, which a command emitted with no row to write them with (an outcome
+    /// without a subject, one that preserves its subject, a set outcome that selected no row), as
+    /// one write of its own: read back with the events the store committed
+    /// ([`Store::events_after`]), at a position of its own, attributed as the writes are. No
+    /// instance moves. Like a write group ([`Write::scanned`]), it is conditioned on `scanned`,
+    /// each entity the command decided on by scanning it at the version the scan answered: where
+    /// another write of one landed in between, nothing is recorded. A store that conditions a
+    /// write by appending to the entity's version (SQLite, PostgreSQL) moves it, as
+    /// [`Store::commit_all`] does. No events is no write: nothing is recorded or checked.
+    ///
+    /// This default, for a store that does not read back its events, keeps nothing and checks
+    /// each entity of `scanned` by scanning it.
+    ///
+    /// # Errors
+    /// [`StoreError::Conflict`] when an entity of `scanned` is not at the version it names, and
+    /// [`StoreError::Backend`] when the store cannot be written.
+    fn commit_events(&mut self, events: &[Event], scanned: &[Scanned]) -> Result<(), StoreError> {
+        if events.is_empty() {
+            return Ok(());
+        }
+        for scanned in scanned {
+            let actual = self.scan(&scanned.entity)?.version;
+            if actual != scanned.version {
+                return Err(moved(scanned, actual));
+            }
+        }
+        Ok(())
+    }
+
+    /// Forgets every event committed so far, as the store records it: from now on
+    /// [`Store::events_after`] answers only the events committed after this, after a restart too.
+    /// What a reset that empties a store in place records. Positions go on growing.
+    ///
+    /// This default, for a store that does not read back its events, keeps nothing to forget.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be written.
+    fn forget_events(&mut self) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    /// Every event committed by a write after the one at `position`, in commit order, each with
+    /// its write's position and origin; `0` reads every event. The events of one write are read
+    /// together or not at all, and a refused write committed none.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read, or, this default, does not read back
+    /// the events it commits.
+    fn events_after(&mut self, position: u64) -> Result<Vec<Committed>, StoreError> {
+        let _ = position;
+        Err(no_events())
     }
 }
 
@@ -270,6 +368,62 @@ pub trait Reading: Send + Sync {
             .map(|entity| Ok((entity.clone(), self.scan(entity)?.rows.len())))
             .collect()
     }
+
+    /// The events committed after `position`, as [`Store::events_after`] answers them.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read, or, this default, does not read back
+    /// the events it commits.
+    fn events_after(&self, position: u64) -> Result<Vec<Committed>, StoreError> {
+        let _ = position;
+        Err(no_events())
+    }
+    /// One position of the store for reads of `entities` together ([`Position`]): a scan of
+    /// one of them and loads of instances of the others, by identity, answer the store as one
+    /// write left it, so a group of writes is seen whole by all of them or by none.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read.
+    fn at(&self, entities: &[String]) -> Result<Box<dyn Position + '_>, StoreError>;
+}
+
+/// One position of a store, taken through its reading handle for some of its entities
+/// ([`Reading::at`]). The memory and SQLite stores take every entity named as one write left it,
+/// at once, and each read of the position answers that. A store that cannot take its entities at
+/// once (PostgreSQL) reads each as it stands when first read, and answers by [`Position::holds`]
+/// whether none of them moved since: a caller reads again from a new position where one did.
+pub trait Position {
+    /// Every instance of `entity`, as [`Store::scan`] answers them at this position.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read, or `entity` is not one the position
+    /// was taken for.
+    fn scan(&self, entity: &str) -> Result<Scan, StoreError>;
+
+    /// The instance of `entity` with this identity at this position, if one rests, as
+    /// [`Store::load`] answers it.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read, or `entity` is not one the position
+    /// was taken for.
+    fn load(&self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError>;
+
+    /// Whether every read of this position answered the store as one write left it: always for
+    /// a position taken at once; for one that is not, whether no write of an entity it read
+    /// landed since it first read that entity.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read.
+    fn holds(&self) -> Result<bool, StoreError> {
+        Ok(true)
+    }
+}
+
+/// The refusal of a read of `entity` from a position not taken for it.
+pub(crate) fn not_taken(entity: &str) -> StoreError {
+    StoreError::Backend(format!(
+        "{entity} is not one of the entities this position was taken for"
+    ))
 }
 
 /// [`Store::commit_all`] on a store that writes one instance at a time: every write's version
@@ -289,6 +443,10 @@ fn one_at_a_time<S: Store + ?Sized>(store: &mut S, writes: &[Write]) -> Result<(
             Write::Commit(change) if !change.scanned.is_empty() => Write::Commit(Change {
                 scanned: Vec::new(),
                 ..change.clone()
+            }),
+            Write::Remove(removal) if !removal.scanned.is_empty() => Write::Remove(Removal {
+                scanned: Vec::new(),
+                ..removal.clone()
             }),
             other => other.clone(),
         })
@@ -362,6 +520,7 @@ fn restore<S: Store + ?Sized>(
             identity: identity.clone(),
             expected,
             events: Vec::new(),
+            scanned: Vec::new(),
         }),
         (None, None) => Ok(()),
     }
@@ -385,18 +544,81 @@ pub(crate) fn identity_from_key(text: &str) -> Result<Value, StoreError> {
 /// value: a write changes them under a lock held only while the write lands, and a read takes
 /// them as they stand and reads them without the lock. Where a read still holds an entity a write
 /// changes, the write changes a copy of that entity alone, so neither waits for the other and a
-/// write never copies an entity it does not change.
+/// write never copies an entity it does not change. The events it committed are shared alike, in
+/// chunks ([`Events`]), so a read of them never makes a write copy more than one chunk.
 #[derive(Debug, Default)]
 pub struct MemoryStore {
     held: Arc<RwLock<Held>>,
-    events: Vec<Event>,
+    /// The command the writes are attributed to ([`Store::attribute`]).
+    origin: Option<Origin>,
 }
 
 /// What a [`MemoryStore`] holds: each entity's instances, by qualified name, each as one value its
-/// reads share.
+/// reads share, and every event committed.
 #[derive(Debug, Default)]
 struct Held {
     entities: BTreeMap<String, Arc<Instances>>,
+    events: Events,
+}
+
+/// How many events one chunk of [`Events`] holds before it is sealed.
+const CHUNK: usize = 256;
+
+/// Every event a [`MemoryStore`] committed, in commit order, as chunks its reads share. A sealed
+/// chunk never changes again; only the open one grows, and where a read still holds it, the event
+/// lands on a copy of it alone. So a read takes the chunks as they stand under the store's lock,
+/// one pointer each, and reads them without it.
+#[derive(Debug, Default)]
+struct Events {
+    sealed: Vec<Arc<Vec<Committed>>>,
+    open: Arc<Vec<Committed>>,
+    /// The position of the last write that committed an event.
+    position: u64,
+}
+
+impl Events {
+    /// Records `events`, which one write committed, at the next position, attributed to `origin`.
+    fn record(&mut self, events: Vec<Event>, origin: Option<&Origin>) {
+        if events.is_empty() {
+            return;
+        }
+        self.position += 1;
+        for event in events {
+            if self.open.len() >= CHUNK {
+                let full = std::mem::take(&mut self.open);
+                self.sealed.push(full);
+            }
+            Arc::make_mut(&mut self.open).push(Committed {
+                position: self.position,
+                origin: origin.cloned(),
+                event,
+            });
+        }
+    }
+
+    fn chunks(&self) -> Vec<Arc<Vec<Committed>>> {
+        self.sealed
+            .iter()
+            .chain(std::iter::once(&self.open))
+            .cloned()
+            .collect()
+    }
+}
+
+/// Every event `held` holds past `position`: its chunks taken under its lock, read without it.
+fn committed_after(held: &RwLock<Held>, position: u64) -> Vec<Committed> {
+    let chunks = held
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .events
+        .chunks();
+    chunks
+        .iter()
+        .filter(|chunk| chunk.last().is_some_and(|last| last.position > position))
+        .flat_map(|chunk| chunk.iter())
+        .filter(|committed| committed.position > position)
+        .cloned()
+        .collect()
 }
 
 /// The instances of one entity in a [`MemoryStore`].
@@ -593,15 +815,26 @@ fn scanned(held: &RwLock<Held>, entity: &str) -> Result<Scan, StoreError> {
 
 impl MemoryStore {
     /// Every event committed so far, in commit order.
-    pub fn events(&self) -> &[Event] {
-        &self.events
+    pub fn events(&self) -> Vec<Event> {
+        committed_after(&self.held, 0)
+            .into_iter()
+            .map(|committed| committed.event)
+            .collect()
     }
 
     /// Lands one write on what the store holds, under its lock: on each entity it changes
     /// itself where no read holds it, else on a copy of that entity that then stands in its place.
-    fn write<T>(&mut self, write: impl FnOnce(&mut Held, &mut Vec<Event>) -> T) -> T {
+    /// The events it committed are recorded with it, under the same lock, so a read sees the
+    /// write and its events together.
+    fn write(
+        &mut self,
+        write: impl FnOnce(&mut Held, &mut Vec<Event>) -> Result<(), StoreError>,
+    ) -> Result<(), StoreError> {
         let mut held = self.held.write().unwrap_or_else(PoisonError::into_inner);
-        write(&mut held, &mut self.events)
+        let mut events = Vec::new();
+        write(&mut held, &mut events)?;
+        held.events.record(events, self.origin.as_ref());
+        Ok(())
     }
 }
 
@@ -622,7 +855,10 @@ impl Store for MemoryStore {
     }
 
     fn remove(&mut self, removal: &Removal) -> Result<(), StoreError> {
-        self.write(|held, events| held.remove(removal, events))
+        self.write(|held, events| {
+            held.unmoved(&removal.scanned)?;
+            held.remove(removal, events)
+        })
     }
 
     /// Checks every write's scanned entities, then writes each in turn, keeping what each
@@ -639,6 +875,35 @@ impl Store for MemoryStore {
     fn reading(&mut self) -> Option<Arc<dyn Reading>> {
         Some(Arc::new(MemoryReading(Arc::clone(&self.held))))
     }
+
+    fn attribute(&mut self, origin: Option<Origin>) {
+        self.origin = origin;
+    }
+
+    fn commit_events(&mut self, events: &[Event], scanned: &[Scanned]) -> Result<(), StoreError> {
+        if events.is_empty() {
+            return Ok(());
+        }
+        self.write(|held, recorded| {
+            held.unmoved(scanned)?;
+            recorded.extend(events.iter().cloned());
+            Ok(())
+        })
+    }
+
+    /// Drops every event held; a read still holding their chunks reads them still.
+    fn forget_events(&mut self) -> Result<(), StoreError> {
+        let mut held = self.held.write().unwrap_or_else(PoisonError::into_inner);
+        held.events = Events {
+            position: held.events.position,
+            ..Events::default()
+        };
+        Ok(())
+    }
+
+    fn events_after(&mut self, position: u64) -> Result<Vec<Committed>, StoreError> {
+        Ok(committed_after(&self.held, position))
+    }
 }
 
 /// The reading handle of a [`MemoryStore`]: what it holds, read as it stands.
@@ -647,6 +912,10 @@ struct MemoryReading(Arc<RwLock<Held>>);
 impl Reading for MemoryReading {
     fn scan(&self, entity: &str) -> Result<Scan, StoreError> {
         scanned(&self.0, entity)
+    }
+
+    fn events_after(&self, position: u64) -> Result<Vec<Committed>, StoreError> {
+        Ok(committed_after(&self.0, position))
     }
 
     /// Every entity's count as one write left them all: taken under one lock.
@@ -662,5 +931,39 @@ impl Reading for MemoryReading {
                 (entity.clone(), rows)
             })
             .collect())
+    }
+
+    /// Each entity as it stands, taken under one lock: a write of one of them lands on a copy
+    /// of that entity alone while the position holds it.
+    fn at(&self, entities: &[String]) -> Result<Box<dyn Position + '_>, StoreError> {
+        let held = self.0.read().unwrap_or_else(PoisonError::into_inner);
+        Ok(Box::new(MemoryPosition(
+            entities
+                .iter()
+                .map(|entity| (entity.clone(), held.entities.get(entity).cloned()))
+                .collect(),
+        )))
+    }
+}
+
+/// A position of a [`MemoryStore`]: each entity taken, as it stood, `None` for one holding
+/// nothing yet.
+struct MemoryPosition(BTreeMap<String, Option<Arc<Instances>>>);
+
+impl Position for MemoryPosition {
+    fn scan(&self, entity: &str) -> Result<Scan, StoreError> {
+        match self.0.get(entity) {
+            Some(Some(instances)) => instances.scan(),
+            Some(None) => Ok(Scan::default()),
+            None => Err(not_taken(entity)),
+        }
+    }
+
+    fn load(&self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
+        match self.0.get(entity) {
+            Some(Some(instances)) => Ok(instances.rows.get(&identity.to_string()).cloned()),
+            Some(None) => Ok(None),
+            None => Err(not_taken(entity)),
+        }
     }
 }

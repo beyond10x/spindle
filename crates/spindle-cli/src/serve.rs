@@ -198,7 +198,9 @@ fn fixed(ir: &EssIr, caller: &Caller) -> Result<()> {
 /// routes ([`spindle_ingress::Console`]) where `ingress.network` is bound to `http-loopback`. State
 /// bound to `sqlite` is kept in the directory `state`, one file per component, or without one in
 /// a temporary directory, printed on stderr and removed when the run ends; state bound to
-/// `memory` takes none.
+/// `memory` takes none, and state bound to `postgres` is kept in the database the `database_*`
+/// settings name, each component in its own tables, opened before anything else is printed
+/// ([`crate::database::stores`]).
 ///
 /// Before listening it prints on stderr one line per operation it does not serve
 /// ([`Surface::unserved`]), one per outcome of a served command it refuses where a request
@@ -233,10 +235,12 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     let signalled = signals()?;
     let environment = serving.environment;
     let scratch;
+    let _lock;
     let directory = match (serving.durable, serving.state) {
         (Some("sqlite"), Some(directory)) => {
             std::fs::create_dir_all(directory)
                 .with_context(|| format!("creating the state directory {}", directory.display()))?;
+            _lock = crate::state_lock::directory(directory)?;
             directory
         }
         (Some("sqlite"), None) => {
@@ -247,16 +251,20 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             );
             scratch.path()
         }
-        (None | Some("memory"), Some(path)) => bail!(
+        (None | Some("memory" | "postgres"), Some(path)) => bail!(
             "nothing on {} keeps state in a file, so --state {} would be ignored",
             environment.name,
             path.display()
         ),
-        (None | Some("memory"), None) => {
+        (None | Some("memory" | "postgres"), None) => {
             scratch = tempfile::tempdir().context("creating an empty state directory")?;
             scratch.path()
         }
         (Some(other), _) => bail!("this build has no `{other}` store for store.durable"),
+    };
+    let stores = match serving.durable {
+        Some(crate::database::POSTGRES) => crate::database::stores(&ir, environment)?,
+        _ => spindle_host::Stores::new(),
     };
     match serving.callers.as_slice() {
         [] => {}
@@ -359,18 +367,18 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     };
     let answers = serving.answers;
     let recorder = surface.recorder().cloned();
-    let opened = if serving.decides {
-        Host::deciding_with_retries(
-            ir,
-            environment,
-            Arc::new(SystemClock),
-            directory,
-            decisions::deciding(&answers, None, recorder.as_ref()).boxed(),
-            retries,
-        )
-    } else {
-        Host::with_retries(ir, environment, Arc::new(SystemClock), directory, retries)
-    };
+    let decider = serving
+        .decides
+        .then(|| decisions::deciding(&answers, None, recorder.as_ref()).boxed());
+    let opened = Host::with_stores(
+        ir,
+        environment,
+        Arc::new(SystemClock),
+        directory,
+        decider,
+        retries,
+        stores,
+    );
     let mut host = match opened {
         Ok(host) => host,
         Err(HostError::Refused(refusal)) => {

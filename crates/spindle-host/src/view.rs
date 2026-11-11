@@ -27,6 +27,9 @@ const STATE: &str = "state";
 /// Why a view cannot be answered here: the constructs a read of the source's own rows does not
 /// cover, named.
 ///
+/// A field read through a reference (`field: {related: …}`) is answered ([`project`]); a filter
+/// that navigates one (`resource_id.state == Active`) is refused with the filter below.
+///
 /// A filter is read only where each leaf, as the compiler parsed it, is one of
 /// (`story:view-list-query-parameters`, `story:view-field-literal-filters`):
 ///
@@ -50,8 +53,6 @@ pub(crate) fn unsupported(ir: &EssIr, view: &ResolvedView) -> Option<String> {
         Some("computed fields".to_owned())
     } else if view.aggregation.is_some() {
         Some("an aggregation".to_owned())
-    } else if !view.references.is_empty() {
-        Some("fields read through a reference".to_owned())
     } else if view.absent.is_some() {
         Some("a default row for an absent identity".to_owned())
     } else if view.paging.is_some() {
@@ -508,22 +509,84 @@ pub(crate) fn holds(
     }
 }
 
-/// The view's row for the instance `identity` names, held as `row`.
+/// The rows the references of one source row name, as they stand now, by the source field each
+/// reference reads (`via`): the referenced row's identity and the row. A reference that is
+/// absent, `null`, or names no row has no entry ([`references`]).
+pub(crate) type Referenced<'a> = BTreeMap<&'a str, (&'a Value, &'a Row)>;
+
+/// Whether `view` declares a field read through a reference (`field: {related: …}`).
+pub(crate) fn reads_related(view: &ResolvedView) -> bool {
+    view.references
+        .iter()
+        .any(|reference| !reference.fields.is_empty())
+}
+
+/// Each reference of `view` a field reads through, with the entity it names and the identity the
+/// source row `row`, the instance `identity` names, holds in it: by the reference's source field
+/// (`via`), in the order the compiler resolved them. A reference whose field the row holds nothing
+/// or `null` in names no row and is left out, as ESS's interpreter reads it
+/// (`ess-conformance` `src/interpret/views.rs`, `referenced_rows`, at ESS 0.92.0).
+pub(crate) fn references<'v>(
+    ir: &'v EssIr,
+    view: &'v ResolvedView,
+    identity: &Value,
+    row: &Row,
+) -> Vec<(&'v str, &'v ResolvedEntity, Value)> {
+    let source = ir.entity(&view.source);
+    view.references
+        .iter()
+        .filter(|reference| !reference.fields.is_empty())
+        .filter_map(|reference| {
+            let named = if reference.via == source.identity.name {
+                Some(identity.clone())
+            } else {
+                row.fields
+                    .get(&reference.via)
+                    .filter(|value| !value.is_null())
+                    .cloned()
+            }?;
+            Some((reference.via.as_str(), ir.entity(&reference.entity), named))
+        })
+        .collect()
+}
+
+/// The view's row for the instance `identity` names, held as `row`; `referenced` holds the rows
+/// its references name ([`references`]).
 ///
-/// A field typed as the source's lifecycle state answers the state the row holds; the field named
+/// A field read through a reference answers what it reads of the row the reference names: its
+/// `state`, its identity, or the stored field of that name, as ESS's interpreter reads it. A
+/// field typed as the source's lifecycle state answers the state the row holds; the field named
 /// as the source's identity answers `identity`; every other field answers the stored field of that
-/// name. Where the row holds nothing for it, the field follows the presence the compiler carried
-/// onto it from its source field: `null` under `null_when_absent`, left out otherwise.
+/// name. Where the row, or the referenced row, holds nothing for it, or the reference names no
+/// row, the field follows the presence the compiler carried onto it from its source field: `null`
+/// under `null_when_absent`, left out otherwise. A field read through a reference carries none, so
+/// it is left out, which ESS reads as the `null` its interpreter answers.
 pub(crate) fn project(
     ir: &EssIr,
     view: &ResolvedView,
     identity: &Value,
     row: &Row,
+    referenced: &Referenced<'_>,
 ) -> Map<String, Value> {
     let entity: &ResolvedEntity = ir.entity(&view.source);
     let mut answer = Map::new();
     for field in &view.fields {
-        let value = if field.type_ref.required().declared() == Some(&entity.state_type) {
+        let value = if let Some((reference, read)) = view.related_read(&field.name) {
+            referenced
+                .get(reference.via.as_str())
+                .and_then(|(far_identity, far)| {
+                    if read == STATE {
+                        Some(Value::String(far.state.clone()))
+                    } else if read == ir.entity(&reference.entity).identity.name {
+                        Some((*far_identity).clone())
+                    } else {
+                        far.fields
+                            .get(read)
+                            .filter(|value| !value.is_null())
+                            .cloned()
+                    }
+                })
+        } else if field.type_ref.required().declared() == Some(&entity.state_type) {
             Some(Value::String(row.state.clone()))
         } else if field.name == entity.identity.name {
             Some(identity.clone())

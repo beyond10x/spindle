@@ -222,13 +222,10 @@ fn without_the_flag_nothing_changes() {
         SHARE,
         Some(&json!({"notebook_id": NOTEBOOK, "with": OTHER})),
     );
-    assert_eq!(status, 501, "{body}");
-    assert_eq!(body["committed"], false, "{body}");
-    let refused = body["refused"].as_str().unwrap_or_default();
-    assert!(
-        refused.contains("the caller attributes it reads (`owner_id`)"),
-        "{body}"
-    );
+    // A command a grant names, sent with no caller, is refused as ESS refuses a request
+    // authenticated as no caller, before the ingress names the attributes it reads.
+    assert_eq!(status, 403, "{body}");
+    assert_eq!(body, json!({"refused": "not granted", "actor": null}));
     let stderr = served.stop();
     assert!(
         !stderr.contains("--fixed-actor"),

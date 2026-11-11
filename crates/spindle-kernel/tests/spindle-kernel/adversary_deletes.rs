@@ -34,6 +34,7 @@ fn removal(identity: &Value, expected: u64) -> Removal {
         identity: identity.clone(),
         expected,
         events: Vec::new(),
+        scanned: Vec::new(),
     }
 }
 

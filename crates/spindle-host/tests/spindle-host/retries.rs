@@ -104,6 +104,7 @@ fn a_dropped_retry_runs_its_failed_invocation_once() {
     );
     assert_eq!(
         host.published()
+            .expect("the events read")
             .iter()
             .map(|published| published.event.name.as_str())
             .collect::<Vec<_>>(),

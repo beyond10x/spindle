@@ -3,11 +3,14 @@
 mod calls;
 mod component;
 mod conform;
+mod database;
 mod decisions;
 mod deploy;
 mod replay;
 mod scaled;
 mod serve;
+mod state;
+mod state_lock;
 mod world;
 
 use std::collections::BTreeMap;
@@ -23,7 +26,7 @@ use clap::Parser;
 use decisions::Answers;
 use signal_hook::consts::{SIGINT, SIGTERM};
 use spindle_capability::{Admission, Capability, Environment, Requirements};
-use spindle_cli::cli::{Cli, Command};
+use spindle_cli::cli::{Cli, Command, StateCommand, StoreCommand};
 use spindle_host::{Host, HostError, rally};
 use spindle_kernel::{External, MemoryStore, SqliteStore, Store};
 
@@ -261,6 +264,17 @@ fn run(cli: Cli) -> Result<ExitCode> {
             known_failing: known_failing.as_deref(),
             accounting_out: accounting_out.as_deref(),
         }),
+        Command::Store {
+            command: StoreCommand::Migrate { spec, environment },
+        } => database::migrate(&spec, &environment),
+        Command::State {
+            command:
+                StateCommand::Move {
+                    from,
+                    spec,
+                    environment,
+                },
+        } => state::move_from(&from, &spec, &environment),
     }
 }
 
@@ -560,6 +574,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         );
     }
     let scratch;
+    let _lock;
     let mut store: Box<dyn Store> = match (durable, state) {
         (None | Some("memory"), None) => Box::new(MemoryStore::default()),
         (None, Some(path)) => bail!(
@@ -573,7 +588,10 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
             parsed.name,
             path.display()
         ),
-        (Some("sqlite"), Some(path)) => Box::new(SqliteStore::open(path)?),
+        (Some("sqlite"), Some(path)) => {
+            _lock = state_lock::file(path)?;
+            Box::new(SqliteStore::open(path)?)
+        }
         (Some("sqlite"), None) => {
             scratch = tempfile::tempdir().context("creating a temporary state directory")?;
             removed_on_signal(scratch.path())?;
@@ -583,6 +601,12 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
             );
             Box::new(SqliteStore::open(&scratch.path().join("state.sqlite"))?)
         }
+        (Some(database::POSTGRES), _) => bail!(
+            "store.durable is bound to postgres on {}, which keeps each component in tables of its \
+             own; run reading stdin keeps one store for every component: serve the specification \
+             over HTTP (ingress.network) instead",
+            parsed.name
+        ),
         (Some(other), _) => bail!("this build has no `{other}` store for store.durable"),
     };
 

@@ -241,7 +241,9 @@ runs every command, event binding delivery, tick and reset on the host's thread,
 arrival order, and answers each read on a thread of its own beside it: a view read, `GET /api/*`
 and `GET /__spindle/*` (§ 11, 2026-11-11). A view is read through its store's reading handle
 (`spindle_kernel::Store::reading`): SQLite reads the file on connections of its own under its
-write-ahead log on a capped pool of connections, the memory store hands out each entity's rows as
+write-ahead log on a capped pool of connections, and answers from each entity's resting rows,
+folded from one read of its log when it opens and from the events appended since, so a view read
+costs the rows of its entity, not the log; the memory store hands out each entity's rows as
 one value a write replaces, copying only an entity a read still holds. Either way a read sees the
 store as the last write that landed left it, never part of one, and never waits for a command, a
 slow external call included; the writer never copies more for a read than the entity it writes or
@@ -435,7 +437,7 @@ Open:
 | question | default |
 |---|---|
 | does the kernel program extend `entity-core` or stand alone | stand alone at first, with ESS `Predicate` for guards; revisit once the instruction set settles |
-| arithmetic beyond `increment:` | none in M0; the `rally` example is written on an integer grid with `increment: 1` / `-1` |
+| arithmetic beyond `increment:` | `{expr: …}` in `sets:` and an event's `payload:` (ess/27) is computed by ESS's own evaluator over `input.` and `subject.`, as ESS's interpreter computes it (`story:kernel-value-expressions`); one in an error's fields stays refused, as the interpreter computes none there. Guards keep `Predicate`, with no arithmetic; the `rally` example is written on an integer grid with `increment: 1` / `-1` |
 | AppSpec above ESS | deferred: the measured gaps are below ESS, not above |
 | whether a Service Worker serves the console routes (`ingress.network` bound to `service-worker`, `spindle-wasm`) | served, as on `http-loopback`: a Service Worker is reached only by the pages of its own origin, the reach the loopback address gives the listener; a reset that carries a world is refused there, and a reset removes every instance of each IndexedDB store rather than replacing it |
 | substrate gaps (ingress, workload/endpoint, Firecracker) | M0–M2 run as host processes; microVMs once substrate's Firecracker driver exists or with a local Firecracker launcher |

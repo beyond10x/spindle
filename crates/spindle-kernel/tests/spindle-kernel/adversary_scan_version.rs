@@ -218,6 +218,7 @@ fn a_removal_and_a_landed_group_move_the_entity_version(store: &mut dyn Store) {
             identity: json!("t1"),
             expected: held.version,
             events: Vec::new(),
+            scanned: Vec::new(),
         })
         .expect("t1 is removed");
     let after_removal = store.commit(&conditioned(
@@ -476,6 +477,7 @@ fn a_reservation_removed_after_the_scan_refuses_the_reservation() {
                 identity: json!(THEIRS),
                 expected: held.version,
                 events: Vec::new(),
+                scanned: Vec::new(),
             })
             .expect("the other writer removes their reservation");
     }));

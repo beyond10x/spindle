@@ -11,8 +11,9 @@
 //!
 //! `tests/fixtures/outcome-scoped-refusal-effects` declares one component reached in process, so
 //! `run` reads stdin. `CloseLot` closes a lot (`closed`), or, where the request sets `sweep`,
-//! closes it and sweeps its tags (`swept`), a secondary effect (`affects:`) the runtime does not
-//! run. ESS refuses `sets:` without a subject (`ESS-COMMAND-003`), so no fixture declares one.
+//! closes it and sweeps the tags the request lists (`swept`), a secondary effect over an input list
+//! (`affects:` with `each:`) the runtime does not run. ESS refuses `sets:` without a subject
+//! (`ESS-COMMAND-003`), so no fixture declares one.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -518,7 +519,8 @@ fn an_outcome_the_ingress_does_not_answer_refuses_only_when_chosen() {
 
 const EFFECTS: &str = "crates/spindle-cli/tests/fixtures/outcome-scoped-refusal-effects";
 const CLOSE_LOT: &str = "bay.lot.CloseLot";
-/// The outcome of `CloseLot` whose secondary effect (`affects:`) the runtime does not run.
+/// The outcome of `CloseLot` whose secondary effect over an input list (`affects:` with `each:`)
+/// the runtime does not run.
 const SWEPT: &str = "bay.lot.CloseLot/swept";
 
 /// `b10x-spindle run <spec> --environment laptop` with `requests` on stdin, one per line: the
@@ -554,10 +556,11 @@ fn run_reading(spec: &str, requests: &[Value]) -> (Vec<Value>, String) {
     (results, stderr)
 }
 
-/// An outcome with a secondary effect (`affects:`) the runtime does not run refuses only the
-/// request that selects it: selection reads no `affects:`, so `CloseLot` stays served, a request
-/// selecting `swept` is refused naming the outcome and its effect with nothing written, and the
-/// same lot then closes through `closed`. `run` reading stdin names the outcome at startup.
+/// An outcome with a secondary effect the runtime does not run (`affects:` with `each:`) refuses
+/// only the request that selects it: selection reads no `affects:`, so `CloseLot` stays served, a
+/// request selecting `swept` is refused naming the outcome and its effect with nothing written,
+/// and the same lot then closes through `closed`. `run` reading stdin names the outcome at
+/// startup.
 #[test]
 fn an_outcome_with_secondary_effects_refuses_only_the_request_that_selects_it() {
     let (results, stderr) = run_reading(
@@ -565,8 +568,8 @@ fn an_outcome_with_secondary_effects_refuses_only_the_request_that_selects_it() 
         &[
             json!({"command": "bay.lot.OpenLot", "input": {"lot_id": "l1"}}),
             json!({"command": "bay.lot.TagLot", "input": {"tag_id": "t1", "lot_id": "l1"}}),
-            json!({"command": CLOSE_LOT, "input": {"lot_id": "l1", "sweep": true}}),
-            json!({"command": CLOSE_LOT, "input": {"lot_id": "l1", "sweep": false}}),
+            json!({"command": CLOSE_LOT, "input": {"lot_id": "l1", "sweep": true, "tags": [{"tag_id": "t1"}]}}),
+            json!({"command": CLOSE_LOT, "input": {"lot_id": "l1", "sweep": false, "tags": []}}),
         ],
     );
     assert_eq!(results.len(), 4, "{results:#?}");

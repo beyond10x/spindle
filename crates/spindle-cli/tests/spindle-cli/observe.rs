@@ -28,6 +28,10 @@ const RESERVED_PREFIX_HTTP: &str = "crates/spindle-cli/tests/fixtures/reserved-p
 const RESERVED_VARIABLES_HTTP: &str =
     "crates/spindle-cli/tests/fixtures/reserved-variables-http.yaml";
 const FIXED_CALLER: &str = "crates/spindle-cli/tests/fixtures/fixed-caller";
+/// A fixture one of whose commands the kernel does not run: it answers `501`.
+const PARTIAL: &str = "crates/spindle-cli/tests/fixtures/partial";
+const DISCARD_NOTE: &str = "notes.pad.DiscardNote";
+const ALL_NOTES: &str = "notes.pad.AllNotes";
 /// A fixture with no component reached over the network: `run` reads stdin and serves no HTTP.
 const REPLAY: &str = "crates/spindle-cli/tests/fixtures/replay";
 const SCRIPTED: &str = "ess/fixtures/observe/requests/scripted.json";
@@ -37,7 +41,6 @@ const LAPTOP: &str = "examples/environments/laptop.toml";
 const READER: &str = "quire.notebook.Reader";
 const CREATE: &str = "quire.notebook.CreateNotebook";
 const SHARE: &str = "quire.notebook.ShareNotebook";
-const CARD: &str = "quire.notebook.NotebookCard";
 const OWNER: &str = "0f1e2d3c-4b5a-4968-8776-a5b4c3d2e1f0";
 const OTHER: &str = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
 const NOTEBOOK: &str = "5b2d8f14-3c6a-4e7b-9d1f-2a3b4c5d6e7f";
@@ -425,10 +428,12 @@ fn the_request_log_keeps_the_refusal_text() {
             "--observe",
         ],
     );
+    // A malformed request to a command the reader may send: one it may not send is refused `403`
+    // before its body is read (`story:command-grant-before-request`).
     let (bad, bad_body) = call_desk(
         &reader,
-        CREATE,
-        Some(&json!({"notebook_id": NOTEBOOK, "title": "notes", "colour": "red"})),
+        SHARE,
+        Some(&json!({"notebook_id": NOTEBOOK, "with": OTHER, "colour": "red"})),
     );
     assert_eq!(bad, 400, "{bad_body}");
     let (denied, denied_body) = call_desk(
@@ -443,42 +448,53 @@ fn the_request_log_keeps_the_refusal_text() {
     assert_eq!(records[0]["class"], "not-granted", "{answered}");
     assert_eq!(records[0]["reason"], denied_body["refused"], "{answered}");
     assert_eq!(records[1]["class"], "refused", "{answered}");
-    assert_eq!(records[1]["reason"], bad_body["refused"], "{answered}");
+    // The answer names the field the caller sent; the log keeps the words and elides the name.
+    assert_eq!(
+        bad_body["refused"],
+        format!("{SHARE} declares no input field colour"),
+        "{bad_body}"
+    );
+    assert_eq!(
+        records[1]["reason"],
+        format!("{SHARE} declares no input field …"),
+        "{answered}"
+    );
     drop(reader);
 
-    let plain = serve(FIXED_CALLER, &["--observe"]);
-    let (unserved, unserved_body) = call_desk(
-        &plain,
-        SHARE,
-        Some(&json!({"notebook_id": NOTEBOOK, "with": OTHER})),
-    );
+    let plain = serve(PARTIAL, &["--observe"]);
+    let (unserved, unserved_body) = call_pad(&plain, DISCARD_NOTE, Some(&json!({"note_id": "n1"})));
     assert_eq!(unserved, 501, "{unserved_body}");
     let answered = log(&plain, "");
     assert_eq!(answered["requests"][0]["class"], "not-served", "{answered}");
     assert_eq!(
-        answered["requests"][0]["reason"], unserved_body["refused"],
+        unserved_body["refused"],
+        format!("unsupported: `input_absent:`, in `{DISCARD_NOTE}/body-missing`"),
+        "{unserved_body}"
+    );
+    // The log keeps the construct; a backticked name holding `/` is not a plain name, so it is
+    // written `…`.
+    assert_eq!(
+        answered["requests"][0]["reason"], "unsupported: `input_absent:`, in …",
         "{answered}"
     );
 }
 
+/// Calls `operation` of the partial fixture's `pad` at its route.
+fn call_pad(served: &Served, operation: &str, body: Option<&Value>) -> (u16, Value) {
+    let (method, path) = route(PARTIAL, "pad", operation);
+    exchange(served.address, &method, &path, body)
+}
+
 #[test]
 fn the_not_served_filter_lists_only_501_answers() {
-    let served = serve(FIXED_CALLER, &["--observe"]);
-    let (status, body) = call_desk(
-        &served,
-        SHARE,
-        Some(&json!({"notebook_id": NOTEBOOK, "with": OTHER})),
-    );
+    let served = serve(PARTIAL, &["--observe"]);
+    let (status, body) = call_pad(&served, DISCARD_NOTE, Some(&json!({"note_id": "n1"})));
     assert_eq!(status, 501, "{body}");
-    let (status, body) = call_desk(&served, CARD, None);
+    let (status, body) = call_pad(&served, ALL_NOTES, None);
     assert_eq!(status, 200, "{body}");
     let (status, body) = exchange(served.address, "GET", "/nowhere", None);
     assert_eq!(status, 404, "{body}");
-    let (status, body) = call_desk(
-        &served,
-        SHARE,
-        Some(&json!({"notebook_id": NOTEBOOK, "with": OTHER})),
-    );
+    let (status, body) = call_pad(&served, DISCARD_NOTE, Some(&json!({"note_id": "n1"})));
     assert_eq!(status, 501, "{body}");
 
     let filtered = log(&served, "?class=not-served");
@@ -945,17 +961,24 @@ fn the_metrics_count_a_scripted_request_sequence() {
         &[("command", close_command), ("outcome", "closed")],
     );
     assert_eq!(sample(&samples, &closed), 1.0, "{closed}");
-    assert_eq!(
-        sample(&samples, "spindle_http_request_duration_seconds_count"),
-        7.0
+    // story:metrics-observed-series: the durations are counted by method and route template.
+    let durations = |suffix: &str| {
+        samples
+            .iter()
+            .filter(|(key, _)| {
+                key.starts_with(&format!("spindle_http_request_duration_seconds{suffix}{{"))
+                    && (suffix != "_bucket" || key.ends_with("le=\"+Inf\"}"))
+            })
+            .map(|(_, value)| *value)
+            .sum::<f64>()
+    };
+    assert_eq!(durations("_count"), 7.0, "{samples:#?}");
+    assert_eq!(durations("_bucket"), 7.0, "{samples:#?}");
+    let closing = series(
+        "spindle_http_request_duration_seconds_count",
+        &[("method", "POST"), ("route", close)],
     );
-    assert_eq!(
-        sample(
-            &samples,
-            "spindle_http_request_duration_seconds_bucket{le=\"+Inf\"}"
-        ),
-        7.0
-    );
+    assert_eq!(sample(&samples, &closing), 2.0, "{closing}");
     let total = samples
         .iter()
         .filter(|(key, _)| key.starts_with("spindle_http_requests_total{"))
@@ -1020,12 +1043,23 @@ fn the_exposed_families_are_the_specified_families() {
     );
 }
 
+/// story:metrics-observed-series: a catalogue counter is exposed once it counted anything, and
+/// every counter sample exposed is one catalogue counter, never 0.
 #[test]
-fn every_catalogue_counter_is_exposed() {
+fn every_counted_catalogue_counter_is_exposed() {
     use spindle_telemetry::Key;
     let mut kinds = std::collections::HashSet::new();
+    let mut counted_any = false;
     for spec in [INGRESS, RETRIED, RALLY] {
-        let served = serve(spec, &["--observe"]);
+        let served = if spec == INGRESS {
+            serve(spec, &["--http", INGRESS_HTTP, "--observe"])
+        } else {
+            serve(spec, &["--observe"])
+        };
+        let unexecuted = samples(&scrape(&served));
+        if spec == INGRESS {
+            scripted(&served);
+        }
         let samples = samples(&scrape(&served));
         let ir = spindle_spec::load(&root().join(spec))
             .expect("the specification compiles")
@@ -1078,8 +1112,8 @@ fn every_catalogue_counter_is_exposed() {
                 };
                 kinds.insert(std::mem::discriminant(&counter.key));
                 assert!(
-                    samples.contains_key(&key),
-                    "{spec}: {} of {component} is exposed as {key}: {samples:#?}",
+                    !unexecuted.contains_key(&key),
+                    "{spec}: {} of {component} is exposed as {key} before it counted anything",
                     counter.name
                 );
                 expected.insert(key);
@@ -1105,11 +1139,17 @@ fn every_catalogue_counter_is_exposed() {
             })
             .cloned()
             .collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(
-            exposed, expected,
-            "{spec}: every counter sample is one catalogue counter"
+        let uncatalogued = exposed.difference(&expected).collect::<Vec<_>>();
+        assert!(
+            uncatalogued.is_empty(),
+            "{spec}: every counter sample is one catalogue counter: {uncatalogued:?}"
         );
+        for key in &exposed {
+            assert!(sample(&samples, key) > 0.0, "{spec}: {key} is exposed at 0");
+        }
+        counted_any |= !exposed.is_empty();
     }
+    assert!(counted_any, "the scripted requests are counted");
     assert_eq!(kinds.len(), 9, "the fixtures hold every kind of counter");
 }
 
@@ -1118,7 +1158,8 @@ fn entity_rows_follow_writes_and_resets() {
     let served = serve(INGRESS, &["--http", INGRESS_HTTP, "--observe"]);
     let rows = series("spindle_entity_rows", &[("entity", "tasks.board.Task")]);
     let before = samples(&scrape(&served));
-    assert_eq!(sample(&before, &rows), 0.0);
+    // story:metrics-observed-series: an entity that never held a row is not written.
+    assert!(!before.contains_key(&rows), "{before:#?}");
     assert_eq!(sample(&before, "spindle_resets_total"), 0.0);
     for (task, title) in [("t1", "Water the plants"), ("t2", "Sweep")] {
         let (status, body) = exchange(
@@ -1157,25 +1198,28 @@ fn a_reset_leaves_counters_and_the_log_intact() {
     );
     assert!(!before.contains_key(&own), "{before:#?}");
     assert_eq!(sample(&after, &own), 1.0, "{own}");
+    // story:metrics-observed-series: its duration is counted under its own route, and the
+    // second scrape writes how long the first took.
     let duration = "spindle_http_request_duration_seconds";
+    let own_duration =
+        |key: &str| key.starts_with(duration) && key.contains("route=\"/api/reset\"");
+    let scraped = "spindle_metrics_scrape_duration_seconds";
     for (key, value) in &before {
-        if key.starts_with("spindle_entity_rows") || key == "spindle_resets_total" {
-            continue;
-        }
-        if key.starts_with(duration) {
-            let now = sample(&after, key);
-            if key.starts_with(&format!("{duration}_bucket")) || key.ends_with("_sum") {
-                assert!(now >= *value, "{key}: {value} then {now}");
-            } else {
-                assert_eq!(now, value + 1.0, "{key}");
-            }
+        if key.starts_with("spindle_entity_rows") || key == "spindle_resets_total" || key == scraped
+        {
             continue;
         }
         assert_eq!(sample(&after, key), *value, "{key} is kept by the reset");
     }
+    let reset_count = series(
+        &format!("{duration}_count"),
+        &[("method", "POST"), ("route", "/api/reset")],
+    );
+    assert_eq!(sample(&after, &reset_count), 1.0, "{reset_count}");
+    assert!(after.contains_key(scraped), "{after:#?}");
     let added = after
         .keys()
-        .filter(|key| !before.contains_key(*key))
+        .filter(|key| !before.contains_key(*key) && !own_duration(key) && *key != scraped)
         .collect::<Vec<_>>();
     assert_eq!(added, [&own], "the reset adds only its own series");
     assert!(sample(&before, "spindle_entity_rows{entity=\"tasks.board.Task\"}") > 0.0);
@@ -1229,8 +1273,16 @@ fn a_reset_leaves_counters_and_the_log_intact() {
 fn reading_the_metrics_changes_no_count() {
     let served = serve(INGRESS, &["--http", INGRESS_HTTP, "--observe"]);
     scripted(&served);
-    let first = scrape(&served);
-    let second = scrape(&served);
+    // story:metrics-observed-series: only the gauge of the last scrape's duration moves.
+    let counted = |exposition: String| {
+        exposition
+            .lines()
+            .filter(|line| !line.starts_with("spindle_metrics_scrape_duration_seconds "))
+            .map(|line| format!("{line}\n"))
+            .collect::<String>()
+    };
+    let first = counted(scrape(&served));
+    let second = counted(scrape(&served));
     assert_eq!(first, second);
     assert_eq!(log(&served, "")["recorded"], 7, "a scrape is not recorded");
 }

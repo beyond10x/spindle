@@ -5,7 +5,7 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:6a66de65817fba4e1e577a2a04a7261c1b1bf69a6b605eac8ccb1aabd40f9712",
+    "contract_digest": "slice-sha256/2:dfd073708eea4024e232ff86c566faae7ad24de5dce074f69b9748b467327ef7",
     "regenerate": "ess generate"
   },
   "$defs": {
@@ -102,7 +102,11 @@
           "type": "string"
         },
         "path": {
-          "description": "The request's path, without the query string.",
+          "description": "The request's path, without the query string. At most 2,048 bytes, cut on a character boundary with `…` where longer.",
+          "type": "string"
+        },
+        "query": {
+          "description": "The query string of a console request (`/api/model`, `/api/events`, `/api/reset`), absent where it carried none and for every other request. Each pair is kept in order, empty pairs dropped: `after` and `limit` by name, the value of `after` where the request was answered `200` (a cursor `GET /api/events` answered) and the value of `limit` where it is digits; every other name and value is written `…`. At most 2,048 bytes, as the path, cut with `…` where longer.",
           "type": "string"
         },
         "route": {
@@ -130,7 +134,7 @@
           "type": "string"
         },
         "reason": {
-          "description": "The `refused` text of the answer, as the caller received it, for every class but `served`.",
+          "description": "Why the request was not served, for every class but `served`: the `refused` text of the answer, its words and the names it gives (a field, a type, a route) kept. A value the caller sent is never recorded: every value in the text (a quoted string, a list, an object, a number, `true`, `false` or `null`), and every map key, struct member or input field name the caller sent, is written `…`. At most 512 bytes, cut with `…` where longer. So the record of a refused request holds its method, its path (at most 2,048 bytes) and the names of its route, and under 1 KiB besides, whatever its body held.",
           "type": "string"
         },
         "duration_us": {
@@ -200,7 +204,7 @@
           "type": "string"
         },
         "reason": {
-          "description": "Why the input could not be filled, as the runtime words it.",
+          "description": "Why the input could not be filled, as the runtime words it, bounded as a record's `reason` is: its words and the names it gives (the binding, the input, a type) kept, a value the event carried never recorded: every value in the text (a quoted string, a list, an object, a number, `true`, `false` or `null`) is written `…`. At most 512 bytes, cut with `…` where longer.",
           "type": "string"
         }
       },

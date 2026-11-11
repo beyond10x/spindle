@@ -127,6 +127,20 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "PostgreSQL store",
+        "store.durable bound to postgres keeps each component's state in its own tables (spindle_<component>_*) of an operator's PostgreSQL, through eventlog-postgres: it passes the store contract the memory and SQLite stores pass, and run's state survives a restart. store migrate creates the tables with the owner role; with database_ca, run opens over TLS verified against it with a DML-only serving role inside the connection budget, and refuses any other before listening.",
+        "/docs/concepts/environment-and-admission",
+        "crates/spindle-kernel/tests/spindle-kernel/postgres.rs::the_postgres_store_passes_the_contract",
+    ),
+    shipped(
+        "Execution",
+        "State moved into PostgreSQL",
+        "state move copies a run --state directory's streams into the PostgreSQL tables of every component bound to postgres, versions kept: run on PostgreSQL then answers every view as the run on the directory did, and a command decided after the move names the version the directory's last write left. A directory missing a component's file, or tables already holding a stream, is refused before anything is written.",
+        "/docs/concepts/environment-and-admission#moving-a-state-directory-into-postgresql",
+        "crates/spindle-cli/tests/spindle-cli/state_move.rs::state_moves_into_postgres_and_answers_as_before",
+    ),
+    shipped(
+        "Execution",
         "Service Worker host",
         "spindle-wasm compiles a specification in the browser, admits it on a browser environment (ingress.network bound to service-worker) and answers its routes and the console routes from a Service Worker through the same router the loopback listener calls, state in IndexedDB and external outcomes answered from a decisions file; web/ is the Vue shell that registers the worker.",
         "/docs/concepts/environment-and-admission",
@@ -215,6 +229,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "List views over every instance of an entity, with a state filter and an order.",
         "/docs/concepts/specification",
         "crates/spindle-host/tests/spindle-host/views.rs::a_state_filter_keeps_only_instances_in_that_state",
+    ),
+    shipped(
+        "Execution",
+        "View fields read through a reference",
+        "A view field declared field: {related: {via, field}} answers what the row the reference names holds now, from any component, and is left out where the reference is empty or names no row, as ESS's interpreter answers; each referenced row is loaded once per read by its identity.",
+        "/docs/concepts/specification",
+        "crates/spindle-host/tests/spindle-host/related.rs::related_fields_agree_with_the_interpreter",
     ),
     shipped(
         "Observe",
@@ -348,6 +369,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "An HTTP run answers every read while a command runs: a view, GET /api/model, GET /api/events and every GET /__spindle/ route are each answered on a thread of their own, from the state the last finished command left, never part of a command, on the memory and SQLite stores. Commands and the reset still run one at a time in arrival order; a slow external call holds the next command, never a read.",
         "/docs/concepts/environment-and-admission",
         "crates/spindle-cli/tests/spindle-cli/concurrent_reads.rs::reads_are_answered_from_the_last_committed_write_while_a_command_is_held",
+    ),
+    shipped(
+        "Execution",
+        "View reads on SQLite cost their rows",
+        "A view read on a SQLite state costs the rows of the entity it reads, not the log: the store keeps each entity's rows as they rest, read from its file once when it opens and then from the events each write appends, and every scan answers what a read of the whole log answers. A read of 40 rows beside 100,000 events answers in under 20 ms in a debug build (0.5 ms measured), where it took over a second.",
+        "/docs/concepts/environment-and-admission",
+        "crates/spindle-kernel/tests/spindle-kernel/resting_rows.rs::a_view_read_of_forty_rows_beside_a_hundred_thousand_events_answers_in_under_20_ms",
     ),
     shipped(
         "Conformance",

@@ -185,6 +185,7 @@ fn a_retry_does_not_reorder_later_events() {
     );
     assert_eq!(
         host.published()
+            .expect("the events read")
             .iter()
             .map(|published| published.event.name.as_str())
             .collect::<Vec<_>>(),

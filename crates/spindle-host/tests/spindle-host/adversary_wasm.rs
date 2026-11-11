@@ -111,7 +111,8 @@ fn a_manual_clock_opened_in_wasm_stamps_the_current_year() {
         object(json!({"title": "Field notes"})),
     )
     .expect("OpenNotebook runs");
-    let identity = host.published()[0].event.payload["notebook_id"].clone();
+    let identity =
+        host.published().expect("the events read")[0].event.payload["notebook_id"].clone();
     let card = host
         .view("desk.notebooks.NotebookCard", &identity)
         .expect("the view reads")

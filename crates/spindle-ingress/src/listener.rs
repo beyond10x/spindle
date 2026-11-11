@@ -25,7 +25,7 @@ use spindle_host::{Failed, Host, Reader};
 
 use crate::answer::Answer;
 use crate::console::{Console, Worlds};
-use crate::observe::{Answered, By, Note, Reserved};
+use crate::observe::{Answered, By, Note, Reserved, Target};
 use crate::router::{Asked, BODY_LIMIT, Pending, Response as Reply};
 use crate::surface::{Caller, Route, Surface};
 
@@ -70,8 +70,10 @@ impl Exchange {
         matches!(self.pending.asked, Asked::Hosted(Reserved::Metrics))
     }
 
-    /// The input the request's path carries in the route's variables and, for a view, the
-    /// parameters its query string carries ([`Route::parameters`]).
+    /// The input the request's path carries in the route's variables. Empty where nothing is read
+    /// before the grant check: for a route the check refuses ([`Route::not_granted`]), and on one
+    /// whose requests prove their caller ([`Route::proves`]), whose path is read as the exchange
+    /// is served, once the caller and its grant are checked.
     pub fn carried(&self) -> &Map<String, Value> {
         &self.pending.carried
     }
@@ -348,9 +350,19 @@ async fn handle(
     let started = Instant::now();
     let method = request.method().as_str().to_owned();
     let path = request.uri().path().to_owned();
+    // The query string as the routes read it: without the token a guarded listener reads.
+    let query = request.uri().query().unwrap_or_default();
+    let query = match &served.guard {
+        Some(guard) => guard.strip(query),
+        None => query.to_owned(),
+    };
     let (reply, note) = answer(&served, request).await;
     if let Some(note) = note {
-        recorder.record(at, started.elapsed(), &method, &path, &reply, note);
+        let target = Target {
+            path: &path,
+            query: &query,
+        };
+        recorder.record(at, started.elapsed(), &method, target, &reply, note);
     }
     Ok(replied(reply))
 }
@@ -398,6 +410,7 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         let pending = Pending {
             asked: Asked::Hosted(reserved),
             carried: Map::new(),
+            path: request.uri().path().to_owned(),
             query,
             content_type: None,
             body: Vec::new(),
@@ -465,6 +478,7 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         }
         _ => None,
     };
+    let path = request.uri().path().to_owned();
     let read = tokio::time::timeout(
         BODY_READ,
         Limited::new(request.into_body(), BODY_LIMIT).collect(),
@@ -489,6 +503,7 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
     let pending = Pending {
         asked,
         carried,
+        path,
         query,
         content_type,
         body,

@@ -1,12 +1,12 @@
 {
   "format": "ess-types-report/3",
-  "source_digest": "2a6e06f3f85f284455d8a509aa3c9fdca3754041212193e9074e0240eaabb3e8",
+  "source_digest": "ec1572f6d953c4c777f76b6f5502e4990bddd0a7db0e62b030980d6a923209bb",
   "input": {
     "kind": "model",
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:b90fe1f54ceda24cd981d31bd5aa4ad48f6f03cce7599a033d0d914dbdef6233",
-    "projection_digest": "13a54b35f345fc74a218277291de09d2b308fc8a75b58b7ace1546da0072543b"
+    "contract_digest": "slice-sha256/2:15b6d1987b4f7ad06e11551f56307a57fbe9af860e9933fbccb8dc8496eeb3ea",
+    "projection_digest": "6bc035bd96a126a2e148089ff9648d3d3d7720ccb2dec35fca56a4c932564ae6"
   },
   "generator_version": "0.92.0",
   "target": "typescript",
@@ -797,6 +797,11 @@
     },
     {
       "pointer": "/$defs/spindle.observe.RequestRecord/properties/path/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.RequestRecord/properties/query/description",
       "rule": "description",
       "detail": "retained in source.schema.json; no decoder behavior inferred"
     },

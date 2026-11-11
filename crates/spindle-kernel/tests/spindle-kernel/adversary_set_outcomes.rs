@@ -2,8 +2,9 @@
 //! fails on a later row, `{generated: true}` in a set outcome's `sets:` and in an event published
 //! once per changed row, integer identities, and `when_state:` on a per-row event.
 //!
-//! The loans cases run over `tests/fixtures/loans`; the rest over a desk of tickets written into a
-//! scratch directory by [`desk`].
+//! The loans cases run over `tests/fixtures/loans`; the revocation cases, a second writer giving
+//! a grant between a set outcome's scan and its commit, over `tests/fixtures/adversary-revoke`;
+//! the rest over a desk of tickets written into a scratch directory by [`desk`].
 
 use serde_json::{Map, Value, json};
 use spindle_kernel::{
@@ -333,9 +334,8 @@ fn every_row_a_set_outcome_moves_has_its_per_row_event_published() {
         .iter()
         .chain([&retried])
         .flat_map(|executed| executed.events.iter());
-    let published: Vec<&Value> = store
-        .inner
-        .events()
+    let committed = store.inner.events();
+    let published: Vec<&Value> = committed
         .iter()
         .chain(answered)
         .filter(|event| event.name == LOAN_MARKED)
@@ -502,4 +502,144 @@ fn per_row_events_with_when_state_agree_with_the_interpreter() {
         ours, theirs,
         "the stored tickets agree with ESS's view rows"
     );
+}
+
+const GRANT: &str = "probe.access.Grant";
+const GIVE_GRANT: &str = "probe.access.GiveGrant";
+const REVOKE_ALL: &str = "probe.access.RevokeAll";
+
+/// `tests/fixtures/adversary-revoke`: grants given one at a time, and `RevokeAll`, a set outcome
+/// removing every grant of a person.
+fn revoke() -> spindle_spec::EssIr {
+    spindle_spec::load(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/adversary-revoke"),
+    )
+    .expect("the adversary-revoke fixture compiles")
+    .ir
+}
+
+/// A store that, right after the kernel's first scan of the grants, lets `other` (a second
+/// handle on the same database) give the grant `racing` names, then goes on.
+struct Granting<'s> {
+    inner: &'s mut dyn Store,
+    other: &'s mut dyn Store,
+    ir: &'s spindle_spec::EssIr,
+    racing: Option<Value>,
+}
+
+impl Store for Granting<'_> {
+    fn load(&mut self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
+        self.inner.load(entity, identity)
+    }
+
+    fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
+        self.inner.commit(change)
+    }
+
+    fn remove(&mut self, removal: &Removal) -> Result<(), StoreError> {
+        self.inner.remove(removal)
+    }
+
+    fn commit_all(&mut self, writes: &[spindle_kernel::Write]) -> Result<(), StoreError> {
+        self.inner.commit_all(writes)
+    }
+
+    fn scan(&mut self, entity: &str) -> Result<spindle_kernel::Scan, StoreError> {
+        let scan = self.inner.scan(entity)?;
+        if entity == GRANT
+            && let Some(input) = self.racing.take()
+        {
+            run(self.ir, self.other, GIVE_GRANT, input);
+        }
+        Ok(scan)
+    }
+}
+
+/// The grants of `person` `store` holds, by identity.
+fn grants_of(store: &mut dyn Store, person: &str) -> Vec<Value> {
+    store
+        .scan(GRANT)
+        .expect("the store scans")
+        .into_iter()
+        .filter(|(_, stored)| stored.row.fields.get("person") == Some(&json!(person)))
+        .map(|(identity, _)| identity)
+        .collect()
+}
+
+/// Revokes every grant of `ann` while a second handle gives her the grant `g9` between the
+/// kernel's scan of the grants and its commit. Run serially either way, `ann` keeps no grant:
+/// revoked first, `g9` is given after; given first, the revocation removes it. So either the
+/// revocation is refused as a conflict and every grant of hers stands, or none does.
+fn a_grant_given_during_a_revocation_does_not_survive_it(
+    name: &str,
+    ir: &spindle_spec::EssIr,
+    store: &mut dyn Store,
+    other: &mut dyn Store,
+) {
+    for (grant, person) in [("g1", "ann"), ("g2", "ann"), ("g3", "bob")] {
+        run(
+            ir,
+            store,
+            GIVE_GRANT,
+            json!({"grant_id": grant, "person": person}),
+        );
+    }
+    let mut granting = Granting {
+        inner: store,
+        other,
+        ir,
+        racing: Some(json!({"grant_id": "g9", "person": "ann"})),
+    };
+    let revoked = execute(
+        ir,
+        &mut granting,
+        &mut NoExternals,
+        REVOKE_ALL,
+        &object(json!({"person": "ann"})),
+    );
+    assert!(granting.racing.is_none(), "{name}: the second writer ran");
+    let held = grants_of(store, "ann");
+    match revoked {
+        Err(spindle_kernel::ExecuteError::Store(StoreError::Conflict { .. })) => assert_eq!(
+            held,
+            [json!("g1"), json!("g2"), json!("g9")],
+            "{name}: a refused revocation leaves every grant of ann"
+        ),
+        Ok(executed) => {
+            assert_eq!(executed.outcome, "revoked", "{name}");
+            assert_eq!(
+                held,
+                Vec::<Value>::new(),
+                "{name}: the revocation landed after g9 was given and left ann holding it: a \
+                 set outcome's write group carries no condition on the scan that selected its \
+                 rows"
+            );
+        }
+        Err(other) => panic!("{name}: the revocation answers {other:?}"),
+    }
+    assert_eq!(
+        grants_of(store, "bob"),
+        [json!("g3")],
+        "{name}: bob's grant is never touched"
+    );
+}
+
+#[test]
+fn a_grant_given_during_a_revocation_does_not_survive_it_on_sqlite() {
+    let ir = revoke();
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a scratch directory");
+    let path = dir.path().join("access.sqlite");
+    let mut store = spindle_kernel::SqliteStore::open(&path).expect("SQLite opens");
+    let mut other =
+        spindle_kernel::SqliteStore::open(&path).expect("a second handle on the file opens");
+    a_grant_given_during_a_revocation_does_not_survive_it("sqlite", &ir, &mut store, &mut other);
+}
+
+#[cfg(feature = "postgres")]
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_grant_given_during_a_revocation_does_not_survive_it_on_postgres() {
+    let ir = revoke();
+    let (mut store, mut other) = super::adversary_secondary_effects::postgres_pair();
+    a_grant_given_during_a_revocation_does_not_survive_it("postgres", &ir, &mut store, &mut other);
 }

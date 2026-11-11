@@ -1,0 +1,38 @@
+format: ess/34
+system: access
+version: v1
+summary: Resources a catalogue keeps, and grants on them a second component keeps, read with what each grant names of its resource.
+domains:
+  - access.resources
+  - access.grants
+components:
+  - component: catalogue
+    summary: Adds, renames, retires and drops resources.
+    owns:
+      domains:
+        - access.resources
+    accepts:
+      commands:
+        - access.resources.AddResource
+        - access.resources.RenameResource
+        - access.resources.RetireResource
+        - access.resources.DropResource
+    publishes:
+      events:
+        - access.resources.ResourceAdded
+        - access.resources.ResourceRenamed
+        - access.resources.ResourceRetired
+        - access.resources.ResourceDropped
+    reached_by: in_process
+  - component: grants
+    summary: Issues grants, each on a resource or on none.
+    owns:
+      domains:
+        - access.grants
+    accepts:
+      commands:
+        - access.grants.IssueGrant
+    publishes:
+      events:
+        - access.grants.GrantIssued
+    reached_by: in_process

@@ -51,6 +51,7 @@ fn removal(identity: &Value, expected: u64, step: u64) -> Removal {
             name: "tabs.tasks.Removed".to_owned(),
             payload: Map::from_iter([("step".to_owned(), json!(step))]),
         }],
+        scanned: Vec::new(),
     }
 }
 

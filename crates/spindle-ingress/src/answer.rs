@@ -1,5 +1,7 @@
 //! One request's answer, from the host that runs the command or reads the view.
 
+use std::borrow::Cow;
+
 use ess_compiler::EssIr;
 use ess_compiler::ir::{ResolvedCommand, ResolvedError, ResolvedField};
 use ess_gen::http::{FORBIDDEN, NOT_GRANTED};
@@ -9,7 +11,12 @@ use spindle_host::{Failed, Host, HostError, Reader};
 use spindle_kernel::{DeclaredError, Event, ExecuteError};
 
 use crate::observe::Answered;
-use crate::surface::{Caller, Route, Unserved, may_read};
+use crate::surface::{Caller, Route, Unserved, may_read, may_run};
+
+/// What the refusal of a JSON body's key the command declares no input field for says between
+/// the command and the key: the request log elides the key, which the caller sent
+/// ([`crate::observe`]).
+pub(crate) const NO_INPUT_FIELD: &str = " declares no input field ";
 
 /// A status and the JSON body written under it, where it has one.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,11 +105,14 @@ impl Answer {
 /// whose consequences could not be carried answers `501` with `committed: true`. A view the host
 /// cannot answer is refused `501`, naming what it does not read.
 ///
-/// A command is sent as the route's fixed caller ([`Route::caller`]), else as no caller. One its
-/// actor's `may:` does not name answers ESS's standard refusal, `403`
-/// `{"refused": "not granted", "actor": <actor>}`, and nothing is written. So does a read-granted
-/// view the fixed actor may not read ([`Route::not_granted`]), before anything is read, its
-/// path variables and query string included, as ESS's served surface checks the reader first.
+/// A command is sent as the route's fixed caller ([`Route::caller`]), else as no caller. The grant
+/// is checked first, as ESS's served surface checks it, before the body, the query string or the
+/// path variables are read ([`Route::not_granted`]): a command the fixed actor's `may:` does not
+/// name, or a read-granted view it may not read, answers ESS's standard refusal, `403`
+/// `{"refused": "not granted", "actor": <actor>}`; without a fixed caller, a command some actor's
+/// `may:` names, or a read-granted view, answers the refusal for a request authenticated as no
+/// caller, `403` `{"refused": "not granted", "actor": null}`. Nothing is read or written. A
+/// command and a view no actor's grant names are answered as no caller.
 ///
 /// On a route whose requests prove their caller ([`Route::proves`]) this function is handed no
 /// proof, so it answers every request `403` `{"refused": "not granted", "actor": null}`
@@ -135,8 +145,28 @@ pub fn answered(
     content_type: Option<&str>,
     body: &[u8],
 ) -> (Answer, Vec<Failed>) {
-    let (answer, failed, _) = answering(host, route, None, carried, query, content_type, body);
+    let (answer, failed, _) = answering(
+        host,
+        route,
+        None,
+        Carried::Read(carried),
+        query,
+        content_type,
+        body,
+    );
     (answer, failed)
+}
+
+/// The input a request's path carries in its route's variables: read by the router
+/// ([`crate::Resolved::Found`]), or, on a route whose requests prove their caller
+/// ([`Route::proves`]), the request's path itself, read only once the caller and its grant are
+/// checked.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Carried<'a> {
+    /// What the router read from the path.
+    Read(&'a Map<String, Value>),
+    /// The request's path, not yet read.
+    Unread(&'a str),
 }
 
 /// [`answered`], and who answered: the model where the command's envelope found a status for the
@@ -146,19 +176,21 @@ pub fn answered(
 /// On a route whose requests prove their caller ([`Route::proves`]) the request is sent or read
 /// as `proven`, the caller its header proves ([`Caller::proven`]), once the model binds it
 /// ([`Caller::binds`]); with no caller proven, or one the model does not bind, it is refused
-/// [`Answer::not_proven`] before anything else is read, run or written. A read-granted view the
-/// proven actor may not read answers [`Answer::not_granted`] naming it.
+/// [`Answer::not_proven`] before anything else is read, run or written. A command the proven
+/// actor's `may:` does not name, or a read-granted view it may not read, answers
+/// [`Answer::not_granted`] naming it, before its body, query string or path is read: the router
+/// leaves the path unread on such a route ([`Carried::Unread`]).
 pub(crate) fn answering(
     host: &mut Host,
     route: &Route,
     proven: Option<&Caller>,
-    carried: &Map<String, Value>,
+    carried: Carried<'_>,
     query: &str,
     content_type: Option<&str>,
     body: &[u8],
 ) -> (Answer, Vec<Failed>, Answered) {
-    let caller = match answered_as(host.ir(), route, proven) {
-        Ok(caller) => caller,
+    let (caller, carried) = match answered_as(host.ir(), route, proven, carried) {
+        Ok(answered_as) => answered_as,
         Err(refusal) => return (refusal, Vec::new(), Answered::ingress()),
     };
     match &route.operation {
@@ -171,12 +203,12 @@ pub(crate) fn answering(
                     .map_err(|detail| Answer::refusal(400, detail)),
             };
             match input {
-                Ok(input) => run(host, route, caller, command, carried, input),
+                Ok(input) => run(host, route, caller, command, &carried, input),
                 Err(refusal) => (refusal, Vec::new(), Answered::ingress()),
             }
         }
         Operation::View(view) => {
-            let (answer, answered) = match viewed(host.ir(), route, caller, view, carried, query) {
+            let (answer, answered) = match viewed(route, &carried, query) {
                 Ok(given) => listed(host.list_with(view, &given)),
                 Err(refusal) => (refusal, Answered::ingress()),
             };
@@ -194,34 +226,40 @@ pub(crate) fn reading(
     reader: &Reader,
     route: &Route,
     proven: Option<&Caller>,
-    carried: &Map<String, Value>,
+    carried: Carried<'_>,
     query: &str,
 ) -> Option<(Answer, Answered)> {
     let Operation::View(view) = &route.operation else {
         return None;
     };
-    let caller = match answered_as(reader.ir(), route, proven) {
-        Ok(caller) => caller,
+    let carried = match answered_as(reader.ir(), route, proven, carried) {
+        Ok((_, carried)) => carried,
         Err(refusal) => return Some((refusal, Answered::ingress())),
     };
-    Some(
-        match viewed(reader.ir(), route, caller, view, carried, query) {
-            Ok(given) => listed(reader.list_with(view, &given)),
-            Err(refusal) => (refusal, Answered::ingress()),
-        },
-    )
+    Some(match viewed(route, &carried, query) {
+        Ok(given) => listed(reader.list_with(view, &given)),
+        Err(refusal) => (refusal, Answered::ingress()),
+    })
 }
 
-/// Who a request for `route` on a model `ir` is answered as: on a route whose requests prove
-/// their caller, `proven` once the model binds it, and otherwise the route's fixed caller, if
-/// any. The refusal, before anything is read, run or written: [`Answer::not_proven`] where no
-/// caller is proven or the model does not bind it, and the `501` of an operation this ingress
-/// does not route ([`Unserved::Ingress`]).
+/// Who a request is answered as, and the input its path carries ([`answered_as`]).
+type AnsweredAs<'a> = (Option<&'a Caller>, Cow<'a, Map<String, Value>>);
+
+/// Who a request for `route` on a model `ir` is answered as, and the input its path carries: on
+/// a route whose requests prove their caller, `proven` once the model binds it, and otherwise the
+/// route's fixed caller, if any. The refusal, before anything is read, run or written, in this
+/// order: [`Answer::not_proven`] where no caller is proven or the model does not bind it; the
+/// grant check ([`granted`]), as ESS's served surface checks the grant first; and the `501` of an
+/// operation this ingress does not route ([`Unserved::Ingress`]), so a granted command that reads
+/// its caller, served without one, is refused `403` rather than naming what it reads. Only then
+/// is a path the router left unread read ([`Carried::Unread`]), `400` for a variable that does
+/// not read.
 fn answered_as<'a>(
     ir: &EssIr,
     route: &'a Route,
     proven: Option<&'a Caller>,
-) -> Result<Option<&'a Caller>, Answer> {
+    carried: Carried<'a>,
+) -> Result<AnsweredAs<'a>, Answer> {
     let caller = if route.proves() {
         Some(
             proven
@@ -231,34 +269,54 @@ fn answered_as<'a>(
     } else {
         route.caller()
     };
+    granted(ir, route, caller)?;
     if let Some(unserved @ Unserved::Ingress(_)) = route.unserved() {
         return Err(Answer::unfinished(
             format!("{}: {unserved}", route.operation),
             false,
         ));
     }
-    Ok(caller)
+    let carried = match carried {
+        Carried::Read(carried) => Cow::Borrowed(carried),
+        Carried::Unread(path) => Cow::Owned(
+            route
+                .read_path(path)
+                .map_err(|why| Answer::refusal(400, why))?,
+        ),
+    };
+    Ok((caller, carried))
 }
 
-/// The parameter values a read of `view` at `route`, as `caller`, is given: those the path
-/// carries and those the query string holds ([`Route::parameters`]). The refusal before
-/// anything is read: [`Answer::not_granted`] for a read-granted view the caller may not read, and
-/// `400` for a query string that does not read.
+/// ESS's grant check, before anything of the request is read: a route the check refuses
+/// whatever the request ([`Route::not_granted`]) answers [`Answer::not_granted`] naming the fixed
+/// caller's actor, or [`Answer::not_proven`] without one; on a route whose requests prove their
+/// caller, a command the proven actor's `may:` does not name, or a read-granted view it may not
+/// read, answers [`Answer::not_granted`] naming it.
+fn granted(ir: &EssIr, route: &Route, caller: Option<&Caller>) -> Result<(), Answer> {
+    if route.not_granted() {
+        return Err(caller.map_or_else(Answer::not_proven, |caller| {
+            Answer::not_granted(&caller.actor)
+        }));
+    }
+    if let Some(caller) = caller.filter(|_| route.proves()) {
+        let may = match &route.operation {
+            Operation::Command(command) => may_run(ir, &caller.actor, command),
+            Operation::View(view) => may_read(ir, &caller.actor, view),
+        };
+        if !may {
+            return Err(Answer::not_granted(&caller.actor));
+        }
+    }
+    Ok(())
+}
+
+/// The parameter values a read at `route` is given: those the path carries and those the query
+/// string holds ([`Route::parameters`]); `400` for a query string that does not read.
 fn viewed(
-    ir: &EssIr,
     route: &Route,
-    caller: Option<&Caller>,
-    view: &str,
     carried: &Map<String, Value>,
     query: &str,
 ) -> Result<Map<String, Value>, Answer> {
-    if route.not_granted()
-        || (route.proves() && caller.is_some_and(|caller| !may_read(ir, &caller.actor, view)))
-    {
-        return Err(Answer::not_granted(
-            caller.map_or("", |caller| caller.actor.as_str()),
-        ));
-    }
     let mut given = carried.clone();
     given.extend(
         route
@@ -299,7 +357,7 @@ fn run(
         .find(|field| !route.input().iter().any(|declared| declared == *field))
     {
         return (
-            Answer::refusal(400, format!("{command} declares no input field {field}")),
+            Answer::refusal(400, format!("{command}{NO_INPUT_FIELD}{field}")),
             Vec::new(),
             Answered::ingress(),
         );

@@ -6,6 +6,277 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-11
+
+### Added
+
+- The kernel runs an outcome that declares secondary effects (`affects:`), which it refused as
+  unsupported (`501`): after the subject's own move, update or removal, each entry selects the rows
+  of its entity whose `where:` holds in the store as it was before the outcome, the subject
+  excepted, and moves them (a row outside the move's `from` states is skipped), removes them or
+  writes its `sets:` into them, entries in the order written. Every row left in place is checked
+  against its entity's invariants, and the subject and every row land in one write group on every
+  store, or nothing is written. A row of an entity an entry selected from, written by another
+  command between the selection and the write, refuses the command as a conflict and writes
+  nothing, whatever the group's writes are: removals only, or the subject's removal alone where
+  no row was selected. An entry over an input list (`each:`) and a filter walking another
+  entity's rows stay refused.
+
+- `store.durable` bound to `postgres` keeps each component's state in an operator's PostgreSQL
+  (13 or later), through `eventlog-postgres` at the pinned eventlog tag, rows and events encoded as
+  the SQLite store encodes them and under the table prefix `spindle_<component>`, so components
+  share one database apart. `run` (served) reads the settings `database_url` (required, never
+  printed), `database_ca` (a PEM CA bundle: TLS with `sslmode=require`, the server verified
+  against it; required off loopback), `database_schema` (`public`), `database_pool` (4 per
+  component) and `database_connections` (required with `database_ca`: the database's connection
+  budget available to this deployment, at least components x `database_pool` + 1, and not the
+  serving role's `CONNECTION LIMIT`) from `SPINDLE_SETTING_<NAME>`. Without `database_ca` a
+  loopback or Unix-socket database is opened isolated and its tables created; with it, `run`
+  opens with a DML-only serving role and exits 1 before listening on an owner role (naming the
+  DDL rights it refuses), a role whose `CONNECTION LIMIT` is outside 1 to components x
+  `database_pool`, and a budget below components x `database_pool` + 1: one component at pool 4
+  takes a role limited to 4 and `database_connections` 8. A malformed `database_url` or
+  `database_schema` is refused naming that setting, as is a `database_url` naming no host or
+  holding an `@` other than the one ending its user info before the host (an `@` in the user
+  name, the password or the query string not percent-encoded as `%40`), printing none of it; a
+  server that cannot be reached is named by host and port, with `database_ca` and the certificate
+  as a cause where it is set. A scan reads the entity's own stream and then one event per
+  instance, up to 1,000 instances and about 32 MiB of rows to one `read_many` call of eventlog,
+  each a bounded read that takes no lock, so a transaction
+  left open elsewhere on the server never delays it, another process's commits on the same tables
+  never wait for it, and it holds the entity's rows in memory, not the log. The rows the host
+  counts when the store opens (`Store::counts`, for `spindle_entity_rows`) are read from each
+  entity's own stream alone, no row read. Its reading handle (`Store::reading`) reads through the
+  store's own pool beside the writer, one statement per connection taken and no lock held, and
+  opens no connection beyond `database_pool`. Reads beside the writer are capped at
+  `database_pool` - 1 (1 with a pool of 1), scans and reads of a related field alike, so a
+  connection is always left for the writer; a read over the cap waits its turn, in arrival order,
+  and fails with a store error only after 30 s. The connection budget is unchanged and `GET`
+  views, `/api/model`, `/api/events` and `/__spindle/*` read a postgres-bound component off the
+  host's thread as they read a SQLite one; a reset, which empties its tables in place, waits for
+  the reads already running, and reads wait for the reset. The new `b10x-spindle store migrate <spec>
+  --environment <env>` creates every postgres-bound component's tables with the owner role,
+  idempotent (a second one started meanwhile waits for the first), one JSON line per component.
+  The example environment is `examples/environments/postgres.toml`. `task check:postgres` runs the
+  database cases against `SPINDLE_TEST_DATABASE_URL` and `SPINDLE_TEST_DATABASE_CA`, and CI's `PostgreSQL` job
+  runs it on PostgreSQL 17 with TLS. `run` reading stdin refuses `postgres`.
+- `b10x-spindle state move --from <dir> <spec> --environment <env>` moves the state a `run
+  --state` directory holds into the PostgreSQL tables of every component bound to `postgres`, with
+  the settings `run` reads: each `<component>.sqlite`, opened without creating anything, appended
+  in commit order, one transaction per write it recorded, so every stream keeps its versions and a
+  command decided after the move names the version the directory's last write left. It exits 1,
+  writing nothing, when the directory lacks a component's file, when a file holds a JSON string or
+  key with U+0000, which the SQLite store keeps and PostgreSQL refuses (every file is read before
+  connecting; the refusal names the component, the stream and where), or when a component's
+  tables already hold the stream of an entity the specification declares or the file holds, or
+  the mark of a partial move: one read of each stream's last version, which writes nothing and
+  does not grow with the log, also while a transaction is open elsewhere on the server; on a
+  loopback database a component's missing tables are created only after every check passed, so a
+  refused move creates no table. A move holds two connections of its role at once, the schema's
+  lock and one component's tables in turn, so a role `run` serves two components or more with
+  moves them; a role whose `CONNECTION LIMIT` is 1 exits 1 before the tables are read, naming the
+  two connections, and a connection refused as one too many is tried again for 5 s. One move
+  at a time writes into a schema: a move holds a PostgreSQL advisory lock on its schema from
+  before that check to after its last append, and a second move into the schema waits up to 5 s,
+  then exits 1 naming the other move, writing nothing. A file written by 0.7.0 to 0.10.0 arrives
+  in this release's form, each write's `spindle.written` event naming the instances it left
+  (event schema 2), so its scans read the entity's stream; a file holding writes of a release
+  before 0.7.0, which recorded no entity version, arrives with its log marked (`spindle:log`
+  `unnamed-writes`, before its first write), so its scans read the whole log and miss no row. It
+  prints one line per component (`component`, `streams`, `events`). Spindle is stopped first; a
+  move that fails partway leaves a partial copy the next move refuses.
+- The kernel computes a value written as `{expr: "<expression>"}` in `sets:` and in an event's
+  `payload:` (ess/27, `story:kernel-value-expressions`). Such an outcome was refused as an
+  unsupported value source and answered 501; a downstream consumer's specification had 7. The value
+  is computed by ESS's own evaluator over `input.<path>` and `subject.<field>` as the row held it
+  before the outcome, so Integer arithmetic, a Decimal quotient and `round(…, half_even)`, a
+  Timestamp moved by a Duration, and `coalesce` answer exactly as ESS's interpreter does. A zero
+  divisor or an absent `Optional` leaves the field absent unless `coalesce` supplies a value; a
+  result past a bound (an Integer past 64 bits, an instant past the year 9999) is never wrapped:
+  the command determines no value and commits nothing. An expression in an error's fields stays
+  refused by name, as ESS's interpreter computes none there.
+- A view field read through a reference is served (`story:view-related-fields`). A field declared
+  `field: {related: {via: <reference>, field: <field>}}` answered `501`; a downstream consumer's
+  specification has 26 such views. It now answers what the row the reference names holds now (a
+  stored field, its identity or its `state`), from that entity's component, another one included,
+  and is left out where the reference is empty or names no row, a removed one included, as ESS's
+  interpreter answers. A read loads each referenced row once by its identity (`Store::load`),
+  however many rows name it, and never scans the referenced entity. Such a view is read on the
+  host's thread, since a store's reading handle answers no row by identity. A filter that reads
+  through a reference is still refused.
+- Released binaries carry their dependency list (`story:release-dependency-list`). A downstream
+  consumer's image scan found no Rust crates in the 0.13.0 binary, so no dependency of Spindle was
+  checked for a known vulnerability. The release workflow now builds the four binaries with
+  `cargo auditable` 0.7.7, which embeds the crate list in a `.dep-v0` section that `trivy`, `grype`
+  and `cargo audit bin` read; each build fails when the tool is missing or when `rust-audit-info`
+  finds a runtime crate of `spindle-cli`, the workspace crates and `eventlog-postgres` included,
+  missing from the list. Each release page also carries one CycloneDX 1.5 SBOM,
+  `b10x-spindle-<version>.cdx.json`, made by `cargo-cyclonedx` 0.5.9 for the four targets and listed
+  in `SHA256SUMS`. Each job that builds an archive or the SBOM hashes it, and the publish job
+  checks every file against that hash before it writes `SHA256SUMS` from them, so a file changed
+  between its build and the release page fails the release.
+- `GET /api/events?after=<cursor>&limit=<n>` answers a range (`story:events-range-read`). A
+  downstream consumer reported that `GET /api/events` ignored every query, so a proxy that polled
+  it read and filtered the whole log on every poll. The answer is `{"events": [...], "next":
+  "<cursor>"}`: at most `n` events after the cursor, in the order the whole list has them.
+  `next` is opaque, and a cursor taken before a restart or a reset still resumes after its last
+  event. `limit` is 100 by default and 1,000 at most, and a larger one is answered with 1,000.
+  A malformed `after` or `limit` is refused `400`. Each store is read only after the position the
+  cursor marks for it, so a poll with the cursor at the end reads no event, however long the log
+  is. Without `after` or `limit` the answer is `{"events": [...]}` as before. The request log
+  records a console request's query string as `query`, at most 2,048 bytes as the path is.
+  Only the cursor of an answered read and a numeric limit are kept there, and every other name
+  and value is written `…`.
+
+### Changed
+
+- `GET /api/events` answers the events each component's store committed, read through the
+  store's reading handle beside the host's thread, instead of a list the host kept in memory: a
+  served run no longer grows with every event it publishes, and with `store.durable` bound to
+  `sqlite` or `postgres` the answer is the same after a restart. Every store reads back the events
+  it committed after a position, each with the command its write was attributed to
+  (`Store::events_after`, `Store::attribute`, the memory, SQLite, PostgreSQL and IndexedDB
+  stores); the host attributes each command with a sequence and merges its components' events
+  back into the order it published them. `Host::published` and `Reader::published` now read the
+  stores and answer a `Result`. An event no write of a row carries (an outcome without a subject,
+  one that preserves its subject, or a set outcome that selected no row) is committed to its
+  store on its own, conditioned on the command's scans as a write group is
+  (`Store::commit_events`), and listed as before. A reset of a store the host was given
+  (PostgreSQL) records in the store that its events so far are forgotten
+  (`Store::forget_events`), so a host opened on it later lists none of them; where that record
+  cannot be written the reset fails as when the store cannot be emptied. An event an earlier
+  release committed is listed with an empty `command`.
+- eventlog moves from 0.9.2 to 0.9.3, whose PostgreSQL store answers a batch of reads with one
+  statement per 1,000 reads and appends a group in batched statements: a scan of 50,000
+  instances, or one write of 20,000, no longer takes one round trip per instance. One command's
+  writes stay one transaction, locking each instance it writes: on PostgreSQL's default
+  `max_locks_per_transaction` (64) and `max_connections` (100), a command writing more than about
+  7,000 instances at once is refused with SQLSTATE 53200 and writes nothing, the message naming
+  `max_locks_per_transaction`, which raised to 256 lands one of 20,000.
+- Store format, in the SQLite store as in the PostgreSQL one: each write's `spindle.written`
+  event names the instances it leaves, each at its stream's version after the write (event schema
+  2, `{"rows": {stream: version}, "removed": {stream: version}}`), so a scan of the PostgreSQL
+  store reads the entity's stream and one event per instance rather than the whole log. The
+  SQLite store reads and scans a file of any earlier release as before, folding the whole file
+  into its resting rows once when it opens (below), and adds writes in the new form. A PostgreSQL log holding writes
+  that name no instances (0.10.0's, which name none, and those before 0.7.0, which record no
+  entity version) is scanned whole when its stream `spindle:log` `unnamed-writes` exists, or
+  when the entity's stream holds such a write.
+- `GET /__spindle/metrics` writes a series only once something was counted in it
+  (`story:metrics-observed-series`). Every command, failure kind, event, binding and entity series
+  was written from the start: a downstream consumer's model of 471 commands scraped 15,565 series,
+  261 of them non-zero, 1.5 MB per scrape. A served model of 500 commands that has run none now
+  writes one series, `spindle_resets_total`; a counted series keeps its value and stays written.
+  `spindle_entity_rows` is written from the first scrape that finds the entity holding a row.
+  `spindle_http_request_duration_seconds` is now labelled by `method` and `route` template, so a
+  slow route shows in its own series, and the new gauge `spindle_metrics_scrape_duration_seconds`
+  reports how long the scrape before took.
+- A request log record's `reason` never holds a value the caller sent
+  (`story:refusal-reason-bounded`). One refused command with an 800 KB mistyped field grew
+  `GET /__spindle/requests` by 804,364 bytes. Now every value in the refusal text is written `…`,
+  the field and the type it expected kept, and the reason is at most 512 bytes. A map key, struct
+  member or input field name the caller sent is written `…` too, and a record's `path` is at most
+  2,048 bytes, cut with `…`: a ring of 10,000 records of 404s for paths near 64 KiB held about
+  640 MiB. The answer the caller receives keeps an unknown field's name; the kernel now quotes a
+  map key or struct member the caller sent (`"key"` where it wrote `` `key` `` or `[key]`), and the
+  ingress text it could not percent-decode (`found "…"` where it wrote ``found `…` ``).
+
+### Fixed
+
+- The SQLite store builds on eventlog 0.9.4, which takes rusqlite 0.41 and libsqlite3-sys 0.39.1:
+  libsqlite3-sys 0.38.2 bundled an SQLite with advisory RUSTSEC-2026-0459.
+- A removal decided on a scan is conditioned on it as a change is: an outcome that `deletes:` its
+  instance behind a `when_related:` guard over a row set, and a set outcome (`instances:`) behind
+  one, is refused as a conflict and writes nothing where another writer wrote a row of the
+  scanned entity between the scan and the write. `Removal` carries the scanned entities
+  (`Removal::scanned`), which `remove` and `commit_all` check in the transaction that writes, on
+  the memory, SQLite, PostgreSQL and IndexedDB stores alike.
+
+- A set outcome (`instances:`) is conditioned on the scan that selected its rows: where another
+  writer wrote a row of the entity between that scan and the write (a grant given while every
+  grant of the person is revoked), the outcome is refused as a conflict and writes nothing,
+  rather than landing and leaving the new row unselected.
+
+- A second `run` on the same SQLite state is refused (`story:state-directory-lock`). Two runs
+  given one `--state` each kept their own outbox and event list over one database. Now `run
+  --state <path>` takes an exclusive advisory lock before it opens any store and holds it until it
+  exits: on `spindle.lock` inside the directory where it serves HTTP, on `<file>.lock` beside the
+  file where it reads stdin. A second run on the same state exits 1 before opening anything,
+  naming the state and the id of the process that holds it. The operating system releases the
+  lock with the process, after a SIGKILL too. Reading stdin, `run` names its lock file after the
+  path the state resolves to, so a second run given a symbolic link to a held state file exits 1
+  too. On Linux it also locks the database file itself, so a second run given a hard link exits 1
+  as well; macOS takes no lock on the database file, where an `flock` excludes SQLite's own
+  byte-range locks and SQLite would find its database locked.
+- A served command checks its caller's grant before it reads the request
+  (`story:command-grant-before-request`), as ESS's served application does. A fixed actor whose
+  `may:` does not name the command, or a proven one, is refused `403` "not granted" naming that
+  actor before the body, the query string or the path is read, so a malformed request from an
+  ungranted caller no longer answers `400`. A granted caller's malformed request still answers
+  `400`, and the transport limits (`411`, `413`, `408`) are still answered first. On a run whose
+  requests prove their caller, a path variable is read only after the caller and its grant are
+  checked, for a view too, so a request that proves no caller answers `403` whatever its path holds.
+- A run serving HTTP without `--fixed-actor` or `--trusted-caller-header` refuses a read-granted
+  view and a command some actor's `may:` names with ESS's standard refusal for a request
+  authenticated as no caller, `403` `{"refused": "not granted", "actor": null}`
+  (`story:unauthenticated-grant-refusals`). Such a view was read for anyone and such a command run
+  as no actor. Nothing is read or written. A view and a command no actor's grant names are served
+  as before. The grant is checked before anything else this ingress does not serve, so a granted
+  command that reads its caller answers this `403` too, not a `501` naming the attributes it reads.
+  The same holds wherever a model is served over HTTP with no caller: the Service Worker
+  (`spindle-wasm`) and each deployed component process's ingress refuse every such view and
+  command `403`. Neither takes `--fixed-actor` or a trusted-caller header, so neither can grant
+  one; serve a model whose commands and views a caller must be granted with `b10x-spindle run`
+  and `--fixed-actor` or `--trusted-caller-header` (behind a proxy that sets it).
+- A view read on a SQLite state costs the rows of its entity, not the whole log
+  (`story:view-read-without-log-scan`). Every `Store::scan` of a SQLite store read the tenant's
+  whole feed and kept the events of the entity asked for, and 0.13.0 only moved that read beside
+  the writer; a downstream consumer on 0.12.1 measured two filtered view reads over entities of
+  tens of rows at about 480 ms each on a 142 MB state, while `GET /api/events` took 16 ms. The
+  SQLite store now keeps each entity's rows as they rest, with their stream versions and the
+  entity's version: folded from one read of its log when it opens, then from only the events
+  appended since, read after each write it lands and before each scan or count, so a write by
+  another handle on the same file is still seen. Scans and counts, on the store and on its reading
+  handle, answer from them; the reading handle's connections share them, a read takes the rows of
+  its entity as they stand at one position of the feed, and new events are folded in under a lock
+  held only while they are applied, copying an entity only while a read still holds it. So a read
+  still sees a write group whole or not at all, a group longer than one page of the feed included,
+  and the reading pool's cap is unchanged. A reset or a restart opens a new store, which reads its
+  log again. Memory holds the rows that rest, never the history: a log of 1,300 rows of 1 MiB,
+  1,200 of them then written again small, holds 111 MiB once opened, scanned and counted; reading
+  it in order holds, for a moment, the rows resting at each point of it (1.3 GiB here, as a scan
+  of it did before). `SqliteStore::events_read` answers how many events of its log a store has
+  read: the whole log once when it opens, then only what was appended. The fold relies on SQLite's
+  single writer, under which no event lands behind a feed position already read; a PostgreSQL
+  store keeps its scan by the entity's stream. Measured in a debug build on a machine at load 30 to 80, a state of 100,091 events
+  whose read entity holds 40 rows: a view read took 1.51 s on the store and 1.31 s on its reading
+  handle at the median of 5 before, and 0.45 ms and 0.34 ms after; opening it takes one read of the
+  log (2.5 s), which the host already paid when it opened a store to count its rows. Every scan
+  and count, on the store, its reading handle and a second handle on the file, equals a read of the
+  whole feed after each step of drawn writes, refused groups, restarts and resets, on a new file and
+  on one the 0.10.0 release binary wrote.
+- `state move --from <dir>` takes the directory's lock (`spindle.lock`, the one `run --state`
+  holds) before it reads a file, and holds it to its end. It read the files of a directory a
+  running `run --state` was still writing; now, while a run holds the directory, it exits 1 naming
+  the directory and the run's process id, before it connects to the database. The lock file a run
+  leaves behind is no component's file and does not refuse a later move.
+- A view with a field read through a reference (`related:`) is read beside the writer like every
+  other view read (`story:view-related-fields`, `story:concurrent-reads`). Since related fields
+  landed, such a view was answered on the host's thread, behind every command, because a reading
+  handle could scan but not load a row by its identity; a downstream consumer reads 26 such views
+  per request. A reading handle now gives a position of its store for some of its entities
+  (`Reading::at`, `Position`), whose scans and loads answer the store as one write left it, so a
+  read still sees a write group whole or not at all: the memory store takes the entities under one
+  lock, SQLite takes them from its resting rows at one position of the feed, and PostgreSQL reads
+  through the store's own pool, within `database_pool`, and holds only where no entity it read
+  moved meanwhile, the view read again from a new position otherwise, up to 8 times.
+- The `reason` of an unmet binding input in the request log (`unmet[].reason`,
+  `spindle.observe.UnmetInput`) is bounded as a record's `reason` is
+  (`story:refusal-reason-bounded`). It copied the host's text verbatim, so the value the event
+  carried was logged (`"member-0042" is not a library.notices.ReaderRef`) and an 800 KB value grew
+  one record by 800 KB. Every value in it is now written `…`, and it is at most 512 bytes, the
+  binding, the input and the type kept.
+
 ## [0.13.0] - 2026-11-11
 
 ### Fixed

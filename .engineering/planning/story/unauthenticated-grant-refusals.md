@@ -2,11 +2,14 @@
 format: aep.planning-md/3
 id: story:unauthenticated-grant-refusals
 kind: story
-status: draft
+status: active
 title: Without a fixed caller, granted operations are refused as ESS refuses them
 relations:
 - serves: vision:spindle
-revision: 1
+revision: 3
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-11T09:40:08Z", actor: "human:timo", revision: 2}
+- {from: "proposed", to: "active", at: "2026-11-11T09:40:09Z", actor: "human:timo", revision: 3}
 ---
 # Without a fixed caller, granted operations are refused as ESS refuses them
 

@@ -23,6 +23,8 @@ Exit statuses: `0` success, `1` an error (printed on stderr as `b10x-spindle: â€
 | [`play`](#play) | Play the rally example in this terminal: every component in one process, one tick per period of its periodic binding, the grid redrawn after each |
 | [`deploy`](#deploy) | Deploy a specification: place and launch every instance of a placement, collect what they send, and serve the read-only observe API and UI on 127.0.0.1 until SIGINT, SIGTERM or SIGHUP |
 | [`conform`](#conform) | Run a specification's conformance suite against every component in one process |
+| [`store`](#store) | Manage where a specification's state is kept |
+| [`state`](#state) | Move a specification's state from one store into another |
 
 ## `check`
 
@@ -94,7 +96,7 @@ An external cause the line does not answer is answered by `--decisions`, then by
 
 With `--scenario`, replays an `ess-scenario` document instead of reading stdin: every component in one process on empty in-memory stores, the document read and checked by ESS, its steps run and compared by ESS's conformance runner. Prints what it arranges, each timeline act and each assertion that holds; exits 0 when all hold. At the first that does not, prints it with what was expected and what was observed and exits 1; that replay runs nothing after it. A document ESS refuses, or one of more than 1000 steps, exits 1 before any step runs.
 
-Where a component requires `ingress.network` (`reached_by: network`), runs every component in one process and serves those over HTTP on 127.0.0.1 instead of reading stdin; only `http-loopback` is served, and any other binding exits 1 before listening. Prints `{"listening": "<address>", "components": [...]}` once listening and serves until SIGINT or SIGTERM (exit 130 or 143). Routes are where `ess generate --kind openapi` publishes them: ESS's derived routes, or with `--http` the `ess-http/1` binding's, read and checked by ESS (methods, paths, path variables and per-outcome statuses), an operation it does not name keeping its derived route. A command's body is its input; it answers its outcome's status with the envelope ESS publishes, `{"outcome", "published", "error"?, "payload"?}`, or with the body the binding lists for the outcome: `response` (the command's response alone), `response.<field>` (that field's value alone), `{<member>: error}` on a refusing outcome (the error's wire name under `<member>`, beside the error's fields, nothing written) or `none` (no body, no `Content-Type`). A view answers `{"rows": [...]}`. Beside those it serves a model console's routes: `GET /api/model` (`{"ir", "subjects"}`, the IR as `ess specify compile --format json` prints it and each outcome's subject), `GET /api/events` (`{"events": [...]}`, every event published so far, in order) and `POST /api/reset` (empties every store, `{"emptied": [...]}`); a route the binding or ESS publishes at one of those paths exits 1 before listening. Commands and the reset run one at a time, in arrival order. Reads are answered beside them, each on a thread of its own, from the state the last finished command left: a view, `GET /api/model`, `GET /api/events` and every `GET /__spindle/` route.
+Where a component requires `ingress.network` (`reached_by: network`), runs every component in one process and serves those over HTTP on 127.0.0.1 instead of reading stdin; only `http-loopback` is served, and any other binding exits 1 before listening. Prints `{"listening": "<address>", "components": [...]}` once listening and serves until SIGINT or SIGTERM (exit 130 or 143). Routes are where `ess generate --kind openapi` publishes them: ESS's derived routes, or with `--http` the `ess-http/1` binding's, read and checked by ESS (methods, paths, path variables and per-outcome statuses), an operation it does not name keeping its derived route. A command's body is its input; it answers its outcome's status with the envelope ESS publishes, `{"outcome", "published", "error"?, "payload"?}`, or with the body the binding lists for the outcome: `response` (the command's response alone), `response.<field>` (that field's value alone), `{<member>: error}` on a refusing outcome (the error's wire name under `<member>`, beside the error's fields, nothing written) or `none` (no body, no `Content-Type`). A view answers `{"rows": [...]}`. Beside those it serves a model console's routes: `GET /api/model` (`{"ir", "subjects"}`, the IR as `ess specify compile --format json` prints it and each outcome's subject), `GET /api/events` (`{"events": [...]}`, every event published so far, in order; with `?after=<cursor>&limit=<n>`, `{"events": [...], "next": <cursor>}`, at most `n` events after the cursor in that order and the cursor after the last of them, either parameter optional: no `after` reads from the first event, `limit` is 100 by default and 1,000 at most, a larger one answered with 1,000, and a malformed `after` or `limit` refused `400`; the cursor is opaque, still resumes after a restart or a reset, and with it at the end the answer is no event and the same cursor) and `POST /api/reset` (empties every store, `{"emptied": [...]}`); a route the binding or ESS publishes at one of those paths exits 1 before listening. Commands and the reset run one at a time, in arrival order. Reads are answered beside them, each on a thread of its own, from the state the last finished command left: a view, `GET /api/model`, `GET /api/events` and every `GET /__spindle/` route.
 
 A command or view this ingress cannot route (such as a view a binding answers other than as `rows`, or one whose parameter no single query value carries), a command the kernel does not run, and a view the host does not read, keeps its route and answers `501` naming the operation and the construct (with ESS's envelope, `{"refused", "committed": false}`); nothing is read or written for it. Before listening, `run` prints one line on stderr per such operation, in name order: component by component, commands then views, each by qualified name. A run that would serve no operation, one of them an operation this ingress cannot route, exits 1 before listening; one whose operations only the kernel or the host does not run is served as before, each answering `501`.
 
@@ -193,3 +195,54 @@ b10x-spindle conform [OPTIONS] --environment <ENVIRONMENT> <SPEC>
 | `--counts <COUNTS>` | no |  | A `spindle-conformance-counts/1` document: the `executed_scenarios` that execute, and the `skipped` and `known_failed` counts. A held scenario that no longer executes, one that executes and is not held, more skipped or more known failures fails the run, naming each; where the counts moved, the document that holds the run is printed |
 | `--known-failing <KNOWN_FAILING>` | no |  | An `ess-known-failures/1` declaration: scenarios this build is known to fail, bound to the exact suite bytes, specification, implementation and build (`sha256:` of `b10x-spindle <version>`), each with its reason and tracking record. Read and accounted by ESS: a declared scenario that failed does not fail the run and is counted `known_failed`; a failure it does not declare still fails it. A declaration that does not bind this run, or names a scenario that passed or ended other than `failed`, exits 2. Requires `--report` and `--accounting-out` |
 | `--accounting-out <ACCOUNTING_OUT>` | no |  | Where to write the `ess-known-failure-accounting/1` document |
+
+## `store`
+
+Manage where a specification's state is kept
+
+```console
+b10x-spindle store <COMMAND>
+```
+
+## `store migrate`
+
+Create the PostgreSQL tables of every component whose `store.durable` is bound to `postgres`.
+
+Each component's tables are `spindle_<component>_*` (each `-` as `_`), in the schema `database_schema` names. The settings are the ones `run` reads, as `SPINDLE_SETTING_<NAME>`: `database_url` (required; `postgres://user:password@host:port/database`, never printed), `database_ca` (a PEM CA bundle: the server is reached over TLS, `sslmode=require`, and verified against it; without it the host must be loopback or a Unix socket), `database_schema` (default `public`), `database_pool` (connections per component, default 4) and `database_connections` (the database's connection budget available to this deployment; `run` requires it with `database_ca` and refuses a budget below components x `database_pool` + 1).
+
+`store migrate` takes the URL of the role that owns the schema and is the only command that runs DDL; `run` with `database_ca` opens with a serving role that can run none, whose `CONNECTION LIMIT` is from 1 to components x `database_pool`, and exits 1 before listening on any other role. A migrate started while another of the same tables runs waits for it, up to 60 s. Tables already there of the same shape are left as they are, so a second migrate changes nothing. Prints one line per component, `{"migrated": "<component>", "tables": "spindle_<component>_*", "schema": "<schema>"}`. Exits 0 once every component's tables exist, 1 when a setting is missing or the database refuses, and 3, creating nothing, when admission is refused.
+
+```console
+b10x-spindle store migrate --environment <ENVIRONMENT> <SPEC>
+```
+
+| Argument | Required | Default | Meaning |
+|---|---|---|---|
+| `<SPEC>` | yes |  | The specification directory |
+| `--environment <ENVIRONMENT>` | yes |  | The `spindle-environment/1` document |
+
+## `state`
+
+Move a specification's state from one store into another
+
+```console
+b10x-spindle state <COMMAND>
+```
+
+## `state move`
+
+Move the state a `run --state` directory holds into the PostgreSQL tables of every component whose `store.durable` is bound to `postgres`, every stream at its versions.
+
+The move takes the directory's lock (`spindle.lock`, the one `run --state` holds) before it reads a file and holds it to its end; while a run holds it, the move exits 1 naming the directory and that run's process id, before any connection. Stop a Spindle running on PostgreSQL first: the move does not keep it off the tables. Each component's `<component>.sqlite` is read, creating nothing beside the lock file, and its events appended in their order into the tables `spindle_<component>_*`, the events one write recorded as one transaction, so a command decided after the move names the version the directory's last write left. Event ids and recording times are new; a write of 0.7.0 to 0.10.0 arrives naming the instances it left, as this release writes it, and a directory holding writes from before 0.7.0 arrives with its log marked, so its scans read the whole log. The settings are the ones `run` reads (`database_url`, `database_ca`, `database_schema`, `database_pool`, `database_connections`); on a hosted database `store migrate` creates the tables first and `database_url` names the serving role.
+
+One move at a time writes into a schema: a move holds a PostgreSQL advisory lock on it, on a connection of its own, from before it reads the tables to after its last append, and opens one component's tables beside it at a time: two connections of its role at once. Exits 1, writing nothing, when another move holds the schema still after 5 s, naming it; when the role's `CONNECTION LIMIT` is 1, naming the two connections; and, naming the component, when the directory lacks a component's file, a file holds a JSON string or key with U+0000 (the SQLite store keeps it, PostgreSQL refuses it; every file is read before connecting, and the refusal names the stream), or a component's tables already hold the stream of an entity the specification declares or the file holds, or a partial move's mark; a refused move creates no table, also on a loopback database. A move that fails partway leaves a partial copy the next move refuses: drop the component's tables, run `store migrate` and move again. Prints one line per component, `{"component": "<component>", "streams": <n>, "events": <n>}`. Exits 3, moving nothing, when admission is refused.
+
+```console
+b10x-spindle state move --from <FROM> --environment <ENVIRONMENT> <SPEC>
+```
+
+| Argument | Required | Default | Meaning |
+|---|---|---|---|
+| `--from <FROM>` | yes |  | The state directory `run --state` kept: one `<component>.sqlite` per component |
+| `<SPEC>` | yes |  | The specification directory |
+| `--environment <ENVIRONMENT>` | yes |  | The `spindle-environment/1` document binding `store.durable` to `postgres` |
