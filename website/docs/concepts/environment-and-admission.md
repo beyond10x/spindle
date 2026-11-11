@@ -106,7 +106,10 @@ call. The body is `spindle-external/1` JSON with `format`, `capability`, `comman
 | a timeout, a failure, another status, a body over 64 KiB or another body | the command fails as `undecided` and writes nothing; a served request is answered `501` |
 
 A call holds the thread that runs every command until it is answered or times out. A served run
-answers nothing else meanwhile.
+runs no other command meanwhile: commands, and the reset, run one at a time in arrival order.
+Reads do not wait for it. A view read, `GET /api/model`, `GET /api/events` and every
+`GET /__spindle/` route are answered beside that thread, from the state the last finished command
+left.
 
 The document never holds the secret. `secret_env` is the name of an environment variable, read
 when `run` starts and sent as `Authorization: Bearer <value>`. An unset variable stops `run` before

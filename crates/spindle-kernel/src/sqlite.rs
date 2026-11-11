@@ -12,8 +12,10 @@
 //! answers and a change decided on a scan names ([`crate::Change::scanned`]), so a row of the
 //! entity written after the scan refuses the change.
 
-use std::collections::BTreeMap;
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 
 use eventlog_core::{
     AppendGroup, AtomicEventStore, CommandMeta, EventLogError, EventStore, Expected, NewEvent,
@@ -24,7 +26,7 @@ use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::store::{
-    Change, Removal, Row, Scan, Scanned, Store, StoreError, Stored, Write, first_writes,
+    Change, Reading, Removal, Row, Scan, Scanned, Store, StoreError, Stored, Write, first_writes,
     identity_from_key, moved,
 };
 
@@ -49,10 +51,19 @@ const SCHEMA: u32 = 1;
 const FEED_PAGE: usize = 500;
 
 /// Instances in one SQLite database file.
+///
+/// Its reading handle ([`Store::reading`]) reads the same file on connections of its own, which
+/// SQLite's write-ahead log lets read beside the writer: each scan reads the feed in commit order,
+/// so it sees a write's whole append group or none of it.
 pub struct SqliteStore {
     log: SqliteEventStore,
     tenant: TenantId,
-    runtime: tokio::runtime::Runtime,
+    /// What drives its log's calls: its own, or the one every connection of its reading handle
+    /// shares.
+    runtime: Arc<tokio::runtime::Runtime>,
+    path: PathBuf,
+    /// Its reading handle, once one was asked for: retired when this store is dropped.
+    reading: Option<Arc<SqliteReading>>,
 }
 
 impl std::fmt::Debug for SqliteStore {
@@ -70,20 +81,39 @@ impl SqliteStore {
     /// # Errors
     /// [`StoreError::Backend`] when the file cannot be opened or provisioned.
     pub fn open(path: &Path) -> Result<Self, StoreError> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .map_err(|error| StoreError::Backend(error.to_string()))?;
+        Self::opening(path, true, runtime()?)
+    }
+
+    /// Opens the database at `path`, which a store opened before provisioned, on a connection of
+    /// its own driven by `runtime`: what a reading handle reads through.
+    fn open_existing(
+        path: &Path,
+        runtime: Arc<tokio::runtime::Runtime>,
+    ) -> Result<Self, StoreError> {
+        Self::opening(path, false, runtime)
+    }
+
+    fn opening(
+        path: &Path,
+        create: bool,
+        runtime: Arc<tokio::runtime::Runtime>,
+    ) -> Result<Self, StoreError> {
         let location = path.to_str().ok_or_else(|| {
             StoreError::Backend(format!("{} is not a UTF-8 path", path.display()))
         })?;
-        let log = runtime
-            .block_on(SqliteEventStore::open(location, PREFIX))
-            .map_err(backend)?;
+        let log = if create {
+            runtime.block_on(SqliteEventStore::open(location, PREFIX))
+        } else {
+            runtime.block_on(SqliteEventStore::open_existing(location, PREFIX))
+        }
+        .map_err(backend)?;
         let tenant = TenantId::new(TENANT).map_err(backend)?;
         Ok(Self {
             log,
             tenant,
             runtime,
+            path: path.to_owned(),
+            reading: None,
         })
     }
 
@@ -149,6 +179,34 @@ impl SqliteStore {
             return Ok(());
         }
         Err(moved(scanned, actual))
+    }
+
+    /// Hands every event of the tenant's feed to `each`, in commit order, a page of
+    /// [`FEED_PAGE`] at a time. Every page moves the position forward, or the read stops as a
+    /// backend error.
+    fn feed(
+        &self,
+        mut each: impl FnMut(RecordedEvent) -> Result<(), StoreError>,
+    ) -> Result<(), StoreError> {
+        let mut position = 0;
+        loop {
+            let page = self
+                .runtime
+                .block_on(self.log.read_feed(&self.tenant, position, FEED_PAGE))
+                .map_err(backend)?;
+            for event in page.events {
+                each(event)?;
+            }
+            if !page.has_more {
+                return Ok(());
+            }
+            if page.next_position <= position {
+                return Err(StoreError::Backend(format!(
+                    "the feed did not move past position {position}"
+                )));
+            }
+            position = page.next_position;
+        }
     }
 }
 
@@ -276,48 +334,250 @@ impl Store for SqliteStore {
     fn scan(&mut self, entity: &str) -> Result<Scan, StoreError> {
         let version = self.entity_version(entity)?;
         let mut latest = BTreeMap::<String, Stored>::new();
-        let mut position = 0;
-        loop {
-            let page = self
-                .runtime
-                .block_on(self.log.read_feed(&self.tenant, position, FEED_PAGE))
-                .map_err(backend)?;
-            for event in page.events {
-                if event.stream_type != entity {
-                    continue;
-                }
-                if event.name == REMOVED {
-                    latest.remove(&event.stream_id);
-                    continue;
-                }
-                if event.name != ROW {
-                    continue;
-                }
-                let row = serde_json::from_value::<Row>(event.data)
-                    .map_err(|error| StoreError::Backend(format!("a stored row: {error}")))?;
-                latest.insert(
-                    event.stream_id,
-                    Stored {
-                        row,
-                        version: event.version,
-                    },
-                );
+        self.feed(|event| {
+            if event.stream_type != entity {
+                return Ok(());
             }
-            if !page.has_more {
-                break;
+            if event.name == REMOVED {
+                latest.remove(&event.stream_id);
+                return Ok(());
             }
-            if page.next_position <= position {
-                return Err(StoreError::Backend(format!(
-                    "the feed did not move past position {position}"
-                )));
+            if event.name != ROW {
+                return Ok(());
             }
-            position = page.next_position;
-        }
+            let row = serde_json::from_value::<Row>(event.data)
+                .map_err(|error| StoreError::Backend(format!("a stored row: {error}")))?;
+            latest.insert(
+                event.stream_id,
+                Stored {
+                    row,
+                    version: event.version,
+                },
+            );
+            Ok(())
+        })?;
         let rows = latest
             .into_iter()
             .map(|(identity, stored)| Ok((identity_from_key(&identity)?, stored)))
             .collect::<Result<_, StoreError>>()?;
         Ok(Scan { rows, version })
+    }
+
+    /// Reads the tenant's feed once, as [`Store::scan`] reads it, and keeps for each stream of
+    /// every entity of `entities` only whether its last `spindle.row` or `spindle.removed` event
+    /// is a row: one read for every entity, where a scan of each reads the whole feed again.
+    fn counts(&mut self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
+        let counted = entities.iter().collect::<BTreeSet<_>>();
+        let mut rests = BTreeMap::<(String, String), bool>::new();
+        self.feed(|event| {
+            if (event.name == ROW || event.name == REMOVED) && counted.contains(&event.stream_type)
+            {
+                rests.insert((event.stream_type, event.stream_id), event.name == ROW);
+            }
+            Ok(())
+        })?;
+        let mut counts = entities
+            .iter()
+            .map(|entity| (entity.clone(), 0))
+            .collect::<BTreeMap<_, _>>();
+        for ((entity, _), rests) in rests {
+            if !rests {
+                continue;
+            }
+            if let Some(count) = counts.get_mut(&entity) {
+                *count += 1;
+            }
+        }
+        Ok(counts)
+    }
+
+    /// Reads the same file on connections of its own, which share one runtime: one opened with
+    /// the handle, more as reads that run at once need them, up to as many as the machine runs
+    /// threads at once (at least 2). Every call answers the same handle; `None` where no
+    /// connection could be opened.
+    fn reading(&mut self) -> Option<Arc<dyn Reading>> {
+        if self.reading.is_none() {
+            let runtime = runtime().ok()?;
+            let first = Self::open_existing(&self.path, Arc::clone(&runtime)).ok()?;
+            let cap = std::thread::available_parallelism()
+                .map_or(2, std::num::NonZero::get)
+                .max(2);
+            self.reading = Some(Arc::new(SqliteReading {
+                path: self.path.clone(),
+                runtime,
+                cap,
+                connections: Mutex::new(Connections {
+                    idle: vec![first],
+                    live: 1,
+                    waiting: 0,
+                }),
+                returned: Condvar::new(),
+                retired: AtomicBool::new(false),
+            }));
+        }
+        self.reading
+            .clone()
+            .map(|reading| reading as Arc<dyn Reading>)
+    }
+}
+
+/// A runtime of its own for a store's log calls: one thread, no driver, so it holds no
+/// descriptor.
+fn runtime() -> Result<Arc<tokio::runtime::Runtime>, StoreError> {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .map(Arc::new)
+        .map_err(|error| StoreError::Backend(error.to_string()))
+}
+
+/// The store is closed: its reading handle opens no further connection by its path, which a
+/// reset may move aside and open again empty, and goes on reading the file it opened.
+impl Drop for SqliteStore {
+    fn drop(&mut self) {
+        if let Some(reading) = &self.reading {
+            reading.retired.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
+/// How many connections a [`SqliteReading`] keeps open beyond those its reads hold, when no read
+/// waits for one.
+const IDLE: usize = 2;
+
+/// The reading handle of a [`SqliteStore`]: the file, and its connections. Reads that run at
+/// once each read on a connection of their own, up to `cap` of them; a read beyond that waits for
+/// one handed back. Once no read waits, at most [`IDLE`] are kept for the next reads and the rest
+/// closed.
+struct SqliteReading {
+    path: PathBuf,
+    /// What drives every connection's log calls.
+    runtime: Arc<tokio::runtime::Runtime>,
+    /// How many connections may be open at once.
+    cap: usize,
+    connections: Mutex<Connections>,
+    /// Signalled whenever a connection is handed back or given up.
+    returned: Condvar,
+    /// The store this handle reads was closed ([`Drop`]): the file at its path may be another
+    /// now, so reads take turns on the connections already open.
+    retired: AtomicBool,
+}
+
+/// The connections of a [`SqliteReading`].
+struct Connections {
+    /// Those no read holds now.
+    idle: Vec<SqliteStore>,
+    /// How many are open, idle or held, or being opened.
+    live: usize,
+    /// How many reads wait for one.
+    waiting: usize,
+}
+
+impl SqliteReading {
+    /// Runs `read` on a connection no other read holds ([`SqliteReading::connection`]); hands it
+    /// back for a read that waits, or keeps it idle up to [`IDLE`], and closes it otherwise or
+    /// where the read failed.
+    fn with<T>(
+        &self,
+        read: impl FnOnce(&mut SqliteStore) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        let mut connection = self.connection()?;
+        let read = read(&mut connection);
+        let mut connections = self.lock();
+        let mut closed = Vec::new();
+        if read.is_ok() {
+            connections.idle.push(connection);
+        } else {
+            connections.live -= 1;
+            closed.push(connection);
+        }
+        // A read woken for a connection counts as waiting until it runs again, so a burst can
+        // leave more idle than any read waits for: the last read of a burst closes them.
+        let kept = IDLE.max(connections.waiting);
+        while connections.idle.len() > kept {
+            if let Some(connection) = connections.idle.pop() {
+                connections.live -= 1;
+                closed.push(connection);
+            }
+        }
+        drop(connections);
+        self.returned.notify_all();
+        drop(closed);
+        read
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Connections> {
+        self.connections
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Waits for a connection to be handed back or given up.
+    fn wait<'a>(
+        &self,
+        mut connections: std::sync::MutexGuard<'a, Connections>,
+    ) -> std::sync::MutexGuard<'a, Connections> {
+        connections.waiting += 1;
+        let mut connections = self
+            .returned
+            .wait(connections)
+            .unwrap_or_else(PoisonError::into_inner);
+        connections.waiting -= 1;
+        connections
+    }
+
+    /// A connection no other read holds: an idle one, else a new one while fewer than `cap` are
+    /// open, else the next one handed back. A new one is opened only while the store is open, and
+    /// kept only where it still was once the connection opened: the path names the store's own
+    /// file until the store is closed, and the file is moved aside only after that.
+    fn connection(&self) -> Result<SqliteStore, StoreError> {
+        let mut connections = self.lock();
+        loop {
+            if let Some(connection) = connections.idle.pop() {
+                return Ok(connection);
+            }
+            if self.retired.load(Ordering::SeqCst) {
+                if connections.live == 0 {
+                    return Err(StoreError::Backend(
+                        "the store was closed while it was read".to_owned(),
+                    ));
+                }
+                connections = self.wait(connections);
+                continue;
+            }
+            if connections.live >= self.cap {
+                connections = self.wait(connections);
+                continue;
+            }
+            connections.live += 1;
+            drop(connections);
+            let opened = SqliteStore::open_existing(&self.path, Arc::clone(&self.runtime));
+            let open = !self.retired.load(Ordering::SeqCst);
+            connections = self.lock();
+            match opened {
+                Ok(connection) if open => return Ok(connection),
+                Ok(_) => {
+                    connections.live -= 1;
+                    self.returned.notify_all();
+                }
+                Err(error) => {
+                    connections.live -= 1;
+                    self.returned.notify_all();
+                    if open {
+                        return Err(error);
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Reading for SqliteReading {
+    fn scan(&self, entity: &str) -> Result<Scan, StoreError> {
+        self.with(|connection| connection.scan(entity))
+    }
+
+    fn counts(&self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
+        self.with(|connection| connection.counts(entities))
     }
 }
 

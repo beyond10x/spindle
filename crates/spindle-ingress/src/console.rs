@@ -5,7 +5,7 @@
 use ess_compiler::EssIr;
 use ess_http::Method;
 use serde_json::{Value, json};
-use spindle_host::{Host, HostError, World};
+use spindle_host::{Host, HostError, Published, Reader, World};
 
 use crate::answer::Answer;
 
@@ -84,8 +84,18 @@ pub fn model(ir: &EssIr) -> String {
 /// What `GET /api/events` answers: `200` with `{"events": [...]}`, each event the host published
 /// as `{"component", "command", "event", "payload"}`, in the order published.
 pub fn events(host: &Host) -> Answer {
-    let events = host
-        .published()
+    listed(&host.published())
+}
+
+/// What `GET /api/events` answers, read beside the host's thread through its `reader`, as
+/// [`events`] answers it.
+pub fn events_read(reader: &Reader) -> Answer {
+    listed(&reader.published())
+}
+
+/// `200` with `{"events": [...]}`, each of `published` in order.
+fn listed(published: &[Published]) -> Answer {
+    let events = published
         .iter()
         .map(|published| {
             json!({

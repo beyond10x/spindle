@@ -10,6 +10,8 @@ mod adversary;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_any_filter;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod adversary_concurrent_reads;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_console;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_links;
@@ -18,12 +20,16 @@ mod adversary_refusal;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_retry;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod adversary_rows;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_view_filters;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_views;
 mod adversary_wasm;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod any_filter;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod concurrent_reads;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod console;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
@@ -46,6 +52,8 @@ mod refusal;
 mod retries;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod retry;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod rows;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod supplied;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]

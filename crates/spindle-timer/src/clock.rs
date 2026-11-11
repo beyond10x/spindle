@@ -31,8 +31,9 @@ fn civil_now() -> SystemTime {
 /// [`Timer::due`](crate::Timer::due), and reads activation from the clock it activates with.
 ///
 /// [`Clock::now`] is monotonic and places ticks; [`Clock::wall`] is the civil time a
-/// `{generated: true}` `Timestamp` is stamped with. Both move together.
-pub trait Clock {
+/// `{generated: true}` `Timestamp` is stamped with. Both move together. A clock is shared with
+/// the threads that read beside the host (`spindle_host::Reader`), so it is `Send` and `Sync`.
+pub trait Clock: Send + Sync {
     /// The current instant.
     fn now(&self) -> Instant;
 

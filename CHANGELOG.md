@@ -6,6 +6,73 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-11
+
+### Fixed
+
+- A served `run` answers reads while a command runs (`story:concurrent-reads`). Every request was
+  handed to the host's thread and answered one at a time, so a view read, the readiness probe
+  `GET /api/model` and `GET /__spindle/metrics` waited behind any command, a slow external call
+  included; a downstream consumer's probe got no answer during one slow request. Now commands, the
+  reset, binding deliveries and ticks still run on the host's thread, one at a time in arrival
+  order, and every read is answered beside it on a thread of its own: a view, `GET /api/model`,
+  `GET /api/events`, `GET /__spindle/metrics` and `GET /__spindle/topology`
+  (`GET /__spindle/requests` and `/__spindle/ui` were already answered by the listener). A view
+  reads its store through the store's new reading handle (`Store::reading`): SQLite reads the file
+  on connections of its own under its write-ahead log, at most one per processor (at least 2), at
+  most 2 kept idle, all driven by one runtime; the memory store keeps each entity's rows as one
+  value a write replaces, copying only an entity a read still holds. So a read sees the store as
+  the last write that landed left it, never part of one, and neither waits for the other. The row
+  counts a reader reads move a whole write group at once, and the events it lists are kept in
+  chunks of 256, so a command never copies more than one chunk for a read. A reset hands readers
+  the emptied stores, and their counts, only once its world is loaded. The trusted-caller proof and the read
+  grants are checked on the read path as on the host's thread. A store with no reading handle, the
+  browser's IndexedDB store, is still read on the host's thread. `spindle_host::Reader` reads a
+  host from any thread, and `Listener::bind_reading` serves through one; the store contract gains
+  a case every reading handle passes. `Clock` is now `Send + Sync`, and `Host::published` and
+  `Host::emitted` answer owned values. Measured in debug builds on a machine at load 30 to 40, with
+  a command held 2 s by its external call: a view read and `GET /api/model` took 2.0 s at the median
+  before (each waited for the command) and 2.7 ms and 3.3 ms after on the memory store, 5.1 ms and
+  5.4 ms on SQLite; `GET /__spindle/requests` took 0.9 ms before and 2.2 ms after. Two view reads
+  of a store whose every scan takes 600 ms, sent together, answered the slower of the two in
+  1.20 s at the median with every read on the host's thread, as before, and 602 ms after.
+
+## [0.12.1] - 2026-11-11
+
+### Fixed
+
+- `GET /__spindle/metrics` no longer scans any store, and requests are no longer held behind it
+  (`story:metrics-read-without-scan`). Since 0.10.0 every read counted `spindle_entity_rows` by
+  scanning each entity's store, and a scan of a SQLite store reads its whole log, so one read
+  cost the log once per entity, on the host's thread, while every request waited. A downstream
+  consumer measured 42 s per read (504 commands, 125 entities, a few thousand rows) and its
+  readiness probe timed out during each. The host now keeps each entity's rows: counted once when
+  a store opens (one read of a SQLite store's log for all its entities, `Store::counts`), then
+  moved by each write that lands, so the gauge answers what it did, a reset included, without a
+  read. The kept counts see only the writes this process lands: one Spindle process writes a state
+  directory, and a second writer on the same store (another process on the same SQLite files)
+  moves rows the gauge shows only once the store is next opened. The gauge's `# HELP` line now
+  says so ("kept from the writes this process lands and taken once from its store when the store
+  opens"), the one line of the exposition whose bytes change. A family's series are found by an
+  index instead of a search of every series, and each sample's labels are escaped once; every
+  other byte of the exposition is as before. The regression test (500
+  commands, 100 entities, 5,000 events on SQLite, a debug build on a heavily loaded machine)
+  measured a read at 41.7 s to 56.3 s and a command sent during it at 53.4 s to 57.0 s before;
+  after, five reads took 31 ms to 45 ms and the commands 40 ms to 73 ms. The read still runs on
+  the host's thread, so a request that arrives during it waits for it, now for milliseconds.
+
+## [0.12.0] - 2026-11-11
+
+### Changed
+
+- ESS 0.92.0: every ESS crate, `schema-contract` included, and CI's `ess` CLI move to tag 0.92.0; the
+  specification requires ess 0.92 and the generated output is restamped. A specification in format
+  `ess/34`, `ess/35` or `ess/36` is admitted, served over HTTP and conformed unchanged; before,
+  `ess/36` was refused whole as `unsupported_format_version`. A format newer than `ess/36` is still
+  refused whole, as ESS 0.92.0 refuses it.
+
+## [0.11.0] - 2026-11-11
+
 ### Added
 
 - `run` serving HTTP proves each request's caller with `--trusted-caller-header <name>`: a proxy

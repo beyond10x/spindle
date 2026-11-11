@@ -5,7 +5,7 @@ use ess_compiler::ir::{ResolvedCommand, ResolvedError, ResolvedField};
 use ess_gen::http::{FORBIDDEN, NOT_GRANTED};
 use ess_http::{Body, Encoding, Operation};
 use serde_json::{Map, Value, json};
-use spindle_host::{Failed, Host, HostError};
+use spindle_host::{Failed, Host, HostError, Reader};
 use spindle_kernel::{DeclaredError, Event, ExecuteError};
 
 use crate::observe::Answered;
@@ -157,21 +157,10 @@ pub(crate) fn answering(
     content_type: Option<&str>,
     body: &[u8],
 ) -> (Answer, Vec<Failed>, Answered) {
-    let caller = if route.proves() {
-        match proven.filter(|caller| caller.binds(host.ir())) {
-            Some(caller) => Some(caller),
-            None => return (Answer::not_proven(), Vec::new(), Answered::ingress()),
-        }
-    } else {
-        route.caller()
+    let caller = match answered_as(host.ir(), route, proven) {
+        Ok(caller) => caller,
+        Err(refusal) => return (refusal, Vec::new(), Answered::ingress()),
     };
-    if let Some(unserved @ Unserved::Ingress(_)) = route.unserved() {
-        return (
-            Answer::unfinished(format!("{}: {unserved}", route.operation), false),
-            Vec::new(),
-            Answered::ingress(),
-        );
-    }
     match &route.operation {
         Operation::Command(command) => {
             let input = match route.encoding() {
@@ -186,44 +175,114 @@ pub(crate) fn answering(
                 Err(refusal) => (refusal, Vec::new(), Answered::ingress()),
             }
         }
-        Operation::View(view)
-            if route.not_granted()
-                || (route.proves()
-                    && caller.is_some_and(|caller| !may_read(host.ir(), &caller.actor, view))) =>
-        {
-            (
-                Answer::not_granted(caller.map_or("", |caller| caller.actor.as_str())),
-                Vec::new(),
-                Answered::ingress(),
-            )
-        }
         Operation::View(view) => {
-            let mut given = carried.clone();
-            match route.parameters(query) {
-                Ok(queried) => given.extend(queried),
-                Err(why) => return (Answer::refusal(400, why), Vec::new(), Answered::ingress()),
-            }
-            match host.list_with(view, &given) {
-                Ok(rows) => (
-                    Answer {
-                        status: 200,
-                        body: Some(json!({"rows": rows})),
-                    },
-                    Vec::new(),
-                    Answered::model(None, Vec::new()),
-                ),
-                Err(error @ HostError::Parameters { .. }) => (
-                    Answer::refusal(400, error.to_string()),
-                    Vec::new(),
-                    Answered::ingress(),
-                ),
-                Err(error) => (
-                    Answer::refusal(501, error.to_string()),
-                    Vec::new(),
-                    Answered::ingress(),
-                ),
-            }
+            let (answer, answered) = match viewed(host.ir(), route, caller, view, carried, query) {
+                Ok(given) => listed(host.list_with(view, &given)),
+                Err(refusal) => (refusal, Answered::ingress()),
+            };
+            (answer, Vec::new(), answered)
         }
+    }
+}
+
+/// [`answering`] for a request for the view route `route`, read beside the host's thread through
+/// its `reader` ([`Reader::list_with`]): the caller proven, the grants checked and the parameters
+/// read exactly as [`answering`] checks and reads them, before anything is read. `None` for a
+/// route that is no view.
+#[cfg_attr(not(feature = "listener"), allow(dead_code))]
+pub(crate) fn reading(
+    reader: &Reader,
+    route: &Route,
+    proven: Option<&Caller>,
+    carried: &Map<String, Value>,
+    query: &str,
+) -> Option<(Answer, Answered)> {
+    let Operation::View(view) = &route.operation else {
+        return None;
+    };
+    let caller = match answered_as(reader.ir(), route, proven) {
+        Ok(caller) => caller,
+        Err(refusal) => return Some((refusal, Answered::ingress())),
+    };
+    Some(
+        match viewed(reader.ir(), route, caller, view, carried, query) {
+            Ok(given) => listed(reader.list_with(view, &given)),
+            Err(refusal) => (refusal, Answered::ingress()),
+        },
+    )
+}
+
+/// Who a request for `route` on a model `ir` is answered as: on a route whose requests prove
+/// their caller, `proven` once the model binds it, and otherwise the route's fixed caller, if
+/// any. The refusal, before anything is read, run or written: [`Answer::not_proven`] where no
+/// caller is proven or the model does not bind it, and the `501` of an operation this ingress
+/// does not route ([`Unserved::Ingress`]).
+fn answered_as<'a>(
+    ir: &EssIr,
+    route: &'a Route,
+    proven: Option<&'a Caller>,
+) -> Result<Option<&'a Caller>, Answer> {
+    let caller = if route.proves() {
+        Some(
+            proven
+                .filter(|caller| caller.binds(ir))
+                .ok_or_else(Answer::not_proven)?,
+        )
+    } else {
+        route.caller()
+    };
+    if let Some(unserved @ Unserved::Ingress(_)) = route.unserved() {
+        return Err(Answer::unfinished(
+            format!("{}: {unserved}", route.operation),
+            false,
+        ));
+    }
+    Ok(caller)
+}
+
+/// The parameter values a read of `view` at `route`, as `caller`, is given: those the path
+/// carries and those the query string holds ([`Route::parameters`]). The refusal before
+/// anything is read: [`Answer::not_granted`] for a read-granted view the caller may not read, and
+/// `400` for a query string that does not read.
+fn viewed(
+    ir: &EssIr,
+    route: &Route,
+    caller: Option<&Caller>,
+    view: &str,
+    carried: &Map<String, Value>,
+    query: &str,
+) -> Result<Map<String, Value>, Answer> {
+    if route.not_granted()
+        || (route.proves() && caller.is_some_and(|caller| !may_read(ir, &caller.actor, view)))
+    {
+        return Err(Answer::not_granted(
+            caller.map_or("", |caller| caller.actor.as_str()),
+        ));
+    }
+    let mut given = carried.clone();
+    given.extend(
+        route
+            .parameters(query)
+            .map_err(|why| Answer::refusal(400, why))?,
+    );
+    Ok(given)
+}
+
+/// The answer to a view read that listed `rows`: `200` `{"rows": [...]}`, answered by the model;
+/// `400` for parameter values the view refuses, and `501` for a view the host cannot read.
+fn listed(rows: Result<Vec<Map<String, Value>>, HostError>) -> (Answer, Answered) {
+    match rows {
+        Ok(rows) => (
+            Answer {
+                status: 200,
+                body: Some(json!({"rows": rows})),
+            },
+            Answered::model(None, Vec::new()),
+        ),
+        Err(error @ HostError::Parameters { .. }) => {
+            (Answer::refusal(400, error.to_string()), Answered::ingress())
+        }
+        Err(error) => (Answer::refusal(501, error.to_string()), Answered::ingress()),
     }
 }
 

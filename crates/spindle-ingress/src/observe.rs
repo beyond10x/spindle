@@ -716,8 +716,9 @@ fn refused(body: &str) -> Option<String> {
 /// with one, `GET /__spindle/requests` answers the request log, each `class=<class>` pair of the
 /// query keeping only that class, and any other method `405`; `GET /__spindle/ui` answers the
 /// panel's page `panel`, `503` naming it without one; `GET /__spindle/metrics` and
-/// `GET /__spindle/topology` are answered on the host's thread, since they read the stores and
-/// the host's counters ([`hosted`]), so they answer `None` here, and any other method `405`.
+/// `GET /__spindle/topology` read the host's counters and kept rows, beside its thread through
+/// its reader ([`read_hosted`]) or on it ([`hosted`]), so they answer `None` here, and any other
+/// method `405`.
 /// Every other reserved path answers `404`. A query pair other than a known `class` is refused
 /// `400`.
 pub(crate) fn reserved(
@@ -758,34 +759,61 @@ pub(crate) fn reserved(
 }
 
 /// The answer to the reserved route `reserved` on the host's thread, which [`reserved`] answered
-/// `None` for: the topology for [`Reserved::Topology`], the metrics otherwise.
+/// `None` for: the topology for [`Reserved::Topology`], the metrics otherwise, read as
+/// [`read_hosted`] reads them, the rows counted by the host where a count failed.
 pub(crate) fn hosted(
     reserved: Reserved,
     recorder: &Recorder,
     host: &mut spindle_host::Host,
 ) -> Response {
-    match reserved {
-        Reserved::Topology => Response {
+    let reader = host.reader();
+    let rows = match reserved {
+        Reserved::Topology => Ok(Vec::new()),
+        _ => host.rows(),
+    };
+    answered(reserved, recorder, &reader, rows)
+}
+
+/// The answer to the reserved route `reserved` beside the host's thread, through its `reader`,
+/// which [`reserved`] answered `None` for: the topology for [`Reserved::Topology`], the metrics
+/// otherwise.
+pub(crate) fn read_hosted(
+    reserved: Reserved,
+    recorder: &Recorder,
+    reader: &spindle_host::Reader,
+) -> Response {
+    let rows = match reserved {
+        Reserved::Topology => Ok(Vec::new()),
+        _ => reader.rows(),
+    };
+    answered(reserved, recorder, reader, rows)
+}
+
+/// The topology for [`Reserved::Topology`]; otherwise the metrics, `rows` the rows each entity
+/// holds: `200` with the text exposition ([`metrics::METRICS_MEDIA`]), `500` naming why a store
+/// could not be read.
+fn answered(
+    reserved: Reserved,
+    recorder: &Recorder,
+    reader: &spindle_host::Reader,
+    rows: Result<Vec<(String, usize)>, spindle_host::HostError>,
+) -> Response {
+    if reserved == Reserved::Topology {
+        return Response {
             status: 200,
             allow: None,
             panel: false,
             metrics: false,
-            body: topology::topology(recorder, host).to_string(),
-        },
-        _ => metrics(recorder, host),
+            body: topology::topology(recorder, reader).to_string(),
+        };
     }
-}
-
-/// The answer to `GET /__spindle/metrics` on `host`, the requests `recorder` counted: `200` with
-/// the text exposition ([`metrics::METRICS_MEDIA`]), `500` naming why a store could not be read.
-fn metrics(recorder: &Recorder, host: &mut spindle_host::Host) -> Response {
-    match metrics::exposition(recorder, host) {
-        Ok(body) => Response {
+    match rows {
+        Ok(rows) => Response {
             status: 200,
             allow: None,
             panel: false,
             metrics: true,
-            body,
+            body: metrics::exposition(recorder, reader, rows),
         },
         Err(error) => Answer::refusal(500, error.to_string()).into(),
     }

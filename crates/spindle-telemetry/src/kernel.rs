@@ -1,10 +1,13 @@
 //! Recording around the kernel: what `execute` answered, and what the store committed.
 
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::Value;
-use spindle_kernel::{Change, ExecuteError, Executed, Removal, Store, StoreError, Stored, Write};
+use spindle_kernel::{
+    Change, ExecuteError, Executed, Reading, Removal, Store, StoreError, Stored, Write,
+};
 
 use crate::port::{Failure, Outcome, Record, Sink};
 
@@ -83,6 +86,13 @@ impl<S: Store> Store for CountingStore<S> {
         self.inner.scan(entity)
     }
 
+    fn counts(
+        &mut self,
+        entities: &[String],
+    ) -> Result<std::collections::BTreeMap<String, usize>, StoreError> {
+        self.inner.counts(entities)
+    }
+
     fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
         self.inner.commit(change)?;
         self.committed(change);
@@ -105,6 +115,11 @@ impl<S: Store> Store for CountingStore<S> {
         self.inner.remove(removal)?;
         self.removed(removal);
         Ok(())
+    }
+
+    /// Reads are not counted, so the handle is the inner store's own.
+    fn reading(&mut self) -> Option<Arc<dyn Reading>> {
+        self.inner.reading()
     }
 }
 

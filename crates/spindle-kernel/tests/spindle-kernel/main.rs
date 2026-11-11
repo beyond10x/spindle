@@ -10,6 +10,7 @@ mod adversary_admission_checked;
 mod adversary_append;
 mod adversary_boolean;
 mod adversary_bytes;
+mod adversary_counts;
 mod adversary_creation_unknown;
 mod adversary_deletes;
 mod adversary_environment;
