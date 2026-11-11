@@ -32,6 +32,16 @@ are Spindle's releases.
   or a space or tab at either end of a plain header) is never written: the request answers `501`
   naming the header. A declared header never replaces one the listener writes itself.
 
+### Fixed
+
+- A PostgreSQL store reads back every event it committed, and its head is past them, while a
+  transaction older than the write is open anywhere on the server. eventlog's feed withholds an
+  event until every such transaction has ended, so `events_after` and `events_head` (and
+  `GET /api/events`) answered none of the store's latest writes meanwhile; they now wait for the
+  feed to answer the store's own last write, up to 30 s, and then fail naming the open
+  transaction. Events of another writer of the same tables may still be answered late, never
+  skipped.
+
 ## [0.15.0] - 2026-11-11
 
 ### Added

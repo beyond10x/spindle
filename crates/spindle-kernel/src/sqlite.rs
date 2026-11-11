@@ -35,16 +35,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
-#[cfg(feature = "sqlite")]
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 #[cfg(feature = "sqlite")]
 use std::sync::{Condvar, Mutex, PoisonError};
 
 use eventlog_core::EventStore;
 use eventlog_core::{
-    AppendGroup, CommandMeta, EventLogError, Expected, MAX_READ_LIMIT, NewEvent, Read, ReadResult,
-    RecordedEvent, StreamAppend, StreamId, TenantId, new_event_id, request_hash,
+    AppendGroup, AppendGroupResult, CommandMeta, EventLogError, Expected, MAX_READ_LIMIT, NewEvent,
+    Read, ReadResult, RecordedEvent, StreamAppend, StreamId, TenantId, new_event_id, request_hash,
 };
 #[cfg(feature = "sqlite")]
 use eventlog_sqlite::SqliteEventStore;
@@ -129,6 +127,11 @@ mod sealed {
         /// ([`super::MARKS`]): then every scan reads the whole log ([`Log::each_event`]).
         const UNMARKED: bool;
 
+        /// Whether the tenant's feed may withhold an event after its append committed
+        /// ([`super::LogStore::published`]): PostgreSQL's does while any transaction older than
+        /// the append is open on the server.
+        const WITHHOLDS: bool;
+
         /// Every event of `tenant`, in commit order, to `visit`, blocking on `runtime`.
         ///
         /// # Errors
@@ -176,6 +179,18 @@ pub struct LogStore<L> {
     /// The command the writes are attributed to ([`Store::attribute`]): each write's
     /// `spindle.written` events carry it.
     origin: Option<Origin>,
+    /// How far the feed holds this store's own appends, shared with its reading handle where
+    /// that reads through the same event store ([`LogStore::published`]).
+    own: Arc<Own>,
+}
+
+/// The feed positions of a store's own appends: the last one it committed, and the last one the
+/// feed was seen to answer. A read of the feed waits until the feed answers the first
+/// ([`LogStore::published`]).
+#[derive(Default)]
+struct Own {
+    committed: AtomicU64,
+    published: AtomicU64,
 }
 
 /// The store is closed: its reading handle opens no further connection by its path.
@@ -291,6 +306,7 @@ impl<L: Log> LogStore<L> {
             #[cfg(feature = "sqlite")]
             rows: None,
             origin: None,
+            own: Arc::default(),
         })
     }
 
@@ -310,6 +326,7 @@ impl<L: Log> LogStore<L> {
             #[cfg(feature = "sqlite")]
             rows: None,
             origin: None,
+            own: Arc::clone(&self.own),
         }
     }
 
@@ -537,7 +554,8 @@ impl<L: Log> Store for LogStore<L> {
             appends,
         };
         match self.runtime.block_on(self.log.append_group(&group)) {
-            Ok(_) => {
+            Ok(landed) => {
+                self.landed(&landed);
                 // The group landed: its rows are folded in now, so a read finds no more to fold.
                 // Where that read fails, the next scan or count folds them in or fails itself.
                 #[cfg(feature = "sqlite")]
@@ -690,10 +708,77 @@ impl<L: Log> LogStore<L> {
             meta: meta(hash),
             appends,
         };
-        self.runtime.block_on(self.log.append_group(&group))?;
+        let landed = self.runtime.block_on(self.log.append_group(&group))?;
+        self.landed(&landed);
         Ok(())
     }
+
+    /// Records the feed position of the last event of an append group this store committed: a
+    /// read of the feed answers it, and every event before it ([`LogStore::published`]).
+    fn landed(&self, group: &AppendGroupResult) {
+        let last = group
+            .appends
+            .iter()
+            .flat_map(|append| &append.events)
+            .map(|event| event.global_seq)
+            .max();
+        if let Some(last) = last {
+            self.own.committed.fetch_max(last, Ordering::SeqCst);
+        }
+    }
+
+    /// Returns once the tenant's feed answers every append this store, or the store its reading
+    /// handle reads ([`LogStore::shared`]), committed before the call: what a read of the feed
+    /// waits for, so that a writer reads back every event it committed. A feed that may withhold
+    /// a committed event ([`Log::WITHHOLDS`]: PostgreSQL's, while any transaction older than the
+    /// append is open anywhere on the server, and every event after one it withholds) is asked,
+    /// one event at a time, until it answers the last such append or [`PUBLISH_WAIT`] passed.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the feed cannot be read, or still withholds the append after
+    /// [`PUBLISH_WAIT`].
+    fn published(&self) -> Result<(), StoreError> {
+        if !L::WITHHOLDS {
+            return Ok(());
+        }
+        let committed = self.own.committed.load(Ordering::SeqCst);
+        if self.own.published.load(Ordering::SeqCst) >= committed {
+            return Ok(());
+        }
+        let started = std::time::Instant::now();
+        let mut pause = std::time::Duration::from_millis(5);
+        loop {
+            // The feed answers a prefix of the committed events, so it answers the one at
+            // `committed` where it answers any at or past it.
+            let page = self
+                .runtime
+                .block_on(self.log.read_feed(&self.tenant, committed - 1, 1))
+                .map_err(backend)?;
+            if !page.events.is_empty() {
+                self.own.published.fetch_max(committed, Ordering::SeqCst);
+                return Ok(());
+            }
+            if started.elapsed() >= PUBLISH_WAIT {
+                return Err(StoreError::Backend(format!(
+                    "the feed still withholds this store's write at position {committed} after \
+                     {PUBLISH_WAIT:?}: PostgreSQL publishes an event only once every \
+                     transaction older than its write has ended, and one is still open on the \
+                     server (pg_stat_activity names it)"
+                )));
+            }
+            std::thread::sleep(pause);
+            pause = (pause * 2).min(std::time::Duration::from_millis(100));
+        }
+    }
 }
+
+/// How long a read of the feed waits for it to answer the store's own writes
+/// ([`LogStore::published`]): as long as a read of a reading handle waits for its turn
+/// (`TURN_WAIT`), three times eventlog's longest transaction of a store
+/// (`PoolOptions::transaction_timeout`, 10 s), so a transaction of any Spindle store on the same
+/// server delays the read and does not fail it, and a bulk write of another owner fails it only
+/// once it held the server that long.
+const PUBLISH_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The reading handle of a store whose event store reads from any thread through a pool of its
 /// own: another [`LogStore`] on the same event store and runtime ([`LogStore::shared`]), and the
@@ -950,7 +1035,8 @@ impl<L: Log> LogStore<L> {
     /// ([`crate::whole_writes`]), each at its group's last feed position, attributed to the
     /// command its group's `spindle.written` events name. The rows, removals and entity versions
     /// the groups appended are left out, so a group that committed no event of a command answers
-    /// nothing.
+    /// nothing. Read once the feed answers every write this store committed
+    /// ([`LogStore::published`]).
     ///
     /// Where the read stops before the feed's end, a reset mark ([`RESET`]) past where it stopped
     /// forgets every event it read: the feed is then read again from the last mark.
@@ -958,6 +1044,7 @@ impl<L: Log> LogStore<L> {
         if limit == 0 {
             return Ok(Vec::new());
         }
+        self.published()?;
         let reset = StreamId::new(self.tenant.clone(), RESET.0, RESET.1).map_err(backend)?;
         let mut from = position;
         let groups = loop {
@@ -986,8 +1073,10 @@ impl<L: Log> LogStore<L> {
     /// The feed position of the last event of the tenant's feed, `0` for an empty one
     /// ([`Store::events_head`]): found by reading one feed event at a time past positions that
     /// double, then halve, so about twice the binary logarithm of the feed's length of them,
-    /// none of them answered.
+    /// none of them answered; once the feed answers every write this store committed
+    /// ([`LogStore::published`]).
     fn feed_end(&self) -> Result<u64, StoreError> {
+        self.published()?;
         let next = |after: u64| -> Result<Option<u64>, StoreError> {
             let page = self
                 .runtime
@@ -1389,6 +1478,9 @@ impl<L: Log> LogStore<L> {
 #[cfg(feature = "sqlite")]
 impl Log for SqliteEventStore {
     const UNMARKED: bool = true;
+
+    /// SQLite has one writer: an append is in the feed once it committed.
+    const WITHHOLDS: bool = false;
 
     fn each_event(
         &self,

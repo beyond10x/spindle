@@ -1064,8 +1064,9 @@ fn after(case: &str, store: &mut dyn Store, position: u64) -> Vec<Committed> {
 /// The events a store committed, read after a position ([`Store::events_after`]): in commit order,
 /// each with its position and the command its write was attributed to ([`Store::attribute`]).
 /// Every event of one write shares one position, a later write's is greater, and a read after an
-/// event's position answers every event committed after its write, and none before. A refused
-/// write commits no event. Where the store gives a reading handle, it reads them alike.
+/// event's position answers every event the store committed after its write, and none before:
+/// the writer reads back its own writes as soon as each commit returns. A refused write commits
+/// no event. Where the store gives a reading handle, it reads them alike.
 fn the_store_reads_events_after_a_position(store: &mut dyn Store) {
     let case = "the_store_reads_events_after_a_position";
     assert_eq!(after(case, store, 0), [], "{case}: an empty store");

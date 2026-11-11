@@ -221,6 +221,10 @@ impl Log for PostgresEventStore {
     /// into.
     const UNMARKED: bool = false;
 
+    /// eventlog's feed answers an event only once every transaction older than its append has
+    /// ended anywhere on the server, and no event after one it withholds.
+    const WITHHOLDS: bool = true;
+
     fn each_event(
         &self,
         runtime: &tokio::runtime::Runtime,
