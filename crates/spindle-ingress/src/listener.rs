@@ -431,9 +431,10 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         .caller_secret()
         .is_some_and(|secret| !presents(request.headers(), secret.expose()));
     // Off loopback, or wherever the surface requires it, nothing of a request without the secret
-    // is read: not its route, its method, its body or its caller.
+    // is read: not its route, its method, its body or its caller. It is neither recorded nor
+    // counted, so a caller on the network cannot evict the operator's records.
     if unproxied && served.surface.secret_required() {
-        return (Answer::not_proven().into(), unrouted(By::Ingress));
+        return (Answer::not_proven().into(), None);
     }
     if reserved.is_some() && unproxied {
         return (Answer::not_proven().into(), None);

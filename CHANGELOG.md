@@ -29,8 +29,9 @@ are Spindle's releases.
   (anything but `127.0.0.0/8` and `::1`) requires `--trusted-caller-header` with
   `--trusted-caller-secret`, and without both exits 2 before listening; `--fixed-actor` is not
   enough. There every request without the proxy's secret is refused `403` before anything of it
-  is read, on every route, the console routes and `/__spindle/` included. On loopback `run`
-  answers as before. Instances `deploy` starts still bind loopback.
+  is read, on every route, the console routes and `/__spindle/` included, and is neither recorded
+  in the request log nor counted. On loopback `run` answers as before. Instances `deploy` starts
+  still bind loopback.
 - A served `run` answers `GET /api/served`, a console route beside `/api/model`, with one row per
   command and view it routes: `component`, `name`, `kind`, `method`, `path`, `served` and, for
   one not served, the `reason` its start log prints, from the same place. The answer is
