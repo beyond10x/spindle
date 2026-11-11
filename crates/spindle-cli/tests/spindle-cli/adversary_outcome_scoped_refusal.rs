@@ -245,6 +245,21 @@ impl Served {
         assert_eq!(answer["outcome"], "packed", "{answer}");
         answer["published"][0]["payload"]["crate_id"].clone()
     }
+
+    /// Resets the run to one open crate labelled `label` and answers its identity. Only `Packer`
+    /// may pack a crate, and a run serving no fixed actor refuses `PackCrate` `403`
+    /// (`story:unauthenticated-grant-refusals`), while `SealCrate`, which no grant names, is sent
+    /// only by such a run.
+    fn open_crate(&self, label: &str) -> Value {
+        let crate_id = json!("3f6c2a1e-8b4d-4e7a-9c1f-2d3e4f5a6b7c");
+        self.reset(&json!({"rows": [{
+            "entity": "yard.crate.Crate",
+            "identity": crate_id,
+            "state": "Open",
+            "fields": {"label": label},
+        }]}));
+        crate_id
+    }
 }
 
 /// A request whose selected outcome is refused mints nothing: the seeded mint a reset fixes
@@ -252,7 +267,8 @@ impl Served {
 /// never come.
 #[test]
 fn a_refused_request_draws_nothing_from_the_seeded_mint() {
-    let served = serve(None, &[]);
+    // Only `Packer` may pack a crate (`story:unauthenticated-grant-refusals`).
+    let served = serve(None, &["--fixed-actor", PACKER]);
 
     served.reset(&json!({"mint": 7}));
     let (status, answer) = served.call(PACK, &json!({"label": "heavy", "weigh": true}));
@@ -283,7 +299,7 @@ fn a_refused_request_draws_nothing_from_the_seeded_mint() {
 #[test]
 fn a_sealed_crate_answers_wrong_state_whichever_branch_the_request_selects() {
     let served = serve(None, &[]);
-    let crate_id = served.pack("kept");
+    let crate_id = served.open_crate("kept");
     let (status, answer) = served.call(SEAL, &json!({"crate_id": crate_id, "weigh": false}));
     assert!((200..300).contains(&status), "{status} {answer}");
     assert_eq!(answer["outcome"], "sealed", "{answer}");
@@ -332,7 +348,7 @@ fn a_bound_wrong_state_answer_the_ingress_does_not_write_refuses_where_selected(
         .collect::<Vec<_>>();
     assert_eq!(listed.len(), 1, "{:#?}", served.stderr.lines());
 
-    let crate_id = served.pack("kept");
+    let crate_id = served.open_crate("kept");
     let (status, answer) = served.exchange(
         "PUT",
         "/crates/seal",

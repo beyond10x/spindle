@@ -1,0 +1,23 @@
+format: ess/34
+system: vault
+version: v1
+summary: Entries filed, stamped, noted and swept over the network, read by a clerk or by anyone.
+domains:
+  - vault.ledger
+components:
+  - component: ledger
+    summary: Files, stamps, notes and sweeps entries, and answers which entries a title selects.
+    owns:
+      domains:
+        - vault.ledger
+    accepts:
+      commands:
+        - vault.ledger.FileEntry
+        - vault.ledger.StampEntry
+        - vault.ledger.NoteEntry
+        - vault.ledger.SweepEntry
+        - vault.ledger.Visit
+    publishes:
+      events:
+        - vault.ledger.EntryMade
+    reached_by: network

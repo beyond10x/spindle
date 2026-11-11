@@ -70,8 +70,10 @@ impl Exchange {
         matches!(self.pending.asked, Asked::Hosted(Reserved::Metrics))
     }
 
-    /// The input the request's path carries in the route's variables and, for a view, the
-    /// parameters its query string carries ([`Route::parameters`]).
+    /// The input the request's path carries in the route's variables. Empty where nothing is read
+    /// before the grant check: for a route the check refuses ([`Route::not_granted`]), and on one
+    /// whose requests prove their caller ([`Route::proves`]), whose path is read as the exchange
+    /// is served, once the caller and its grant are checked.
     pub fn carried(&self) -> &Map<String, Value> {
         &self.pending.carried
     }
@@ -398,6 +400,7 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         let pending = Pending {
             asked: Asked::Hosted(reserved),
             carried: Map::new(),
+            path: request.uri().path().to_owned(),
             query,
             content_type: None,
             body: Vec::new(),
@@ -465,6 +468,7 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         }
         _ => None,
     };
+    let path = request.uri().path().to_owned();
     let read = tokio::time::timeout(
         BODY_READ,
         Limited::new(request.into_body(), BODY_LIMIT).collect(),
@@ -489,6 +493,7 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
     let pending = Pending {
         asked,
         carried,
+        path,
         query,
         content_type,
         body,

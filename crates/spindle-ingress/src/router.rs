@@ -7,7 +7,7 @@ use ess_http::Operation;
 use serde_json::{Map, Value};
 use spindle_host::{Failed, Host, Reader};
 
-use crate::answer::Answer;
+use crate::answer::{Answer, Carried};
 use crate::console::{Console, Worlds};
 use crate::observe::{Answered, By, Recorder, Reserved, UnmetInput};
 use crate::surface::{Caller, Resolved, Route, Surface};
@@ -158,6 +158,7 @@ fn routing(
     let (response, failed, _) = Pending {
         asked,
         carried,
+        path: request.path,
         query: request.query,
         content_type: request.content_type,
         body: request.body,
@@ -230,6 +231,10 @@ pub(crate) fn ask(
 pub(crate) struct Pending {
     pub(crate) asked: Asked,
     pub(crate) carried: Map<String, Value>,
+    /// The request's path, still percent-encoded: on a route whose requests prove their caller
+    /// ([`Route::proves`]) the router leaves `carried` empty, and the path is read once the caller
+    /// and its grant are checked.
+    pub(crate) path: String,
     pub(crate) query: String,
     pub(crate) content_type: Option<String>,
     pub(crate) body: Vec<u8>,
@@ -242,6 +247,16 @@ pub(crate) struct Pending {
 }
 
 impl Pending {
+    /// The input the path carries for `route`: what the router read, or on a route whose
+    /// requests prove their caller the path itself, still unread.
+    fn carried<'a>(&'a self, route: &Route) -> Carried<'a> {
+        if route.proves() {
+            Carried::Unread(&self.path)
+        } else {
+            Carried::Read(&self.carried)
+        }
+    }
+
     /// Whether the request is a read `reader` answers beside the host's thread: a view whose
     /// owning store it reads ([`Reader::reads`]), `GET /api/model`, `GET /api/events`, and on an
     /// observing surface the metrics and the topology. A command, `POST /api/reset` and a view
@@ -273,7 +288,7 @@ impl Pending {
                 reader,
                 route,
                 self.proven.as_ref(),
-                &self.carried,
+                self.carried(route),
                 &self.query,
             )
             .map(|(answer, answered)| (answer.into(), answered)),
@@ -336,7 +351,7 @@ impl Pending {
                     host,
                     route,
                     self.proven.as_ref(),
-                    &self.carried,
+                    self.carried(route),
                     &self.query,
                     self.content_type.as_deref(),
                     &self.body,
