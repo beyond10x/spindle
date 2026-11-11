@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-11
+
 ### Fixed
 
 - A served `run` answers reads while a command runs (`story:concurrent-reads`). Every request was
