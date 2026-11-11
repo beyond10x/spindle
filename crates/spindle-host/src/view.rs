@@ -27,20 +27,24 @@ const STATE: &str = "state";
 /// Why a view cannot be answered here: the constructs a read of the source's own rows does not
 /// cover, named.
 ///
-/// A field read through a reference (`field: {related: …}`) is answered ([`project`]); a filter
-/// that navigates one (`resource_id.state == Active`) is refused with the filter below.
+/// A field read through a reference (`field: {related: …}`) is answered ([`project`]), and so is
+/// a filter that navigates one (`resource_id.state == Active`,
+/// `story:view-filter-through-reference`).
 ///
 /// A filter is read only where each leaf, as the compiler parsed it, is one of
 /// (`story:view-list-query-parameters`, `story:view-field-literal-filters`):
 ///
-/// - an observable field of the source (the state and the identity among them) compared with a
-///   literal of its type by `==` or `!=`, or by `<`, `<=`, `>` or `>=` where ESS orders the type
-///   (a number, or text other than a `Duration`): `archived == false`, `priority >= 3`,
-///   `state == Open`; a `Timestamp` field ordered against `now`, `now - 1h` or `now + 5m`
-///   (`issued_at < now`), the current-time operand ESS reads against the clock of the read
-///   ([`reads_now`]);
+/// - a field compared with a literal of its type by `==` or `!=`, or by `<`, `<=`, `>` or `>=`
+///   where ESS orders the type (a number, or text other than a `Duration`): `archived == false`,
+///   `priority >= 3`, `state == Open`; a `Timestamp` field ordered against `now`, `now - 1h` or
+///   `now + 5m` (`issued_at < now`), the current-time operand ESS reads against the clock of the
+///   read ([`reads_now`]). A field is an observable field of the source (the state and the
+///   identity among them), or one of the row a reference names, read through it
+///   (`<via>.<field>`, [`ResolvedView::navigated`]);
 /// - such a field listed `in:` or `none_of:` literals of its type;
-/// - a parameter compared with `==` or `!=` to such a field (`book_id == param.id`);
+/// - such a field compared with `==` or `!=` to a parameter or another such field
+///   (`book_id == param.id`, `class_id.holder == person_id`), or ordered against one where ESS
+///   orders both and they are of one scalar kind (`started_at > person_id.joined_at`);
 /// - `defined(param.<name>)` or `defined(<field>)`;
 ///
 /// leaves combined by `any`, `all` and `not`, or under `exists` or `forall` over a list parameter
@@ -66,10 +70,11 @@ pub(crate) fn unsupported(ir: &EssIr, view: &ResolvedView) -> Option<String> {
     } else {
         match &view.filter {
             Some(filter) if !reads(ir, view, filter) => Some(format!(
-                "the filter `{filter}`; only a field compared with a literal of its type or \
-                 ordered against `now`, or listed `in:` or `none_of:` literals, a parameter compared with a field by `==` \
-                 or `!=`, and `defined`, combined by `any`, `all` and `not` or quantified over a \
-                 list parameter or a list field by `exists` or `forall`, are read"
+                "the filter `{filter}`; only a field of the row, or of the row a reference names, \
+                 compared with a literal of its type or ordered against `now`, listed `in:` or \
+                 `none_of:` literals, or compared with a parameter or another field, and \
+                 `defined`, combined by `any`, `all` and `not` or quantified over a list \
+                 parameter or a list field by `exists` or `forall`, are read"
             )),
             _ => None,
         }
@@ -107,13 +112,15 @@ fn unread_aggregation(
 
 /// Whether every leaf of `filter` is one [`unsupported`] admits. Each path is typed as ESS types
 /// it ([`ess_compiler::expression::resolve_path`]): a field against the source's observable
-/// fields, a parameter against the view's, and a binder as the element (`<list>.0`) of the list it
-/// walks. ESS evaluates a quantifier over the elements a list publishes (`<name>.count`,
-/// `<name>.<index>`). The parser bounds the nesting at `MAX_PREDICATE_DEPTH`.
+/// fields, a field read through a reference (`<via>.<field>`) against the observable fields of the
+/// entity it names, a parameter against the view's, and a binder as the element (`<list>.0`) of
+/// the list it walks. ESS evaluates a quantifier over the elements a list publishes
+/// (`<name>.count`, `<name>.<index>`). The parser bounds the nesting at `MAX_PREDICATE_DEPTH`.
 fn reads(ir: &EssIr, view: &ResolvedView, filter: &Predicate) -> bool {
     let fields = ir.entity(&view.source).observable_fields();
     let scope = Scope {
         ir,
+        view,
         fields: &fields,
         params: &view.params,
         binders: Vec::new(),
@@ -131,10 +138,12 @@ struct Binder<'p> {
     row: bool,
 }
 
-/// What a leaf of a filter may name where it stands: the source's fields, the view's parameters
-/// and the binders of the quantifiers it is inside, innermost last.
+/// What a leaf of a filter may name where it stands: the source's fields, the fields of the rows
+/// the view's references name (`view`), the view's parameters and the binders of the quantifiers
+/// it is inside, innermost last.
 struct Scope<'a> {
     ir: &'a EssIr,
+    view: &'a ResolvedView,
     fields: &'a [ResolvedField],
     params: &'a [ResolvedField],
     binders: Vec<Binder<'a>>,
@@ -159,8 +168,9 @@ impl<'a> Scope<'a> {
         ess_compiler::expression::resolve_path(self.ir, fields, path, "a view filter").ok()
     }
 
-    /// What `path` names here, or `None` where it is no field of the source, no declared
-    /// parameter and no binder in scope.
+    /// What `path` names here, or `None` where it is no field of the source, none of a row a
+    /// reference names read through it (`<via>.<field>`, a binder's name never a `<via>`), no
+    /// declared parameter and no binder in scope.
     fn typed(&self, path: &FactPath) -> Option<Typed> {
         match path.segments() {
             [name] => {
@@ -186,6 +196,15 @@ impl<'a> Scope<'a> {
                     resolution: self.resolve(fields, &path)?,
                 })
             }
+            [root, member] if !self.binders.iter().any(|binder| binder.name == root) => {
+                let (reference, _) = self.view.navigated(self.ir, path)?;
+                let far = self.ir.entity(&reference.entity).observable_fields();
+                Some(Typed {
+                    row: true,
+                    binder: false,
+                    resolution: self.resolve(&far, &FactPath::from_segments([member.clone()]))?,
+                })
+            }
             _ => None,
         }
     }
@@ -204,14 +223,16 @@ impl<'a> Scope<'a> {
         match filter {
             Predicate::Compare {
                 left: Operand::Fact(left),
-                op: CompareOp::Eq | CompareOp::Ne,
+                op,
                 right: Operand::Fact(right),
                 ..
             } => match (self.typed(left), self.typed(right)) {
                 (Some(left), Some(right)) => {
-                    left.row != right.row
-                        || (left.row && left.binder && right.binder)
-                        || (right.row && right.binder && left.binder)
+                    (left.row || right.row)
+                        && (!op.needs_ordering()
+                            || (ordered(&left.resolution)
+                                && ordered(&right.resolution)
+                                && left.resolution.scalar == right.resolution.scalar))
                 }
                 _ => false,
             },
@@ -268,6 +289,7 @@ impl<'a> Scope<'a> {
                 });
                 Scope {
                     ir: self.ir,
+                    view: self.view,
                     fields: self.fields,
                     params: self.params,
                     binders,
@@ -358,53 +380,98 @@ pub(crate) fn parameters(
 }
 
 /// What a filter reads: the row's facts at their own paths, typed by the source's observable
-/// fields, and the parameters under `param.`, typed by the view's, as ESS's interpreter reads a
-/// view's filter (`ess-conformance` `src/interpret/views.rs`, `ViewFacts` over `TypedFacts`): a
-/// `Timestamp` is ordered by the instant it names, any text but a `Duration` by its bytes, and a
-/// `now` operand against `now`, the instant of the read (`ViewFacts::now`).
+/// fields, the parameters under `param.`, typed by the view's, and a path `<via>.<member>` the
+/// view navigates ([`ResolvedView::navigated`]) in the row the reference `via` names, typed by its
+/// entity's observable fields, as ESS's interpreter reads a view's filter (`ess-conformance`
+/// `src/interpret/views.rs` at ESS 0.92.0, `ViewFacts` over `TypedFacts`): a `Timestamp` is
+/// ordered by the instant it names, any text but a `Duration` by its bytes, and a `now` operand
+/// against `now`, the instant of the read (`ViewFacts::now`). A path read through a reference
+/// that names no row reads nothing: no value, absent, and ordered neither as an instant nor by
+/// its bytes, as `ViewFacts::source` answers it.
 struct Read<'a> {
     ir: &'a EssIr,
+    view: &'a ResolvedView,
     fields: &'a [ResolvedField],
     params: &'a [ResolvedField],
     row: &'a FactStore,
     parameters: &'a FactStore,
+    navigated: &'a Navigated,
     now: Option<Rfc3339Instant>,
 }
 
+/// The rows a filter reads through the view's references, by the reference's source field
+/// (`via`): the observable fields of the entity it names, and the row's facts where it names one.
+type Navigated = BTreeMap<String, (Vec<ResolvedField>, Option<FactStore>)>;
+
 impl Read<'_> {
+    /// Where `path` is read, the fields that type it there, and its path there; `None` where it
+    /// reads through a reference that names no row.
     fn source<'p>(
         &self,
         path: &'p FactPath,
-    ) -> (&FactStore, &[ResolvedField], std::borrow::Cow<'p, FactPath>) {
-        parameter(path).map_or(
-            (self.row, self.fields, std::borrow::Cow::Borrowed(path)),
-            |inner| (self.parameters, self.params, std::borrow::Cow::Owned(inner)),
-        )
+    ) -> Option<(&FactStore, &[ResolvedField], std::borrow::Cow<'p, FactPath>)> {
+        if let Some(inner) = parameter(path) {
+            return Some((self.parameters, self.params, std::borrow::Cow::Owned(inner)));
+        }
+        if let Some((reference, _)) = self.view.navigated(self.ir, path) {
+            let (fields, facts) = self.navigated.get(&reference.via)?;
+            return Some((
+                facts.as_ref()?,
+                fields,
+                std::borrow::Cow::Owned(FactPath::from_segments(&path.segments()[1..])),
+            ));
+        }
+        Some((self.row, self.fields, std::borrow::Cow::Borrowed(path)))
     }
 
     /// The primitive `path` is declared as, through every newtype and `Optional`, and through a
-    /// list to its element at an ordinal; `None` for anything else, `state` included.
-    fn declared(&self, path: &FactPath) -> Option<Primitive> {
-        let (_, fields, path) = self.source(path);
-        match ess_compiler::expression::resolve_path(self.ir, fields, &path, "a view filter")
-            .ok()?
-            .terminal
-        {
-            ResolvedTypeRef::Primitive { name } => Some(name),
-            _ => None,
-        }
+    /// list to its element at an ordinal; `None` for anything else, `state` included. The outer
+    /// `None` where `path` reads through a reference that names no row.
+    fn declared(&self, path: &FactPath) -> Option<Option<Primitive>> {
+        let (_, fields, path) = self.source(path)?;
+        Some(
+            match ess_compiler::expression::resolve_path(self.ir, fields, &path, "a view filter")
+                .ok()
+                .map(|resolved| resolved.terminal)
+            {
+                Some(ResolvedTypeRef::Primitive { name }) => Some(name),
+                _ => None,
+            },
+        )
+    }
+
+    /// Whether ESS's interpreter hides the row rather than refusing the read, where the filter is
+    /// unknown for it: every path it reads that observes nothing reads through a reference that
+    /// names no row (`ess-conformance` `src/interpret/views.rs` at ESS 0.92.0,
+    /// `absent_navigation`).
+    fn absent_navigation(&self, filter: &Predicate) -> bool {
+        let mut unobserved = filter
+            .fact_paths()
+            .into_iter()
+            .filter(|path| self.observe(path).is_none())
+            .peekable();
+        unobserved.peek().is_some()
+            && unobserved.all(|path| {
+                self.view
+                    .navigated(self.ir, path)
+                    .is_some_and(|(reference, _)| {
+                        self.navigated
+                            .get(&reference.via)
+                            .is_none_or(|(_, facts)| facts.is_none())
+                    })
+            })
     }
 }
 
 impl FactSource for Read<'_> {
     fn fact(&self, path: &FactPath) -> Option<FactValue> {
-        let (source, _, path) = self.source(path);
+        let (source, _, path) = self.source(path)?;
         source.fact(&path)
     }
 
     fn present(&self, path: &FactPath) -> bool {
-        let (source, _, path) = self.source(path);
-        source.present(&path)
+        self.source(path)
+            .is_some_and(|(source, _, path)| source.present(&path))
     }
 
     fn scales(&self) -> &ess_primitives::facts::Scales {
@@ -412,11 +479,12 @@ impl FactSource for Read<'_> {
     }
 
     fn orders_as_instant(&self, path: &FactPath) -> bool {
-        self.declared(path) == Some(Primitive::Timestamp)
+        self.declared(path) == Some(Some(Primitive::Timestamp))
     }
 
     fn orders_text_by_bytes(&self, path: &FactPath) -> bool {
-        self.declared(path) != Some(Primitive::Duration)
+        self.declared(path)
+            .is_some_and(|declared| declared != Some(Primitive::Duration))
     }
 
     fn now(&self) -> Option<Rfc3339Instant> {
@@ -467,32 +535,37 @@ pub(crate) fn instant(at: SystemTime) -> Option<Rfc3339Instant> {
 }
 
 /// Whether the view holds `row`, the instance `identity` names: always without a filter; with
-/// one, where ESS evaluates the filter to true over the row and `parameters`
-/// ([`parameters`]). Only a filter [`unsupported`] admits is read.
+/// one, where ESS evaluates the filter to true over the row, `parameters` ([`parameters`]) and
+/// `referenced`, the rows its references name ([`references`]). Only a filter [`unsupported`]
+/// admits is read.
 ///
 /// A view without parameters whose filter reads nothing but the state reads the state alone;
 /// any other binds the state, the identity and every stored field, as ESS binds a source row
-/// ([`ess_conformance::input::bind`] over the entity's observable fields). A field the row holds
-/// no value for is absent, as ESS reads it: a comparison with it is unknown, `defined` false.
-/// A `now` operand is read as `now`, the instant of the read the caller took ([`reads_now`]); with
-/// none it is unknown, as ESS reads it without a clock.
+/// ([`ess_conformance::input::bind`] over the entity's observable fields), and each row a
+/// reference names the same way over its own entity's. A field the row holds no value for is
+/// absent, as ESS reads it: a comparison with it is unknown, `defined` false. A path read through
+/// a reference that names no row reads nothing. A `now` operand is read as `now`, the instant of
+/// the read the caller took ([`reads_now`]); with none it is unknown, as ESS reads it without a
+/// clock.
 ///
 /// A filter unknown for the row is refused, as ESS's interpreter refuses the read
-/// (`ess-conformance` `src/interpret/views.rs:214` at ESS 0.89.0, `select`,
+/// (`ess-conformance` `src/interpret/views.rs:214` at ESS 0.92.0, `select`,
 /// `Truth::Unknown => return Err(unsupported())`): one comparing against an `Optional` parameter
 /// the read left out, or an `Optional` field the row does not hold, is unknown, not false. The
-/// interpreter hides such a row only where the omitted parameter is read by a string operator
-/// (`absent_text_operands`, `views.rs:210`), or where a path read through a reference reads no
-/// row (`absent_navigation`), and no filter [`unsupported`] admits has either.
+/// row is not held, and the read goes on, where every path the filter reads that observes nothing
+/// reads through a reference that names no row (`absent_navigation`, `views.rs:213`). The
+/// interpreter also hides a row where the omitted parameter is read by a string operator
+/// (`absent_text_operands`, `views.rs:210`), and no filter [`unsupported`] admits has one.
 ///
 /// # Errors
-/// When the row is not a value of the source's declared fields, naming what it holds, or when the
-/// filter is unknown for it.
+/// When the row, or a row a reference names, is not a value of its entity's declared fields,
+/// naming what it holds, or when the filter is unknown for it.
 pub(crate) fn holds(
     ir: &EssIr,
     view: &ResolvedView,
     identity: &Value,
     row: &Row,
+    referenced: &Referenced<'_>,
     parameters: &FactStore,
     now: Option<Rfc3339Instant>,
 ) -> Result<bool, String> {
@@ -504,19 +577,22 @@ pub(crate) fn holds(
             .fact_paths()
             .iter()
             .all(|path| path.segments() == [STATE]);
-    let facts = if state_alone {
+    let (facts, navigated) = if state_alone {
         let mut facts = FactStore::new();
         if let Ok(path) = FactPath::new(STATE) {
             facts.set(path, FactValue::text(row.state.clone()));
         }
-        facts
+        (facts, Navigated::new())
     } else {
-        bound(ir, view, &source_row(ir, view, identity, row)?)?
+        (
+            bound(ir, view, &source_row(ir, view, identity, row)?)?,
+            navigated(ir, view, referenced)?,
+        )
     };
-    match truth(ir, view, filter, &facts, parameters, now) {
-        Truth::True => Ok(true),
-        Truth::False => Ok(false),
-        Truth::Unknown => Err(format!(
+    match truth(ir, view, filter, &facts, parameters, &navigated, now) {
+        (Truth::True, _) => Ok(true),
+        (Truth::False, _) | (Truth::Unknown, true) => Ok(false),
+        (Truth::Unknown, false) => Err(format!(
             "the filter `{filter}` is unknown for a row, so the model does not determine the rows \
              it holds"
         )),
@@ -538,7 +614,12 @@ fn source_row(
 
 /// The source row [`source_row`] reads, as the store holds it.
 fn source_json(ir: &EssIr, view: &ResolvedView, identity: &Value, row: &Row) -> Map<String, Value> {
-    let entity = ir.entity(&view.source);
+    held_json(ir.entity(&view.source), identity, row)
+}
+
+/// `row`, a row of `entity` the instance `identity` names, as the store holds it: every stored
+/// field it holds a value for, its identity and its `state`.
+fn held_json(entity: &ResolvedEntity, identity: &Value, row: &Row) -> Map<String, Value> {
     let mut held = row
         .fields
         .iter()
@@ -548,6 +629,39 @@ fn source_json(ir: &EssIr, view: &ResolvedView, identity: &Value, row: &Row) -> 
     held.insert(entity.identity.name.clone(), identity.clone());
     held.insert(STATE.to_owned(), Value::String(row.state.clone()));
     held
+}
+
+/// Each reference of `view` with the observable fields of the entity it names and, where
+/// `referenced` holds the row it names, that row bound to them as ESS's interpreter binds it
+/// (`ess-conformance` `src/interpret/views.rs:175-189` at ESS 0.92.0, `select`: its stored fields,
+/// its identity and its `state`, [`ess_conformance::input::bind`]).
+///
+/// # Errors
+/// Where a row a reference names is not a value of its entity's declared fields, as the
+/// interpreter refuses the read.
+fn navigated(
+    ir: &EssIr,
+    view: &ResolvedView,
+    referenced: &Referenced<'_>,
+) -> Result<Navigated, String> {
+    view.references
+        .iter()
+        .map(|reference| {
+            let entity = ir.entity(&reference.entity);
+            let fields = entity.observable_fields();
+            let facts = referenced
+                .get(reference.via.as_str())
+                .map(|(identity, row)| {
+                    let held: BTreeMap<String, Node> =
+                        serde_json::from_value(Value::Object(held_json(entity, identity, row)))
+                            .map_err(|error| format!("a row of {}: {error}", entity.name))?;
+                    ess_conformance::input::bind(ir, &fields, &held, Completeness::Partial)
+                        .map_err(|errors| format!("a row of {}: {errors}", entity.name))
+                })
+                .transpose()?;
+            Ok((reference.via.clone(), (fields, facts)))
+        })
+        .collect()
 }
 
 /// `held`, a source row of `view` as the store holds it, as ESS values.
@@ -577,25 +691,35 @@ fn bound(
     .map_err(|errors| format!("a row of {}: {errors}", entity.name))
 }
 
-/// What ESS evaluates `predicate`, a filter [`unsupported`] admits, to over the row `facts` and
-/// `parameters`, a `now` operand read as `now` ([`Read`]).
+/// What ESS evaluates `predicate`, a filter [`unsupported`] admits, to over the row `facts`,
+/// `parameters` and the rows its references name (`navigated`), a `now` operand read as `now`
+/// ([`Read`]); and, where it is unknown, whether it is unknown only through a reference that
+/// names no row ([`Read::absent_navigation`]).
 fn truth(
     ir: &EssIr,
     view: &ResolvedView,
     predicate: &Predicate,
     facts: &FactStore,
     parameters: &FactStore,
+    navigated: &Navigated,
     now: Option<Rfc3339Instant>,
-) -> Truth {
+) -> (Truth, bool) {
     let fields = ir.entity(&view.source).observable_fields();
-    predicate.evaluate(&Read {
+    let read = Read {
         ir,
+        view,
         fields: &fields,
         params: &view.params,
         row: facts,
         parameters,
+        navigated,
         now,
-    })
+    };
+    let truth = predicate.evaluate(&read);
+    (
+        truth,
+        truth == Truth::Unknown && read.absent_navigation(predicate),
+    )
 }
 
 /// The rows of `view`, an aggregate view (`aggregation`), over `held`, each an identity and the
@@ -653,7 +777,17 @@ pub(crate) fn aggregate(
         if !conditions.is_empty() {
             let facts = bound(ir, view, &fields)?;
             for &(name, condition) in &conditions {
-                match truth(ir, view, condition, &facts, parameters, now) {
+                match truth(
+                    ir,
+                    view,
+                    condition,
+                    &facts,
+                    parameters,
+                    &Navigated::new(),
+                    now,
+                )
+                .0
+                {
                     Truth::True => {
                         admitted.insert(name.clone());
                     }
@@ -778,11 +912,12 @@ pub(crate) fn reads_related(view: &ResolvedView) -> bool {
         .any(|reference| !reference.fields.is_empty())
 }
 
-/// Each reference of `view` a field reads through, with the entity it names and the identity the
-/// source row `row`, the instance `identity` names, holds in it: by the reference's source field
-/// (`via`), in the order the compiler resolved them. A reference whose field the row holds nothing
-/// or `null` in names no row and is left out, as ESS's interpreter reads it
-/// (`ess-conformance` `src/interpret/views.rs`, `referenced_rows`, at ESS 0.92.0).
+/// Each reference of `view`, one a field reads through or its filter navigates
+/// ([`ResolvedView::reads_through`]), with the entity it names and the identity the source row
+/// `row`, the instance `identity` names, holds in it: by the reference's source field (`via`), in
+/// the order the compiler resolved them. A reference whose field the row holds nothing or `null`
+/// in names no row and is left out, as ESS's interpreter reads it (`ess-conformance`
+/// `src/interpret/views.rs`, `referenced_rows`, at ESS 0.92.0).
 pub(crate) fn references<'v>(
     ir: &'v EssIr,
     view: &'v ResolvedView,
@@ -792,7 +927,6 @@ pub(crate) fn references<'v>(
     let source = ir.entity(&view.source);
     view.references
         .iter()
-        .filter(|reference| !reference.fields.is_empty())
         .filter_map(|reference| {
             let named = if reference.via == source.identity.name {
                 Some(identity.clone())
