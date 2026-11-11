@@ -5,7 +5,7 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:c3b0089b1f3f570cf20f4f490f4b24a1d79933a0cae20b947c1f59d0581149b1",
+    "contract_digest": "slice-sha256/2:5aeadc98c76161b4521f9e3b03ccbe884b7b8eaff48b0114157d2cb8dba014ad",
     "regenerate": "ess generate"
   },
   "$defs": {
@@ -157,7 +157,7 @@
           "type": "string"
         },
         "path": {
-          "description": "The request's path, without the query string.",
+          "description": "The request's path, without the query string. At most 2,048 bytes, cut on a character boundary with `…` where longer.",
           "type": "string"
         },
         "route": {
@@ -185,7 +185,7 @@
           "type": "string"
         },
         "reason": {
-          "description": "Why the request was not served, for every class but `served`: the `refused` text of the answer, its words and the names it gives (a field, a type, a route) kept. A value the caller sent is never recorded: every value in the text (a quoted string, a list, an object, a number, `true`, `false` or `null`) is written `…`. At most 512 bytes, cut with `…` where longer. So the record of a refused request holds its method, its path and the names of its route, and under 1 KiB besides, whatever its body held.",
+          "description": "Why the request was not served, for every class but `served`: the `refused` text of the answer, its words and the names it gives (a field, a type, a route) kept. A value the caller sent is never recorded: every value in the text (a quoted string, a list, an object, a number, `true`, `false` or `null`), and every map key, struct member or input field name the caller sent, is written `…`. At most 512 bytes, cut with `…` where longer. So the record of a refused request holds its method, its path (at most 2,048 bytes) and the names of its route, and under 1 KiB besides, whatever its body held.",
           "type": "string"
         },
         "duration_us": {

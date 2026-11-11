@@ -254,9 +254,15 @@ impl Log for PostgresEventStore {
     /// Reads through the store's own pool and runtime ([`LogStore::shared`]): each read takes a
     /// connection of the pool for one statement, as the writer does between its statements, so
     /// a read holds no lock and never the writer, and the store opens no connection beyond its
-    /// pool's `database_pool`.
+    /// pool's `database_pool`. At most `database_pool` - 1 reads run at once (1 with a pool of
+    /// 1), so a connection is always left for the writer and the pool's queue never fills; a
+    /// read beyond that waits its turn ([`SharedReading`]).
     fn reading(store: &LogStore<Self>) -> Option<Arc<dyn Reading>> {
-        Some(Arc::new(SharedReading(store.shared())))
+        let pool = store.log().pool_status().max_connections;
+        Some(Arc::new(SharedReading::new(
+            store.shared(),
+            pool.saturating_sub(1),
+        )))
     }
 }
 

@@ -726,11 +726,11 @@
           "type": "string"
         },
         "path": {
-          "description": "The request's path, without the query string.",
+          "description": "The request's path, without the query string. At most 2,048 bytes, cut on a character boundary with `…` where longer.",
           "type": "string"
         },
         "reason": {
-          "description": "Why the request was not served, for every class but `served`: the `refused` text of the answer, its words and the names it gives (a field, a type, a route) kept. A value the caller sent is never recorded: every value in the text (a quoted string, a list, an object, a number, `true`, `false` or `null`) is written `…`. At most 512 bytes, cut with `…` where longer. So the record of a refused request holds its method, its path and the names of its route, and under 1 KiB besides, whatever its body held.",
+          "description": "Why the request was not served, for every class but `served`: the `refused` text of the answer, its words and the names it gives (a field, a type, a route) kept. A value the caller sent is never recorded: every value in the text (a quoted string, a list, an object, a number, `true`, `false` or `null`), and every map key, struct member or input field name the caller sent, is written `…`. At most 512 bytes, cut with `…` where longer. So the record of a refused request holds its method, its path (at most 2,048 bytes) and the names of its route, and under 1 KiB besides, whatever its body held.",
           "type": "string"
         },
         "route": {
@@ -1233,8 +1233,8 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-ess-provenance": {
-    "contract_digest": "slice-sha256/2:8365b972f4e6a3eef6135a5d28f5f99dfbfc6e20e7c62686f964158e293f1aac",
-    "source_digest": "a10b7a4e762b22a254597579c028089b6c8bd940c01a08fb55dd50c235f9e5fb",
+    "contract_digest": "slice-sha256/2:5d321a0955eb4d13ff3aed679cf1b18f2a2d5141765cc3d62d236dc5e90939e1",
+    "source_digest": "10d618c3b26e8badb8f905e82bbfe4b083b17c299351cb1f76529513bd11c076",
     "specification_version": "v1",
     "system": "spindle"
   }

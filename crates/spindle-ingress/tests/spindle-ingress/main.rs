@@ -9,6 +9,7 @@ mod adversary_refusal_payload;
 mod adversary_route_precedence;
 mod adversary_router;
 mod adversary_view_parameters;
+mod adversary_w21_security;
 mod concurrent_reads;
 mod grants;
 mod metrics_read;

@@ -46,7 +46,10 @@ are Spindle's releases.
   counts when the store opens (`Store::counts`, for `spindle_entity_rows`) are read from each
   entity's own stream alone, no row read. Its reading handle (`Store::reading`) reads through the
   store's own pool beside the writer, one statement per connection taken and no lock held, and
-  opens no connection beyond `database_pool`, so the connection budget is unchanged and `GET`
+  opens no connection beyond `database_pool`. Reads beside the writer are capped at
+  `database_pool` - 1 (1 with a pool of 1), scans and reads of a related field alike, so a
+  connection is always left for the writer; a read over the cap waits its turn, in arrival order,
+  and fails with a store error only after 30 s. The connection budget is unchanged and `GET`
   views, `/api/model`, `/api/events` and `/__spindle/*` read a postgres-bound component off the
   host's thread as they read a SQLite one; a reset, which empties its tables in place, waits for
   the reads already running, and reads wait for the reset. The new `b10x-spindle store migrate <spec>
@@ -107,7 +110,9 @@ are Spindle's releases.
   finds a runtime crate of `spindle-cli`, the workspace crates and `eventlog-postgres` included,
   missing from the list. Each release page also carries one CycloneDX 1.5 SBOM,
   `b10x-spindle-<version>.cdx.json`, made by `cargo-cyclonedx` 0.5.9 for the four targets and listed
-  in `SHA256SUMS`.
+  in `SHA256SUMS`. Each job that builds an archive or the SBOM hashes it, and the publish job
+  checks every file against that hash before it writes `SHA256SUMS` from them, so a file changed
+  between its build and the release page fails the release.
 
 ### Changed
 
@@ -139,8 +144,12 @@ are Spindle's releases.
 - A request log record's `reason` never holds a value the caller sent
   (`story:refusal-reason-bounded`). One refused command with an 800 KB mistyped field grew
   `GET /__spindle/requests` by 804,364 bytes. Now every value in the refusal text is written `…`,
-  the field and the type it expected kept, and the reason is at most 512 bytes. The answer the
-  caller receives is unchanged.
+  the field and the type it expected kept, and the reason is at most 512 bytes. A map key, struct
+  member or input field name the caller sent is written `…` too, and a record's `path` is at most
+  2,048 bytes, cut with `…`: a ring of 10,000 records of 404s for paths near 64 KiB held about
+  640 MiB. The answer the caller receives keeps an unknown field's name; the kernel now quotes a
+  map key or struct member the caller sent (`"key"` where it wrote `` `key` `` or `[key]`), and the
+  ingress text it could not percent-decode (`found "…"` where it wrote ``found `…` ``).
 
 ### Fixed
 
@@ -162,7 +171,9 @@ are Spindle's releases.
   exits: on `spindle.lock` inside the directory where it serves HTTP, on `<file>.lock` beside the
   file where it reads stdin. A second run on the same state exits 1 before opening anything,
   naming the state and the id of the process that holds it. The operating system releases the
-  lock with the process, after a SIGKILL too.
+  lock with the process, after a SIGKILL too. Reading stdin, `run` also locks the database file
+  itself and names its lock file after the path the state resolves to, so a second run given a
+  symbolic or hard link to a held state file exits 1 too.
 - A served command checks its caller's grant before it reads the request
   (`story:command-grant-before-request`), as ESS's served application does. A fixed actor whose
   `may:` does not name the command, or a proven one, is refused `403` "not granted" naming that
@@ -176,7 +187,13 @@ are Spindle's releases.
   authenticated as no caller, `403` `{"refused": "not granted", "actor": null}`
   (`story:unauthenticated-grant-refusals`). Such a view was read for anyone and such a command run
   as no actor. Nothing is read or written. A view and a command no actor's grant names are served
-  as before.
+  as before. The grant is checked before anything else this ingress does not serve, so a granted
+  command that reads its caller answers this `403` too, not a `501` naming the attributes it reads.
+  The same holds wherever a model is served over HTTP with no caller: the Service Worker
+  (`spindle-wasm`) and each deployed component process's ingress refuse every such view and
+  command `403`. Neither takes `--fixed-actor` or a trusted-caller header, so neither can grant
+  one; serve a model whose commands and views a caller must be granted with `b10x-spindle run`
+  and `--fixed-actor` or `--trusted-caller-header` (behind a proxy that sets it).
 - A view read on a SQLite state costs the rows of its entity, not the whole log
   (`story:view-read-without-log-scan`). Every `Store::scan` of a SQLite store read the tenant's
   whole feed and kept the events of the entity asked for, and 0.13.0 only moved that read beside
