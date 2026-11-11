@@ -2,7 +2,9 @@
 //! (`story:state-directory-lock`): an advisory lock on a lock file beside the state, taken before
 //! any store is opened. A second run on the same state is refused, naming the path and the
 //! process that holds it, so two runs never keep two outboxes and event lists over one database.
-//! The operating system releases the lock with the process, after a SIGKILL too.
+//! `state move --from <directory>` takes the same lock before it reads the directory, so it never
+//! reads files a run still writes. The operating system releases the lock with the process, after
+//! a SIGKILL too.
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{Read, Seek, Write};

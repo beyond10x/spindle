@@ -433,8 +433,11 @@ pub enum StateCommand {
     /// Move the state a `run --state` directory holds into the PostgreSQL tables of every
     /// component whose `store.durable` is bound to `postgres`, every stream at its versions.
     ///
-    /// Stop Spindle first: the move does not keep a running Spindle off the directory or the
-    /// tables. Each component's `<component>.sqlite` is read, creating nothing, and its events
+    /// The move takes the directory's lock (`spindle.lock`, the one `run --state` holds) before
+    /// it reads a file and holds it to its end; while a run holds it, the move exits 1 naming the
+    /// directory and that run's process id, before any connection. Stop a Spindle running on
+    /// PostgreSQL first: the move does not keep it off the tables. Each component's
+    /// `<component>.sqlite` is read, creating nothing beside the lock file, and its events
     /// appended in their order into the tables `spindle_<component>_*`, the events one write
     /// recorded as one transaction, so a command decided after the move names the version the
     /// directory's last write left. Event ids and recording times are new; a write of 0.7.0 to

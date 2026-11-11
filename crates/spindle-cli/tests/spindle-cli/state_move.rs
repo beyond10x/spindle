@@ -969,3 +969,67 @@ fn two_moves_started_together_into_one_schema_leave_one_directory() {
         "the schema holds the directory of the move that exited 0, or nothing: {report}"
     );
 }
+
+/// While `run --state <directory>` holds the directory's lock (`story:state-directory-lock`), a
+/// move from it exits 1 naming the directory and the process that holds it, before it reads a
+/// file or connects to the database, and the run goes on answering.
+#[test]
+fn a_move_from_a_directory_a_run_holds_exits_1_naming_the_holder_before_connecting() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let served = on_directory(directory.path());
+    let refused = state_move(
+        directory.path(),
+        &[("database_url", "postgres://owner:secret@127.0.0.1:1/rally")],
+    );
+    assert_eq!(refused.status.code(), Some(1), "{}", text(&refused));
+    assert!(refused.stdout.is_empty(), "{}", text(&refused));
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.contains(directory.path().to_str().expect("a UTF-8 path")),
+        "the refusal names the directory: {}",
+        text(&refused)
+    );
+    assert!(
+        stderr.contains(&format!("process {}", served.child.id())),
+        "the refusal names the holder's process id {}: {}",
+        served.child.id(),
+        text(&refused)
+    );
+    assert!(
+        !stderr.contains("127.0.0.1"),
+        "the refusal comes before any connection: {}",
+        text(&refused)
+    );
+    let (status, _) = call(served.address, "GET", "/api/model", None);
+    assert_eq!(status, 200, "the run still answers");
+}
+
+/// The lock file a run leaves in its directory once it ended is no component's file and holds
+/// nothing: a move from the directory goes on to the database, here one that answers nothing.
+#[test]
+fn a_move_from_a_directory_a_killed_run_left_goes_past_its_lock_file() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let mut served = on_directory(directory.path());
+    served.child.kill().expect("the run is killed");
+    served.child.wait().expect("the run ends");
+    assert!(
+        directory.path().join("spindle.lock").is_file(),
+        "the run left its lock file"
+    );
+    let moved = state_move(
+        directory.path(),
+        &[("database_url", "postgres://owner:secret@127.0.0.1:1/rally")],
+    );
+    assert_eq!(moved.status.code(), Some(1), "{}", text(&moved));
+    let stderr = String::from_utf8_lossy(&moved.stderr);
+    assert!(
+        !stderr.contains("in use") && !stderr.contains("spindle.lock"),
+        "the lock file neither refuses the move nor is read as a component's file: {}",
+        text(&moved)
+    );
+    assert!(
+        stderr.contains("127.0.0.1"),
+        "the move reached the database: {}",
+        text(&moved)
+    );
+}

@@ -180,6 +180,11 @@ are Spindle's releases.
   and count, on the store, its reading handle and a second handle on the file, equals a read of the
   whole feed after each step of drawn writes, refused groups, restarts and resets, on a new file and
   on one the 0.10.0 release binary wrote.
+- `state move --from <dir>` takes the directory's lock (`spindle.lock`, the one `run --state`
+  holds) before it reads a file, and holds it to its end. It read the files of a directory a
+  running `run --state` was still writing; now, while a run holds the directory, it exits 1 naming
+  the directory and the run's process id, before it connects to the database. The lock file a run
+  leaves behind is no component's file and does not refuse a later move.
 
 ## [0.13.0] - 2026-11-11
 
