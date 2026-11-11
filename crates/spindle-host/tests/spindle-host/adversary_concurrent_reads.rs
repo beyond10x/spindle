@@ -13,8 +13,10 @@
 //! - Many resets must not leave the files of earlier stores open.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+#[cfg(target_os = "linux")]
+use std::sync::Barrier;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
@@ -350,7 +352,9 @@ fn adversary_reading_the_events_does_not_make_each_command_copy_every_event_publ
     );
 }
 
-/// The file descriptors this process holds open on a path under `dir`, deleted ones included.
+/// The file descriptors this process holds open on a path under `dir`, deleted ones included,
+/// read from `/proc/self/fd`, which only Linux has.
+#[cfg(target_os = "linux")]
 fn open_under(dir: &Path) -> Vec<String> {
     let dir = dir
         .canonicalize()
@@ -367,6 +371,7 @@ fn open_under(dir: &Path) -> Vec<String> {
 
 /// How many descriptors a SQLite host may hold on its state once reads are done: the writer's
 /// file, log and index, and a few reading connections kept for the next reads.
+#[cfg(target_os = "linux")]
 const KEPT: usize = 48;
 
 /// A burst of reads on a SQLite store opens a connection for each read that runs at once
@@ -374,6 +379,7 @@ const KEPT: usize = 48;
 /// apiece, so one burst of N reads holds about 3N descriptors until the store is closed; at the
 /// common soft limit of 1024 descriptors a burst of some 330 slow reads leaves none for the
 /// listener's next connection or the writer.
+#[cfg(target_os = "linux")]
 #[test]
 fn adversary_a_burst_of_reads_on_sqlite_does_not_keep_a_connection_per_read() {
     const READS: usize = 96;
@@ -409,6 +415,7 @@ fn adversary_a_burst_of_reads_on_sqlite_does_not_keep_a_connection_per_read() {
 
 /// A reset moves a SQLite store's files aside and opens it again; the reading handle of the
 /// closed store must go with it, so that many resets leave no file of an earlier store open.
+#[cfg(target_os = "linux")]
 #[test]
 fn adversary_many_resets_leave_no_earlier_sqlite_file_open() {
     let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state");
