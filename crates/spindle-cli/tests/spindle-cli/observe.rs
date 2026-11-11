@@ -425,10 +425,12 @@ fn the_request_log_keeps_the_refusal_text() {
             "--observe",
         ],
     );
+    // A malformed request to a command the reader may send: one it may not send is refused `403`
+    // before its body is read (`story:command-grant-before-request`).
     let (bad, bad_body) = call_desk(
         &reader,
-        CREATE,
-        Some(&json!({"notebook_id": NOTEBOOK, "title": "notes", "colour": "red"})),
+        SHARE,
+        Some(&json!({"notebook_id": NOTEBOOK, "with": OTHER, "colour": "red"})),
     );
     assert_eq!(bad, 400, "{bad_body}");
     let (denied, denied_body) = call_desk(

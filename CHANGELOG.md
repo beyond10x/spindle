@@ -6,6 +6,23 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- A served command checks its caller's grant before it reads the request
+  (`story:command-grant-before-request`), as ESS's served application does. A fixed actor whose
+  `may:` does not name the command, or a proven one, is refused `403` "not granted" naming that
+  actor before the body, the query string or the path is read, so a malformed request from an
+  ungranted caller no longer answers `400`. A granted caller's malformed request still answers
+  `400`, and the transport limits (`411`, `413`, `408`) are still answered first. On a run whose
+  requests prove their caller, a path variable is read only after the caller and its grant are
+  checked, for a view too, so a request that proves no caller answers `403` whatever its path holds.
+- A run serving HTTP without `--fixed-actor` or `--trusted-caller-header` refuses a read-granted
+  view and a command some actor's `may:` names with ESS's standard refusal for a request
+  authenticated as no caller, `403` `{"refused": "not granted", "actor": null}`
+  (`story:unauthenticated-grant-refusals`). Such a view was read for anyone and such a command run
+  as no actor. Nothing is read or written. A view and a command no actor's grant names are served
+  as before.
+
 ## [0.13.0] - 2026-11-11
 
 ### Fixed

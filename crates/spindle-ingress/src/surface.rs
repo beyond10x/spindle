@@ -448,9 +448,13 @@ impl Route {
         self.caller.as_ref()
     }
 
-    /// Whether the route's view is read-granted (ess/22 `may:` naming a view, `x-ess-may-read`)
-    /// and no fixed caller's actor may read it: ESS's served surface then refuses it `403`
-    /// "not granted" before reading anything. Always `false` without a fixed caller.
+    /// Whether the grant check refuses every request for this route, `403` "not granted", before
+    /// anything of the request is read, as ESS's served surface checks the grant first: with a
+    /// fixed caller, a command its actor's `may:` does not name or a read-granted view (ess/22
+    /// `may:` naming a view, `x-ess-may-read`) it may not read, the refusal naming that actor;
+    /// without one, a command some actor's `may:` names or a read-granted view, refused as a
+    /// request authenticated as no caller (`"actor": null`). Always `false` on a route whose
+    /// requests prove their caller ([`Route::proves`]), which checks each request's.
     pub fn not_granted(&self) -> bool {
         self.not_granted
     }
@@ -468,8 +472,10 @@ impl Route {
     /// compared with `path` in its [`literal_spelling`], as ESS's served application compares
     /// them, so `/things/%7Emodules` matches `/things/~modules`; a variable is read from the raw
     /// segment, every escape decoded ([`decoded`]). Nothing is read from a matched path for an
-    /// operation the ingress does not serve or a view the fixed caller may not read: both are
-    /// refused before their request is read.
+    /// operation the ingress does not serve or one the grant check refuses
+    /// ([`Route::not_granted`]): both are refused before their request is read. Nor is it on a
+    /// route whose requests prove their caller: [`crate::answer`] reads it ([`Route::read_path`])
+    /// once the caller and its grant are checked.
     fn carried(&self, path: &str) -> Option<Result<Map<String, Value>, String>> {
         let spelled;
         let compared = if self.declared {
@@ -489,23 +495,30 @@ impl Route {
         }) {
             return None;
         }
-        if matches!(self.unserved, Some(Unserved::Ingress(_))) || self.not_granted {
+        if matches!(self.unserved, Some(Unserved::Ingress(_))) || self.not_granted || self.proves {
             return Some(Ok(Map::new()));
         }
+        Some(self.read_path(path))
+    }
+
+    /// The input `path`, which matches the route's template, carries in its variables; the
+    /// refusal's text where a variable's text is malformed.
+    pub(crate) fn read_path(&self, path: &str) -> Result<Map<String, Value>, String> {
+        let given: Vec<&str> = path.strip_prefix('/').unwrap_or(path).split('/').collect();
         let mut carried = Map::new();
         for variable in &self.variables {
             let Some(text) = given.get(variable.position).and_then(|text| decoded(text)) else {
-                return Some(Err(format!(
+                return Err(format!(
                     "the path segment for {} is not percent-encoded UTF-8",
                     variable.field
-                )));
+                ));
             };
             match read(variable.flat, text) {
                 Some(value) => carried.insert(variable.field.clone(), value),
-                None => return Some(Err(format!("the path carries no {}", variable.field))),
+                None => return Err(format!("the path carries no {}", variable.field)),
             };
         }
-        Some(Ok(carried))
+        Ok(carried)
     }
 }
 
@@ -778,6 +791,12 @@ impl Surface {
     /// status; for one it names, the binding's method and path, its path variables read into the
     /// input, the request it declares (`json`, `form` or `query`) and the status it lists for an
     /// outcome ([`ess_gen::http::listed`]).
+    ///
+    /// No caller is fixed, so no request proves an actor: a command some actor's `may:` names and
+    /// a read-granted view are refused as ESS refuses a request authenticated as no caller, `403`
+    /// `{"refused": "not granted", "actor": null}`, before anything is read
+    /// ([`Route::not_granted`]); a command and a view no actor's grant names are served as no
+    /// caller.
     ///
     /// A command or view this ingress cannot route keeps its route and is marked
     /// [`Unserved::Ingress`]: for a command, an outcome that answers with the command's retained
@@ -1176,7 +1195,11 @@ fn route(
             route.refused.clear();
             route.unserved = Some(Unserved::Ingress(what));
         }
-        (Ok(()), Operation::Command(_)) => {
+        (Ok(()), Operation::Command(command)) => {
+            route.not_granted = match caller {
+                Some(caller) => !may_run(ir, &caller.actor, command),
+                None => !proves && run_granted(ir, command),
+            };
             if let ess_gen::http::Served::Command(handle) = bound.serves {
                 refuse(ir, ir.command(handle), &mut route);
             }
@@ -1185,12 +1208,35 @@ fn route(
             if let Err(refused) = spindle_host::reads(ir, view) {
                 route.unserved = Some(Unserved::Host(refused.to_string()));
             }
-            if let Some(caller) = caller {
-                route.not_granted = !may_read(ir, &caller.actor, view);
-            }
+            route.not_granted = match caller {
+                Some(caller) => !may_read(ir, &caller.actor, view),
+                None => !proves && read_granted(ir, view),
+            };
         }
     }
     Ok(route)
+}
+
+/// Whether some declared actor's `may:` names `command`: ESS's served surface then checks every
+/// request's grant, and one that proves no caller is refused.
+fn run_granted(ir: &EssIr, command: &str) -> bool {
+    ir.actors().values().any(|declared| {
+        declared
+            .may
+            .iter()
+            .any(|granted| granted.name().to_string() == command)
+    })
+}
+
+/// Whether `view` is read-granted: some declared actor's `may:` names it
+/// ([`ess_compiler::ir::ResolvedActor::may_read`]); a view no actor names is open.
+fn read_granted(ir: &EssIr, view: &str) -> bool {
+    ir.actors().values().any(|declared| {
+        declared
+            .may_read
+            .iter()
+            .any(|granted| granted.name().to_string() == view)
+    })
 }
 
 /// The fixed caller `operation` is sent or read as: the first of `callers` whose actor may run the
@@ -1206,7 +1252,7 @@ fn chosen<'a>(ir: &EssIr, operation: &Operation, callers: &'a [Caller]) -> Optio
 
 /// Whether `actor` may send `command`: a declared actor whose `may:` names it
 /// ([`ess_compiler::ir::ResolvedActor::may`]), the grant the kernel checks before it runs one.
-fn may_run(ir: &EssIr, actor: &str, command: &str) -> bool {
+pub(crate) fn may_run(ir: &EssIr, actor: &str, command: &str) -> bool {
     ir.actors().iter().any(|(name, declared)| {
         name.to_string() == actor
             && declared
@@ -1220,18 +1266,16 @@ fn may_run(ir: &EssIr, actor: &str, command: &str) -> bool {
 /// to every actor; a read-granted one only to an actor whose `may:` names it
 /// ([`ess_compiler::ir::ResolvedActor::may_read`]).
 pub(crate) fn may_read(ir: &EssIr, actor: &str, view: &str) -> bool {
-    let names = |declared: &ess_compiler::ir::ResolvedActor| {
-        declared
-            .may_read
-            .iter()
-            .any(|granted| granted.name().to_string() == view)
-    };
-    if !ir.actors().values().any(names) {
+    if !read_granted(ir, view) {
         return true;
     }
-    ir.actors()
-        .iter()
-        .any(|(name, declared)| name.to_string() == actor && names(declared))
+    ir.actors().iter().any(|(name, declared)| {
+        name.to_string() == actor
+            && declared
+                .may_read
+                .iter()
+                .any(|granted| granted.name().to_string() == view)
+    })
 }
 
 /// Marks what the route of `command`, once [`served`] filled it, does not run. Each outcome the
