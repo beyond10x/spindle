@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-11
+
 ### Added
 
 - The kernel runs an outcome that declares secondary effects (`affects:`), which it refused as
@@ -181,6 +183,8 @@ are Spindle's releases.
 
 ### Fixed
 
+- The SQLite store builds on eventlog 0.9.4, which takes rusqlite 0.41 and libsqlite3-sys 0.39.1:
+  libsqlite3-sys 0.38.2 bundled an SQLite with advisory RUSTSEC-2026-0459.
 - A removal decided on a scan is conditioned on it as a change is: an outcome that `deletes:` its
   instance behind a `when_related:` guard over a row set, and a set outcome (`instances:`) behind
   one, is refused as a conflict and writes nothing where another writer wrote a row of the

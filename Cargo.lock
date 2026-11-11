@@ -553,7 +553,7 @@ dependencies = [
 [[package]]
 name = "eventlog-capture-types"
 version = "0.0.0"
-source = "git+https://github.com/beyond10x/eventlog?tag=0.9.3#c5acb0c0daf5f40cb4ae34037872a86232052d96"
+source = "git+https://github.com/beyond10x/eventlog?tag=0.9.4#b8582219f881a7281398b45c534108a01ef151e1"
 dependencies = [
  "serde",
  "serde_json",
@@ -561,8 +561,8 @@ dependencies = [
 
 [[package]]
 name = "eventlog-core"
-version = "0.9.3"
-source = "git+https://github.com/beyond10x/eventlog?tag=0.9.3#c5acb0c0daf5f40cb4ae34037872a86232052d96"
+version = "0.9.4"
+source = "git+https://github.com/beyond10x/eventlog?tag=0.9.4#b8582219f881a7281398b45c534108a01ef151e1"
 dependencies = [
  "eventlog-capture-types",
  "serde",
@@ -575,8 +575,8 @@ dependencies = [
 
 [[package]]
 name = "eventlog-postgres"
-version = "0.9.3"
-source = "git+https://github.com/beyond10x/eventlog?tag=0.9.3#c5acb0c0daf5f40cb4ae34037872a86232052d96"
+version = "0.9.4"
+source = "git+https://github.com/beyond10x/eventlog?tag=0.9.4#b8582219f881a7281398b45c534108a01ef151e1"
 dependencies = [
  "eventlog-core",
  "rustls",
@@ -592,8 +592,8 @@ dependencies = [
 
 [[package]]
 name = "eventlog-sqlite"
-version = "0.9.3"
-source = "git+https://github.com/beyond10x/eventlog?tag=0.9.3#c5acb0c0daf5f40cb4ae34037872a86232052d96"
+version = "0.9.4"
+source = "git+https://github.com/beyond10x/eventlog?tag=0.9.4#b8582219f881a7281398b45c534108a01ef151e1"
 dependencies = [
  "eventlog-capture-types",
  "eventlog-core",
@@ -1007,9 +1007,9 @@ dependencies = [
 
 [[package]]
 name = "libsqlite3-sys"
-version = "0.38.2"
+version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1d20bef17f513b9b3004532233187769cd072d790971f4e4da0e346eb6401e8"
+checksum = "14a5f01b87b92705d07b433c06f96cbc764637d81a0bffb5734ce17cf0f9a2b3"
 dependencies = [
  "cc",
  "pkg-config",
@@ -1576,9 +1576,9 @@ dependencies = [
 
 [[package]]
 name = "rusqlite"
-version = "0.40.2"
+version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23f2a97da3e3873c73cb2a2e71b35c40ff95e0b1eefa8d72d8499a6928c3b5b3"
+checksum = "9c026b4444579e8d754556c6c75d040d69c4a44283cdb648ab8a8d5965c2cfa8"
 dependencies = [
  "bitflags",
  "fallible-iterator 0.3.0",
@@ -1866,7 +1866,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-capability"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -1879,7 +1879,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-channel"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -1895,7 +1895,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-cli"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1933,7 +1933,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-conformance"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "ess-compiler",
  "ess-conformance",
@@ -1951,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-control"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "ess-compiler",
  "http-body-util",
@@ -1976,7 +1976,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-docs"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1986,7 +1986,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-firecracker"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "clap",
  "libc",
@@ -2003,7 +2003,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-host"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "base64",
  "ess-compiler",
@@ -2025,7 +2025,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-ingress"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "ess-compiler",
  "ess-conformance",
@@ -2048,7 +2048,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-kernel"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "ess-compiler",
  "ess-conformance",
@@ -2083,7 +2083,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-qemu"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "clap",
  "libc",
@@ -2100,7 +2100,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-spec"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -2112,7 +2112,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-store-browser"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "js-sys",
  "serde",
@@ -2128,7 +2128,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-target"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "ess-compiler",
  "rustix",
@@ -2143,7 +2143,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-telemetry"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "ess-compiler",
  "libc",
@@ -2158,7 +2158,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-timer"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -2170,7 +2170,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-wasm"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "ess-compiler",
  "ess-gen",
