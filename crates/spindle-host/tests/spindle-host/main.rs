@@ -18,6 +18,8 @@ mod adversary_refusal;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_retry;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod adversary_rows;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_view_filters;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_views;

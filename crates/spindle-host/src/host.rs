@@ -1099,6 +1099,11 @@ impl Host {
     /// a SQLite store's feed), then moved by each write that lands, so reading them reads no store
     /// ([`Store::counts`]). Only where that count failed are they counted again when read.
     ///
+    /// They see only the writes this host lands: a store has one writer, as a state directory has
+    /// one Spindle process. A second writer on the same store, another host on the same SQLite
+    /// files or on a shared supplied store, moves its rows without moving these, until the store is
+    /// next opened.
+    ///
     /// # Errors
     /// [`HostError::Store`] when the rows had to be counted and a store could not be read, as a
     /// store a failed reset lost cannot.

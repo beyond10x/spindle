@@ -120,7 +120,8 @@ pub(crate) const FAMILIES: [Family; 14] = [
         name: "spindle_entity_rows",
         kind: "gauge",
         labels: &["entity"],
-        summary: "Rows each entity holds now, read from its store when scraped; falls on a reset.",
+        summary: "Rows each entity holds now, kept from the writes this process lands and taken \
+                  once from its store when the store opens; falls on a reset.",
     },
     Family {
         name: "spindle_resets_total",
