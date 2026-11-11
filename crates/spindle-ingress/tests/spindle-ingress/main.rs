@@ -13,6 +13,7 @@ mod adversary_w21_security;
 mod concurrent_reads;
 mod events_from_store;
 mod events_range;
+mod exposed;
 mod grants;
 mod metrics_read;
 mod observe;

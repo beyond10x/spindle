@@ -33,6 +33,10 @@ use spindle_kernel::{External, MemoryStore, SqliteStore, Store};
 /// Exit status of an `admit` the environment refused.
 const REFUSED: u8 = 3;
 
+/// The exit status of a command line `run` refuses before anything else, as clap exits on one it
+/// cannot parse.
+const USAGE: u8 = 2;
+
 /// One command line read by `run`.
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -186,6 +190,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             answer_default,
             http,
             port,
+            address,
             drop_retries,
             fixed_actor,
             fixed_caller,
@@ -202,6 +207,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             answer_default,
             http: http.as_deref(),
             port,
+            address,
             drop_retries,
             callers: serve::callers(fixed_actor, fixed_caller)?,
             observe: observe.then_some(usize::from(observe_requests)),
@@ -417,6 +423,8 @@ struct Execute<'a> {
     answer_default: bool,
     http: Option<&'a Path>,
     port: Option<u16>,
+    /// `--address`: the IP address to serve on, 127.0.0.1 without it.
+    address: Option<std::net::IpAddr>,
     drop_retries: bool,
     callers: Vec<spindle_ingress::Caller>,
     /// With `--observe`, how many request records to keep.
@@ -436,12 +444,23 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         answer_default,
         http,
         port,
+        address,
         drop_retries,
         ref callers,
         observe,
         caller_header,
         caller_secret,
     } = *arguments;
+    if let Some(address) = address.filter(|address| spindle_ingress::exposed(*address))
+        && (caller_header.is_none() || caller_secret.is_none())
+    {
+        eprintln!(
+            "b10x-spindle: --address {address} is not loopback, so every request must come \
+             through an authenticating proxy: give --trusted-caller-header <NAME> with \
+             --trusted-caller-secret <FILE> (--fixed-actor proves nobody)"
+        );
+        return Ok(ExitCode::from(USAGE));
+    }
     if let (Some(header), Some(caller)) = (caller_header, callers.first()) {
         bail!(
             "--trusted-caller-header {header} and --fixed-actor {} are given together: each \
@@ -522,6 +541,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 components,
                 binding,
                 port: port.unwrap_or(0),
+                address: address.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
                 ingress: ingress.implementation.as_str(),
                 drop_retries,
                 decides,
@@ -563,6 +583,12 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
     if let Some(port) = port {
         bail!(
             "nothing in {} requires ingress.network, so --port {port} would be ignored",
+            spec.display()
+        );
+    }
+    if let Some(address) = address {
+        bail!(
+            "nothing in {} requires ingress.network, so --address {address} would be ignored",
             spec.display()
         );
     }

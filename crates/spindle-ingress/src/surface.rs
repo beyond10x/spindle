@@ -759,6 +759,9 @@ pub struct Surface {
     caller_header: Option<String>,
     /// The secret the proxy presents in [`Surface::SECRET_HEADER`] on each such request.
     caller_secret: Option<Secret>,
+    /// Every request must carry the secret, refused before anything is read without it
+    /// ([`Surface::requiring_secret`]).
+    secret_required: bool,
 }
 
 /// The proxy's secret: never written by `Debug`, so no surface printed for a diagnosis shows it.
@@ -921,6 +924,25 @@ impl Surface {
         self.caller_header.as_deref()
     }
 
+    /// This surface refusing every request that does not carry the proxy's secret in
+    /// [`Surface::SECRET_HEADER`] `403` `{"refused": "not granted", "actor": null}` before
+    /// anything else of it is read or checked: its path, method, body and caller, on every route,
+    /// the console routes and those under `/__spindle/` included. Its listener serves it so
+    /// wherever it is bound; one bound off loopback (`exposed`, feature `listener`) always does. A
+    /// surface not made [`Surface::proving_callers`] has no secret to require, and no listener
+    /// binds it once it requires one.
+    #[must_use]
+    pub fn requiring_secret(mut self) -> Self {
+        self.secret_required = true;
+        self
+    }
+
+    /// Whether every request must carry the secret ([`Surface::requiring_secret`]).
+    #[cfg_attr(not(feature = "listener"), allow(dead_code))]
+    pub(crate) fn secret_required(&self) -> bool {
+        self.secret_required
+    }
+
     fn routed(
         ir: &EssIr,
         components: &[String],
@@ -971,6 +993,7 @@ impl Surface {
             panel: None,
             caller_header: None,
             caller_secret: None,
+            secret_required: false,
         })
     }
 

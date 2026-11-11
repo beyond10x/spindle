@@ -391,6 +391,142 @@ fn the_listener_binds_loopback_only() {
     assert_eq!(rows(&served, &contract, ALL_TASKS), Vec::<Value>::new());
 }
 
+/// `run --address <ip>` listens on `ip`, prints it in its start line and answers a request sent
+/// there.
+fn answers_on(ip: std::net::IpAddr) {
+    let contract = Contract::load();
+    let served = serve_with(&["--address", &ip.to_string()]);
+    assert_eq!(served.address.ip(), ip, "{}", served.ready);
+    assert_ne!(served.address.port(), 0, "{}", served.ready);
+    assert_eq!(
+        served.ready["listening"],
+        json!(SocketAddr::new(ip, served.address.port()).to_string())
+    );
+    let (status, answer) = call(
+        &served,
+        &contract,
+        OPEN_TASK,
+        Some(&json!({"task_id": "t1", "title": "Water the plants"})),
+    );
+    assert_eq!(status, 202, "{answer}");
+    assert_eq!(
+        rows(&served, &contract, ALL_TASKS),
+        [json!({"task_id": "t1", "state": "Open", "title": "Water the plants"})]
+    );
+}
+
+#[test]
+fn run_with_an_ipv4_address_listens_and_answers_there() {
+    answers_on(std::net::IpAddr::from([127, 0, 0, 1]));
+}
+
+#[test]
+fn run_with_an_ipv6_address_listens_and_answers_there() {
+    answers_on(std::net::IpAddr::from(std::net::Ipv6Addr::LOCALHOST));
+}
+
+#[test]
+fn a_malformed_address_is_refused_before_listening() {
+    for malformed in ["127.0.0.256", "localhost", "[::1]", "127.0.0.1:8080"] {
+        let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+        let output = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+            .current_dir(root())
+            .args(["run", SPEC, "--environment", LAPTOP, "--state"])
+            .arg(state.path().join("state"))
+            .args(["--address", malformed])
+            .stdin(Stdio::null())
+            .output()
+            .expect("b10x-spindle runs");
+        assert_eq!(output.status.code(), Some(2), "{malformed}: {output:?}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(!stdout.contains("listening"), "nothing listened: {stdout}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("--address") && stderr.contains(malformed),
+            "the refusal names the option and the value: {stderr}"
+        );
+    }
+}
+
+/// Addresses off loopback no test host holds: a documentation address of each family
+/// (RFC 5737, RFC 3849), and loopback written as an IPv4-mapped IPv6 address, which is not `::1`.
+/// Each is refused before anything binds.
+const OFF_LOOPBACK: [&str; 3] = ["192.0.2.1", "2001:db8::1", "::ffff:127.0.0.1"];
+
+#[test]
+fn a_non_loopback_address_without_the_trusted_proxy_is_refused_before_listening() {
+    let secret = tempfile::NamedTempFile::new_in(env!("CARGO_TARGET_TMPDIR")).expect("a file");
+    std::fs::write(secret.path(), "proxy-secret\n").expect("the secret is written");
+    let secret = secret.path().to_str().expect("a UTF-8 path").to_owned();
+    for address in OFF_LOOPBACK {
+        for extra in [
+            &[][..],
+            &["--fixed-actor", "tasks.board.Owner"][..],
+            &["--trusted-caller-header", "x-caller"][..],
+            &["--trusted-caller-secret", &secret][..],
+        ] {
+            let state =
+                tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+            let mut child = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+                .current_dir(root())
+                .args(["run", SPEC, "--environment", LAPTOP, "--state"])
+                .arg(state.path().join("state"))
+                .args(["--address", address])
+                .args(extra)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("b10x-spindle starts");
+            let started = Instant::now();
+            while child.try_wait().expect("the child is waited on").is_none() {
+                if started.elapsed() > EXIT {
+                    let _ = child.kill();
+                    let output = child.wait_with_output();
+                    panic!("{address} {extra:?}: run did not exit within {EXIT:?}: {output:?}");
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let output = child.wait_with_output().expect("the output is read");
+            assert_eq!(
+                output.status.code(),
+                Some(2),
+                "{address} {extra:?}: {output:?}"
+            );
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(!stdout.contains("listening"), "nothing listened: {stdout}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            for named in [
+                "--address",
+                address,
+                "--trusted-caller-header",
+                "--trusted-caller-secret",
+            ] {
+                assert!(
+                    stderr.contains(named),
+                    "{address} {extra:?}: the refusal names {named}: {stderr}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn an_address_without_ingress_network_is_refused() {
+    let output = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+        .current_dir(root())
+        .args(["run", "ess", "--environment", LAPTOP, "--address", "::1"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("b10x-spindle runs");
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--address ::1 would be ignored"),
+        "the refusal names the option: {stderr}"
+    );
+}
+
 #[test]
 fn an_ingress_binding_other_than_http_loopback_is_refused() {
     let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
