@@ -435,7 +435,7 @@ Open:
 | question | default |
 |---|---|
 | does the kernel program extend `entity-core` or stand alone | stand alone at first, with ESS `Predicate` for guards; revisit once the instruction set settles |
-| arithmetic beyond `increment:` | none in M0; the `rally` example is written on an integer grid with `increment: 1` / `-1` |
+| arithmetic beyond `increment:` | `{expr: …}` in `sets:` and an event's `payload:` (ess/27) is computed by ESS's own evaluator over `input.` and `subject.`, as ESS's interpreter computes it (`story:kernel-value-expressions`); one in an error's fields stays refused, as the interpreter computes none there. Guards keep `Predicate`, with no arithmetic; the `rally` example is written on an integer grid with `increment: 1` / `-1` |
 | AppSpec above ESS | deferred: the measured gaps are below ESS, not above |
 | whether a Service Worker serves the console routes (`ingress.network` bound to `service-worker`, `spindle-wasm`) | served, as on `http-loopback`: a Service Worker is reached only by the pages of its own origin, the reach the loopback address gives the listener; a reset that carries a world is refused there, and a reset removes every instance of each IndexedDB store rather than replacing it |
 | substrate gaps (ingress, workload/endpoint, Firecracker) | M0–M2 run as host processes; microVMs once substrate's Firecracker driver exists or with a local Firecracker launcher |

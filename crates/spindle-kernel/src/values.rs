@@ -4,8 +4,10 @@
 //! Only the sources Spindle's own specification and the `rally` example use,
 //! `{append: input.<path>}`, and a field or the state of the row an input field names
 //! (`{related: {via: input.<field>, field: …}}`), and what a set outcome changed
-//! (`{count: changed}`, `{changed: …}`), are read here; the rest are refused by
-//! [`crate::supported`] before a command runs. Numbers are ESS's own [`Number`], so `{increment: N}` adds exactly as ESS adds, and a literal is typed by
+//! (`{count: changed}`, `{changed: …}`), and a value an expression computes (`{expr: …}`, outside
+//! an error), are read here; the rest are refused by [`crate::supported`] before a command runs.
+//! Numbers are ESS's own [`Number`], so `{increment: N}` adds exactly as ESS adds, an expression
+//! is computed by ESS's own evaluator ([`Expr::evaluate`]), and a literal is typed by
 //! [`EssIr::literal_primitive`], the one question every ESS consumer asks of a literal.
 
 use std::collections::BTreeMap;
@@ -17,7 +19,10 @@ use ess_compiler::ir::{
 };
 use ess_domain::QualifiedName;
 use ess_domain::types::Primitive;
-use ess_primitives::facts::Number;
+use ess_primitives::expr::{Evaluated, Expr, Reading};
+use ess_primitives::facts::{FactPath, Number};
+use ess_primitives::node::Node;
+use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::ExecuteError;
@@ -173,6 +178,9 @@ impl<'a> Sources<'a, '_> {
                         field.target
                     ),
                 }),
+            ResolvedPayloadValue::Expression { expr, .. } if !self.error => {
+                self.expression(field, expr)
+            }
             ResolvedPayloadValue::Increment { by } => self.increment(field, by).map(Some),
             ResolvedPayloadValue::Append { field: read, .. } => self.append(field, read).map(Some),
             ResolvedPayloadValue::Generated { .. }
@@ -378,6 +386,62 @@ impl<'a> Sources<'a, '_> {
         }
     }
 
+    /// `{expr: "<expression>"}` (ess/27, G1), as ESS computes it (`interpret::execute::determined::
+    /// expression`): ESS's own evaluator over `input.<path>` from the command's input and
+    /// `subject.<field>` from the instance as it was before the outcome, the result spelled as
+    /// ESS spells it. An absent read, or a zero divisor outside `coalesce`, leaves the field
+    /// absent. A read of an instance none holds, a value past a bound (an Integer past `i64`, an
+    /// instant past what RFC 3339 spells) or one with no spelling determines nothing: the
+    /// evaluator is exact and checked, and never wraps or saturates.
+    fn expression(
+        &self,
+        field: &ResolvedPayloadField,
+        expr: &Expr,
+    ) -> Result<Option<Value>, ExecuteError> {
+        let reads = |path: &FactPath| -> Reading {
+            let text = path.to_string();
+            if let Some(read) = text.strip_prefix("input.") {
+                return borrowed_input(self.input, read).map_or(Reading::Absent, reading);
+            }
+            if let Some(read) = text.strip_prefix("subject.") {
+                return match self.before {
+                    Some(row) => row.fields.get(read).map_or(Reading::Absent, reading),
+                    None => Reading::Unknown,
+                };
+            }
+            Reading::Unknown
+        };
+        let no_value = |why: &str| ExecuteError::NoValue {
+            what: format!(
+                "`{}`, the value `{expr}` computes, which {why}",
+                field.target
+            ),
+        };
+        match expr.evaluate(&reads) {
+            Evaluated::Unknown => Err(no_value(
+                "reads an undetermined value or passes a bound of its type",
+            )),
+            evaluated => match evaluated.to_node() {
+                Some(Node::Null) => Ok(None),
+                // An `Integer` is written as the integer, as `{increment: …}` writes one; ESS's
+                // `Number` writes an integral value as `2.0`, one number either way.
+                Some(Node::Number(number))
+                    if self.ir.literal_primitive(&field.target_type)
+                        == Some(Primitive::Integer) =>
+                {
+                    number
+                        .as_i64()
+                        .map(|integer| Some(Value::from(integer)))
+                        .ok_or_else(|| no_value("has no spelling of its type"))
+                }
+                Some(node) => serde_json::to_value(node)
+                    .map(Some)
+                    .map_err(|_| no_value("has no spelling of its type")),
+                None => Err(no_value("has no spelling of its type")),
+            },
+        }
+    }
+
     /// `{append: input.<read>}` (ess/31), as ESS determines it (`interpret::execute::determined::
     /// append`): the list the instance held in the target before the outcome, with the input
     /// element last. A held `null` reads as empty; a list the instance does not hold reads as
@@ -417,6 +481,27 @@ pub(crate) fn read_input(input: &Map<String, Value>, read: &str) -> Option<Value
         value = value.as_object()?.get(segment)?;
     }
     (!value.is_null()).then(|| value.clone())
+}
+
+/// [`read_input`], borrowed: an expression reads a scalar, and copies nothing else of the input.
+fn borrowed_input<'v>(input: &'v Map<String, Value>, read: &str) -> Option<&'v Value> {
+    let mut segments = read.split('.');
+    let mut value = input.get(segments.next()?)?;
+    for segment in segments {
+        value = value.as_object()?.get(segment)?;
+    }
+    Some(value)
+}
+
+/// What an expression reads `value` as ([`Reading::of_node`]): `null` is absent, a scalar its
+/// value, and a list or a mapping no operand, read as unknown without being copied.
+fn reading(value: &Value) -> Reading {
+    match value {
+        Value::Array(_) | Value::Object(_) => Reading::Unknown,
+        scalar => {
+            Node::deserialize(scalar).map_or(Reading::Unknown, |node| Reading::of_node(&node))
+        }
+    }
 }
 
 /// The typed value a literal written in the model denotes, read against the field it fills: a

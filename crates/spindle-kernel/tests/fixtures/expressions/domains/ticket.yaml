@@ -1,0 +1,117 @@
+domain: relay.ticket
+summary: A ticket opened for a request, retried with a count one higher, expiring a week after each request and holding the share one part is of a whole.
+types:
+  - name: relay.ticket.TicketId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: relay.ticket.Ticket
+    identity:
+      name: ticket_id
+      type: relay.ticket.TicketId
+    fields:
+      - name: attempt
+        type: Integer
+      - name: expires_at
+        type: Timestamp
+      - name: renew_by
+        type: Timestamp
+      - name: share
+        type: Decimal
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+commands:
+  - name: relay.ticket.OpenTicket
+    input:
+      - name: ticket_id
+        type: relay.ticket.TicketId
+      - name: attempt
+        type: Integer
+      - name: requested_at
+        type: Timestamp
+      - name: ttl
+        type: Optional<Duration>
+      - name: part
+        type: Integer
+      - name: whole
+        type: Integer
+    outcomes:
+      - name: opened
+        creates: relay.ticket.Ticket
+        instance: ticket_id
+        sets:
+          attempt: input.attempt
+          expires_at: {expr: "input.requested_at + 168h"}
+          renew_by: {expr: "input.requested_at + coalesce(input.ttl, 168h)"}
+          share: {expr: "coalesce(round(input.part * 100 / input.whole, 1, half_even), 0)"}
+        emits: [relay.ticket.TicketOpened]
+        payload:
+          relay.ticket.TicketOpened:
+            ticket_id: input.ticket_id
+            expires_at: {expr: "input.requested_at + 168h"}
+            share: {expr: "coalesce(round(input.part * 100 / input.whole, 1, half_even), 0)"}
+        summary: The ticket opens at the attempt sent, expiring a week after the request.
+  - name: relay.ticket.RetryTicket
+    input:
+      - name: ticket_id
+        type: relay.ticket.TicketId
+      - name: requested_at
+        type: Timestamp
+      - name: ttl
+        type: Optional<Duration>
+      - name: part
+        type: Integer
+      - name: whole
+        type: Integer
+    outcomes:
+      - name: retried
+        updates: relay.ticket.Ticket
+        instance: ticket_id
+        sets:
+          attempt: {expr: "subject.attempt + 1"}
+          expires_at: {expr: "input.requested_at + 168h"}
+          renew_by: {expr: "input.requested_at + coalesce(input.ttl, 168h)"}
+          share: {expr: "coalesce(round(input.part * 100 / input.whole, 1, half_even), 0)"}
+        emits: [relay.ticket.TicketRetried]
+        payload:
+          relay.ticket.TicketRetried:
+            ticket_id: input.ticket_id
+            attempt: {expr: "subject.attempt + 1"}
+            expires_at: {expr: "input.requested_at + 168h"}
+        summary: The ticket is retried once more, expiring a week after this request.
+events:
+  - name: relay.ticket.TicketOpened
+    fields:
+      - name: ticket_id
+        type: relay.ticket.TicketId
+      - name: expires_at
+        type: Timestamp
+      - name: share
+        type: Decimal
+  - name: relay.ticket.TicketRetried
+    fields:
+      - name: ticket_id
+        type: relay.ticket.TicketId
+      - name: attempt
+        type: Integer
+      - name: expires_at
+        type: Timestamp
+views:
+  - name: relay.ticket.TicketCard
+    source: relay.ticket.Ticket
+    consistency: read_your_writes
+    fields:
+      - name: ticket_id
+        type: relay.ticket.TicketId
+      - name: attempt
+        type: Integer
+      - name: expires_at
+        type: Timestamp
+      - name: renew_by
+        type: Timestamp
+      - name: share
+        type: Decimal
+      - name: state
+        type: relay.ticket.Ticket.State

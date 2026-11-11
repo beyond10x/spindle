@@ -6,6 +6,19 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- The kernel computes a value written as `{expr: "<expression>"}` in `sets:` and in an event's
+  `payload:` (ess/27, `story:kernel-value-expressions`). Such an outcome was refused as an
+  unsupported value source and answered 501; a downstream consumer's specification had 7. The value
+  is computed by ESS's own evaluator over `input.<path>` and `subject.<field>` as the row held it
+  before the outcome, so Integer arithmetic, a Decimal quotient and `round(…, half_even)`, a
+  Timestamp moved by a Duration, and `coalesce` answer exactly as ESS's interpreter does. A zero
+  divisor or an absent `Optional` leaves the field absent unless `coalesce` supplies a value; a
+  result past a bound (an Integer past 64 bits, an instant past the year 9999) is never wrapped:
+  the command determines no value and commits nothing. An expression in an error's fields stays
+  refused by name, as ESS's interpreter computes none there.
+
 ## [0.13.0] - 2026-11-11
 
 ### Fixed
