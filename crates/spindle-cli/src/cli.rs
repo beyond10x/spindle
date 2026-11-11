@@ -414,13 +414,15 @@ pub enum StateCommand {
     /// migrate` creates the tables first and `database_url` names the serving role.
     ///
     /// One move at a time writes into a schema: a move holds a PostgreSQL advisory lock on it, on a
-    /// connection of its own, from before it reads the tables to after its last append. Exits 1,
-    /// writing nothing, when another move holds the schema still after 5 s, naming it; and, naming
+    /// connection of its own, from before it reads the tables to after its last append, and opens
+    /// one component's tables beside it at a time: two connections of its role at once. Exits 1,
+    /// writing nothing, when another move holds the schema still after 5 s, naming it; when the
+    /// role's `CONNECTION LIMIT` is 1, naming the two connections; and, naming
     /// the component, when the directory lacks a component's file, a file holds a JSON string or
     /// key with U+0000 (the SQLite store keeps it, PostgreSQL refuses it; every file is read before
     /// connecting, and the refusal names the stream), or a component's tables already hold the
-    /// stream of an entity the specification declares or the file holds, or a partial move's mark.
-    /// A move that fails partway leaves a partial copy the next move refuses: drop the component's
+    /// stream of an entity the specification declares or the file holds, or a partial move's mark;
+    /// a refused move creates no table, also on a loopback database. A move that fails partway leaves a partial copy the next move refuses: drop the component's
     /// tables, run `store migrate` and move again.
     /// Prints one line per component, `{"component": "<component>", "streams": <n>, "events":
     /// <n>}`. Exits 3, moving nothing, when admission is refused.

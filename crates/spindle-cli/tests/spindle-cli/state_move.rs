@@ -715,11 +715,11 @@ const PASSWORD: &str = "serving-password";
 
 /// A role that may log in and run DML on `schema`'s tables, as `run` serves with on a hosted
 /// database.
-fn serving_role(schema: &str) -> String {
+fn serving_role(schema: &str, limit: u32) -> String {
     let role = format!("spindle_move_serving_{}", &schema["spindle_move_".len()..]);
     let database = sql(&["SELECT current_database()".to_owned()]).remove(0);
     sql(&[
-        format!("CREATE ROLE {role} LOGIN PASSWORD '{PASSWORD}' CONNECTION LIMIT 12"),
+        format!("CREATE ROLE {role} LOGIN PASSWORD '{PASSWORD}' CONNECTION LIMIT {limit}"),
         format!("GRANT USAGE ON SCHEMA {schema} TO {role}"),
         format!("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {schema} TO {role}"),
         format!("GRANT USAGE ON ALL SEQUENCES IN SCHEMA {schema} TO {role}"),
@@ -746,7 +746,7 @@ fn a_move_with_the_serving_role_on_a_hosted_database_moves_the_directory() {
         ("database_ca", &ca),
         ("database_schema", &schema),
     ]);
-    let role = serving_role(&schema);
+    let role = serving_role(&schema, 12);
     let (scheme, rest) = url.split_once("://").expect("a URL with a scheme");
     let (_, location) = rest.split_once('@').expect("a URL with user and password");
     let serving = format!("{scheme}://{role}:{PASSWORD}@{location}");
@@ -765,6 +765,101 @@ fn a_move_with_the_serving_role_on_a_hosted_database_moves_the_directory() {
         .map(|component| events(&schema, component))
         .collect();
     assert_eq!(landed, [2, 2, 2], "{}", text(&moved));
+}
+
+/// A move holds two connections of its role at once, its schema's lock and one component's
+/// tables: a serving role limited to 2 moves rally's three components at `database_pool` 1; one
+/// limited to 1 exits 1 naming the two it needs, writing nothing; and one limited to 2 while
+/// another session of it is open (a `run` not stopped) exits 1 after trying again for 5 s, saying
+/// the connection was one too many, writing nothing.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL and SPINDLE_TEST_DATABASE_CA: task check:postgres"]
+fn a_move_holds_two_connections_of_the_serving_role_and_refuses_fewer() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    one_match_each(directory.path());
+    let url = owner_url();
+    let ca = std::env::var("SPINDLE_TEST_DATABASE_CA").expect(
+        "SPINDLE_TEST_DATABASE_CA names the PEM CA of the test server's TLS certificate (task \
+         check:postgres)",
+    );
+    let cases = [
+        (
+            1,
+            0,
+            1,
+            [0, 0, 0],
+            vec!["CONNECTION LIMIT 1", "2 connections", "nothing was moved"],
+        ),
+        (
+            2,
+            1,
+            1,
+            [0, 0, 0],
+            vec![
+                "one too many",
+                "2 connections",
+                "stop every run",
+                "nothing was moved",
+            ],
+        ),
+        (2, 0, 0, [2, 2, 2], Vec::new()),
+    ];
+    for (limit, others, code, expected, named) in cases {
+        let schema = schema();
+        migrate(&[
+            ("database_url", url.as_str()),
+            ("database_ca", &ca),
+            ("database_schema", &schema),
+        ]);
+        let role = serving_role(&schema, limit);
+        let (scheme, rest) = url.split_once("://").expect("a URL with a scheme");
+        let (_, location) = rest.split_once('@').expect("a URL with user and password");
+        let serving = format!("{scheme}://{role}:{PASSWORD}@{location}");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        let held: Vec<tokio_postgres::Client> = (0..others)
+            .map(|_| {
+                runtime.block_on(async {
+                    let (client, connection) =
+                        tokio_postgres::connect(&serving, tokio_postgres::NoTls)
+                            .await
+                            .expect("the serving role connects");
+                    tokio::spawn(connection);
+                    client
+                })
+            })
+            .collect();
+        let moved = state_move(
+            directory.path(),
+            &[
+                ("database_url", serving.as_str()),
+                ("database_ca", &ca),
+                ("database_schema", &schema),
+                ("database_pool", "1"),
+                ("database_connections", "4"),
+            ],
+        );
+        drop(held);
+        drop(runtime);
+        let landed: Vec<u64> = COMPONENTS
+            .iter()
+            .map(|component| events(&schema, component))
+            .collect();
+        sql(&[format!("DROP OWNED BY {role}"), format!("DROP ROLE {role}")]);
+        let case = format!("limit {limit}, {others} other sessions");
+        assert_eq!(moved.status.code(), Some(code), "{case}: {}", text(&moved));
+        assert_eq!(landed, expected, "{case}: {}", text(&moved));
+        let stderr = String::from_utf8_lossy(&moved.stderr);
+        for named in named {
+            assert!(
+                stderr.contains(named),
+                "{case}: the refusal names {named}: {}",
+                text(&moved)
+            );
+        }
+    }
 }
 
 /// Two moves of two directories started together into one empty schema, both waiting on its

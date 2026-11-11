@@ -236,7 +236,18 @@ writing nothing, naming the component, when:
 - a component's tables already hold the stream of an entity the specification declares or the
   directory holds, or the mark of a partial move: each read is of a stream's last committed
   version, so it writes nothing, does not grow with the log and sees every commit while a
-  transaction is open elsewhere on the server.
+  transaction is open elsewhere on the server. On a loopback database, where opening a store
+  creates its tables, a component without tables is opened only after every check passed, so a
+  refused move creates no table.
+
+A move holds two connections of its role at once: the session holding the schema's lock, which
+also reads which tables the schema holds, and one to the tables of the component it reads or
+copies, each component's in turn. `run` holds at least one connection per component, so a role
+`run` serves two components or more with moves them. A role whose `CONNECTION LIMIT` is 1, which
+`run` admits for one component, exits 1 before the move reads the tables, writing nothing and
+naming the two connections: move with the role limited to 2 and `database_pool` 2 or more. A connection
+PostgreSQL refuses as one too many is tried again for 5 seconds, then the move exits 1 saying so:
+stop every `run` on the database first.
 
 A move that fails partway leaves a partial copy, which the next move refuses: drop the component's
 tables (or the schema), run `store migrate` and move again.

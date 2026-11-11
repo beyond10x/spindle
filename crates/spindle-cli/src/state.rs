@@ -15,9 +15,10 @@ use spindle_kernel::{StateLock, StateSource, StateTarget, postgres_prefix};
 /// `state move --from <directory> <spec> --environment <env>`: refuses, writing nothing, a
 /// directory without the file of every component bound to `postgres`, a file holding a value
 /// PostgreSQL refuses ([`StateSource::check`], before any connection), a schema another move
-/// holds ([`StateLock::take`]) and a component whose tables already hold a stream; then moves
-/// each component's file into its tables, printing one JSON line per component, and releases
-/// the schema.
+/// holds or a role limited to fewer connections than the move holds at once, two
+/// ([`StateLock::take`]), and a component whose tables already hold a stream, creating no table;
+/// then moves each component's file into its tables, one component's open at a time, printing
+/// one JSON line per component, and releases the schema.
 pub(crate) fn move_from(from: &Path, spec: &Path, environment: &Path) -> Result<ExitCode> {
     let loaded = spindle_spec::load(spec)?;
     let text = std::fs::read_to_string(environment)
@@ -73,18 +74,24 @@ pub(crate) fn move_from(from: &Path, spec: &Path, environment: &Path) -> Result<
         .collect();
     let database = crate::database::database()?;
     let lock = StateLock::take(&database).context("nothing was moved")?;
-    let mut targets = Vec::with_capacity(components.len());
-    for component in &components {
-        targets.push(
-            StateTarget::open(&database, component, components.len())
-                .with_context(|| format!("opening the PostgreSQL store of {component}"))?,
-        );
-    }
+    let open = |component: &str| {
+        StateTarget::open(&database, component, components.len())
+            .with_context(|| format!("opening the PostgreSQL store of {component}"))
+    };
+    // One target open beside the lock at a time. Opening a loopback database's store creates
+    // its tables, so a component without them is opened only once nothing refused the move.
     let mut held = Vec::new();
-    for ((component, source), target) in components.iter().zip(&sources).zip(&targets) {
+    let mut absent = Vec::new();
+    for (component, source) in components.iter().zip(&sources) {
+        if database.ca.is_none() && !lock.has_tables(component)? {
+            absent.push(component);
+            continue;
+        }
+        let target = open(component).context("nothing was moved")?;
         if !target.is_empty(&declared, source)? {
             held.push(format!("{component} ({}_*)", postgres_prefix(component)));
         }
+        target.close()?;
     }
     if !held.is_empty() {
         bail!(
@@ -94,13 +101,18 @@ pub(crate) fn move_from(from: &Path, spec: &Path, environment: &Path) -> Result<
             database.schema
         );
     }
-    for ((component, source), target) in components.iter().zip(&sources).zip(&targets) {
+    for component in absent {
+        open(component).context("nothing was moved")?.close()?;
+    }
+    for (component, source) in components.iter().zip(&sources) {
+        let target = open(component)?;
         let moved = target.copy(source).with_context(|| {
             format!(
                 "moving {} into the PostgreSQL store of {component}",
                 from.join(format!("{component}.sqlite")).display()
             )
         })?;
+        target.close()?;
         println!(
             "{}",
             serde_json::json!({

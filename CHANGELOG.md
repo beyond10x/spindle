@@ -44,7 +44,12 @@ are Spindle's releases.
   connecting; the refusal names the component, the stream and where), or when a component's
   tables already hold the stream of an entity the specification declares or the file holds, or
   the mark of a partial move: one read of each stream's last version, which writes nothing and
-  does not grow with the log, also while a transaction is open elsewhere on the server. One move
+  does not grow with the log, also while a transaction is open elsewhere on the server; on a
+  loopback database a component's missing tables are created only after every check passed, so a
+  refused move creates no table. A move holds two connections of its role at once, the schema's
+  lock and one component's tables in turn, so a role `run` serves two components or more with
+  moves them; a role whose `CONNECTION LIMIT` is 1 exits 1 before the tables are read, naming the
+  two connections, and a connection refused as one too many is tried again for 5 s. One move
   at a time writes into a schema: a move holds a PostgreSQL advisory lock on its schema from
   before that check to after its last append, and a second move into the schema waits up to 5 s,
   then exits 1 naming the other move, writing nothing. A file written by 0.7.0 to 0.10.0 arrives

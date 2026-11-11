@@ -17,7 +17,9 @@
 //! Every group is built and checked from the file ([`Source::check`]) before anything is written:
 //! eventlog's own check of an append group, and the one value PostgreSQL refuses that the SQLite
 //! store keeps, U+0000 in a JSON string ([`nul`]). One move holds its schema ([`Lock`]) from
-//! before it finds the tables empty ([`Target::is_empty`]) to after its last append.
+//! before it finds the tables empty ([`Target::is_empty`]) to after its last append, on a
+//! session that also reads which tables the schema holds ([`Lock::has_tables`]); it holds one
+//! [`Target`] open beside it at a time, [`CONNECTIONS`] connections in all.
 
 use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -25,15 +27,15 @@ use std::path::Path;
 use std::time::Duration;
 
 use eventlog_core::{
-    AppendGroup, AtomicEventStore, CommandMeta, EventStore, Expected, NewEvent, RecordedEvent,
-    StreamAppend, StreamId, TenantId, new_event_id, request_hash,
+    AppendGroup, AtomicEventStore, CommandMeta, EventLogError, EventStore, Expected, NewEvent,
+    RecordedEvent, StreamAppend, StreamId, TenantId, new_event_id, request_hash,
 };
 use eventlog_postgres::PostgresEventStore;
 use eventlog_sqlite::SqliteEventStore;
 use serde_json::Value;
 use tokio_postgres::error::SqlState;
 
-use crate::postgres::{Database, PostgresStore, session};
+use crate::postgres::{Database, PostgresStore, prefix, session};
 use crate::sqlite::{
     ENTITY, Log, MARKS, PREFIX, REMOVED, TENANT, WRITTEN, WRITTEN_SCHEMA, Written, backend, meta,
 };
@@ -201,17 +203,54 @@ impl std::fmt::Debug for Target {
 
 impl Target {
     /// Opens `component`'s tables in `database` as its store opens them ([`PostgresStore::open`]):
-    /// the role and settings `run` takes.
+    /// the role and settings `run` takes. Where PostgreSQL refuses the connection as one too
+    /// many (SQLSTATE 53300), as it may while the session of a target just closed is still
+    /// ending, it tries again for up to [`OPEN_WAIT`].
     ///
     /// # Errors
-    /// As [`PostgresStore::open`].
+    /// As [`PostgresStore::open`]; a connection still refused as one too many after
+    /// [`OPEN_WAIT`] names the connections a move holds ([`CONNECTIONS`]).
     pub fn open(database: &Database, component: &str, sharing: usize) -> Result<Self, StoreError> {
-        let (log, runtime) = PostgresStore::open(database, component, sharing)?.into_parts();
+        let until = std::time::Instant::now() + OPEN_WAIT;
+        let opened = loop {
+            match PostgresStore::open(database, component, sharing) {
+                Err(StoreError::Backend(why))
+                    if why == EventLogError::Overloaded.to_string()
+                        && std::time::Instant::now() < until =>
+                {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(StoreError::Backend(why)) if why == EventLogError::Overloaded.to_string() => {
+                    return Err(StoreError::Backend(format!(
+                        "PostgreSQL refused a connection to the tables of {component} as one too \
+                         many, still after {} s: the role database_url names is at its \
+                         CONNECTION LIMIT, or the server at max_connections. A state move holds \
+                         {CONNECTIONS} connections at once, one holding the schema's lock and \
+                         one to the tables of the component it reads or copies; stop every run \
+                         on the database first",
+                        OPEN_WAIT.as_secs()
+                    )));
+                }
+                other => break other?,
+            }
+        };
+        let (log, runtime) = opened.into_parts();
         Ok(Self {
             log,
             tenant: TenantId::new(TENANT).map_err(backend)?,
             runtime,
         })
+    }
+
+    /// Closes the tables' connections, so the next target opened fits the connections a move
+    /// holds ([`CONNECTIONS`]).
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when a connection is still in use past eventlog's shutdown wait.
+    pub fn close(self) -> Result<(), StoreError> {
+        self.runtime
+            .block_on(self.log.shutdown())
+            .map_err(|error| StoreError::Backend(format!("closing the tables: {error}")))
     }
 
     /// Whether the tables hold no stream a move of `source` could land on: neither the stream
@@ -319,20 +358,49 @@ const LOCK_CLASS: i32 = 0x5350_4D56;
 /// How long a move waits for another move's lock on its schema before it is refused.
 const LOCK_WAIT: Duration = Duration::from_secs(5);
 
+/// The connections of its role a move holds at once: its lock's session ([`Lock`]) and one
+/// [`Target`]'s, each component's opened and closed in turn. Within what `run` is admitted with
+/// for two components or more, which holds one connection per component; one component whose
+/// serving role is limited to one connection is refused ([`Lock::take`]).
+const CONNECTIONS: usize = 2;
+
+/// How long [`Target::open`] tries again a connection PostgreSQL refuses as one too many.
+const OPEN_WAIT: Duration = Duration::from_secs(5);
+
 impl Lock {
     /// Takes the lock on `database`'s schema, waiting up to [`LOCK_WAIT`] for another move to
     /// end. The session has no statement or idle timeout, so it keeps the lock while the move's
     /// appends run on other connections.
     ///
     /// # Errors
-    /// [`StoreError::Backend`] when another move holds the schema past the wait, naming it, or
-    /// the database cannot be reached as a store reaches it.
+    /// [`StoreError::Backend`] when another move holds the schema past the wait, naming it; the
+    /// role's `CONNECTION LIMIT` is below [`CONNECTIONS`], naming both; or the database cannot be
+    /// reached as a store reaches it.
     pub fn take(database: &Database) -> Result<Self, StoreError> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_err(|error| StoreError::Backend(error.to_string()))?;
         let client = session(database, &runtime)?;
+        let limit: i32 = runtime
+            .block_on(client.query_one(
+                "SELECT CASE WHEN rolsuper THEN -1 ELSE rolconnlimit END FROM pg_roles WHERE \
+                 rolname = current_user",
+                &[],
+            ))
+            .map(|row| row.get(0))
+            .map_err(|error| {
+                StoreError::Backend(format!("reading the role's CONNECTION LIMIT: {error}"))
+            })?;
+        if usize::try_from(limit).is_ok_and(|limit| limit < CONNECTIONS) {
+            return Err(StoreError::Backend(format!(
+                "the role database_url names has CONNECTION LIMIT {limit}, and a state move holds \
+                 {CONNECTIONS} connections of it at once: one holding the schema's lock and one \
+                 to the tables of the component it reads or copies, each in turn. Move with a \
+                 role limited to {CONNECTIONS} or more (for one component, with database_pool \
+                 {CONNECTIONS} or more, which run admits such a role with)"
+            )));
+        }
         let schema = database.schema.clone();
         let taken = runtime.block_on(async {
             client
@@ -367,6 +435,24 @@ impl Lock {
                 "taking the lock of a state move on the schema {schema}: {error}"
             ))),
         }
+    }
+
+    /// Whether the schema holds `component`'s event table, read on the lock's session from the
+    /// catalogue: it opens no store, so on a loopback database, where opening a store creates its
+    /// tables, it creates nothing. Tables without it hold no stream.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the catalogue cannot be read.
+    pub fn has_tables(&self, component: &str) -> Result<bool, StoreError> {
+        let table = format!("{}_events", prefix(component));
+        self.runtime
+            .block_on(self.client.query_one(
+                "SELECT EXISTS (SELECT FROM pg_catalog.pg_tables WHERE schemaname = $1 AND \
+                 tablename = $2)",
+                &[&self.schema, &table],
+            ))
+            .map(|row| row.get::<_, bool>(0))
+            .map_err(|error| StoreError::Backend(format!("reading the schema's tables: {error}")))
     }
 
     /// Releases the lock, after the move's last append.
