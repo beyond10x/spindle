@@ -6,6 +6,14 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- The kernel runs an outcome that declares `when_state_changes: true` or `false`, which it refused
+  as unsupported (`501`): the branch holds where its own move does, or does not, change the state
+  the subject holds immediately before selection, and its `when:` holds too. It answers among the
+  branches guarded by the held state, in declaration order, and a subject no row holds is answered
+  by the command's `unknown_instance:` branch first, as in ESS's interpreter.
+
 ## [0.14.0] - 2026-11-11
 
 ### Added

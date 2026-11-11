@@ -67,6 +67,7 @@ mod row_set_guards;
 mod scan;
 mod secondary_effects;
 mod set_outcomes;
+mod state_change;
 #[cfg(all(feature = "postgres", feature = "sqlite"))]
 mod state_move;
 mod store_contract;
