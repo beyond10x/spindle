@@ -169,6 +169,7 @@ fn every_kernel_failure_is_named_as_the_kernel_names_it() {
         ExecuteError::InvalidInput("c".to_owned()),
         ExecuteError::Undecidable {
             outcome: "o".to_owned(),
+            why: None,
         },
         ExecuteError::Undecided {
             capability: "c".to_owned(),

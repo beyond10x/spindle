@@ -283,6 +283,7 @@ pub fn execute_refusing(
         scanned: Vec::new(),
         answer: None,
         refused,
+        open: None,
     };
     match run.select()? {
         Selected::Outcome(outcome) => run.take(outcome),
@@ -435,6 +436,95 @@ fn reads_subject(predicate: &Predicate) -> bool {
     })
 }
 
+/// The stored rows a row-set guard's predicates leave `Unknown`, for the refusal that names them
+/// ([`Run::row_set`]): those its filter leaves open, and those of a `forall` test it does not.
+#[derive(Default)]
+struct Open {
+    filter: Unknowns,
+    test: Unknowns,
+}
+
+/// The rows one predicate leaves `Unknown`: how many, the first one's identity, and every
+/// `Optional` field it reads that one of them holds nothing in.
+#[derive(Default)]
+struct Unknowns {
+    rows: usize,
+    first: Option<Value>,
+    absent: Vec<String>,
+}
+
+impl Unknowns {
+    /// Counts the row `identity` of `entity`, which `predicate` leaves `Unknown`.
+    fn read(
+        &mut self,
+        predicate: &Predicate,
+        entity: &ResolvedEntity,
+        identity: &Value,
+        row: &Row,
+    ) {
+        self.rows += 1;
+        self.first.get_or_insert_with(|| identity.clone());
+        for path in predicate.fact_paths() {
+            let [field] = path.segments() else {
+                continue;
+            };
+            let optional = entity
+                .fields
+                .iter()
+                .any(|declared| declared.name == *field && declared.type_ref.is_optional());
+            if optional
+                && row.fields.get(field).is_none_or(Value::is_null)
+                && !self.absent.contains(field)
+            {
+                self.absent.push(field.clone());
+            }
+        }
+    }
+
+    /// What `predicate`, the guard's `place`, leaves open on these rows of `entity`, and the way
+    /// out where an absent `Optional` field is why: `defined(<field>)` beside it reads such a row
+    /// `false` (ESS `docs/design/cross-record-and-stored-field-guards.md`, "Optional fields").
+    fn why(&self, entity: &ResolvedEntity, predicate: &Predicate, place: &str) -> String {
+        let first = match &self.first {
+            Some(Value::String(identity)) => format!(" (`{identity}` first)"),
+            Some(identity) => format!(" (`{identity}` first)"),
+            None => String::new(),
+        };
+        let rows = if self.rows == 1 { "row" } else { "rows" };
+        let mut why = format!(
+            "`{predicate}` is unknown on {} `{}` {rows}{first}",
+            self.rows, entity.name
+        );
+        if !self.absent.is_empty() {
+            let quoted = |format: fn(&String) -> String, separator: &str| {
+                self.absent
+                    .iter()
+                    .map(format)
+                    .collect::<Vec<_>>()
+                    .join(separator)
+            };
+            why.push_str(&format!(
+                " where {} is absent; write {} in the {place} to rule such a row out",
+                quoted(|field| format!("`{field}`"), " or "),
+                quoted(|field| format!("`defined({field})`"), " and "),
+            ));
+        }
+        why
+    }
+}
+
+impl Open {
+    /// What left the guard open: the filter's unknown rows where there are any, else the test's.
+    fn why(&self, entity: &ResolvedEntity, filter: &Predicate, test: Option<&Predicate>) -> String {
+        match test {
+            Some(test) if self.filter.rows == 0 && self.test.rows > 0 => {
+                self.test.why(entity, test, "test")
+            }
+            _ => self.filter.why(entity, filter, "filter"),
+        }
+    }
+}
+
 /// What selection found.
 enum Selected<'ir> {
     /// The outcome to take.
@@ -477,6 +567,9 @@ struct Run<'a, 'ir> {
     answer: Option<Map<String, Value>>,
     /// The outcomes the caller does not serve, by name, each with why ([`execute_refusing`]).
     refused: &'a BTreeMap<String, String>,
+    /// What left the last row-set guard read `Unknown` open, with its outcome's qualified name
+    /// ([`Self::row_set`]): the refusal that guard answers names it ([`Self::why`]).
+    open: Option<(String, String)>,
 }
 
 impl<'a, 'ir> Run<'a, 'ir> {
@@ -614,11 +707,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
         match self.truth(outcome, false)? {
             Truth::True => {}
             Truth::False => return Ok(false),
-            Truth::Unknown => {
-                return Err(ExecuteError::Undecidable {
-                    outcome: format!("{}/{}", self.command, outcome.name.as_str()),
-                });
-            }
+            Truth::Unknown => return Err(self.undecidable(outcome)),
         }
         match &outcome.condition {
             ResolvedCondition::External { cause }
@@ -781,8 +870,9 @@ impl<'a, 'ir> Run<'a, 'ir> {
     /// state, the input under `input.`, the addressed subject under `subject.` and the decision's
     /// instant as `now` ([`crate::facts::Selector`]). A row it leaves `Unknown` stays a possible
     /// member, and ESS decides the test over the members ([`ResolvedRowSetTest::decide`]): a test
-    /// those possible members leave open is `Unknown`. A selector reading `subject.` on a command
-    /// that addresses no held row decides nothing.
+    /// those possible members leave open is `Unknown`, and what left it open is kept for the
+    /// refusal ([`Open`]). A selector reading `subject.` on a command that addresses no held row
+    /// decides nothing.
     fn row_set(
         &mut self,
         outcome: &ResolvedOutcome,
@@ -805,11 +895,13 @@ impl<'a, 'ir> Run<'a, 'ir> {
         {
             return Err(ExecuteError::Undecidable {
                 outcome: format!("{}/{}", self.command, outcome.name.as_str()),
+                why: None,
             });
         }
         let input = Facts::values(ir, &self.spec.input, self.input);
         let now = self.now();
         let mut members = Vec::new();
+        let mut open = Open::default();
         let name = entity.name.to_string();
         let scan = self.store.scan(&name)?;
         if !self.scanned.iter().any(|scanned| scanned.entity == name) {
@@ -831,12 +923,41 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 (Some(_), Truth::False) | (None, _) => Truth::True,
                 (Some(predicate), _) => predicate.evaluate(&facts),
             };
+            if selected == Truth::Unknown {
+                open.filter
+                    .read(&selection.filter, entity, &identity, &stored.row);
+            } else if let (Some(predicate), Truth::Unknown) = (test.predicate(), satisfies) {
+                open.test.read(predicate, entity, &identity, &stored.row);
+            }
             members.push(RowMember {
                 selected,
                 satisfies,
             });
         }
-        Ok(test.decide(&members))
+        let decided = test.decide(&members);
+        if decided == Truth::Unknown {
+            self.open = Some((
+                self.qualified(outcome),
+                open.why(entity, &selection.filter, test.predicate()),
+            ));
+        }
+        Ok(decided)
+    }
+
+    /// `outcome`'s name qualified by the command's, as a refusal names it.
+    fn qualified(&self, outcome: &ResolvedOutcome) -> String {
+        format!("{}/{}", self.command, outcome.name.as_str())
+    }
+
+    /// The refusal of `outcome`, whose guard read `Unknown`: it names what left a row-set guard
+    /// open where the last one read was this outcome's ([`Self::row_set`]).
+    fn undecidable(&mut self, outcome: &ResolvedOutcome) -> ExecuteError {
+        let outcome = self.qualified(outcome);
+        let why = self
+            .open
+            .take_if(|(open, _)| *open == outcome)
+            .map(|(_, why)| why);
+        ExecuteError::Undecidable { outcome, why }
     }
 
     /// The `existing_instance:` answer where the plan places that branch in `phase`, step 1 on a
@@ -1043,6 +1164,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
             {
                 return Err(ExecuteError::Undecidable {
                     outcome: format!("{}/{}", self.command, outcome.name.as_str()),
+                    why: None,
                 });
             }
         }
@@ -1090,6 +1212,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
             Some(absent) => Ok(Some(Selected::Outcome(absent))),
             None => Err(ExecuteError::Undecidable {
                 outcome: format!("{}/{}", self.command, outcome.name.as_str()),
+                why: None,
             }),
         }
     }
@@ -1212,11 +1335,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                         }
                     }
                     Truth::False => {}
-                    Truth::Unknown => {
-                        return Err(ExecuteError::Undecidable {
-                            outcome: format!("{}/{}", self.command, outcome.name.as_str()),
-                        });
-                    }
+                    Truth::Unknown => return Err(self.undecidable(outcome)),
                 }
             }
         }

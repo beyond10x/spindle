@@ -159,6 +159,7 @@ impl Run<'_, '_> {
                 Truth::Unknown => {
                     return Err(ExecuteError::Undecidable {
                         outcome: format!("{}/{}", self.command, outcome.name.as_str()),
+                        why: None,
                     });
                 }
             }
