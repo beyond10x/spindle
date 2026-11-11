@@ -1,0 +1,92 @@
+domain: access.grants
+summary: Grants, each on a resource or on none, read with the name, state and label of the resource each names.
+types:
+  - name: access.grants.GrantId
+    kind: newtype
+    of: String
+entities:
+  - name: access.grants.Grant
+    identity:
+      name: grant_id
+      type: access.grants.GrantId
+    fields:
+      - name: holder
+        type: String
+      - name: resource_id
+        type: Optional<access.resources.ResourceId>
+    relations:
+      - {name: resource, kind: references, target: access.resources.Resource, cardinality: one, via: resource_id}
+    lifecycle:
+      initial: Issued
+      states: [Issued]
+      terminal: [Issued]
+commands:
+  - name: access.grants.IssueGrant
+    input:
+      - name: grant_id
+        type: access.grants.GrantId
+      - name: holder
+        type: String
+      - name: resource_id
+        type: Optional<access.resources.ResourceId>
+    outcomes:
+      - name: issued
+        creates: access.grants.Grant
+        instance: grant_id
+        sets:
+          holder: input.holder
+          resource_id: input.resource_id
+        emits: [access.grants.GrantIssued]
+        payload:
+          access.grants.GrantIssued: {grant_id: input.grant_id}
+        summary: The grant is kept.
+events:
+  - name: access.grants.GrantIssued
+    fields:
+      - name: grant_id
+        type: access.grants.GrantId
+views:
+  - name: access.grants.Grants
+    source: access.grants.Grant
+    consistency: read_your_writes
+    fields:
+      - name: grant_id
+        type: access.grants.GrantId
+      - name: holder
+        type: String
+      - name: resource_id
+        type: Optional<access.resources.ResourceId>
+      - name: resource_name
+        type: Optional<String>
+        field: {related: {via: resource_id, field: name}}
+      - name: resource_label
+        type: Optional<String>
+        field: {related: {via: resource_id, field: label}}
+      - name: resource_state
+        type: Optional<access.resources.Resource.State>
+        field: {related: {via: resource_id, field: state}}
+      - name: resource_key
+        type: Optional<access.resources.ResourceId>
+        field: {related: {via: resource_id, field: resource_id}}
+  - name: access.grants.GrantsByHolder
+    source: access.grants.Grant
+    consistency: read_your_writes
+    order_by: [holder desc]
+    fields:
+      - name: grant_id
+        type: access.grants.GrantId
+      - name: holder
+        type: String
+      - name: resource_name
+        type: Optional<String>
+        field: {related: {via: resource_id, field: name}}
+  - name: access.grants.HeldGrants
+    source: access.grants.Grant
+    consistency: read_your_writes
+    filter: holder == "ada"
+    fields:
+      - name: grant_id
+        type: access.grants.GrantId
+      - name: resource_name
+        type: Optional<String>
+        field: {related: {via: resource_id, field: name}}

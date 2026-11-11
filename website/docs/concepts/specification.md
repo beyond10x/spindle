@@ -68,8 +68,15 @@ printed once instead, as not served.
 ## Views
 
 A view is answered from the store of the component that owns its source: one row by identity, or a
-list over every instance of the entity, ranked by `order_by: [<field> asc|desc]`. A filter is read
-where each leaf does one of these:
+list over every instance of the entity, ranked by `order_by: [<field> asc|desc]`.
+
+A field read through a reference, `field: {related: {via: resource_id, field: name}}`, answers what
+the row the reference names holds now: a stored field, its identity or its `state`. The row may
+belong to another component. Each row a list names is loaded once by its identity, however many
+rows name it. The field is left out where the reference is empty or names no row, a removed one
+included, as ESS's interpreter answers it. A filter that reads through a reference is refused.
+
+A filter is read where each leaf does one of these:
 
 - compares a field with a literal of its type: `archived == false`, `priority >= 3`. The ordered
   operators apply only where ESS orders the type. A timestamp also compares against `now`, read on
