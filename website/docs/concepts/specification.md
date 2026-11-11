@@ -94,8 +94,16 @@ list parameter or a list field of the row. Each filter is evaluated as ESS evalu
 ESS leaves unknown for a row, such as a comparison with an optional field the row does not hold,
 refuses the read as ESS's interpreter does.
 
-Computed fields, aggregation, fields read through a
-reference, a default row for an absent identity, paging and any other filter are refused as
+A view with aggregate fields, `open_sessions: {aggregate: {count: {}}}` or `sum` or `avg`, answers
+the rows ESS's interpreter answers. The filter keeps the instances first. They are then grouped by
+the `group_by` fields, one row per group in the order of the group keys. A view without `group_by`
+answers one row, also over no instance. A measure's own `where:` counts only the instances it
+keeps, and is read where it is a filter that is read. A count and a sum over no instance are `0`,
+an average over none is `null`, as is an optional group key a group holds no value for. Integers
+are answered as integers. An aggregate view has no row by identity, and an aggregation beside a
+field read through a reference is refused.
+
+Computed fields, a default row for an absent identity, paging and any other filter are refused as
 unsupported, and the refusal names the construct.
 
 ## Scenarios

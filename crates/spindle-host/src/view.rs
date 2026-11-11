@@ -2,12 +2,12 @@
 //! or every row the view holds, kept by its filter and ranked by its `order_by`.
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::SystemTime;
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::{
-    ResolvedBody, ResolvedEntity, ResolvedField, ResolvedTypeRef, ResolvedView,
+    ResolvedAggregation, ResolvedBody, ResolvedEntity, ResolvedField, ResolvedTypeRef, ResolvedView,
 };
 use ess_conformance::input::Completeness;
 use ess_domain::expression::{Resolution, ScalarKind};
@@ -48,11 +48,19 @@ const STATE: &str = "state";
 /// field's element as a field is, and is also compared with `==` or `!=` to an outer binder. Any
 /// other filter is named with its text and refused whole, since evaluating part of it would answer
 /// a subset of its rows.
+///
+/// An aggregation (`group_by:` and fields with `aggregate:`) is answered ([`aggregate`]) where
+/// each measure's `where:` is a filter read here, and no field of the view is read through a
+/// reference.
 pub(crate) fn unsupported(ir: &EssIr, view: &ResolvedView) -> Option<String> {
     if !view.computed.is_empty() {
         Some("computed fields".to_owned())
-    } else if view.aggregation.is_some() {
-        Some("an aggregation".to_owned())
+    } else if let Some(construct) = view
+        .aggregation
+        .as_ref()
+        .and_then(|aggregation| unread_aggregation(ir, view, aggregation))
+    {
+        Some(construct)
     } else if view.absent.is_some() {
         Some("a default row for an absent identity".to_owned())
     } else if view.paging.is_some() {
@@ -68,6 +76,35 @@ pub(crate) fn unsupported(ir: &EssIr, view: &ResolvedView) -> Option<String> {
             _ => None,
         }
     }
+}
+
+/// What of `aggregation`, the aggregation of `view`, is not answered here, named: a field read
+/// through a reference beside it, or a measure whose `where:` is not a filter [`unsupported`]
+/// admits.
+fn unread_aggregation(
+    ir: &EssIr,
+    view: &ResolvedView,
+    aggregation: &ResolvedAggregation,
+) -> Option<String> {
+    if reads_related(view) {
+        return Some("an aggregation beside a field read through a reference".to_owned());
+    }
+    aggregation
+        .functions
+        .iter()
+        .find_map(|(name, measure)| {
+            measure
+                .r#where
+                .as_ref()
+                .filter(|condition| !reads(ir, view, condition))
+                .map(|condition| (name, condition))
+        })
+        .map(|(name, condition)| {
+            format!(
+                "the aggregate `{name}` read `where: {condition}`; a measure's `where:` is read \
+                 where it is a filter that is read"
+            )
+        })
 }
 
 /// Whether every leaf of `filter` is one [`unsupported`] admits. Each path is typed as ESS types
@@ -464,8 +501,6 @@ pub(crate) fn holds(
     let Some(filter) = &view.filter else {
         return Ok(true);
     };
-    let entity = ir.entity(&view.source);
-    let fields = entity.observable_fields();
     let state_alone = view.params.is_empty()
         && filter
             .fact_paths()
@@ -478,28 +513,9 @@ pub(crate) fn holds(
         }
         facts
     } else {
-        let mut held = row
-            .fields
-            .iter()
-            .filter(|(_, value)| !value.is_null())
-            .map(|(name, value)| (name.clone(), value.clone()))
-            .collect::<Map<String, Value>>();
-        held.insert(entity.identity.name.clone(), identity.clone());
-        held.insert(STATE.to_owned(), Value::String(row.state.clone()));
-        let held: BTreeMap<String, Node> = serde_json::from_value(Value::Object(held))
-            .map_err(|error| format!("a row of {}: {error}", entity.name))?;
-        ess_conformance::input::bind(ir, &fields, &held, Completeness::Partial)
-            .map_err(|errors| format!("a row of {}: {errors}", entity.name))?
+        bound(ir, view, &source_row(ir, view, identity, row)?)?
     };
-    let read = Read {
-        ir,
-        fields: &fields,
-        params: &view.params,
-        row: &facts,
-        parameters,
-        now,
-    };
-    match filter.evaluate(&read) {
+    match truth(ir, view, filter, &facts, parameters, now) {
         Truth::True => Ok(true),
         Truth::False => Ok(false),
         Truth::Unknown => Err(format!(
@@ -507,6 +523,249 @@ pub(crate) fn holds(
              it holds"
         )),
     }
+}
+
+/// The source row `row`, the instance `identity` names, as ESS's interpreter reads one
+/// (`ess-conformance` `src/interpret/views.rs:170-172` at ESS 0.92.0, `select`): every stored
+/// field it holds a value for, its identity and its `state`, as ESS values. A field it holds
+/// `null` in is absent.
+fn source_row(
+    ir: &EssIr,
+    view: &ResolvedView,
+    identity: &Value,
+    row: &Row,
+) -> Result<BTreeMap<String, Node>, String> {
+    nodes(ir, view, source_json(ir, view, identity, row))
+}
+
+/// The source row [`source_row`] reads, as the store holds it.
+fn source_json(ir: &EssIr, view: &ResolvedView, identity: &Value, row: &Row) -> Map<String, Value> {
+    let entity = ir.entity(&view.source);
+    let mut held = row
+        .fields
+        .iter()
+        .filter(|(_, value)| !value.is_null())
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect::<Map<String, Value>>();
+    held.insert(entity.identity.name.clone(), identity.clone());
+    held.insert(STATE.to_owned(), Value::String(row.state.clone()));
+    held
+}
+
+/// `held`, a source row of `view` as the store holds it, as ESS values.
+fn nodes(
+    ir: &EssIr,
+    view: &ResolvedView,
+    held: Map<String, Value>,
+) -> Result<BTreeMap<String, Node>, String> {
+    serde_json::from_value(Value::Object(held))
+        .map_err(|error| format!("a row of {}: {error}", ir.entity(&view.source).name))
+}
+
+/// `fields`, a source row ([`source_row`]), bound to the source's observable fields as ESS binds
+/// one ([`ess_conformance::input::bind`]).
+fn bound(
+    ir: &EssIr,
+    view: &ResolvedView,
+    fields: &BTreeMap<String, Node>,
+) -> Result<FactStore, String> {
+    let entity = ir.entity(&view.source);
+    ess_conformance::input::bind(
+        ir,
+        &entity.observable_fields(),
+        fields,
+        Completeness::Partial,
+    )
+    .map_err(|errors| format!("a row of {}: {errors}", entity.name))
+}
+
+/// What ESS evaluates `predicate`, a filter [`unsupported`] admits, to over the row `facts` and
+/// `parameters`, a `now` operand read as `now` ([`Read`]).
+fn truth(
+    ir: &EssIr,
+    view: &ResolvedView,
+    predicate: &Predicate,
+    facts: &FactStore,
+    parameters: &FactStore,
+    now: Option<Rfc3339Instant>,
+) -> Truth {
+    let fields = ir.entity(&view.source).observable_fields();
+    predicate.evaluate(&Read {
+        ir,
+        fields: &fields,
+        params: &view.params,
+        row: facts,
+        parameters,
+        now,
+    })
+}
+
+/// The rows of `view`, an aggregate view (`aggregation`), over `held`, each an identity and the
+/// source row it names that the view's filter holds ([`holds`]), as ESS's interpreter answers them
+/// (`ess-conformance` `src/interpret/views.rs` at ESS 0.92.0, `select` at 136-241 and `project`
+/// at 370-432):
+///
+/// - each measure's `where:` is evaluated over each held row, after the filter
+///   (`views.rs:217-225`); one unknown for a row refuses the read;
+/// - the rows are grouped by the values of the `group_by` fields (`views.rs:383-401`), read from
+///   the source row by name; one the row holds nothing for is `null` where the field is
+///   `Optional` and refuses the read otherwise, and each is checked against its field's type as
+///   ESS checks it ([`spindle_kernel::admits`]). Without `group_by` there is one group, held even
+///   over no row (`views.rs:380-382`), so such a view always answers one row; with it, a group is
+///   a key some held row has, and over no row there is none;
+/// - the groups come in the order of their keys as ESS orders its values (`views.rs:378`, a
+///   `BTreeMap` over `Node`). An aggregate view declares no `order_by` (`ess-domain`
+///   `view.rs:1995`), so ESS's sort of the rows (`views.rs:68`) keeps that order;
+/// - each group's row holds its key fields and every aggregate, computed by ESS's own measure
+///   (`views.rs:404-430`): the value each member a measure reads holds
+///   ([`ess_conformance::aggregate::measured`]), refused where a required input is missing, and
+///   the function over them ([`ess_conformance::aggregate::evaluate_measure`]): `count` and a
+///   required `sum` `0` over no value, an exact `sum`, an `avg` rounded to six places half-even
+///   and absent over no value, a `sum` skipping absent values absent over none.
+///
+/// Each value is answered as [`answer`] writes it.
+///
+/// # Errors
+/// Naming what refuses the read: a row that is not a value of the source's fields, a `where:`
+/// unknown for a row, a group key the row holds no value of its type for, or a measure ESS
+/// determines no value of.
+pub(crate) fn aggregate(
+    ir: &EssIr,
+    view: &ResolvedView,
+    aggregation: &ResolvedAggregation,
+    held: &[(Value, Row)],
+    parameters: &FactStore,
+    now: Option<Rfc3339Instant>,
+) -> Result<Vec<Map<String, Value>>, String> {
+    type Members = Vec<(BTreeMap<String, Node>, BTreeSet<String>)>;
+    let entity = ir.entity(&view.source);
+    let conditions = aggregation
+        .functions
+        .iter()
+        .filter_map(|(name, measure)| measure.r#where.as_ref().map(|at| (name, at)))
+        .collect::<Vec<_>>();
+    let mut groups: BTreeMap<Vec<Node>, Members> = BTreeMap::new();
+    if aggregation.group_by.is_empty() {
+        groups.insert(Vec::new(), Vec::new());
+    }
+    for (identity, row) in held {
+        let stored = source_json(ir, view, identity, row);
+        let fields = nodes(ir, view, stored.clone())?;
+        let mut admitted = BTreeSet::new();
+        if !conditions.is_empty() {
+            let facts = bound(ir, view, &fields)?;
+            for &(name, condition) in &conditions {
+                match truth(ir, view, condition, &facts, parameters, now) {
+                    Truth::True => {
+                        admitted.insert(name.clone());
+                    }
+                    Truth::False => {}
+                    Truth::Unknown => {
+                        return Err(format!(
+                            "the aggregate `{name}` reads `where: {condition}`, which is unknown \
+                             for a row, so the model does not determine its value"
+                        ));
+                    }
+                }
+            }
+        }
+        let mut key = Vec::new();
+        for name in &aggregation.group_by {
+            let field = view
+                .fields
+                .iter()
+                .find(|field| &field.name == name)
+                .ok_or_else(|| format!("the group key `{name}` is no field of {}", view.name))?;
+            let value = match fields.get(name) {
+                Some(value) => value.clone(),
+                None if field.type_ref.is_optional() => Node::Null,
+                None => {
+                    return Err(format!(
+                        "a row of {} holds no value of the group key `{name}`",
+                        entity.name
+                    ));
+                }
+            };
+            spindle_kernel::admits(
+                ir,
+                &field.type_ref,
+                stored.get(name).unwrap_or(&Value::Null),
+            )
+            .map_err(|error| format!("the group key `{name}`: {error}"))?;
+            key.push(value);
+        }
+        groups.entry(key).or_default().push((fields, admitted));
+    }
+    let mut rows = Vec::new();
+    for (key, members) in groups {
+        let mut row: BTreeMap<&str, Node> = aggregation
+            .group_by
+            .iter()
+            .map(String::as_str)
+            .zip(key)
+            .collect();
+        for (name, measure) in &aggregation.functions {
+            let mut values = Vec::new();
+            for (fields, admitted) in &members {
+                if measure.r#where.is_some() && !admitted.contains(name) {
+                    continue;
+                }
+                if let Some(input) = &measure.input
+                    && !fields.contains_key(&input.name)
+                    && !input.type_ref.is_optional()
+                {
+                    return Err(format!(
+                        "a row of {} holds no value of `{}`, which the aggregate `{name}` reads",
+                        entity.name, input.name
+                    ));
+                }
+                values.push(
+                    ess_conformance::aggregate::measured(ir, entity, measure, fields).ok_or_else(
+                        || format!("the model determines no value the aggregate `{name}` reads"),
+                    )?,
+                );
+            }
+            let kind = ess_conformance::aggregate::measure_kind(ir, entity, measure);
+            let value = ess_conformance::aggregate::evaluate_measure(
+                measure.function,
+                &values,
+                &kind,
+                measure.skip_absent,
+            )
+            .ok_or_else(|| format!("the model determines no value of the aggregate `{name}`"))?;
+            row.insert(name.as_str(), value);
+        }
+        rows.push(answer(row)?);
+    }
+    Ok(rows)
+}
+
+/// `row`, one row of an aggregate view as ESS values, as JSON: a number ESS spells as an integer
+/// (a `count`, an `Integer` `sum`, an integral `Decimal`) as that integer, any other value as ESS
+/// writes it ([`Node`]'s serialisation, a `Decimal` as its binary64, as the kernel writes one).
+/// Every field is answered, an absent one (an `avg` over no value, an `Optional` group key the
+/// group's rows hold nothing for) as `null`, as ESS's interpreter writes an aggregate row whatever
+/// the field's presence (`ess-conformance` `src/interpret/views.rs:393` and `:429` at ESS 0.92.0)
+/// and as its suite expects one (`<view>/aggregate`, `rating = null`).
+///
+/// # Errors
+/// Naming the field whose value ESS writes no JSON of.
+fn answer(row: BTreeMap<&str, Node>) -> Result<Map<String, Value>, String> {
+    let mut answered = Map::new();
+    for (name, value) in row {
+        let json = match &value {
+            Node::Null => Value::Null,
+            Node::Number(number) => match number.as_i64() {
+                Some(integer) => Value::from(integer),
+                None => serde_json::to_value(&value)
+                    .map_err(|error| format!("the aggregate `{name}`: {error}"))?,
+            },
+            _ => serde_json::to_value(&value)
+                .map_err(|error| format!("the field `{name}`: {error}"))?,
+        };
+        answered.insert(name.to_owned(), json);
+    }
+    Ok(answered)
 }
 
 /// The rows the references of one source row name, as they stand now, by the source field each
