@@ -1,0 +1,38 @@
+domain: probe.access
+summary: A grant is given to one person; every grant of a person is revoked together.
+entities:
+  - name: probe.access.Grant
+    identity: {name: grant_id, type: String}
+    fields:
+      - {name: person, type: String}
+    lifecycle: {initial: Active, states: [Active], terminal: [Active]}
+events:
+  - name: probe.access.Given
+    fields: [{name: grant_id, type: String}]
+  - name: probe.access.Revoked
+    fields: [{name: person, type: String}]
+commands:
+  - name: probe.access.GiveGrant
+    input:
+      - {name: grant_id, type: String}
+      - {name: person, type: String}
+    outcomes:
+      - name: given
+        creates: probe.access.Grant
+        instance: grant_id
+        sets: {person: input.person}
+        emits: [probe.access.Given]
+        payload:
+          probe.access.Given: {grant_id: input.grant_id}
+        summary: The grant is given.
+  - name: probe.access.RevokeAll
+    input:
+      - {name: person, type: String}
+    outcomes:
+      - name: revoked
+        deletes: probe.access.Grant
+        instances: {where: person == input.person}
+        emits: [probe.access.Revoked]
+        payload:
+          probe.access.Revoked: {person: input.person}
+        summary: Every grant of the person is revoked.
