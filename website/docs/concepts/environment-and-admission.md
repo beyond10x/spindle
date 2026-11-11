@@ -199,3 +199,26 @@ the server does not delay it, another process's commits on the same tables (a ro
 not wait for it, and it holds the entity's rows in memory, not the log. A log holding writes of
 the SQLite store of 0.10.0 or earlier, which name no instances, is read whole, at one snapshot,
 instead. The SQLite store keeps reading a scan from its file's whole log, page by page.
+
+### Moving a state directory into PostgreSQL
+
+A `run --state` directory keeps one `<component>.sqlite` file per component. `b10x-spindle state
+move --from <dir> <spec> --environment <env>` moves that state into the tables of every component
+the environment binds to `postgres`, with the settings `run` reads: on a hosted database the
+tables come from `store migrate` first, and `database_url` names the serving role. Each file is
+read without creating anything, and its events are appended in their order, the events of one
+write in one transaction, so every stream keeps its versions: `run` on PostgreSQL answers every
+view as the run on the directory did, and a command decided after the move names the version the
+directory's last write left. Event ids and recording times are new. One line per component:
+
+```console
+$ b10x-spindle state move --from target/rally-state examples/rally/ess --environment examples/environments/postgres.toml
+{"component":"rally-player-east","events":6,"streams":2}
+{"component":"rally-player-west","events":6,"streams":2}
+{"component":"rally-table","events":12,"streams":2}
+```
+
+Stop Spindle first: the move does not keep another process off the directory. It exits 1, writing
+nothing, when the directory lacks a component's file or a component's tables already hold a
+stream, naming them. A move that fails partway leaves a partial copy, which the next move refuses:
+drop the component's tables (or the schema), run `store migrate` and move again.

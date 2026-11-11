@@ -59,6 +59,8 @@ mod mint;
 mod postgres;
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
 mod sqlite;
+#[cfg(all(feature = "sqlite", feature = "postgres"))]
+mod state_move;
 mod store;
 mod supported;
 mod typed;
@@ -81,6 +83,8 @@ pub use postgres::{
 pub use sqlite::LogStore;
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteStore;
+#[cfg(all(feature = "sqlite", feature = "postgres"))]
+pub use state_move::{Moved, Source as StateSource, Target as StateTarget};
 pub use store::{
     Change, EVERY_INSTANCE, MemoryStore, Removal, Row, Scan, Scanned, Store, StoreError, Stored,
     Write,

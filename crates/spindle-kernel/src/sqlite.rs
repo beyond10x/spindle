@@ -45,7 +45,7 @@ use crate::store::{
 /// The table prefix Spindle's events are kept under.
 pub(crate) const PREFIX: &str = "spindle";
 /// The one tenant a single Spindle process holds.
-const TENANT: &str = "local";
+pub(crate) const TENANT: &str = "local";
 /// The event that carries an instance's row after a change.
 const ROW: &str = "spindle.row";
 /// The event that ends the stream of a removed instance (`deletes:`).
@@ -155,6 +155,12 @@ impl<L: Log> LogStore<L> {
             tenant,
             runtime,
         })
+    }
+
+    /// The event store and the runtime its calls block on: what a state move appends through.
+    #[cfg(all(feature = "sqlite", feature = "postgres"))]
+    pub(crate) fn into_parts(self) -> (L, tokio::runtime::Runtime) {
+        (self.log, self.runtime)
     }
 
     fn stream(&self, entity: &str, identity: &Value) -> Result<StreamId, StoreError> {

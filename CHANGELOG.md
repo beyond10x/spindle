@@ -33,6 +33,14 @@ are Spindle's releases.
   idempotent (a second one started meanwhile waits for the first), one JSON line per component. `examples/environments/postgres.toml`; `task check:postgres` runs the database cases
   against `SPINDLE_TEST_DATABASE_URL` and `SPINDLE_TEST_DATABASE_CA`, and CI's `PostgreSQL` job
   runs it on PostgreSQL 17 with TLS. `run` reading stdin refuses `postgres`.
+- `b10x-spindle state move --from <dir> <spec> --environment <env>` moves the state a `run
+  --state` directory holds into the PostgreSQL tables of every component bound to `postgres`, with
+  the settings `run` reads: each `<component>.sqlite`, opened without creating anything, appended
+  in commit order, one transaction per write it recorded, so every stream keeps its versions and a
+  command decided after the move names the version the directory's last write left. It exits 1,
+  writing nothing, when the directory lacks a component's file or a component's tables already
+  hold a stream, and prints one line per component (`component`, `streams`, `events`). Spindle is
+  stopped first; a move that fails partway leaves a partial copy the next move refuses.
 
 ### Changed
 

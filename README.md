@@ -114,7 +114,7 @@ prefix; an exact key wins over it.
 |---|---|
 | `memory` | in the process, gone when it ends |
 | `sqlite` | one SQLite file per component (`run --state`) |
-| `postgres` | the tables `spindle_<component>_*` of the PostgreSQL the settings `database_url`, `database_ca`, `database_schema`, `database_pool` and `database_connections` name; `b10x-spindle store migrate` creates them ([environment and admission](https://beyond10x.github.io/spindle/docs/concepts/environment-and-admission#state-in-postgresql)) |
+| `postgres` | the tables `spindle_<component>_*` of the PostgreSQL the settings `database_url`, `database_ca`, `database_schema`, `database_pool` and `database_connections` name; `b10x-spindle store migrate` creates them ([environment and admission](https://beyond10x.github.io/spindle/docs/concepts/environment-and-admission#state-in-postgresql)); `b10x-spindle state move` moves a `run --state` directory into them, versions kept ([moving a state directory](https://beyond10x.github.io/spindle/docs/concepts/environment-and-admission#moving-a-state-directory-into-postgresql)) |
 | `indexeddb` | one IndexedDB database per component, in the Service Worker host |
 
 ## Layout

@@ -52,7 +52,7 @@ fn count(name: &str) -> Result<Option<usize>> {
 }
 
 /// The database the settings name.
-fn database() -> Result<Database> {
+pub(crate) fn database() -> Result<Database> {
     let url = setting("database_url")?.with_context(|| {
         format!(
             "store.durable is bound to postgres, which needs the setting database_url ({}): \
@@ -73,7 +73,10 @@ fn database() -> Result<Database> {
 }
 
 /// Every component of `ir` whose `store.durable` admission binds to `postgres` on `environment`.
-fn components(ir: &EssIr, environment: &Environment) -> Result<Vec<String>, spindle_host::Refusal> {
+pub(crate) fn components(
+    ir: &EssIr,
+    environment: &Environment,
+) -> Result<Vec<String>, spindle_host::Refusal> {
     Ok(spindle_host::admit(ir, environment)?
         .into_iter()
         .filter(|(_, bindings)| {

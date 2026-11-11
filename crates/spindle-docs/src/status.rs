@@ -134,6 +134,13 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "State moved into PostgreSQL",
+        "state move copies a run --state directory's streams into the PostgreSQL tables of every component bound to postgres, versions kept: run on PostgreSQL then answers every view as the run on the directory did, and a command decided after the move names the version the directory's last write left. A directory missing a component's file, or tables already holding a stream, is refused before anything is written.",
+        "/docs/concepts/environment-and-admission#moving-a-state-directory-into-postgresql",
+        "crates/spindle-cli/tests/spindle-cli/state_move.rs::state_moves_into_postgres_and_answers_as_before",
+    ),
+    shipped(
+        "Execution",
         "Service Worker host",
         "spindle-wasm compiles a specification in the browser, admits it on a browser environment (ingress.network bound to service-worker) and answers its routes and the console routes from a Service Worker through the same router the loopback listener calls, state in IndexedDB and external outcomes answered from a decisions file; web/ is the Vue shell that registers the worker.",
         "/docs/concepts/environment-and-admission",

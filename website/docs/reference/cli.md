@@ -24,6 +24,7 @@ Exit statuses: `0` success, `1` an error (printed on stderr as `b10x-spindle: â€
 | [`deploy`](#deploy) | Deploy a specification: place and launch every instance of a placement, collect what they send, and serve the read-only observe API and UI on 127.0.0.1 until SIGINT, SIGTERM or SIGHUP |
 | [`conform`](#conform) | Run a specification's conformance suite against every component in one process |
 | [`store`](#store) | Manage where a specification's state is kept |
+| [`state`](#state) | Move a specification's state from one store into another |
 
 ## `check`
 
@@ -217,3 +218,29 @@ b10x-spindle store migrate --environment <ENVIRONMENT> <SPEC>
 |---|---|---|---|
 | `<SPEC>` | yes |  | The specification directory |
 | `--environment <ENVIRONMENT>` | yes |  | The `spindle-environment/1` document |
+
+## `state`
+
+Move a specification's state from one store into another
+
+```console
+b10x-spindle state <COMMAND>
+```
+
+## `state move`
+
+Move the state a `run --state` directory holds into the PostgreSQL tables of every component whose `store.durable` is bound to `postgres`, every stream at its versions.
+
+Stop Spindle first: the move does not keep another process off the directory. Each component's `<component>.sqlite` is read, creating nothing, and its events appended in their order into the tables `spindle_<component>_*`, the events one write recorded as one transaction, so a command decided after the move names the version the directory's last write left. Event ids and recording times are new. The settings are the ones `run` reads (`database_url`, `database_ca`, `database_schema`, `database_pool`, `database_connections`); on a hosted database `store migrate` creates the tables first and `database_url` names the serving role.
+
+Exits 1, writing nothing, when the directory lacks a component's file or a component's tables already hold a stream, naming them. A move that fails partway leaves a partial copy the next move refuses: drop the component's tables, run `store migrate` and move again. Prints one line per component, `{"component": "<component>", "streams": <n>, "events": <n>}`. Exits 3, moving nothing, when admission is refused.
+
+```console
+b10x-spindle state move --from <FROM> --environment <ENVIRONMENT> <SPEC>
+```
+
+| Argument | Required | Default | Meaning |
+|---|---|---|---|
+| `--from <FROM>` | yes |  | The state directory `run --state` kept: one `<component>.sqlite` per component |
+| `<SPEC>` | yes |  | The specification directory |
+| `--environment <ENVIRONMENT>` | yes |  | The `spindle-environment/1` document binding `store.durable` to `postgres` |

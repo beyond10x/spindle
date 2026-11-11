@@ -9,6 +9,7 @@ mod deploy;
 mod replay;
 mod scaled;
 mod serve;
+mod state;
 mod world;
 
 use std::collections::BTreeMap;
@@ -24,7 +25,7 @@ use clap::Parser;
 use decisions::Answers;
 use signal_hook::consts::{SIGINT, SIGTERM};
 use spindle_capability::{Admission, Capability, Environment, Requirements};
-use spindle_cli::cli::{Cli, Command, StoreCommand};
+use spindle_cli::cli::{Cli, Command, StateCommand, StoreCommand};
 use spindle_host::{Host, HostError, rally};
 use spindle_kernel::{External, MemoryStore, SqliteStore, Store};
 
@@ -261,6 +262,14 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Command::Store {
             command: StoreCommand::Migrate { spec, environment },
         } => database::migrate(&spec, &environment),
+        Command::State {
+            command:
+                StateCommand::Move {
+                    from,
+                    spec,
+                    environment,
+                },
+        } => state::move_from(&from, &spec, &environment),
     }
 }
 
