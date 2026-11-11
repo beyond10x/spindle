@@ -1,0 +1,25 @@
+format: ess/34
+system: beacons
+version: v1
+summary: Beacons lit, doused, pinged and dimmed, each outcome publishing an event whether or not it writes a row.
+domains:
+  - beacons.tower
+components:
+  - component: tower
+    summary: Lights, douses, pings and dims beacons.
+    owns:
+      domains:
+        - beacons.tower
+    accepts:
+      commands:
+        - beacons.tower.Light
+        - beacons.tower.Douse
+        - beacons.tower.Ping
+        - beacons.tower.Dim
+    publishes:
+      events:
+        - beacons.tower.Lit
+        - beacons.tower.Doused
+        - beacons.tower.Pinged
+        - beacons.tower.Dimmed
+    reached_by: in_process

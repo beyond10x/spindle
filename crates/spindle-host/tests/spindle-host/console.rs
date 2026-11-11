@@ -87,8 +87,9 @@ fn close(host: &mut Host, task: &str) -> bool {
             .any(|ran| ran.command == "tasks.ledger.RecordClosure")
 }
 
-fn published(host: &Host) -> Vec<(String, String, String, Value)> {
+fn published(host: &mut Host) -> Vec<(String, String, String, Value)> {
     host.published()
+        .expect("the events read")
         .iter()
         .map(|published| {
             (
@@ -104,7 +105,10 @@ fn published(host: &Host) -> Vec<(String, String, String, Value)> {
 #[test]
 fn the_host_keeps_every_event_published_in_order() {
     on_every_store(|name, host| {
-        assert!(host.published().is_empty(), "{name}");
+        assert!(
+            host.published().expect("the events read").is_empty(),
+            "{name}"
+        );
         open(host, "t1", "First");
         open(host, "t2", "Second");
         assert!(close(host, "t1"), "{name}");
@@ -163,7 +167,10 @@ fn a_reset_empties_every_store_and_the_published_events() {
             .reset()
             .unwrap_or_else(|error| panic!("{name}: {error}"));
         assert_eq!(emptied, ["board", "ledger"], "{name}");
-        assert!(host.published().is_empty(), "{name}");
+        assert!(
+            host.published().expect("the events read").is_empty(),
+            "{name}"
+        );
         for view in ["tasks.board.AllTasks", "tasks.board.OpenTasks"] {
             assert_eq!(
                 host.list(view).expect("lists"),

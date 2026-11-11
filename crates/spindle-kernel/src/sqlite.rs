@@ -20,6 +20,12 @@
 //! reads the entity's stream, unless the log is marked as holding such writes ([`MARKS`]) or the
 //! entity's stream holds one.
 //!
+//! A write attributed to a command ([`Store::attribute`]) names it in each of its `spindle.written`
+//! events too (`"origin": {"command", "sequence"}`). The events the commands committed are read
+//! back from the tenant's feed past a position ([`Store::events_after`]), each at the feed
+//! position of its append group's last event and attributed as its group's `spindle.written`
+//! events name.
+//!
 //! The encoding is the store's, not SQLite's: [`LogStore`] keeps it on any eventlog event store
 //! that appends groups and answers the tenant's whole log ([`Log`]), and the PostgreSQL store
 //! (`PostgresStore`, the `postgres` feature) is the same store on PostgreSQL.
@@ -35,7 +41,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(feature = "sqlite")]
 use std::sync::{Condvar, Mutex, PoisonError};
 
-#[cfg(feature = "sqlite")]
 use eventlog_core::EventStore;
 use eventlog_core::{
     AppendGroup, CommandMeta, EventLogError, Expected, MAX_READ_LIMIT, NewEvent, Read, ReadResult,
@@ -47,8 +52,8 @@ use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::store::{
-    Change, Position, Reading, Removal, Row, Scan, Scanned, Store, StoreError, Stored, Write,
-    first_writes, identity_from_key, moved,
+    Change, Committed, Origin, Position, Reading, Removal, Row, Scan, Scanned, Store, StoreError,
+    Stored, Write, first_writes, identity_from_key, moved,
 };
 
 /// The table prefix Spindle's events are kept under.
@@ -64,6 +69,22 @@ pub(crate) const WRITTEN: &str = "spindle.written";
 /// The schema of a `spindle.written` event that names the instances its write left
 /// ([`Written`]). One of schema [`SCHEMA`], as the store of 0.10.0 wrote it, names none.
 pub(crate) const WRITTEN_SCHEMA: u32 = 2;
+/// The field of a `spindle.written` event's body naming the command its write was attributed to
+/// ([`Store::attribute`]): `{"command": <qualified name>, "sequence": <n>}`. A write attributed
+/// to none, and every write of a release before it, carries none.
+const ORIGIN: &str = "origin";
+/// The stream of the events a command committed with no row ([`Store::commit_events`]): each
+/// such write appends them, then one [`PUBLISHED_END`] event naming the command under
+/// [`ORIGIN`]. Of the stream type [`MARKS`] is of, which a scan and a state move count as no
+/// entity's.
+pub(crate) const PUBLISHED: (&str, &str) = ("spindle:log", "published");
+/// The event closing each write of [`PUBLISHED`].
+const PUBLISHED_END: &str = "spindle.published";
+/// The stream a reset of a store emptied in place appends one [`RESET_MARK`] event to
+/// ([`Store::forget_events`]): the events read back are those committed after the last.
+pub(crate) const RESET: (&str, &str) = ("spindle:log", "reset");
+/// The event of [`RESET`].
+const RESET_MARK: &str = "spindle.reset";
 /// The stream type of the streams carrying an entity's version, one per entity: no qualified
 /// entity name holds a colon.
 pub(crate) const ENTITY: &str = "spindle:entity";
@@ -152,6 +173,9 @@ pub struct LogStore<L> {
     /// since the fold relies on SQLite's single writer ([`RestingRows`]); `None` on PostgreSQL.
     #[cfg(feature = "sqlite")]
     rows: Option<Arc<RestingRows>>,
+    /// The command the writes are attributed to ([`Store::attribute`]): each write's
+    /// `spindle.written` events carry it.
+    origin: Option<Origin>,
 }
 
 /// The store is closed: its reading handle opens no further connection by its path.
@@ -266,6 +290,7 @@ impl<L: Log> LogStore<L> {
             retired: Arc::default(),
             #[cfg(feature = "sqlite")]
             rows: None,
+            origin: None,
         })
     }
 
@@ -284,6 +309,7 @@ impl<L: Log> LogStore<L> {
             retired: Arc::default(),
             #[cfg(feature = "sqlite")]
             rows: None,
+            origin: None,
         }
     }
 
@@ -493,7 +519,10 @@ impl<L: Log> Store for LogStore<L> {
         }
         let mut appends = Vec::with_capacity(instances.len() + marks.len());
         for (entity, expected) in marks {
-            let body = written.remove(entity).unwrap_or_default().body();
+            let mut body = written.remove(entity).unwrap_or_default().body();
+            if let (Some(origin), Value::Object(fields)) = (&self.origin, &mut body) {
+                fields.insert(ORIGIN.to_owned(), origin_body(origin));
+            }
             appends.push(StreamAppend {
                 stream: self.entity_stream(entity)?,
                 expected,
@@ -560,6 +589,106 @@ impl<L: Log> Store for LogStore<L> {
         }
         self.reading.clone()
     }
+
+    fn attribute(&mut self, origin: Option<Origin>) {
+        self.origin = origin;
+    }
+
+    /// Appends `events` to the stream [`PUBLISHED`], closed by a `spindle.published` event
+    /// naming the command they are attributed to, as one append group. The group is conditioned
+    /// on `scanned` as [`Store::commit_all`] conditions one: one `spindle.written` event naming
+    /// no instance appended to the stream of each entity, at the version its scan answered.
+    fn commit_events(
+        &mut self,
+        events: &[crate::Event],
+        scanned: &[Scanned],
+    ) -> Result<(), StoreError> {
+        if events.is_empty() {
+            return Ok(());
+        }
+        for scanned in scanned {
+            self.unmoved(scanned)?;
+        }
+        let mut appends = Vec::with_capacity(scanned.len() + 1);
+        for scanned in scanned {
+            let mut body = Written::default().body();
+            if let (Some(origin), Value::Object(fields)) = (&self.origin, &mut body) {
+                fields.insert(ORIGIN.to_owned(), origin_body(origin));
+            }
+            appends.push(StreamAppend {
+                stream: self.entity_stream(&scanned.entity)?,
+                expected: match scanned.version {
+                    0 => Expected::NoStream,
+                    version => Expected::Exact(version),
+                },
+                events: vec![NewEvent::new(WRITTEN, WRITTEN_SCHEMA, body).map_err(backend)?],
+            });
+        }
+        let mut body = serde_json::Map::new();
+        if let Some(origin) = &self.origin {
+            body.insert(ORIGIN.to_owned(), origin_body(origin));
+        }
+        let end = NewEvent::new(PUBLISHED_END, SCHEMA, Value::Object(body)).map_err(backend)?;
+        let (kind, id) = PUBLISHED;
+        appends.push(StreamAppend {
+            stream: StreamId::new(self.tenant.clone(), kind, id).map_err(backend)?,
+            expected: Expected::Any,
+            events: recorded(events, end)?,
+        });
+        match self.append(appends) {
+            Ok(()) => {
+                // As after a write group: the entity versions it moved are folded in now.
+                #[cfg(feature = "sqlite")]
+                if let Some(rows) = &self.rows {
+                    drop(self.caught_up(rows));
+                }
+                Ok(())
+            }
+            Err(EventLogError::Conflict { .. }) => {
+                for scanned in scanned {
+                    self.unmoved(scanned)?;
+                }
+                Err(StoreError::Backend(
+                    "another writer moved an entity while the events were appended".to_owned(),
+                ))
+            }
+            Err(other) => Err(backend(other)),
+        }
+    }
+
+    /// Appends one `spindle.reset` event to the stream [`RESET`]: the events read back are
+    /// those committed after the last such event ([`LogStore::committed_after`]).
+    fn forget_events(&mut self) -> Result<(), StoreError> {
+        let mark = NewEvent::new(RESET_MARK, SCHEMA, Value::Object(serde_json::Map::new()))
+            .map_err(backend)?;
+        let (kind, id) = RESET;
+        self.append(vec![StreamAppend {
+            stream: StreamId::new(self.tenant.clone(), kind, id).map_err(backend)?,
+            expected: Expected::Any,
+            events: vec![mark],
+        }])
+        .map_err(backend)
+    }
+
+    fn events_after(&mut self, position: u64) -> Result<Vec<Committed>, StoreError> {
+        self.committed_after(position)
+    }
+}
+
+impl<L: Log> LogStore<L> {
+    /// Appends `appends` as one append group.
+    fn append(&self, appends: Vec<StreamAppend>) -> Result<(), EventLogError> {
+        let entries: Vec<&Vec<NewEvent>> = appends.iter().map(|append| &append.events).collect();
+        let hash =
+            request_hash(&entries).map_err(|error| EventLogError::Backend(error.to_string()))?;
+        let group = AppendGroup {
+            tenant: self.tenant.clone(),
+            meta: meta(hash),
+            appends,
+        };
+        self.runtime.block_on(self.log.append_group(&group))?;
+        Ok(())
+    }
 }
 
 /// The reading handle of a store whose event store reads from any thread through a pool of its
@@ -600,6 +729,12 @@ impl<L: Log> Reading for SharedReading<L> {
     /// its scans do ([`Checked`]); each read of the position takes a turn as a scan does.
     fn at(&self, entities: &[String]) -> Result<Box<dyn Position + '_>, StoreError> {
         Ok(Box::new(Checked::new(&self.store, &self.turns, entities)))
+    }
+
+    /// Reads the feed through the store's own pool on a turn, as a scan does.
+    fn events_after(&self, position: u64) -> Result<Vec<Committed>, StoreError> {
+        let _turn = self.turns.take()?;
+        self.store.committed_after(position)
     }
 }
 
@@ -786,6 +921,118 @@ impl<L: Log> Position for Checked<'_, L> {
         }
         Ok(true)
     }
+}
+
+/// The events of one append group read from the feed: what [`LogStore::committed_after`] answers
+/// for it.
+struct Group {
+    /// The request id every event of the group carries.
+    request: String,
+    /// The feed position of its last event.
+    position: u64,
+    origin: Option<Origin>,
+    events: Vec<crate::Event>,
+}
+
+impl<L: Log> LogStore<L> {
+    /// Every event committed by an append group after the one ending at feed position
+    /// `position`, in commit order, each at its group's last feed position, attributed to the
+    /// command its group's `spindle.written` events name. The feed is read to its end, a page of
+    /// [`FEED_PAGE`] at a time; an append group commits whole, so every group read is read whole.
+    /// The rows, removals and entity versions the groups appended are left out, so a group that
+    /// committed no event of a command answers nothing.
+    fn committed_after(&self, position: u64) -> Result<Vec<Committed>, StoreError> {
+        let mut groups: Vec<Group> = Vec::new();
+        let mut at = position;
+        loop {
+            let page = self
+                .runtime
+                .block_on(self.log.read_feed(&self.tenant, at, FEED_PAGE))
+                .map_err(backend)?;
+            for event in page.events {
+                if groups
+                    .last()
+                    .is_none_or(|group| group.request != event.request_id)
+                {
+                    groups.push(Group {
+                        request: event.request_id.clone(),
+                        position: event.global_seq,
+                        origin: None,
+                        events: Vec::new(),
+                    });
+                }
+                let Some(group) = groups.last_mut() else {
+                    continue;
+                };
+                group.position = group.position.max(event.global_seq);
+                if event.stream_type == ENTITY {
+                    if event.name == WRITTEN && group.origin.is_none() {
+                        group.origin = origin_of(&event.data);
+                    }
+                    continue;
+                }
+                let stream = (event.stream_type.as_str(), event.stream_id.as_str());
+                if stream == RESET {
+                    groups.clear();
+                    continue;
+                }
+                if stream == PUBLISHED && event.name == PUBLISHED_END {
+                    if group.origin.is_none() {
+                        group.origin = origin_of(&event.data);
+                    }
+                    continue;
+                }
+                if stream == MARKS || event.name == ROW || event.name == REMOVED {
+                    continue;
+                }
+                let Value::Object(payload) = event.data else {
+                    return Err(StoreError::Backend(format!(
+                        "the event {} at version {} of the stream {} {} carries no payload \
+                         object",
+                        event.name, event.version, event.stream_type, event.stream_id
+                    )));
+                };
+                group.events.push(crate::Event {
+                    name: event.name,
+                    payload,
+                });
+            }
+            if !page.has_more {
+                break;
+            }
+            if page.next_position <= at {
+                return Err(StoreError::Backend(format!(
+                    "the feed did not move past position {at}"
+                )));
+            }
+            at = page.next_position;
+        }
+        Ok(groups
+            .into_iter()
+            .flat_map(|group| {
+                let (position, origin) = (group.position, group.origin);
+                group.events.into_iter().map(move |event| Committed {
+                    position,
+                    origin: origin.clone(),
+                    event,
+                })
+            })
+            .collect())
+    }
+}
+
+/// What a body names `origin` as, under [`ORIGIN`].
+fn origin_body(origin: &Origin) -> Value {
+    serde_json::json!({"command": origin.command, "sequence": origin.sequence})
+}
+
+/// The command a `spindle.written` event's body names under [`ORIGIN`], if it names one.
+fn origin_of(body: &Value) -> Option<Origin> {
+    let origin = body.get(ORIGIN)?;
+    Some(Origin {
+        command: origin.get("command")?.as_str()?.to_owned(),
+        sequence: origin.get("sequence")?.as_u64()?,
+    })
 }
 
 impl<L: Log> LogStore<L> {
@@ -1527,6 +1774,10 @@ impl Reading for SqliteReading {
 
     fn counts(&self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
         self.with(|connection| connection.counts(entities))
+    }
+
+    fn events_after(&self, position: u64) -> Result<Vec<Committed>, StoreError> {
+        self.with(|connection| connection.committed_after(position))
     }
 
     /// The entities taken from the resting rows a connection caught up ([`LogStore::taken`]);

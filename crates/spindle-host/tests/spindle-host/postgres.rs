@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde_json::{Value, json};
 use spindle_host::{Host, ManualClock, Stores};
 use spindle_kernel::{Database, PostgresStore, Store};
 
@@ -44,12 +45,16 @@ fn fresh() -> String {
 /// A host of the rows fixture whose component `desk` keeps its state in a PostgreSQL store of
 /// its own, opened as `run` opens it, with `pool` connections.
 fn host(pool: usize) -> Host {
+    host_on(pool, &fresh())
+}
+
+/// [`host`], keeping `desk` under the component name `component`.
+fn host_on(pool: usize, component: &str) -> Host {
     let url = std::env::var("SPINDLE_TEST_DATABASE_URL")
         .expect("SPINDLE_TEST_DATABASE_URL names a loopback PostgreSQL (task check:postgres)");
     let mut database = Database::new(url);
     database.pool = pool;
-    let component = fresh();
-    let store = PostgresStore::open(&database, &component, 1)
+    let store = PostgresStore::open(&database, component, 1)
         .unwrap_or_else(|error| panic!("the store of {component} opens: {error}"));
     let mut stores = Stores::new();
     stores.insert("desk".to_owned(), Box::new(store) as Box<dyn Store>);
@@ -103,4 +108,68 @@ fn reading_a_small_view_does_not_make_the_writer_pay() {
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn a_reader_reads_a_command_once_it_returns() {
     reads_each_command_once_it_returns(host(4));
+}
+
+fn submit(host: &mut Host, command: &str, input: Value) {
+    let Value::Object(input) = input else {
+        panic!("{command}: the input is an object");
+    };
+    let report = host
+        .submit(command, input)
+        .unwrap_or_else(|error| panic!("{command}: {error}"));
+    assert!(report.failed.is_empty(), "{command}: {:?}", report.failed);
+}
+
+/// The events a host lists (`story:events-read-from-store`), by command and event.
+fn listed(host: &mut Host) -> Vec<(String, String)> {
+    host.published()
+        .expect("the events read")
+        .into_iter()
+        .map(|published| (published.command, published.event.name))
+        .collect()
+}
+
+/// A reset of the PostgreSQL store, which it empties in place, is recorded in the store: a host
+/// opened on the same tables later lists only the events published after it. An event of a set
+/// outcome that selected no row is listed too.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_reset_is_kept_across_a_restart() {
+    let component = fresh();
+    let mut first = host_on(2, &component);
+    submit(
+        &mut first,
+        "lending.loans.Lend",
+        json!({"loan_id": "l1", "borrower": "ada", "due": "2026-01-05T00:00:00Z"}),
+    );
+    first.reset().expect("the reset empties the store");
+    submit(
+        &mut first,
+        "lending.loans.Lend",
+        json!({"loan_id": "l2", "borrower": "ada", "due": "2026-01-05T00:00:00Z"}),
+    );
+    submit(
+        &mut first,
+        "lending.loans.MarkOverdue",
+        json!({"as_of": "2025-01-01T00:00:00Z"}),
+    );
+    let since = vec![
+        (
+            "lending.loans.Lend".to_owned(),
+            "lending.loans.Lent".to_owned(),
+        ),
+        (
+            "lending.loans.MarkOverdue".to_owned(),
+            "lending.loans.LoansMarked".to_owned(),
+        ),
+    ];
+    assert_eq!(listed(&mut first), since, "before the restart");
+    drop(first);
+
+    let mut again = host_on(2, &component);
+    assert_eq!(
+        listed(&mut again),
+        since,
+        "after the restart, only what was published after the reset"
+    );
 }

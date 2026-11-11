@@ -75,9 +75,11 @@ fn rests(
 /// Executes `command` with `input` against the instances in `store`.
 ///
 /// Reads the instance the command addresses, selects the outcome, and commits that outcome's
-/// change in one [`Store::commit`]. A refusal, a `preserves:` outcome and a `refuses: false`
-/// outcome commit nothing; a set outcome (`instances:`), and an outcome with secondary effects
-/// (`affects:`), writes every row it changes, with its events, in one [`Store::commit_all`]. An
+/// change in one [`Store::commit`]. A refusal commits nothing; the events of an outcome that
+/// writes no row (no subject, `preserves:`, a set outcome that selected no row) are a write of
+/// their own ([`Store::commit_events`]), conditioned on the run's scans as a write group is; a
+/// set outcome (`instances:`), and an outcome with secondary effects (`affects:`), writes every
+/// row it changes, with its events, in one [`Store::commit_all`]. An
 /// identity the runtime mints is a random UUIDv4 ([`UuidV4`]).
 ///
 /// # Errors
@@ -1398,12 +1400,14 @@ impl<'a, 'ir> Run<'a, 'ir> {
             self.runs(outcome)?;
             self.publish_reads(outcome, None)?;
             let before = self.before();
-            return Ok(Executed {
+            let executed = Executed {
                 outcome: outcome.name.as_str().to_owned(),
                 events: self.emit(outcome, before)?,
                 error: self.declared_error(outcome, before)?,
                 response: self.response(outcome)?,
-            });
+            };
+            self.store.commit_events(&executed.events, &self.scanned)?;
+            return Ok(executed);
         };
         let entity = self.ir.entity(&subject.entity);
         if let (ResolvedEffect::Deletes, ResolvedInstance::Supplied { .. }) =
@@ -1518,8 +1522,11 @@ impl<'a, 'ir> Run<'a, 'ir> {
             self.at_rest(entity, change)?;
         }
         if affected.is_empty() {
-            if let Some(change) = &change {
-                self.store.commit(change)?;
+            match &change {
+                Some(change) => self.store.commit(change)?,
+                // An outcome that preserves its subject writes no row: its events are a write of
+                // their own, conditioned on the run's scans as a group is.
+                None => self.store.commit_events(&events, &self.scanned)?,
             }
         } else {
             let writes = self.grouped(change.map(Write::Commit), affected, &events);

@@ -116,6 +116,22 @@ are Spindle's releases.
 
 ### Changed
 
+- `GET /api/events` answers the events each component's store committed, read through the
+  store's reading handle beside the host's thread, instead of a list the host kept in memory: a
+  served run no longer grows with every event it publishes, and with `store.durable` bound to
+  `sqlite` or `postgres` the answer is the same after a restart. Every store reads back the events
+  it committed after a position, each with the command its write was attributed to
+  (`Store::events_after`, `Store::attribute`, the memory, SQLite, PostgreSQL and IndexedDB
+  stores); the host attributes each command with a sequence and merges its components' events
+  back into the order it published them. `Host::published` and `Reader::published` now read the
+  stores and answer a `Result`. An event no write of a row carries (an outcome without a subject,
+  one that preserves its subject, or a set outcome that selected no row) is committed to its
+  store on its own, conditioned on the command's scans as a write group is
+  (`Store::commit_events`), and listed as before. A reset of a store the host was given
+  (PostgreSQL) records in the store that its events so far are forgotten
+  (`Store::forget_events`), so a host opened on it later lists none of them; where that record
+  cannot be written the reset fails as when the store cannot be emptied. An event an earlier
+  release committed is listed with an empty `command`.
 - eventlog moves from 0.9.2 to 0.9.3, whose PostgreSQL store answers a batch of reads with one
   statement per 1,000 reads and appends a group in batched statements: a scan of 50,000
   instances, or one write of 20,000, no longer takes one round trip per instance. One command's

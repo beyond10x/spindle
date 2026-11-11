@@ -6,7 +6,10 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock};
 
 use serde_json::Value;
-use spindle_kernel::{Change, Position, Reading, Removal, Scan, Store, StoreError, Stored, Write};
+use spindle_kernel::{
+    Change, Committed, Event, Origin, Position, Reading, Removal, Scan, Scanned, Store, StoreError,
+    Stored, Write,
+};
 
 /// A component's store with the rows each entity it owns holds: counted once from the store when
 /// it is opened ([`Store::counts`]), then moved by each write that lands. The store refuses a
@@ -113,6 +116,11 @@ impl Reading for Gated {
     fn counts(&self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
         let _passed = self.gate.enter();
         self.reading.counts(entities)
+    }
+
+    fn events_after(&self, position: u64) -> Result<Vec<Committed>, StoreError> {
+        let _passed = self.gate.enter();
+        self.reading.events_after(position)
     }
 
     /// The position, read past the gate for as long as it is held: a reset waits for it.
@@ -332,5 +340,21 @@ impl Store for Counted {
 
     fn reading(&mut self) -> Option<Arc<dyn Reading>> {
         self.store.reading()
+    }
+
+    fn attribute(&mut self, origin: Option<Origin>) {
+        self.store.attribute(origin);
+    }
+
+    fn commit_events(&mut self, events: &[Event], scanned: &[Scanned]) -> Result<(), StoreError> {
+        self.store.commit_events(events, scanned)
+    }
+
+    fn forget_events(&mut self) -> Result<(), StoreError> {
+        self.store.forget_events()
+    }
+
+    fn events_after(&mut self, position: u64) -> Result<Vec<Committed>, StoreError> {
+        self.store.events_after(position)
     }
 }

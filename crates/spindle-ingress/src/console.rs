@@ -82,15 +82,24 @@ pub fn model(ir: &EssIr) -> String {
 }
 
 /// What `GET /api/events` answers: `200` with `{"events": [...]}`, each event the host published
-/// as `{"component", "command", "event", "payload"}`, in the order published.
-pub fn events(host: &Host) -> Answer {
-    listed(&host.published())
+/// as `{"component", "command", "event", "payload"}`, in the order published, read from the
+/// stores that committed them ([`Host::published`]); `500` naming why where a store cannot be
+/// read.
+pub fn events(host: &mut Host) -> Answer {
+    answered(host.published())
 }
 
 /// What `GET /api/events` answers, read beside the host's thread through its `reader`, as
-/// [`events`] answers it.
+/// [`events`] answers it ([`Reader::published`]).
 pub fn events_read(reader: &Reader) -> Answer {
-    listed(&reader.published())
+    answered(reader.published())
+}
+
+fn answered(published: Result<Vec<Published>, HostError>) -> Answer {
+    match published {
+        Ok(published) => listed(&published),
+        Err(error) => Answer::refusal(500, error.to_string()),
+    }
 }
 
 /// `200` with `{"events": [...]}`, each of `published` in order.

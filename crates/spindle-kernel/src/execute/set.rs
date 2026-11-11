@@ -35,8 +35,9 @@ impl Run<'_, '_> {
     /// refused, none. The group is conditioned on the scan that selected the rows, and on every
     /// entity a row-set guard scanned ([`Run::condition`]): a row of one written after its scan,
     /// a row the filter would have selected among them, refuses the group as a conflict and
-    /// nothing is written. With no row selected the events are answered and no store records them, as
-    /// for an outcome without a subject.
+    /// nothing is written. With no row selected the events are a write of their own
+    /// ([`Store::commit_events`](crate::Store::commit_events)), as for an outcome without a
+    /// subject, conditioned alike: a row written after the scan that selected none refuses them.
     pub(super) fn take_set(
         &mut self,
         outcome: &ResolvedOutcome,
@@ -99,6 +100,8 @@ impl Run<'_, '_> {
             // written after its scan refuses the whole group.
             self.condition(&mut writes);
             self.store.commit_all(&writes)?;
+        } else {
+            self.store.commit_events(&events, &self.scanned)?;
         }
         Ok(Executed {
             outcome: outcome.name.as_str().to_owned(),

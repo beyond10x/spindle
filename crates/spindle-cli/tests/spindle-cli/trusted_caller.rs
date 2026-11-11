@@ -810,5 +810,8 @@ fn the_router_refuses_every_request_where_the_caller_is_proven_by_a_header() {
             "{method} {path}: no request value carries the proxy's secret"
         );
     }
-    assert!(host.published().is_empty(), "nothing is published");
+    assert!(
+        host.published().expect("the events read").is_empty(),
+        "nothing is published"
+    );
 }

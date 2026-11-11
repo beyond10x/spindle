@@ -14,6 +14,13 @@
 //! the readwrite transactions on one database in the order they were made, so the database
 //! follows the order of the commits.
 //!
+//! `BrowserStore::open` reads every event the database holds into memory too, and the events
+//! each commit records join them: `Store::events_after` answers from there, each event with the
+//! command its write was attributed to (`Store::attribute`), which the database records beside
+//! it. The events another tab commits are read on the next open. Events no instance's write
+//! carries (`Store::commit_events`) are recorded naming none, and `Store::forget_events` records
+//! a mark that every event before it is forgotten, read as such on the next open.
+//!
 //! The [`Store`](spindle_kernel::Store) trait answers synchronously and IndexedDB does not, so a
 //! write lands after the call that made it returns. `BrowserStore::flush` waits for every write
 //! made so far; a reopen of the same database after the handle is dropped reads them all. A write

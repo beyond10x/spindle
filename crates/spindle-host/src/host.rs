@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use ess_compiler::EssIr;
@@ -16,8 +16,8 @@ use spindle_channel::{
     ChannelError, Envelope, Receiver, Route, RouteError, Router, Sender, in_process,
 };
 use spindle_kernel::{
-    Change, Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, Mint, NoExternals,
-    Reading, Row, Seeded, Store, StoreError, Stored, Uuid, UuidV4,
+    Change, Committed, Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, Mint,
+    NoExternals, Origin, Reading, Row, Scanned, Seeded, Store, StoreError, Stored, Uuid, UuidV4,
 };
 use spindle_telemetry::{Counters, CountingStore, Retried, Sink};
 use spindle_timer::{BindingName, Clock, CompleteError, Instant, LifetimeError, Timer};
@@ -412,6 +412,24 @@ impl Store for Tallied<'_> {
         self.store.reading()
     }
 
+    fn attribute(&mut self, origin: Option<Origin>) {
+        self.store.attribute(origin);
+    }
+
+    fn events_after(&mut self, position: u64) -> Result<Vec<Committed>, StoreError> {
+        self.store.events_after(position)
+    }
+
+    /// Kept for [`Host::published`], tallied as no write's: an event no write carries counts
+    /// nothing appended ([`Host::emitted`]).
+    fn commit_events(&mut self, events: &[Event], scanned: &[Scanned]) -> Result<(), StoreError> {
+        self.store.commit_events(events, scanned)
+    }
+
+    fn forget_events(&mut self) -> Result<(), StoreError> {
+        self.store.forget_events()
+    }
+
     fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
         self.store.commit(change)?;
         self.tally(&change.events);
@@ -469,6 +487,22 @@ impl Store for Supplied {
     fn reading(&mut self) -> Option<Arc<dyn Reading>> {
         self.0.reading()
     }
+
+    fn attribute(&mut self, origin: Option<Origin>) {
+        self.0.attribute(origin);
+    }
+
+    fn commit_events(&mut self, events: &[Event], scanned: &[Scanned]) -> Result<(), StoreError> {
+        self.0.commit_events(events, scanned)
+    }
+
+    fn forget_events(&mut self) -> Result<(), StoreError> {
+        self.0.forget_events()
+    }
+
+    fn events_after(&mut self, position: u64) -> Result<Vec<Committed>, StoreError> {
+        self.0.events_after(position)
+    }
 }
 
 struct Component {
@@ -508,8 +542,10 @@ pub struct Host {
     timer: Timer,
     periodic: BTreeMap<String, Periodic>,
     remote: Option<component::Remote>,
-    /// Every event published, in chunks its readers share ([`reader::History`]).
-    published: Arc<RwLock<reader::History>>,
+    /// The sequence the last command run was attributed with ([`Origin::sequence`]): the events
+    /// each component's store committed merge back into the order published by it
+    /// ([`Host::published`]). The host keeps no list of the events itself.
+    sequence: u64,
     /// Every event a store appended since the host started, by the command whose write carried it
     /// and the event: a reset keeps the counts, as it keeps the counters.
     emitted: Arc<Mutex<BTreeMap<(String, String), u64>>>,
@@ -893,7 +929,7 @@ impl Host {
             timer,
             periodic,
             remote: None,
-            published: Arc::default(),
+            sequence: 0,
             emitted: Arc::default(),
             decider: decider.unwrap_or_else(|| Box::new(NoExternals)),
             answers: None,
@@ -961,12 +997,27 @@ impl Host {
         Ok(owner)
     }
 
-    /// Every event a command published since the host started or was last [reset](Self::reset),
-    /// in the order published: a command's own events in emit order, then those of the commands
-    /// they led to. A refused command publishes none. Held in memory: the events of an earlier
-    /// process that kept its state in SQLite are not among them.
-    pub fn published(&self) -> Vec<Published> {
-        reader::listed(&self.published)
+    /// Every event a command committed since its component's store was last
+    /// [reset](Self::reset), in the order published: a command's own events in emit order, then
+    /// those of the commands they led to. A refused command publishes none. An event no write of
+    /// a row carries (one of an outcome without a subject, that preserves its subject, or of a set
+    /// outcome that selected no row) is committed to its store on its own
+    /// ([`Store::commit_events`]).
+    ///
+    /// Read from each component's store ([`Store::events_after`]), not held by the host: a store
+    /// in SQLite or PostgreSQL answers the events of an earlier process too. The stores' events
+    /// merge by the sequence the host attributed each command with ([`Origin::sequence`]), its
+    /// civil time in microseconds or one past the last, whichever is later; an event its store
+    /// holds no command for is answered with an empty `command`.
+    ///
+    /// # Errors
+    /// [`HostError::Store`] when a store cannot be read, or does not read back its events.
+    pub fn published(&mut self) -> Result<Vec<Published>, HostError> {
+        let mut committed = Vec::with_capacity(self.components.len());
+        for (name, component) in &mut self.components {
+            committed.push((name.clone(), component.store.events_after(0)?));
+        }
+        Ok(merged(committed))
     }
 
     /// How many events each command appended since the host started, by command and event,
@@ -1005,7 +1056,6 @@ impl Host {
                     })
                     .collect(),
             ),
-            published: Arc::clone(&self.published),
             emitted: Arc::clone(&self.emitted),
         }
     }
@@ -1015,16 +1065,20 @@ impl Host {
     ///
     /// A store in memory is replaced by an empty one. A store in SQLite is closed, its file and
     /// the SQLite side files beside it moved aside, and an empty one opened at the same path; the
-    /// moved files are removed only once the empty store is open. Periodic bindings keep running,
-    /// and the counters keep their counts. The answers and the mint of the world an earlier
-    /// [`Host::reset_to`] loaded are dropped.
+    /// moved files are removed only once the empty store is open. A store the host was given is
+    /// emptied in place and records that its events so far are forgotten
+    /// ([`Store::forget_events`]), so a host opened on it later does not read them either.
+    /// Periodic bindings keep running, and the counters keep their counts. The answers and
+    /// the mint of the world an earlier [`Host::reset_to`] loaded are dropped.
     ///
     /// # Errors
     /// [`HostError::Reset`] when a component's files cannot be moved aside or the empty store
     /// cannot be opened. Its files are moved back and its store reopened as it was
     /// (`restored: true`); where even that fails, every read and write of that component fails
-    /// from then on, naming why (`restored: false`). The components emptied before it stay
-    /// empty, and the published events are forgotten only when every store was emptied.
+    /// from then on, naming why (`restored: false`). A store the host was given that cannot be
+    /// emptied, or cannot record that its events are forgotten, is lost alike
+    /// (`restored: false`). The components emptied before it stay empty, their events forgotten
+    /// with them; the others keep theirs.
     pub fn reset(&mut self) -> Result<Vec<String>, HostError> {
         self.reset_to(World::default())
     }
@@ -1115,7 +1169,13 @@ impl Host {
         let mut emptied = Vec::new();
         for (name, component) in &mut self.components {
             if matches!(component.kept, Kept::Supplied) {
-                if let Err(error) = removed_all(&self.ir, &mut component.store) {
+                let forgotten = removed_all(&self.ir, &mut component.store).and_then(|()| {
+                    component
+                        .store
+                        .forget_events()
+                        .map_err(|error| format!("forgetting its events: {error}"))
+                });
+                if let Err(error) = forgotten {
                     component.store.replace(Box::new(Lost(format!(
                         "{name}'s store was lost in a reset: {error}"
                     ))));
@@ -1162,10 +1222,6 @@ impl Host {
             }
             emptied.push(name.clone());
         }
-        *self
-            .published
-            .write()
-            .unwrap_or_else(PoisonError::into_inner) = reader::History::default();
         Ok(emptied)
     }
 
@@ -1536,6 +1592,11 @@ impl Host {
             .ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
         let started = Instant::now();
         let clock = &self.clock;
+        self.sequence = following(self.sequence, clock.wall());
+        held.store.attribute(Some(Origin {
+            command: command.to_owned(),
+            sequence: self.sequence,
+        }));
         let mut tallied = Tallied {
             store: &mut held.store,
             appended: Vec::new(),
@@ -1558,6 +1619,7 @@ impl Host {
             refused,
         );
         let appended = tallied.appended;
+        held.store.attribute(None);
         held.sink.executed(command, &result, started.elapsed());
         let mut emitted = self.emitted.lock().unwrap_or_else(PoisonError::into_inner);
         for event in appended {
@@ -1569,17 +1631,6 @@ impl Host {
             Ok(executed) => executed,
             Err(error) => return Ok(Err(error)),
         };
-        if !executed.events.is_empty() {
-            let mut published = self
-                .published
-                .write()
-                .unwrap_or_else(PoisonError::into_inner);
-            published.extend(executed.events.iter().map(|event| Published {
-                component: component.to_owned(),
-                command: command.to_owned(),
-                event: event.clone(),
-            }));
-        }
         if !executed.events.is_empty() {
             held.position += 1;
             for event in &executed.events {
@@ -1773,6 +1824,50 @@ impl Host {
 struct Deliveries {
     count: usize,
     bindings: BTreeSet<String>,
+}
+
+/// The sequence the next command is attributed with, after `last`: the civil time `wall` in
+/// microseconds since the Unix epoch, or one past `last`, whichever is later. So a command's
+/// sequence is greater than every one this host attributed before it, and, as long as the civil
+/// time does not go back between two processes, than every one an earlier process on the same
+/// stores attributed.
+fn following(last: u64, wall: std::time::SystemTime) -> u64 {
+    let micros = wall
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_micros()).unwrap_or(u64::MAX)
+        });
+    micros.max(last.saturating_add(1))
+}
+
+/// The events of every component, each component's in its store's commit order, merged into the
+/// order published: by the sequence each command was attributed with ([`Origin::sequence`]). An
+/// event its store holds no command for keeps the sequence of the event before it in its store,
+/// and a component's events never pass each other, whatever their sequences.
+pub(crate) fn merged(committed: Vec<(String, Vec<Committed>)>) -> Vec<Published> {
+    let mut keyed = Vec::with_capacity(committed.iter().map(|(_, events)| events.len()).sum());
+    for (index, (component, events)) in committed.into_iter().enumerate() {
+        let mut sequence = 0;
+        for (at, committed) in events.into_iter().enumerate() {
+            let command = match committed.origin {
+                Some(origin) => {
+                    sequence = sequence.max(origin.sequence);
+                    origin.command
+                }
+                None => String::new(),
+            };
+            keyed.push((
+                (sequence, index, at),
+                Published {
+                    component: component.clone(),
+                    command,
+                    event: committed.event,
+                },
+            ));
+        }
+    }
+    keyed.sort_by_key(|(key, _)| *key);
+    keyed.into_iter().map(|(_, published)| published).collect()
 }
 
 /// Removes every instance `store` holds of every entity `ir` declares, each at the version it
