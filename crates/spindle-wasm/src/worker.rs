@@ -175,13 +175,20 @@ fn respond(response: &spindle_ingress::Response) -> Result<Response, JsValue> {
     // replaces.
     for (name, value) in &response.headers {
         if !headers.has(name)? {
-            headers.append(name, value)?;
+            headers.append(name, &byte_string(value))?;
         }
     }
     let init = ResponseInit::new();
     init.set_status(response.status);
     init.set_headers(&headers);
     Response::new_with_opt_str_and_init(body, &init)
+}
+
+/// `value`'s UTF-8 bytes as a ByteString, one code point per byte, so a declared header carries the
+/// bytes the native listener and ESS write: `Headers` takes a header value as a ByteString, and
+/// throws on a code point above U+00FF or writes one up to it as a single byte.
+fn byte_string(value: &str) -> String {
+    value.bytes().map(char::from).collect()
 }
 
 async fn opened(config: &str) -> Result<Spindle, String> {
