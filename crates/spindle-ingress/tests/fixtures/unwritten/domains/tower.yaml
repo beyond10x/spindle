@@ -1,0 +1,91 @@
+domain: beacons.tower
+summary: A beacon is lit at a level until it is doused; a ping touches no beacon, and a dim lowers every lit beacon above a level.
+entities:
+  - name: beacons.tower.Beacon
+    identity:
+      name: beacon_id
+      type: String
+    fields:
+      - name: level
+        type: Integer
+    lifecycle:
+      initial: Lit
+      states: [Lit, Out]
+      terminal: [Out]
+      transitions:
+        - {name: douse, from: [Lit], to: Out}
+commands:
+  - name: beacons.tower.Light
+    input:
+      - name: beacon_id
+        type: String
+      - name: level
+        type: Integer
+    outcomes:
+      - name: lit
+        creates: beacons.tower.Beacon
+        instance: beacon_id
+        sets:
+          level: input.level
+        emits: [beacons.tower.Lit]
+        payload:
+          beacons.tower.Lit: {beacon_id: input.beacon_id}
+        summary: The beacon is lit at the level given.
+  - name: beacons.tower.Douse
+    input:
+      - name: beacon_id
+        type: String
+    outcomes:
+      - name: doused
+        moves: beacons.tower.Beacon.douse
+        instance: beacon_id
+        emits: [beacons.tower.Doused]
+        payload:
+          beacons.tower.Doused: {beacon_id: input.beacon_id}
+        summary: The beacon goes out.
+  - name: beacons.tower.Ping
+    input:
+      - name: note
+        type: String
+    outcomes:
+      - name: pinged
+        emits: [beacons.tower.Pinged]
+        payload:
+          beacons.tower.Pinged: {note: input.note}
+        summary: The ping is published; no beacon is touched.
+  - name: beacons.tower.Dim
+    input:
+      - name: above
+        type: Integer
+    outcomes:
+      - name: dimmed
+        updates: beacons.tower.Beacon
+        instances:
+          where:
+            all:
+              - level > input.above
+              - state == Lit
+        sets:
+          level: input.above
+        emits: [beacons.tower.Dimmed]
+        payload:
+          beacons.tower.Dimmed:
+            count: {count: changed}
+        summary: Every lit beacon above the level given is lowered to it.
+events:
+  - name: beacons.tower.Lit
+    fields:
+      - name: beacon_id
+        type: String
+  - name: beacons.tower.Doused
+    fields:
+      - name: beacon_id
+        type: String
+  - name: beacons.tower.Pinged
+    fields:
+      - name: note
+        type: String
+  - name: beacons.tower.Dimmed
+    fields:
+      - name: count
+        type: Integer

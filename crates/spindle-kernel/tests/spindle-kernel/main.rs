@@ -15,6 +15,7 @@ mod adversary_creation_unknown;
 mod adversary_deletes;
 mod adversary_environment;
 mod adversary_existing_instance;
+mod adversary_expressions;
 mod adversary_generated;
 mod adversary_guard_now;
 mod adversary_launch_admission;
@@ -22,35 +23,52 @@ mod adversary_launch_refused;
 mod adversary_look_ahead;
 mod adversary_mint_text;
 mod adversary_placement;
+#[cfg(feature = "postgres")]
+mod adversary_postgres;
+#[cfg(all(feature = "postgres", feature = "sqlite"))]
+mod adversary_postgres_named;
+#[cfg(feature = "postgres")]
+mod adversary_postgres_scan;
 mod adversary_rally;
 mod adversary_related_guards;
 mod adversary_related_values;
 mod adversary_responses;
 mod adversary_row_set;
 mod adversary_scan_version;
+mod adversary_secondary_effects;
 mod adversary_set_outcomes;
+mod adversary_state_move;
 mod adversary_store_contract;
 mod adversary_structured_responses;
+#[cfg(feature = "postgres")]
+mod adversary_w21_store;
 mod caller;
 mod creation_takes_unknown_row;
 mod deletes;
 mod deployment;
 mod error_fields;
 mod existing_instance;
+mod expressions;
 mod generated;
 mod guard_reads_now;
 mod guards;
 mod list_append;
 mod mint;
 mod placement;
+#[cfg(feature = "postgres")]
+mod postgres;
 mod provides;
 mod rally;
 mod related_guards;
 mod related_values;
 mod responses;
+mod resting_rows;
 mod row_set_guards;
 mod scan;
+mod secondary_effects;
 mod set_outcomes;
+#[cfg(all(feature = "postgres", feature = "sqlite"))]
+mod state_move;
 mod store_contract;
 mod structured_responses;
 mod unsupported;

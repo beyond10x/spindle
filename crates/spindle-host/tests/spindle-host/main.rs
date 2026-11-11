@@ -33,6 +33,8 @@ mod concurrent_reads;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod console;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod events_range;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod frame;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod generated;
@@ -45,9 +47,13 @@ mod mint;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod native;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod postgres;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod rally;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod refusal;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod related;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod retries;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]

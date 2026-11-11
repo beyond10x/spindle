@@ -42,7 +42,8 @@ fn the_native_build_is_unchanged() {
         object(json!({"title": "Field notes"})),
     )
     .expect("OpenNotebook runs");
-    let identity = host.published()[0].event.payload["notebook_id"].clone();
+    let identity =
+        host.published().expect("the events read")[0].event.payload["notebook_id"].clone();
     let card = host
         .view("desk.notebooks.NotebookCard", &identity)
         .expect("the view reads")

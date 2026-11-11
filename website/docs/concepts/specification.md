@@ -38,8 +38,11 @@ pinned to a released tag in the workspace `Cargo.toml`.
 1. It reads the instance the command addresses from a store.
 2. It selects the outcome in the order of ESS's precedence plan: input refusals, whether the
    instance exists, what it holds, causes outside the model (`external:`), then the default.
-3. It applies the outcome's effect (`creates:`, `moves:`, `updates:`), checks every written value
-   against its declared type and the instance against its entity's invariants, and commits.
+3. It applies the outcome's effect (`creates:`, `moves:`, `updates:`, `deletes:`), then its
+   secondary effects (`affects:`): each entry moves, updates or removes the rows of its entity its
+   filter selects in the store as it was before the outcome, the subject excepted, in the order
+   written. It checks every written value against its declared type and every row left in place
+   against its entity's invariants, and commits every row in one write, or none.
 4. It returns the events the outcome emits, or the error it declares.
 
 A guard that evaluates to *unknown* refuses the command. It does not take a branch by default.
@@ -58,7 +61,8 @@ construct.
 - A construct that decides which outcome a request selects, a condition or an outcome's shape,
   refuses the whole command before it reads anything.
 - A construct only the selected outcome reads refuses that outcome alone. Examples are a value it
-  would generate of a type the runtime does not mint, and a secondary effect (`affects:`). A
+  would generate of a type the runtime does not mint, and a secondary effect over an input list
+  (an `affects:` entry with `each:`). A
   request that selects the outcome is refused with the outcome in the message, and every other
   outcome of the command runs.
 
@@ -68,8 +72,15 @@ printed once instead, as not served.
 ## Views
 
 A view is answered from the store of the component that owns its source: one row by identity, or a
-list over every instance of the entity, ranked by `order_by: [<field> asc|desc]`. A filter is read
-where each leaf does one of these:
+list over every instance of the entity, ranked by `order_by: [<field> asc|desc]`.
+
+A field read through a reference, `field: {related: {via: resource_id, field: name}}`, answers what
+the row the reference names holds now: a stored field, its identity or its `state`. The row may
+belong to another component. Each row a list names is loaded once by its identity, however many
+rows name it. The field is left out where the reference is empty or names no row, a removed one
+included, as ESS's interpreter answers it. A filter that reads through a reference is refused.
+
+A filter is read where each leaf does one of these:
 
 - compares a field with a literal of its type: `archived == false`, `priority >= 3`. The ordered
   operators apply only where ESS orders the type. A timestamp also compares against `now`, read on

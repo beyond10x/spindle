@@ -726,11 +726,15 @@
           "type": "string"
         },
         "path": {
-          "description": "The request's path, without the query string.",
+          "description": "The request's path, without the query string. At most 2,048 bytes, cut on a character boundary with `…` where longer.",
+          "type": "string"
+        },
+        "query": {
+          "description": "The query string of a console request (`/api/model`, `/api/events`, `/api/reset`), absent where it carried none and for every other request. Each pair is kept in order, empty pairs dropped: `after` and `limit` by name, the value of `after` where the request was answered `200` (a cursor `GET /api/events` answered) and the value of `limit` where it is digits; every other name and value is written `…`. At most 2,048 bytes, as the path, cut with `…` where longer.",
           "type": "string"
         },
         "reason": {
-          "description": "The `refused` text of the answer, as the caller received it, for every class but `served`.",
+          "description": "Why the request was not served, for every class but `served`: the `refused` text of the answer, its words and the names it gives (a field, a type, a route) kept. A value the caller sent is never recorded: every value in the text (a quoted string, a list, an object, a number, `true`, `false` or `null`), and every map key, struct member or input field name the caller sent, is written `…`. At most 512 bytes, cut with `…` where longer. So the record of a refused request holds its method, its path (at most 2,048 bytes) and the names of its route, and under 1 KiB besides, whatever its body held.",
           "type": "string"
         },
         "route": {
@@ -1152,7 +1156,7 @@
           "type": "string"
         },
         "reason": {
-          "description": "Why the input could not be filled, as the runtime words it.",
+          "description": "Why the input could not be filled, as the runtime words it, bounded as a record's `reason` is: its words and the names it gives (the binding, the input, a type) kept, a value the event carried never recorded: every value in the text (a quoted string, a list, an object, a number, `true`, `false` or `null`) is written `…`. At most 512 bytes, cut with `…` where longer.",
           "type": "string"
         }
       },
@@ -1233,8 +1237,8 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-ess-provenance": {
-    "contract_digest": "slice-sha256/2:b90fe1f54ceda24cd981d31bd5aa4ad48f6f03cce7599a033d0d914dbdef6233",
-    "source_digest": "2a6e06f3f85f284455d8a509aa3c9fdca3754041212193e9074e0240eaabb3e8",
+    "contract_digest": "slice-sha256/2:15b6d1987b4f7ad06e11551f56307a57fbe9af860e9933fbccb8dc8496eeb3ea",
+    "source_digest": "ec1572f6d953c4c777f76b6f5502e4990bddd0a7db0e62b030980d6a923209bb",
     "specification_version": "v1",
     "system": "spindle"
   }

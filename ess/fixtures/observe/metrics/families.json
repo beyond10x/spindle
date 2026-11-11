@@ -9,8 +9,8 @@
     {
       "name": "spindle_http_request_duration_seconds",
       "kind": "histogram",
-      "labels": [],
-      "summary": "From a request's head read to its answer handed back, on the listener thread, for every request counted by spindle_http_requests_total."
+      "labels": ["method", "route"],
+      "summary": "From a request's head read to its answer handed back, on the listener thread, for every request counted by spindle_http_requests_total, by method and route template; an unrouted request has an empty route."
     },
     {
       "name": "spindle_commands_total",
@@ -70,7 +70,7 @@
       "name": "spindle_entity_rows",
       "kind": "gauge",
       "labels": ["entity"],
-      "summary": "Rows each entity holds now, kept from the writes this process lands and taken once from its store when the store opens; falls on a reset."
+      "summary": "Rows each entity holds now, kept from the writes this process lands and taken once from its store when the store opens; written from the first scrape that finds the entity holding a row, and falls on a reset."
     },
     {
       "name": "spindle_resets_total",
@@ -83,6 +83,12 @@
       "kind": "counter",
       "labels": ["command", "outcome", "source"],
       "summary": "External causes a served command asked about, by what answered each: world, file, default, call or unanswered."
+    },
+    {
+      "name": "spindle_metrics_scrape_duration_seconds",
+      "kind": "gauge",
+      "labels": [],
+      "summary": "How long the last GET /__spindle/metrics before this one took to read the counts and write them; absent until one was answered."
     }
   ]
 }

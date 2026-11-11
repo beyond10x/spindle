@@ -11,6 +11,14 @@ Binaries for Linux and macOS, x86_64 and aarch64 each, are attached to each
 [GitHub release](https://github.com/beyond10x/spindle/releases) with a `SHA256SUMS` file. This page
 builds `b10x-spindle` from source.
 
+Each released binary carries its dependency list: it is built with
+[`cargo auditable`](https://github.com/rust-secure-code/cargo-auditable), which embeds the crates
+and versions in a `.dep-v0` section. `trivy`, `grype` and `cargo audit bin` read that section, so an
+image scan lists Spindle's crates; `rust-audit-info b10x-spindle` prints it as JSON. The release
+page also carries one CycloneDX SBOM, `b10x-spindle-<version>.cdx.json`, covering the four targets
+and listed in `SHA256SUMS`. A binary built from source with plain `cargo build` carries no list;
+build it with `cargo auditable build` for one.
+
 ## Build
 
 You need Git and Rust. The repository pins its toolchain in `rust-toolchain.toml` (Rust 1.98.1),

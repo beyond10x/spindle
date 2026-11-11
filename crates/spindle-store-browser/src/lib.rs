@@ -7,12 +7,19 @@
 //! versions, conflicts and removed versions), then written in one IndexedDB transaction: the
 //! instance's record and the events the command emitted, together or not at all; the writes of a
 //! set outcome (`Store::commit_all`) are all checked there, then written in one transaction
-//! together, every record and every event, or none of them. A change decided on a scan
-//! (`Change::scanned`) is refused there as a conflict where the entity's version moved since the
+//! together, every record and every event, or none of them. A change or removal decided on a scan
+//! (`Write::scanned`) is refused there as a conflict where the entity's version moved since the
 //! scan: every write of the entity this global scope made or heard moves it, and a write another
 //! tab made that it has not heard yet does not. IndexedDB runs
 //! the readwrite transactions on one database in the order they were made, so the database
 //! follows the order of the commits.
+//!
+//! `BrowserStore::open` reads every event the database holds into memory too, and the events
+//! each commit records join them: `Store::events_after` answers from there, each event with the
+//! command its write was attributed to (`Store::attribute`), which the database records beside
+//! it. The events another tab commits are read on the next open. Events no instance's write
+//! carries (`Store::commit_events`) are recorded naming none, and `Store::forget_events` records
+//! a mark that every event before it is forgotten, read as such on the next open.
 //!
 //! The [`Store`](spindle_kernel::Store) trait answers synchronously and IndexedDB does not, so a
 //! write lands after the call that made it returns. `BrowserStore::flush` waits for every write

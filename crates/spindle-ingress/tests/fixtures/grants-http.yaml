@@ -1,0 +1,26 @@
+type: ess-http/1
+specification:
+  system: vault
+  version: v1
+  source_digest: sha256:8bc3af3237ce4d5f79885a61a81c2bcbe4b98c9e26fd3e0da60ac12bf91ae28b
+routes:
+  - command: vault.ledger.FileEntry
+    method: post
+    path: /entries/{number}
+    parameters: {number: input.number}
+    request: {encoding: form}
+    outcomes:
+      filed: {status: 201}
+  - command: vault.ledger.StampEntry
+    method: get
+    path: /entries/{number}/stamp
+    parameters: {number: input.number}
+    request: {encoding: query}
+    outcomes:
+      stamped: {status: 200}
+  - command: vault.ledger.NoteEntry
+    method: post
+    path: /notes/{number}
+    parameters: {number: input.number}
+    outcomes:
+      noted: {status: 201}

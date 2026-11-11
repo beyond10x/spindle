@@ -2,11 +2,14 @@
 format: aep.planning-md/3
 id: story:command-grant-before-request
 kind: story
-status: draft
+status: active
 title: A command grant is checked before its request is read
 relations:
 - serves: vision:spindle
-revision: 1
+revision: 3
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-11T09:40:08Z", actor: "human:timo", revision: 2}
+- {from: "proposed", to: "active", at: "2026-11-11T09:40:08Z", actor: "human:timo", revision: 3}
 ---
 # A command grant is checked before its request is read
 

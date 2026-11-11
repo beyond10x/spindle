@@ -1,0 +1,129 @@
+domain: vault.ledger
+summary: Entries a clerk files, stamps and notes, swept by anyone, and read by title.
+actors:
+  - name: vault.ledger.Clerk
+    may:
+      - vault.ledger.FileEntry
+      - vault.ledger.StampEntry
+      - vault.ledger.NoteEntry
+      - vault.ledger.EntriesTitled
+  - name: vault.ledger.Visitor
+    may:
+      - vault.ledger.Visit
+entities:
+  - name: vault.ledger.Entry
+    identity:
+      name: number
+      type: Integer
+    fields:
+      - name: title
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+commands:
+  - name: vault.ledger.FileEntry
+    input:
+      - name: number
+        type: Integer
+      - name: title
+        type: String
+    outcomes:
+      - name: filed
+        creates: vault.ledger.Entry
+        instance: number
+        sets:
+          title: input.title
+        emits: [vault.ledger.EntryMade]
+        payload:
+          vault.ledger.EntryMade: {number: input.number}
+        summary: The entry is filed from a form.
+  - name: vault.ledger.StampEntry
+    input:
+      - name: number
+        type: Integer
+      - name: title
+        type: String
+    outcomes:
+      - name: stamped
+        creates: vault.ledger.Entry
+        instance: number
+        sets:
+          title: input.title
+        emits: [vault.ledger.EntryMade]
+        payload:
+          vault.ledger.EntryMade: {number: input.number}
+        summary: The entry is stamped from a query string.
+  - name: vault.ledger.NoteEntry
+    input:
+      - name: number
+        type: Integer
+      - name: title
+        type: String
+    outcomes:
+      - name: noted
+        creates: vault.ledger.Entry
+        instance: number
+        sets:
+          title: input.title
+        emits: [vault.ledger.EntryMade]
+        payload:
+          vault.ledger.EntryMade: {number: input.number}
+        summary: The entry is noted from a JSON body.
+  - name: vault.ledger.SweepEntry
+    input:
+      - name: number
+        type: Integer
+      - name: title
+        type: String
+    outcomes:
+      - name: swept
+        creates: vault.ledger.Entry
+        instance: number
+        sets:
+          title: input.title
+        emits: [vault.ledger.EntryMade]
+        payload:
+          vault.ledger.EntryMade: {number: input.number}
+        summary: The entry is swept in; no actor's grant names this command.
+  - name: vault.ledger.Visit
+    input:
+      - name: number
+        type: Integer
+      - name: title
+        type: String
+    outcomes:
+      - name: visited
+        creates: vault.ledger.Entry
+        instance: number
+        sets:
+          title: input.title
+        emits: [vault.ledger.EntryMade]
+        payload:
+          vault.ledger.EntryMade: {number: input.number}
+        summary: The visitor leaves an entry.
+events:
+  - name: vault.ledger.EntryMade
+    fields:
+      - name: number
+        type: Integer
+views:
+  - name: vault.ledger.EntriesTitled
+    source: vault.ledger.Entry
+    consistency: read_your_writes
+    params:
+      - name: title
+        type: String
+    filter: title == param.title
+    fields:
+      - name: number
+        type: Integer
+  - name: vault.ledger.AllEntries
+    source: vault.ledger.Entry
+    consistency: read_your_writes
+    fields:
+      - name: number
+        type: Integer
+      - name: title
+        type: String

@@ -232,8 +232,11 @@ fn adversary_concurrent_requests_are_each_counted_once() {
     let opened = "spindle_http_requests_total{method=\"PUT\",route=\"/tasks/{task_id}\",operation=\"tasks.board.OpenTask\",kind=\"command\",class=\"served\",status_class=\"2xx\"}";
     let expected = MANY as f64;
     assert_eq!(samples.get(opened), Some(&expected), "{exposition}");
+    // story:metrics-observed-series: the durations are counted by method and route template.
     assert_eq!(
-        samples.get("spindle_http_request_duration_seconds_count"),
+        samples.get(
+            "spindle_http_request_duration_seconds_count{method=\"PUT\",route=\"/tasks/{task_id}\"}"
+        ),
         Some(&expected),
         "{exposition}"
     );

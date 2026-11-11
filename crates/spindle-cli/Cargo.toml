@@ -47,3 +47,4 @@ openmetrics-parser = "0.5"
 rustix = { version = "1", features = ["process"] }
 spindle-channel = { path = "../spindle-channel" }
 spindle-observe-api = { path = "../spindle-observe-api", default-features = false }
+tokio-postgres = "0.7"

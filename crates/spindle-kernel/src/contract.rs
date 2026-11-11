@@ -16,7 +16,8 @@ use serde_json::{Map, Value, json};
 
 use crate::Event;
 use crate::store::{
-    Change, EVERY_INSTANCE, Removal, Row, Scan, Scanned, Store, StoreError, Stored, Write,
+    Change, Committed, EVERY_INSTANCE, Origin, Removal, Row, Scan, Scanned, Store, StoreError,
+    Stored, Write,
 };
 
 /// The entity most cases write.
@@ -93,12 +94,32 @@ pub const CASES: &[Case] = &[
         run: a_commit_conditioned_on_a_scanned_entity_is_refused_after_another_write,
     },
     Case {
+        name: "a_removal_conditioned_on_a_scanned_entity_is_refused_after_another_write",
+        run: a_removal_conditioned_on_a_scanned_entity_is_refused_after_another_write,
+    },
+    Case {
         name: "the_counts_are_the_rows_each_scan_answers",
         run: the_counts_are_the_rows_each_scan_answers,
     },
     Case {
         name: "a_reading_handle_reads_each_write_whole_as_it_lands",
         run: a_reading_handle_reads_each_write_whole_as_it_lands,
+    },
+    Case {
+        name: "the_store_reads_events_after_a_position",
+        run: the_store_reads_events_after_a_position,
+    },
+    Case {
+        name: "events_no_write_of_a_row_carries_are_read_back",
+        run: events_no_write_of_a_row_carries_are_read_back,
+    },
+    Case {
+        name: "forgotten_events_are_not_read_back",
+        run: forgotten_events_are_not_read_back,
+    },
+    Case {
+        name: "a_position_scans_and_loads_one_state_of_the_store",
+        run: a_position_scans_and_loads_one_state_of_the_store,
     },
 ];
 
@@ -135,6 +156,7 @@ fn removal(identity: &Value, expected: u64) -> Removal {
         identity: identity.clone(),
         expected,
         events: events(1),
+        scanned: Vec::new(),
     }
 }
 
@@ -664,20 +686,25 @@ fn writes_committed_together_one_refused_write_none(store: &mut dyn Store) {
     );
 }
 
-/// Commits `change`, conditioned on `scanned`, by itself and as the one write of a group; the
-/// store must refuse both as a conflict naming the entity, the version the scan answered and the
-/// one the store holds now, and must leave every instance as it was.
-fn refused_scanned(case: &str, store: &mut dyn Store, change: &Change, condition: &Scanned) {
+/// Writes `write`, conditioned on `scanned`, by itself ([`Store::commit`] or [`Store::remove`])
+/// and as the one write of a group; the store must refuse both as a conflict naming the entity,
+/// the version the scan answered and the one the store holds now, and must leave every instance
+/// as it was.
+fn refused_scanned(case: &str, store: &mut dyn Store, write: &Write, condition: &Scanned) {
+    refused_group(case, store, std::slice::from_ref(write), condition);
+}
+
+/// [`refused_scanned`] for a group: each write of `writes` by itself where the group is one
+/// write, then the group as one [`Store::commit_all`].
+fn refused_group(case: &str, store: &mut dyn Store, writes: &[Write], condition: &Scanned) {
     let before = everything(case, store);
     let now = scanned(case, store, &condition.entity).version;
     for grouped in [false, true] {
-        let (what, result) = if grouped {
-            (
-                "the commit as a group",
-                store.commit_all(&[Write::Commit(change.clone())]),
-            )
-        } else {
-            ("the commit", store.commit(change))
+        let (what, result) = match (grouped, writes) {
+            (true, _) => ("the writes as a group", store.commit_all(writes)),
+            (false, [Write::Commit(change)]) => ("the commit", store.commit(change)),
+            (false, [Write::Remove(removal)]) => ("the removal", store.remove(removal)),
+            (false, _) => continue,
         };
         if let Err(StoreError::Conflict {
             entity, identity, ..
@@ -727,13 +754,13 @@ fn a_commit_conditioned_on_a_scanned_entity_is_refused_after_another_write(store
         scanned: vec![at_scan.clone()],
         ..change(TASK, &json!("t3"), None, row("Open", "3"))
     };
-    refused_scanned(case, store, &created, &at_scan);
+    refused_scanned(case, store, &Write::Commit(created), &at_scan);
     let t1 = held(case, store, &json!("t1"));
     let moved = Change {
         scanned: vec![at_scan.clone()],
         ..change(TASK, &json!("t1"), Some(t1.version), row("Done", "1"))
     };
-    refused_scanned(case, store, &moved, &at_scan);
+    refused_scanned(case, store, &Write::Commit(moved), &at_scan);
     assert_eq!(
         scan(case, store, TASK),
         left,
@@ -759,7 +786,7 @@ fn a_commit_conditioned_on_a_scanned_entity_is_refused_after_another_write(store
         scanned: vec![at_fresh.clone()],
         ..change(TASK, &json!("t3"), None, row("Open", "3"))
     };
-    refused_scanned(case, store, &after_removal, &at_fresh);
+    refused_scanned(case, store, &Write::Commit(after_removal), &at_fresh);
     // A write of another entity does not move the scanned one, and a condition that still
     // holds lets the change land.
     let current = scanned(case, store, TASK);
@@ -788,7 +815,94 @@ fn a_commit_conditioned_on_a_scanned_entity_is_refused_after_another_write(store
         scanned: vec![at_others.clone()],
         ..change(TASK, &json!("t4"), None, row("Open", "4"))
     };
-    refused_scanned(case, store, &stale_other, &at_others);
+    refused_scanned(case, store, &Write::Commit(stale_other), &at_others);
+}
+
+/// A removal conditioned on a scanned entity is refused once another write of the entity
+/// landed after the scan: by itself, and in a group whose every write is a removal, which
+/// carries the condition on its first. A condition that still holds lets it land.
+fn a_removal_conditioned_on_a_scanned_entity_is_refused_after_another_write(store: &mut dyn Store) {
+    let case = "a_removal_conditioned_on_a_scanned_entity_is_refused_after_another_write";
+    for identity in ["t1", "t2"] {
+        commit(
+            case,
+            store,
+            &change(TASK, &json!(identity), None, row("Open", identity)),
+        );
+    }
+    let tasks = scanned(case, store, TASK);
+    // A second writer creates a row of the scanned entity.
+    commit(
+        case,
+        store,
+        &change(TASK, &json!("t3"), None, row("Open", "3")),
+    );
+    let at_scan = Scanned {
+        entity: TASK.to_owned(),
+        version: tasks.version,
+    };
+    let (t1, t2) = (
+        held(case, store, &json!("t1")),
+        held(case, store, &json!("t2")),
+    );
+    let removed = Removal {
+        scanned: vec![at_scan.clone()],
+        ..removal(&json!("t1"), t1.version)
+    };
+    refused_scanned(case, store, &Write::Remove(removed.clone()), &at_scan);
+    let removals = [
+        Write::Remove(removed),
+        Write::Remove(removal(&json!("t2"), t2.version)),
+    ];
+    refused_group(case, store, &removals, &at_scan);
+    // A condition on another entity that moved refuses it too.
+    let others = scanned(case, store, OTHER);
+    commit(
+        case,
+        store,
+        &change(OTHER, &json!("o1"), None, row("Open", "o")),
+    );
+    let at_others = Scanned {
+        entity: OTHER.to_owned(),
+        version: others.version,
+    };
+    let stale_other = Removal {
+        scanned: vec![at_others.clone()],
+        ..removal(&json!("t1"), t1.version)
+    };
+    refused_scanned(case, store, &Write::Remove(stale_other), &at_others);
+    // A condition that still holds lets the removal land, by itself and as a group.
+    let current = Scanned {
+        entity: TASK.to_owned(),
+        version: scanned(case, store, TASK).version,
+    };
+    commit_removal(
+        case,
+        store,
+        &Removal {
+            scanned: vec![current],
+            ..removal(&json!("t1"), t1.version)
+        },
+    );
+    let current = Scanned {
+        entity: TASK.to_owned(),
+        version: scanned(case, store, TASK).version,
+    };
+    let t3 = held(case, store, &json!("t3"));
+    store
+        .commit_all(&[
+            Write::Remove(Removal {
+                scanned: vec![current],
+                ..removal(&json!("t2"), t2.version)
+            }),
+            Write::Remove(removal(&json!("t3"), t3.version)),
+        ])
+        .unwrap_or_else(|error| panic!("{case}: the removals land together: {error}"));
+    assert_eq!(
+        scan(case, store, TASK),
+        Vec::new(),
+        "{case}: every row is removed"
+    );
 }
 
 fn commit_removal(case: &str, store: &mut dyn Store, removal: &Removal) {
@@ -917,4 +1031,372 @@ fn a_reading_handle_reads_each_write_whole_as_it_lands(store: &mut dyn Store) {
     same(store, "a refused group");
     commit_removal(case, store, &removal(&first, one.version));
     same(store, "a removal");
+}
+
+fn named(name: &str) -> Event {
+    Event {
+        name: format!("contract.tasks.{name}"),
+        payload: Map::from_iter([("name".to_owned(), json!(name))]),
+    }
+}
+
+fn origin(command: &str, sequence: u64) -> Option<Origin> {
+    Some(Origin {
+        command: format!("contract.tasks.{command}"),
+        sequence,
+    })
+}
+
+fn after(case: &str, store: &mut dyn Store, position: u64) -> Vec<Committed> {
+    store
+        .events_after(position)
+        .unwrap_or_else(|error| panic!("{case}: the events after {position} read: {error}"))
+}
+
+/// The events a store committed, read after a position ([`Store::events_after`]): in commit order,
+/// each with its position and the command its write was attributed to ([`Store::attribute`]).
+/// Every event of one write shares one position, a later write's is greater, and a read after an
+/// event's position answers every event committed after its write, and none before. A refused
+/// write commits no event. Where the store gives a reading handle, it reads them alike.
+fn the_store_reads_events_after_a_position(store: &mut dyn Store) {
+    let case = "the_store_reads_events_after_a_position";
+    assert_eq!(after(case, store, 0), [], "{case}: an empty store");
+    let (first, second, other) = (json!("t1"), json!("t2"), json!("o1"));
+    store.attribute(origin("Open", 7));
+    let mut opened = change(TASK, &first, None, row("Open", "1"));
+    opened.events = vec![named("A")];
+    commit(case, store, &opened);
+    store.attribute(origin("Pair", 9));
+    let mut paired = change(TASK, &second, None, row("Open", "2"));
+    paired.events = vec![named("B"), named("C")];
+    let mut beside = change(OTHER, &other, None, row("Open", "o"));
+    beside.events = vec![named("D")];
+    store
+        .commit_all(&[Write::Commit(paired), Write::Commit(beside)])
+        .unwrap_or_else(|error| panic!("{case}: the pair commits: {error}"));
+    let mut refused = change(TASK, &first, None, row("Open", "again"));
+    refused.events = vec![named("Refused")];
+    assert!(
+        store.commit(&refused).is_err(),
+        "{case}: a creation of a held identity"
+    );
+    store.attribute(None);
+    let one = held(case, store, &first);
+    let mut closing = removal(&first, one.version);
+    closing.events = vec![named("E")];
+    commit_removal(case, store, &closing);
+
+    let every = after(case, store, 0);
+    let names = every
+        .iter()
+        .map(|committed| committed.event.name.trim_start_matches("contract.tasks."))
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["A", "B", "C", "D", "E"], "{case}: in commit order");
+    assert_eq!(every[0].event, named("A"), "{case}: the event as committed");
+    let origins = every
+        .iter()
+        .map(|committed| committed.origin.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        origins,
+        [
+            origin("Open", 7),
+            origin("Pair", 9),
+            origin("Pair", 9),
+            origin("Pair", 9),
+            None
+        ],
+        "{case}: each with the command its write was attributed to"
+    );
+    let positions = every
+        .iter()
+        .map(|committed| committed.position)
+        .collect::<Vec<_>>();
+    assert!(positions[0] > 0, "{case}: a position is past 0");
+    assert!(
+        positions[1] == positions[2] && positions[2] == positions[3],
+        "{case}: one write's events share its position: {positions:?}"
+    );
+    assert!(
+        positions[0] < positions[1] && positions[3] < positions[4],
+        "{case}: a later write's position is greater: {positions:?}"
+    );
+    assert_eq!(
+        after(case, store, positions[0]),
+        every[1..],
+        "{case}: after the first write, the second's and the third's"
+    );
+    assert_eq!(
+        after(case, store, positions[1]),
+        every[4..],
+        "{case}: after the second write, the third's"
+    );
+    assert_eq!(
+        after(case, store, positions[4]),
+        [],
+        "{case}: after the last"
+    );
+    if let Some(reading) = store.reading() {
+        for position in [0, positions[0], positions[4]] {
+            let read = reading.events_after(position).unwrap_or_else(|error| {
+                panic!("{case}: the handle reads the events after {position}: {error}")
+            });
+            assert_eq!(
+                read,
+                after(case, store, position),
+                "{case}: the handle reads the events after {position} as the store"
+            );
+        }
+    }
+}
+
+/// The names of `committed`, read without their domain.
+fn names(committed: &[Committed]) -> Vec<&str> {
+    committed
+        .iter()
+        .map(|committed| committed.event.name.trim_start_matches("contract.tasks."))
+        .collect()
+}
+
+/// Events committed with no row ([`Store::commit_events`]) are read back with the others, in
+/// commit order, at a position of their own past the last write's, attributed as the writes are,
+/// and move no row. None commits nothing and is never refused. Conditioned on a scan of an entity
+/// another write moved since, they are refused as a write group is ([`Write::scanned`]), and none
+/// is read back; on a scan that still holds, they land.
+fn events_no_write_of_a_row_carries_are_read_back(store: &mut dyn Store) {
+    let case = "events_no_write_of_a_row_carries_are_read_back";
+    let first = json!("t1");
+    store.attribute(origin("Open", 3));
+    let mut opened = change(TASK, &first, None, row("Open", "1"));
+    opened.events = vec![named("A")];
+    commit(case, store, &opened);
+    let rows = everything(case, store);
+    store.attribute(origin("Ping", 4));
+    store
+        .commit_events(&[named("P"), named("Q")], &[])
+        .unwrap_or_else(|error| panic!("{case}: the events commit: {error}"));
+    store
+        .commit_events(&[], &[])
+        .unwrap_or_else(|error| panic!("{case}: no events commit: {error}"));
+    assert_eq!(everything(case, store), rows, "{case}: no row moves");
+    let every = after(case, store, 0);
+    assert_eq!(names(&every), ["A", "P", "Q"], "{case}: in commit order");
+    assert_eq!(
+        every
+            .iter()
+            .map(|committed| committed.origin.clone())
+            .collect::<Vec<_>>(),
+        [origin("Open", 3), origin("Ping", 4), origin("Ping", 4)],
+        "{case}: attributed as the writes are"
+    );
+    assert!(
+        every[0].position < every[1].position && every[1].position == every[2].position,
+        "{case}: a position of their own, shared: {every:?}"
+    );
+
+    let stale = Scanned {
+        entity: TASK.to_owned(),
+        version: scanned(case, store, TASK).version,
+    };
+    let one = held(case, store, &first);
+    commit(
+        case,
+        store,
+        &change(TASK, &first, Some(one.version), row("Open", "moved")),
+    );
+    let rows = everything(case, store);
+    let read = after(case, store, 0);
+    let last = read.last().map_or(0, |committed| committed.position);
+    let now = scanned(case, store, TASK).version;
+    let result = store.commit_events(&[named("Stale")], std::slice::from_ref(&stale));
+    if let Err(StoreError::Conflict {
+        entity, identity, ..
+    }) = &result
+    {
+        assert_eq!(
+            (entity.as_str(), identity.as_str()),
+            (TASK, EVERY_INSTANCE),
+            "{case}: the conflict names the scanned entity"
+        );
+    }
+    conflict(
+        case,
+        "events conditioned on a moved scan",
+        result,
+        Some(stale.version),
+        Some(now),
+    );
+    assert_eq!(
+        everything(case, store),
+        rows,
+        "{case}: the refusal moves no row"
+    );
+    assert_eq!(
+        after(case, store, 0),
+        read,
+        "{case}: refused events are not read back"
+    );
+    store
+        .commit_events(&[], std::slice::from_ref(&stale))
+        .unwrap_or_else(|error| panic!("{case}: no events on a moved scan is no write: {error}"));
+    let holding = Scanned {
+        entity: TASK.to_owned(),
+        version: now,
+    };
+    store
+        .commit_events(&[named("Fresh")], std::slice::from_ref(&holding))
+        .unwrap_or_else(|error| panic!("{case}: events on a scan that holds commit: {error}"));
+    assert_eq!(
+        names(&after(case, store, last)),
+        ["Fresh"],
+        "{case}: events on a scan that holds are read back"
+    );
+    if let Some(reading) = store.reading() {
+        let read = reading
+            .events_after(0)
+            .unwrap_or_else(|error| panic!("{case}: the handle reads the events: {error}"));
+        assert_eq!(
+            read,
+            after(case, store, 0),
+            "{case}: the handle reads them alike"
+        );
+    }
+}
+
+/// Once a store forgets its events ([`Store::forget_events`]), they are no longer read back, by
+/// the store or its reading handle, and its rows stay as they were; an event committed after is
+/// read back at a position past every forgotten one.
+fn forgotten_events_are_not_read_back(store: &mut dyn Store) {
+    let case = "forgotten_events_are_not_read_back";
+    let mut opened = change(TASK, &json!("t1"), None, row("Open", "1"));
+    opened.events = vec![named("A")];
+    commit(case, store, &opened);
+    store
+        .commit_events(&[named("P")], &[])
+        .unwrap_or_else(|error| panic!("{case}: the events commit: {error}"));
+    let forgotten = after(case, store, 0);
+    assert_eq!(names(&forgotten), ["A", "P"], "{case}: before");
+    let rows = everything(case, store);
+    store
+        .forget_events()
+        .unwrap_or_else(|error| panic!("{case}: the events are forgotten: {error}"));
+    assert_eq!(after(case, store, 0), [], "{case}: none is read back");
+    assert_eq!(everything(case, store), rows, "{case}: the rows stay");
+    if let Some(reading) = store.reading() {
+        let read = reading
+            .events_after(0)
+            .unwrap_or_else(|error| panic!("{case}: the handle reads the events: {error}"));
+        assert_eq!(read, [], "{case}: the handle reads none either");
+    }
+    let mut second = change(TASK, &json!("t2"), None, row("Open", "2"));
+    second.events = vec![named("B")];
+    commit(case, store, &second);
+    let later = after(case, store, 0);
+    assert_eq!(
+        names(&later),
+        ["B"],
+        "{case}: only what was committed after"
+    );
+    assert!(
+        later[0].position > forgotten[1].position,
+        "{case}: positions go on growing: {later:?} after {forgotten:?}"
+    );
+}
+
+/// How many positions [`a_position_scans_and_loads_one_state_of_the_store`] takes at most before
+/// one holds.
+const POSITIONS: usize = 4;
+
+/// Where the store gives a reading handle, a position of it ([`crate::Reading::at`]) that holds
+/// answers one state of the store: a scan of one entity and a load of an instance of another
+/// agree, even where a group of writes changing both landed between them, and the position then
+/// answers what the store held before the group (a store that takes its entities at once) or
+/// does not hold, and a position taken next answers what it held after. A load of an identity
+/// that rests nowhere answers `None`, and a read of an entity the position was not taken for
+/// fails.
+fn a_position_scans_and_loads_one_state_of_the_store(store: &mut dyn Store) {
+    let case = "a_position_scans_and_loads_one_state_of_the_store";
+    let Some(reading) = store.reading() else {
+        return;
+    };
+    let (task, other) = (json!("t1"), json!("o1"));
+    commit(
+        case,
+        store,
+        &change(TASK, &task, None, row("Open", "before")),
+    );
+    commit(
+        case,
+        store,
+        &change(OTHER, &other, None, row("Open", "before")),
+    );
+    let entities = [TASK.to_owned(), OTHER.to_owned()];
+    let title = |stored: &Stored| stored.row.fields["title"].clone();
+    let mut read = None;
+    for attempt in 0..POSITIONS {
+        let position = reading
+            .at(&entities)
+            .unwrap_or_else(|error| panic!("{case}: a position is taken: {error}"));
+        let scanned = position
+            .scan(TASK)
+            .unwrap_or_else(|error| panic!("{case}: the position scans: {error}"));
+        if attempt == 0 {
+            let one = held(case, store, &task);
+            let two =
+                load(case, store, OTHER, &other).unwrap_or_else(|| panic!("{case}: {other} rests"));
+            store
+                .commit_all(&[
+                    Write::Commit(change(TASK, &task, Some(one.version), row("Open", "after"))),
+                    Write::Commit(change(
+                        OTHER,
+                        &other,
+                        Some(two.version),
+                        row("Open", "after"),
+                    )),
+                ])
+                .unwrap_or_else(|error| panic!("{case}: the writes commit together: {error}"));
+        }
+        let loaded = position
+            .load(OTHER, &other)
+            .unwrap_or_else(|error| panic!("{case}: the position loads: {error}"))
+            .unwrap_or_else(|| panic!("{case}: {other} rests"));
+        assert_eq!(
+            position
+                .load(OTHER, &json!("nowhere"))
+                .unwrap_or_else(|error| panic!("{case}: the position loads: {error}")),
+            None,
+            "{case}: an identity that rests nowhere"
+        );
+        assert!(
+            position.load("contract.tasks.Untaken", &other).is_err(),
+            "{case}: a load of an entity the position was not taken for fails"
+        );
+        if position
+            .holds()
+            .unwrap_or_else(|error| panic!("{case}: the position is checked: {error}"))
+        {
+            let [(identity, row)] = scanned.rows.as_slice() else {
+                panic!("{case}: one task is scanned: {scanned:?}");
+            };
+            assert_eq!(identity, &task, "{case}");
+            read = Some((attempt, title(row), title(&loaded)));
+            break;
+        }
+    }
+    let Some((attempt, scanned, loaded)) = read else {
+        panic!(
+            "{case}: no position of {POSITIONS} held, though nothing was written after the first"
+        );
+    };
+    assert_eq!(
+        scanned, loaded,
+        "{case}: the scan and the load of one position answer one state of the store"
+    );
+    let expected = if attempt == 0 { "before" } else { "after" };
+    assert_eq!(
+        scanned,
+        json!(expected),
+        "{case}: a position that holds at once answers the store before the group, a later one \
+         after it"
+    );
 }

@@ -302,4 +302,29 @@ impl Store for Shared {
     fn scan(&mut self, entity: &str) -> Result<spindle_kernel::Scan, StoreError> {
         self.with(|store| store.scan(entity))
     }
+
+    fn attribute(&mut self, origin: Option<spindle_kernel::Origin>) {
+        if let Some(store) = self.0.borrow_mut().as_mut() {
+            store.attribute(origin);
+        }
+    }
+
+    fn commit_events(
+        &mut self,
+        events: &[spindle_kernel::Event],
+        scanned: &[spindle_kernel::Scanned],
+    ) -> Result<(), StoreError> {
+        self.with(|store| store.commit_events(events, scanned))
+    }
+
+    fn forget_events(&mut self) -> Result<(), StoreError> {
+        self.with(|store| store.forget_events())
+    }
+
+    fn events_after(
+        &mut self,
+        position: u64,
+    ) -> Result<Vec<spindle_kernel::Committed>, StoreError> {
+        self.with(|store| store.events_after(position))
+    }
 }

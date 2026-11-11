@@ -323,7 +323,11 @@ fn adversary_a_reset_holds_across_a_restart_and_the_run_keeps_serving() {
         })
         .filter(|name| !name.starts_with("board.sqlite") && !name.starts_with("ledger.sqlite"))
         .collect();
-    assert_eq!(leftover, Vec::<String>::new());
+    assert_eq!(
+        leftover,
+        vec!["spindle.lock".to_owned()],
+        "beside the stores only the run's lock (story:state-directory-lock)"
+    );
 }
 
 #[test]

@@ -1,0 +1,11 @@
+{"command":"library.books.ShelveBook","input":{"book_id":"b03","title":"Again 3"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b07","title":"Again 7"}}
+{"command":"library.books.LendBook","input":{"book_id":"b11"}}
+{"command":"library.books.LendBook","input":{"book_id":"b13"}}
+{"command":"library.books.LendBook","input":{"book_id":"b03"}}
+{"command":"library.books.RemoveBook","input":{"book_id":"b15"}}
+{"command":"library.books.RemoveBook","input":{"book_id":"b17"}}
+{"command":"library.books.RemoveBook","input":{"book_id":"b19"}}
+{"command":"library.books.RemoveBook","input":{"book_id":"b21"}}
+{"command":"library.books.RemoveBook","input":{"book_id":"b23"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b15","title":"Third life"}}

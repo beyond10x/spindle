@@ -130,10 +130,14 @@ fn sample(reader: &Reader, phase: &AtomicU8, stop: &AtomicBool) -> Vec<usize> {
 /// reports this count as `spindle_entity_rows` beside the host's thread.
 #[test]
 fn adversary_a_reader_counts_the_rows_before_a_reset_or_after_it_never_between() {
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state");
+    reset_counted_whole(host("memory", state.path()));
+}
+
+/// [`adversary_a_reader_counts_the_rows_before_a_reset_or_after_it_never_between`] on `host`.
+pub(crate) fn reset_counted_whole(mut host: Host) {
     const BEFORE: usize = 5;
     const AFTER: usize = 300;
-    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state");
-    let mut host = host("memory", state.path());
     let reader = host.reader();
     let phase = Arc::new(AtomicU8::new(IDLE));
     let stop = Arc::new(AtomicBool::new(false));
@@ -172,9 +176,13 @@ fn adversary_a_reader_counts_the_rows_before_a_reset_or_after_it_never_between()
 /// the rows read while it lands is the count before it or after it, never part of it.
 #[test]
 fn adversary_a_reader_counts_a_set_removal_whole() {
-    const LENT: usize = 100;
     let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state");
-    let mut host = host("memory", state.path());
+    purge_counted_whole(host("memory", state.path()), 60);
+}
+
+/// [`adversary_a_reader_counts_a_set_removal_whole`] on `host`, up to `rounds_at_most` purges.
+pub(crate) fn purge_counted_whole(mut host: Host, rounds_at_most: usize) {
+    const LENT: usize = 100;
     let reader = host.reader();
     let phase = Arc::new(AtomicU8::new(IDLE));
     let stop = Arc::new(AtomicBool::new(false));
@@ -184,7 +192,7 @@ fn adversary_a_reader_counts_a_set_removal_whole() {
     };
     let mut rounds = 0;
     let started = Instant::now();
-    while rounds < 60 && started.elapsed() < Duration::from_secs(60) {
+    while rounds < rounds_at_most && started.elapsed() < Duration::from_secs(60) {
         rounds += 1;
         for index in 0..LENT {
             let loan = format!("loan-{rounds}-{index}");
@@ -287,7 +295,7 @@ fn read_members(reader: &Reader) {
 }
 
 fn read_events(reader: &Reader) {
-    std::hint::black_box(reader.published());
+    std::hint::black_box(reader.published().expect("the events read"));
 }
 
 /// The mean of `durations` without the slowest tenth, which a loaded machine's scheduler
@@ -321,12 +329,17 @@ fn assert_not_paid_for(what: &str, (idle, reading): (Vec<Duration>, Vec<Duration
 #[test]
 fn adversary_reading_a_small_view_does_not_make_each_write_copy_the_whole_store() {
     let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state");
-    let mut host = host("memory", state.path());
-    host.reset_to(world("held", 20_000, "reader-0"))
+    small_view_not_paid_for(host("memory", state.path()), 20_000);
+}
+
+/// [`adversary_reading_a_small_view_does_not_make_each_write_copy_the_whole_store`] on `host`,
+/// with `held` loans.
+pub(crate) fn small_view_not_paid_for(mut host: Host, held: usize) {
+    host.reset_to(world("held", held, "reader-0"))
         .expect("the world loads");
     let reader = host.reader();
     assert_not_paid_for(
-        "joining a member beside a read of the members, with 20000 loans held",
+        &format!("joining a member beside a read of the members, with {held} loans held"),
         joins(&mut host, &reader, read_members),
     );
 }
@@ -345,7 +358,10 @@ fn adversary_reading_the_events_does_not_make_each_command_copy_every_event_publ
         );
     }
     let reader = host.reader();
-    assert!(reader.published().len() >= 20_000, "the history is held");
+    assert!(
+        reader.published().expect("the events read").len() >= 20_000,
+        "the history is held"
+    );
     assert_not_paid_for(
         "joining a member beside a read of the events, with 20000 events published",
         joins(&mut host, &reader, read_events),
@@ -449,7 +465,11 @@ fn adversary_many_resets_leave_no_earlier_sqlite_file_open() {
 #[test]
 fn adversary_a_reader_reads_a_command_once_it_returns_on_sqlite() {
     let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state");
-    let mut host = host("sqlite", state.path());
+    reads_each_command_once_it_returns(host("sqlite", state.path()));
+}
+
+/// [`adversary_a_reader_reads_a_command_once_it_returns_on_sqlite`] on `host`.
+pub(crate) fn reads_each_command_once_it_returns(mut host: Host) {
     let reader = host.reader();
     for round in 0..40 {
         submit(
