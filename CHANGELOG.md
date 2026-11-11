@@ -32,6 +32,15 @@ are Spindle's releases.
   or a space or tab at either end of a plain header) is never written: the request answers `501`
   naming the header. A declared header never replaces one the listener writes itself.
 
+### Changed
+
+- A `when_related:` row-set guard left open by stored rows its filter or `forall` test reads
+  as unknown is still refused `501 undecidable`, as ESS's interpreter refuses it, but the refusal
+  now says why: the predicate, the entity, how many rows left it open and the first one's
+  identity, and each absent `Optional` field it reads, with the way out, `defined(<field>)`
+  beside the comparison. Before, it named only the outcome. `ExecuteError::Undecidable` carries
+  this as `why`.
+
 ## [0.15.0] - 2026-11-11
 
 ### Added

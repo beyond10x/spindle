@@ -225,6 +225,7 @@ impl<'ir> Run<'_, 'ir> {
                 Truth::Unknown => {
                     return Err(ExecuteError::Undecidable {
                         outcome: format!("{}/{}", self.command, outcome.name.as_str()),
+                        why: None,
                     });
                 }
             }
