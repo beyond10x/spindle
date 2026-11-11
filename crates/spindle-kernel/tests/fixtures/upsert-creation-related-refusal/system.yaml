@@ -1,0 +1,23 @@
+format: ess/34
+system: store
+version: v1
+summary: Notes recorded under a key and tickets opened, each onto a box the input names, which must exist.
+domains:
+  - store.shelf
+components:
+  - component: counter
+    summary: Places boxes, records notes and opens tickets.
+    owns:
+      domains:
+        - store.shelf
+    accepts:
+      commands:
+        - store.shelf.PlaceBox
+        - store.shelf.RecordNote
+        - store.shelf.OpenTicket
+    publishes:
+      events:
+        - store.shelf.BoxPlaced
+        - store.shelf.NoteRecorded
+        - store.shelf.TicketOpened
+    reached_by: in_process
