@@ -23,10 +23,12 @@ are Spindle's releases.
   `database_pool`, and a budget below components x `database_pool` + 1: one component at pool 4
   takes a role limited to 4 and `database_connections` 8. A malformed `database_url` or
   `database_schema` is refused naming that setting, as is a `database_url` naming no host or
-  holding more than one `@` before its host (an `@` in the password not percent-encoded as
-  `%40`), printing none of it; a server that cannot be reached is named by host and port, with
-  `database_ca` and the certificate as a cause where it is set. A scan reads the entity's own
-  stream and one event per instance, each a bounded read that takes no lock, so a transaction
+  holding an `@` other than the one ending its user info before the host (an `@` in the user
+  name, the password or the query string not percent-encoded as `%40`), printing none of it; a
+  server that cannot be reached is named by host and port, with `database_ca` and the certificate
+  as a cause where it is set. A scan reads the entity's own stream and then one event per
+  instance, up to 1,000 instances and about 32 MiB of rows to one `read_many` call of eventlog,
+  each a bounded read that takes no lock, so a transaction
   left open elsewhere on the server never delays it, another process's commits on the same tables
   never wait for it, and it holds the entity's rows in memory, not the log. The new `b10x-spindle store migrate <spec>
   --environment <env>` creates every postgres-bound component's tables with the owner role,
@@ -36,6 +38,13 @@ are Spindle's releases.
 
 ### Changed
 
+- eventlog moves from 0.9.2 to 0.9.3, whose PostgreSQL store answers a batch of reads with one
+  statement per 1,000 reads and appends a group in batched statements: a scan of 50,000
+  instances, or one write of 20,000, no longer takes one round trip per instance. One command's
+  writes stay one transaction, locking each instance it writes: on PostgreSQL's default
+  `max_locks_per_transaction` (64) and `max_connections` (100), a command writing more than about
+  7,000 instances at once is refused with SQLSTATE 53200 and writes nothing, the message naming
+  `max_locks_per_transaction`, which raised to 256 lands one of 20,000.
 - Store format, in the SQLite store as in the PostgreSQL one: each write's `spindle.written`
   event names the instances it leaves, each at its stream's version after the write (event schema
   2, `{"rows": {stream: version}, "removed": {stream: version}}`), so a scan of the PostgreSQL

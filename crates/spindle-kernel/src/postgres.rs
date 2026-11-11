@@ -17,8 +17,8 @@
 //!   ([`Database::connections`]).
 //!
 //! A scan reads the entity's own stream page by page and then each instance's row at the version
-//! that stream names ([`LogStore`]'s `scan`): plain reads of committed events, each one bounded
-//! statement, so it takes no lock, never waits on a transaction anywhere on the server, and holds
+//! that stream names, up to 1,000 instances and about 32 MiB of rows to one `read_many` call
+//! ([`LogStore`]'s `scan`): plain reads of committed events, each bounded, so it takes no lock, never waits on a transaction anywhere on the server, and holds
 //! in memory the instances whose row rests, not the log. Only a log holding writes that name no
 //! instances (those of a SQLite file of 0.10.0 or earlier, copied in by `state move`) is read
 //! whole, at one snapshot.
@@ -278,17 +278,23 @@ fn config(database: &Database, prefix: &str) -> Result<PostgresConfig, StoreErro
 
 /// `url` parsed, where it is a PostgreSQL connection URL naming a host, printing no part of it.
 ///
-/// An authority (between `://` and the next `/`, `?` or `#`) holding more than one `@` is
-/// refused before it is parsed: a password holding an `@` that is not percent-encoded, whose
-/// rest a parser would take for the host.
+/// The parser takes everything before the first `@` after `://` for the user and password,
+/// wherever that `@` is, and what follows it for the host. So a URL holding any `@` but one
+/// that ends its user info in the authority (between `://` and the next `/`, `?` or `#`) is
+/// refused before it is parsed: a user name, password or query string holding an `@` that is
+/// not percent-encoded, whose rest the parser would take for the host, or which would name a
+/// host by a part of a password. Every part the parser reads is percent-decoded, so `%40`
+/// carries an `@` anywhere.
 fn admitted(url: &str) -> Result<tokio_postgres::Config, StoreError> {
     const FORM: &str = "postgres://user:password@host:port/database";
     if let Some((_, rest)) = url.split_once("://") {
         let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-        if authority.matches('@').count() > 1 {
+        let ats = rest.matches('@').count();
+        if ats > 1 || (ats == 1 && !authority.contains('@')) {
             return Err(StoreError::Backend(format!(
-                "database_url holds more than one @ before its host: percent-encode each @ in \
-                 the user name and password as %40 ({FORM})"
+                "database_url holds an @ other than the one ending its user info before the \
+                 host: percent-encode each @ in the user name, the password and the query string \
+                 as %40 ({FORM})"
             )));
         }
     }

@@ -277,6 +277,51 @@ fn adv_a_state_directory_the_base_build_wrote_answers_the_same() {
     assert!(extended[0].starts_with("three: 200"), "{extended:?}");
 }
 
+/// Adversary pass 3: the other way round. A state directory this build wrote (its
+/// `spindle.written` events of schema 2, naming their instances) is read by the base build
+/// (`SPINDLE_ADV_BASE_BIN`, 0.10.0) as this build reads it, takes the base build's writes, and is
+/// read back by this build with both. Without `SPINDLE_ADV_BASE_BIN` the case says so and ends.
+#[test]
+#[ignore = "needs SPINDLE_ADV_BASE_BIN, a b10x-spindle built at the unit's base"]
+fn adv3_a_state_directory_this_build_wrote_is_read_by_the_base_build() {
+    let Some(base) = std::env::var_os("SPINDLE_ADV_BASE_BIN").map(PathBuf::from) else {
+        eprintln!("skipped: SPINDLE_ADV_BASE_BIN names no base build");
+        return;
+    };
+    let this = Path::new(env!("CARGO_BIN_EXE_b10x-spindle"));
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
+    let written = answers(this, state.path(), &["one", "two", "none"], &["one", "two"]);
+    let read = answers(&base, state.path(), &["one", "two", "none"], &[]);
+    assert_eq!(
+        read, written,
+        "the base build reads this build's state as this build does"
+    );
+    let extended = answers(&base, state.path(), &["three"], &["three"]);
+    assert!(extended[0].starts_with("three: 200"), "{extended:?}");
+    let back = answers(
+        this,
+        state.path(),
+        &["one", "two", "three", "none"],
+        &["four"],
+    );
+    let again = answers(
+        &base,
+        state.path(),
+        &["one", "two", "three", "four", "none"],
+        &[],
+    );
+    let mine = answers(
+        this,
+        state.path(),
+        &["one", "two", "three", "four", "none"],
+        &[],
+    );
+    assert_eq!(
+        again, mine,
+        "both builds read the mixed state alike: {back:?}"
+    );
+}
+
 fn owner_url() -> String {
     std::env::var("SPINDLE_TEST_DATABASE_URL")
         .expect("SPINDLE_TEST_DATABASE_URL names a loopback PostgreSQL (task check:postgres)")

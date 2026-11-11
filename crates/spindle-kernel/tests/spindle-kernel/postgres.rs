@@ -454,15 +454,24 @@ fn a_marked_log_scans_the_rows_written_before_entity_versions() {
     assert_eq!(identities, [&json!("new"), &json!("old")]);
 }
 
-/// A `database_url` whose password holds an `@` that is not percent-encoded is refused before
-/// anything connects, naming `database_url` and printing no part of it; so is one that names no
-/// host.
+/// A `database_url` holding an `@` that is not percent-encoded, other than the one ending its
+/// user info before the host, is refused before anything connects, naming `database_url` and
+/// printing no part of it: the URL parser takes everything before the first `@` for the user
+/// and password, wherever it is, so a password in the query string would otherwise be read as
+/// the host. So is one that names no host.
 #[test]
 fn a_database_url_holding_an_unencoded_at_or_no_host_is_refused() {
     for url in [
         "postgres://adv:sec@retpart@db.example.invalid:5432/x",
         "postgres://adv:sec@retpart@127.0.0.1:1/x",
         "postgresql://adv@sec@retpart@127.0.0.1/x?sslmode=disable",
+        "postgres://127.0.0.1:1/x?user=adv&password=sec@retpart",
+        "postgres:///x?host=127.0.0.1&port=1&user=adv&password=sec@retpart",
+        "postgres://db.example.invalid/x?user=adv&password=sec@retpart",
+        "postgres://adv@127.0.0.1:1/x?password=sec@retpart",
+        "postgres://adv:sec/ret@part@db.example.invalid/x",
+        "postgres://adv:sec?ret@db.example.invalid/x",
+        "postgres://adv:pw@/x?host=/run/sec@retpart",
     ] {
         for ca in [None, Some(std::path::PathBuf::from("absent-ca.pem"))] {
             let mut database = Database::new(url);

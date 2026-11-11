@@ -29,8 +29,8 @@ use std::path::Path;
 #[cfg(feature = "sqlite")]
 use eventlog_core::EventStore;
 use eventlog_core::{
-    AppendGroup, CommandMeta, EventLogError, Expected, MAX_READ_LIMIT, NewEvent, RecordedEvent,
-    StreamAppend, StreamId, TenantId, new_event_id, request_hash,
+    AppendGroup, CommandMeta, EventLogError, Expected, MAX_READ_LIMIT, NewEvent, Read, ReadResult,
+    RecordedEvent, StreamAppend, StreamId, TenantId, new_event_id, request_hash,
 };
 #[cfg(feature = "sqlite")]
 use eventlog_sqlite::SqliteEventStore;
@@ -67,6 +67,14 @@ pub(crate) const MARKS: (&str, &str) = ("spindle:log", "unnamed-writes");
 const ACTOR: &str = "spindle-kernel";
 /// The schema version of every event Spindle appends but `spindle.written` ([`WRITTEN_SCHEMA`]).
 const SCHEMA: u32 = 1;
+/// The most instances' rows a scan of the entity's stream reads in one
+/// [`eventlog_core::EventStore::read_many`] call, which a provider may answer with one statement.
+const READ_BATCH: usize = 1_000;
+/// How many it reads in its first call, before it has seen how large the entity's rows are.
+const FIRST_READ_BATCH: usize = 64;
+/// About how many bytes of rows one call reads, by the largest row read so far ([`weight`]): a
+/// statement reading rows of a mebibyte 1,000 at a time outlasts the store's deadline.
+const READ_BYTES: usize = 32 << 20;
 /// How many feed events one read of a SQLite scan asks for.
 #[cfg(feature = "sqlite")]
 const FEED_PAGE: usize = 500;
@@ -181,12 +189,23 @@ impl<L: Log> LogStore<L> {
     }
 
     /// Refuses `write` where its instance stands at another version than the one it names, or
-    /// at none: the conflict [`Store::commit`] names.
-    fn stands_at(&mut self, write: &Write) -> Result<(), StoreError> {
+    /// at none: the conflict [`Store::commit`] names. Otherwise answers the version its stream
+    /// ends at with a `spindle.removed` event, or `None` where it holds a row or was never
+    /// written: the version a write naming none appends at.
+    fn stands_at(&self, write: &Write) -> Result<Option<u64>, StoreError> {
         let (entity, identity) = write.instance();
-        let actual = self.load(entity, identity)?.map(|stored| stored.version);
+        let (actual, removed) = match self.last(&self.stream(entity, identity)?)? {
+            None => (None, None),
+            Some((version, last)) if last.name == REMOVED => (None, Some(version)),
+            Some((version, last)) if last.name == ROW => (Some(version), None),
+            Some(_) => {
+                return Err(StoreError::Backend(format!(
+                    "the stream of {entity} {identity} does not end with its row"
+                )));
+            }
+        };
         if actual == write.expected() {
-            return Ok(());
+            return Ok(removed);
         }
         Err(StoreError::Conflict {
             entity: entity.to_owned(),
@@ -270,8 +289,13 @@ impl<L: Log> Store for LogStore<L> {
             self.unmoved(scanned)?;
         }
         let firsts = first_writes(writes);
+        // Where each instance's stream ends removed before the group: one read per instance,
+        // which a write naming no version appends after.
+        let mut ends_removed = BTreeMap::<(&str, String), Option<u64>>::new();
         for write in &firsts {
-            self.stands_at(write)?;
+            let removed = self.stands_at(write)?;
+            let (entity, identity) = write.instance();
+            ends_removed.insert((entity, identity.to_string()), removed);
         }
         let mut marks = BTreeMap::<&str, Expected>::new();
         for scanned in &scanned {
@@ -291,8 +315,8 @@ impl<L: Log> Store for LogStore<L> {
             let stream = self.stream(entity, identity)?;
             let expected = match write.expected() {
                 Some(version) => Expected::Exact(version),
-                None => match self.last(&stream)? {
-                    Some((version, last)) if last.name == REMOVED => Expected::Exact(version),
+                None => match ends_removed.get(&(entity, identity.to_string())) {
+                    Some(Some(version)) => Expected::Exact(*version),
                     _ => Expected::NoStream,
                 },
             };
@@ -348,6 +372,15 @@ impl<L: Log> Store for LogStore<L> {
                     "another writer moved an instance while the writes were appended".to_owned(),
                 ))
             }
+            // PostgreSQL's lock table ran out: the group locks each stream it appends to.
+            Err(EventLogError::Backend(why)) if why.contains("SQLSTATE 53200") => {
+                Err(StoreError::Backend(format!(
+                    "{why}: one write of {} streams locks more than PostgreSQL's lock table holds \
+                     (out of shared memory); raise the server's max_locks_per_transaction, which \
+                     takes a restart",
+                    group.appends.len()
+                )))
+            }
             Err(other) => Err(backend(other)),
         }
     }
@@ -379,9 +412,13 @@ impl<L: Log> LogStore<L> {
     /// version the scan answers, and its `spindle.written` events, in order, name each instance
     /// whose row rests after them and the version of its stream there ([`Written`]). Then reads
     /// each such instance's event at exactly that version: its `spindle.row` event, the row as it
-    /// rested once the write the version counts last landed.
+    /// rested once the write the version counts last landed. Those reads go up to [`READ_BATCH`]
+    /// to one [`eventlog_core::EventStore::read_many`] call, which a provider may answer with one
+    /// statement rather than one per read, and about [`READ_BYTES`] of rows to one call by the
+    /// largest row read so far; a call that outlasts the store's deadline is read again in halves.
     ///
-    /// Every read is one statement of its own and holds no lock. It is consistent all the same:
+    /// Every read is a bounded read of committed events and holds no lock. It is consistent all
+    /// the same:
     /// a stream's events never change once appended and its versions land in order, so the pages
     /// read are the stream's first versions however many writes land meanwhile; and the write a
     /// `spindle.written` event belongs to appended the instance's events in the same group, so
@@ -420,26 +457,63 @@ impl<L: Log> LogStore<L> {
                 break;
             }
         }
+        let resting: Vec<(String, u64)> = resting.into_iter().collect();
         let mut rows = Vec::with_capacity(resting.len());
-        for (key, at) in resting {
-            let instance = StreamId::new(self.tenant.clone(), entity, &key).map_err(backend)?;
-            let event = self
-                .runtime
-                .block_on(self.log.read_stream(&instance, at.saturating_sub(1), 1))
-                .map_err(backend)?
-                .events
-                .into_iter()
-                .next()
-                .filter(|event| event.version == at && event.name == ROW)
-                .ok_or_else(|| {
-                    StoreError::Backend(format!(
-                        "the stream of {entity} {key} holds no row at version {at}, which the \
-                         entity's stream names"
-                    ))
-                })?;
-            let row = serde_json::from_value::<Row>(event.data)
-                .map_err(|error| StoreError::Backend(format!("a stored row: {error}")))?;
-            rows.push((identity_from_key(&key)?, Stored { row, version: at }));
+        let mut size = FIRST_READ_BATCH;
+        let mut largest = 0;
+        while rows.len() < resting.len() {
+            let batch = &resting[rows.len()..resting.len().min(rows.len() + size)];
+            let reads = batch
+                .iter()
+                .map(|(key, at)| {
+                    Ok(Read::Stream {
+                        stream: StreamId::new(self.tenant.clone(), entity, key).map_err(backend)?,
+                        after_version: at.saturating_sub(1),
+                        limit: 1,
+                    })
+                })
+                .collect::<Result<Vec<_>, StoreError>>()?;
+            let answered = match self.runtime.block_on(self.log.read_many(&reads)) {
+                Ok(answered) => answered,
+                // Rows larger than those read so far outlasted the store's deadline: read
+                // fewer at once.
+                Err(EventLogError::Deadline { .. }) if batch.len() > 1 => {
+                    size = batch.len() / 2;
+                    continue;
+                }
+                Err(error) => return Err(backend(error)),
+            };
+            if answered.len() != batch.len() {
+                return Err(StoreError::Backend(format!(
+                    "{} reads of instances of {entity} answered {}",
+                    batch.len(),
+                    answered.len()
+                )));
+            }
+            for ((key, at), answer) in batch.iter().zip(answered) {
+                let at = *at;
+                let ReadResult::Stream(slice) = answer else {
+                    return Err(StoreError::Backend(format!(
+                        "the read of the stream of {entity} {key} answered no stream"
+                    )));
+                };
+                let event = slice
+                    .events
+                    .into_iter()
+                    .next()
+                    .filter(|event| event.version == at && event.name == ROW)
+                    .ok_or_else(|| {
+                        StoreError::Backend(format!(
+                            "the stream of {entity} {key} holds no row at version {at}, which \
+                             the entity's stream names"
+                        ))
+                    })?;
+                largest = largest.max(weight(&event.data));
+                let row = serde_json::from_value::<Row>(event.data)
+                    .map_err(|error| StoreError::Backend(format!("a stored row: {error}")))?;
+                rows.push((identity_from_key(key)?, Stored { row, version: at }));
+            }
+            size = (READ_BYTES / largest.max(1)).clamp(1, READ_BATCH);
         }
         Ok(Scan { rows, version })
     }
@@ -609,6 +683,23 @@ impl Written {
             resting.remove(&id);
         }
         resting.extend(self.rows);
+    }
+}
+
+/// About how many bytes `value` takes as JSON: its strings and keys, and a few bytes for each
+/// other value, without writing it.
+fn weight(value: &Value) -> usize {
+    match value {
+        Value::String(text) => text.len() + 2,
+        Value::Array(items) => items.iter().map(weight).sum::<usize>() + 2,
+        Value::Object(entries) => {
+            entries
+                .iter()
+                .map(|(key, value)| key.len() + 3 + weight(value))
+                .sum::<usize>()
+                + 2
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) => 8,
     }
 }
 
