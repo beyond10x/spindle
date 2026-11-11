@@ -1,6 +1,7 @@
 //! What reads a host's committed state beside the host's thread ([`Reader`]).
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use ess_compiler::EssIr;
@@ -36,6 +37,8 @@ pub struct Reader {
     pub(super) emitted: Arc<Mutex<BTreeMap<(String, String), u64>>>,
     /// The host's run ([`super::Cursor`]).
     pub(super) run: u64,
+    /// The sequence of the last command the host started, `0` before the first.
+    pub(super) sequence: Arc<AtomicU64>,
 }
 
 /// What a [`Reader`] reads of one component.
@@ -172,6 +175,29 @@ impl Reader {
                 .ok_or_else(|| HostError::Unsupported(format!("{name} is not running")))?;
             Ok(reading.events_after(position, wanted)?)
         })
+    }
+
+    /// The cursor after the last event published, as [`super::Host::published_head`] answers
+    /// it: read through each component's reading handle, beside the host's thread, reading no
+    /// event. The sequence of the last command started is taken before any store's head, so a
+    /// command running meanwhile is answered after the cursor where it commits after its store's
+    /// head was read, and is before the cursor otherwise.
+    ///
+    /// # Errors
+    /// [`HostError::Unsupported`] where a component's store gives no reading handle
+    /// ([`Reader::reads_events`]), and [`HostError::Store`] where a store cannot be read.
+    pub fn published_head(&self) -> Result<Cursor, HostError> {
+        let sequence =
+            super::head_sequence(self.sequence.load(Ordering::SeqCst), self.clock.wall());
+        let mut stores = Vec::with_capacity(self.components.len());
+        for (name, read) in self.components.iter() {
+            let (generation, reading) = read.shared.handed();
+            let reading = reading.ok_or_else(|| {
+                HostError::Unsupported(format!("{name} is read on the host's thread only"))
+            })?;
+            stores.push((name.clone(), generation, reading.events_head()?));
+        }
+        Ok(super::range::head(self.run, &stores, sequence))
     }
 
     /// Whether this reader answers the events published ([`Reader::published`]): whether every

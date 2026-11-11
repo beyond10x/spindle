@@ -114,6 +114,10 @@ pub const CASES: &[Case] = &[
         run: a_limited_read_answers_whole_writes_up_to_its_limit,
     },
     Case {
+        name: "the_events_head_is_past_every_event_committed",
+        run: the_events_head_is_past_every_event_committed,
+    },
+    Case {
         name: "events_no_write_of_a_row_carries_are_read_back",
         run: events_no_write_of_a_row_carries_are_read_back,
     },
@@ -1302,6 +1306,106 @@ fn a_limited_read_answers_whole_writes_up_to_its_limit(store: &mut dyn Store) {
             .unwrap_or_else(|error| panic!("{case}: the handle reads after the reset: {error}"));
         assert_eq!(names(&beside), ["F"], "{case}: the handle skips them too");
     }
+}
+
+fn head(case: &str, store: &mut dyn Store) -> u64 {
+    store
+        .events_head()
+        .unwrap_or_else(|error| panic!("{case}: the head reads: {error}"))
+}
+
+/// A store's head ([`Store::events_head`]) is at or past every write that committed an event so
+/// far: a read after it answers none of them, and every event committed after it, in commit
+/// order. A write of rows alone may move it. After the store forgets its events, a read after
+/// its head answers only what was committed since. Where the store gives a reading handle, its
+/// head is as good.
+fn the_events_head_is_past_every_event_committed(store: &mut dyn Store) {
+    let case = "the_events_head_is_past_every_event_committed";
+    let empty = head(case, store);
+    assert_eq!(after(case, store, empty), [], "{case}: an empty store");
+    store.attribute(origin("Open", 1));
+    let mut opened = change(TASK, &json!("t1"), None, row("Open", "1"));
+    opened.events = vec![named("A")];
+    commit(case, store, &opened);
+    let one = head(case, store);
+    assert_eq!(
+        after(case, store, one),
+        [],
+        "{case}: no event is after the head"
+    );
+    assert!(
+        after(case, store, 0)
+            .iter()
+            .all(|committed| committed.position <= one),
+        "{case}: the head is at or past every write's position"
+    );
+    store.attribute(origin("Pair", 2));
+    let mut paired = change(TASK, &json!("t2"), None, row("Open", "2"));
+    paired.events = vec![named("B"), named("C")];
+    let mut beside = change(OTHER, &json!("o1"), None, row("Open", "o"));
+    beside.events = vec![named("D")];
+    store
+        .commit_all(&[Write::Commit(paired), Write::Commit(beside)])
+        .unwrap_or_else(|error| panic!("{case}: the pair commits: {error}"));
+    store.attribute(origin("Ping", 3));
+    store
+        .commit_events(&[named("P")], &[])
+        .unwrap_or_else(|error| panic!("{case}: the events commit: {error}"));
+    store.attribute(None);
+    assert_eq!(
+        names(&after(case, store, one)),
+        ["B", "C", "D", "P"],
+        "{case}: every event committed after the head"
+    );
+    let quiet = head(case, store);
+    let stored = held(case, store, &json!("t1"));
+    commit(
+        case,
+        store,
+        &change(
+            TASK,
+            &json!("t1"),
+            Some(stored.version),
+            row("Open", "rows"),
+        ),
+    );
+    let moved = head(case, store);
+    assert!(moved >= quiet, "{case}: the head never goes back");
+    assert_eq!(
+        after(case, store, moved),
+        [],
+        "{case}: a write of rows alone is no event after the head"
+    );
+    if let Some(reading) = store.reading() {
+        let beside = reading
+            .events_head()
+            .unwrap_or_else(|error| panic!("{case}: the handle reads the head: {error}"));
+        assert_eq!(
+            after(case, store, beside),
+            [],
+            "{case}: no event is after the handle's head"
+        );
+        assert!(
+            beside >= quiet,
+            "{case}: the handle's head is past every event"
+        );
+    }
+
+    store
+        .forget_events()
+        .unwrap_or_else(|error| panic!("{case}: the events are forgotten: {error}"));
+    let forgotten = head(case, store);
+    assert_eq!(after(case, store, forgotten), [], "{case}: after a reset");
+    store.attribute(origin("Late", 4));
+    let mut late = change(TASK, &json!("t3"), None, row("Open", "3"));
+    late.events = vec![named("E")];
+    commit(case, store, &late);
+    store.attribute(None);
+    assert_eq!(
+        names(&after(case, store, forgotten)),
+        ["E"],
+        "{case}: only what was committed after the reset"
+    );
 }
 
 /// The names of `committed`, read without their domain.

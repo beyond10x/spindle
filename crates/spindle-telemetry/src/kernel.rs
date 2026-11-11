@@ -146,6 +146,10 @@ impl<S: Store> Store for CountingStore<S> {
     ) -> Result<Vec<spindle_kernel::Committed>, StoreError> {
         self.inner.events_after(position, limit)
     }
+
+    fn events_head(&mut self) -> Result<u64, StoreError> {
+        self.inner.events_head()
+    }
 }
 
 impl<S: Store> CountingStore<S> {

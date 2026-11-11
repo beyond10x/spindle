@@ -126,6 +126,11 @@ impl Reading for Gated {
         self.reading.events_after(position, limit)
     }
 
+    fn events_head(&self) -> Result<u64, StoreError> {
+        let _passed = self.gate.enter();
+        self.reading.events_head()
+    }
+
     /// The position, read past the gate for as long as it is held: a reset waits for it.
     fn at(&self, entities: &[String]) -> Result<Box<dyn Position + '_>, StoreError> {
         let passed = self.gate.enter();
@@ -373,5 +378,9 @@ impl Store for Counted {
 
     fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
         self.store.events_after(position, limit)
+    }
+
+    fn events_head(&mut self) -> Result<u64, StoreError> {
+        self.store.events_head()
     }
 }

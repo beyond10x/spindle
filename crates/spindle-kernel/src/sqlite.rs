@@ -673,6 +673,10 @@ impl<L: Log> Store for LogStore<L> {
     fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
         self.committed_after(position, limit)
     }
+
+    fn events_head(&mut self) -> Result<u64, StoreError> {
+        self.feed_end()
+    }
 }
 
 impl<L: Log> LogStore<L> {
@@ -735,6 +739,12 @@ impl<L: Log> Reading for SharedReading<L> {
     fn events_after(&self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
         let _turn = self.turns.take()?;
         self.store.committed_after(position, limit)
+    }
+
+    /// Reads the feed through the store's own pool on a turn, as a scan does.
+    fn events_head(&self) -> Result<u64, StoreError> {
+        let _turn = self.turns.take()?;
+        self.store.feed_end()
     }
 }
 
@@ -971,6 +981,43 @@ impl<L: Log> LogStore<L> {
                 })
             })
             .collect())
+    }
+
+    /// The feed position of the last event of the tenant's feed, `0` for an empty one
+    /// ([`Store::events_head`]): found by reading one feed event at a time past positions that
+    /// double, then halve, so about twice the binary logarithm of the feed's length of them,
+    /// none of them answered.
+    fn feed_end(&self) -> Result<u64, StoreError> {
+        let next = |after: u64| -> Result<Option<u64>, StoreError> {
+            let page = self
+                .runtime
+                .block_on(self.log.read_feed(&self.tenant, after, 1))
+                .map_err(backend)?;
+            Ok(page.events.first().map(|event| event.global_seq))
+        };
+        // The feed holds an event at `last` and none past `none`.
+        let Some(mut last) = next(0)? else {
+            return Ok(0);
+        };
+        let mut step: u64 = 1;
+        let mut none = loop {
+            let probe = last.saturating_add(step);
+            match next(probe)? {
+                Some(at) => {
+                    last = at;
+                    step = step.saturating_mul(2);
+                }
+                None => break probe,
+            }
+        };
+        while last < none {
+            let middle = last + (none - last) / 2;
+            match next(middle)? {
+                Some(at) => last = at,
+                None => none = middle,
+            }
+        }
+        Ok(last)
     }
 
     /// The append groups after feed position `position`, read a page of [`FEED_PAGE`] at a time,
@@ -1815,6 +1862,10 @@ impl Reading for SqliteReading {
 
     fn events_after(&self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
         self.with(|connection| connection.committed_after(position, limit))
+    }
+
+    fn events_head(&self) -> Result<u64, StoreError> {
+        self.with(|connection| connection.feed_end())
     }
 
     /// The entities taken from the resting rows a connection caught up ([`LogStore::taken`]);

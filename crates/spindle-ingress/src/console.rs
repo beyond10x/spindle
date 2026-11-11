@@ -109,6 +109,18 @@ pub(crate) const AFTER: &str = "after";
 /// The query parameter that bounds a range of `GET /api/events`.
 pub(crate) const LIMIT: &str = "limit";
 
+/// The value of [`AFTER`] that asks for the cursor after the last event published, and no event
+/// (`story:events-head-cursor`): no cursor is this text.
+pub(crate) const HEAD: &str = "head";
+
+/// Where a range of `GET /api/events` starts.
+enum Start {
+    /// After a cursor.
+    After(Cursor),
+    /// After the last event published: the range answers no event, only the cursor.
+    Head,
+}
+
 /// What `GET /api/events?<query>` answers on the host's thread. Where `query` (after the `?`,
 /// still percent-encoded) names neither `after` nor `limit`, [`events`], as without a query; a
 /// parameter it does not read is ignored, as a view's query is read. Otherwise `200` with
@@ -116,13 +128,16 @@ pub(crate) const LIMIT: &str = "limit";
 /// the first without one), at most `limit` ([`EVENTS_LIMIT_DEFAULT`] without one, and at most
 /// [`EVENTS_LIMIT_MOST`]: a larger one is answered with it), in the order [`events`] lists
 /// them, and the cursor after the last of them ([`Host::published_after`]); with the cursor at
-/// the end, no event and the same cursor. A malformed `after` or `limit`, either given twice, a
-/// `limit` of 0 and a cursor of another run's components are refused `400` naming the
-/// parameter, never its value; a store that cannot be read `500`.
+/// the end, no event and the same cursor. `after=head` answers no event and the cursor after the
+/// last one published, reading no event ([`Host::published_head`]), whatever `limit` it names. A
+/// malformed `after` or `limit`, either given twice, a `limit` of 0 and a cursor of another
+/// run's components are refused `400` naming the parameter, never its value; a store that cannot
+/// be read `500`.
 pub fn events_queried(host: &mut Host, query: &str) -> Answer {
     match ranged(query) {
         Ok(None) => events(host),
-        Ok(Some((after, limit))) => paged(host.published_after(&after, limit)),
+        Ok(Some((Start::After(after), limit))) => paged(host.published_after(&after, limit)),
+        Ok(Some((Start::Head, _))) => paged(host.published_head().map(headed)),
         Err(why) => Answer::refusal(400, why),
     }
 }
@@ -132,14 +147,23 @@ pub fn events_queried(host: &mut Host, query: &str) -> Answer {
 pub fn events_read_queried(reader: &Reader, query: &str) -> Answer {
     match ranged(query) {
         Ok(None) => events_read(reader),
-        Ok(Some((after, limit))) => paged(reader.published_after(&after, limit)),
+        Ok(Some((Start::After(after), limit))) => paged(reader.published_after(&after, limit)),
+        Ok(Some((Start::Head, _))) => paged(reader.published_head().map(headed)),
         Err(why) => Answer::refusal(400, why),
     }
 }
 
-/// The range `query` asks for, a cursor and a limit; `None` where it names neither parameter;
-/// the refusal of a malformed one, which never repeats its value.
-fn ranged(query: &str) -> Result<Option<(Cursor, usize)>, String> {
+/// The page of no event before `next`, the cursor after the last event published.
+fn headed(next: Cursor) -> Page {
+    Page {
+        events: Vec::new(),
+        next,
+    }
+}
+
+/// The range `query` asks for, where it starts and a limit; `None` where it names neither
+/// parameter; the refusal of a malformed one, which never repeats its value.
+fn ranged(query: &str) -> Result<Option<(Start, usize)>, String> {
     let mut after = Vec::new();
     let mut limit = Vec::new();
     for pair in query.split('&').filter(|pair| !pair.is_empty()) {
@@ -154,10 +178,16 @@ fn ranged(query: &str) -> Result<Option<(Cursor, usize)>, String> {
         return Ok(None);
     }
     let after = match one(AFTER, &after)? {
-        None => Cursor::start(),
+        None => Start::After(Cursor::start()),
         Some(raw) => form_decoded(raw)
             .ok_or_else(|| "expected percent-encoded UTF-8 text".to_owned())
-            .and_then(|text| Cursor::parse(&text))
+            .and_then(|text| {
+                if text == HEAD {
+                    Ok(Start::Head)
+                } else {
+                    Cursor::parse(&text).map(Start::After)
+                }
+            })
             .map_err(|why| format!("query.{AFTER}: {why}"))?,
     };
     let limit = match one(LIMIT, &limit)? {

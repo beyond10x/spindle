@@ -205,6 +205,44 @@ fn answered(keyed: &Keyed, last: Option<&Key>) -> bool {
     last.is_some_and(|last| keyed.key <= *last)
 }
 
+/// The cursor after the last event published, of the stores `stores` names, each by its
+/// component, the generation of the store held for it and its head ([`Store::events_head`]),
+/// read once `sequence` ([`super::head_sequence`]) was the sequence of the last command started,
+/// and in `run`: every event of an earlier command is at or before its store's head, and is
+/// before the cursor; every event after a store's head is after it, whatever its command. The
+/// cursor marks each store at its head, so a read with it reads only what was committed since.
+/// Where a store is read from its start (another run, a store replaced), the events of the
+/// commands before `sequence` are skipped, and those of later commands answered.
+///
+/// [`Store::events_head`]: spindle_kernel::Store::events_head
+pub(super) fn head(run: u64, stores: &[(String, u64, u64)], sequence: u64) -> Cursor {
+    let marks = stores
+        .iter()
+        .map(|(component, generation, position)| {
+            (
+                component.clone(),
+                Mark {
+                    generation: *generation,
+                    position: *position,
+                    sequence,
+                    ordinal: 0,
+                },
+            )
+        })
+        .collect();
+    // After every event of a sequence below `sequence`, before every event of it and later.
+    let last = stores
+        .iter()
+        .map(|(component, _, _)| component)
+        .max()
+        .map(|component| Key {
+            sequence: sequence.saturating_sub(1),
+            component: component.clone(),
+            ordinal: u64::MAX,
+        });
+    Cursor { run, last, marks }
+}
+
 /// The events after `after`, at most `limit`, of the stores `stores` names, each by its
 /// component and the generation of the store held for it, in the order published, read by
 /// `read`, which answers a component's events after a position, up to a limit, as

@@ -328,4 +328,8 @@ impl Store for Shared {
     ) -> Result<Vec<spindle_kernel::Committed>, StoreError> {
         self.with(|store| store.events_after(position, limit))
     }
+
+    fn events_head(&mut self) -> Result<u64, StoreError> {
+        self.with(|store| store.events_head())
+    }
 }

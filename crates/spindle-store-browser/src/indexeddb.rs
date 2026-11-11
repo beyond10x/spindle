@@ -760,6 +760,13 @@ impl Store for BrowserStore {
             .partition_point(|committed| committed.position <= position);
         Ok(whole_writes(&shared.events[from..], limit))
     }
+
+    /// The position of the last write that committed an event, kept past a reset.
+    fn events_head(&mut self) -> Result<u64, StoreError> {
+        let shared = self.shared.borrow();
+        shared.healthy()?;
+        Ok(shared.position)
+    }
 }
 
 fn key(entity: &str, identity: &Value) -> Key {

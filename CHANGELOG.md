@@ -125,6 +125,14 @@ are Spindle's releases.
   records a console request's query string as `query`, at most 2,048 bytes as the path is.
   Only the cursor of an answered read and a numeric limit are kept there, and every other name
   and value is written `…`.
+- `GET /api/events?after=head` answers `{"events": [], "next": <cursor>}`, the cursor after the
+  last event published, reading no event of the log (`story:events-head-cursor`). A downstream
+  consumer with about 179,000 events had to page from the start to reach the end before it could
+  poll. A read after that cursor answers what was published since. `limit=0` is still refused
+  `400`. Each store answers the position it is at (`Store::events_head`, `Reading::events_head`):
+  the memory and IndexedDB stores the position of their last write, SQLite and PostgreSQL the
+  end of their feed, found in about twice the binary logarithm of its length single-event feed
+  reads.
 
 ### Changed
 

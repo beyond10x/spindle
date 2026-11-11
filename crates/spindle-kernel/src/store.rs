@@ -345,6 +345,17 @@ pub trait Store {
         let _ = (position, limit);
         Err(no_events())
     }
+
+    /// A position at or past every write that committed an event so far, read without reading
+    /// any event: [`Store::events_after`] it answers none of the events committed so far and
+    /// every one committed after. `0` for a store that never committed one.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read, or, this default, does not read back
+    /// the events it commits.
+    fn events_head(&mut self) -> Result<u64, StoreError> {
+        Err(no_events())
+    }
 }
 
 /// A read-only handle on what a store committed, read from any thread beside the store's one
@@ -381,6 +392,16 @@ pub trait Reading: Send + Sync {
     /// the events it commits.
     fn events_after(&self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
         let _ = (position, limit);
+        Err(no_events())
+    }
+
+    /// A position at or past every write that committed an event so far, as
+    /// [`Store::events_head`] answers it.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read, or, this default, does not read back
+    /// the events it commits.
+    fn events_head(&self) -> Result<u64, StoreError> {
         Err(no_events())
     }
     /// One position of the store for reads of `entities` together ([`Position`]): a scan of
@@ -629,6 +650,15 @@ pub fn whole_writes<'a>(
         taken.push(committed.clone());
     }
     taken
+}
+
+/// The position of the last write `held` recorded events of, kept past a reset that forgot
+/// them ([`Store::events_head`]).
+fn events_head(held: &RwLock<Held>) -> u64 {
+    held.read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .events
+        .position
 }
 
 /// The events `held` holds past `position`, up to `limit` ([`whole_writes`]): its chunks taken
@@ -932,6 +962,10 @@ impl Store for MemoryStore {
     fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
         Ok(committed_after(&self.held, position, limit))
     }
+
+    fn events_head(&mut self) -> Result<u64, StoreError> {
+        Ok(events_head(&self.held))
+    }
 }
 
 /// The reading handle of a [`MemoryStore`]: what it holds, read as it stands.
@@ -944,6 +978,10 @@ impl Reading for MemoryReading {
 
     fn events_after(&self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
         Ok(committed_after(&self.0, position, limit))
+    }
+
+    fn events_head(&self) -> Result<u64, StoreError> {
+        Ok(events_head(&self.0))
     }
 
     /// Every entity's count as one write left them all: taken under one lock.

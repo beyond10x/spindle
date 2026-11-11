@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -426,6 +427,10 @@ impl Store for Tallied<'_> {
         self.store.events_after(position, limit)
     }
 
+    fn events_head(&mut self) -> Result<u64, StoreError> {
+        self.store.events_head()
+    }
+
     /// Kept for [`Host::published`], tallied as no write's: an event no write carries counts
     /// nothing appended ([`Host::emitted`]).
     fn commit_events(&mut self, events: &[Event], scanned: &[Scanned]) -> Result<(), StoreError> {
@@ -509,6 +514,10 @@ impl Store for Supplied {
     fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
         self.0.events_after(position, limit)
     }
+
+    fn events_head(&mut self) -> Result<u64, StoreError> {
+        self.0.events_head()
+    }
 }
 
 struct Component {
@@ -550,8 +559,10 @@ pub struct Host {
     remote: Option<component::Remote>,
     /// The sequence the last command run was attributed with ([`Origin::sequence`]): the events
     /// each component's store committed merge back into the order published by it
-    /// ([`Host::published`]). The host keeps no list of the events itself.
-    sequence: u64,
+    /// ([`Host::published`]). The host keeps no list of the events itself. Shared with its
+    /// readers, which take the cursor after the last event published by it
+    /// ([`Reader::published_head`]); `0` before the first command of the run.
+    sequence: Arc<AtomicU64>,
     /// This run of the host, drawn at random when it opens: a [`Cursor`] marks the stores of the
     /// run it was taken in ([`Host::published_after`]).
     run: u64,
@@ -938,7 +949,7 @@ impl Host {
             timer,
             periodic,
             remote: None,
-            sequence: 0,
+            sequence: Arc::new(AtomicU64::new(0)),
             run: Uuid::new_v4().as_u64_pair().0.max(1),
             emitted: Arc::default(),
             decider: decider.unwrap_or_else(|| Box::new(NoExternals)),
@@ -1052,6 +1063,26 @@ impl Host {
         })
     }
 
+    /// The cursor after the last event published, read without reading any event: each
+    /// component's store answers only the position it is at ([`Store::events_head`]). A read after
+    /// it ([`Host::published_after`]) answers every event published after this call, and none
+    /// before, as long as the cursor is read in this run and every store is the one it was taken
+    /// from; otherwise the stores are read from their start once, and the events of the commands
+    /// run before the last one this run ran, or, before the first, before the civil time of the
+    /// call, are skipped.
+    ///
+    /// # Errors
+    /// [`HostError::Store`] where a store cannot be read.
+    pub fn published_head(&mut self) -> Result<Cursor, HostError> {
+        let sequence = head_sequence(self.sequence.load(Ordering::SeqCst), self.clock.wall());
+        let mut stores = Vec::with_capacity(self.components.len());
+        for (name, component) in &mut self.components {
+            let generation = component.store.generation();
+            stores.push((name.clone(), generation, component.store.events_head()?));
+        }
+        Ok(range::head(self.run, &stores, sequence))
+    }
+
     /// How many events each command appended since the host started, by command and event,
     /// counted where a component's store commits them, as its `event.<Event>.appended` counter
     /// is: a set outcome that publishes an event once per changed row counts each row's, and an
@@ -1090,6 +1121,7 @@ impl Host {
             ),
             emitted: Arc::clone(&self.emitted),
             run: self.run,
+            sequence: Arc::clone(&self.sequence),
         }
     }
 
@@ -1625,10 +1657,11 @@ impl Host {
             .ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
         let started = Instant::now();
         let clock = &self.clock;
-        self.sequence = following(self.sequence, clock.wall());
+        let sequence = following(self.sequence.load(Ordering::SeqCst), clock.wall());
+        self.sequence.store(sequence, Ordering::SeqCst);
         held.store.attribute(Some(Origin {
             command: command.to_owned(),
-            sequence: self.sequence,
+            sequence,
         }));
         let mut tallied = Tallied {
             store: &mut held.store,
@@ -1865,12 +1898,23 @@ struct Deliveries {
 /// time does not go back between two processes, than every one an earlier process on the same
 /// stores attributed.
 fn following(last: u64, wall: std::time::SystemTime) -> u64 {
-    let micros = wall
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+    micros(wall).max(last.saturating_add(1))
+}
+
+/// The sequence a cursor after the last event published is taken at ([`range::head`]), where
+/// `last` is the sequence of the last command started: that sequence, or, before the first
+/// command, the civil time `wall` in microseconds, which every earlier command's sequence is
+/// below as long as the civil time does not go back. At least 1.
+pub(crate) fn head_sequence(last: u64, wall: std::time::SystemTime) -> u64 {
+    if last == 0 { micros(wall) } else { last }.max(1)
+}
+
+/// The civil time `wall` in microseconds since the Unix epoch, `0` before it.
+fn micros(wall: std::time::SystemTime) -> u64 {
+    wall.duration_since(std::time::SystemTime::UNIX_EPOCH)
         .map_or(0, |since| {
             u64::try_from(since.as_micros()).unwrap_or(u64::MAX)
-        });
-    micros.max(last.saturating_add(1))
+        })
 }
 
 /// The events of every component, each component's in its store's commit order, merged into the

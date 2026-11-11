@@ -16,7 +16,7 @@ use spindle_capability::Environment;
 use spindle_host::{Cursor, Host, ManualClock, Published, Reader, Stores};
 use spindle_kernel::{
     Change, Committed, Event, MemoryStore, Origin, Position, Reading, Removal, Scan, Scanned,
-    Store, StoreError, Stored, Write,
+    SqliteStore, Store, StoreError, Stored, Write,
 };
 
 /// How many events the long log holds.
@@ -90,10 +90,10 @@ fn script(host: &mut Host) {
     submit(host, "tasks.board.CloseTask", json!({"task_id": "t1"}));
 }
 
-/// A memory store that counts every event its `events_after` reads answer, on the writer and
+/// A store that counts every event its `events_after` reads answer, on the writer and
 /// through its reading handle.
-struct Counting {
-    store: MemoryStore,
+struct Counting<S> {
+    store: S,
     read: Arc<AtomicUsize>,
 }
 
@@ -102,7 +102,7 @@ struct CountingReading {
     read: Arc<AtomicUsize>,
 }
 
-impl Store for Counting {
+impl<S: Store> Store for Counting<S> {
     fn load(&mut self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
         self.store.load(entity, identity)
     }
@@ -152,6 +152,10 @@ impl Store for Counting {
         self.read.fetch_add(committed.len(), Ordering::SeqCst);
         Ok(committed)
     }
+
+    fn events_head(&mut self) -> Result<u64, StoreError> {
+        self.store.events_head()
+    }
 }
 
 impl Reading for CountingReading {
@@ -167,6 +171,10 @@ impl Reading for CountingReading {
         let committed = self.reading.events_after(position, limit)?;
         self.read.fetch_add(committed.len(), Ordering::SeqCst);
         Ok(committed)
+    }
+
+    fn events_head(&self) -> Result<u64, StoreError> {
+        self.reading.events_head()
     }
 
     fn at(&self, entities: &[String]) -> Result<Box<dyn Position + '_>, StoreError> {
@@ -613,4 +621,151 @@ fn an_idle_read_reads_no_event_of_a_long_log() {
         1,
         "the read after one command reads its one event"
     );
+}
+
+/// How many events one write of [`the_head_reads_no_event_of_a_long_log_on`]'s log commits.
+const WRITE: usize = 100;
+
+/// `story:events-head-cursor` acceptances 1 and 2 on the stores `board` and `ledger`, of the
+/// store `name`: with 10,000 events committed to the board, in writes of [`WRITE`] events and
+/// one command each, the cursor after the last event published is answered on the host's thread
+/// and beside it reading no event of any store; a page after it answers nothing and the same
+/// cursor, reading nothing; once one more command ran, a page after it answers that command's
+/// event alone, reading only it.
+pub(crate) fn the_head_reads_no_event_of_a_long_log_on(
+    name: &str,
+    mut board: impl Store + 'static,
+    ledger: impl Store + 'static,
+) {
+    for write in 0..LONG / WRITE {
+        let sequence = u64::try_from(write).expect("a write fits") + 1;
+        board.attribute(Some(Origin {
+            command: "tasks.board.OpenTask".to_owned(),
+            sequence,
+        }));
+        let events = (0..WRITE)
+            .map(|index| Event {
+                name: "tasks.board.TaskOpened".to_owned(),
+                payload: object(json!({"task_id": format!("t{write}-{index}"), "title": "Old"})),
+            })
+            .collect::<Vec<_>>();
+        board
+            .commit_events(&events, &[])
+            .unwrap_or_else(|error| panic!("{name}: the board records write {write}: {error}"));
+    }
+    board.attribute(None);
+    let read = Arc::new(AtomicUsize::new(0));
+    let given: Stores = [
+        (
+            "board".to_owned(),
+            Box::new(Counting {
+                store: board,
+                read: Arc::clone(&read),
+            }) as Box<dyn Store>,
+        ),
+        (
+            "ledger".to_owned(),
+            Box::new(Counting {
+                store: ledger,
+                read: Arc::clone(&read),
+            }) as Box<dyn Store>,
+        ),
+    ]
+    .into_iter()
+    .collect();
+    let mut host = Host::supplied(
+        tasks(),
+        &bound("elsewhere"),
+        Arc::new(ManualClock::new()),
+        None,
+        given,
+    )
+    .unwrap_or_else(|error| panic!("{name}: the host opens: {error}"));
+    assert_eq!(
+        host.published().expect("the whole list reads").len(),
+        LONG,
+        "{name}"
+    );
+
+    read.store(0, Ordering::SeqCst);
+    let head = host
+        .published_head()
+        .unwrap_or_else(|error| panic!("{name}: the head reads: {error}"));
+    assert_eq!(
+        read.load(Ordering::SeqCst),
+        0,
+        "{name}: the head on the host's thread reads no event of {LONG}"
+    );
+    let reader = host.reader();
+    let beside = reader
+        .published_head()
+        .unwrap_or_else(|error| panic!("{name}: the head reads beside: {error}"));
+    assert_eq!(
+        read.load(Ordering::SeqCst),
+        0,
+        "{name}: the head beside the host's thread reads no event of {LONG}"
+    );
+    for (side, cursor) in [("on the host's thread", &head), ("beside it", &beside)] {
+        let idle = host
+            .published_after(cursor, 100)
+            .unwrap_or_else(|error| panic!("{name}: the page after the head reads: {error}"));
+        assert_eq!(
+            idle.events,
+            Vec::<Published>::new(),
+            "{name}: nothing after the head taken {side}"
+        );
+        assert_eq!(&idle.next, cursor, "{name}: the same cursor, {side}");
+    }
+    assert_eq!(
+        read.load(Ordering::SeqCst),
+        0,
+        "{name}: a page after the head reads no event"
+    );
+
+    submit(
+        &mut host,
+        "tasks.board.OpenTask",
+        json!({"task_id": "new", "title": "New"}),
+    );
+    for (side, cursor) in [("on the host's thread", &head), ("beside it", &beside)] {
+        read.store(0, Ordering::SeqCst);
+        let page = reader
+            .published_after(cursor, 100)
+            .unwrap_or_else(|error| panic!("{name}: the page after one command reads: {error}"));
+        let ids = page
+            .events
+            .iter()
+            .map(|published| published.event.payload["task_id"].clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            [json!("new")],
+            "{name}: after the head taken {side}, the one event published since"
+        );
+        assert_eq!(
+            read.load(Ordering::SeqCst),
+            1,
+            "{name}: after the head taken {side}, the page reads that event alone"
+        );
+    }
+}
+
+/// [`the_head_reads_no_event_of_a_long_log_on`] the memory store.
+#[test]
+fn the_head_reads_no_event_of_a_long_log_on_memory() {
+    the_head_reads_no_event_of_a_long_log_on(
+        "memory",
+        MemoryStore::default(),
+        MemoryStore::default(),
+    );
+}
+
+/// [`the_head_reads_no_event_of_a_long_log_on`] SQLite.
+#[test]
+fn the_head_reads_no_event_of_a_long_log_on_sqlite() {
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
+    let open = |name: &str| {
+        SqliteStore::open(&state.path().join(format!("{name}.sqlite"))).expect("SQLite opens")
+    };
+    the_head_reads_no_event_of_a_long_log_on("sqlite", open("board"), open("ledger"));
 }
