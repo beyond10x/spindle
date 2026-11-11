@@ -64,7 +64,11 @@ A record's `reason` is the refusal text with every value the caller sent written
 map key, struct member or input field name the caller sent too: a refused field is named with the
 type it expected, never with what was sent. It is at most 512 bytes, and a record's `path` at most
 2,048 bytes, each cut with `…` where longer, so the record of a refused request holds its method,
-its path and the names of its route, and under 1 KiB besides, whatever its body held. The `reason` of each binding listed under `unmet` is bounded
+its path and the names of its route, and under 1 KiB besides, whatever its body held. A record
+of a console request (`/api/model`, `/api/events`, `/api/reset`) that carried a query string
+keeps it as `query`, at most 2,048 bytes as the path is: `after` and `limit` with their values,
+the cursor only where the read was answered and the limit only where it is digits, and every
+other name and value written `…`. So a poller's cursor is in the log and nothing else it sent. The `reason` of each binding listed under `unmet` is bounded
 the same way: it names the binding, the input and the type it expected, never the value the event
 carried.
 

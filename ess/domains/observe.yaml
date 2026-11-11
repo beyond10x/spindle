@@ -373,6 +373,15 @@ types:
         summary: >-
           The request's path, without the query string. At most 2,048 bytes, cut on a character
           boundary with `…` where longer.
+      - name: query
+        type: Optional<String>
+        summary: >-
+          The query string of a console request (`/api/model`, `/api/events`, `/api/reset`),
+          absent where it carried none and for every other request. Each pair is kept in order,
+          empty pairs dropped: `after` and `limit` by name, the value of `after` where the request
+          was answered `200` (a cursor `GET /api/events` answered) and the value of `limit` where
+          it is digits; every other name and value is written `…`. At most 2,048 bytes, as the
+          path, cut with `…` where longer.
       - name: route
         type: Optional<String>
         summary: The route template the path resolved to; absent for an unrouted request.

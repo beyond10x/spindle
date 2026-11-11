@@ -305,7 +305,7 @@ impl Pending {
                 Answered::ingress(),
             )),
             (Asked::Console(Console::Events), _) => Some((
-                crate::console::events_read(reader).into(),
+                crate::console::events_read_queried(reader, &self.query).into(),
                 Answered::ingress(),
             )),
             (Asked::Hosted(reserved), Some(recorder)) => Some((
@@ -372,7 +372,7 @@ impl Pending {
                 Answered::ingress(),
             ),
             Asked::Console(Console::Events) => (
-                crate::console::events(host).into(),
+                crate::console::events_queried(host, &self.query).into(),
                 Vec::new(),
                 Answered::ingress(),
             ),

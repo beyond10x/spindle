@@ -113,6 +113,18 @@ are Spindle's releases.
   in `SHA256SUMS`. Each job that builds an archive or the SBOM hashes it, and the publish job
   checks every file against that hash before it writes `SHA256SUMS` from them, so a file changed
   between its build and the release page fails the release.
+- `GET /api/events?after=<cursor>&limit=<n>` answers a range (`story:events-range-read`). A
+  downstream consumer reported that `GET /api/events` ignored every query, so a proxy that polled
+  it read and filtered the whole log on every poll. The answer is `{"events": [...], "next":
+  "<cursor>"}`: at most `n` events after the cursor, in the order the whole list has them.
+  `next` is opaque, and a cursor taken before a restart or a reset still resumes after its last
+  event. `limit` is 100 by default and 1,000 at most, and a larger one is answered with 1,000.
+  A malformed `after` or `limit` is refused `400`. Each store is read only after the position the
+  cursor marks for it, so a poll with the cursor at the end reads no event, however long the log
+  is. Without `after` or `limit` the answer is `{"events": [...]}` as before. The request log
+  records a console request's query string as `query`, at most 2,048 bytes as the path is.
+  Only the cursor of an answered read and a numeric limit are kept there, and every other name
+  and value is written `…`.
 
 ### Changed
 

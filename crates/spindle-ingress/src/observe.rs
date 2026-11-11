@@ -354,6 +354,14 @@ impl Answered {
     }
 }
 
+/// What a request asked for: its path and its query string (after the `?`, without the token a
+/// guarded listener reads), both still percent-encoded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Target<'a> {
+    pub(crate) path: &'a str,
+    pub(crate) query: &'a str,
+}
+
 /// What a request was for, and how it was answered, as one record keeps it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Note {
@@ -385,6 +393,8 @@ struct Record {
     at: SystemTime,
     method: String,
     path: String,
+    /// A console request's query string, as [`recorded_query`] keeps it.
+    query: Option<String>,
     route: Option<String>,
     operation: Option<String>,
     kind: Option<&'static str>,
@@ -409,6 +419,7 @@ impl Record {
         record.insert("method".to_owned(), json!(self.method));
         record.insert("path".to_owned(), json!(self.path));
         let optional = [
+            ("query", self.query.as_deref()),
             ("route", self.route.as_deref()),
             ("operation", self.operation.as_deref()),
             ("kind", self.kind),
@@ -564,8 +575,9 @@ impl Recorder {
         self.ring(|ring| ring.capacity)
     }
 
-    /// Records one request: `method` and `path` (without the query string, cut to
-    /// [`PATH_MOST`] bytes with `…` where longer: [`recorded_path`]), its head read `at`,
+    /// Records one request: `method` and the path of its `target` (without the query string, cut
+    /// to [`PATH_MOST`] bytes with `…` where longer: [`recorded_path`]), the query string of a
+    /// console request as [`recorded_query`] keeps it, its head read `at`,
     /// answered with `response` after `duration`, for what `note` says. Its class is read from
     /// the answer ([`Class::of`]); its reason is the answer's `refused` text with every value in
     /// it elided and cut to [`REASON_MOST`] bytes ([`reason`]), for every class but
@@ -576,10 +588,13 @@ impl Recorder {
         at: SystemTime,
         duration: Duration,
         method: &str,
-        path: &str,
+        target: Target<'_>,
         response: &Response,
         note: Note,
     ) {
+        let Target { path, query } = target;
+        let query = (note.kind == Some("console") && !query.is_empty())
+            .then(|| recorded_query(query, response.status == 200));
         let refused = refused(&response.body);
         let class = Class::of(response.status, refused.as_deref(), note.answered.by);
         let micros = u64::try_from(duration.as_micros()).unwrap_or(u64::MAX);
@@ -614,6 +629,7 @@ impl Recorder {
                 at,
                 method: method.to_owned(),
                 path: recorded_path(path),
+                query,
                 route: note.route,
                 operation: note.operation,
                 kind: note.kind,
@@ -861,6 +877,51 @@ fn recorded_path(path: &str) -> String {
         end -= 1;
     }
     let mut kept = path[..end].to_owned();
+    cut(&mut kept, PATH_MOST);
+    kept
+}
+
+/// The query string `query` of a console request as a record keeps it: each pair in order,
+/// empty pairs dropped, `after` and `limit` by name, the value of `after` where the request was
+/// `answered` (a cursor `GET /api/events` read, which is text it wrote) and the value of `limit`
+/// where it is digits; every other name and value is caller input and written `…`. At most
+/// [`PATH_MOST`] bytes, cut with `…` where longer, as a path is.
+fn recorded_query(query: &str, answered: bool) -> String {
+    let mut kept = String::new();
+    for pair in query.split('&').filter(|pair| !pair.is_empty()) {
+        if kept.len() > PATH_MOST {
+            break;
+        }
+        if !kept.is_empty() {
+            kept.push('&');
+        }
+        let (key, value) = match pair.split_once('=') {
+            Some((key, value)) => (key, Some(value)),
+            None => (pair, None),
+        };
+        let name = crate::surface::form_decoded(key);
+        let name = name
+            .as_deref()
+            .filter(|name| [crate::console::AFTER, crate::console::LIMIT].contains(name));
+        kept.push_str(name.unwrap_or(ELIDED));
+        let Some(value) = value else {
+            continue;
+        };
+        kept.push('=');
+        let cursor = |value: &str| {
+            value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        };
+        let digits = |value: &str| value.bytes().all(|byte| byte.is_ascii_digit());
+        let shown = !value.is_empty()
+            && match name {
+                Some(crate::console::AFTER) => answered && cursor(value),
+                Some(crate::console::LIMIT) => digits(value),
+                _ => false,
+            };
+        kept.push_str(if shown { value } else { ELIDED });
+    }
     cut(&mut kept, PATH_MOST);
     kept
 }
@@ -1160,7 +1221,7 @@ fn classes(query: &str) -> Result<Vec<Class>, String> {
 mod tests {
     use std::time::{Duration, UNIX_EPOCH};
 
-    use super::{Answered, By, Class, Note, Recorder, Reserved};
+    use super::{Answered, By, Class, Note, Recorder, Reserved, Target};
     use crate::answer::Answer;
     use crate::router::Response;
 
@@ -1246,7 +1307,10 @@ mod tests {
                 UNIX_EPOCH,
                 Duration::from_micros(7),
                 "GET",
-                "/x",
+                Target {
+                    path: "/x",
+                    query: "",
+                },
                 &Answer::refusal(status, "no").into(),
                 Note::unrouted(By::Unrouted),
             );

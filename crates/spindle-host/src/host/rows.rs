@@ -31,6 +31,9 @@ pub(super) struct Counted {
     held: bool,
     /// What its readers share with it: the rows, and the store's reading handle.
     shared: Arc<Shared>,
+    /// How many times a store was opened in place of the first: a store opened in place of another
+    /// starts its positions over ([`super::Cursor`]).
+    generation: u64,
     /// For a store a reset empties in place (one the host was given, such as PostgreSQL), which
     /// its readers cannot go on reading as it was: the gate its reads pass ([`Gate`]).
     gate: Option<Arc<Gate>>,
@@ -164,8 +167,8 @@ pub(super) struct Shared {
     /// The handle a reader reads the store through ([`Store::reading`]); `None` for a store only
     /// the host's thread reads. It is the one of the store as the last command left it: a reset
     /// hands its readers the emptied store only once every store is emptied and its world loaded
-    /// ([`Counted::publish`]).
-    reading: RwLock<Option<Arc<dyn Reading>>>,
+    /// ([`Counted::publish`]), with the generation of that store ([`Counted::generation`]).
+    reading: RwLock<(u64, Option<Arc<dyn Reading>>)>,
 }
 
 impl Shared {
@@ -180,6 +183,12 @@ impl Shared {
 
     /// The handle the store is read through beside the host's thread, where it has one.
     pub(super) fn reading(&self) -> Option<Arc<dyn Reading>> {
+        self.handed().1
+    }
+
+    /// The generation of the store its readers read ([`Counted::generation`]) and its handle,
+    /// where it has one, as one reset handed both.
+    pub(super) fn handed(&self) -> (u64, Option<Arc<dyn Reading>>) {
         self.reading
             .read()
             .unwrap_or_else(PoisonError::into_inner)
@@ -200,8 +209,9 @@ impl Counted {
             shared: Arc::new(Shared {
                 entities,
                 rows: Mutex::new(None),
-                reading: RwLock::new(None),
+                reading: RwLock::new((0, None)),
             }),
+            generation: 0,
             gate: in_place.then(Arc::default),
         };
         counted.rows = counted.store.counts(&counted.shared.entities).ok();
@@ -212,6 +222,12 @@ impl Counted {
     /// What its readers share with it.
     pub(super) fn shared(&self) -> Arc<Shared> {
         Arc::clone(&self.shared)
+    }
+
+    /// The generation of the store it holds: 0 for the store it was opened with, one more for
+    /// each store opened in place of the one before ([`Counted::replace`]).
+    pub(super) fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Holds its readers at the counts and the store they read now, whatever lands, until
@@ -228,6 +244,7 @@ impl Counted {
     /// Its readers go on reading the one held, and its counts, until [`Counted::publish`].
     pub(super) fn replace(&mut self, store: Box<dyn Store>) -> Box<dyn Store> {
         self.held = true;
+        self.generation = self.generation.wrapping_add(1);
         let held = std::mem::replace(&mut self.store, store);
         self.rows = self.store.counts(&self.shared.entities).ok();
         held
@@ -248,7 +265,7 @@ impl Counted {
             .shared
             .reading
             .write()
-            .unwrap_or_else(PoisonError::into_inner) = reading;
+            .unwrap_or_else(PoisonError::into_inner) = (self.generation, reading);
         rows.clone_from(&self.rows);
         drop(rows);
         self.held = false;

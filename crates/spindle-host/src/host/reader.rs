@@ -11,7 +11,7 @@ use spindle_telemetry::Counters;
 use spindle_timer::Clock;
 
 use super::rows::Shared;
-use super::{HostError, Published, listing, owner_of, readable};
+use super::{Cursor, HostError, Page, Published, listing, owner_of, readable};
 use crate::admission::Placements;
 
 /// What reads a host's committed state from any thread while the host's own thread runs
@@ -34,6 +34,8 @@ pub struct Reader {
     pub(super) placements: Arc<Placements>,
     pub(super) components: Arc<BTreeMap<String, Read>>,
     pub(super) emitted: Arc<Mutex<BTreeMap<(String, String), u64>>>,
+    /// The host's run ([`super::Cursor`]).
+    pub(super) run: u64,
 }
 
 /// What a [`Reader`] reads of one component.
@@ -141,6 +143,35 @@ impl Reader {
             committed.push((name.clone(), reading.events_after(0)?));
         }
         Ok(super::merged(committed))
+    }
+
+    /// The events published after `after`, at most `limit`, as
+    /// [`super::Host::published_after`] answers them: read from each component's store through
+    /// its reading handle, beside the host's thread, only after the position the cursor marks.
+    ///
+    /// # Errors
+    /// [`HostError::Unsupported`] where a component's store gives no reading handle
+    /// ([`Reader::reads_events`]), [`HostError::Cursor`] where `after` names a component the host
+    /// does not run, and [`HostError::Store`] where a store cannot be read.
+    pub fn published_after(&self, after: &Cursor, limit: usize) -> Result<Page, HostError> {
+        let mut stores = Vec::with_capacity(self.components.len());
+        let mut handles = BTreeMap::new();
+        for (name, read) in self.components.iter() {
+            // The generation and the handle are taken together: a reset hands its readers both
+            // at once.
+            let (generation, reading) = read.shared.handed();
+            let reading = reading.ok_or_else(|| {
+                HostError::Unsupported(format!("{name} is read on the host's thread only"))
+            })?;
+            stores.push((name.clone(), generation));
+            handles.insert(name.as_str(), reading);
+        }
+        super::range::range(self.run, &stores, after, limit, |name, position| {
+            let reading = handles
+                .get(name)
+                .ok_or_else(|| HostError::Unsupported(format!("{name} is not running")))?;
+            Ok(reading.events_after(position)?)
+        })
     }
 
     /// Whether this reader answers the events published ([`Reader::published`]): whether every
