@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-11-11
+
 ### Fixed
 
 - `GET /__spindle/metrics` no longer scans any store, and requests are no longer held behind it
@@ -27,6 +29,16 @@ are Spindle's releases.
   measured a read at 41.7 s to 56.3 s and a command sent during it at 53.4 s to 57.0 s before;
   after, five reads took 31 ms to 45 ms and the commands 40 ms to 73 ms. The read still runs on
   the host's thread, so a request that arrives during it waits for it, now for milliseconds.
+
+## [0.12.0] - 2026-11-11
+
+### Changed
+
+- ESS 0.92.0: every ESS crate, `schema-contract` included, and CI's `ess` CLI move to tag 0.92.0; the
+  specification requires ess 0.92 and the generated output is restamped. A specification in format
+  `ess/34`, `ess/35` or `ess/36` is admitted, served over HTTP and conformed unchanged; before,
+  `ess/36` was refused whole as `unsupported_format_version`. A format newer than `ess/36` is still
+  refused whole, as ESS 0.92.0 refuses it.
 
 ## [0.11.0] - 2026-11-11
 
