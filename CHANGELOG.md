@@ -6,6 +6,33 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- `run` serving HTTP proves each request's caller with `--trusted-caller-header <name>`: a proxy
+  in front of the ingress authenticates the request and sets that header to one JSON object,
+  `{"actor": "<qualified actor>", "caller": {"<attribute>": <value>}}`, bound against the model as
+  `--fixed-caller` is. The proxy is trusted by a shared secret: `--trusted-caller-secret <file>`
+  is required with the header option (exit 1 without it, or for a file that cannot be read or is
+  empty), and the proxy sends the secret on every request in the header `Spindle-Proxy-Secret`. A
+  command that reads its caller then runs for that caller instead of answering `501`, and a
+  read-granted view is read as it. A request for a command or view without the caller header,
+  with it twice, with a value that names a member twice or proves no caller of the model, or
+  without the right secret is refused `403` `{"refused": "not granted", "actor": null}` and writes
+  nothing; no default caller is taken, and neither header's value nor the secret is ever printed.
+  On such a run the console routes (`/api/*`) and `/__spindle/*` require the secret alone and are
+  refused the same way without it. The ingress must be
+  reachable only through that proxy, which must remove both headers from client requests. With
+  `--fixed-actor` the run exits 1 (design § 11, `architecture-decision-record:http-caller-proof`).
+
+- An event binding with a payload condition (`when: {event: X, where: …}`, ess/22) runs: the
+  channel no longer refuses it at start ("a `where` condition is not supported by the channel").
+  The condition is decided on each event's payload before the input is mapped, by ESS's own
+  evaluator, as ESS 0.90.0's interpreter decides it: true invokes the command, false invokes
+  nothing and reports nothing as failed, and a condition that reads an absent or `null` Optional
+  field is unknown, invokes nothing and is reported as unmet binding input, with zero attempts,
+  while the event's other bindings still run (`spindle_channel::Route::holds`,
+  `MappingError::Undecided`).
+
 ## [0.10.0] - 2026-11-10
 
 ### Added

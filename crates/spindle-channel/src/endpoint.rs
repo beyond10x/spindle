@@ -22,9 +22,10 @@ use spindle_telemetry::{Carried, Sink};
 /// How long an `at_least_once` envelope waits for its acknowledgement unless configured.
 pub const DEFAULT_ACKNOWLEDGEMENT_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// A binding an event triggered whose command input could not be filled from it: no envelope was
-/// staged for it and its command is not invoked: zero attempts, no retry. The event's other
-/// bindings still run. ESS 0.86.0's interpreter calls this an unmet input obligation only for a
+/// A binding an event triggered whose command input could not be filled from it, or whose `where`
+/// condition the event leaves undecided ([`MappingError::Undecided`]): no envelope was staged for
+/// it and its command is not invoked: zero attempts, no retry. The event's other bindings still
+/// run. ESS 0.86.0's interpreter calls this an unmet input obligation only for a
 /// binding with `on_refusal` and answers every other one unsupported (`interpret/bindings.rs`);
 /// what Spindle does instead is a runtime decision, `docs/design/spindle.md` § 11 (unmet binding
 /// input).
@@ -112,9 +113,12 @@ impl Sender {
     /// it triggers; returns how many.
     ///
     /// Refused, with nothing staged, when the component does not publish the event, or when a
-    /// binding leads to a component no channel is connected to. A binding whose input the event
-    /// does not fill stages nothing and is held as [`Unmet`] until [`Self::take_unmet`]; the
-    /// event's other bindings are staged.
+    /// binding leads to a component no channel is connected to. A binding whose `where` condition
+    /// is false for the event stages nothing and reports nothing ([`Route::holds`]). A binding
+    /// whose input the event does not fill, or whose condition is undecided, stages nothing and is
+    /// held as [`Unmet`] until [`Self::take_unmet`]; the event's other bindings are staged.
+    ///
+    /// [`Route::holds`]: crate::Route::holds
     pub fn publish(&mut self, position: u64, event: Event) -> Result<usize, ChannelError> {
         let publishes = self
             .router
@@ -131,7 +135,7 @@ impl Sender {
             .routes()
             .iter()
             .filter(|route| route.event == event.name)
-            .map(|route| (route, route.map(&event)))
+            .map(|route| (route, route.invoke(&event)))
             .collect::<Vec<_>>();
         if let Some((route, _)) = triggered
             .iter()
@@ -145,7 +149,8 @@ impl Sender {
         let mut envelopes = Vec::with_capacity(triggered.len());
         for (route, mapped) in triggered {
             let command = match mapped {
-                Ok(command) => command,
+                Ok(Some(command)) => command,
+                Ok(None) => continue,
                 Err(error) => {
                     self.unmet.push(Unmet {
                         binding: route.binding.clone(),

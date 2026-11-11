@@ -12,8 +12,8 @@ use ess_http::Operation;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::{Bytes, Incoming};
 use hyper::header::{
-    ALLOW, AUTHORIZATION, CONTENT_LENGTH, CONTENT_SECURITY_POLICY, CONTENT_TYPE, HOST, HeaderValue,
-    TRANSFER_ENCODING,
+    ALLOW, AUTHORIZATION, CONTENT_LENGTH, CONTENT_SECURITY_POLICY, CONTENT_TYPE, HOST, HeaderMap,
+    HeaderValue, TRANSFER_ENCODING,
 };
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
@@ -26,7 +26,7 @@ use crate::answer::Answer;
 use crate::console::{Console, Worlds};
 use crate::observe::{Answered, By, Note, Reserved};
 use crate::router::{Asked, BODY_LIMIT, Pending, Response as Reply};
-use crate::surface::{Route, Surface};
+use crate::surface::{Caller, Route, Surface};
 
 /// How long a connection may take to send a request's head; a slower one is closed.
 pub const HEADER_READ: Duration = Duration::from_secs(10);
@@ -213,6 +213,12 @@ impl Listener {
     /// [`HEADER_READ`] closes the connection. A failed accept is retried, and the listener goes
     /// on.
     ///
+    /// On a surface made [`Surface::proving_callers`] each request for a command or view is
+    /// handed on with the caller its header proves where it also carries the proxy's secret, both
+    /// read once and never printed; the router refuses one that proves none. A console route or
+    /// one under `/__spindle/` answers the proxy's secret alone, and without it is refused `403`
+    /// `{"refused": "not granted", "actor": null}` before anything is read.
+    ///
     /// # Errors
     /// When the socket cannot be bound or the server thread cannot start.
     pub fn bind(port: u16, surface: Surface) -> io::Result<Self> {
@@ -334,6 +340,15 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
     {
         return (refusal.into(), unrouted(By::Ingress));
     }
+    // On a surface whose requests prove their caller, the run's own routes are operator tooling
+    // behind the proxy: they answer the proxy's secret alone.
+    let unproxied = served
+        .surface
+        .caller_secret()
+        .is_some_and(|secret| !presents(request.headers(), secret.expose()));
+    if reserved.is_some() && unproxied {
+        return (Answer::not_proven().into(), None);
+    }
     if let Some(reserved) = reserved {
         let query = request.uri().query().unwrap_or_default();
         let query = match &served.guard {
@@ -360,6 +375,7 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
             content_type: None,
             body: Vec::new(),
             recorder: served.surface.recorder().cloned(),
+            proven: None,
         };
         let reply = match handed(served, pending).await {
             Ok((reply, _)) => reply,
@@ -385,6 +401,9 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
     let refused = |answer: Answer| -> (Reply, Option<Note>) {
         (answer.into(), Some(noted(&asked, Answered::ingress())))
     };
+    if matches!(asked, Asked::Console(_)) && unproxied {
+        return refused(Answer::not_proven());
+    }
     if request.headers().contains_key(TRANSFER_ENCODING) {
         return refused(Answer::refusal(
             411,
@@ -409,6 +428,16 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned);
+    let proven = match (
+        &asked,
+        served.surface.caller_header(),
+        served.surface.caller_secret(),
+    ) {
+        (Asked::Route(_), Some(header), Some(secret)) => {
+            proven(request.headers(), header, secret.expose())
+        }
+        _ => None,
+    };
     let read = tokio::time::timeout(
         BODY_READ,
         Limited::new(request.into_body(), BODY_LIMIT).collect(),
@@ -437,6 +466,7 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         content_type,
         body,
         recorder: served.surface.recorder().cloned(),
+        proven,
     };
     match handed(served, pending).await {
         Ok((reply, answered)) => (
@@ -448,6 +478,33 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         ),
         Err(refusal) => (refusal.into(), Some(unanswered)),
     }
+}
+
+/// The caller `headers` prove in `header` ([`Caller::proven`]), where they also carry `secret` in
+/// [`Surface::SECRET_HEADER`], compared in time that depends only on the lengths ([`same`]);
+/// `None` where either header is absent or given more than once, or the secret is another. No
+/// value is printed.
+fn proven(headers: &HeaderMap, header: &str, secret: &str) -> Option<Caller> {
+    if !presents(headers, secret) {
+        return None;
+    }
+    Caller::proven(once(headers, header)?.as_bytes())
+}
+
+/// Whether `headers` carry `secret` once in [`Surface::SECRET_HEADER`], compared in time that
+/// depends only on the lengths ([`same`]).
+fn presents(headers: &HeaderMap, secret: &str) -> bool {
+    once(headers, Surface::SECRET_HEADER)
+        .and_then(|presented| presented.to_str().ok())
+        .is_some_and(|presented| same(presented, secret))
+}
+
+/// The one value of the header `name` in `headers`; `None` where it is absent or given more than
+/// once.
+fn once<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a HeaderValue> {
+    let mut values = headers.get_all(name).iter();
+    let value = values.next()?;
+    values.next().is_none().then_some(value)
 }
 
 /// Hands `pending` to the host's thread as an [`Exchange`] and waits for its answer; the `503`

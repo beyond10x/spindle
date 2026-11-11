@@ -5,12 +5,14 @@ use std::sync::Arc;
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::{
-    ResolvedBinding, ResolvedMapping, ResolvedMappingValue, ResolvedRefusalAction,
-    ResolvedRefusalPolicy, ResolvedTypeRef,
+    ResolvedBinding, ResolvedBindingCondition, ResolvedMapping, ResolvedMappingValue,
+    ResolvedRefusalAction, ResolvedRefusalPolicy, ResolvedTypeRef,
 };
 use ess_domain::binding::{Delivery, Failure};
 use ess_domain::command::OutcomeName;
 use ess_domain::types::Primitive;
+use ess_primitives::node::Node;
+use ess_primitives::predicate::Truth;
 use serde_json::{Map, Value};
 
 use crate::model::{Command, Event};
@@ -43,6 +45,8 @@ pub struct Route {
     /// The policy chosen per refusal of the command (`on_refusal`), where the binding declares
     /// one: each `drop` or an unbounded `retry`.
     pub on_refusal: Option<ResolvedRefusalPolicy>,
+    /// The binding's payload condition (`when.where`), decided by [`Self::holds`].
+    condition: Option<ResolvedBindingCondition>,
     rules: Vec<Rule>,
 }
 
@@ -137,6 +141,16 @@ pub enum MappingError {
         /// What the value is not.
         reason: String,
     },
+    /// The binding's `where` condition is neither true nor false for the event: a comparison
+    /// reads an absent Optional field, or the payload cannot be read as the event declares it.
+    /// ESS calls this an unmet obligation that invokes nothing, never a skip.
+    #[error("binding {binding}: the `where` condition is unknown for this event: {reason}")]
+    Undecided {
+        /// The binding.
+        binding: String,
+        /// Why it is undecided.
+        reason: String,
+    },
 }
 
 impl Router {
@@ -144,10 +158,10 @@ impl Router {
     ///
     /// A periodic binding is the timer's and is skipped. A binding that uses anything the channel
     /// does not carry is refused whole, so a specification never runs with part of a binding:
-    /// a delivery context, a `where` condition, a selection, a bounded retry, an escalation
-    /// (universal or chosen per refusal), or a mapping source other than `event.<field>` or a
-    /// literal. A policy chosen per refusal whose entries drop or retry without a bound is
-    /// carried ([`Route::on_refusal`]). A mapping
+    /// a delivery context, a selection, a bounded retry, an escalation (universal or chosen per
+    /// refusal), or a mapping source other than `event.<field>` or a literal. A policy chosen per
+    /// refusal whose entries drop or retry without a bound is carried ([`Route::on_refusal`]), and
+    /// so is a `where` condition ([`Route::holds`]). A mapping
     /// across a declared conversion is carried, its value checked when it is mapped, against a copy of
     /// `ir` this router holds; [`Self::from_shared`] holds no copy.
     pub fn from_ir(ir: &EssIr) -> Result<Self, RouteError> {
@@ -221,13 +235,15 @@ impl Router {
         self.publishes.get(component)
     }
 
-    /// The commands `event` maps to, one per binding it triggers.
+    /// The commands `event` maps to, one per binding it triggers whose condition holds.
     pub fn map(&self, event: &Event) -> Result<Vec<(&Route, Command)>, MappingError> {
-        self.routes
-            .iter()
-            .filter(|route| route.event == event.name)
-            .map(|route| route.map(event).map(|command| (route, command)))
-            .collect()
+        let mut commands = Vec::new();
+        for route in self.routes.iter().filter(|route| route.event == event.name) {
+            if let Some(command) = route.invoke(event)? {
+                commands.push((route, command));
+            }
+        }
+        Ok(commands)
     }
 }
 
@@ -255,7 +271,53 @@ impl Route {
         }
     }
 
-    /// The command this binding invokes for `event`.
+    /// Whether this binding runs for `event`: its `where` condition, decided on the payload before
+    /// the input is mapped by ESS's own evaluator, as ESS's interpreter decides it
+    /// (`interpret/bindings.rs`, `holds`). `true` for a binding without one. `false` skips the
+    /// binding for this event and is no failure; a condition that is Unknown (a comparison reads
+    /// an absent or `null` Optional field), or that cannot read the payload as declared, is
+    /// [`MappingError::Undecided`].
+    pub fn holds(&self, event: &Event) -> Result<bool, MappingError> {
+        let Some(condition) = &self.condition else {
+            return Ok(true);
+        };
+        let undecided = |reason: String| MappingError::Undecided {
+            binding: self.binding.clone(),
+            reason,
+        };
+        let mut payload = BTreeMap::new();
+        for read in condition.plan.reads.values() {
+            let Some(field) = read.members.first() else {
+                continue;
+            };
+            if let Some(value) = event.fields.get(field) {
+                let node = serde_json::from_value::<Node>(value.clone())
+                    .map_err(|error| undecided(format!("event.{field}: {error}")))?;
+                payload.insert(field.clone(), node);
+            }
+        }
+        match condition.plan.evaluate(&payload) {
+            Ok(Truth::True) => Ok(true),
+            Ok(Truth::False) => Ok(false),
+            Ok(Truth::Unknown) => Err(undecided(
+                "a comparison reads a field the event leaves absent".to_owned(),
+            )),
+            Err(malformed) => Err(undecided(malformed.to_string())),
+        }
+    }
+
+    /// The command this binding invokes for `event`, or `None` where its `where` condition is
+    /// false ([`Self::holds`], then [`Self::map`]).
+    pub fn invoke(&self, event: &Event) -> Result<Option<Command>, MappingError> {
+        if self.holds(event)? {
+            self.map(event).map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// The command this binding's mapping makes of `event`, its `where` condition aside: a
+    /// caller that delivers decides [`Self::holds`] first, as [`Self::invoke`] does.
     ///
     /// An absent `event.<field>` source leaves an Optional input out and refuses a required one. A
     /// value carried across a declared conversion that is no value of its input's declared type
@@ -308,9 +370,6 @@ impl Route {
         };
         if binding.context.is_some() {
             return Err(unsupported("a delivery context".to_owned()));
-        }
-        if binding.condition.is_some() {
-            return Err(unsupported("a `where` condition".to_owned()));
         }
         if binding.selection.is_some() {
             return Err(unsupported("a selection".to_owned()));
@@ -369,6 +428,7 @@ impl Route {
             delivery: binding.delivery,
             on_failure: binding.failure,
             on_refusal: binding.refusal_policy.clone(),
+            condition: binding.condition.clone(),
             rules,
         }))
     }

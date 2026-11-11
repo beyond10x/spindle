@@ -1,0 +1,43 @@
+format: ess/34
+system: parcels
+version: v1
+summary: A depot that sends on the boxes it receives and keeps the letters.
+domains:
+  - parcels.intake
+  - parcels.dispatch
+components:
+  - component: intake
+    summary: Receives parcels.
+    owns:
+      domains:
+        - parcels.intake
+    accepts:
+      commands:
+        - parcels.intake.ReceiveParcel
+    publishes:
+      events:
+        - parcels.intake.ParcelReceived
+    reached_by: in_process
+  - component: dispatch
+    summary: Sends parcels on.
+    owns:
+      domains:
+        - parcels.dispatch
+    accepts:
+      commands:
+        - parcels.dispatch.SendOn
+    publishes:
+      events:
+        - parcels.dispatch.SentOn
+    reached_by: in_process
+bindings:
+  - id: send-boxes
+    when:
+      event: parcels.intake.ParcelReceived
+      where: event.kind == box
+    invoke:
+      command: parcels.dispatch.SendOn
+    mapping:
+      parcel_id: event.parcel_id
+    delivery: at_most_once
+    on_failure: drop

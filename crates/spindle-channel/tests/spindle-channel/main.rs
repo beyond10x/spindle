@@ -4,4 +4,5 @@
 
 mod adversary;
 mod channel;
+mod condition;
 mod telemetry;

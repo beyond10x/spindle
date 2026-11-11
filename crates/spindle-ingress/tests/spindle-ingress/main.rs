@@ -2,6 +2,7 @@
 //! one test binary (`story:one-test-binary-per-crate`). Test names are unchanged under their
 //! module path.
 
+mod adversary2_caller_proof;
 mod adversary_component_reset;
 mod adversary_delivery;
 mod adversary_refusal_payload;

@@ -3,7 +3,9 @@
 //! module path.
 
 mod admit;
+mod adversary2_console_paths;
 mod adversary2_http_cause;
+mod adversary_binding_where;
 mod adversary_caller;
 mod adversary_console;
 mod adversary_control;
@@ -23,12 +25,14 @@ mod adversary_responses;
 mod adversary_served_decisions;
 mod adversary_topology;
 mod adversary_topology_emitted;
+mod adversary_trusted_caller;
 mod adversary_unserved;
 mod adversary_unserved_base;
 mod adversary_view_list_parameter;
 mod adversary_w17_conform;
 mod adversary_world;
 mod adversary_world_spec;
+mod binding_where;
 mod caller;
 mod conform;
 mod console;
@@ -56,6 +60,7 @@ mod run;
 mod served_decisions;
 mod served_world;
 mod topology;
+mod trusted_caller;
 mod unserved;
 mod view_field_filters;
 mod view_list_parameter;
