@@ -6,6 +6,17 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- `run --address <IP>` serves HTTP on the IPv4 or IPv6 address given instead of `127.0.0.1`, so a
+  container port can reach it; without it `run` still binds `127.0.0.1` only. A value that is not
+  an IP address (a host name, a port, brackets) exits 2 before anything listens. The start line
+  names the address bound, `{"listening": "<address>:<port>", ...}`. No check is added off
+  loopback: every check `run` makes on `127.0.0.1` stays in force, and `run` makes no `Host` or
+  token check on any address, so on a non-loopback address every route, the console's
+  `POST /api/reset` included, answers whoever reaches it. Instances `deploy` starts still bind
+  loopback.
+
 ## [0.14.0] - 2026-11-11
 
 ### Added

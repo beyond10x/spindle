@@ -391,6 +391,79 @@ fn the_listener_binds_loopback_only() {
     assert_eq!(rows(&served, &contract, ALL_TASKS), Vec::<Value>::new());
 }
 
+/// `run --address <ip>` listens on `ip`, prints it in its start line and answers a request sent
+/// there.
+fn answers_on(ip: std::net::IpAddr) {
+    let contract = Contract::load();
+    let served = serve_with(&["--address", &ip.to_string()]);
+    assert_eq!(served.address.ip(), ip, "{}", served.ready);
+    assert_ne!(served.address.port(), 0, "{}", served.ready);
+    assert_eq!(
+        served.ready["listening"],
+        json!(SocketAddr::new(ip, served.address.port()).to_string())
+    );
+    let (status, answer) = call(
+        &served,
+        &contract,
+        OPEN_TASK,
+        Some(&json!({"task_id": "t1", "title": "Water the plants"})),
+    );
+    assert_eq!(status, 202, "{answer}");
+    assert_eq!(
+        rows(&served, &contract, ALL_TASKS),
+        [json!({"task_id": "t1", "state": "Open", "title": "Water the plants"})]
+    );
+}
+
+#[test]
+fn run_with_an_ipv4_address_listens_and_answers_there() {
+    answers_on(std::net::IpAddr::from([127, 0, 0, 1]));
+}
+
+#[test]
+fn run_with_an_ipv6_address_listens_and_answers_there() {
+    answers_on(std::net::IpAddr::from(std::net::Ipv6Addr::LOCALHOST));
+}
+
+#[test]
+fn a_malformed_address_is_refused_before_listening() {
+    for malformed in ["127.0.0.256", "localhost", "[::1]", "127.0.0.1:8080"] {
+        let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+        let output = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+            .current_dir(root())
+            .args(["run", SPEC, "--environment", LAPTOP, "--state"])
+            .arg(state.path().join("state"))
+            .args(["--address", malformed])
+            .stdin(Stdio::null())
+            .output()
+            .expect("b10x-spindle runs");
+        assert_eq!(output.status.code(), Some(2), "{malformed}: {output:?}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(!stdout.contains("listening"), "nothing listened: {stdout}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("--address") && stderr.contains(malformed),
+            "the refusal names the option and the value: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn an_address_without_ingress_network_is_refused() {
+    let output = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+        .current_dir(root())
+        .args(["run", "ess", "--environment", LAPTOP, "--address", "::1"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("b10x-spindle runs");
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--address ::1 would be ignored"),
+        "the refusal names the option: {stderr}"
+    );
+}
+
 #[test]
 fn an_ingress_binding_other_than_http_loopback_is_refused() {
     let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");

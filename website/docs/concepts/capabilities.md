@@ -84,6 +84,15 @@ refused before anything listens. Once listening it prints
 `{"listening": "127.0.0.1:<port>", "components": [...]}`. `--port` picks the port, and its
 default, `0`, lets the system choose one. It serves until SIGINT or SIGTERM.
 
+`--address <IP>` serves on that IPv4 or IPv6 address instead, such as the address a container
+port forwards to, and the start line names it (`[::1]:<port>` for `--address ::1`). Without it
+`run` binds `127.0.0.1` only. A value that is not an IP address, such as a host name or one with
+a port, exits 2 before anything listens. No check is added off loopback: every check `run`
+makes on `127.0.0.1` stays in force on any address, and `run` makes no `Host` or token check on
+any address. On a non-loopback address every route, `POST /api/reset` included, answers whoever
+can reach it; put a proxy in front (`--trusted-caller-header`) or keep the address on a network
+only you reach.
+
 What is served is what ESS derives: each command the component accepts and, for a
 `reached_by: network` component, each view of a domain it owns. Each is served exactly where
 `ess generate --kind openapi` publishes it:

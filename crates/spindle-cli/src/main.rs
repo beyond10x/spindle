@@ -186,6 +186,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             answer_default,
             http,
             port,
+            address,
             drop_retries,
             fixed_actor,
             fixed_caller,
@@ -202,6 +203,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             answer_default,
             http: http.as_deref(),
             port,
+            address,
             drop_retries,
             callers: serve::callers(fixed_actor, fixed_caller)?,
             observe: observe.then_some(usize::from(observe_requests)),
@@ -417,6 +419,8 @@ struct Execute<'a> {
     answer_default: bool,
     http: Option<&'a Path>,
     port: Option<u16>,
+    /// `--address`: the IP address to serve on, 127.0.0.1 without it.
+    address: Option<std::net::IpAddr>,
     drop_retries: bool,
     callers: Vec<spindle_ingress::Caller>,
     /// With `--observe`, how many request records to keep.
@@ -436,6 +440,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         answer_default,
         http,
         port,
+        address,
         drop_retries,
         ref callers,
         observe,
@@ -522,6 +527,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 components,
                 binding,
                 port: port.unwrap_or(0),
+                address: address.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
                 ingress: ingress.implementation.as_str(),
                 drop_retries,
                 decides,
@@ -563,6 +569,12 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
     if let Some(port) = port {
         bail!(
             "nothing in {} requires ingress.network, so --port {port} would be ignored",
+            spec.display()
+        );
+    }
+    if let Some(address) = address {
+        bail!(
+            "nothing in {} requires ingress.network, so --address {address} would be ignored",
             spec.display()
         );
     }

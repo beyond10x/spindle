@@ -1,11 +1,12 @@
-//! The HTTP server: one socket on 127.0.0.1, hyper on a thread of its own, and every request for
+//! The HTTP server: one socket, on 127.0.0.1 unless the caller names another address
+//! ([`Listener::bind_reading_on`]), hyper on a thread of its own, and every request for
 //! a route handed to the caller's thread as an [`Exchange`], answered there by the router
 //! ([`crate::route`]); on a listener given the host's [`Reader`], every read answered through it
 //! on a blocking thread of its own instead ([`Listener::bind_reading`]).
 
 use std::convert::Infallible;
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -186,6 +187,11 @@ impl Guard {
     }
 }
 
+/// `127.0.0.1:<port>`.
+fn loopback(port: u16) -> SocketAddr {
+    SocketAddr::from((Ipv4Addr::LOCALHOST, port))
+}
+
 /// Compares two strings in time that depends only on their lengths.
 fn same(left: &str, right: &str) -> bool {
     left.len() == right.len()
@@ -196,7 +202,8 @@ fn same(left: &str, right: &str) -> bool {
             == 0
 }
 
-/// An HTTP/1.1 listener on 127.0.0.1 serving one [`Surface`].
+/// An HTTP/1.1 listener serving one [`Surface`], on 127.0.0.1 unless bound with
+/// [`Listener::bind_reading_on`].
 ///
 /// Dropping it stops accepting: requests not yet answered are answered `503`.
 #[derive(Debug)]
@@ -228,7 +235,7 @@ impl Listener {
     /// # Errors
     /// When the socket cannot be bound or the server thread cannot start.
     pub fn bind(port: u16, surface: Surface) -> io::Result<Self> {
-        Self::serve(port, surface, None, None)
+        Self::serve(loopback(port), surface, None, None)
     }
 
     /// As [`Listener::bind`], every request first checked: one whose `Host` header is neither
@@ -239,7 +246,7 @@ impl Listener {
     /// # Errors
     /// As [`Listener::bind`].
     pub fn bind_guarded(port: u16, surface: Surface, token: &str) -> io::Result<Self> {
-        Self::serve(port, surface, Some(token.to_owned()), None)
+        Self::serve(loopback(port), surface, Some(token.to_owned()), None)
     }
 
     /// As [`Listener::bind`], every read answered beside the host's thread through the host's
@@ -256,16 +263,31 @@ impl Listener {
     /// # Errors
     /// As [`Listener::bind`].
     pub fn bind_reading(port: u16, surface: Surface, reader: Reader) -> io::Result<Self> {
-        Self::serve(port, surface, None, Some(reader))
+        Self::bind_reading_on(IpAddr::V4(Ipv4Addr::LOCALHOST), port, surface, reader)
+    }
+
+    /// As [`Listener::bind_reading`], bound to `ip`, IPv4 or IPv6, instead of 127.0.0.1. No
+    /// `Host` or token check is added on any address: each request is checked exactly as on
+    /// 127.0.0.1.
+    ///
+    /// # Errors
+    /// As [`Listener::bind`].
+    pub fn bind_reading_on(
+        ip: IpAddr,
+        port: u16,
+        surface: Surface,
+        reader: Reader,
+    ) -> io::Result<Self> {
+        Self::serve(SocketAddr::new(ip, port), surface, None, Some(reader))
     }
 
     fn serve(
-        port: u16,
+        address: SocketAddr,
         surface: Surface,
         token: Option<String>,
         reader: Option<Reader>,
     ) -> io::Result<Self> {
-        let socket = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port))?;
+        let socket = std::net::TcpListener::bind(address)?;
         socket.set_nonblocking(true)?;
         let address = socket.local_addr()?;
         let guard = token.map(|token| Guard {

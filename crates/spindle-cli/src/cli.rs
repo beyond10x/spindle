@@ -97,8 +97,8 @@ pub enum Command {
     /// step runs.
     ///
     /// Where a component requires `ingress.network` (`reached_by: network`), runs every component
-    /// in one process and serves those over HTTP on 127.0.0.1 instead of reading stdin; only
-    /// `http-loopback` is served, and any other binding exits 1 before listening. Prints
+    /// in one process and serves those over HTTP on 127.0.0.1, or `--address`, instead of reading
+    /// stdin; only `http-loopback` is served, and any other binding exits 1 before listening. Prints
     /// `{"listening": "<address>", "components": [...]}` once listening and serves until SIGINT
     /// or SIGTERM (exit 130 or 143). Routes are where `ess generate --kind openapi` publishes them:
     /// ESS's derived routes, or with `--http` the `ess-http/1` binding's, read and checked by ESS
@@ -194,10 +194,17 @@ pub enum Command {
         /// JSON or YAML; only where `run` serves HTTP.
         #[arg(long, conflicts_with = "scenario")]
         http: Option<PathBuf>,
-        /// The port to serve HTTP on, on 127.0.0.1; `0`, the default, lets the system choose. Only
-        /// where `run` serves HTTP.
+        /// The port to serve HTTP on, on 127.0.0.1 or `--address`; `0`, the default, lets the
+        /// system choose. Only where `run` serves HTTP.
         #[arg(long, conflicts_with = "scenario")]
         port: Option<u16>,
+        /// The IP address to serve HTTP on, IPv4 or IPv6 (`::1`, no brackets), instead of
+        /// 127.0.0.1, the default; a host name or a value with a port exits 2 before listening.
+        /// No check is added off loopback: `run` makes the same checks on every address, and no
+        /// `Host` or token check on any, so on a non-loopback address every route, the console's
+        /// included, answers whoever reaches it. Only where `run` serves HTTP.
+        #[arg(long, value_name = "IP", conflicts_with = "scenario")]
+        address: Option<std::net::IpAddr>,
         /// A TOML file of answers, `<outcome> = true | false`, at the top level for every command
         /// or under a `["<command>"]` table for one; a command's table wins over the top level.
         #[arg(long)]
