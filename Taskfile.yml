@@ -82,6 +82,17 @@ tasks:
       - pnpm typecheck
       - pnpm build
 
+  check:postgres:
+    desc: The PostgreSQL store's and the state move's tests against the database SPINDLE_TEST_DATABASE_URL names (loopback, a role that may create schemas, roles and tables), the hosted cases over TLS verified against SPINDLE_TEST_DATABASE_CA
+    requires:
+      vars: [SPINDLE_TEST_DATABASE_URL, SPINDLE_TEST_DATABASE_CA]
+    cmds:
+      - 'cargo test --locked -p spindle-kernel --test spindle-kernel -- --include-ignored postgres::'
+      - 'cargo test --locked -p spindle-kernel --test spindle-kernel -- --include-ignored state_move::'
+      - 'cargo test --locked -p spindle-host --test spindle-host -- --include-ignored postgres::'
+      - 'cargo test --locked -p spindle-cli --test spindle-cli -- --include-ignored postgres::'
+      - 'cargo test --locked -p spindle-cli --test spindle-cli -- --include-ignored state_move::'
+
   check:vm:
     desc: The VM tests, on a host with KVM
     cmds:

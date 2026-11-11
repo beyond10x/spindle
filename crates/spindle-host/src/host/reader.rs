@@ -22,6 +22,8 @@ use crate::admission::Placements;
 /// that landed left it, never part of a write; a read never waits for the host's thread, and the
 /// host's thread never waits for a read. A reset hands its readers the emptied stores only once
 /// every store is emptied and its world loaded: until then they read the stores as they were.
+/// A store the host was given (PostgreSQL) is emptied in place, so it cannot be read as it was:
+/// a reset waits for the reads of it already running, and reads of it wait for the reset.
 /// Cloning it is cheap, and every clone reads the same host.
 #[derive(Clone)]
 pub struct Reader {

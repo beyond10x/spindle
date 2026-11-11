@@ -6,6 +6,88 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- `store.durable` bound to `postgres` keeps each component's state in an operator's PostgreSQL
+  (13 or later), through `eventlog-postgres` at the pinned eventlog tag, rows and events encoded as
+  the SQLite store encodes them and under the table prefix `spindle_<component>`, so components
+  share one database apart. `run` (served) reads the settings `database_url` (required, never
+  printed), `database_ca` (a PEM CA bundle: TLS with `sslmode=require`, the server verified
+  against it; required off loopback), `database_schema` (`public`), `database_pool` (4 per
+  component) and `database_connections` (required with `database_ca`: the database's connection
+  budget available to this deployment, at least components x `database_pool` + 1, and not the
+  serving role's `CONNECTION LIMIT`) from `SPINDLE_SETTING_<NAME>`. Without `database_ca` a
+  loopback or Unix-socket database is opened isolated and its tables created; with it, `run`
+  opens with a DML-only serving role and exits 1 before listening on an owner role (naming the
+  DDL rights it refuses), a role whose `CONNECTION LIMIT` is outside 1 to components x
+  `database_pool`, and a budget below components x `database_pool` + 1: one component at pool 4
+  takes a role limited to 4 and `database_connections` 8. A malformed `database_url` or
+  `database_schema` is refused naming that setting, as is a `database_url` naming no host or
+  holding an `@` other than the one ending its user info before the host (an `@` in the user
+  name, the password or the query string not percent-encoded as `%40`), printing none of it; a
+  server that cannot be reached is named by host and port, with `database_ca` and the certificate
+  as a cause where it is set. A scan reads the entity's own stream and then one event per
+  instance, up to 1,000 instances and about 32 MiB of rows to one `read_many` call of eventlog,
+  each a bounded read that takes no lock, so a transaction
+  left open elsewhere on the server never delays it, another process's commits on the same tables
+  never wait for it, and it holds the entity's rows in memory, not the log. The rows the host
+  counts when the store opens (`Store::counts`, for `spindle_entity_rows`) are read from each
+  entity's own stream alone, no row read. Its reading handle (`Store::reading`) reads through the
+  store's own pool beside the writer, one statement per connection taken and no lock held, and
+  opens no connection beyond `database_pool`, so the connection budget is unchanged and `GET`
+  views, `/api/model`, `/api/events` and `/__spindle/*` read a postgres-bound component off the
+  host's thread as they read a SQLite one; a reset, which empties its tables in place, waits for
+  the reads already running, and reads wait for the reset. The new `b10x-spindle store migrate <spec>
+  --environment <env>` creates every postgres-bound component's tables with the owner role,
+  idempotent (a second one started meanwhile waits for the first), one JSON line per component.
+  The example environment is `examples/environments/postgres.toml`. `task check:postgres` runs the
+  database cases against `SPINDLE_TEST_DATABASE_URL` and `SPINDLE_TEST_DATABASE_CA`, and CI's `PostgreSQL` job
+  runs it on PostgreSQL 17 with TLS. `run` reading stdin refuses `postgres`.
+- `b10x-spindle state move --from <dir> <spec> --environment <env>` moves the state a `run
+  --state` directory holds into the PostgreSQL tables of every component bound to `postgres`, with
+  the settings `run` reads: each `<component>.sqlite`, opened without creating anything, appended
+  in commit order, one transaction per write it recorded, so every stream keeps its versions and a
+  command decided after the move names the version the directory's last write left. It exits 1,
+  writing nothing, when the directory lacks a component's file, when a file holds a JSON string or
+  key with U+0000, which the SQLite store keeps and PostgreSQL refuses (every file is read before
+  connecting; the refusal names the component, the stream and where), or when a component's
+  tables already hold the stream of an entity the specification declares or the file holds, or
+  the mark of a partial move: one read of each stream's last version, which writes nothing and
+  does not grow with the log, also while a transaction is open elsewhere on the server; on a
+  loopback database a component's missing tables are created only after every check passed, so a
+  refused move creates no table. A move holds two connections of its role at once, the schema's
+  lock and one component's tables in turn, so a role `run` serves two components or more with
+  moves them; a role whose `CONNECTION LIMIT` is 1 exits 1 before the tables are read, naming the
+  two connections, and a connection refused as one too many is tried again for 5 s. One move
+  at a time writes into a schema: a move holds a PostgreSQL advisory lock on its schema from
+  before that check to after its last append, and a second move into the schema waits up to 5 s,
+  then exits 1 naming the other move, writing nothing. A file written by 0.7.0 to 0.10.0 arrives
+  in this release's form, each write's `spindle.written` event naming the instances it left
+  (event schema 2), so its scans read the entity's stream; a file holding writes of a release
+  before 0.7.0, which recorded no entity version, arrives with its log marked (`spindle:log`
+  `unnamed-writes`, before its first write), so its scans read the whole log and miss no row. It
+  prints one line per component (`component`, `streams`, `events`). Spindle is stopped first; a
+  move that fails partway leaves a partial copy the next move refuses.
+
+### Changed
+
+- eventlog moves from 0.9.2 to 0.9.3, whose PostgreSQL store answers a batch of reads with one
+  statement per 1,000 reads and appends a group in batched statements: a scan of 50,000
+  instances, or one write of 20,000, no longer takes one round trip per instance. One command's
+  writes stay one transaction, locking each instance it writes: on PostgreSQL's default
+  `max_locks_per_transaction` (64) and `max_connections` (100), a command writing more than about
+  7,000 instances at once is refused with SQLSTATE 53200 and writes nothing, the message naming
+  `max_locks_per_transaction`, which raised to 256 lands one of 20,000.
+- Store format, in the SQLite store as in the PostgreSQL one: each write's `spindle.written`
+  event names the instances it leaves, each at its stream's version after the write (event schema
+  2, `{"rows": {stream: version}, "removed": {stream: version}}`), so a scan of the PostgreSQL
+  store reads the entity's stream and one event per instance rather than the whole log. The
+  SQLite store reads and scans a file of any earlier release as before, its scan still reading
+  the whole file page by page, and adds writes in the new form. A PostgreSQL log holding writes
+  that name no instances (0.10.0's, which name none, and those before 0.7.0, which record no
+  entity version) is scanned whole when its stream `spindle:log` `unnamed-writes` exists, or
+  when the entity's stream holds such a write.
+
 ## [0.13.0] - 2026-11-11
 
 ### Fixed

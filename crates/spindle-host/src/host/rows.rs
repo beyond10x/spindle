@@ -3,7 +3,7 @@
 //! beside the host's thread ([`super::Reader`]).
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock};
 
 use serde_json::Value;
 use spindle_kernel::{Change, Reading, Removal, Scan, Store, StoreError, Stored, Write};
@@ -28,6 +28,92 @@ pub(super) struct Counted {
     held: bool,
     /// What its readers share with it: the rows, and the store's reading handle.
     shared: Arc<Shared>,
+    /// For a store a reset empties in place (one the host was given, such as PostgreSQL), which
+    /// its readers cannot go on reading as it was: the gate its reads pass ([`Gate`]).
+    gate: Option<Arc<Gate>>,
+}
+
+/// What keeps the readers of a store a reset empties in place from reading it partly reset:
+/// closed from [`Counted::hold`] to [`Counted::publish`]. A read waits while it is closed, and
+/// closing it waits for the reads already running, so a read answers the store before the reset
+/// or after it, never between. Only a reset closes it.
+#[derive(Default)]
+struct Gate {
+    state: Mutex<Passing>,
+    changed: Condvar,
+}
+
+/// Whether a [`Gate`] is closed, and how many reads are passing it.
+#[derive(Default)]
+struct Passing {
+    closed: bool,
+    reads: usize,
+}
+
+impl Gate {
+    fn lock(&self) -> MutexGuard<'_, Passing> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Waits while the gate is closed, then counts a read passing until the answer is dropped.
+    fn enter(&self) -> Passed<'_> {
+        let mut state = self.lock();
+        while state.closed {
+            state = self
+                .changed
+                .wait(state)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+        state.reads += 1;
+        Passed(self)
+    }
+
+    /// Closes the gate, then waits for every read passing it to end.
+    fn close(&self) {
+        let mut state = self.lock();
+        state.closed = true;
+        while state.reads > 0 {
+            state = self
+                .changed
+                .wait(state)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+
+    fn open(&self) {
+        self.lock().closed = false;
+        self.changed.notify_all();
+    }
+}
+
+/// One read passing a [`Gate`], until dropped.
+struct Passed<'a>(&'a Gate);
+
+impl Drop for Passed<'_> {
+    fn drop(&mut self) {
+        let mut state = self.0.lock();
+        state.reads -= 1;
+        drop(state);
+        self.0.changed.notify_all();
+    }
+}
+
+/// A reading handle whose reads pass a [`Gate`].
+struct Gated {
+    reading: Arc<dyn Reading>,
+    gate: Arc<Gate>,
+}
+
+impl Reading for Gated {
+    fn scan(&self, entity: &str) -> Result<Scan, StoreError> {
+        let _passed = self.gate.enter();
+        self.reading.scan(entity)
+    }
+
+    fn counts(&self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
+        let _passed = self.gate.enter();
+        self.reading.counts(entities)
+    }
 }
 
 /// What a component's readers read beside the host's thread ([`super::Reader`]).
@@ -66,7 +152,9 @@ impl Shared {
 impl Counted {
     /// `store`, with the rows of each of `entities` counted from it, and read beside the host's
     /// thread through its reading handle.
-    pub(super) fn new(store: Box<dyn Store>, entities: Vec<String>) -> Self {
+    /// `in_place`: a reset empties the store where it is rather than opening another in its
+    /// place, so its readers pass a [`Gate`] a reset closes.
+    pub(super) fn new(store: Box<dyn Store>, entities: Vec<String>, in_place: bool) -> Self {
         let mut counted = Self {
             store,
             rows: None,
@@ -76,6 +164,7 @@ impl Counted {
                 rows: Mutex::new(None),
                 reading: RwLock::new(None),
             }),
+            gate: in_place.then(Arc::default),
         };
         counted.rows = counted.store.counts(&counted.shared.entities).ok();
         counted.publish();
@@ -88,9 +177,13 @@ impl Counted {
     }
 
     /// Holds its readers at the counts and the store they read now, whatever lands, until
-    /// [`Counted::publish`].
+    /// [`Counted::publish`]. A store a reset empties in place cannot be read as it was meanwhile:
+    /// its gate closes, once the reads already running ended, and its reads wait for the reset.
     pub(super) fn hold(&mut self) {
         self.held = true;
+        if let Some(gate) = &self.gate {
+            gate.close();
+        }
     }
 
     /// Opens `store` in place of the one held, its rows counted from it; answers the one held.
@@ -105,7 +198,13 @@ impl Counted {
     /// Hands its readers the counts and the reading handle of the store it holds now, together,
     /// and stops holding them.
     pub(super) fn publish(&mut self) {
-        let reading = self.store.reading();
+        let reading = self.store.reading().map(|reading| match &self.gate {
+            Some(gate) => Arc::new(Gated {
+                reading,
+                gate: Arc::clone(gate),
+            }) as Arc<dyn Reading>,
+            None => reading,
+        });
         let mut rows = self.shared.rows();
         *self
             .shared
@@ -115,6 +214,9 @@ impl Counted {
         rows.clone_from(&self.rows);
         drop(rows);
         self.held = false;
+        if let Some(gate) = &self.gate {
+            gate.open();
+        }
     }
 
     /// Hands its readers the counts as the writes so far left them, unless they are held.
