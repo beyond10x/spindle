@@ -219,6 +219,14 @@ $ b10x-spindle state move --from target/rally-state examples/rally/ess --environ
 ```
 
 Stop Spindle first: the move does not keep another process off the directory. It exits 1, writing
-nothing, when the directory lacks a component's file or a component's tables already hold a
-stream, naming them. A move that fails partway leaves a partial copy, which the next move refuses:
-drop the component's tables (or the schema), run `store migrate` and move again.
+nothing, naming the component, when:
+
+- the directory lacks a component's file;
+- a file holds a JSON string or object key with U+0000, which the SQLite store keeps and
+  PostgreSQL refuses. Every file is read before the move connects, and the refusal names the
+  stream, the event and where in its body the value is;
+- a component's tables already hold a stream, read at one snapshot, so also while a transaction
+  is open elsewhere on the server.
+
+A move that fails partway leaves a partial copy, which the next move refuses: drop the component's
+tables (or the schema), run `store migrate` and move again.

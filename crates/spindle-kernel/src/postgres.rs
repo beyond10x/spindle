@@ -27,8 +27,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use eventlog_core::{
-    CaptureError, CaptureLimits, ConsistentTenantCapture, EventLogError, EventStore, TenantId,
-    validate_identifier,
+    CaptureError, CaptureLimits, ConsistentTenantCapture, EventLogError, EventStore, TenantCapture,
+    TenantId, validate_identifier,
 };
 use eventlog_postgres::{PoolOptions, PostgresConfig, PostgresEventStore};
 use rustls::RootCertStore;
@@ -230,22 +230,35 @@ impl Log for PostgresEventStore {
             max_projection_rows: u64::MAX,
             max_payload_bytes: u64::MAX,
         };
-        let captured = match runtime.block_on(self.capture_tenant(tenant, &[], limits)) {
-            // Appends do not record the tenant's stream identity, and a capture needs one: the
-            // first scan of a log records it, once, and captures again.
-            Err(CaptureError::TenantIdentityMissing) => {
-                runtime
-                    .block_on(self.stream_identity(tenant))
-                    .map_err(backend)?;
-                runtime.block_on(self.capture_tenant(tenant, &[], limits))
-            }
-            other => other,
-        }
-        .map_err(|error| StoreError::Backend(format!("reading the log: {error}")))?;
+        let captured = capture(self, runtime, tenant, limits)
+            .map_err(|error| StoreError::Backend(format!("reading the log: {error}")))?;
         for event in captured.events {
             visit(event)?;
         }
         Ok(())
+    }
+}
+
+/// `tenant`'s log in `log` at one snapshot, within `limits` ([`ConsistentTenantCapture`]): every
+/// committed event, whatever transaction is open elsewhere on the server.
+///
+/// # Errors
+/// As [`ConsistentTenantCapture::capture_tenant`], and [`CaptureError::Store`] when the tenant's
+/// stream identity cannot be recorded.
+pub(crate) fn capture(
+    log: &PostgresEventStore,
+    runtime: &tokio::runtime::Runtime,
+    tenant: &TenantId,
+    limits: CaptureLimits,
+) -> Result<TenantCapture, CaptureError> {
+    match runtime.block_on(log.capture_tenant(tenant, &[], limits)) {
+        // Appends do not record the tenant's stream identity, and a capture needs one: the first
+        // capture of a log records it, once, and captures again.
+        Err(CaptureError::TenantIdentityMissing) => {
+            runtime.block_on(log.stream_identity(tenant))?;
+            runtime.block_on(log.capture_tenant(tenant, &[], limits))
+        }
+        other => other,
     }
 }
 

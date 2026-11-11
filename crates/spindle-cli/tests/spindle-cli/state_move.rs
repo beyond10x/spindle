@@ -15,7 +15,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use spindle_kernel::{Change, Database, PostgresStore, Row, SqliteStore, Store, StoreError};
+use spindle_kernel::{Change, Database, Event, PostgresStore, Row, SqliteStore, Store, StoreError};
 
 const RALLY: &str = "examples/rally/ess";
 const LAPTOP: &str = "examples/environments/laptop.toml";
@@ -545,5 +545,75 @@ fn a_move_from_a_directory_without_the_components_files_exits_1_naming_it() {
             .count(),
         0,
         "the move creates nothing in the directory"
+    );
+}
+
+/// A JSON string holding U+0000, which the SQLite store keeps and PostgreSQL refuses, here in an
+/// object key of an event: the move reads every file before it connects, and exits 1 naming the
+/// component and the stream, nothing written.
+#[test]
+fn a_move_of_a_string_postgresql_refuses_exits_1_before_connecting() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    for component in COMPONENTS {
+        let mut store = SqliteStore::open(&directory.path().join(format!("{component}.sqlite")))
+            .expect("the file opens");
+        store
+            .commit(&Change {
+                entity: MATCH.to_owned(),
+                identity: json!("first"),
+                expected: None,
+                row: Row {
+                    state: "Serving".to_owned(),
+                    fields: BTreeMap::new(),
+                },
+                events: Vec::new(),
+                scanned: Vec::new(),
+            })
+            .expect("a row is written");
+    }
+    SqliteStore::open(&directory.path().join("rally-table.sqlite"))
+        .expect("the file opens")
+        .commit(&Change {
+            entity: MATCH.to_owned(),
+            identity: json!("held"),
+            expected: None,
+            row: Row {
+                state: "Serving".to_owned(),
+                fields: BTreeMap::new(),
+            },
+            events: vec![Event {
+                name: "rally.table.MatchOpened".to_owned(),
+                payload: serde_json::Map::from_iter([(
+                    "detail".to_owned(),
+                    json!([{"no\u{0}te": 1}]),
+                )]),
+            }],
+            scanned: Vec::new(),
+        })
+        .expect("the SQLite store keeps the event");
+    let refused = state_move(
+        directory.path(),
+        &[("database_url", "postgres://owner:secret@127.0.0.1:1/rally")],
+    );
+    assert_eq!(refused.status.code(), Some(1), "{}", text(&refused));
+    assert!(refused.stdout.is_empty(), "{}", text(&refused));
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    for named in [
+        "rally-table",
+        r#"rally.table.Match "held""#,
+        "U+0000",
+        r#"["detail"][0]["no\u0000te"]"#,
+        "nothing was moved",
+    ] {
+        assert!(
+            stderr.contains(named),
+            "the refusal names {named}: {}",
+            text(&refused)
+        );
+    }
+    assert!(
+        !stderr.contains("127.0.0.1"),
+        "the refusal comes before any connection: {}",
+        text(&refused)
     );
 }

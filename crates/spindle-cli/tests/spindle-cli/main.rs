@@ -22,6 +22,7 @@ mod adversary_prometheus;
 mod adversary_replay;
 mod adversary_responses;
 mod adversary_served_decisions;
+mod adversary_state_move;
 mod adversary_topology;
 mod adversary_topology_emitted;
 mod adversary_unserved;

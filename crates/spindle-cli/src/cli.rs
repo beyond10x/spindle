@@ -411,8 +411,10 @@ pub enum StateCommand {
     /// `database_connections`); on a hosted database `store migrate` creates the tables first and
     /// `database_url` names the serving role.
     ///
-    /// Exits 1, writing nothing, when the directory lacks a component's file or a component's
-    /// tables already hold a stream, naming them. A move that fails partway leaves a partial copy
+    /// Exits 1, writing nothing, naming the component, when the directory lacks a component's
+    /// file, a file holds a JSON string or key with U+0000 (the SQLite store keeps it, PostgreSQL
+    /// refuses it; every file is read before connecting, and the refusal names the stream), or a
+    /// component's tables already hold a stream. A move that fails partway leaves a partial copy
     /// the next move refuses: drop the component's tables, run `store migrate` and move again.
     /// Prints one line per component, `{"component": "<component>", "streams": <n>, "events":
     /// <n>}`. Exits 3, moving nothing, when admission is refused.

@@ -11,7 +11,8 @@ use spindle_capability::Environment;
 use spindle_kernel::{StateSource, StateTarget, postgres_prefix};
 
 /// `state move --from <directory> <spec> --environment <env>`: refuses, writing nothing, a
-/// directory without the file of every component bound to `postgres` and a component whose
+/// directory without the file of every component bound to `postgres`, a file holding a value
+/// PostgreSQL refuses ([`StateSource::check`], before any connection) and a component whose
 /// tables already hold a stream; then moves each component's file into its tables, printing one
 /// JSON line per component.
 pub(crate) fn move_from(from: &Path, spec: &Path, environment: &Path) -> Result<ExitCode> {
@@ -51,8 +52,15 @@ pub(crate) fn move_from(from: &Path, spec: &Path, environment: &Path) -> Result<
     let mut sources = Vec::with_capacity(components.len());
     for component in &components {
         let file = from.join(format!("{component}.sqlite"));
-        sources
-            .push(StateSource::open(&file).with_context(|| format!("opening {}", file.display()))?);
+        let source =
+            StateSource::open(&file).with_context(|| format!("opening {}", file.display()))?;
+        source.check().with_context(|| {
+            format!(
+                "{} of {component} cannot move into PostgreSQL; nothing was moved",
+                file.display()
+            )
+        })?;
+        sources.push(source);
     }
     let database = crate::database::database()?;
     let mut targets = Vec::with_capacity(components.len());
