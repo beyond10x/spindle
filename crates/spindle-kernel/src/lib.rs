@@ -90,6 +90,7 @@ pub use store::{
     Scanned, Store, StoreError, Stored, Write,
 };
 pub use supported::{check as runs, selects, takes};
+pub use values::{Undetermined, compute};
 
 /// Refuses `value` unless it is a value of `kind`, naming what it is not: the check every command
 /// input goes through before the command runs, as ESS's interpreter makes it

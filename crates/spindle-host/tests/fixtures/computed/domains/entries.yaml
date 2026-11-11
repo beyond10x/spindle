@@ -1,0 +1,103 @@
+domain: league.entries
+summary: Entries, each with a score, an optional previous score, games won and lost, a rate and an optional bonus, on a team or on none, and the views that compute figures from them.
+types:
+  - name: league.entries.EntryId
+    kind: newtype
+    of: String
+entities:
+  - name: league.entries.Entry
+    identity:
+      name: entry_id
+      type: league.entries.EntryId
+    fields:
+      - name: team_id
+        type: Optional<league.teams.TeamId>
+      - name: score
+        type: Integer
+      - name: previous_score
+        type: Optional<Integer>
+      - name: won
+        type: Integer
+      - name: lost
+        type: Integer
+      - name: rate
+        type: Decimal
+      - name: bonus
+        type: Optional<Decimal>
+    relations:
+      - {name: team, kind: references, target: league.teams.Team, cardinality: one, via: team_id}
+    lifecycle:
+      initial: Entered
+      states: [Entered]
+      terminal: [Entered]
+commands:
+  - name: league.entries.Enter
+    input:
+      - name: entry_id
+        type: league.entries.EntryId
+      - name: team_id
+        type: Optional<league.teams.TeamId>
+      - name: score
+        type: Integer
+      - name: previous_score
+        type: Optional<Integer>
+      - name: won
+        type: Integer
+      - name: lost
+        type: Integer
+      - name: rate
+        type: Decimal
+      - name: bonus
+        type: Optional<Decimal>
+    outcomes:
+      - name: entered
+        creates: league.entries.Entry
+        instance: entry_id
+        sets:
+          team_id: input.team_id
+          score: input.score
+          previous_score: input.previous_score
+          won: input.won
+          lost: input.lost
+          rate: input.rate
+          bonus: input.bonus
+        emits: [league.entries.Entered]
+        payload:
+          league.entries.Entered: {entry_id: input.entry_id}
+        summary: The entry is kept.
+events:
+  - name: league.entries.Entered
+    fields:
+      - name: entry_id
+        type: league.entries.EntryId
+views:
+  - name: league.entries.ScoreChanges
+    source: league.entries.Entry
+    consistency: read_your_writes
+    fields:
+      - {name: entry_id, type: league.entries.EntryId}
+      - {name: score, type: Integer}
+      - {name: score_change, type: Integer, expr: "score - coalesce(previous_score, score)"}
+  - name: league.entries.Figures
+    source: league.entries.Entry
+    consistency: read_your_writes
+    order_by: [total desc]
+    fields:
+      - {name: entry_id, type: league.entries.EntryId}
+      - {name: total, type: Integer, expr: "won + lost"}
+      - {name: margin, type: Integer, expr: "-(score * 2 - lost)"}
+      - {name: weighted, type: Decimal, expr: "rate * score"}
+      - {name: adjusted, type: Optional<Decimal>, expr: "rate + bonus"}
+      - {name: next_score, type: Optional<Integer>, expr: "previous_score + 1"}
+      - {name: ratio, type: Optional<Decimal>, expr: "round(won / lost, 2, half_even)"}
+      - {name: share, type: Decimal, expr: "coalesce(won / lost, 0)"}
+  - name: league.entries.Records
+    source: league.entries.Entry
+    consistency: read_your_writes
+    fields:
+      - {name: entry_id, type: league.entries.EntryId}
+      - {name: team_id, type: Optional<league.teams.TeamId>}
+      - {name: win_pct, type: Optional<Decimal>, expr: "won * 100 / (won + lost)"}
+      - name: team_name
+        type: Optional<String>
+        field: {related: {via: team_id, field: name}}
