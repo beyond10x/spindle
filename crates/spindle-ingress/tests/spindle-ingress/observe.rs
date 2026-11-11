@@ -541,3 +541,35 @@ fn a_refused_value_is_never_recorded_and_the_reason_is_bounded() {
     assert!(reason.contains("String"), "the type is named: {reason}");
     assert!(!reason.contains('Z') && !reason.contains('q'), "{reason}");
 }
+
+/// The most bytes of a record's path (`spindle.observe.RequestRecord.path`).
+const PATH_MOST: usize = 2_048;
+
+/// `spindle.observe.RequestRecord.path`: a request for a path of 60,000 bytes that no route
+/// serves adds one record whose path is its first bytes, cut to 2,048 with `…`, so a full ring
+/// of 10,000 such records holds about 20 MiB of paths rather than 600 MiB.
+#[test]
+fn a_long_unrouted_path_is_recorded_cut_to_its_bound() {
+    let (listener, _host, _surface, _state) = served_desk();
+    let address = listener.local_addr();
+    let path = format!("/{}", "p".repeat(60_000));
+    let (status, body) = send_text(address, "GET", &path);
+    assert_eq!(status, 404, "{}", &body[..body.len().min(200)]);
+
+    let (status, log) = send(address, "GET", "/__spindle/requests");
+    assert_eq!(status, 200, "{log}");
+    let record = &log["requests"][0];
+    assert_eq!(record["status"], 404);
+    let kept = record["path"].as_str().expect("a path");
+    assert!(kept.len() <= PATH_MOST, "{} bytes", kept.len());
+    assert!(kept.ends_with('…'), "the cut is marked: {kept}");
+    assert!(
+        path.starts_with(kept.trim_end_matches('…')),
+        "the path's first bytes are kept"
+    );
+    assert!(kept.len() > PATH_MOST - 8, "{} bytes", kept.len());
+    let (status, short) = send(address, "GET", "/no/such/route");
+    assert_eq!(status, 404, "{short}");
+    let (_, log) = send(address, "GET", "/__spindle/requests");
+    assert_eq!(log["requests"][0]["path"], "/no/such/route", "{log}");
+}

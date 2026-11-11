@@ -47,7 +47,7 @@
       "kind": "command",
       "status": 400,
       "class": "refused",
-      "reason": "tasks.board.OpenTask declares no input field priority",
+      "reason": "tasks.board.OpenTask declares no input field …",
       "duration_us": 412,
       "events": [],
       "externals": [],

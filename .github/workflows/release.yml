@@ -277,11 +277,15 @@ jobs:
           tar -tzf "dist/${name}.tar.gz" > "dist/${name}.list"
           grep -Fxq "${name}/b10x-spindle" "dist/${name}.list"
           rm "dist/${name}.list"
+          (cd dist && shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256")
+          test -s "dist/${name}.tar.gz.sha256"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.target }}
-          path: dist/*.tar.gz
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
           if-no-files-found: error
           retention-days: 7
 
@@ -349,11 +353,14 @@ jobs:
             exit 1
           fi
           echo "SBOM $(basename "$sbom"): $(jq '.components | length' "$sbom") components for $(wc -w <<< "$targets") targets." | tee -a "$GITHUB_STEP_SUMMARY"
+          (cd dist && sha256sum "$(basename "$sbom")" > "$(basename "$sbom").sha256")
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sbom
-          path: dist/*.cdx.json
+          path: |
+            dist/*.cdx.json
+            dist/*.cdx.json.sha256
           if-no-files-found: error
           retention-days: 7
 
@@ -382,18 +389,28 @@ jobs:
           name: sbom
           path: dist
 
-      - name: Create the checksum manifest
+      - name: Check each artifact against the hash its job wrote, then create the checksum manifest
         working-directory: dist
         run: |
           set -euo pipefail
           targets="x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-apple-darwin x86_64-apple-darwin"
+          files=()
           for target in $targets; do
-            test -s "b10x-spindle-${VERSION}-${target}.tar.gz"
+            files+=("b10x-spindle-${VERSION}-${target}.tar.gz")
           done
-          test -s "b10x-spindle-${VERSION}.cdx.json"
-          test "$(ls | wc -l)" -eq "$(( $(wc -w <<< "$targets") + 1 ))"
-          sha256sum *.tar.gz "b10x-spindle-${VERSION}.cdx.json" > SHA256SUMS
-          sha256sum --check --strict SHA256SUMS
+          files+=("b10x-spindle-${VERSION}.cdx.json")
+          test "$(ls | wc -l)" -eq "$(( 2 * ${#files[@]} ))"
+          for file in "${files[@]}"; do
+            test -s "$file"
+            test "$(wc -l < "$file.sha256")" -eq 1
+            test "$(awk '{print $2}' "$file.sha256")" = "$file"
+            sha256sum --check --strict "$file.sha256"
+          done
+          for file in "${files[@]}"; do
+            cat "$file.sha256" >> SHA256SUMS
+            rm "$file.sha256"
+          done
+          test "$(wc -l < SHA256SUMS)" -eq "${#files[@]}"
 
       - name: Wait for the release page of the tag
         run: |

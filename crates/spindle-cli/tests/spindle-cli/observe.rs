@@ -28,6 +28,10 @@ const RESERVED_PREFIX_HTTP: &str = "crates/spindle-cli/tests/fixtures/reserved-p
 const RESERVED_VARIABLES_HTTP: &str =
     "crates/spindle-cli/tests/fixtures/reserved-variables-http.yaml";
 const FIXED_CALLER: &str = "crates/spindle-cli/tests/fixtures/fixed-caller";
+/// A fixture one of whose commands the kernel does not run: it answers `501`.
+const PARTIAL: &str = "crates/spindle-cli/tests/fixtures/partial";
+const DISCARD_NOTE: &str = "notes.pad.DiscardNote";
+const ALL_NOTES: &str = "notes.pad.AllNotes";
 /// A fixture with no component reached over the network: `run` reads stdin and serves no HTTP.
 const REPLAY: &str = "crates/spindle-cli/tests/fixtures/replay";
 const SCRIPTED: &str = "ess/fixtures/observe/requests/scripted.json";
@@ -37,7 +41,6 @@ const LAPTOP: &str = "examples/environments/laptop.toml";
 const READER: &str = "quire.notebook.Reader";
 const CREATE: &str = "quire.notebook.CreateNotebook";
 const SHARE: &str = "quire.notebook.ShareNotebook";
-const CARD: &str = "quire.notebook.NotebookCard";
 const OWNER: &str = "0f1e2d3c-4b5a-4968-8776-a5b4c3d2e1f0";
 const OTHER: &str = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
 const NOTEBOOK: &str = "5b2d8f14-3c6a-4e7b-9d1f-2a3b4c5d6e7f";
@@ -445,42 +448,53 @@ fn the_request_log_keeps_the_refusal_text() {
     assert_eq!(records[0]["class"], "not-granted", "{answered}");
     assert_eq!(records[0]["reason"], denied_body["refused"], "{answered}");
     assert_eq!(records[1]["class"], "refused", "{answered}");
-    assert_eq!(records[1]["reason"], bad_body["refused"], "{answered}");
+    // The answer names the field the caller sent; the log keeps the words and elides the name.
+    assert_eq!(
+        bad_body["refused"],
+        format!("{SHARE} declares no input field colour"),
+        "{bad_body}"
+    );
+    assert_eq!(
+        records[1]["reason"],
+        format!("{SHARE} declares no input field …"),
+        "{answered}"
+    );
     drop(reader);
 
-    let plain = serve(FIXED_CALLER, &["--observe"]);
-    let (unserved, unserved_body) = call_desk(
-        &plain,
-        SHARE,
-        Some(&json!({"notebook_id": NOTEBOOK, "with": OTHER})),
-    );
+    let plain = serve(PARTIAL, &["--observe"]);
+    let (unserved, unserved_body) = call_pad(&plain, DISCARD_NOTE, Some(&json!({"note_id": "n1"})));
     assert_eq!(unserved, 501, "{unserved_body}");
     let answered = log(&plain, "");
     assert_eq!(answered["requests"][0]["class"], "not-served", "{answered}");
     assert_eq!(
-        answered["requests"][0]["reason"], unserved_body["refused"],
+        unserved_body["refused"],
+        format!("unsupported: `input_absent:`, in `{DISCARD_NOTE}/body-missing`"),
+        "{unserved_body}"
+    );
+    // The log keeps the construct; a backticked name holding `/` is not a plain name, so it is
+    // written `…`.
+    assert_eq!(
+        answered["requests"][0]["reason"], "unsupported: `input_absent:`, in …",
         "{answered}"
     );
 }
 
+/// Calls `operation` of the partial fixture's `pad` at its route.
+fn call_pad(served: &Served, operation: &str, body: Option<&Value>) -> (u16, Value) {
+    let (method, path) = route(PARTIAL, "pad", operation);
+    exchange(served.address, &method, &path, body)
+}
+
 #[test]
 fn the_not_served_filter_lists_only_501_answers() {
-    let served = serve(FIXED_CALLER, &["--observe"]);
-    let (status, body) = call_desk(
-        &served,
-        SHARE,
-        Some(&json!({"notebook_id": NOTEBOOK, "with": OTHER})),
-    );
+    let served = serve(PARTIAL, &["--observe"]);
+    let (status, body) = call_pad(&served, DISCARD_NOTE, Some(&json!({"note_id": "n1"})));
     assert_eq!(status, 501, "{body}");
-    let (status, body) = call_desk(&served, CARD, None);
+    let (status, body) = call_pad(&served, ALL_NOTES, None);
     assert_eq!(status, 200, "{body}");
     let (status, body) = exchange(served.address, "GET", "/nowhere", None);
     assert_eq!(status, 404, "{body}");
-    let (status, body) = call_desk(
-        &served,
-        SHARE,
-        Some(&json!({"notebook_id": NOTEBOOK, "with": OTHER})),
-    );
+    let (status, body) = call_pad(&served, DISCARD_NOTE, Some(&json!({"note_id": "n1"})));
     assert_eq!(status, 501, "{body}");
 
     let filtered = log(&served, "?class=not-served");

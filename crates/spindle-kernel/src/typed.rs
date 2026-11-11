@@ -60,9 +60,9 @@ fn check(ir: &EssIr, kind: &ResolvedTypeRef, value: &Value, depth: usize) -> Res
             };
             entries.iter().try_for_each(|(spelling, entry)| {
                 if !map_key(*key, spelling) {
-                    return Err(format!("`{spelling}` is not a {key} map key"));
+                    return Err(format!("{spelling:?} is not a {key} map key"));
                 }
-                check(ir, of, entry, depth + 1).map_err(|error| format!("[{spelling}]: {error}"))
+                check(ir, of, entry, depth + 1).map_err(|error| format!("{spelling:?}: {error}"))
             })
         }
         ResolvedTypeRef::Declared { name } => {
@@ -122,7 +122,7 @@ fn body(
                 if fields.iter().any(|field| field.name == *member) {
                     declared.insert(member.clone(), held.clone());
                 } else if !open {
-                    return Err(format!("{name} declares no member `{member}`"));
+                    return Err(format!("{name} declares no member {member:?}"));
                 }
             }
             for field in fields {
