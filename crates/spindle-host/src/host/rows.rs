@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock};
 
 use serde_json::Value;
-use spindle_kernel::{Change, Reading, Removal, Scan, Store, StoreError, Stored, Write};
+use spindle_kernel::{Change, Position, Reading, Removal, Scan, Store, StoreError, Stored, Write};
 
 /// A component's store with the rows each entity it owns holds: counted once from the store when
 /// it is opened ([`Store::counts`]), then moved by each write that lands. The store refuses a
@@ -113,6 +113,36 @@ impl Reading for Gated {
     fn counts(&self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
         let _passed = self.gate.enter();
         self.reading.counts(entities)
+    }
+
+    /// The position, read past the gate for as long as it is held: a reset waits for it.
+    fn at(&self, entities: &[String]) -> Result<Box<dyn Position + '_>, StoreError> {
+        let passed = self.gate.enter();
+        let position = self.reading.at(entities)?;
+        Ok(Box::new(GatedPosition {
+            position,
+            _passed: passed,
+        }))
+    }
+}
+
+/// A position of a [`Gated`] handle, holding its passage of the gate until dropped.
+struct GatedPosition<'a> {
+    position: Box<dyn Position + 'a>,
+    _passed: Passed<'a>,
+}
+
+impl Position for GatedPosition<'_> {
+    fn scan(&self, entity: &str) -> Result<Scan, StoreError> {
+        self.position.scan(entity)
+    }
+
+    fn load(&self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
+        self.position.load(entity, identity)
+    }
+
+    fn holds(&self) -> Result<bool, StoreError> {
+        self.position.holds()
     }
 }
 

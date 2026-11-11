@@ -4,13 +4,14 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use ess_compiler::EssIr;
+use ess_compiler::ir::ResolvedView;
 use serde_json::{Map, Value};
 use spindle_kernel::StoreError;
 use spindle_telemetry::Counters;
 use spindle_timer::Clock;
 
 use super::rows::Shared;
-use super::{HostError, Published, listing, readable};
+use super::{HostError, Published, listing, owner_of, readable};
 use crate::admission::Placements;
 
 /// What reads a host's committed state from any thread while the host's own thread runs
@@ -130,18 +131,19 @@ impl Reader {
         listed(&self.published)
     }
 
-    /// Whether this reader answers `view`: one the host reads ([`crate::reads`]), whose owning
-    /// component's store gives a reading handle now, and that declares no field read through a
-    /// reference: such a field reads the row its reference names by its identity
-    /// ([`spindle_kernel::Store::load`]), which a reading handle does not answer. A view it does
-    /// not answer is read on the host's thread.
+    /// Whether this reader answers `view`: one the host reads ([`crate::reads`]) whose owning
+    /// component's store gives a reading handle now, and, where the view declares fields read
+    /// through a reference, so does the store of each component owning an entity a reference
+    /// names. A view it does not answer is read on the host's thread.
     pub fn reads(&self, view: &str) -> bool {
         readable(&self.ir, view).is_ok_and(|(declared, owner)| {
-            !crate::view::reads_related(declared)
-                && self
-                    .components
-                    .get(&owner)
-                    .is_some_and(|read| read.shared.reading().is_some())
+            read_from(&self.ir, declared, owner).is_ok_and(|read| {
+                read.keys().all(|component| {
+                    self.components
+                        .get(component)
+                        .is_some_and(|read| read.shared.reading().is_some())
+                })
+            })
         })
     }
 
@@ -156,34 +158,109 @@ impl Reader {
     /// Every row `view` holds for `parameters`, as [`super::Host::list_with`] answers them, read
     /// through the reading handle of the store of the component that owns the view's source.
     ///
+    /// A view declaring fields read through a reference reads one position of each store it
+    /// reads ([`spindle_kernel::Reading::at`]): the source's instances are scanned, and each row
+    /// a reference names loaded by its identity, from the same position of its store, so a read
+    /// sees each write group whole or not at all. Each component's writes land in its own store,
+    /// so the rows of two components are each as some write left them. Where a store cannot take
+    /// its entities at once (PostgreSQL) and one of them moved while it was read, the view is
+    /// read again from a new position, up to [`POSITIONS`] times.
+    ///
     /// # Errors
-    /// As [`super::Host::list_with`]; [`HostError::Unsupported`] where that store gives no
-    /// reading handle, or the view declares a field read through a reference
-    /// ([`Reader::reads`]), before anything is read.
+    /// As [`super::Host::list_with`]; [`HostError::Unsupported`] where a store it reads gives no
+    /// reading handle ([`Reader::reads`]), before anything is read; [`HostError::Store`] where a
+    /// store moved under each of [`POSITIONS`] reads.
     pub fn list_with(
         &self,
         view: &str,
         parameters: &Map<String, Value>,
     ) -> Result<Vec<Map<String, Value>>, HostError> {
         let listing = listing(&self.ir, self.clock.as_ref(), view, parameters)?;
-        if crate::view::reads_related(listing.declared) {
-            return Err(HostError::Unsupported(format!(
-                "view {view} reads fields through a reference, read on the host's thread only"
-            )));
+        let read = read_from(&self.ir, listing.declared, listing.owner.clone())?;
+        let readings = read
+            .into_iter()
+            .map(|(component, entities)| {
+                let reading = self
+                    .components
+                    .get(&component)
+                    .and_then(|read| read.shared.reading())
+                    .ok_or_else(|| {
+                        HostError::Unsupported(format!(
+                            "{component} is read on the host's thread only"
+                        ))
+                    })?;
+                Ok((component, (reading, entities)))
+            })
+            .collect::<Result<BTreeMap<_, _>, HostError>>()?;
+        if !crate::view::reads_related(listing.declared) {
+            let (reading, _) = &readings[&listing.owner];
+            let scan = reading.scan(&listing.entity)?;
+            return listing.rows(&self.ir, view, scan, &mut |_, entity, _| {
+                Err(HostError::Unsupported(format!(
+                    "view {view} reads no field through a reference, yet {entity} was loaded"
+                )))
+            });
         }
-        let reading = self
-            .components
-            .get(&listing.owner)
-            .and_then(|read| read.shared.reading())
-            .ok_or_else(|| {
-                HostError::Unsupported(format!(
-                    "{} is read on the host's thread only",
-                    listing.owner
-                ))
+        for _ in 0..POSITIONS {
+            // Taken in the order of the components' names, the order a reset closes the gates of
+            // stores it empties in place: a read holding one position never waits at a gate a
+            // reset closed while that reset waits for the read.
+            let positions = readings
+                .iter()
+                .map(|(component, (reading, entities))| {
+                    Ok((component.as_str(), reading.at(entities)?))
+                })
+                .collect::<Result<BTreeMap<_, _>, StoreError>>()?;
+            let scan = positions[listing.owner.as_str()].scan(&listing.entity)?;
+            let rows = listing.rows(&self.ir, view, scan, &mut |component, entity, identity| {
+                let position = positions.get(component).ok_or_else(|| {
+                    HostError::Unsupported(format!("{component} is not read for view {view}"))
+                })?;
+                Ok(position.load(entity, identity)?)
             })?;
-        let scan = reading.scan(&listing.entity)?;
-        listing.rows(&self.ir, view, scan, None)
+            let mut held = true;
+            for position in positions.values() {
+                held = held && position.holds()?;
+            }
+            if held {
+                return Ok(rows);
+            }
+        }
+        Err(StoreError::Backend(format!(
+            "view {view}: a store it reads moved while each of {POSITIONS} reads of it ran"
+        ))
+        .into())
     }
+}
+
+/// How many positions [`Reader::list_with`] reads a view with related fields from at most, where
+/// a store moved while a read of it ran.
+const POSITIONS: usize = 8;
+
+/// The entities a read of `declared`, whose source `owner` owns, reads, by the component that
+/// owns each: the source, and every entity a field of it reads through a reference names.
+///
+/// # Errors
+/// [`HostError::Unsupported`] where no component owns a referenced entity.
+fn read_from(
+    ir: &EssIr,
+    declared: &ResolvedView,
+    owner: String,
+) -> Result<BTreeMap<String, Vec<String>>, HostError> {
+    let mut read = BTreeMap::from([(owner, vec![ir.entity(&declared.source).name.to_string()])]);
+    for reference in declared
+        .references
+        .iter()
+        .filter(|reference| !reference.fields.is_empty())
+    {
+        let entity = ir.entity(&reference.entity);
+        let entities = read.entry(owner_of(ir, entity)?).or_default();
+        let name = entity.name.to_string();
+        if !entities.contains(&name) {
+            entities.push(name);
+        }
+    }
+    Ok(read)
 }
 
 /// How many events one chunk of a [`History`] holds before it is sealed.

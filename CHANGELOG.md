@@ -185,6 +185,16 @@ are Spindle's releases.
   running `run --state` was still writing; now, while a run holds the directory, it exits 1 naming
   the directory and the run's process id, before it connects to the database. The lock file a run
   leaves behind is no component's file and does not refuse a later move.
+- A view with a field read through a reference (`related:`) is read beside the writer like every
+  other view read (`story:view-related-fields`, `story:concurrent-reads`). Since related fields
+  landed, such a view was answered on the host's thread, behind every command, because a reading
+  handle could scan but not load a row by its identity; a downstream consumer reads 26 such views
+  per request. A reading handle now gives a position of its store for some of its entities
+  (`Reading::at`, `Position`), whose scans and loads answer the store as one write left it, so a
+  read still sees a write group whole or not at all: the memory store takes the entities under one
+  lock, SQLite takes them from its resting rows at one position of the feed, and PostgreSQL reads
+  through the store's own pool, within `database_pool`, and holds only where no entity it read
+  moved meanwhile, the view read again from a new position otherwise, up to 8 times.
 
 ## [0.13.0] - 2026-11-11
 

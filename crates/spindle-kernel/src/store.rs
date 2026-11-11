@@ -270,6 +270,53 @@ pub trait Reading: Send + Sync {
             .map(|entity| Ok((entity.clone(), self.scan(entity)?.rows.len())))
             .collect()
     }
+
+    /// One position of the store for reads of `entities` together ([`Position`]): a scan of
+    /// one of them and loads of instances of the others, by identity, answer the store as one
+    /// write left it, so a group of writes is seen whole by all of them or by none.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read.
+    fn at(&self, entities: &[String]) -> Result<Box<dyn Position + '_>, StoreError>;
+}
+
+/// One position of a store, taken through its reading handle for some of its entities
+/// ([`Reading::at`]). The memory and SQLite stores take every entity named as one write left it,
+/// at once, and each read of the position answers that. A store that cannot take its entities at
+/// once (PostgreSQL) reads each as it stands when first read, and answers by [`Position::holds`]
+/// whether none of them moved since: a caller reads again from a new position where one did.
+pub trait Position {
+    /// Every instance of `entity`, as [`Store::scan`] answers them at this position.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read, or `entity` is not one the position
+    /// was taken for.
+    fn scan(&self, entity: &str) -> Result<Scan, StoreError>;
+
+    /// The instance of `entity` with this identity at this position, if one rests, as
+    /// [`Store::load`] answers it.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read, or `entity` is not one the position
+    /// was taken for.
+    fn load(&self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError>;
+
+    /// Whether every read of this position answered the store as one write left it: always for
+    /// a position taken at once; for one that is not, whether no write of an entity it read
+    /// landed since it first read that entity.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read.
+    fn holds(&self) -> Result<bool, StoreError> {
+        Ok(true)
+    }
+}
+
+/// The refusal of a read of `entity` from a position not taken for it.
+pub(crate) fn not_taken(entity: &str) -> StoreError {
+    StoreError::Backend(format!(
+        "{entity} is not one of the entities this position was taken for"
+    ))
 }
 
 /// [`Store::commit_all`] on a store that writes one instance at a time: every write's version
@@ -662,5 +709,39 @@ impl Reading for MemoryReading {
                 (entity.clone(), rows)
             })
             .collect())
+    }
+
+    /// Each entity as it stands, taken under one lock: a write of one of them lands on a copy
+    /// of that entity alone while the position holds it.
+    fn at(&self, entities: &[String]) -> Result<Box<dyn Position + '_>, StoreError> {
+        let held = self.0.read().unwrap_or_else(PoisonError::into_inner);
+        Ok(Box::new(MemoryPosition(
+            entities
+                .iter()
+                .map(|entity| (entity.clone(), held.entities.get(entity).cloned()))
+                .collect(),
+        )))
+    }
+}
+
+/// A position of a [`MemoryStore`]: each entity taken, as it stood, `None` for one holding
+/// nothing yet.
+struct MemoryPosition(BTreeMap<String, Option<Arc<Instances>>>);
+
+impl Position for MemoryPosition {
+    fn scan(&self, entity: &str) -> Result<Scan, StoreError> {
+        match self.0.get(entity) {
+            Some(Some(instances)) => instances.scan(),
+            Some(None) => Ok(Scan::default()),
+            None => Err(not_taken(entity)),
+        }
+    }
+
+    fn load(&self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
+        match self.0.get(entity) {
+            Some(Some(instances)) => Ok(instances.rows.get(&identity.to_string()).cloned()),
+            Some(None) => Ok(None),
+            None => Err(not_taken(entity)),
+        }
     }
 }

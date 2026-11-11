@@ -47,8 +47,8 @@ use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::store::{
-    Change, Reading, Removal, Row, Scan, Scanned, Store, StoreError, Stored, Write, first_writes,
-    identity_from_key, moved,
+    Change, Position, Reading, Removal, Row, Scan, Scanned, Store, StoreError, Stored, Write,
+    first_writes, identity_from_key, moved,
 };
 
 /// The table prefix Spindle's events are kept under.
@@ -378,8 +378,9 @@ impl<L: Log> LogStore<L> {
     }
 }
 
-impl<L: Log> Store for LogStore<L> {
-    fn load(&mut self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
+impl<L: Log> LogStore<L> {
+    /// The instance's row as its stream's last event holds it ([`Store::load`]).
+    fn loaded(&self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
         let stream = self.stream(entity, identity)?;
         let Some((version, last)) = self.last(&stream)? else {
             return Ok(None);
@@ -395,6 +396,12 @@ impl<L: Log> Store for LogStore<L> {
         let row = serde_json::from_value::<Row>(last.data)
             .map_err(|error| StoreError::Backend(format!("a stored row: {error}")))?;
         Ok(Some(Stored { row, version }))
+    }
+}
+
+impl<L: Log> Store for LogStore<L> {
+    fn load(&mut self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
+        self.loaded(entity, identity)
     }
 
     /// Appends the change's events and its row, as a group of one write ([`Store::commit_all`]).
@@ -562,6 +569,92 @@ impl<L: Log> Reading for SharedReading<L> {
 
     fn counts(&self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
         self.0.counted(entities)
+    }
+
+    /// Reads through the store's own pool, one statement on a connection of it at a time, as
+    /// its scans do ([`Checked`]).
+    fn at(&self, entities: &[String]) -> Result<Box<dyn Position + '_>, StoreError> {
+        Ok(Box::new(Checked::new(&self.0, entities)))
+    }
+}
+
+/// A position of a store whose transactions commit out of the order of their positions
+/// (PostgreSQL), which cannot take its entities at once: each entity is read as it stands when
+/// first read, its version noted, and the position holds while every entity it read still stands
+/// at that version. Every write of an instance lands with a `spindle.written` event on its
+/// entity's stream, so an entity at the version noted holds every row read of it.
+#[cfg(feature = "postgres")]
+pub(crate) struct Checked<'s, L> {
+    store: &'s LogStore<L>,
+    entities: BTreeSet<String>,
+    /// The version each entity read stood at when first read.
+    noted: std::sync::Mutex<BTreeMap<String, u64>>,
+    /// Set where a later scan of an entity answered another version than the one noted.
+    moved: AtomicBool,
+}
+
+#[cfg(feature = "postgres")]
+impl<'s, L: Log> Checked<'s, L> {
+    pub(crate) fn new(store: &'s LogStore<L>, entities: &[String]) -> Self {
+        Self {
+            store,
+            entities: entities.iter().cloned().collect(),
+            noted: std::sync::Mutex::default(),
+            moved: AtomicBool::new(false),
+        }
+    }
+
+    fn noted(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, u64>> {
+        self.noted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn taken(&self, entity: &str) -> Result<(), StoreError> {
+        if self.entities.contains(entity) {
+            return Ok(());
+        }
+        Err(crate::store::not_taken(entity))
+    }
+}
+
+#[cfg(feature = "postgres")]
+impl<L: Log> Position for Checked<'_, L> {
+    fn scan(&self, entity: &str) -> Result<Scan, StoreError> {
+        self.taken(entity)?;
+        let scan = self.store.scanned(entity)?;
+        let noted = *self
+            .noted()
+            .entry(entity.to_owned())
+            .or_insert(scan.version);
+        if noted != scan.version {
+            self.moved.store(true, Ordering::SeqCst);
+        }
+        Ok(scan)
+    }
+
+    /// Notes the entity's version before its first load, so a write landed between that and
+    /// [`Position::holds`] is seen.
+    fn load(&self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
+        self.taken(entity)?;
+        if !self.noted().contains_key(entity) {
+            let version = self.store.entity_version(entity)?;
+            self.noted().entry(entity.to_owned()).or_insert(version);
+        }
+        self.store.loaded(entity, identity)
+    }
+
+    fn holds(&self) -> Result<bool, StoreError> {
+        if self.moved.load(Ordering::SeqCst) {
+            return Ok(false);
+        }
+        let noted = self.noted().clone();
+        for (entity, version) in noted {
+            if self.store.entity_version(&entity)? != version {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 }
 
@@ -955,6 +1048,47 @@ impl<L: Log> LogStore<L> {
         }
         Ok(held)
     }
+
+    /// Each of `entities` as the resting rows hold it once caught up ([`LogStore::caught_up`]),
+    /// all taken under one hold of their lock: one position of the feed, each write group whole
+    /// or not at all, `None` for an entity holding nothing yet.
+    fn taken(&self, entities: &[String]) -> Result<Taken, StoreError> {
+        let rows = self.rows.as_ref().ok_or_else(|| {
+            StoreError::Backend("this store holds no resting rows to take a position of".to_owned())
+        })?;
+        let folded = self.caught_up(rows)?;
+        Ok(Taken(
+            entities
+                .iter()
+                .map(|entity| (entity.clone(), folded.entities.get(entity).cloned()))
+                .collect(),
+        ))
+    }
+}
+
+/// A position of a SQLite store ([`Reading::at`]): the entities it was taken for, each as the
+/// resting rows held it at one position of the feed ([`LogStore::taken`]). A fold after it lands
+/// on a copy of an entity it holds, never on what it reads.
+#[cfg(feature = "sqlite")]
+struct Taken(BTreeMap<String, Option<Arc<Entity>>>);
+
+#[cfg(feature = "sqlite")]
+impl Position for Taken {
+    fn scan(&self, entity: &str) -> Result<Scan, StoreError> {
+        match self.0.get(entity) {
+            Some(Some(rows)) => rows.scan(),
+            Some(None) => Ok(Scan::default()),
+            None => Err(crate::store::not_taken(entity)),
+        }
+    }
+
+    fn load(&self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
+        match self.0.get(entity) {
+            Some(Some(rows)) => rows.load(identity),
+            Some(None) => Ok(None),
+            None => Err(crate::store::not_taken(entity)),
+        }
+    }
 }
 
 /// The rows of every entity of a SQLite store as they rest in its log, folded from its feed:
@@ -1097,6 +1231,20 @@ impl Entity {
             rows,
             version: self.version,
         })
+    }
+
+    /// The instance whose identity is `identity`, as its last `spindle.row` event holds it, if
+    /// one rests; an instance whose row did not read fails, as its scan does.
+    fn load(&self, identity: &Value) -> Result<Option<Stored>, StoreError> {
+        let key = identity.to_string();
+        if self.unreadable.contains(&key) {
+            return Err(StoreError::Backend(
+                self.malformed
+                    .clone()
+                    .unwrap_or_else(|| format!("the row of {key} does not read")),
+            ));
+        }
+        Ok(self.rows.get(&key).map(|stored| Stored::clone(stored)))
     }
 }
 
@@ -1249,6 +1397,14 @@ impl Reading for SqliteReading {
 
     fn counts(&self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
         self.with(|connection| connection.counts(entities))
+    }
+
+    /// The entities taken from the resting rows a connection caught up ([`LogStore::taken`]);
+    /// the connection is handed back before the position is read.
+    fn at(&self, entities: &[String]) -> Result<Box<dyn Position + '_>, StoreError> {
+        Ok(Box::new(
+            self.with(|connection| connection.taken(entities))?,
+        ))
     }
 }
 
