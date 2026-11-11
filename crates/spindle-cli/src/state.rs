@@ -1,8 +1,10 @@
 //! `state move`: a `--state` directory's streams moved into the PostgreSQL store of every
 //! component bound to `postgres`, versions kept ([`spindle_kernel::StateTarget::copy`]).
 //!
-//! Spindle is stopped first: nothing here keeps a running Spindle off the directory or the
-//! tables. Another `state move` into the same schema is kept off by the lock this one holds
+//! A `run --state` on the directory is kept off by the directory's lock (`spindle.lock`,
+//! [`crate::state_lock`]), which the move takes before it reads a file and holds to its end; a
+//! running Spindle on PostgreSQL is not kept off the tables, so it is stopped first. Another
+//! `state move` into the same schema is kept off by the lock this one holds
 //! ([`spindle_kernel::StateLock`]).
 
 use std::path::Path;
@@ -13,7 +15,9 @@ use spindle_capability::Environment;
 use spindle_kernel::{StateLock, StateSource, StateTarget, postgres_prefix};
 
 /// `state move --from <directory> <spec> --environment <env>`: refuses, writing nothing, a
-/// directory without the file of every component bound to `postgres`, a file holding a value
+/// directory without the file of every component bound to `postgres`, a directory another
+/// process holds the lock of (a `run --state` on it, naming that process, before any file is read
+/// or any connection made), a file holding a value
 /// PostgreSQL refuses ([`StateSource::check`], before any connection), a schema another move
 /// holds or a role limited to fewer connections than the move holds at once, two
 /// ([`StateLock::take`]), and a component whose tables already hold a stream, creating no table;
@@ -53,6 +57,9 @@ pub(crate) fn move_from(from: &Path, spec: &Path, environment: &Path) -> Result<
             spec.display()
         );
     }
+    // The lock a `run --state` holds on the directory, held to the end of the move: no run
+    // writes the files while they are read and copied.
+    let _directory = crate::state_lock::directory(from).context("nothing was moved")?;
     let mut sources = Vec::with_capacity(components.len());
     for component in &components {
         let file = from.join(format!("{component}.sqlite"));

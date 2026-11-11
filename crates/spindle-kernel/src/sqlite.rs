@@ -52,8 +52,8 @@ use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::store::{
-    Change, Committed, Origin, Reading, Removal, Row, Scan, Scanned, Store, StoreError, Stored,
-    Write, first_writes, identity_from_key, moved,
+    Change, Committed, Origin, Position, Reading, Removal, Row, Scan, Scanned, Store, StoreError,
+    Stored, Write, first_writes, identity_from_key, moved,
 };
 
 /// The table prefix Spindle's events are kept under.
@@ -301,6 +301,12 @@ impl<L: Log> LogStore<L> {
         }
     }
 
+    /// The event store.
+    #[cfg(feature = "postgres")]
+    pub(crate) fn log(&self) -> &L {
+        &self.log
+    }
+
     /// The event store and the runtime its calls block on: what a state move appends through.
     ///
     /// # Errors
@@ -392,8 +398,9 @@ impl<L: Log> LogStore<L> {
     }
 }
 
-impl<L: Log> Store for LogStore<L> {
-    fn load(&mut self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
+impl<L: Log> LogStore<L> {
+    /// The instance's row as its stream's last event holds it ([`Store::load`]).
+    fn loaded(&self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
         let stream = self.stream(entity, identity)?;
         let Some((version, last)) = self.last(&stream)? else {
             return Ok(None);
@@ -409,6 +416,12 @@ impl<L: Log> Store for LogStore<L> {
         let row = serde_json::from_value::<Row>(last.data)
             .map_err(|error| StoreError::Backend(format!("a stored row: {error}")))?;
         Ok(Some(Stored { row, version }))
+    }
+}
+
+impl<L: Log> Store for LogStore<L> {
+    fn load(&mut self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
+        self.loaded(entity, identity)
     }
 
     /// Appends the change's events and its row, as a group of one write ([`Store::commit_all`]).
@@ -578,22 +591,234 @@ impl<L: Log> Store for LogStore<L> {
 }
 
 /// The reading handle of a store whose event store reads from any thread through a pool of its
-/// own: another [`LogStore`] on the same event store and runtime ([`LogStore::shared`]).
+/// own: another [`LogStore`] on the same event store and runtime ([`LogStore::shared`]), and the
+/// turns its reads take ([`Turns`]), so the reads in flight never hold every connection of the
+/// pool the writer takes its own from.
 #[cfg(feature = "postgres")]
-pub(crate) struct SharedReading<L>(pub(crate) LogStore<L>);
+pub(crate) struct SharedReading<L> {
+    store: LogStore<L>,
+    turns: Turns,
+}
+
+#[cfg(feature = "postgres")]
+impl<L> SharedReading<L> {
+    /// Reads `store`, at most `cap` reads at once (at least 1), each waiting its turn for at most
+    /// [`TURN_WAIT`].
+    pub(crate) fn new(store: LogStore<L>, cap: usize) -> Self {
+        Self {
+            store,
+            turns: Turns::new(cap, TURN_WAIT),
+        }
+    }
+}
 
 #[cfg(feature = "postgres")]
 impl<L: Log> Reading for SharedReading<L> {
     fn scan(&self, entity: &str) -> Result<Scan, StoreError> {
-        self.0.scanned(entity)
+        let _turn = self.turns.take()?;
+        self.store.scanned(entity)
     }
 
     fn counts(&self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
-        self.0.counted(entities)
+        let _turn = self.turns.take()?;
+        self.store.counted(entities)
     }
 
+    /// Reads through the store's own pool, one statement on a connection of it at a time, as
+    /// its scans do ([`Checked`]); each read of the position takes a turn as a scan does.
+    fn at(&self, entities: &[String]) -> Result<Box<dyn Position + '_>, StoreError> {
+        Ok(Box::new(Checked::new(&self.store, &self.turns, entities)))
+    }
+
+    /// Reads the feed through the store's own pool on a turn, as a scan does.
     fn events_after(&self, position: u64) -> Result<Vec<Committed>, StoreError> {
-        self.0.committed_after(position)
+        let _turn = self.turns.take()?;
+        self.store.committed_after(position)
+    }
+}
+
+/// How long a read of a [`SharedReading`] waits for its turn before it is refused.
+#[cfg(feature = "postgres")]
+const TURN_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The reads in flight on a [`SharedReading`]: at most `cap` at once. A read beyond that waits,
+/// in the order the reads arrived, until one ends, and is refused only once it waited `wait`.
+#[cfg(feature = "postgres")]
+pub(crate) struct Turns {
+    cap: usize,
+    wait: std::time::Duration,
+    state: std::sync::Mutex<Waiting>,
+    /// Signalled whenever a read ends or a waiting one leaves the line.
+    ended: std::sync::Condvar,
+}
+
+/// The reads of [`Turns`] in flight, and those waiting, first in line first.
+#[cfg(feature = "postgres")]
+#[derive(Default)]
+struct Waiting {
+    running: usize,
+    line: std::collections::VecDeque<u64>,
+    next: u64,
+}
+
+/// A read's turn: it ends when dropped.
+#[cfg(feature = "postgres")]
+pub(crate) struct Turn<'t>(&'t Turns);
+
+#[cfg(feature = "postgres")]
+impl Turns {
+    pub(crate) fn new(cap: usize, wait: std::time::Duration) -> Self {
+        Self {
+            cap: cap.max(1),
+            wait,
+            state: std::sync::Mutex::default(),
+            ended: std::sync::Condvar::new(),
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Waiting> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// A turn: at once while fewer than `cap` reads run and none waits, else once every read
+    /// that arrived before this one has had its turn and one ends.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] where the read waited `wait` for its turn.
+    pub(crate) fn take(&self) -> Result<Turn<'_>, StoreError> {
+        let mut state = self.lock();
+        if state.line.is_empty() && state.running < self.cap {
+            state.running += 1;
+            return Ok(Turn(self));
+        }
+        let ticket = state.next;
+        state.next += 1;
+        state.line.push_back(ticket);
+        let deadline = std::time::Instant::now() + self.wait;
+        loop {
+            if state.line.front() == Some(&ticket) && state.running < self.cap {
+                state.line.pop_front();
+                state.running += 1;
+                drop(state);
+                // The next in line may take a turn left free as well.
+                self.ended.notify_all();
+                return Ok(Turn(self));
+            }
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                state.line.retain(|waiting| *waiting != ticket);
+                drop(state);
+                self.ended.notify_all();
+                return Err(StoreError::Backend(format!(
+                    "a read waited {:?} for one of the {} reads that may run beside the writer \
+                     to end, and was given up",
+                    self.wait, self.cap
+                )));
+            }
+            state = self
+                .ended
+                .wait_timeout(state, deadline - now)
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .0;
+        }
+    }
+}
+
+#[cfg(feature = "postgres")]
+impl Drop for Turn<'_> {
+    fn drop(&mut self) {
+        self.0.lock().running -= 1;
+        self.0.ended.notify_all();
+    }
+}
+
+/// A position of a store whose transactions commit out of the order of their positions
+/// (PostgreSQL), which cannot take its entities at once: each entity is read as it stands when
+/// first read, its version noted, and the position holds while every entity it read still stands
+/// at that version. Every write of an instance lands with a `spindle.written` event on its
+/// entity's stream, so an entity at the version noted holds every row read of it.
+#[cfg(feature = "postgres")]
+pub(crate) struct Checked<'s, L> {
+    store: &'s LogStore<L>,
+    /// The turns of the handle it was taken through: each of its reads takes one.
+    turns: &'s Turns,
+    entities: BTreeSet<String>,
+    /// The version each entity read stood at when first read.
+    noted: std::sync::Mutex<BTreeMap<String, u64>>,
+    /// Set where a later scan of an entity answered another version than the one noted.
+    moved: AtomicBool,
+}
+
+#[cfg(feature = "postgres")]
+impl<'s, L: Log> Checked<'s, L> {
+    pub(crate) fn new(store: &'s LogStore<L>, turns: &'s Turns, entities: &[String]) -> Self {
+        Self {
+            store,
+            turns,
+            entities: entities.iter().cloned().collect(),
+            noted: std::sync::Mutex::default(),
+            moved: AtomicBool::new(false),
+        }
+    }
+
+    fn noted(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, u64>> {
+        self.noted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn taken(&self, entity: &str) -> Result<(), StoreError> {
+        if self.entities.contains(entity) {
+            return Ok(());
+        }
+        Err(crate::store::not_taken(entity))
+    }
+}
+
+#[cfg(feature = "postgres")]
+impl<L: Log> Position for Checked<'_, L> {
+    fn scan(&self, entity: &str) -> Result<Scan, StoreError> {
+        self.taken(entity)?;
+        let scan = {
+            let _turn = self.turns.take()?;
+            self.store.scanned(entity)?
+        };
+        let noted = *self
+            .noted()
+            .entry(entity.to_owned())
+            .or_insert(scan.version);
+        if noted != scan.version {
+            self.moved.store(true, Ordering::SeqCst);
+        }
+        Ok(scan)
+    }
+
+    /// Notes the entity's version before its first load, so a write landed between that and
+    /// [`Position::holds`] is seen.
+    fn load(&self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
+        self.taken(entity)?;
+        let _turn = self.turns.take()?;
+        if !self.noted().contains_key(entity) {
+            let version = self.store.entity_version(entity)?;
+            self.noted().entry(entity.to_owned()).or_insert(version);
+        }
+        self.store.loaded(entity, identity)
+    }
+
+    fn holds(&self) -> Result<bool, StoreError> {
+        if self.moved.load(Ordering::SeqCst) {
+            return Ok(false);
+        }
+        let noted = self.noted().clone();
+        let _turn = self.turns.take()?;
+        for (entity, version) in noted {
+            if self.store.entity_version(&entity)? != version {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 }
 
@@ -1083,6 +1308,47 @@ impl<L: Log> LogStore<L> {
         }
         Ok(held)
     }
+
+    /// Each of `entities` as the resting rows hold it once caught up ([`LogStore::caught_up`]),
+    /// all taken under one hold of their lock: one position of the feed, each write group whole
+    /// or not at all, `None` for an entity holding nothing yet.
+    fn taken(&self, entities: &[String]) -> Result<Taken, StoreError> {
+        let rows = self.rows.as_ref().ok_or_else(|| {
+            StoreError::Backend("this store holds no resting rows to take a position of".to_owned())
+        })?;
+        let folded = self.caught_up(rows)?;
+        Ok(Taken(
+            entities
+                .iter()
+                .map(|entity| (entity.clone(), folded.entities.get(entity).cloned()))
+                .collect(),
+        ))
+    }
+}
+
+/// A position of a SQLite store ([`Reading::at`]): the entities it was taken for, each as the
+/// resting rows held it at one position of the feed ([`LogStore::taken`]). A fold after it lands
+/// on a copy of an entity it holds, never on what it reads.
+#[cfg(feature = "sqlite")]
+struct Taken(BTreeMap<String, Option<Arc<Entity>>>);
+
+#[cfg(feature = "sqlite")]
+impl Position for Taken {
+    fn scan(&self, entity: &str) -> Result<Scan, StoreError> {
+        match self.0.get(entity) {
+            Some(Some(rows)) => rows.scan(),
+            Some(None) => Ok(Scan::default()),
+            None => Err(crate::store::not_taken(entity)),
+        }
+    }
+
+    fn load(&self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
+        match self.0.get(entity) {
+            Some(Some(rows)) => rows.load(identity),
+            Some(None) => Ok(None),
+            None => Err(crate::store::not_taken(entity)),
+        }
+    }
 }
 
 /// The rows of every entity of a SQLite store as they rest in its log, folded from its feed:
@@ -1225,6 +1491,20 @@ impl Entity {
             rows,
             version: self.version,
         })
+    }
+
+    /// The instance whose identity is `identity`, as its last `spindle.row` event holds it, if
+    /// one rests; an instance whose row did not read fails, as its scan does.
+    fn load(&self, identity: &Value) -> Result<Option<Stored>, StoreError> {
+        let key = identity.to_string();
+        if self.unreadable.contains(&key) {
+            return Err(StoreError::Backend(
+                self.malformed
+                    .clone()
+                    .unwrap_or_else(|| format!("the row of {key} does not read")),
+            ));
+        }
+        Ok(self.rows.get(&key).map(|stored| Stored::clone(stored)))
     }
 }
 
@@ -1381,6 +1661,14 @@ impl Reading for SqliteReading {
 
     fn events_after(&self, position: u64) -> Result<Vec<Committed>, StoreError> {
         self.with(|connection| connection.committed_after(position))
+    }
+
+    /// The entities taken from the resting rows a connection caught up ([`LogStore::taken`]);
+    /// the connection is handed back before the position is read.
+    fn at(&self, entities: &[String]) -> Result<Box<dyn Position + '_>, StoreError> {
+        Ok(Box::new(
+            self.with(|connection| connection.taken(entities))?,
+        ))
     }
 }
 
@@ -1681,5 +1969,93 @@ mod tests {
                 (json!("old"), "Moved".to_owned(), 2)
             ]
         );
+    }
+}
+
+#[cfg(all(test, feature = "postgres"))]
+mod turns {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use super::Turns;
+
+    /// A read beyond the cap is not refused: it waits until a read in flight ends.
+    #[test]
+    fn a_read_beyond_the_cap_waits_for_one_to_end() {
+        let turns = Turns::new(2, Duration::from_secs(10));
+        let first = turns.take().expect("a first turn");
+        let _second = turns.take().expect("a second turn");
+        let (sent, taken) = mpsc::channel();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let turn = turns.take();
+                sent.send(turn.is_ok()).expect("the test listens");
+            });
+            assert!(
+                taken.recv_timeout(Duration::from_millis(200)).is_err(),
+                "a third read ran beside two with a cap of 2"
+            );
+            drop(first);
+            assert_eq!(
+                taken.recv_timeout(Duration::from_secs(5)),
+                Ok(true),
+                "the third read took its turn once one ended"
+            );
+        });
+    }
+
+    /// Reads waiting for a turn take it in the order they arrived.
+    #[test]
+    fn waiting_reads_take_their_turns_in_arrival_order() {
+        let turns = Turns::new(1, Duration::from_secs(10));
+        let held = turns.take().expect("the one turn");
+        let (sent, order) = mpsc::channel();
+        std::thread::scope(|scope| {
+            for index in 0..4 {
+                let (turns, sent) = (&turns, sent.clone());
+                scope.spawn(move || {
+                    let _turn = turns.take().expect("a turn");
+                    sent.send(index).expect("the test listens");
+                });
+                // Each read is in line before the next arrives.
+                while turns.lock().line.len() <= index {
+                    std::thread::yield_now();
+                }
+            }
+            drop(held);
+        });
+        drop(sent);
+        assert_eq!(order.iter().collect::<Vec<_>>(), [0, 1, 2, 3]);
+    }
+
+    /// A read that waits past the deadline is refused with a store error naming the wait, and
+    /// leaves the line, so the next read is not held behind it.
+    #[test]
+    fn a_read_waiting_past_the_deadline_is_refused() {
+        let turns = Turns::new(1, Duration::from_millis(100));
+        let held = turns.take().expect("the one turn");
+        let Err(error) = turns.take() else {
+            panic!("a second read took a turn beside the first with a cap of 1");
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("a read waited 100ms for one of the 1 reads"),
+            "{error}"
+        );
+        assert!(
+            turns.lock().line.is_empty(),
+            "the refused read left the line"
+        );
+        drop(held);
+        assert!(turns.take().is_ok(), "the next read takes the freed turn");
+    }
+
+    /// A cap of 0 (a pool of 1) still lets one read run.
+    #[test]
+    fn a_cap_of_zero_still_runs_one_read() {
+        let turns = Turns::new(0, Duration::from_millis(100));
+        let _held = turns.take().expect("one read runs");
+        assert!(turns.take().is_err(), "a second waits and is refused");
     }
 }

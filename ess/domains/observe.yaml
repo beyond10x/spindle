@@ -737,4 +737,9 @@ types:
         summary: The qualified name of the command not invoked.
       - name: reason
         type: String
-        summary: Why the input could not be filled, as the runtime words it.
+        summary: >-
+          Why the input could not be filled, as the runtime words it, bounded as a record's
+          `reason` is: its words and the names it gives (the binding, the input, a type) kept, a
+          value the event carried never recorded: every value in the text (a quoted string, a
+          list, an object, a number, `true`, `false` or `null`) is written `…`. At most 512
+          bytes, cut with `…` where longer.

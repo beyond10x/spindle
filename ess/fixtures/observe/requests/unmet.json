@@ -30,7 +30,7 @@
           "binding": "thank-on-close",
           "component": "notices",
           "command": "library.notices.SendThanks",
-          "reason": "binding thank-on-close: the input reader_id is unmet: \"member-0042\" is not a library.notices.ReaderRef: its invariant `value.count <= 8` is false"
+          "reason": "binding thank-on-close: the input reader_id is unmet: … is not a library.notices.ReaderRef: its invariant … is false"
         }
       ]
     },

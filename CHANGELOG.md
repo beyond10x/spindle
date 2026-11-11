@@ -8,6 +8,17 @@ are Spindle's releases.
 
 ### Added
 
+- The kernel runs an outcome that declares secondary effects (`affects:`), which it refused as
+  unsupported (`501`): after the subject's own move, update or removal, each entry selects the rows
+  of its entity whose `where:` holds in the store as it was before the outcome, the subject
+  excepted, and moves them (a row outside the move's `from` states is skipped), removes them or
+  writes its `sets:` into them, entries in the order written. Every row left in place is checked
+  against its entity's invariants, and the subject and every row land in one write group on every
+  store, or nothing is written. A row of an entity an entry selected from, written by another
+  command between the selection and the write, refuses the command as a conflict, unless every
+  write of the group removes a row. An entry over an input list (`each:`) and a filter walking
+  another entity's rows stay refused.
+
 - `store.durable` bound to `postgres` keeps each component's state in an operator's PostgreSQL
   (13 or later), through `eventlog-postgres` at the pinned eventlog tag, rows and events encoded as
   the SQLite store encodes them and under the table prefix `spindle_<component>`, so components
@@ -34,7 +45,10 @@ are Spindle's releases.
   counts when the store opens (`Store::counts`, for `spindle_entity_rows`) are read from each
   entity's own stream alone, no row read. Its reading handle (`Store::reading`) reads through the
   store's own pool beside the writer, one statement per connection taken and no lock held, and
-  opens no connection beyond `database_pool`, so the connection budget is unchanged and `GET`
+  opens no connection beyond `database_pool`. Reads beside the writer are capped at
+  `database_pool` - 1 (1 with a pool of 1), scans and reads of a related field alike, so a
+  connection is always left for the writer; a read over the cap waits its turn, in arrival order,
+  and fails with a store error only after 30 s. The connection budget is unchanged and `GET`
   views, `/api/model`, `/api/events` and `/__spindle/*` read a postgres-bound component off the
   host's thread as they read a SQLite one; a reset, which empties its tables in place, waits for
   the reads already running, and reads wait for the reset. The new `b10x-spindle store migrate <spec>
@@ -191,6 +205,27 @@ are Spindle's releases.
   and count, on the store, its reading handle and a second handle on the file, equals a read of the
   whole feed after each step of drawn writes, refused groups, restarts and resets, on a new file and
   on one the 0.10.0 release binary wrote.
+- `state move --from <dir>` takes the directory's lock (`spindle.lock`, the one `run --state`
+  holds) before it reads a file, and holds it to its end. It read the files of a directory a
+  running `run --state` was still writing; now, while a run holds the directory, it exits 1 naming
+  the directory and the run's process id, before it connects to the database. The lock file a run
+  leaves behind is no component's file and does not refuse a later move.
+- A view with a field read through a reference (`related:`) is read beside the writer like every
+  other view read (`story:view-related-fields`, `story:concurrent-reads`). Since related fields
+  landed, such a view was answered on the host's thread, behind every command, because a reading
+  handle could scan but not load a row by its identity; a downstream consumer reads 26 such views
+  per request. A reading handle now gives a position of its store for some of its entities
+  (`Reading::at`, `Position`), whose scans and loads answer the store as one write left it, so a
+  read still sees a write group whole or not at all: the memory store takes the entities under one
+  lock, SQLite takes them from its resting rows at one position of the feed, and PostgreSQL reads
+  through the store's own pool, within `database_pool`, and holds only where no entity it read
+  moved meanwhile, the view read again from a new position otherwise, up to 8 times.
+- The `reason` of an unmet binding input in the request log (`unmet[].reason`,
+  `spindle.observe.UnmetInput`) is bounded as a record's `reason` is
+  (`story:refusal-reason-bounded`). It copied the host's text verbatim, so the value the event
+  carried was logged (`"member-0042" is not a library.notices.ReaderRef`) and an 800 KB value grew
+  one record by 800 KB. Every value in it is now written `…`, and it is at most 512 bytes, the
+  binding, the input and the type kept.
 
 ## [0.13.0] - 2026-11-11
 

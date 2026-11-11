@@ -63,7 +63,9 @@ so a slow route shows in its own series. An unrouted request has an empty `route
 A record's `reason` is the refusal text with every value the caller sent written `…`: a refused
 field is named with the type it expected, never with what was sent. It is at most 512 bytes, so
 the record of a refused request holds its method, its path and the names of its route, and under
-1 KiB besides, whatever its body held.
+1 KiB besides, whatever its body held. The `reason` of each binding listed under `unmet` is bounded
+the same way: it names the binding, the input and the type it expected, never the value the event
+carried.
 
 ## Resources
 

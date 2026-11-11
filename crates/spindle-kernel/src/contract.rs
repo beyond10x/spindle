@@ -105,6 +105,10 @@ pub const CASES: &[Case] = &[
         name: "the_store_reads_events_after_a_position",
         run: the_store_reads_events_after_a_position,
     },
+    Case {
+        name: "a_position_scans_and_loads_one_state_of_the_store",
+        run: a_position_scans_and_loads_one_state_of_the_store,
+    },
 ];
 
 fn row(state: &str, title: &str) -> Row {
@@ -1039,4 +1043,102 @@ fn the_store_reads_events_after_a_position(store: &mut dyn Store) {
             );
         }
     }
+}
+
+/// How many positions [`a_position_scans_and_loads_one_state_of_the_store`] takes at most before
+/// one holds.
+const POSITIONS: usize = 4;
+
+/// Where the store gives a reading handle, a position of it ([`crate::Reading::at`]) that holds
+/// answers one state of the store: a scan of one entity and a load of an instance of another
+/// agree, even where a group of writes changing both landed between them, and the position then
+/// answers what the store held before the group (a store that takes its entities at once) or
+/// does not hold, and a position taken next answers what it held after. A load of an identity
+/// that rests nowhere answers `None`, and a read of an entity the position was not taken for
+/// fails.
+fn a_position_scans_and_loads_one_state_of_the_store(store: &mut dyn Store) {
+    let case = "a_position_scans_and_loads_one_state_of_the_store";
+    let Some(reading) = store.reading() else {
+        return;
+    };
+    let (task, other) = (json!("t1"), json!("o1"));
+    commit(
+        case,
+        store,
+        &change(TASK, &task, None, row("Open", "before")),
+    );
+    commit(
+        case,
+        store,
+        &change(OTHER, &other, None, row("Open", "before")),
+    );
+    let entities = [TASK.to_owned(), OTHER.to_owned()];
+    let title = |stored: &Stored| stored.row.fields["title"].clone();
+    let mut read = None;
+    for attempt in 0..POSITIONS {
+        let position = reading
+            .at(&entities)
+            .unwrap_or_else(|error| panic!("{case}: a position is taken: {error}"));
+        let scanned = position
+            .scan(TASK)
+            .unwrap_or_else(|error| panic!("{case}: the position scans: {error}"));
+        if attempt == 0 {
+            let one = held(case, store, &task);
+            let two =
+                load(case, store, OTHER, &other).unwrap_or_else(|| panic!("{case}: {other} rests"));
+            store
+                .commit_all(&[
+                    Write::Commit(change(TASK, &task, Some(one.version), row("Open", "after"))),
+                    Write::Commit(change(
+                        OTHER,
+                        &other,
+                        Some(two.version),
+                        row("Open", "after"),
+                    )),
+                ])
+                .unwrap_or_else(|error| panic!("{case}: the writes commit together: {error}"));
+        }
+        let loaded = position
+            .load(OTHER, &other)
+            .unwrap_or_else(|error| panic!("{case}: the position loads: {error}"))
+            .unwrap_or_else(|| panic!("{case}: {other} rests"));
+        assert_eq!(
+            position
+                .load(OTHER, &json!("nowhere"))
+                .unwrap_or_else(|error| panic!("{case}: the position loads: {error}")),
+            None,
+            "{case}: an identity that rests nowhere"
+        );
+        assert!(
+            position.load("contract.tasks.Untaken", &other).is_err(),
+            "{case}: a load of an entity the position was not taken for fails"
+        );
+        if position
+            .holds()
+            .unwrap_or_else(|error| panic!("{case}: the position is checked: {error}"))
+        {
+            let [(identity, row)] = scanned.rows.as_slice() else {
+                panic!("{case}: one task is scanned: {scanned:?}");
+            };
+            assert_eq!(identity, &task, "{case}");
+            read = Some((attempt, title(row), title(&loaded)));
+            break;
+        }
+    }
+    let Some((attempt, scanned, loaded)) = read else {
+        panic!(
+            "{case}: no position of {POSITIONS} held, though nothing was written after the first"
+        );
+    };
+    assert_eq!(
+        scanned, loaded,
+        "{case}: the scan and the load of one position answer one state of the store"
+    );
+    let expected = if attempt == 0 { "before" } else { "after" };
+    assert_eq!(
+        scanned,
+        json!(expected),
+        "{case}: a position that holds at once answers the store before the group, a later one \
+         after it"
+    );
 }

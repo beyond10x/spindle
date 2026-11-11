@@ -38,6 +38,8 @@ mod adversary_set_outcomes;
 mod adversary_state_move;
 mod adversary_store_contract;
 mod adversary_structured_responses;
+#[cfg(feature = "postgres")]
+mod adversary_w21_store;
 mod caller;
 mod creation_takes_unknown_row;
 mod deletes;
@@ -61,6 +63,7 @@ mod responses;
 mod resting_rows;
 mod row_set_guards;
 mod scan;
+mod secondary_effects;
 mod set_outcomes;
 #[cfg(all(feature = "postgres", feature = "sqlite"))]
 mod state_move;

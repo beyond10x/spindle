@@ -1,0 +1,29 @@
+format: ess/34
+system: writing
+version: v1
+summary: Notebooks holding pages and drafts; archiving a notebook archives its open pages and removes its drafts.
+domains:
+  - writing.notebooks
+components:
+  - component: desk
+    summary: Opens, fills, relabels and archives notebooks.
+    owns:
+      domains:
+        - writing.notebooks
+    accepts:
+      commands:
+        - writing.notebooks.OpenNotebook
+        - writing.notebooks.AddPage
+        - writing.notebooks.ArchivePage
+        - writing.notebooks.AddDraft
+        - writing.notebooks.ArchiveNotebook
+        - writing.notebooks.PromotePages
+    publishes:
+      events:
+        - writing.notebooks.NotebookOpened
+        - writing.notebooks.PageAdded
+        - writing.notebooks.PageArchived
+        - writing.notebooks.DraftAdded
+        - writing.notebooks.NotebookArchived
+        - writing.notebooks.PagesPromoted
+    reached_by: in_process

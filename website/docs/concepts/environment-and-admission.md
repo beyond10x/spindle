@@ -141,7 +141,7 @@ from settings, read as `SPINDLE_SETTING_<NAME>`:
 | `database_url` | `postgres://user:password@host:port/database`; required, never printed |
 | `database_ca` | a PEM CA bundle; the server is reached over TLS (`sslmode=require`) and verified against it. Required for a host that is not loopback or a Unix socket |
 | `database_schema` | the schema holding the tables; `public` by default |
-| `database_pool` | connections per component; 4 by default |
+| `database_pool` | connections per component; 4 by default. Reads run at most `database_pool` - 1 at a time (1 with a pool of 1), so one connection is always left for writes; a read over that waits its turn |
 | `database_connections` | the database's connection budget available to this deployment: at least components x `database_pool` + 1. Not the serving role's `CONNECTION LIMIT`. Required with `database_ca` |
 
 Without `database_ca`, a loopback or Unix-socket database is opened isolated, over plaintext, and
@@ -253,8 +253,10 @@ instances it left, so a scan of the moved tables reads the entity's own stream. 
 writes of a release before 0.7.0, which recorded no entity version, arrives with its log marked, so
 its scans read the whole log and miss no row.
 
-Stop Spindle first: the move does not keep a running Spindle off the directory or the tables.
-Another move is kept off: a move holds a PostgreSQL advisory lock on its schema (any role may take
+The move takes the directory's lock, `spindle.lock`, the one `run --state` holds, before it reads
+a file, and holds it to its end. While a run holds it, the move exits 1 naming the directory and the
+run's process id, before it connects. Stop a Spindle running on PostgreSQL first: the move does not
+keep it off the tables. Another move is kept off: a move holds a PostgreSQL advisory lock on its schema (any role may take
 one) from before it reads the tables to after its last append, and a second move into the same
 schema waits up to 5 seconds, then exits 1 naming the other move, writing nothing. A move exits 1,
 writing nothing, naming the component, when:

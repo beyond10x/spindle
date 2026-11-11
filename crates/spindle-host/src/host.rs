@@ -17,7 +17,7 @@ use spindle_channel::{
 };
 use spindle_kernel::{
     Change, Committed, Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, Mint,
-    NoExternals, Origin, Reading, Row, Seeded, Store, StoreError, Uuid, UuidV4,
+    NoExternals, Origin, Reading, Row, Seeded, Store, StoreError, Stored, Uuid, UuidV4,
 };
 use spindle_telemetry::{Counters, CountingStore, Retried, Sink};
 use spindle_timer::{BindingName, Clock, CompleteError, Instant, LifetimeError, Timer};
@@ -1474,9 +1474,8 @@ impl Host {
         let mut far = Far::default();
         let referenced = far.referenced(
             &self.ir,
-            view,
             declared,
-            Some(&mut self.components),
+            &mut loading_from(&mut self.components),
             identity,
             &stored.row,
         )?;
@@ -1539,7 +1538,12 @@ impl Host {
     ) -> Result<Vec<Map<String, Value>>, HostError> {
         let listing = listing(&self.ir, self.clock.as_ref(), view, parameters)?;
         let scan = store_of(&mut self.components, &listing.owner)?.scan(&listing.entity)?;
-        listing.rows(&self.ir, view, scan, Some(&mut self.components))
+        listing.rows(
+            &self.ir,
+            view,
+            scan,
+            &mut loading_from(&mut self.components),
+        )
     }
 
     /// Executes one command on `component` and sends the events it emitted, refusing each outcome
@@ -2029,29 +2033,40 @@ fn owner_of(ir: &EssIr, entity: &ResolvedEntity) -> Result<String, HostError> {
         .ok_or_else(|| HostError::Unsupported(format!("no component owns {}", entity.domain)))
 }
 
+/// What loads the row an instance rests with, by the component that owns its entity, the entity
+/// and the identity: the host's stores on its thread ([`loading_from`]), the positions of a read
+/// beside it ([`Reader::list_with`]).
+type Load<'l> = dyn FnMut(&str, &str, &Value) -> Result<Option<Stored>, HostError> + 'l;
+
+/// Loads from the store of the running component that owns the entity ([`Store::load`]).
+fn loading_from(
+    components: &mut BTreeMap<String, Component>,
+) -> impl FnMut(&str, &str, &Value) -> Result<Option<Stored>, HostError> + '_ {
+    |owner, entity, identity| Ok(store_of(components, owner)?.load(entity, identity)?)
+}
+
 /// The rows the fields of one read of a view read through a reference: each loaded once, by its
-/// entity and identity, from the store of the component that owns the entity ([`Store::load`]),
-/// and held for the rest of the read, so a read loads each row it names once however many of its
-/// rows name it, and never scans the referenced entity. A row that is gone is held as gone.
+/// entity and identity, through what loads the rows of the component that owns the entity
+/// ([`Load`]), and held for the rest of the read, so a read loads each row it names once however
+/// many of its rows name it, and never scans the referenced entity. A row that is gone is held as
+/// gone.
 #[derive(Default)]
 struct Far {
     loaded: BTreeMap<(String, String), Option<(Value, Row)>>,
 }
 
 impl Far {
-    /// The rows the references of `declared`, the view `view`, name from the source row `row`,
-    /// the instance `identity` names ([`crate::view::references`]), loaded from `components`.
+    /// The rows the references of `declared` name from the source row `row`, the instance
+    /// `identity` names ([`crate::view::references`]), each loaded through `load`.
     ///
     /// # Errors
-    /// [`HostError::Store`] when a store cannot be read; [`HostError::Unsupported`] where the
-    /// component that owns a referenced entity is not running, or where `components` is `None`,
-    /// a read beside the host's thread, which has no store to load a row from by its identity.
+    /// [`HostError::Store`] when a store cannot be read; [`HostError::Unsupported`] where no
+    /// component owns a referenced entity, or the one that does is not running.
     fn referenced<'f>(
         &'f mut self,
         ir: &'f EssIr,
-        view: &str,
         declared: &'f ResolvedView,
-        mut components: Option<&mut BTreeMap<String, Component>>,
+        load: &mut Load<'_>,
         identity: &Value,
         row: &Row,
     ) -> Result<crate::view::Referenced<'f>, HostError> {
@@ -2065,14 +2080,8 @@ impl Far {
             if self.loaded.contains_key(key) {
                 continue;
             }
-            let Some(components) = components.as_deref_mut() else {
-                return Err(HostError::Unsupported(format!(
-                    "view {view} reads fields through a reference, read on the host's thread only"
-                )));
-            };
-            let held = store_of(components, &owner_of(ir, entity)?)?
-                .load(&key.0, far)?
-                .map(|stored| (far.clone(), stored.row));
+            let held =
+                load(&owner_of(ir, entity)?, &key.0, far)?.map(|stored| (far.clone(), stored.row));
             self.loaded.insert(key.clone(), held);
         }
         let loaded = &self.loaded;
@@ -2123,13 +2132,13 @@ fn listing<'ir>(
 
 impl Listing<'_> {
     /// Every row of `scan`, the source's instances, the view holds: projected, in its order. The
-    /// rows its fields read through a reference are loaded from `components` ([`Far`]).
+    /// rows its fields read through a reference are loaded through `load` ([`Far`]).
     fn rows(
         &self,
         ir: &EssIr,
         view: &str,
         scan: spindle_kernel::Scan,
-        mut components: Option<&mut BTreeMap<String, Component>>,
+        load: &mut Load<'_>,
     ) -> Result<Vec<Map<String, Value>>, HostError> {
         let mut rows = Vec::new();
         let mut far = Far::default();
@@ -2143,14 +2152,7 @@ impl Listing<'_> {
                 &self.parameters,
                 self.now,
             )? {
-                let referenced = far.referenced(
-                    ir,
-                    view,
-                    self.declared,
-                    components.as_deref_mut(),
-                    &identity,
-                    &stored.row,
-                )?;
+                let referenced = far.referenced(ir, self.declared, load, &identity, &stored.row)?;
                 let row =
                     crate::view::project(ir, self.declared, &identity, &stored.row, &referenced);
                 rows.push((identity, row));
