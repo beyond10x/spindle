@@ -40,6 +40,25 @@ are Spindle's releases.
   `admit` now prints, without serving, each view `run` would not serve, in the start log's words;
   it printed command refusals only. On one downstream specification that is 62 of 366 views
   (48 aggregations, 6 computed fields, 8 filters); all 520 of its commands are served.
+- `GET /api/events?after=head` answers `{"events": [], "next": <cursor>}`, the cursor after the
+  last event published, reading no event of the log (`story:events-head-cursor`). A downstream
+  consumer with about 179,000 events had to page from the start to reach the end before it could
+  poll. A read after that cursor answers what was published since. `limit=0` is still refused
+  `400`. Each store answers the position it is at (`Store::events_head`, `Reading::events_head`):
+  the memory and IndexedDB stores the position of their last write, SQLite and PostgreSQL the
+  end of their feed, found in about twice the binary logarithm of its length single-event feed
+  reads.
+
+### Changed
+
+- A page of `GET /api/events?after=<cursor>&limit=<n>` reads at most about `n` events from each
+  store (`story:events-read-bounded`), where it read every event after the cursor's position and
+  dropped all but `n`, so paging through a long log re-read the rest of it on every page.
+  `Store::events_after` and `Reading::events_after` take a limit: the memory, SQLite, PostgreSQL
+  and IndexedDB stores answer the first events after the position, write by write up to the write
+  that brings them to the limit, which is read whole (`whole_writes`). A store that implements
+  `events_after` adds the parameter. The range reads each store until it has `n` events after the
+  cursor or none is left, so the pages still list every event in the order of the whole list.
 
 ## [0.14.0] - 2026-11-11
 

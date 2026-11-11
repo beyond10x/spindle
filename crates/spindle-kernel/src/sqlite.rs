@@ -670,8 +670,12 @@ impl<L: Log> Store for LogStore<L> {
         .map_err(backend)
     }
 
-    fn events_after(&mut self, position: u64) -> Result<Vec<Committed>, StoreError> {
-        self.committed_after(position)
+    fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
+        self.committed_after(position, limit)
+    }
+
+    fn events_head(&mut self) -> Result<u64, StoreError> {
+        self.feed_end()
     }
 }
 
@@ -732,9 +736,15 @@ impl<L: Log> Reading for SharedReading<L> {
     }
 
     /// Reads the feed through the store's own pool on a turn, as a scan does.
-    fn events_after(&self, position: u64) -> Result<Vec<Committed>, StoreError> {
+    fn events_after(&self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
         let _turn = self.turns.take()?;
-        self.store.committed_after(position)
+        self.store.committed_after(position, limit)
+    }
+
+    /// Reads the feed through the store's own pool on a turn, as a scan does.
+    fn events_head(&self) -> Result<u64, StoreError> {
+        let _turn = self.turns.take()?;
+        self.store.feed_end()
     }
 }
 
@@ -935,14 +945,93 @@ struct Group {
 }
 
 impl<L: Log> LogStore<L> {
-    /// Every event committed by an append group after the one ending at feed position
-    /// `position`, in commit order, each at its group's last feed position, attributed to the
-    /// command its group's `spindle.written` events name. The feed is read to its end, a page of
-    /// [`FEED_PAGE`] at a time; an append group commits whole, so every group read is read whole.
-    /// The rows, removals and entity versions the groups appended are left out, so a group that
-    /// committed no event of a command answers nothing.
-    fn committed_after(&self, position: u64) -> Result<Vec<Committed>, StoreError> {
+    /// The events committed by the append groups after the one ending at feed position
+    /// `position`, in commit order, group by group up to the one that brings them to `limit`
+    /// ([`crate::whole_writes`]), each at its group's last feed position, attributed to the
+    /// command its group's `spindle.written` events name. The rows, removals and entity versions
+    /// the groups appended are left out, so a group that committed no event of a command answers
+    /// nothing.
+    ///
+    /// Where the read stops before the feed's end, a reset mark ([`RESET`]) past where it stopped
+    /// forgets every event it read: the feed is then read again from the last mark.
+    fn committed_after(&self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let reset = StreamId::new(self.tenant.clone(), RESET.0, RESET.1).map_err(backend)?;
+        let mut from = position;
+        let groups = loop {
+            let (groups, stopped) = self.groups_after(from, limit)?;
+            let Some(read_to) = stopped else {
+                break groups;
+            };
+            match self.last(&reset)? {
+                Some((_, mark)) if mark.global_seq > read_to => from = mark.global_seq,
+                _ => break groups,
+            }
+        };
+        Ok(groups
+            .into_iter()
+            .flat_map(|group| {
+                let (position, origin) = (group.position, group.origin);
+                group.events.into_iter().map(move |event| Committed {
+                    position,
+                    origin: origin.clone(),
+                    event,
+                })
+            })
+            .collect())
+    }
+
+    /// The feed position of the last event of the tenant's feed, `0` for an empty one
+    /// ([`Store::events_head`]): found by reading one feed event at a time past positions that
+    /// double, then halve, so about twice the binary logarithm of the feed's length of them,
+    /// none of them answered.
+    fn feed_end(&self) -> Result<u64, StoreError> {
+        let next = |after: u64| -> Result<Option<u64>, StoreError> {
+            let page = self
+                .runtime
+                .block_on(self.log.read_feed(&self.tenant, after, 1))
+                .map_err(backend)?;
+            Ok(page.events.first().map(|event| event.global_seq))
+        };
+        // The feed holds an event at `last` and none past `none`.
+        let Some(mut last) = next(0)? else {
+            return Ok(0);
+        };
+        let mut step: u64 = 1;
+        let mut none = loop {
+            let probe = last.saturating_add(step);
+            match next(probe)? {
+                Some(at) => {
+                    last = at;
+                    step = step.saturating_mul(2);
+                }
+                None => break probe,
+            }
+        };
+        while last < none {
+            let middle = last + (none - last) / 2;
+            match next(middle)? {
+                Some(at) => last = at,
+                None => none = middle,
+            }
+        }
+        Ok(last)
+    }
+
+    /// The append groups after feed position `position`, read a page of [`FEED_PAGE`] at a time,
+    /// up to the group that brings their events to `limit`; an append group commits whole, so
+    /// every group read is read whole. With them, where the read stopped before the feed's end,
+    /// the feed position of the last event it read.
+    fn groups_after(
+        &self,
+        position: u64,
+        limit: usize,
+    ) -> Result<(Vec<Group>, Option<u64>), StoreError> {
         let mut groups: Vec<Group> = Vec::new();
+        let mut count = 0;
+        let mut read_to = position;
         let mut at = position;
         loop {
             let page = self
@@ -954,6 +1043,9 @@ impl<L: Log> LogStore<L> {
                     .last()
                     .is_none_or(|group| group.request != event.request_id)
                 {
+                    if count >= limit {
+                        return Ok((groups, Some(read_to)));
+                    }
                     groups.push(Group {
                         request: event.request_id.clone(),
                         position: event.global_seq,
@@ -961,6 +1053,7 @@ impl<L: Log> LogStore<L> {
                         events: Vec::new(),
                     });
                 }
+                read_to = event.global_seq;
                 let Some(group) = groups.last_mut() else {
                     continue;
                 };
@@ -974,6 +1067,7 @@ impl<L: Log> LogStore<L> {
                 let stream = (event.stream_type.as_str(), event.stream_id.as_str());
                 if stream == RESET {
                     groups.clear();
+                    count = 0;
                     continue;
                 }
                 if stream == PUBLISHED && event.name == PUBLISHED_END {
@@ -996,9 +1090,10 @@ impl<L: Log> LogStore<L> {
                     name: event.name,
                     payload,
                 });
+                count += 1;
             }
             if !page.has_more {
-                break;
+                return Ok((groups, None));
             }
             if page.next_position <= at {
                 return Err(StoreError::Backend(format!(
@@ -1007,17 +1102,6 @@ impl<L: Log> LogStore<L> {
             }
             at = page.next_position;
         }
-        Ok(groups
-            .into_iter()
-            .flat_map(|group| {
-                let (position, origin) = (group.position, group.origin);
-                group.events.into_iter().map(move |event| Committed {
-                    position,
-                    origin: origin.clone(),
-                    event,
-                })
-            })
-            .collect())
     }
 }
 
@@ -1776,8 +1860,12 @@ impl Reading for SqliteReading {
         self.with(|connection| connection.counts(entities))
     }
 
-    fn events_after(&self, position: u64) -> Result<Vec<Committed>, StoreError> {
-        self.with(|connection| connection.committed_after(position))
+    fn events_after(&self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
+        self.with(|connection| connection.committed_after(position, limit))
+    }
+
+    fn events_head(&self) -> Result<u64, StoreError> {
+        self.with(|connection| connection.feed_end())
     }
 
     /// The entities taken from the resting rows a connection caught up ([`LogStore::taken`]);

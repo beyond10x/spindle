@@ -320,6 +320,56 @@ fn a_malformed_after_or_limit_is_refused() {
     );
 }
 
+/// `story:events-head-cursor` acceptance 1: `after=head` answers no event and the cursor after
+/// the last one published, whatever `limit` it names, on the host's thread and beside it; a read
+/// after that cursor answers what was published since. `limit=0` is still refused.
+#[test]
+fn after_head_answers_the_newest_cursor_and_no_event() {
+    let mut host = scripted();
+    let (status, whole) = routed(&mut host, "limit=10");
+    assert_eq!(status, 200, "{whole}");
+    let end = next(&whole);
+    for query in ["after=head", "limit=5&after=head", "after=head&limit=1000"] {
+        let (status, head) = routed(&mut host, query);
+        assert_eq!(status, 200, "{query}: {head}");
+        assert_eq!(events(&head), Vec::<Value>::new(), "{query}: no event");
+        let (status, beside_head) = beside(&host, query);
+        assert_eq!(status, 200, "{query}, beside: {beside_head}");
+        assert_eq!(events(&beside_head), Vec::<Value>::new(), "{query}, beside");
+        for cursor in [next(&head), next(&beside_head)] {
+            let (status, idle) = routed(&mut host, &format!("after={cursor}"));
+            assert_eq!(status, 200, "{idle}");
+            assert_eq!(
+                idle,
+                json!({"events": [], "next": cursor}),
+                "{query}: nothing after the head"
+            );
+        }
+    }
+    let (status, refused) = routed(&mut host, "after=head&limit=0");
+    assert_eq!(status, 400, "a limit of 0 is refused: {refused}");
+    let (_, head) = routed(&mut host, "after=head");
+    let head = next(&head);
+
+    submit(
+        &mut host,
+        "tasks.board.OpenTask",
+        json!({"task_id": "t3", "title": "Third"}),
+    );
+    for (status, page) in [
+        routed(&mut host, &format!("after={head}")),
+        beside(&host, &format!("after={head}")),
+        routed(&mut host, &format!("after={end}")),
+    ] {
+        assert_eq!(status, 200, "{page}");
+        let ids = events(&page)
+            .iter()
+            .map(|event| event["payload"]["task_id"].clone())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, [json!("t3")], "only what was published since: {page}");
+    }
+}
+
 /// Acceptance 4: without a query, or with only parameters it does not read, the answer is
 /// `{"events": [...]}` as before, every event, no `next`.
 #[test]
