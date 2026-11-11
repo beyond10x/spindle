@@ -10,6 +10,7 @@ mod adversary_route_precedence;
 mod adversary_router;
 mod adversary_view_parameters;
 mod adversary_w21_security;
+mod adversary_w22_exposed;
 mod concurrent_reads;
 mod events_from_store;
 mod events_range;
