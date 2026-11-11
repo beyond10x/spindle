@@ -92,6 +92,11 @@ struct Ledger {
 
 impl Ledger {
     fn open() -> Self {
+        Self::with(slips())
+    }
+
+    /// A ledger with `issued` issued on the host and on the interpreter.
+    fn with(issued: Vec<Value>) -> Self {
         let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
         let ir = spindle_spec::load(&fixture())
             .expect("the adversary fixture compiles")
@@ -108,7 +113,7 @@ impl Ledger {
         )
         .expect("the host admits the adversary fixture");
         let correlation = CorrelationId::new("adversary-view-filters").expect("a correlation");
-        for input in slips() {
+        for input in issued {
             let Value::Object(fields) = input.clone() else {
                 unreachable!("a slip is an object")
             };
@@ -213,5 +218,47 @@ fn literal_filters_over_every_scalar_agree_with_the_interpreter() {
     assert!(
         differences.is_empty(),
         "views whose rows differ from ESS's interpreter: {differences:#?}"
+    );
+}
+
+/// A slip issued at `issued_at`, every other field as `s1` holds it.
+fn slip(id: &str, issued_at: &str) -> Value {
+    json!({"slip_id": id, "issued_at": issued_at, "wait": "PT1H", "amount": 1, "count": 1,
+           "colour": "Red", "stamps": []})
+}
+
+/// `story:view-filter-reads-now`: a filter `issued_at < now - 5m` (`ess/34` admits `now` in a view
+/// filter from `ess/30`) is read, so the route answers without `501`, and keeps the slips issued
+/// more than five minutes before the clock of the read: `old`, ten minutes before, and `offset`,
+/// six minutes before in a `+01:00` spelling; not `edge`, issued exactly five minutes before, nor
+/// `young`, one minute before. The host's thread, its reader and ESS's interpreter, its clock
+/// where the host's stands, answer the same slips.
+#[test]
+fn a_filter_ordering_against_now_minus_five_minutes_keeps_the_older_rows() {
+    const STALE: &str = "ledger.slips.Stale";
+    let mut ledger = Ledger::with(vec![
+        slip("old", "2026-05-31T23:50:00Z"),
+        slip("offset", "2026-06-01T00:54:00+01:00"),
+        slip("edge", "2026-05-31T23:55:00Z"),
+        slip("young", "2026-05-31T23:59:00Z"),
+    ]);
+    assert!(
+        spindle_host::reads(ledger.host.ir(), STALE).is_ok(),
+        "{STALE} is read: {:?}",
+        spindle_host::reads(ledger.host.ir(), STALE)
+    );
+    let older = vec!["offset".to_owned(), "old".to_owned()];
+    assert_eq!(ledger.served(STALE), Ok(older.clone()), "the host's thread");
+    let beside = ledger
+        .host
+        .reader()
+        .list(STALE)
+        .map(|rows| ids(rows.iter().map(|row| row.get("slip_id").cloned())))
+        .map_err(|error| error.to_string());
+    assert_eq!(beside, Ok(older.clone()), "the host's reader");
+    assert_eq!(
+        ledger.interpreted(STALE),
+        Some(older),
+        "ESS's interpreter, its clock at {NOW}"
     );
 }

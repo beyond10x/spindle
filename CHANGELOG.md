@@ -10,6 +10,15 @@ are Spindle's releases.
 
 ### Added
 
+- A view filter that reads a field through a reference (`person_id.state == Active`), compares a
+  field with another field of the row or of a referenced row (`person_id.name == holder`,
+  `started_at > person_id.joined_at`), or a referenced field with a parameter
+  (`person_id.team == param.team`), answers the rows ESS's interpreter answers for the same state,
+  on the memory and SQLite stores, on the host's thread, through its reader and by identity.
+  Before, such a view answered `501` "only a field compared with a literal of its type or ordered
+  against `now`". A row whose reference is empty or names no row is left out where the filter is
+  unknown only for that, as the interpreter leaves it out (`absent_navigation`). Each row a
+  reference names is loaded once per read by its identity; the referenced entity is not scanned.
 - A view that declares computed fields (`expr:`) answers each row with the value ESS's
   interpreter computes over the row's own fields, by ESS's evaluator and the kernel's one
   computation of a value expression, the one an outcome's `{expr: …}` is written with: `null`

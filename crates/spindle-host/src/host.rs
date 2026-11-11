@@ -1524,7 +1524,8 @@ impl Host {
     /// A field read through a reference (`field: {related: …}`) answers the row the reference
     /// names as it stands now, loaded by its identity ([`Store::load`]) from the store of the
     /// component that owns its entity, that component's or another's; it is left out where the
-    /// reference is empty or names no row, a removed one included.
+    /// reference is empty or names no row, a removed one included. A filter that reads through a
+    /// reference reads the same row, loaded before the filter is evaluated.
     ///
     /// A view that declares parameters is read as [`Host::list_with`] reads it with no parameter
     /// values, so a required parameter is refused as left out. A computed field (`expr:`) is
@@ -1561,17 +1562,6 @@ impl Host {
             return Ok(None);
         };
         let now = read_instant(declared, self.clock.as_ref());
-        if !held(
-            &self.ir,
-            view,
-            declared,
-            identity,
-            &stored.row,
-            &parameters,
-            now,
-        )? {
-            return Ok(None);
-        }
         let mut far = Far::default();
         let referenced = far.referenced(
             &self.ir,
@@ -1580,6 +1570,17 @@ impl Host {
             identity,
             &stored.row,
         )?;
+        if !held(
+            &self.ir,
+            declared,
+            identity,
+            &stored.row,
+            &referenced,
+            &parameters,
+            now,
+        )? {
+            return Ok(None);
+        }
         crate::view::project(&self.ir, declared, identity, &stored.row, &referenced)
             .map(Some)
             .map_err(|detail| HostError::Unsupported(format!("view {view}: {detail}")))
@@ -1598,27 +1599,32 @@ impl Host {
     /// each instance of its source its filter keeps, projected, in the order its `order_by` ranks
     /// them, ties and a view without `order_by` by identity.
     ///
-    /// The filter is evaluated by ESS, as the compiler parsed it, over the row and the parameters
-    /// (each read as `param.<name>`). The filters read are those whose every leaf is one of:
+    /// The filter is evaluated by ESS, as the compiler parsed it, over the row, the parameters
+    /// (each read as `param.<name>`) and the rows its references name (each field read as
+    /// `<via>.<field>`). The filters read are those whose every leaf is one of:
     ///
-    /// - an observable field of the source (the state and the identity among them) compared with
-    ///   a literal of its type by `==` or `!=`, or by `<`, `<=`, `>` or `>=` where ESS orders the
-    ///   type (a number, or text other than a `Duration`): `archived == false`, `priority >= 3`,
-    ///   `state == Open`; a `Timestamp` field ordered against `now`, `now - 1h` or `now + 5m`
-    ///   (`issued_at < now`), read against this host's clock, taken once per read and only for
-    ///   such a filter;
+    /// - a field compared with a literal of its type by `==` or `!=`, or by `<`, `<=`, `>` or `>=`
+    ///   where ESS orders the type (a number, or text other than a `Duration`):
+    ///   `archived == false`, `priority >= 3`, `state == Open`, `person_id.state == Active`; a
+    ///   `Timestamp` field ordered against `now`, `now - 1h` or `now + 5m` (`issued_at < now`),
+    ///   read against this host's clock, taken once per read and only for such a filter. A field
+    ///   is an observable field of the source (the state and the identity among them), or one of
+    ///   the row a reference names, read through it;
     /// - such a field listed `in:` or `none_of:` literals of its type;
-    /// - a parameter compared with `==` or `!=` to such a field (`book_id == param.id`);
+    /// - such a field compared with `==` or `!=` to a parameter or another such field
+    ///   (`book_id == param.id`, `person_id.name == holder`), or ordered against one where ESS
+    ///   orders both and they are of one scalar kind (`started_at > person_id.joined_at`);
     /// - `defined(param.<name>)` or `defined(<field>)`;
     ///
     /// leaves combined by `any`, `all` and `not`, or under `exists` or `forall` over a list
     /// parameter or a list field of the row, a list field's element read as a field is and also
     /// compared with `==` or `!=` to an outer binder. A filter unknown for a row, such as `==`
-    /// with an `Optional` parameter left out, refuses the read, as ESS's interpreter refuses it.
-    /// Read from the same store as [`Host::view`], for either consistency. A field read through a
-    /// reference is answered as [`Host::view`] answers it: each row a reference names is loaded
-    /// once per read, by its identity, however many rows name it, and the referenced entity is
-    /// never scanned.
+    /// with an `Optional` parameter left out, refuses the read, as ESS's interpreter refuses it;
+    /// one unknown only because a path it reads through a reference reads no row (the reference
+    /// is empty or names no row) does not hold the row, as the interpreter hides it.
+    /// Read from the same store as [`Host::view`], for either consistency. A view that reads
+    /// through a reference, by a field or by its filter, loads each row a reference names once per
+    /// read, by its identity, however many rows name it, and never scans the referenced entity.
     ///
     /// A view declaring aggregate fields (`aggregate: {count: {}}`, `sum`, `avg` and the rest,
     /// with or without `group_by`, each with or without its own `where:`) answers the rows ESS's
@@ -1633,7 +1639,7 @@ impl Host {
     ///
     /// # Errors
     /// [`HostError::NoView`]; [`HostError::Unsupported`], naming the construct, for a view that
-    /// declares paging, a filter read through a reference, a default row for an absent identity,
+    /// declares paging, a default row for an absent identity,
     /// an aggregation beside a field read through a reference, or any other filter, a measure's
     /// `where:` included; [`HostError::Parameters`], naming the parameter, for a value the view
     /// does not declare, a required one left out or one not of its declared type or newtype,
@@ -2134,11 +2140,7 @@ fn readable<'ir>(ir: &'ir EssIr, view: &str) -> Result<(&'ir ResolvedView, Strin
         )));
     }
     let owner = owner_of(ir, ir.entity(&declared.source))?;
-    for reference in declared
-        .references
-        .iter()
-        .filter(|reference| !reference.fields.is_empty())
-    {
+    for reference in &declared.references {
         owner_of(ir, ir.entity(&reference.entity))?;
     }
     Ok((declared, owner))
@@ -2168,7 +2170,8 @@ fn loading_from(
     |owner, entity, identity| Ok(store_of(components, owner)?.load(entity, identity)?)
 }
 
-/// The rows the fields of one read of a view read through a reference: each loaded once, by its
+/// The rows one read of a view reads through a reference, by a field or by its filter: each loaded
+/// once, by its
 /// entity and identity, through what loads the rows of the component that owns the entity
 /// ([`Load`]), and held for the rest of the read, so a read loads each row it names once however
 /// many of its rows name it, and never scans the referenced entity. A row that is gone is held as
@@ -2255,7 +2258,8 @@ fn listing<'ir>(
 
 impl Listing<'_> {
     /// Every row of `scan`, the source's instances, the view holds: projected, in its order. The
-    /// rows its fields read through a reference are loaded through `load` ([`Far`]).
+    /// rows it reads through a reference, by a field or by its filter, are loaded through `load`
+    /// ([`Far`]).
     fn rows(
         &self,
         ir: &EssIr,
@@ -2268,10 +2272,10 @@ impl Listing<'_> {
             for (identity, stored) in scan {
                 if held(
                     ir,
-                    view,
                     self.declared,
                     &identity,
                     &stored.row,
+                    &crate::view::Referenced::new(),
                     &self.parameters,
                     self.now,
                 )? {
@@ -2291,16 +2295,16 @@ impl Listing<'_> {
         let mut rows = Vec::new();
         let mut far = Far::default();
         for (identity, stored) in scan {
+            let referenced = far.referenced(ir, self.declared, load, &identity, &stored.row)?;
             if held(
                 ir,
-                view,
                 self.declared,
                 &identity,
                 &stored.row,
+                &referenced,
                 &self.parameters,
                 self.now,
             )? {
-                let referenced = far.referenced(ir, self.declared, load, &identity, &stored.row)?;
                 let row =
                     crate::view::project(ir, self.declared, &identity, &stored.row, &referenced)
                         .map_err(|detail| {
@@ -2314,19 +2318,20 @@ impl Listing<'_> {
     }
 }
 
-/// Whether `declared`, the view `view`, holds `row` for `parameters` ([`crate::view::holds`]); a
-/// row that is not a value of its source's fields is refused [`HostError::Unsupported`], naming it.
+/// Whether `declared` holds `row` for `parameters`, `referenced` the rows its
+/// references name ([`crate::view::holds`]); a row that is not a value of its entity's fields is
+/// refused [`HostError::Unsupported`], naming it.
 fn held(
     ir: &EssIr,
-    view: &str,
     declared: &ResolvedView,
     identity: &Value,
     row: &Row,
+    referenced: &crate::view::Referenced<'_>,
     parameters: &ess_primitives::FactStore,
     now: Option<ess_primitives::Rfc3339Instant>,
 ) -> Result<bool, HostError> {
-    crate::view::holds(ir, declared, identity, row, parameters, now)
-        .map_err(|detail| HostError::Unsupported(format!("view {view}: {detail}")))
+    crate::view::holds(ir, declared, identity, row, referenced, parameters, now)
+        .map_err(|detail| HostError::Unsupported(format!("view {}: {detail}", declared.name)))
 }
 
 /// The instant a read of `declared` holds its rows against: the clock's civil time, read once,

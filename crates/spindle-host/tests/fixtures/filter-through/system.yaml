@@ -1,0 +1,38 @@
+format: ess/34
+system: org
+version: v1
+summary: People a directory keeps, and tasks on them a second component keeps, read by views whose filters read through the references a task holds.
+domains:
+  - org.people
+  - org.tasks
+components:
+  - component: directory
+    summary: Adds people, lets them leave and removes them.
+    owns:
+      domains:
+        - org.people
+    accepts:
+      commands:
+        - org.people.AddPerson
+        - org.people.LeavePerson
+        - org.people.RemovePerson
+    publishes:
+      events:
+        - org.people.PersonAdded
+        - org.people.PersonLeft
+        - org.people.PersonRemoved
+    reached_by: in_process
+  - component: work
+    summary: Opens and closes tasks, each held by a person and reviewed by one or none.
+    owns:
+      domains:
+        - org.tasks
+    accepts:
+      commands:
+        - org.tasks.OpenTask
+        - org.tasks.CloseTask
+    publishes:
+      events:
+        - org.tasks.TaskOpened
+        - org.tasks.TaskClosed
+    reached_by: in_process

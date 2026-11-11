@@ -1,0 +1,145 @@
+domain: org.tasks
+summary: Tasks, each held under a name by a person and reviewed by one or none, read by views whose filters read the people a task names.
+types:
+  - name: org.tasks.TaskId
+    kind: newtype
+    of: String
+entities:
+  - name: org.tasks.Task
+    identity:
+      name: task_id
+      type: org.tasks.TaskId
+    fields:
+      - name: holder
+        type: String
+      - name: person_id
+        type: org.people.PersonId
+      - name: reviewer_id
+        type: Optional<org.people.PersonId>
+      - name: started_at
+        type: Timestamp
+    relations:
+      - {name: person, kind: references, target: org.people.Person, cardinality: one, via: person_id}
+      - {name: reviewer, kind: references, target: org.people.Person, cardinality: one, via: reviewer_id}
+    lifecycle:
+      initial: Open
+      states: [Open, Closed]
+      terminal: [Closed]
+      transitions:
+        - {name: close, from: [Open], to: Closed}
+errors:
+  - name: org.tasks.WrongState
+    summary: The task is closed.
+    fields: []
+commands:
+  - name: org.tasks.OpenTask
+    input:
+      - name: task_id
+        type: org.tasks.TaskId
+      - name: holder
+        type: String
+      - name: person_id
+        type: org.people.PersonId
+      - name: reviewer_id
+        type: Optional<org.people.PersonId>
+      - name: started_at
+        type: Timestamp
+    outcomes:
+      - name: opened
+        creates: org.tasks.Task
+        instance: task_id
+        sets:
+          holder: input.holder
+          person_id: input.person_id
+          reviewer_id: input.reviewer_id
+          started_at: input.started_at
+        emits: [org.tasks.TaskOpened]
+        payload:
+          org.tasks.TaskOpened: {task_id: input.task_id}
+        summary: The task is kept.
+  - name: org.tasks.CloseTask
+    input:
+      - name: task_id
+        type: org.tasks.TaskId
+    outcomes:
+      - name: closed
+        moves: org.tasks.Task.close
+        instance: task_id
+        emits: [org.tasks.TaskClosed]
+        payload:
+          org.tasks.TaskClosed: {task_id: input.task_id}
+        summary: The task is closed.
+      - {name: wrong-state, wrong_state: true, error: org.tasks.WrongState}
+events:
+  - name: org.tasks.TaskOpened
+    fields:
+      - name: task_id
+        type: org.tasks.TaskId
+  - name: org.tasks.TaskClosed
+    fields:
+      - name: task_id
+        type: org.tasks.TaskId
+views:
+  - name: org.tasks.WithActivePerson
+    source: org.tasks.Task
+    consistency: read_your_writes
+    filter: person_id.state == Active
+    fields:
+      - name: task_id
+        type: org.tasks.TaskId
+      - name: holder
+        type: String
+      - name: person_name
+        type: Optional<String>
+        field: {related: {via: person_id, field: name}}
+  - name: org.tasks.NotLeft
+    source: org.tasks.Task
+    consistency: read_your_writes
+    filter:
+      not: person_id.state == Left
+    fields: &fields
+      - name: task_id
+        type: org.tasks.TaskId
+      - name: holder
+        type: String
+  - name: org.tasks.HeldByName
+    source: org.tasks.Task
+    consistency: read_your_writes
+    filter: person_id.name == holder
+    fields: *fields
+  - name: org.tasks.SelfReviewed
+    source: org.tasks.Task
+    consistency: read_your_writes
+    filter:
+      all: [defined(reviewer_id), reviewer_id == person_id]
+    fields: *fields
+  - name: org.tasks.NicknamedReviewer
+    source: org.tasks.Task
+    consistency: read_your_writes
+    filter: defined(reviewer_id.nickname)
+    fields: *fields
+  - name: org.tasks.StartedAfterJoining
+    source: org.tasks.Task
+    consistency: read_your_writes
+    filter: started_at > person_id.joined_at
+    fields: *fields
+  - name: org.tasks.ForViewer
+    source: org.tasks.Task
+    consistency: read_your_writes
+    params:
+      - name: viewer
+        type: org.people.PersonId
+    filter:
+      all: [person_id == param.viewer, reviewer_id.state == Active]
+    fields: *fields
+  - name: org.tasks.ForTeam
+    source: org.tasks.Task
+    consistency: read_your_writes
+    params:
+      - name: team
+        type: String
+    filter:
+      all:
+        - state == Open
+        - any: [person_id.team == param.team, reviewer_id.team == param.team]
+    fields: *fields

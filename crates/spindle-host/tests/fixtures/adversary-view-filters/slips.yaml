@@ -129,3 +129,8 @@ views:
     consistency: read_your_writes
     filter: colour > Green
     fields: *fields
+  - name: ledger.slips.Stale
+    source: ledger.slips.Slip
+    consistency: read_your_writes
+    filter: issued_at < now - 5m
+    fields: *fields

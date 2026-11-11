@@ -238,6 +238,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "crates/spindle-host/tests/spindle-host/related.rs::related_fields_agree_with_the_interpreter",
     ),
     shipped(
+        "Execution",
+        "View filters read through a reference",
+        "A view filter that reads a field of the row a reference names (person_id.state == Active), or compares a field with another field or a parameter (person_id.name == holder, person_id.team == param.team), answers the rows ESS's interpreter answers, on the host's thread and through its reader, a row whose reference is empty or names no row left out where the filter is unknown only for that; each referenced row is loaded once per read by its identity.",
+        "/docs/concepts/specification",
+        "crates/spindle-host/tests/spindle-host/filter_through.rs::filters_through_a_reference_agree_with_the_interpreter",
+    ),
+    shipped(
         "Observe",
         "Counters derived from the specification",
         "spindle-telemetry counts commands by outcome, events, bindings, timer ticks and store writes per component; b10x-spindle metrics prints the catalogue, play prints the table's counters.",
