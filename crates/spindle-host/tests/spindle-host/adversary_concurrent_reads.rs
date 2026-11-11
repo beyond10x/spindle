@@ -295,7 +295,7 @@ fn read_members(reader: &Reader) {
 }
 
 fn read_events(reader: &Reader) {
-    std::hint::black_box(reader.published());
+    std::hint::black_box(reader.published().expect("the events read"));
 }
 
 /// The mean of `durations` without the slowest tenth, which a loaded machine's scheduler
@@ -358,7 +358,10 @@ fn adversary_reading_the_events_does_not_make_each_command_copy_every_event_publ
         );
     }
     let reader = host.reader();
-    assert!(reader.published().len() >= 20_000, "the history is held");
+    assert!(
+        reader.published().expect("the events read").len() >= 20_000,
+        "the history is held"
+    );
     assert_not_paid_for(
         "joining a member beside a read of the events, with 20000 events published",
         joins(&mut host, &reader, read_events),

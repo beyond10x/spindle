@@ -8,7 +8,8 @@ use js_sys::{Array, Promise, Reflect};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use spindle_kernel::{
-    Change, EVERY_INSTANCE, Event, Removal, Row, Scan, Store, StoreError, Stored, Write,
+    Change, Committed, EVERY_INSTANCE, Event, Origin, Removal, Row, Scan, Store, StoreError,
+    Stored, Write,
 };
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
@@ -39,13 +40,28 @@ struct Record {
     row: Option<Row>,
 }
 
-/// An event as the `events` object store holds it.
+/// An event as the `events` object store holds it, with the command its write was attributed to
+/// ([`Store::attribute`]), where it was attributed to one.
 #[derive(Serialize, Deserialize)]
 struct Recorded {
     entity: String,
     identity: Value,
     event: String,
     payload: Map<String, Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sequence: Option<u64>,
+}
+
+impl Recorded {
+    /// The command it was attributed to, where it names one whole.
+    fn origin(&self) -> Option<Origin> {
+        Some(Origin {
+            command: self.command.clone()?,
+            sequence: self.sequence?,
+        })
+    }
 }
 
 /// One instance [`Shared::write`] writes: the record it is written as, where this global scope
@@ -124,6 +140,12 @@ struct Shared {
     removed: BTreeMap<Key, u64>,
     /// Each entity's version: how many writes of its instances this global scope made or heard.
     entities: BTreeMap<String, u64>,
+    /// Every event the database held when it opened and every one this global scope committed
+    /// since, in commit order ([`Store::events_after`]); the events another global scope commits
+    /// meanwhile are read when the database is next opened.
+    events: Vec<Committed>,
+    /// The command the writes are attributed to ([`Store::attribute`]).
+    origin: Option<Origin>,
     /// Settles when the last write's transaction completes or aborts.
     written: Option<Promise>,
     /// Why a write did not land, once one did not.
@@ -249,6 +271,8 @@ impl Shared {
             rows: BTreeMap::new(),
             removed: BTreeMap::new(),
             entities: BTreeMap::new(),
+            events: Vec::new(),
+            origin: None,
             written: None,
             failed: Rc::new(RefCell::new(None)),
             channel: None,
@@ -279,7 +303,28 @@ impl Shared {
                 .borrow_mut()
                 .learn(parse::<Record>(&text, "an instance")?);
         }
+        let mut events = Vec::new();
+        for text in read_all(&database, EVENTS).await? {
+            events.push(parse::<Recorded>(&text, "an event")?);
+        }
+        shared.borrow_mut().events = committed(events);
         Ok(shared)
+    }
+
+    /// Records `events`, which one write committed, at the position after the last, attributed
+    /// as the writes are.
+    fn record(&mut self, events: Vec<Event>) {
+        if events.is_empty() {
+            return;
+        }
+        let position = self.events.last().map_or(0, |last| last.position) + 1;
+        let origin = self.origin.clone();
+        self.events
+            .extend(events.into_iter().map(|event| Committed {
+                position,
+                origin: origin.clone(),
+                event,
+            }));
     }
 
     /// Takes `record` as where its instance stands, unless what is held stands later.
@@ -405,6 +450,8 @@ impl Shared {
                         identity: (*identity).clone(),
                         event: event.name.clone(),
                         payload: event.payload.clone(),
+                        command: self.origin.as_ref().map(|origin| origin.command.clone()),
+                        sequence: self.origin.as_ref().map(|origin| origin.sequence),
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()
@@ -557,13 +604,16 @@ impl Store for BrowserStore {
             shared.write(&pending)
         })();
         if staged.is_ok() {
+            let mut events = Vec::new();
             for write in writes {
-                let entity = match write {
-                    Write::Commit(change) => &change.entity,
-                    Write::Remove(removal) => &removal.entity,
+                let (entity, committed) = match write {
+                    Write::Commit(change) => (&change.entity, &change.events),
+                    Write::Remove(removal) => (&removal.entity, &removal.events),
                 };
                 *shared.entities.entry(entity.clone()).or_default() += 1;
+                events.extend(committed.iter().cloned());
             }
+            shared.record(events);
         } else {
             for (key, (row, removed)) in before {
                 match row {
@@ -598,10 +648,48 @@ impl Store for BrowserStore {
             version: shared.entities.get(entity).copied().unwrap_or(0),
         })
     }
+
+    fn attribute(&mut self, origin: Option<Origin>) {
+        self.shared.borrow_mut().origin = origin;
+    }
+
+    /// The events committed after `position`, read from memory: those the database held when this
+    /// global scope opened it, and those it committed since.
+    fn events_after(&mut self, position: u64) -> Result<Vec<Committed>, StoreError> {
+        let shared = self.shared.borrow();
+        shared.healthy()?;
+        let from = shared
+            .events
+            .partition_point(|committed| committed.position <= position);
+        Ok(shared.events[from..].to_vec())
+    }
 }
 
 fn key(entity: &str, identity: &Value) -> Key {
     (entity.to_owned(), identity.to_string())
+}
+
+/// The events the `events` object store holds, in key order, at their positions: the events of
+/// one attributed command, one write, share one; an event attributed to none has one of its own.
+fn committed(recorded: Vec<Recorded>) -> Vec<Committed> {
+    let mut committed: Vec<Committed> = Vec::with_capacity(recorded.len());
+    for recorded in recorded {
+        let origin = recorded.origin();
+        let position = match committed.last() {
+            Some(last) if origin.is_some() && last.origin == origin => last.position,
+            Some(last) => last.position + 1,
+            None => 1,
+        };
+        committed.push(Committed {
+            position,
+            origin,
+            event: Event {
+                name: recorded.event,
+                payload: recorded.payload,
+            },
+        });
+    }
+    committed
 }
 
 fn describe_standing(standing: Standing) -> String {

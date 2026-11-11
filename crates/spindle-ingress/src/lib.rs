@@ -40,8 +40,9 @@
 //! Beside those, a surface bound to `http-loopback` serves the routes a generic model console
 //! reads ([`Surface::with_console`], [`Console`]): `GET /api/model`, the IR as
 //! `ess specify compile --format json` prints it and each outcome's subject; `GET /api/events`,
-//! every event published so far, in order; and `POST /api/reset`, which empties every store of the
-//! run. A route the binding or ESS publishes at one of those paths is refused at startup.
+//! every event published so far, in order, read from the stores that committed them; and
+//! `POST /api/reset`, which empties every store of the run. A route the binding or ESS publishes
+//! at one of those paths is refused at startup.
 //!
 //! Paths under `/__spindle/` are the run's own ([`Reserved`]): [`Surface::resolve`] matches them
 //! before any route, and a route the binding or ESS publishes there is refused at startup

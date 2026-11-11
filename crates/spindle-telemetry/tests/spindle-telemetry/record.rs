@@ -75,7 +75,7 @@ fn executing_a_command_increments_its_outcome_counter() {
         .expect("the match is stored");
     bytes += serde_json::to_vec(&stored.row).expect("a row").len() as u64;
     for event in store.inner().events() {
-        bytes += serde_json::to_vec(event).expect("an event").len() as u64;
+        bytes += serde_json::to_vec(&event).expect("an event").len() as u64;
     }
     assert_eq!(counters.value("store.bytes_written"), Some(bytes));
 

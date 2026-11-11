@@ -10,6 +10,7 @@ mod adversary_route_precedence;
 mod adversary_router;
 mod adversary_view_parameters;
 mod concurrent_reads;
+mod events_from_store;
 mod grants;
 mod metrics_read;
 mod observe;

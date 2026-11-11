@@ -1,7 +1,7 @@
 //! What reads a host's committed state beside the host's thread ([`Reader`]).
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use ess_compiler::EssIr;
 use serde_json::{Map, Value};
@@ -15,8 +15,9 @@ use crate::admission::Placements;
 
 /// What reads a host's committed state from any thread while the host's own thread runs
 /// commands, bindings and ticks ([`super::Host::reader`]): the views of every component whose
-/// store gives a reading handle ([`spindle_kernel::Store::reading`]), the events published, the
-/// rows each entity holds, the counters and the events each command appended.
+/// store gives a reading handle ([`spindle_kernel::Store::reading`]), the events published, read
+/// from those stores alike, the rows each entity holds, the counters and the events each command
+/// appended.
 ///
 /// A view is read through its store's reading handle, so it answers the store as the last write
 /// that landed left it, never part of a write; a read never waits for the host's thread, and the
@@ -31,7 +32,6 @@ pub struct Reader {
     pub(super) clock: Arc<dyn Clock>,
     pub(super) placements: Arc<Placements>,
     pub(super) components: Arc<BTreeMap<String, Read>>,
-    pub(super) published: Arc<RwLock<History>>,
     pub(super) emitted: Arc<Mutex<BTreeMap<(String, String), u64>>>,
 }
 
@@ -125,9 +125,30 @@ impl Reader {
             .clone()
     }
 
-    /// Every event published, as [`super::Host::published`] answers them.
-    pub fn published(&self) -> Vec<Published> {
-        listed(&self.published)
+    /// Every event published, as [`super::Host::published`] answers them: read from each
+    /// component's store through its reading handle, beside the host's thread.
+    ///
+    /// # Errors
+    /// [`HostError::Unsupported`] where a component's store gives no reading handle
+    /// ([`Reader::reads_events`]), and [`HostError::Store`] where a store cannot be read.
+    pub fn published(&self) -> Result<Vec<Published>, HostError> {
+        let mut committed = Vec::with_capacity(self.components.len());
+        for (name, read) in self.components.iter() {
+            let reading = read.shared.reading().ok_or_else(|| {
+                HostError::Unsupported(format!("{name} is read on the host's thread only"))
+            })?;
+            committed.push((name.clone(), reading.events_after(0)?));
+        }
+        Ok(super::merged(committed))
+    }
+
+    /// Whether this reader answers the events published ([`Reader::published`]): whether every
+    /// component's store gives a reading handle now. Where one does not, they are read on the
+    /// host's thread.
+    pub fn reads_events(&self) -> bool {
+        self.components
+            .values()
+            .all(|read| read.shared.reading().is_some())
     }
 
     /// Whether this reader answers `view`: one the host reads ([`crate::reads`]), whose owning
@@ -184,51 +205,4 @@ impl Reader {
         let scan = reading.scan(&listing.entity)?;
         listing.rows(&self.ir, view, scan, None)
     }
-}
-
-/// How many events one chunk of a [`History`] holds before it is sealed.
-const CHUNK: usize = 256;
-
-/// Every event published since the host started or was last reset, in the order published, as
-/// chunks its readers share. A sealed chunk never changes again; only the open one grows, and
-/// where a read still holds it, the event lands on a copy of it alone. So a read takes the chunks
-/// as they stand under the lock, one pointer each, and reads them without it, and the host's
-/// thread never copies more than one chunk for a read.
-#[derive(Debug, Default)]
-pub(super) struct History {
-    sealed: Vec<Arc<Vec<Published>>>,
-    open: Arc<Vec<Published>>,
-}
-
-impl History {
-    /// Appends `events`, in order.
-    pub(super) fn extend(&mut self, events: impl IntoIterator<Item = Published>) {
-        for event in events {
-            if self.open.len() >= CHUNK {
-                let full = std::mem::take(&mut self.open);
-                self.sealed.push(full);
-            }
-            Arc::make_mut(&mut self.open).push(event);
-        }
-    }
-
-    fn chunks(&self) -> Vec<Arc<Vec<Published>>> {
-        self.sealed
-            .iter()
-            .chain(std::iter::once(&self.open))
-            .cloned()
-            .collect()
-    }
-}
-
-/// Every event `history` holds now: its chunks taken under its lock, read without it.
-pub(super) fn listed(history: &RwLock<History>) -> Vec<Published> {
-    let chunks = history
-        .read()
-        .unwrap_or_else(PoisonError::into_inner)
-        .chunks();
-    chunks
-        .iter()
-        .flat_map(|chunk| chunk.iter().cloned())
-        .collect()
 }

@@ -121,6 +121,17 @@ impl<S: Store> Store for CountingStore<S> {
     fn reading(&mut self) -> Option<Arc<dyn Reading>> {
         self.inner.reading()
     }
+
+    fn attribute(&mut self, origin: Option<spindle_kernel::Origin>) {
+        self.inner.attribute(origin);
+    }
+
+    fn events_after(
+        &mut self,
+        position: u64,
+    ) -> Result<Vec<spindle_kernel::Committed>, StoreError> {
+        self.inner.events_after(position)
+    }
 }
 
 impl<S: Store> CountingStore<S> {

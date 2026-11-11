@@ -333,9 +333,8 @@ fn every_row_a_set_outcome_moves_has_its_per_row_event_published() {
         .iter()
         .chain([&retried])
         .flat_map(|executed| executed.events.iter());
-    let published: Vec<&Value> = store
-        .inner
-        .events()
+    let committed = store.inner.events();
+    let published: Vec<&Value> = committed
         .iter()
         .chain(answered)
         .filter(|event| event.name == LOAN_MARKED)

@@ -6,7 +6,9 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock};
 
 use serde_json::Value;
-use spindle_kernel::{Change, Reading, Removal, Scan, Store, StoreError, Stored, Write};
+use spindle_kernel::{
+    Change, Committed, Origin, Reading, Removal, Scan, Store, StoreError, Stored, Write,
+};
 
 /// A component's store with the rows each entity it owns holds: counted once from the store when
 /// it is opened ([`Store::counts`]), then moved by each write that lands. The store refuses a
@@ -31,6 +33,10 @@ pub(super) struct Counted {
     /// For a store a reset empties in place (one the host was given, such as PostgreSQL), which
     /// its readers cannot go on reading as it was: the gate its reads pass ([`Gate`]).
     gate: Option<Arc<Gate>>,
+    /// The position of the last write a store emptied in place had committed events at when it
+    /// was last reset ([`Counted::forget_events`]): its events are read past it only. `0` for a
+    /// store a reset opens anew in place of the one it empties.
+    since: u64,
 }
 
 /// What keeps the readers of a store a reset empties in place from reading it partly reset:
@@ -98,10 +104,12 @@ impl Drop for Passed<'_> {
     }
 }
 
-/// A reading handle whose reads pass a [`Gate`].
+/// A reading handle whose reads pass a [`Gate`], reading the events committed since the last
+/// reset only ([`Counted::since`]).
 struct Gated {
     reading: Arc<dyn Reading>,
     gate: Arc<Gate>,
+    since: u64,
 }
 
 impl Reading for Gated {
@@ -113,6 +121,11 @@ impl Reading for Gated {
     fn counts(&self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
         let _passed = self.gate.enter();
         self.reading.counts(entities)
+    }
+
+    fn events_after(&self, position: u64) -> Result<Vec<Committed>, StoreError> {
+        let _passed = self.gate.enter();
+        self.reading.events_after(position.max(self.since))
     }
 }
 
@@ -165,6 +178,7 @@ impl Counted {
                 reading: RwLock::new(None),
             }),
             gate: in_place.then(Arc::default),
+            since: 0,
         };
         counted.rows = counted.store.counts(&counted.shared.entities).ok();
         counted.publish();
@@ -192,7 +206,17 @@ impl Counted {
         self.held = true;
         let held = std::mem::replace(&mut self.store, store);
         self.rows = self.store.counts(&self.shared.entities).ok();
+        self.since = 0;
         held
+    }
+
+    /// Forgets the events the store, emptied in place, committed so far: from now on, and for its
+    /// readers once [`Counted::publish`] hands it to them, its events are read past the last of
+    /// them only. A store that does not read back its events keeps nothing to forget.
+    pub(super) fn forget_events(&mut self) {
+        if let Ok(committed) = self.store.events_after(self.since) {
+            self.since = committed.last().map_or(self.since, |last| last.position);
+        }
     }
 
     /// Hands its readers the counts and the reading handle of the store it holds now, together,
@@ -202,6 +226,7 @@ impl Counted {
             Some(gate) => Arc::new(Gated {
                 reading,
                 gate: Arc::clone(gate),
+                since: self.since,
             }) as Arc<dyn Reading>,
             None => reading,
         });
@@ -302,5 +327,14 @@ impl Store for Counted {
 
     fn reading(&mut self) -> Option<Arc<dyn Reading>> {
         self.store.reading()
+    }
+
+    fn attribute(&mut self, origin: Option<Origin>) {
+        self.store.attribute(origin);
+    }
+
+    /// The events the store committed past `position` and since it was last reset.
+    fn events_after(&mut self, position: u64) -> Result<Vec<Committed>, StoreError> {
+        self.store.events_after(position.max(self.since))
     }
 }

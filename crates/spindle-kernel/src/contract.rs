@@ -16,7 +16,8 @@ use serde_json::{Map, Value, json};
 
 use crate::Event;
 use crate::store::{
-    Change, EVERY_INSTANCE, Removal, Row, Scan, Scanned, Store, StoreError, Stored, Write,
+    Change, Committed, EVERY_INSTANCE, Origin, Removal, Row, Scan, Scanned, Store, StoreError,
+    Stored, Write,
 };
 
 /// The entity most cases write.
@@ -99,6 +100,10 @@ pub const CASES: &[Case] = &[
     Case {
         name: "a_reading_handle_reads_each_write_whole_as_it_lands",
         run: a_reading_handle_reads_each_write_whole_as_it_lands,
+    },
+    Case {
+        name: "the_store_reads_events_after_a_position",
+        run: the_store_reads_events_after_a_position,
     },
 ];
 
@@ -917,4 +922,121 @@ fn a_reading_handle_reads_each_write_whole_as_it_lands(store: &mut dyn Store) {
     same(store, "a refused group");
     commit_removal(case, store, &removal(&first, one.version));
     same(store, "a removal");
+}
+
+fn named(name: &str) -> Event {
+    Event {
+        name: format!("contract.tasks.{name}"),
+        payload: Map::from_iter([("name".to_owned(), json!(name))]),
+    }
+}
+
+fn origin(command: &str, sequence: u64) -> Option<Origin> {
+    Some(Origin {
+        command: format!("contract.tasks.{command}"),
+        sequence,
+    })
+}
+
+fn after(case: &str, store: &mut dyn Store, position: u64) -> Vec<Committed> {
+    store
+        .events_after(position)
+        .unwrap_or_else(|error| panic!("{case}: the events after {position} read: {error}"))
+}
+
+/// The events a store committed, read after a position ([`Store::events_after`]): in commit order,
+/// each with its position and the command its write was attributed to ([`Store::attribute`]).
+/// Every event of one write shares one position, a later write's is greater, and a read after an
+/// event's position answers every event committed after its write, and none before. A refused
+/// write commits no event. Where the store gives a reading handle, it reads them alike.
+fn the_store_reads_events_after_a_position(store: &mut dyn Store) {
+    let case = "the_store_reads_events_after_a_position";
+    assert_eq!(after(case, store, 0), [], "{case}: an empty store");
+    let (first, second, other) = (json!("t1"), json!("t2"), json!("o1"));
+    store.attribute(origin("Open", 7));
+    let mut opened = change(TASK, &first, None, row("Open", "1"));
+    opened.events = vec![named("A")];
+    commit(case, store, &opened);
+    store.attribute(origin("Pair", 9));
+    let mut paired = change(TASK, &second, None, row("Open", "2"));
+    paired.events = vec![named("B"), named("C")];
+    let mut beside = change(OTHER, &other, None, row("Open", "o"));
+    beside.events = vec![named("D")];
+    store
+        .commit_all(&[Write::Commit(paired), Write::Commit(beside)])
+        .unwrap_or_else(|error| panic!("{case}: the pair commits: {error}"));
+    let mut refused = change(TASK, &first, None, row("Open", "again"));
+    refused.events = vec![named("Refused")];
+    assert!(
+        store.commit(&refused).is_err(),
+        "{case}: a creation of a held identity"
+    );
+    store.attribute(None);
+    let one = held(case, store, &first);
+    let mut closing = removal(&first, one.version);
+    closing.events = vec![named("E")];
+    commit_removal(case, store, &closing);
+
+    let every = after(case, store, 0);
+    let names = every
+        .iter()
+        .map(|committed| committed.event.name.trim_start_matches("contract.tasks."))
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["A", "B", "C", "D", "E"], "{case}: in commit order");
+    assert_eq!(every[0].event, named("A"), "{case}: the event as committed");
+    let origins = every
+        .iter()
+        .map(|committed| committed.origin.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        origins,
+        [
+            origin("Open", 7),
+            origin("Pair", 9),
+            origin("Pair", 9),
+            origin("Pair", 9),
+            None
+        ],
+        "{case}: each with the command its write was attributed to"
+    );
+    let positions = every
+        .iter()
+        .map(|committed| committed.position)
+        .collect::<Vec<_>>();
+    assert!(positions[0] > 0, "{case}: a position is past 0");
+    assert!(
+        positions[1] == positions[2] && positions[2] == positions[3],
+        "{case}: one write's events share its position: {positions:?}"
+    );
+    assert!(
+        positions[0] < positions[1] && positions[3] < positions[4],
+        "{case}: a later write's position is greater: {positions:?}"
+    );
+    assert_eq!(
+        after(case, store, positions[0]),
+        every[1..],
+        "{case}: after the first write, the second's and the third's"
+    );
+    assert_eq!(
+        after(case, store, positions[1]),
+        every[4..],
+        "{case}: after the second write, the third's"
+    );
+    assert_eq!(
+        after(case, store, positions[4]),
+        [],
+        "{case}: after the last"
+    );
+    if let Some(reading) = store.reading() {
+        for position in [0, positions[0], positions[4]] {
+            let read = reading.events_after(position).unwrap_or_else(|error| {
+                panic!("{case}: the handle reads the events after {position}: {error}")
+            });
+            assert_eq!(
+                read,
+                after(case, store, position),
+                "{case}: the handle reads the events after {position} as the store"
+            );
+        }
+    }
 }

@@ -70,7 +70,7 @@ fn a_command_runs_in_wasm_on_the_memory_store() {
     assert_eq!(report.ran.len(), 1, "one command ran: {report:?}");
     assert_eq!(report.ran[0].executed.outcome, "opened");
 
-    let published = host.published();
+    let published = host.published().expect("the events read");
     assert_eq!(published.len(), 1, "one event published: {published:?}");
     let identity = published[0].event.payload["notebook_id"].clone();
     let minted = Uuid::parse_str(identity.as_str().expect("the identity is text"))
