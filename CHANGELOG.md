@@ -15,9 +15,10 @@ are Spindle's releases.
   writes its `sets:` into them, entries in the order written. Every row left in place is checked
   against its entity's invariants, and the subject and every row land in one write group on every
   store, or nothing is written. A row of an entity an entry selected from, written by another
-  command between the selection and the write, refuses the command as a conflict, unless every
-  write of the group removes a row. An entry over an input list (`each:`) and a filter walking
-  another entity's rows stay refused.
+  command between the selection and the write, refuses the command as a conflict and writes
+  nothing, whatever the group's writes are: removals only, or the subject's removal alone where
+  no row was selected. An entry over an input list (`each:`) and a filter walking another
+  entity's rows stay refused.
 
 - `store.durable` bound to `postgres` keeps each component's state in an operator's PostgreSQL
   (13 or later), through `eventlog-postgres` at the pinned eventlog tag, rows and events encoded as
@@ -142,6 +143,14 @@ are Spindle's releases.
   caller receives is unchanged.
 
 ### Fixed
+
+- A removal decided on a scan is conditioned on it as a change is: an outcome that `deletes:` its
+  instance behind a `when_related:` guard over a row set, and a set outcome (`instances:`) behind
+  one, is refused as a conflict and writes nothing where another writer wrote a row of the
+  scanned entity between the scan and the write. `Removal` carries the scanned entities
+  (`Removal::scanned`), which `remove` and `commit_all` check in the transaction that writes, on
+  the memory, SQLite, PostgreSQL and IndexedDB stores alike. A set outcome's writes are still not
+  conditioned on the scan that selected its rows.
 
 - A second `run` on the same SQLite state is refused (`story:state-directory-lock`). Two runs
   given one `--state` each kept their own outbox and event list over one database. Now `run

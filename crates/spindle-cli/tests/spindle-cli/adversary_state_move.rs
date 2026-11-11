@@ -362,6 +362,7 @@ fn a_long_log_with_groups_across_pages_arrives_whole() {
             identity: gone.clone(),
             expected: versions["m3"],
             events: Vec::new(),
+            scanned: Vec::new(),
         })
         .expect("removed");
     table

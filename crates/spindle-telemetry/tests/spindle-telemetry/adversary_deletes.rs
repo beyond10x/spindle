@@ -76,6 +76,7 @@ fn a_deleting_outcome_counts_one_row_written_and_its_events() {
         identity: json!("b1"),
         expected: held.version,
         events: removed.events.clone(),
+        scanned: Vec::new(),
     });
     assert!(matches!(refused, Err(StoreError::Conflict { .. })));
     assert_eq!(

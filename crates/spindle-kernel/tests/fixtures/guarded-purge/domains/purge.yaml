@@ -1,0 +1,52 @@
+domain: probe.purge
+summary: Tickets of a team are purged together, unless a freeze of the team stands.
+entities:
+  - name: probe.purge.Freeze
+    identity: {name: freeze_id, type: String}
+    fields:
+      - {name: team, type: String}
+    lifecycle: {initial: Standing, states: [Standing], terminal: [Standing]}
+  - name: probe.purge.Ticket
+    identity: {name: ticket_id, type: String}
+    fields:
+      - {name: team, type: String}
+    lifecycle: {initial: Open, states: [Open], terminal: [Open]}
+errors:
+  - {name: probe.purge.TeamFrozen, summary: A freeze of the team stands., fields: []}
+events:
+  - name: probe.purge.Frozen
+    fields: [{name: freeze_id, type: String}]
+  - name: probe.purge.Purged
+    fields: [{name: team, type: String}]
+commands:
+  - name: probe.purge.FreezeTeam
+    input:
+      - {name: freeze_id, type: String}
+      - {name: team, type: String}
+    outcomes:
+      - name: frozen
+        creates: probe.purge.Freeze
+        instance: freeze_id
+        sets: {team: input.team}
+        emits: [probe.purge.Frozen]
+        payload:
+          probe.purge.Frozen: {freeze_id: input.freeze_id}
+        summary: The team is frozen.
+  - name: probe.purge.Purge
+    input:
+      - {name: team, type: String}
+    outcomes:
+      - name: refused
+        when_related:
+          entity: probe.purge.Freeze
+          where: team == input.team
+          exists: true
+        error: probe.purge.TeamFrozen
+        summary: A freeze of the team stands.
+      - name: purged
+        deletes: probe.purge.Ticket
+        instances: {where: team == input.team}
+        emits: [probe.purge.Purged]
+        payload:
+          probe.purge.Purged: {team: input.team}
+        summary: Every ticket of the team is removed.

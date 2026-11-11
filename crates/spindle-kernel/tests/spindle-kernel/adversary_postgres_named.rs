@@ -194,6 +194,7 @@ fn group(
                     identity: identity.clone(),
                     expected,
                     events: events(added),
+                    scanned: Vec::new(),
                 }));
                 after.insert(
                     key,

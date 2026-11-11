@@ -57,6 +57,7 @@ impl Run<'_, '_> {
                     identity,
                     expected: stored.version,
                     events: Vec::new(),
+                    scanned: Vec::new(),
                 }));
                 continue;
             }
@@ -76,8 +77,7 @@ impl Run<'_, '_> {
                 expected: Some(stored.version),
                 row: after,
                 events: Vec::new(),
-                // Not conditioned on the scan that selected the rows: a row of the entity
-                // created after it is left out unrefused, an open gap no story covers yet.
+                // The group's condition is set on its first write below.
                 scanned: Vec::new(),
             };
             self.at_rest(entity, &change)?;
@@ -91,6 +91,11 @@ impl Run<'_, '_> {
                 Write::Commit(change) => change.events.clone_from(&events),
                 Write::Remove(removal) => removal.events.clone_from(&events),
             }
+            // Conditioned on every entity a row-set guard scanned, carried by the first write,
+            // a change or a removal alike. Not conditioned on the scan that selected the rows: a
+            // row of the entity created after it is left out unrefused, an open gap no story
+            // covers yet.
+            self.condition(&mut writes);
             self.store.commit_all(&writes)?;
         }
         Ok(Executed {
