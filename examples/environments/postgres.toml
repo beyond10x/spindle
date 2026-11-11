@@ -1,0 +1,16 @@
+format = "spindle-environment/1"
+name = "postgres"
+os = "linux"
+arch = "x86_64"
+
+[provides]
+"store.durable" = ["postgres"]
+"store.ephemeral" = ["memory"]
+"identity.mint" = ["uuid-v4"]
+clock = ["system"]
+timer = ["tokio"]
+channel = ["in-process"]
+projection = ["in-process"]
+"ingress.network" = ["http-loopback"]
+"ingress.command_line" = ["terminal"]
+"external.*" = ["operator-prompt"]

@@ -3,7 +3,7 @@ title: Environment and admission
 sidebar_position: 3
 description: An environment names the implementations available where Spindle runs; admission binds one to every capability or refuses.
 lede: The environment, not the specification, chooses the implementations, and admission is the only step that differs between a laptop and a VM.
-source: crates/spindle-capability/src/environment.rs, crates/spindle-capability/src/admission.rs, crates/spindle-capability/tests/spindle-capability/admission.rs, crates/spindle-cli/tests/spindle-cli/admit.rs, crates/spindle-host/src/host.rs
+source: crates/spindle-capability/src/environment.rs, crates/spindle-capability/src/admission.rs, crates/spindle-capability/tests/spindle-capability/admission.rs, crates/spindle-cli/tests/spindle-cli/admit.rs, crates/spindle-host/src/host.rs, crates/spindle-kernel/src/postgres.rs, crates/spindle-cli/src/database.rs, crates/spindle-cli/tests/spindle-cli/postgres.rs
 ---
 
 ## The environment
@@ -63,7 +63,7 @@ Admission binds names. The parts that run today act on these bindings:
 
 | Capability | Implementations the runtime runs today |
 |---|---|
-| `store.durable` | `memory`, `sqlite` (one SQLite file per component; `run --state` names it), `indexeddb` (one IndexedDB database per component, in the Service Worker host) |
+| `store.durable` | `memory`, `sqlite` (one SQLite file per component; `run --state` names it), `postgres` (one set of tables per component in an operator's PostgreSQL, served by `run`; below), `indexeddb` (one IndexedDB database per component, in the Service Worker host) |
 | `channel` | `in-process` in the one-process host (`play`, `run`); `tcp` between processes, one component each (`play --component`) |
 | `timer` | `tokio`, the name the shipped environments give `spindle-timer`'s schedule |
 | `clock` | `system` |
@@ -110,3 +110,64 @@ document is read, naming the table and never repeating the value. This build cal
 only; a served run whose every external cause is bound to a call needs neither `--decisions` nor
 `--answer-default`. With `--observe`, a cause a call answers is listed and counted with the source
 `call`, and one whose call failed as `unanswered`.
+
+## State in PostgreSQL
+
+An environment that binds `store.durable` to `postgres` (`examples/environments/postgres.toml`)
+keeps each component's state in an operator's PostgreSQL, 13 or later, through `eventlog-postgres`.
+Rows and events are encoded as the SQLite store encodes them. Each component has its own tables,
+`spindle_<component>_*` (each `-` as `_`), so the components of one deployment share a database
+without reading each other's rows. The document names only the implementation; the database comes
+from settings, read as `SPINDLE_SETTING_<NAME>`:
+
+| Setting | Meaning |
+|---|---|
+| `database_url` | `postgres://user:password@host:port/database`; required, never printed |
+| `database_ca` | a PEM CA bundle; the server is reached over TLS (`sslmode=require`) and verified against it. Required for a host that is not loopback or a Unix socket |
+| `database_schema` | the schema holding the tables; `public` by default |
+| `database_pool` | connections per component; 4 by default |
+| `database_connections` | the connection budget of the serving role; required with `database_ca` |
+
+Without `database_ca`, a loopback or Unix-socket database is opened isolated, over plaintext, and
+its tables are created when `run` opens it: for tests and a local database. With `database_ca` the
+database is hosted, and two roles take part:
+
+- The role that owns the schema creates the tables with `b10x-spindle store migrate <spec>
+  --environment <env>`, the only command that runs DDL. A second migrate leaves the tables as they
+  are. One line per component:
+
+  ```console
+  $ b10x-spindle store migrate crates/spindle-cli/tests/fixtures/served-review --environment examples/environments/postgres.toml
+  {"migrated":"probe","schema":"downstream_1794331581","tables":"spindle_probe_*"}
+  ```
+
+- `run` opens with a serving role that can run no DDL and holds `SELECT`, `INSERT`, `UPDATE` and
+  `DELETE` on every `spindle_<component>_*` table, `USAGE` on their sequences and `TEMP` on the
+  database:
+
+  ```sql
+  CREATE ROLE serving LOGIN PASSWORD '...' CONNECTION LIMIT 4;
+  GRANT USAGE ON SCHEMA app TO serving;
+  GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA app TO serving;
+  GRANT USAGE ON ALL SEQUENCES IN SCHEMA app TO serving;
+  ```
+
+`run` exits 1 before listening when the database or the settings would not be admitted:
+`database_url` unset; a host off loopback without `database_ca`; `database_connections` below
+components x `database_pool` + 1 (one connection reserved); a role that can run DDL (`CREATE` on
+the schema, an object it owns there, membership of another role, `SUPERUSER`, `CREATEROLE`,
+`CREATEDB`, `REPLICATION` or `BYPASSRLS`), such as the owner role; and a role whose `CONNECTION
+LIMIT` is not between 1 and components x `database_pool`. The last is eventlog's rule: a serving
+role may open no more connections than its pools admit. With one component and the default pool of
+4, a role limited to 8 connections is refused:
+
+```text
+b10x-spindle: opening the PostgreSQL store of probe: store: PostgreSQL refused the serving role for the tables spindle_probe_*: hosted application role requires a finite connection limit within its admitted replica pool share. A serving role holds no DDL right (no CREATE on the schema downstream_1794331581, no object it owns there, no membership of another role, none of SUPERUSER, CREATEROLE, CREATEDB, REPLICATION and BYPASSRLS: the owner role's URL is for `store migrate`, never `run`); has a CONNECTION LIMIT from 1 to 4 (components 1 x database_pool 4); holds SELECT, INSERT, UPDATE and DELETE on every spindle_probe_* table, USAGE on the sequence of spindle_probe_events and TEMP on the database; and finds the tables `store migrate` created
+```
+
+The same role limited to 4, with `database_connections` 8, is admitted and served. `run --state`
+and `run` reading stdin refuse `postgres`; `run` serves it over HTTP.
+
+PostgreSQL shows a committed row to a reader of the log only once every older write transaction
+on the server has ended. A scan of an entity (a list view, a reset, a command decided on a scan)
+waits for that, up to 10 s, and fails when an older write transaction stays open longer.

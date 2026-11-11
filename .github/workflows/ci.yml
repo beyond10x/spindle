@@ -102,6 +102,64 @@ jobs:
       - name: Gate
         run: task check
 
+  postgres:
+    name: PostgreSQL
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: '1.98.1'
+
+      - name: Install go-task
+        env:
+          TASK_VERSION: '3.53.1'
+          TASK_SHA256: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
+        run: |
+          set -o pipefail
+          curl --fail --silent --show-error --location --retry 3 --output "$RUNNER_TEMP/task.tar.gz" \
+            "https://github.com/go-task/task/releases/download/v$TASK_VERSION/task_linux_amd64.tar.gz"
+          echo "$TASK_SHA256  $RUNNER_TEMP/task.tar.gz" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf "$RUNNER_TEMP/task.tar.gz" -C "$RUNNER_TEMP/bin" task
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: PostgreSQL 17 on loopback, its TLS certificate issued by a CA of this run
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/postgres"
+          mkdir -p "$dir"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=spindle-test-ca \
+            -keyout "$dir/ca.key" -out "$dir/ca.pem" \
+            -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign
+          openssl req -newkey rsa:2048 -nodes -subj /CN=localhost -keyout "$dir/server.key" -out "$dir/server.csr"
+          printf 'subjectAltName=DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth\n' > "$dir/server.ext"
+          openssl x509 -req -in "$dir/server.csr" -CA "$dir/ca.pem" -CAkey "$dir/ca.key" -CAcreateserial \
+            -days 1 -extfile "$dir/server.ext" -out "$dir/server.pem"
+          chmod 644 "$dir/server.key"
+          docker run -d --name postgres -p 127.0.0.1:5432:5432 \
+            -e POSTGRES_USER=owner -e POSTGRES_PASSWORD=owner -e POSTGRES_DB=spindle \
+            -v "$dir:/certs:ro" --entrypoint sh postgres:17 -c \
+            'install -o postgres -g postgres -m 600 /certs/server.key /tmp/server.key && install -o postgres -g postgres -m 644 /certs/server.pem /tmp/server.pem && exec docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=/tmp/server.pem -c ssl_key_file=/tmp/server.key'
+          for attempt in $(seq 1 60); do
+            if docker exec postgres pg_isready -h 127.0.0.1 -U owner -d spindle >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec postgres pg_isready -h 127.0.0.1 -U owner -d spindle
+          echo "SPINDLE_TEST_DATABASE_URL=postgres://owner:owner@127.0.0.1:5432/spindle" >> "$GITHUB_ENV"
+          echo "SPINDLE_TEST_DATABASE_CA=$dir/ca.pem" >> "$GITHUB_ENV"
+
+      - name: The PostgreSQL store
+        run: task check:postgres
+
   macos:
     name: macOS
     runs-on: macos-15

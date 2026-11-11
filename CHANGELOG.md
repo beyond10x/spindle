@@ -6,6 +6,25 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- `store.durable` bound to `postgres` keeps each component's state in an operator's PostgreSQL
+  (13 or later), through `eventlog-postgres` at the pinned eventlog tag, rows and events encoded as
+  the SQLite store encodes them and under the table prefix `spindle_<component>`, so components
+  share one database apart. `run` (served) reads the settings `database_url` (required, never
+  printed), `database_ca` (a PEM CA bundle: TLS with `sslmode=require`, the server verified
+  against it; required off loopback), `database_schema` (`public`), `database_pool` (4 per
+  component) and `database_connections` (required with `database_ca`) from
+  `SPINDLE_SETTING_<NAME>`. Without `database_ca` a loopback or Unix-socket database is opened
+  isolated and its tables created; with it, `run` opens with a DML-only serving role and exits 1
+  before listening on an owner role (naming the DDL rights it refuses), a role whose
+  `CONNECTION LIMIT` is outside 1 to components x `database_pool`, and a budget below components
+  x `database_pool` + 1. The new `b10x-spindle store migrate <spec> --environment <env>` creates
+  every postgres-bound component's tables with the owner role, idempotent, one JSON line per
+  component. `examples/environments/postgres.toml`; `task check:postgres` runs the database cases
+  against `SPINDLE_TEST_DATABASE_URL` and `SPINDLE_TEST_DATABASE_CA`, and CI's `PostgreSQL` job
+  runs it on PostgreSQL 17 with TLS. `run` reading stdin refuses `postgres`.
+
 ## [0.10.0] - 2026-11-10
 
 ### Added

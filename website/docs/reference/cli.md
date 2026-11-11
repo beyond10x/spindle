@@ -23,6 +23,7 @@ Exit statuses: `0` success, `1` an error (printed on stderr as `b10x-spindle: â€
 | [`play`](#play) | Play the rally example in this terminal: every component in one process, one tick per period of its periodic binding, the grid redrawn after each |
 | [`deploy`](#deploy) | Deploy a specification: place and launch every instance of a placement, collect what they send, and serve the read-only observe API and UI on 127.0.0.1 until SIGINT, SIGTERM or SIGHUP |
 | [`conform`](#conform) | Run a specification's conformance suite against every component in one process |
+| [`store`](#store) | Manage where a specification's state is kept |
 
 ## `check`
 
@@ -191,3 +192,28 @@ b10x-spindle conform [OPTIONS] --environment <ENVIRONMENT> <SPEC>
 | `--counts <COUNTS>` | no |  | A `spindle-conformance-counts/1` document: the `executed_scenarios` that execute, and the `skipped` and `known_failed` counts. A held scenario that no longer executes, one that executes and is not held, more skipped or more known failures fails the run, naming each; where the counts moved, the document that holds the run is printed |
 | `--known-failing <KNOWN_FAILING>` | no |  | An `ess-known-failures/1` declaration: scenarios this build is known to fail, bound to the exact suite bytes, specification, implementation and build (`sha256:` of `b10x-spindle <version>`), each with its reason and tracking record. Read and accounted by ESS: a declared scenario that failed does not fail the run and is counted `known_failed`; a failure it does not declare still fails it. A declaration that does not bind this run, or names a scenario that passed or ended other than `failed`, exits 2. Requires `--report` and `--accounting-out` |
 | `--accounting-out <ACCOUNTING_OUT>` | no |  | Where to write the `ess-known-failure-accounting/1` document |
+
+## `store`
+
+Manage where a specification's state is kept
+
+```console
+b10x-spindle store <COMMAND>
+```
+
+## `store migrate`
+
+Create the PostgreSQL tables of every component whose `store.durable` is bound to `postgres`.
+
+Each component's tables are `spindle_<component>_*` (each `-` as `_`), in the schema `database_schema` names. The settings are the ones `run` reads, as `SPINDLE_SETTING_<NAME>`: `database_url` (required; `postgres://user:password@host:port/database`, never printed), `database_ca` (a PEM CA bundle: the server is reached over TLS, `sslmode=require`, and verified against it; without it the host must be loopback or a Unix socket), `database_schema` (default `public`), `database_pool` (connections per component, default 4) and `database_connections` (the serving role's connection budget; `run` requires it with `database_ca` and refuses a budget below components x `database_pool` + 1).
+
+`store migrate` takes the URL of the role that owns the schema and is the only command that runs DDL; `run` with `database_ca` opens with a serving role that can run none, and exits 1 before listening on a role that can. Tables already there of the same shape are left as they are, so a second migrate changes nothing. Prints one line per component, `{"migrated": "<component>", "tables": "spindle_<component>_*", "schema": "<schema>"}`. Exits 0 once every component's tables exist, 1 when a setting is missing or the database refuses, and 3, creating nothing, when admission is refused.
+
+```console
+b10x-spindle store migrate --environment <ENVIRONMENT> <SPEC>
+```
+
+| Argument | Required | Default | Meaning |
+|---|---|---|---|
+| `<SPEC>` | yes |  | The specification directory |
+| `--environment <ENVIRONMENT>` | yes |  | The `spindle-environment/1` document |

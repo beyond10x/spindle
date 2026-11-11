@@ -42,6 +42,8 @@ mod guards;
 mod list_append;
 mod mint;
 mod placement;
+#[cfg(feature = "postgres")]
+mod postgres;
 mod provides;
 mod rally;
 mod related_guards;

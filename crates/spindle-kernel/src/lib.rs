@@ -55,7 +55,9 @@ mod execute;
 mod facts;
 mod grant;
 mod mint;
-#[cfg(feature = "sqlite")]
+#[cfg(feature = "postgres")]
+mod postgres;
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
 mod sqlite;
 mod store;
 mod supported;
@@ -71,6 +73,12 @@ pub use execute::{
     Invocation, at_rest, execute, execute_as, execute_at, execute_minting, execute_refusing,
 };
 pub use mint::{Identity, Mint, Seeded, Uuid, UuidV4};
+#[cfg(feature = "postgres")]
+pub use postgres::{
+    Database, PostgresStore, RESERVED as POSTGRES_RESERVED, prefix as postgres_prefix,
+};
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
+pub use sqlite::LogStore;
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteStore;
 pub use store::{

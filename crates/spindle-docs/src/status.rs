@@ -127,6 +127,13 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "PostgreSQL store",
+        "store.durable bound to postgres keeps each component's state in its own tables (spindle_<component>_*) of an operator's PostgreSQL, through eventlog-postgres: it passes the store contract the memory and SQLite stores pass, and run's state survives a restart. store migrate creates the tables with the owner role; with database_ca, run opens over TLS verified against it with a DML-only serving role inside the connection budget, and refuses any other before listening.",
+        "/docs/concepts/environment-and-admission",
+        "crates/spindle-kernel/tests/spindle-kernel/postgres.rs::the_postgres_store_passes_the_contract",
+    ),
+    shipped(
+        "Execution",
         "Service Worker host",
         "spindle-wasm compiles a specification in the browser, admits it on a browser environment (ingress.network bound to service-worker) and answers its routes and the console routes from a Service Worker through the same router the loopback listener calls, state in IndexedDB and external outcomes answered from a decisions file; web/ is the Vue shell that registers the worker.",
         "/docs/concepts/environment-and-admission",

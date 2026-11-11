@@ -110,6 +110,13 @@ channel = ["in-process"]
 Each list is in order of preference. A key ending in `.*` covers every capability under that
 prefix; an exact key wins over it.
 
+| `store.durable` | where each component's state is kept |
+|---|---|
+| `memory` | in the process, gone when it ends |
+| `sqlite` | one SQLite file per component (`run --state`) |
+| `postgres` | the tables `spindle_<component>_*` of the PostgreSQL the settings `database_url`, `database_ca`, `database_schema`, `database_pool` and `database_connections` name; `b10x-spindle store migrate` creates them ([environment and admission](https://beyond10x.github.io/spindle/docs/concepts/environment-and-admission#state-in-postgresql)) |
+| `indexeddb` | one IndexedDB database per component, in the Service Worker host |
+
 ## Layout
 
 - `ess/` — Spindle's own specification: environments, deployments, admission.

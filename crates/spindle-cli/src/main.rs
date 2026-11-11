@@ -3,6 +3,7 @@
 mod calls;
 mod component;
 mod conform;
+mod database;
 mod decisions;
 mod deploy;
 mod replay;
@@ -23,7 +24,7 @@ use clap::Parser;
 use decisions::Answers;
 use signal_hook::consts::{SIGINT, SIGTERM};
 use spindle_capability::{Admission, Capability, Environment, Requirements};
-use spindle_cli::cli::{Cli, Command};
+use spindle_cli::cli::{Cli, Command, StoreCommand};
 use spindle_host::{Host, HostError, rally};
 use spindle_kernel::{External, MemoryStore, SqliteStore, Store};
 
@@ -257,6 +258,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
             known_failing: known_failing.as_deref(),
             accounting_out: accounting_out.as_deref(),
         }),
+        Command::Store {
+            command: StoreCommand::Migrate { spec, environment },
+        } => database::migrate(&spec, &environment),
     }
 }
 
@@ -544,6 +548,12 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
             );
             Box::new(SqliteStore::open(&scratch.path().join("state.sqlite"))?)
         }
+        (Some(database::POSTGRES), _) => bail!(
+            "store.durable is bound to postgres on {}, which keeps each component in tables of its \
+             own; run reading stdin keeps one store for every component: serve the specification \
+             over HTTP (ingress.network) instead",
+            parsed.name
+        ),
         (Some(other), _) => bail!("this build has no `{other}` store for store.durable"),
     };
 

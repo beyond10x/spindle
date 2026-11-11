@@ -28,6 +28,12 @@ pub const FORMAT: &str = "spindle-environment/1";
 /// Each list is in order of preference. A key ending in `.*` provides every capability under
 /// that prefix, and an exact key wins over it.
 ///
+/// The runtime keeps `store.durable` in `memory`, `sqlite`, `postgres` or, in the browser,
+/// `indexeddb`. `postgres` is an operator's PostgreSQL: the document names only the
+/// implementation, and where the database is, and with which role, comes from the settings
+/// `database_url`, `database_ca`, `database_schema`, `database_pool` and
+/// `database_connections`, never from the document.
+///
 /// An `external.` key may name an HTTP call the environment declares as `[http.<name>]`; the
 /// cause it provides is then answered by that call where the runtime makes one:
 ///

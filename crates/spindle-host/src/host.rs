@@ -623,6 +623,37 @@ impl Host {
         )
     }
 
+    /// [`Host::with_retries`], or [`Host::deciding_with_retries`] where `decider` is given, where a
+    /// component whose state admission bound to an implementation this host has no store of its
+    /// own for keeps it in the store `stores` holds for it, as [`Host::supplied`] keeps it: the
+    /// PostgreSQL store `run` opens for each component bound to `postgres`.
+    ///
+    /// # Errors
+    /// As [`Host::supplied`].
+    pub fn with_stores(
+        ir: EssIr,
+        environment: &Environment,
+        clock: Arc<dyn Clock>,
+        state: &Path,
+        decider: Option<Box<dyn Decider + Send>>,
+        retries: Retries,
+        stores: Stores,
+    ) -> Result<Self, HostError> {
+        let placements = admit(&ir, environment).map_err(HostError::Refused)?;
+        Self::assemble(
+            ir,
+            clock,
+            state,
+            placements,
+            IN_PROCESS,
+            Opening {
+                decider,
+                retries,
+                stores,
+            },
+        )
+    }
+
     fn open(
         ir: EssIr,
         environment: &Environment,

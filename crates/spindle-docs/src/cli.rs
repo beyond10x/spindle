@@ -131,6 +131,17 @@ pub fn page() -> String {
     for name in &names {
         let command = root.find_subcommand_mut(name).expect("listed subcommand");
         page.push_str(&section(name, command));
+        let nested: Vec<String> = command
+            .get_subcommands()
+            .map(|nested| nested.get_name().to_owned())
+            .filter(|nested| nested != "help")
+            .collect();
+        for nested in nested {
+            let inner = command
+                .find_subcommand_mut(&nested)
+                .expect("listed subcommand");
+            page.push_str(&section(&format!("{name} {nested}"), inner));
+        }
     }
     page.trim_end().to_owned() + "\n"
 }

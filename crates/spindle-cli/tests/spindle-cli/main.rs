@@ -48,6 +48,7 @@ mod observe_panel;
 mod outcome_bodies;
 mod outcome_scoped_refusal;
 mod play;
+mod postgres;
 mod processes;
 mod replay;
 mod responses;

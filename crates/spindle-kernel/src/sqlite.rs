@@ -11,14 +11,21 @@
 //! the stream of each entity it writes: that stream's version is the entity's version a scan
 //! answers and a change decided on a scan names ([`crate::Change::scanned`]), so a row of the
 //! entity written after the scan refuses the change.
+//!
+//! The encoding is the store's, not SQLite's: [`LogStore`] keeps it on any eventlog event store
+//! that appends groups, and the PostgreSQL store (`PostgresStore`, the `postgres` feature) is the
+//! same store on PostgreSQL.
 
 use std::collections::BTreeMap;
+#[cfg(feature = "sqlite")]
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use eventlog_core::{
-    AppendGroup, AtomicEventStore, CommandMeta, EventLogError, EventStore, Expected, NewEvent,
-    RecordedEvent, StreamAppend, StreamId, TenantId, new_event_id, request_hash,
+    AppendGroup, AtomicEventStore, CommandMeta, EventLogError, Expected, NewEvent, RecordedEvent,
+    StreamAppend, StreamId, TenantId, new_event_id, request_hash,
 };
+#[cfg(feature = "sqlite")]
 use eventlog_sqlite::SqliteEventStore;
 use serde_json::Value;
 use time::OffsetDateTime;
@@ -29,7 +36,7 @@ use crate::store::{
 };
 
 /// The table prefix Spindle's events are kept under.
-const PREFIX: &str = "spindle";
+pub(crate) const PREFIX: &str = "spindle";
 /// The one tenant a single Spindle process holds.
 const TENANT: &str = "local";
 /// The event that carries an instance's row after a change.
@@ -47,24 +54,34 @@ const ACTOR: &str = "spindle-kernel";
 const SCHEMA: u32 = 1;
 /// How many feed events one read of a scan asks for.
 const FEED_PAGE: usize = 500;
+/// How long a scan waits for the feed to show every write the entity's version counts.
+const SETTLE: Duration = Duration::from_secs(10);
+/// How long a scan waits before it reads a lagging feed again.
+const SETTLE_POLL: Duration = Duration::from_millis(20);
 
-/// Instances in one SQLite database file.
-pub struct SqliteStore {
-    log: SqliteEventStore,
+/// Instances in an eventlog event store: one SQLite database file ([`SqliteStore`]) or one
+/// component's tables of a PostgreSQL database (`PostgresStore`).
+pub struct LogStore<L> {
+    log: L,
     tenant: TenantId,
     runtime: tokio::runtime::Runtime,
 }
 
-impl std::fmt::Debug for SqliteStore {
+/// Instances in one SQLite database file.
+#[cfg(feature = "sqlite")]
+pub type SqliteStore = LogStore<SqliteEventStore>;
+
+impl<L> std::fmt::Debug for LogStore<L> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("SqliteStore")
+            .debug_struct("LogStore")
             .field("tenant", &self.tenant)
             .finish_non_exhaustive()
     }
 }
 
-impl SqliteStore {
+#[cfg(feature = "sqlite")]
+impl LogStore<SqliteEventStore> {
     /// Opens the database at `path`, creating it and its tables when absent.
     ///
     /// # Errors
@@ -79,6 +96,13 @@ impl SqliteStore {
         let log = runtime
             .block_on(SqliteEventStore::open(location, PREFIX))
             .map_err(backend)?;
+        Self::on(log, runtime)
+    }
+}
+
+impl<L: AtomicEventStore> LogStore<L> {
+    /// The store on `log`, every call blocking on `runtime`.
+    pub(crate) fn on(log: L, runtime: tokio::runtime::Runtime) -> Result<Self, StoreError> {
         let tenant = TenantId::new(TENANT).map_err(backend)?;
         Ok(Self {
             log,
@@ -152,7 +176,7 @@ impl SqliteStore {
     }
 }
 
-impl Store for SqliteStore {
+impl<L: AtomicEventStore> Store for LogStore<L> {
     fn load(&mut self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
         let stream = self.stream(entity, identity)?;
         let Some((version, last)) = self.last(&stream)? else {
@@ -273,9 +297,40 @@ impl Store for SqliteStore {
     /// `spindle.removed` event after it leaves the stream out, until a later row.
     /// Every page moves the position forward, or the read stops as a backend error. The entity's
     /// version is read first, so a write landing during the read leaves it behind the rows.
+    ///
+    /// A feed may lag a commit: PostgreSQL's shows an event only once every transaction older
+    /// than it has ended. So the feed is read again, for up to [`SETTLE`], until it holds as many
+    /// of the entity's `spindle.written` events as the version read first: each write appends one
+    /// in the transaction of its rows, so then every row written up to that version is in it.
     fn scan(&mut self, entity: &str) -> Result<Scan, StoreError> {
         let version = self.entity_version(entity)?;
+        let deadline = Instant::now() + SETTLE;
+        loop {
+            let (latest, written) = self.feed(entity)?;
+            if written >= version {
+                let rows = latest
+                    .into_iter()
+                    .map(|(identity, stored)| Ok((identity_from_key(&identity)?, stored)))
+                    .collect::<Result<_, StoreError>>()?;
+                return Ok(Scan { rows, version });
+            }
+            if Instant::now() >= deadline {
+                return Err(StoreError::Backend(format!(
+                    "the feed shows {written} of the {version} writes of {entity} after \
+                     {SETTLE:?}: a transaction older than the last of them is still open"
+                )));
+            }
+            std::thread::sleep(SETTLE_POLL);
+        }
+    }
+}
+
+impl<L: AtomicEventStore> LogStore<L> {
+    /// The last row of every stream of `entity` the feed holds, by identity key, and how many of
+    /// the entity's `spindle.written` events it holds.
+    fn feed(&self, entity: &str) -> Result<(BTreeMap<String, Stored>, u64), StoreError> {
         let mut latest = BTreeMap::<String, Stored>::new();
+        let mut written = 0;
         let mut position = 0;
         loop {
             let page = self
@@ -283,6 +338,10 @@ impl Store for SqliteStore {
                 .block_on(self.log.read_feed(&self.tenant, position, FEED_PAGE))
                 .map_err(backend)?;
             for event in page.events {
+                if event.stream_type == ENTITY && event.stream_id == entity {
+                    written += 1;
+                    continue;
+                }
                 if event.stream_type != entity {
                     continue;
                 }
@@ -313,11 +372,7 @@ impl Store for SqliteStore {
             }
             position = page.next_position;
         }
-        let rows = latest
-            .into_iter()
-            .map(|(identity, stored)| Ok((identity_from_key(&identity)?, stored)))
-            .collect::<Result<_, StoreError>>()?;
-        Ok(Scan { rows, version })
+        Ok((latest, written))
     }
 }
 
@@ -366,6 +421,6 @@ fn meta(request_hash: String) -> CommandMeta {
     }
 }
 
-fn backend(error: EventLogError) -> StoreError {
+pub(crate) fn backend(error: EventLogError) -> StoreError {
     StoreError::Backend(error.to_string())
 }
