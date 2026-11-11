@@ -415,6 +415,7 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
             content_type: None,
             body: Vec::new(),
             recorder: served.surface.recorder().cloned(),
+            served: None,
             proven: None,
         };
         let reply = match handed(served, pending).await {
@@ -508,6 +509,7 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         content_type,
         body,
         recorder: served.surface.recorder().cloned(),
+        served: served.surface.served(),
         proven,
     };
     match handed(served, pending).await {

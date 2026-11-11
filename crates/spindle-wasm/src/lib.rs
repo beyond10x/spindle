@@ -13,9 +13,10 @@
 //! landed in IndexedDB before its answer is returned.
 //!
 //! A component reached over the network must have `ingress.network` bound to [`SERVICE_WORKER`].
-//! The console routes (`GET /api/model`, `GET /api/events`, `POST /api/reset`) are served beside
-//! the specification's routes, as on a loopback listener: a Service Worker is reached only by the
-//! pages of its own origin, which is the reach the loopback address gives the listener. A URL of
+//! The console routes (`GET /api/model`, `GET /api/events`, `GET /api/served`, `POST /api/reset`)
+//! are served beside the specification's routes, as on a loopback listener: a Service Worker is
+//! reached only by the pages of its own origin, which is the reach the loopback address gives the
+//! listener. A URL of
 //! another origin is never answered: `Spindle::serves` says no and `Spindle::fetch` answers it
 //! `404`. A reset that carries a world is refused; a reset without one empties every store.
 //!

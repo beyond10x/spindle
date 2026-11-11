@@ -1,0 +1,129 @@
+domain: notes.pad
+summary: Notes written and discarded, read whole, by identity, counted, paged, computed and filtered.
+types:
+  - name: notes.pad.NoteId
+    kind: newtype
+    of: String
+entities:
+  - name: notes.pad.Note
+    identity:
+      name: note_id
+      type: notes.pad.NoteId
+    fields:
+      - name: text
+        type: String
+      - name: count
+        type: Integer
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+errors:
+  - name: notes.pad.BodyMissing
+    summary: The request carried no body.
+    fields: []
+commands:
+  - name: notes.pad.WriteNote
+    input:
+      - name: note_id
+        type: notes.pad.NoteId
+      - name: text
+        type: String
+    outcomes:
+      - name: written
+        creates: notes.pad.Note
+        instance: note_id
+        sets:
+          text: input.text
+          count: 1
+        emits: [notes.pad.NoteWritten]
+        payload:
+          notes.pad.NoteWritten: {note_id: input.note_id}
+        summary: The note is kept.
+  - name: notes.pad.DiscardNote
+    input:
+      - name: note_id
+        type: notes.pad.NoteId
+    outcomes:
+      - name: body-missing
+        input_absent: true
+        error: notes.pad.BodyMissing
+        summary: The request carried no body.
+      - name: discarded
+        deletes: notes.pad.Note
+        instance: note_id
+        emits: [notes.pad.NoteDiscarded]
+        payload:
+          notes.pad.NoteDiscarded: {note_id: input.note_id}
+        summary: The note is gone.
+events:
+  - name: notes.pad.NoteWritten
+    fields:
+      - name: note_id
+        type: notes.pad.NoteId
+  - name: notes.pad.NoteDiscarded
+    fields:
+      - name: note_id
+        type: notes.pad.NoteId
+views:
+  - name: notes.pad.AllNotes
+    source: notes.pad.Note
+    consistency: read_your_writes
+    fields:
+      - name: note_id
+        type: notes.pad.NoteId
+      - name: text
+        type: String
+  - name: notes.pad.NotesWithText
+    source: notes.pad.Note
+    consistency: read_your_writes
+    params:
+      - {name: text, type: String}
+    filter: text == param.text
+    fields:
+      - name: note_id
+        type: notes.pad.NoteId
+      - name: text
+        type: String
+  - name: notes.pad.KeptNotes
+    source: notes.pad.Note
+    consistency: read_your_writes
+    filter: {text: {starts_with: kept}}
+    fields:
+      - name: note_id
+        type: notes.pad.NoteId
+      - name: text
+        type: String
+  - name: notes.pad.NoteCount
+    source: notes.pad.Note
+    consistency: read_your_writes
+    fields:
+      - {name: notes, type: Integer, aggregate: {count: {}}}
+  - name: notes.pad.DoubledCounts
+    source: notes.pad.Note
+    consistency: read_your_writes
+    fields:
+      - {name: note_id, type: notes.pad.NoteId}
+      - {name: doubled, type: Integer, expr: "count * 2"}
+  - name: notes.pad.NotePages
+    source: notes.pad.Note
+    consistency: read_your_writes
+    params:
+      - {name: page, type: Integer}
+      - {name: size, type: Integer}
+    order_by: [note_id asc]
+    paging: {page: page, size: size, total: true}
+    fields:
+      - {name: note_id, type: notes.pad.NoteId}
+      - {name: text, type: String}
+  - name: notes.pad.NoteById
+    source: notes.pad.Note
+    consistency: read_your_writes
+    params: [{name: note_id, type: notes.pad.NoteId}]
+    filter: note_id == param.note_id
+    fields:
+      - {name: note_id, type: notes.pad.NoteId}
+      - {name: text, type: String}
+      - {name: count, type: Integer}
+    absent:
+      row: {text: "", count: 0}

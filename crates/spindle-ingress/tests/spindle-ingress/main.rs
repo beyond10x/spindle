@@ -18,5 +18,6 @@ mod metrics_read;
 mod observe;
 mod refusal_payload;
 mod router;
+mod served;
 mod topology;
 mod view_parameters;

@@ -166,6 +166,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
             for line in unsupported_outcomes(&loaded.ir, component.as_deref()) {
                 eprintln!("b10x-spindle: {line}");
             }
+            for line in unserved_views(&loaded.ir, component.as_deref()) {
+                eprintln!("b10x-spindle: {line}");
+            }
             Ok(if admission.is_admitted() {
                 ExitCode::SUCCESS
             } else {
@@ -754,6 +757,30 @@ fn unsupported_outcomes(ir: &spindle_spec::EssIr, component: Option<&str>) -> Ve
         }
     }
     lines
+}
+
+/// One line per view `run` would not serve over HTTP, of `component` or, without one, of every
+/// component reached over the network, as `run` prints it at startup
+/// ([`spindle_ingress::Route::not_served`]): the routes ESS derives, read without serving. A
+/// command is named by [`unsupported_outcomes`] instead. Where the routes cannot be derived, the
+/// one line saying why: `run` refuses to listen for the same reason.
+fn unserved_views(ir: &spindle_spec::EssIr, component: Option<&str>) -> Vec<String> {
+    let components: Vec<String> = serve::networked(ir)
+        .into_iter()
+        .filter(|name| component.is_none_or(|component| component == name))
+        .collect();
+    if components.is_empty() {
+        return Vec::new();
+    }
+    match spindle_ingress::Surface::new(ir, &components, None) {
+        Ok(surface) => surface
+            .unserved()
+            .into_iter()
+            .filter(|route| matches!(route.operation, ess_http::Operation::View(_)))
+            .filter_map(spindle_ingress::Route::not_served)
+            .collect(),
+        Err(refused) => vec![format!("the HTTP routes are not derived: {refused}")],
+    }
 }
 
 fn requirements(spec: &std::path::Path, component: Option<&str>) -> Result<Requirements> {

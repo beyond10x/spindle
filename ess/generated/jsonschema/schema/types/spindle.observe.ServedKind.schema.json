@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.ServedKind.schema.json",
+  "$ref": "#/$defs/spindle.observe.ServedKind",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "contract_digest": "slice-sha256/2:12f26323e63bcd8360410b0f8dfbf291f8807079542a9b7618904c10a9fd4903",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.ServedKind": {
+      "title": "ServedKind",
+      "description": "What one operation of the model a served run routes is.",
+      "x-ess-name": "spindle.observe.ServedKind",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "command",
+        "view"
+      ]
+    }
+  }
+}

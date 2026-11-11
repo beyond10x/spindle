@@ -681,6 +681,55 @@ types:
       - name: edges
         type: List<spindle.observe.TopologyEdge>
 
+  - name: spindle.observe.ServedKind
+    kind: enum
+    naming:
+      summary: What one operation of the model a served run routes is.
+    variants: [command, view]
+
+  - name: spindle.observe.ServedOperation
+    kind: struct
+    naming:
+      summary: >-
+        One command or view a served run routes, and whether it serves it. An operation not served
+        keeps its route and answers `501` naming the construct; `reason` is the text the run
+        prints for it at startup (`b10x-spindle: not served: <kind> <name> at <method> <path>:
+        <reason>`) and `admit` prints for a view, read from one place
+        (`spindle_ingress::Route::not_served`). A served command may still refuse an outcome,
+        which the startup line `unsupported outcome` names; it is served here.
+    fields:
+      - name: component
+        type: String
+        summary: The component whose route it is.
+      - name: name
+        type: String
+        summary: The qualified name of the command or view.
+      - name: kind
+        type: spindle.observe.ServedKind
+      - name: method
+        type: String
+        summary: The route's method, uppercase, as the binding or ESS publishes it.
+      - name: path
+        type: String
+        summary: The route's path template, as the binding or ESS publishes it.
+      - name: served
+        type: Boolean
+        summary: Whether a request for it is answered by the model.
+      - name: reason
+        type: Optional<String>
+        summary: Why it is not served; absent for one that is.
+
+  - name: spindle.observe.ServedOperations
+    kind: struct
+    naming:
+      summary: >-
+        The answer of `GET /api/served`, a console route of a served run: every command and view it
+        routes, served or not, in the order its startup lines name them: component by component,
+        commands then views, each by qualified name. Computed once, when the run starts.
+    fields:
+      - name: operations
+        type: List<spindle.observe.ServedOperation>
+
   - name: spindle.observe.DeliveryGuarantee
     kind: enum
     naming:
