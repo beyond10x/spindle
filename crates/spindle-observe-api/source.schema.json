@@ -935,6 +935,81 @@
       "x-ess-kind": "struct",
       "x-ess-name": "spindle.observe.Sample"
     },
+    "spindle.observe.ServedKind": {
+      "description": "What one operation of the model a served run routes is.",
+      "enum": [
+        "command",
+        "view"
+      ],
+      "title": "ServedKind",
+      "type": "string",
+      "x-ess-kind": "enum",
+      "x-ess-name": "spindle.observe.ServedKind"
+    },
+    "spindle.observe.ServedOperation": {
+      "additionalProperties": false,
+      "description": "One command or view a served run routes, and whether it serves it. An operation not served keeps its route and answers `501` naming the construct; `reason` is the text the run prints for it at startup (`b10x-spindle: not served: <kind> <name> at <method> <path>: <reason>`) and `admit` prints for a view, read from one place (`spindle_ingress::Route::not_served`). A served command may still refuse an outcome, which the startup line `unsupported outcome` names; it is served here.",
+      "properties": {
+        "component": {
+          "description": "The component whose route it is.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/spindle.observe.ServedKind"
+        },
+        "method": {
+          "description": "The route's method, uppercase, as the binding or ESS publishes it.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The qualified name of the command or view.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The route's path template, as the binding or ESS publishes it.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why it is not served; absent for one that is.",
+          "type": "string"
+        },
+        "served": {
+          "description": "Whether a request for it is answered by the model.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "component",
+        "name",
+        "kind",
+        "method",
+        "path",
+        "served"
+      ],
+      "title": "ServedOperation",
+      "type": "object",
+      "x-ess-kind": "struct",
+      "x-ess-name": "spindle.observe.ServedOperation"
+    },
+    "spindle.observe.ServedOperations": {
+      "additionalProperties": false,
+      "description": "The answer of `GET /api/served`, a console route of a served run: every command and view it routes, served or not, in the order its startup lines name them: component by component, commands then views, each by qualified name. Computed once, when the run starts.",
+      "properties": {
+        "operations": {
+          "items": {
+            "$ref": "#/$defs/spindle.observe.ServedOperation"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "operations"
+      ],
+      "title": "ServedOperations",
+      "type": "object",
+      "x-ess-kind": "struct",
+      "x-ess-name": "spindle.observe.ServedOperations"
+    },
     "spindle.observe.SourceCount": {
       "additionalProperties": false,
       "description": "How many times one source answered the external cause an `asks` edge leads to.",
@@ -1237,8 +1312,8 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-ess-provenance": {
-    "contract_digest": "slice-sha256/2:15b6d1987b4f7ad06e11551f56307a57fbe9af860e9933fbccb8dc8496eeb3ea",
-    "source_digest": "ec1572f6d953c4c777f76b6f5502e4990bddd0a7db0e62b030980d6a923209bb",
+    "contract_digest": "slice-sha256/2:a606a0470e57188466428844f8d967159bcad5f54d5651704fbbbb0f004332f8",
+    "source_digest": "c13f24dff1d905b526d145df54ca2cc25618a9406f7177b59ea6e583acf9516a",
     "specification_version": "v1",
     "system": "spindle"
   }

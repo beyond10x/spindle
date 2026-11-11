@@ -1,7 +1,7 @@
 version: '3'
 
 vars:
-  OBSERVE_ROOTS: --root spindle.observe.Deployment --root spindle.observe.Catalogue --root spindle.observe.Sample --root spindle.observe.StateChange --root spindle.observe.RequestLog --root spindle.observe.MetricFamilies --root spindle.observe.Topology
+  OBSERVE_ROOTS: --root spindle.observe.Deployment --root spindle.observe.Catalogue --root spindle.observe.Sample --root spindle.observe.StateChange --root spindle.observe.RequestLog --root spindle.observe.MetricFamilies --root spindle.observe.Topology --root spindle.observe.ServedOperations
   OBSERVE_SCHEMAS: ess/generated/jsonschema/schema/types
 
 tasks:
@@ -45,6 +45,7 @@ tasks:
     desc: The wasm host runs a command on the memory store, under wasm-bindgen-test-runner on Node
     env:
       CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+      WASM_BINDGEN_TEST_TIMEOUT: '120'
     cmds:
       - cargo test --locked --target wasm32-unknown-unknown --no-default-features -p spindle-host --test spindle-host
 
@@ -52,6 +53,7 @@ tasks:
     desc: The IndexedDB store passes the store contract and keeps its state across a reopen, in a headless browser under wasm-bindgen-test-runner
     env:
       CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+      WASM_BINDGEN_TEST_TIMEOUT: '120'
     cmds:
       - cargo test --locked --target wasm32-unknown-unknown -p spindle-store-browser --test spindle-store-browser
 
@@ -59,6 +61,7 @@ tasks:
     desc: The wasm host answers a specification's routes and the console routes inside a Service Worker of a headless browser, as the loopback listener answers them, under wasm-bindgen-test-runner
     env:
       CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+      WASM_BINDGEN_TEST_TIMEOUT: '120'
     cmds:
       - cargo test --locked --target wasm32-unknown-unknown -p spindle-wasm --test spindle-wasm
 
@@ -200,7 +203,7 @@ tasks:
         sh: mktemp -d
     cmds:
       - defer: rm -rf {{.BUNDLES}}
-      - for: [Deployment, Catalogue, Sample, StateChange, RequestLog, MetricFamilies, Topology]
+      - for: [Deployment, Catalogue, Sample, StateChange, RequestLog, MetricFamilies, Topology, ServedOperations]
         cmd: ess generate schema import-document --path {{.OBSERVE_SCHEMAS}}/spindle.observe.{{.ITEM}}.schema.json --root spindle.observe.{{.ITEM}}.document --dialect draft-2020-12 --out {{.BUNDLES}}/{{.ITEM}}.json
       - ess generate schema validate-bundle --bundle {{.BUNDLES}}/Deployment.json --root spindle.observe.Deployment.document ess/fixtures/observe/deployment.json
       - ess generate schema validate-bundle --bundle {{.BUNDLES}}/Catalogue.json --root spindle.observe.Catalogue.document ess/fixtures/observe/catalogue/*.json
@@ -209,3 +212,4 @@ tasks:
       - ess generate schema validate-bundle --bundle {{.BUNDLES}}/RequestLog.json --root spindle.observe.RequestLog.document ess/fixtures/observe/requests/*.json
       - ess generate schema validate-bundle --bundle {{.BUNDLES}}/MetricFamilies.json --root spindle.observe.MetricFamilies.document ess/fixtures/observe/metrics/families.json
       - ess generate schema validate-bundle --bundle {{.BUNDLES}}/Topology.json --root spindle.observe.Topology.document ess/fixtures/observe/topology/*.json
+      - ess generate schema validate-bundle --bundle {{.BUNDLES}}/ServedOperations.json --root spindle.observe.ServedOperations.document ess/fixtures/observe/served/*.json

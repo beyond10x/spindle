@@ -655,6 +655,21 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 let subject = truth(state.iter().any(|held| held.as_str() == row.state));
                 both(subject, || self.guard(predicate.as_ref()))
             }
+            // `when_state_changes:` holds where the state held immediately before selection is one
+            // of `states`: the branch's own move's `from` set, partitioned by whether each state is
+            // the one it arrives at, derived by the compiler (ess-compiler `src/resolve.rs:6105-6121`).
+            // ESS's interpreter reads it as it reads a held-state guard, the held state then the
+            // input guard, conjunctively (ess-conformance `src/interpret/execute/subject.rs:66-75`,
+            // `:125`); the plan places it among the held-state branches in declaration order
+            // (ess-domain `src/command/precedence.rs:526-532`), and a subject no row holds is
+            // answered before it is read (ess-conformance `src/interpret/execute.rs:994-997`).
+            ResolvedCondition::StateChange {
+                states, predicate, ..
+            } => {
+                let row = self.held_row(outcome)?;
+                let subject = truth(states.iter().any(|held| held.as_str() == row.state));
+                both(subject, || self.guard(predicate.as_ref()))
+            }
             // A marker, never selected by reading: the wrong-state answer comes from the branch that
             // is selected, when its move does not start from the state held (ESS `act`).
             ResolvedCondition::WrongState => Truth::False,

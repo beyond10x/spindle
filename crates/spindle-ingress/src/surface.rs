@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Arc;
 
 use ess_compiler::EssIr;
 use ess_gen::http::{Binding, Flat, Shape};
@@ -241,6 +242,21 @@ impl Route {
     /// Why the operation is not served; `None` for one that is.
     pub fn unserved(&self) -> Option<&Unserved> {
         self.unserved.as_ref()
+    }
+
+    /// The line naming the operation as not served, `` not served: view `<name>` at GET <path>:
+    /// <reason> ``, the reason [`Route::unserved`] as text; `None` for one that is served. `run`
+    /// prints it at startup, `admit` prints it for a view, and `GET /api/served` answers the same
+    /// reason ([`crate::console::served`]).
+    pub fn not_served(&self) -> Option<String> {
+        self.unserved.as_ref().map(|why| {
+            format!(
+                "not served: {} at {} {}: {why}",
+                self.operation,
+                self.method.as_str().to_uppercase(),
+                self.path
+            )
+        })
     }
 
     /// The command's outcomes the route does not run, in declaration order, each with why:
@@ -759,6 +775,12 @@ pub struct Surface {
     caller_header: Option<String>,
     /// The secret the proxy presents in [`Surface::SECRET_HEADER`] on each such request.
     caller_secret: Option<Secret>,
+    /// Every request must carry the secret, refused before anything is read without it
+    /// ([`Surface::requiring_secret`]).
+    secret_required: bool,
+    /// The body `GET /api/served` answers, computed once the console routes are added
+    /// ([`Surface::with_console`]); `None` without them.
+    served: Option<Arc<str>>,
 }
 
 /// The proxy's secret: never written by `Debug`, so no surface printed for a diagnosis shows it.
@@ -921,6 +943,25 @@ impl Surface {
         self.caller_header.as_deref()
     }
 
+    /// This surface refusing every request that does not carry the proxy's secret in
+    /// [`Surface::SECRET_HEADER`] `403` `{"refused": "not granted", "actor": null}` before
+    /// anything else of it is read or checked: its path, method, body and caller, on every route,
+    /// the console routes and those under `/__spindle/` included. Its listener serves it so
+    /// wherever it is bound; one bound off loopback (`exposed`, feature `listener`) always does. A
+    /// surface not made [`Surface::proving_callers`] has no secret to require, and no listener
+    /// binds it once it requires one.
+    #[must_use]
+    pub fn requiring_secret(mut self) -> Self {
+        self.secret_required = true;
+        self
+    }
+
+    /// Whether every request must carry the secret ([`Surface::requiring_secret`]).
+    #[cfg_attr(not(feature = "listener"), allow(dead_code))]
+    pub(crate) fn secret_required(&self) -> bool {
+        self.secret_required
+    }
+
     fn routed(
         ir: &EssIr,
         components: &[String],
@@ -971,6 +1012,8 @@ impl Surface {
             panel: None,
             caller_header: None,
             caller_secret: None,
+            secret_required: false,
+            served: None,
         })
     }
 
@@ -1044,7 +1087,13 @@ impl Surface {
             }
         }
         self.console = true;
+        self.served = Some(crate::console::served(&self).to_string().into());
         Ok(self)
+    }
+
+    /// The body `GET /api/served` answers, where the surface has the console routes.
+    pub(crate) fn served(&self) -> Option<Arc<str>> {
+        self.served.clone()
     }
 
     /// Every route, component by component.
@@ -1052,22 +1101,26 @@ impl Surface {
         &self.routes
     }
 
-    /// Every route whose operation is not served, component by component and, within one, in
-    /// name order: commands, then views, each by qualified name, as the compiled model's maps
-    /// hold them.
-    pub fn unserved(&self) -> Vec<&Route> {
-        let mut unserved: Vec<&Route> = self
-            .routes
-            .iter()
-            .filter(|route| route.unserved.is_some())
-            .collect();
+    /// Every route, component by component and, within one, in name order: commands, then
+    /// views, each by qualified name, as the compiled model's maps hold them. The order
+    /// [`Surface::unserved`] names them in, and `GET /api/served` lists them in.
+    pub fn operations(&self) -> Vec<&Route> {
+        let mut operations: Vec<&Route> = self.routes.iter().collect();
         let component = |route: &Route| {
             self.routes
                 .iter()
                 .position(|first| first.component == route.component)
         };
-        unserved.sort_by_cached_key(|route| (component(route), route.operation.to_string()));
-        unserved
+        operations.sort_by_cached_key(|route| (component(route), route.operation.to_string()));
+        operations
+    }
+
+    /// Every route whose operation is not served, in the order of [`Surface::operations`].
+    pub fn unserved(&self) -> Vec<&Route> {
+        self.operations()
+            .into_iter()
+            .filter(|route| route.unserved.is_some())
+            .collect()
     }
 
     /// The route a request with `method` (compared exactly, RFC 9110 §9.1) and `path` is for.

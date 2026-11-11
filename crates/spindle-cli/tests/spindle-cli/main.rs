@@ -64,6 +64,7 @@ mod responses;
 mod route_precedence;
 mod run;
 mod served_decisions;
+mod served_operations;
 mod served_world;
 mod state_lock;
 mod state_move;

@@ -1,0 +1,21 @@
+format: ess/34
+system: notes
+version: v1
+summary: Notes written over the network, with one view of each kind this runtime does not read.
+domains:
+  - notes.pad
+components:
+  - component: pad
+    summary: Writes and discards notes, and reads them in every way a view may.
+    owns:
+      domains:
+        - notes.pad
+    accepts:
+      commands:
+        - notes.pad.WriteNote
+        - notes.pad.DiscardNote
+    publishes:
+      events:
+        - notes.pad.NoteWritten
+        - notes.pad.NoteDiscarded
+    reached_by: network

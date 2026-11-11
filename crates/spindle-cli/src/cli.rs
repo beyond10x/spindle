@@ -58,8 +58,10 @@ pub enum Command {
     /// Prints on stderr one line per outcome the kernel does not run, naming the outcome and what
     /// it lacks: a request that selects it is refused, and every other outcome of its command
     /// runs. A command the kernel refuses whole (one it cannot select among, or none of whose
-    /// outcomes runs) is named once instead, as not served. Exits 0 when admitted and 3 when
-    /// refused.
+    /// outcomes runs) is named once instead, as not served. Then one line per view `run` would not
+    /// serve over HTTP on ESS's derived routes, as `run` prints it at startup
+    /// (`not served: view <name> at GET <path>: <reason>`), without serving. Exits 0 when
+    /// admitted and 3 when refused.
     Admit {
         /// The specification directory.
         spec: PathBuf,
@@ -97,8 +99,8 @@ pub enum Command {
     /// step runs.
     ///
     /// Where a component requires `ingress.network` (`reached_by: network`), runs every component
-    /// in one process and serves those over HTTP on 127.0.0.1 instead of reading stdin; only
-    /// `http-loopback` is served, and any other binding exits 1 before listening. Prints
+    /// in one process and serves those over HTTP on 127.0.0.1, or `--address`, instead of reading
+    /// stdin; only `http-loopback` is served, and any other binding exits 1 before listening. Prints
     /// `{"listening": "<address>", "components": [...]}` once listening and serves until SIGINT
     /// or SIGTERM (exit 130 or 143). Routes are where `ess generate --kind openapi` publishes them:
     /// ESS's derived routes, or with `--http` the `ess-http/1` binding's, read and checked by ESS
@@ -117,12 +119,14 @@ pub enum Command {
     /// either parameter optional: no `after` reads from the first event, `limit` is 100 by
     /// default and 1,000 at most, a larger one answered with 1,000, and a malformed `after` or
     /// `limit` refused `400`; the cursor is opaque, still resumes after a restart or a reset, and
-    /// with it at the end the answer is no event and the same cursor) and `POST /api/reset`
+    /// with it at the end the answer is no event and the same cursor), `GET /api/served`
+    /// (`{"operations": [...]}`, one row per command and view routed, `served` true or false and,
+    /// for one not served, the `reason` the startup line below prints) and `POST /api/reset`
     /// (empties every store, `{"emptied": [...]}`); a
     /// route the binding or ESS publishes at one of those paths exits 1 before listening.
     /// Commands and the reset run one at a time, in arrival order. Reads are answered beside
     /// them, each on a thread of its own, from the state the last finished command left: a view,
-    /// `GET /api/model`, `GET /api/events` and every `GET /__spindle/` route.
+    /// `GET /api/model`, `GET /api/events`, `GET /api/served` and every `GET /__spindle/` route.
     ///
     /// A command or view this ingress cannot route (such as a view a binding answers other than
     /// as `rows`, or one whose parameter no single query value carries), a command the kernel does
@@ -194,10 +198,21 @@ pub enum Command {
         /// JSON or YAML; only where `run` serves HTTP.
         #[arg(long, conflicts_with = "scenario")]
         http: Option<PathBuf>,
-        /// The port to serve HTTP on, on 127.0.0.1; `0`, the default, lets the system choose. Only
-        /// where `run` serves HTTP.
+        /// The port to serve HTTP on, on 127.0.0.1 or `--address`; `0`, the default, lets the
+        /// system choose. Only where `run` serves HTTP.
         #[arg(long, conflicts_with = "scenario")]
         port: Option<u16>,
+        /// The IP address to serve HTTP on, IPv4 or IPv6 (`::1`, no brackets), instead of
+        /// 127.0.0.1, the default; a host name or a value with a port exits 2 before listening.
+        /// An address off loopback (anything but 127.0.0.0/8 and `::1`) requires
+        /// `--trusted-caller-header` with `--trusted-caller-secret`, and without both exits 2
+        /// before listening; `--fixed-actor` is not enough, since it proves nobody. There every
+        /// request without the proxy's secret is refused `403` `{"refused": "not granted",
+        /// "actor": null}` before anything of it is read, on every route, the console routes and
+        /// `/__spindle/` included. On loopback `run` serves as without `--address`. Only where
+        /// `run` serves HTTP.
+        #[arg(long, value_name = "IP", conflicts_with = "scenario")]
+        address: Option<std::net::IpAddr>,
         /// A TOML file of answers, `<outcome> = true | false`, at the top level for every command
         /// or under a `["<command>"]` table for one; a command's table wins over the top level.
         #[arg(long)]

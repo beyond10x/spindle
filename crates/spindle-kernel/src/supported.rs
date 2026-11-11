@@ -253,7 +253,10 @@ fn condition(condition: &ResolvedCondition) -> Option<&'static str> {
         | ResolvedCondition::ExistingInstance
         | ResolvedCondition::SubjectPredicate { .. }
         | ResolvedCondition::SubjectField { .. }
-        | ResolvedCondition::SubjectState { .. } => None,
+        | ResolvedCondition::SubjectState { .. }
+        // `when_state_changes:` reads as a held-state guard over the states the compiler derived
+        // from the branch's own move ([`crate::execute`]); ESS refuses it beside no `moves:`.
+        | ResolvedCondition::StateChange { .. } => None,
         ResolvedCondition::Related { also, .. } if !also.is_empty() => {
             Some("`when_related: {all: […]}` over several rows")
         }
@@ -275,7 +278,6 @@ fn condition(condition: &ResolvedCondition) -> Option<&'static str> {
             Some("a rows quantifier in a `when_related:` row-set selector")
         }
         ResolvedCondition::RelatedSet { .. } => None,
-        ResolvedCondition::StateChange { .. } => Some("`when_state_changes:`"),
         ResolvedCondition::InputAbsent => Some("`input_absent:`"),
     }
 }

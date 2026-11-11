@@ -35,7 +35,10 @@
 //! the host's [`spindle_host::Reader`] as well, and answers every read through it on a thread of
 //! its own instead (a view whose store the reader reads, `GET /api/model`, `GET /api/events`, the
 //! metrics and the topology), so a read never waits for a command; commands and the reset still
-//! arrive on `Listener::next`, one at a time in arrival order.
+//! arrive on `Listener::next`, one at a time in arrival order. Every listener binds 127.0.0.1
+//! but one made by `Listener::bind_reading_on`, which binds the IP address it is given; off
+//! loopback (`exposed`) only a surface made [`Surface::proving_callers`], served
+//! [`Surface::requiring_secret`].
 //!
 //! Beside those, a surface bound to `http-loopback` serves the routes a generic model console
 //! reads ([`Surface::with_console`], [`Console`]): `GET /api/model`, the IR as
@@ -77,7 +80,7 @@ mod wire;
 pub use answer::{Answer, answer, answered};
 pub use console::Console;
 #[cfg(feature = "listener")]
-pub use listener::{BODY_READ, Exchange, HEADER_READ, Listener};
+pub use listener::{BODY_READ, Exchange, HEADER_READ, Listener, exposed};
 pub use observe::metrics::METRICS_MEDIA;
 pub use observe::{
     AnswerSource, By, Class, ExternalAnswer, PANEL_MEDIA, PANEL_POLICY, REQUESTS_DEFAULT,

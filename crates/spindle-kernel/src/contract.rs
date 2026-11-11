@@ -110,6 +110,14 @@ pub const CASES: &[Case] = &[
         run: the_store_reads_events_after_a_position,
     },
     Case {
+        name: "a_limited_read_answers_whole_writes_up_to_its_limit",
+        run: a_limited_read_answers_whole_writes_up_to_its_limit,
+    },
+    Case {
+        name: "the_events_head_is_past_every_event_committed",
+        run: the_events_head_is_past_every_event_committed,
+    },
+    Case {
         name: "events_no_write_of_a_row_carries_are_read_back",
         run: events_no_write_of_a_row_carries_are_read_back,
     },
@@ -1049,7 +1057,7 @@ fn origin(command: &str, sequence: u64) -> Option<Origin> {
 
 fn after(case: &str, store: &mut dyn Store, position: u64) -> Vec<Committed> {
     store
-        .events_after(position)
+        .events_after(position, usize::MAX)
         .unwrap_or_else(|error| panic!("{case}: the events after {position} read: {error}"))
 }
 
@@ -1138,9 +1146,11 @@ fn the_store_reads_events_after_a_position(store: &mut dyn Store) {
     );
     if let Some(reading) = store.reading() {
         for position in [0, positions[0], positions[4]] {
-            let read = reading.events_after(position).unwrap_or_else(|error| {
-                panic!("{case}: the handle reads the events after {position}: {error}")
-            });
+            let read = reading
+                .events_after(position, usize::MAX)
+                .unwrap_or_else(|error| {
+                    panic!("{case}: the handle reads the events after {position}: {error}")
+                });
             assert_eq!(
                 read,
                 after(case, store, position),
@@ -1148,6 +1158,254 @@ fn the_store_reads_events_after_a_position(store: &mut dyn Store) {
             );
         }
     }
+}
+
+fn limited(case: &str, store: &mut dyn Store, position: u64, limit: usize) -> Vec<Committed> {
+    store.events_after(position, limit).unwrap_or_else(|error| {
+        panic!("{case}: at most {limit} events after {position} read: {error}")
+    })
+}
+
+/// The names of the events [`limited`] reads, joined.
+fn joined(case: &str, store: &mut dyn Store, position: u64, limit: usize) -> String {
+    names(&limited(case, store, position, limit)).join("")
+}
+
+/// Whether `read` is what a read of at most `limit` events answers out of `every`, the events
+/// after the same position: the first of them, write by write, up to the write that brings them
+/// to `limit`, which is read whole.
+fn up_to(read: &[Committed], every: &[Committed], limit: usize) -> bool {
+    let Some(last) = read.last() else {
+        return limit == 0 || every.is_empty();
+    };
+    let ends_a_write = every
+        .get(read.len())
+        .is_none_or(|next| next.position != last.position);
+    let before_last = read
+        .iter()
+        .take_while(|committed| committed.position != last.position)
+        .count();
+    every.starts_with(read)
+        && ends_a_write
+        && before_last < limit
+        && (read.len() >= limit || read.len() == every.len())
+}
+
+/// A read of the events after a position takes a limit ([`Store::events_after`]): it answers
+/// the first of them in commit order, write by write, up to the write that brings them to the
+/// limit, which is read whole however many events it committed; fewer than the limit only where
+/// none is left. A limit of 0 reads none. After a store forgets its events, a limited read from
+/// its start answers only what was committed after, however few it asks for. Where the store
+/// gives a reading handle, it reads them alike.
+fn a_limited_read_answers_whole_writes_up_to_its_limit(store: &mut dyn Store) {
+    let case = "a_limited_read_answers_whole_writes_up_to_its_limit";
+    assert_eq!(limited(case, store, 0, 1), [], "{case}: an empty store");
+    store.attribute(origin("Open", 1));
+    let mut opened = change(TASK, &json!("t1"), None, row("Open", "1"));
+    opened.events = vec![named("A")];
+    commit(case, store, &opened);
+    store.attribute(origin("Pair", 2));
+    let mut paired = change(TASK, &json!("t2"), None, row("Open", "2"));
+    paired.events = vec![named("B"), named("C")];
+    let mut beside = change(OTHER, &json!("o1"), None, row("Open", "o"));
+    beside.events = vec![named("D")];
+    store
+        .commit_all(&[Write::Commit(paired), Write::Commit(beside)])
+        .unwrap_or_else(|error| panic!("{case}: the pair commits: {error}"));
+    store.attribute(origin("Ping", 3));
+    store
+        .commit_events(&[named("P"), named("Q")], &[])
+        .unwrap_or_else(|error| panic!("{case}: the events commit: {error}"));
+    store.attribute(origin("Third", 4));
+    let mut third = change(TASK, &json!("t3"), None, row("Open", "3"));
+    third.events = vec![named("E")];
+    commit(case, store, &third);
+    store.attribute(None);
+
+    let every = after(case, store, 0);
+    assert_eq!(names(&every), ["A", "B", "C", "D", "P", "Q", "E"], "{case}");
+    assert_eq!(
+        joined(case, store, 0, 0),
+        "",
+        "{case}: a limit of 0 reads none"
+    );
+    assert_eq!(joined(case, store, 0, 1), "A", "{case}: the first write");
+    assert_eq!(
+        joined(case, store, 0, 2),
+        "ABCD",
+        "{case}: the write that reaches the limit is read whole"
+    );
+    assert_eq!(
+        joined(case, store, 0, 4),
+        "ABCD",
+        "{case}: exactly the limit"
+    );
+    assert_eq!(
+        joined(case, store, 0, 5),
+        "ABCDPQ",
+        "{case}: past the limit by one write"
+    );
+    assert_eq!(
+        joined(case, store, 0, 100),
+        "ABCDPQE",
+        "{case}: fewer where none is left"
+    );
+    let first = every[0].position;
+    assert_eq!(
+        joined(case, store, first, 1),
+        "BCD",
+        "{case}: a write of more events than the limit is read whole"
+    );
+    let mut positions = every
+        .iter()
+        .map(|committed| committed.position)
+        .collect::<Vec<_>>();
+    positions.dedup();
+    positions.insert(0, 0);
+    let reading = store.reading();
+    for position in positions {
+        let from = after(case, store, position);
+        for limit in 0..=8 {
+            let read = limited(case, store, position, limit);
+            assert!(
+                up_to(&read, &from, limit),
+                "{case}: at most {limit} after {position}: {:?} of {:?}",
+                names(&read),
+                names(&from)
+            );
+            if let Some(reading) = &reading {
+                let beside = reading
+                    .events_after(position, limit)
+                    .unwrap_or_else(|error| {
+                        panic!("{case}: the handle reads at most {limit} after {position}: {error}")
+                    });
+                assert_eq!(
+                    beside, read,
+                    "{case}: the handle reads at most {limit} after {position} as the store"
+                );
+            }
+        }
+    }
+
+    store
+        .forget_events()
+        .unwrap_or_else(|error| panic!("{case}: the events are forgotten: {error}"));
+    store.attribute(origin("Late", 5));
+    let mut late = change(TASK, &json!("t4"), None, row("Open", "4"));
+    late.events = vec![named("F")];
+    commit(case, store, &late);
+    store.attribute(None);
+    assert_eq!(
+        joined(case, store, 0, 1),
+        "F",
+        "{case}: a limited read from the start skips the forgotten events"
+    );
+    if let Some(reading) = store.reading() {
+        let beside = reading
+            .events_after(0, 1)
+            .unwrap_or_else(|error| panic!("{case}: the handle reads after the reset: {error}"));
+        assert_eq!(names(&beside), ["F"], "{case}: the handle skips them too");
+    }
+}
+
+fn head(case: &str, store: &mut dyn Store) -> u64 {
+    store
+        .events_head()
+        .unwrap_or_else(|error| panic!("{case}: the head reads: {error}"))
+}
+
+/// A store's head ([`Store::events_head`]) is at or past every write that committed an event so
+/// far: a read after it answers none of them, and every event committed after it, in commit
+/// order. A write of rows alone may move it. After the store forgets its events, a read after
+/// its head answers only what was committed since. Where the store gives a reading handle, its
+/// head is as good.
+fn the_events_head_is_past_every_event_committed(store: &mut dyn Store) {
+    let case = "the_events_head_is_past_every_event_committed";
+    let empty = head(case, store);
+    assert_eq!(after(case, store, empty), [], "{case}: an empty store");
+    store.attribute(origin("Open", 1));
+    let mut opened = change(TASK, &json!("t1"), None, row("Open", "1"));
+    opened.events = vec![named("A")];
+    commit(case, store, &opened);
+    let one = head(case, store);
+    assert_eq!(
+        after(case, store, one),
+        [],
+        "{case}: no event is after the head"
+    );
+    assert!(
+        after(case, store, 0)
+            .iter()
+            .all(|committed| committed.position <= one),
+        "{case}: the head is at or past every write's position"
+    );
+    store.attribute(origin("Pair", 2));
+    let mut paired = change(TASK, &json!("t2"), None, row("Open", "2"));
+    paired.events = vec![named("B"), named("C")];
+    let mut beside = change(OTHER, &json!("o1"), None, row("Open", "o"));
+    beside.events = vec![named("D")];
+    store
+        .commit_all(&[Write::Commit(paired), Write::Commit(beside)])
+        .unwrap_or_else(|error| panic!("{case}: the pair commits: {error}"));
+    store.attribute(origin("Ping", 3));
+    store
+        .commit_events(&[named("P")], &[])
+        .unwrap_or_else(|error| panic!("{case}: the events commit: {error}"));
+    store.attribute(None);
+    assert_eq!(
+        names(&after(case, store, one)),
+        ["B", "C", "D", "P"],
+        "{case}: every event committed after the head"
+    );
+    let quiet = head(case, store);
+    let stored = held(case, store, &json!("t1"));
+    commit(
+        case,
+        store,
+        &change(
+            TASK,
+            &json!("t1"),
+            Some(stored.version),
+            row("Open", "rows"),
+        ),
+    );
+    let moved = head(case, store);
+    assert!(moved >= quiet, "{case}: the head never goes back");
+    assert_eq!(
+        after(case, store, moved),
+        [],
+        "{case}: a write of rows alone is no event after the head"
+    );
+    if let Some(reading) = store.reading() {
+        let beside = reading
+            .events_head()
+            .unwrap_or_else(|error| panic!("{case}: the handle reads the head: {error}"));
+        assert_eq!(
+            after(case, store, beside),
+            [],
+            "{case}: no event is after the handle's head"
+        );
+        assert!(
+            beside >= quiet,
+            "{case}: the handle's head is past every event"
+        );
+    }
+
+    store
+        .forget_events()
+        .unwrap_or_else(|error| panic!("{case}: the events are forgotten: {error}"));
+    let forgotten = head(case, store);
+    assert_eq!(after(case, store, forgotten), [], "{case}: after a reset");
+    store.attribute(origin("Late", 4));
+    let mut late = change(TASK, &json!("t3"), None, row("Open", "3"));
+    late.events = vec![named("E")];
+    commit(case, store, &late);
+    store.attribute(None);
+    assert_eq!(
+        names(&after(case, store, forgotten)),
+        ["E"],
+        "{case}: only what was committed after the reset"
+    );
 }
 
 /// The names of `committed`, read without their domain.
@@ -1253,7 +1511,7 @@ fn events_no_write_of_a_row_carries_are_read_back(store: &mut dyn Store) {
     );
     if let Some(reading) = store.reading() {
         let read = reading
-            .events_after(0)
+            .events_after(0, usize::MAX)
             .unwrap_or_else(|error| panic!("{case}: the handle reads the events: {error}"));
         assert_eq!(
             read,
@@ -1284,7 +1542,7 @@ fn forgotten_events_are_not_read_back(store: &mut dyn Store) {
     assert_eq!(everything(case, store), rows, "{case}: the rows stay");
     if let Some(reading) = store.reading() {
         let read = reading
-            .events_after(0)
+            .events_after(0, usize::MAX)
             .unwrap_or_else(|error| panic!("{case}: the handle reads the events: {error}"));
         assert_eq!(read, [], "{case}: the handle reads none either");
     }

@@ -173,3 +173,23 @@ fn a_reset_is_kept_across_a_restart() {
         "after the restart, only what was published after the reset"
     );
 }
+
+/// `story:events-head-cursor` acceptances 1 and 2 on PostgreSQL
+/// ([`crate::events_range::the_head_reads_no_event_of_a_long_log_on`]): the cursor after the last
+/// of 10,000 events is answered reading no event of either component's store.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn the_head_reads_no_event_of_a_long_log() {
+    let url = std::env::var("SPINDLE_TEST_DATABASE_URL")
+        .expect("SPINDLE_TEST_DATABASE_URL names a loopback PostgreSQL (task check:postgres)");
+    let database = Database::new(url);
+    let open = |component: &str| {
+        PostgresStore::open(&database, component, 1)
+            .unwrap_or_else(|error| panic!("the store of {component} opens: {error}"))
+    };
+    crate::events_range::the_head_reads_no_event_of_a_long_log_on(
+        "postgres",
+        open(&fresh()),
+        open(&fresh()),
+    );
+}

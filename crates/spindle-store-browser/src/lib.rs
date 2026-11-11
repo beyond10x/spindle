@@ -15,11 +15,12 @@
 //! follows the order of the commits.
 //!
 //! `BrowserStore::open` reads every event the database holds into memory too, and the events
-//! each commit records join them: `Store::events_after` answers from there, each event with the
-//! command its write was attributed to (`Store::attribute`), which the database records beside
-//! it. The events another tab commits are read on the next open. Events no instance's write
-//! carries (`Store::commit_events`) are recorded naming none, and `Store::forget_events` records
-//! a mark that every event before it is forgotten, read as such on the next open.
+//! each commit records join them: `Store::events_after` answers from there, up to its limit,
+//! each event with the command its write was attributed to (`Store::attribute`), which the
+//! database records beside it. The events another tab commits are read on the next open. Events
+//! no instance's write carries (`Store::commit_events`) are recorded naming none, and
+//! `Store::forget_events` records a mark that every event before it is forgotten, read as such
+//! on the next open.
 //!
 //! The [`Store`](spindle_kernel::Store) trait answers synchronously and IndexedDB does not, so a
 //! write lands after the call that made it returns. `BrowserStore::flush` waits for every write

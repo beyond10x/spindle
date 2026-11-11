@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-11T15:40:04Z",
+  "actor": "human:timo",
+  "artifact": "story:kernel-secondary-effects",
+  "kind": "story",
+  "revision": 7,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "CI on merge 1a3f2420 (0.14.0): Gate, PostgreSQL, macOS",
+    "reference": "https://github.com/beyond10x/spindle/actions/runs/43047034119"
+  }
+}

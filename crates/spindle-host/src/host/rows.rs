@@ -121,9 +121,14 @@ impl Reading for Gated {
         self.reading.counts(entities)
     }
 
-    fn events_after(&self, position: u64) -> Result<Vec<Committed>, StoreError> {
+    fn events_after(&self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
         let _passed = self.gate.enter();
-        self.reading.events_after(position)
+        self.reading.events_after(position, limit)
+    }
+
+    fn events_head(&self) -> Result<u64, StoreError> {
+        let _passed = self.gate.enter();
+        self.reading.events_head()
     }
 
     /// The position, read past the gate for as long as it is held: a reset waits for it.
@@ -371,7 +376,11 @@ impl Store for Counted {
         self.store.forget_events()
     }
 
-    fn events_after(&mut self, position: u64) -> Result<Vec<Committed>, StoreError> {
-        self.store.events_after(position)
+    fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
+        self.store.events_after(position, limit)
+    }
+
+    fn events_head(&mut self) -> Result<u64, StoreError> {
+        self.store.events_head()
     }
 }

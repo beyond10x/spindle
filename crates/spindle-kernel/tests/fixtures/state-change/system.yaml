@@ -1,0 +1,24 @@
+format: ess/34
+system: room
+version: v1
+summary: A room roster rebuilt from pushes that re-report each member's state.
+domains:
+  - room.roster
+components:
+  - component: roster
+    summary: Adds members and takes the pushes about them.
+    owns:
+      domains:
+        - room.roster
+    accepts:
+      commands:
+        - room.roster.AddMember
+        - room.roster.Report
+    publishes:
+      events:
+        - room.roster.MemberAdded
+        - room.roster.MemberJoined
+        - room.roster.MemberRejoined
+        - room.roster.MemberLeft
+        - room.roster.MemberUpdated
+    reached_by: in_process

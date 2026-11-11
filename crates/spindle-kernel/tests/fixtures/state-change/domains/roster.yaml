@@ -1,0 +1,122 @@
+domain: room.roster
+summary: A push re-reports the state a member already holds; only the first report of a state moves it.
+types:
+  - name: room.roster.Reported
+    kind: enum
+    variants: [Pending, Added, Gone]
+entities:
+  - name: room.roster.Member
+    identity:
+      name: member_id
+      type: String
+    fields:
+      - name: on_hold
+        type: Boolean
+    lifecycle:
+      initial: Pending
+      states: [Pending, Added, Gone]
+      transitions:
+        - name: join
+          from: [Pending, Added, Gone]
+          to: Added
+        - name: leave
+          from: [Pending, Added, Gone]
+          to: Gone
+errors:
+  - name: room.roster.NoSuchMember
+    summary: No member carries the id.
+commands:
+  - name: room.roster.AddMember
+    input:
+      - name: member_id
+        type: String
+    outcomes:
+      - name: added
+        creates: room.roster.Member
+        instance: member_id
+        sets:
+          on_hold: false
+        emits: [room.roster.MemberAdded]
+        payload:
+          room.roster.MemberAdded: {member_id: input.member_id}
+        summary: The member is on the roster, pending.
+  - name: room.roster.Report
+    input:
+      - name: member_id
+        type: String
+      - name: state
+        type: room.roster.Reported
+      - name: on_hold
+        type: Boolean
+    outcomes:
+      - name: no-such-member
+        unknown_instance: true
+        error: room.roster.NoSuchMember
+        summary: No member carries the id.
+      - name: joined
+        when: state == Added
+        when_state_changes: true
+        moves: room.roster.Member.join
+        instance: member_id
+        emits: [room.roster.MemberJoined]
+        payload:
+          room.roster.MemberJoined: {member_id: input.member_id}
+        summary: The first report of Added.
+      - name: rejoined
+        when: state == Added
+        when_state_changes: false
+        moves: room.roster.Member.join
+        instance: member_id
+        emits: [room.roster.MemberRejoined]
+        payload:
+          room.roster.MemberRejoined: {member_id: input.member_id}
+        summary: Added again, for a member already Added.
+      - name: left
+        when: state == Gone
+        when_state_changes: true
+        moves: room.roster.Member.leave
+        instance: member_id
+        emits: [room.roster.MemberLeft]
+        payload:
+          room.roster.MemberLeft: {member_id: input.member_id}
+        summary: The first report of Gone.
+      - name: paused
+        when: on_hold == true
+        updates: room.roster.Member
+        instance: member_id
+        sets:
+          on_hold: input.on_hold
+        emits: [room.roster.MemberUpdated]
+        payload:
+          room.roster.MemberUpdated: {member_id: input.member_id}
+        summary: A hold is recorded where no held-state branch holds.
+      - name: refreshed
+        updates: room.roster.Member
+        instance: member_id
+        sets:
+          on_hold: input.on_hold
+        emits: [room.roster.MemberUpdated]
+        payload:
+          room.roster.MemberUpdated: {member_id: input.member_id}
+        summary: Every other push changes fields only.
+events:
+  - name: room.roster.MemberAdded
+    fields:
+      - name: member_id
+        type: String
+  - name: room.roster.MemberJoined
+    fields:
+      - name: member_id
+        type: String
+  - name: room.roster.MemberRejoined
+    fields:
+      - name: member_id
+        type: String
+  - name: room.roster.MemberLeft
+    fields:
+      - name: member_id
+        type: String
+  - name: room.roster.MemberUpdated
+    fields:
+      - name: member_id
+        type: String

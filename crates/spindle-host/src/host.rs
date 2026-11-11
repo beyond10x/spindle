@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -422,8 +423,12 @@ impl Store for Tallied<'_> {
         self.store.attribute(origin);
     }
 
-    fn events_after(&mut self, position: u64) -> Result<Vec<Committed>, StoreError> {
-        self.store.events_after(position)
+    fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
+        self.store.events_after(position, limit)
+    }
+
+    fn events_head(&mut self) -> Result<u64, StoreError> {
+        self.store.events_head()
     }
 
     /// Kept for [`Host::published`], tallied as no write's: an event no write carries counts
@@ -506,8 +511,12 @@ impl Store for Supplied {
         self.0.forget_events()
     }
 
-    fn events_after(&mut self, position: u64) -> Result<Vec<Committed>, StoreError> {
-        self.0.events_after(position)
+    fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
+        self.0.events_after(position, limit)
+    }
+
+    fn events_head(&mut self) -> Result<u64, StoreError> {
+        self.0.events_head()
     }
 }
 
@@ -550,8 +559,10 @@ pub struct Host {
     remote: Option<component::Remote>,
     /// The sequence the last command run was attributed with ([`Origin::sequence`]): the events
     /// each component's store committed merge back into the order published by it
-    /// ([`Host::published`]). The host keeps no list of the events itself.
-    sequence: u64,
+    /// ([`Host::published`]). The host keeps no list of the events itself. Shared with its
+    /// readers, which take the cursor after the last event published by it
+    /// ([`Reader::published_head`]); `0` before the first command of the run.
+    sequence: Arc<AtomicU64>,
     /// This run of the host, drawn at random when it opens: a [`Cursor`] marks the stores of the
     /// run it was taken in ([`Host::published_after`]).
     run: u64,
@@ -938,7 +949,7 @@ impl Host {
             timer,
             periodic,
             remote: None,
-            sequence: 0,
+            sequence: Arc::new(AtomicU64::new(0)),
             run: Uuid::new_v4().as_u64_pair().0.max(1),
             emitted: Arc::default(),
             decider: decider.unwrap_or_else(|| Box::new(NoExternals)),
@@ -1025,7 +1036,7 @@ impl Host {
     pub fn published(&mut self) -> Result<Vec<Published>, HostError> {
         let mut committed = Vec::with_capacity(self.components.len());
         for (name, component) in &mut self.components {
-            committed.push((name.clone(), component.store.events_after(0)?));
+            committed.push((name.clone(), component.store.events_after(0, usize::MAX)?));
         }
         Ok(merged(committed))
     }
@@ -1047,9 +1058,29 @@ impl Host {
             .map(|(name, component)| (name.clone(), component.store.generation()))
             .collect::<Vec<_>>();
         let components = &mut self.components;
-        range::range(self.run, &stores, after, limit, |name, position| {
-            Ok(store_of(components, name)?.events_after(position)?)
+        range::range(self.run, &stores, after, limit, |name, position, wanted| {
+            Ok(store_of(components, name)?.events_after(position, wanted)?)
         })
+    }
+
+    /// The cursor after the last event published, read without reading any event: each
+    /// component's store answers only the position it is at ([`Store::events_head`]). A read after
+    /// it ([`Host::published_after`]) answers every event published after this call, and none
+    /// before, as long as the cursor is read in this run and every store is the one it was taken
+    /// from; otherwise the stores are read from their start once, and the events of the commands
+    /// run before the last one this run ran, or, before the first, before the civil time of the
+    /// call, are skipped.
+    ///
+    /// # Errors
+    /// [`HostError::Store`] where a store cannot be read.
+    pub fn published_head(&mut self) -> Result<Cursor, HostError> {
+        let sequence = head_sequence(self.sequence.load(Ordering::SeqCst), self.clock.wall());
+        let mut stores = Vec::with_capacity(self.components.len());
+        for (name, component) in &mut self.components {
+            let generation = component.store.generation();
+            stores.push((name.clone(), generation, component.store.events_head()?));
+        }
+        Ok(range::head(self.run, &stores, sequence))
     }
 
     /// How many events each command appended since the host started, by command and event,
@@ -1090,6 +1121,7 @@ impl Host {
             ),
             emitted: Arc::clone(&self.emitted),
             run: self.run,
+            sequence: Arc::clone(&self.sequence),
         }
     }
 
@@ -1498,7 +1530,8 @@ impl Host {
     /// values, so a required parameter is refused as left out.
     ///
     /// # Errors
-    /// [`HostError::NoView`], [`HostError::Unsupported`] for a view [`Host::list`] cannot answer,
+    /// [`HostError::NoView`], [`HostError::Unsupported`] for a view [`Host::list`] cannot answer
+    /// and for an aggregate view, whose rows are groups and none an instance's,
     /// [`HostError::Parameters`] for a view with a required parameter, and [`HostError::Store`]
     /// when the store cannot be read.
     pub fn view(
@@ -1507,6 +1540,12 @@ impl Host {
         identity: &Value,
     ) -> Result<Option<Map<String, Value>>, HostError> {
         let (declared, owner) = readable(&self.ir, view)?;
+        if declared.aggregation.is_some() {
+            return Err(HostError::Unsupported(format!(
+                "view {view} declares an aggregation: its rows are groups, read as a list, and \
+                 none is the row of one identity"
+            )));
+        }
         let parameters =
             crate::view::parameters(&self.ir, declared, &Map::new()).map_err(|detail| {
                 HostError::Parameters {
@@ -1583,13 +1622,20 @@ impl Host {
     /// once per read, by its identity, however many rows name it, and the referenced entity is
     /// never scanned.
     ///
+    /// A view declaring aggregate fields (`aggregate: {count: {}}`, `sum`, `avg` and the rest,
+    /// with or without `group_by`, each with or without its own `where:`) answers the rows ESS's
+    /// interpreter answers over the instances its filter keeps ([`crate::view::aggregate`]): one
+    /// per group in the order of the group keys, and without `group_by` one row even over no
+    /// instance. It reads the same one scan of the source's rows as any view.
+    ///
     /// # Errors
     /// [`HostError::NoView`]; [`HostError::Unsupported`], naming the construct, for a view that
-    /// declares computed fields, an aggregation, paging, a filter read through a reference, a
-    /// default row for an absent identity, or any other filter; [`HostError::Parameters`],
-    /// naming the parameter, for a value the view does not declare, a required one left out or
-    /// one not of its declared type or newtype, before anything is read;
-    /// [`HostError::Unsupported`] for a filter unknown for a row; and [`HostError::Store`] when
+    /// declares computed fields, paging, a filter read through a reference, a default row for an
+    /// absent identity, an aggregation beside a field read through a reference, or any other
+    /// filter, a measure's `where:` included; [`HostError::Parameters`], naming the parameter,
+    /// for a value the view does not declare, a required one left out or one not of its declared
+    /// type or newtype, before anything is read; [`HostError::Unsupported`] for a filter unknown
+    /// for a row, and for an aggregate ESS determines no value of; and [`HostError::Store`] when
     /// the store cannot be read.
     pub fn list_with(
         &mut self,
@@ -1625,10 +1671,11 @@ impl Host {
             .ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
         let started = Instant::now();
         let clock = &self.clock;
-        self.sequence = following(self.sequence, clock.wall());
+        let sequence = following(self.sequence.load(Ordering::SeqCst), clock.wall());
+        self.sequence.store(sequence, Ordering::SeqCst);
         held.store.attribute(Some(Origin {
             command: command.to_owned(),
-            sequence: self.sequence,
+            sequence,
         }));
         let mut tallied = Tallied {
             store: &mut held.store,
@@ -1865,12 +1912,23 @@ struct Deliveries {
 /// time does not go back between two processes, than every one an earlier process on the same
 /// stores attributed.
 fn following(last: u64, wall: std::time::SystemTime) -> u64 {
-    let micros = wall
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+    micros(wall).max(last.saturating_add(1))
+}
+
+/// The sequence a cursor after the last event published is taken at ([`range::head`]), where
+/// `last` is the sequence of the last command started: that sequence, or, before the first
+/// command, the civil time `wall` in microseconds, which every earlier command's sequence is
+/// below as long as the civil time does not go back. At least 1.
+pub(crate) fn head_sequence(last: u64, wall: std::time::SystemTime) -> u64 {
+    if last == 0 { micros(wall) } else { last }.max(1)
+}
+
+/// The civil time `wall` in microseconds since the Unix epoch, `0` before it.
+fn micros(wall: std::time::SystemTime) -> u64 {
+    wall.duration_since(std::time::SystemTime::UNIX_EPOCH)
         .map_or(0, |since| {
             u64::try_from(since.as_micros()).unwrap_or(u64::MAX)
-        });
-    micros.max(last.saturating_add(1))
+        })
 }
 
 /// The events of every component, each component's in its store's commit order, merged into the
@@ -2201,6 +2259,31 @@ impl Listing<'_> {
         scan: spindle_kernel::Scan,
         load: &mut Load<'_>,
     ) -> Result<Vec<Map<String, Value>>, HostError> {
+        if let Some(aggregation) = &self.declared.aggregation {
+            let mut kept = Vec::new();
+            for (identity, stored) in scan {
+                if held(
+                    ir,
+                    view,
+                    self.declared,
+                    &identity,
+                    &stored.row,
+                    &self.parameters,
+                    self.now,
+                )? {
+                    kept.push((identity, stored.row));
+                }
+            }
+            return crate::view::aggregate(
+                ir,
+                self.declared,
+                aggregation,
+                &kept,
+                &self.parameters,
+                self.now,
+            )
+            .map_err(|detail| HostError::Unsupported(format!("view {view}: {detail}")));
+        }
         let mut rows = Vec::new();
         let mut far = Far::default();
         for (identity, stored) in scan {
@@ -2240,17 +2323,25 @@ fn held(
 }
 
 /// The instant a read of `declared` holds its rows against: the clock's civil time, read once,
-/// where the view's filter orders a field against `now` ([`crate::view::reads_now`]), and `None`
-/// for any other view, so a read reads the clock only where its filter names the current time.
+/// where the view's filter, or the `where:` of one of its aggregates, orders a field against `now`
+/// ([`crate::view::reads_now`]), and `None` for any other view, so a read reads the clock only
+/// where what it evaluates names the current time.
 fn read_instant(
     declared: &ResolvedView,
     clock: &dyn Clock,
 ) -> Option<ess_primitives::Rfc3339Instant> {
+    let conditions = declared
+        .aggregation
+        .iter()
+        .flat_map(|aggregation| aggregation.functions.values())
+        .filter_map(|measure| measure.r#where.as_ref());
     declared
         .filter
-        .as_ref()
-        .filter(|filter| crate::view::reads_now(filter))
-        .and_then(|_| crate::view::instant(clock.wall()))
+        .iter()
+        .chain(conditions)
+        .any(crate::view::reads_now)
+        .then(|| crate::view::instant(clock.wall()))
+        .flatten()
 }
 
 /// The entities whose domain the component `name` owns, by qualified name: those whose rows its

@@ -200,10 +200,60 @@ struct Keyed {
     published: Published,
 }
 
+/// Whether `keyed` was answered by a range whose last event is `last`.
+fn answered(keyed: &Keyed, last: Option<&Key>) -> bool {
+    last.is_some_and(|last| keyed.key <= *last)
+}
+
+/// The cursor after the last event published, of the stores `stores` names, each by its
+/// component, the generation of the store held for it and its head ([`Store::events_head`]),
+/// read once `sequence` ([`super::head_sequence`]) was the sequence of the last command started,
+/// and in `run`: every event of an earlier command is at or before its store's head, and is
+/// before the cursor; every event after a store's head is after it, whatever its command. The
+/// cursor marks each store at its head, so a read with it reads only what was committed since.
+/// Where a store is read from its start (another run, a store replaced), the events of the
+/// commands before `sequence` are skipped, and those of later commands answered.
+///
+/// [`Store::events_head`]: spindle_kernel::Store::events_head
+pub(super) fn head(run: u64, stores: &[(String, u64, u64)], sequence: u64) -> Cursor {
+    let marks = stores
+        .iter()
+        .map(|(component, generation, position)| {
+            (
+                component.clone(),
+                Mark {
+                    generation: *generation,
+                    position: *position,
+                    sequence,
+                    ordinal: 0,
+                },
+            )
+        })
+        .collect();
+    // After every event of a sequence below `sequence`, before every event of it and later.
+    let last = stores
+        .iter()
+        .map(|(component, _, _)| component)
+        .max()
+        .map(|component| Key {
+            sequence: sequence.saturating_sub(1),
+            component: component.clone(),
+            ordinal: u64::MAX,
+        });
+    Cursor { run, last, marks }
+}
+
 /// The events after `after`, at most `limit`, of the stores `stores` names, each by its
 /// component and the generation of the store held for it, in the order published, read by
-/// `read`, which answers a component's events after a position; and the cursor after them.
-/// `run` is the host's run.
+/// `read`, which answers a component's events after a position, up to a limit, as
+/// [`spindle_kernel::Store::events_after`] does; and the cursor after them. `run` is the host's
+/// run.
+///
+/// Each store is read only until it answered `limit` events after the cursor, or every one it
+/// holds: the events a page answers are the first `limit` of those, in the order published, and
+/// an event a store was not read as far as follows `limit` of that store's own, so no page of
+/// the whole list skips it. A store whose first events after its mark were answered already,
+/// in part of a write or before a restart, is read on past them.
 ///
 /// # Errors
 /// [`HostError::Cursor`] where `after` names a component `stores` does not, before anything is
@@ -213,7 +263,7 @@ pub(super) fn range(
     stores: &[(String, u64)],
     after: &Cursor,
     limit: usize,
-    mut read: impl FnMut(&str, u64) -> Result<Vec<Committed>, HostError>,
+    mut read: impl FnMut(&str, u64, usize) -> Result<Vec<Committed>, HostError>,
 ) -> Result<Page, HostError> {
     let runs = |name: &str| stores.iter().any(|(component, _)| component == name);
     if after
@@ -236,37 +286,50 @@ pub(super) fn range(
             .unwrap_or_else(|| Mark::start(*generation));
         let mut sequence = start.sequence;
         let mut ordinal = start.ordinal;
-        let committed = read(component, start.position)?;
-        let mut keyed = Vec::with_capacity(committed.len());
-        for committed in committed {
-            let command = match committed.origin {
-                Some(origin) => {
-                    if origin.sequence > sequence {
-                        sequence = origin.sequence;
-                        ordinal = 0;
+        let mut keyed: Vec<Keyed> = Vec::new();
+        let mut position = start.position;
+        let mut fresh = 0;
+        while fresh < limit {
+            let wanted = limit - fresh;
+            let committed = read(component, position, wanted)?;
+            let answered_all = committed.len() < wanted;
+            for committed in committed {
+                let command = match committed.origin {
+                    Some(origin) => {
+                        if origin.sequence > sequence {
+                            sequence = origin.sequence;
+                            ordinal = 0;
+                        }
+                        origin.command
                     }
-                    origin.command
+                    None => String::new(),
+                };
+                ordinal = ordinal.saturating_add(1);
+                position = committed.position;
+                let next = Keyed {
+                    key: Key {
+                        sequence,
+                        component: component.clone(),
+                        ordinal,
+                    },
+                    position,
+                    published: Published {
+                        component: component.clone(),
+                        command,
+                        event: committed.event,
+                    },
+                };
+                if !answered(&next, after.last.as_ref()) {
+                    fresh += 1;
                 }
-                None => String::new(),
-            };
-            ordinal = ordinal.saturating_add(1);
-            keyed.push(Keyed {
-                key: Key {
-                    sequence,
-                    component: component.clone(),
-                    ordinal,
-                },
-                position: committed.position,
-                published: Published {
-                    component: component.clone(),
-                    command,
-                    event: committed.event,
-                },
-            });
+                keyed.push(next);
+            }
+            if answered_all {
+                break;
+            }
         }
         read_from.push((start, keyed));
     }
-    let answered = |keyed: &Keyed, last: Option<&Key>| last.is_some_and(|last| keyed.key <= *last);
     let mut after_cursor = read_from
         .iter()
         .flat_map(|(_, keyed)| keyed.iter())

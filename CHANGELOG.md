@@ -6,6 +6,63 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-11
+
+### Added
+
+- The kernel runs an outcome that declares `when_state_changes: true` or `false`, which it refused
+  as unsupported (`501`): the branch holds where its own move does, or does not, change the state
+  the subject holds immediately before selection, and its `when:` holds too. It answers among the
+  branches guarded by the held state, in declaration order, and a subject no row holds is answered
+  by the command's `unknown_instance:` branch first, as in ESS's interpreter.
+- A view that declares aggregate fields (`aggregate: {count: {}}`, `sum`, `avg` and the rest of
+  ESS's functions), with or without `group_by`, behind a filter the host reads and with each
+  measure's own `where:`, answers the rows ESS's interpreter answers for the same state: one row
+  per group in the order of the group keys, one row without `group_by` even over no instance, a
+  `count` or required `sum` `0` and an `avg` `null` over none, every field answered (`null` where
+  absent, as ESS writes an aggregate row), integers answered as integers. It is read from the
+  same one scan of the source's resting rows as any view, on the host's thread and beside it.
+  Before, such a view answered `501` "declares an aggregation". A read of one row by identity of
+  an aggregate view, and an aggregation beside a field read through a reference, stay refused.
+- `run --address <IP>` serves HTTP on the IPv4 or IPv6 address given instead of `127.0.0.1`, so a
+  container port can reach it; without it `run` still binds `127.0.0.1` only. A value that is not
+  an IP address (a host name, a port, brackets) exits 2 before anything listens. The start line
+  names the address bound, `{"listening": "<address>:<port>", ...}`. An address off loopback
+  (anything but `127.0.0.0/8` and `::1`) requires `--trusted-caller-header` with
+  `--trusted-caller-secret`, and without both exits 2 before listening; `--fixed-actor` is not
+  enough. There every request without the proxy's secret is refused `403` before anything of it
+  is read, on every route, the console routes and `/__spindle/` included, and is neither recorded
+  in the request log nor counted. On loopback `run` answers as before. Instances `deploy` starts
+  still bind loopback.
+- A served `run` answers `GET /api/served`, a console route beside `/api/model`, with one row per
+  command and view it routes: `component`, `name`, `kind`, `method`, `path`, `served` and, for
+  one not served, the `reason` its start log prints, from the same place. The answer is
+  `spindle.observe.ServedOperations`, with its schema and generated types. It is granted as
+  `GET /api/model` is: a guarded listener asks for its token, and behind a trusted-caller proxy
+  only a request that carries the proxy's secret is answered. The Service Worker answers it too.
+  `admit` now prints, without serving, each view `run` would not serve, in the start log's words;
+  it printed command refusals only. On one downstream specification that is 62 of 366 views
+  (48 aggregations, 6 computed fields, 8 filters); all 520 of its commands are served.
+- `GET /api/events?after=head` answers `{"events": [], "next": <cursor>}`, the cursor after the
+  last event published, reading no event of the log (`story:events-head-cursor`). A downstream
+  consumer with about 179,000 events had to page from the start to reach the end before it could
+  poll. A read after that cursor answers what was published since. `limit=0` is still refused
+  `400`. Each store answers the position it is at (`Store::events_head`, `Reading::events_head`):
+  the memory and IndexedDB stores the position of their last write, SQLite and PostgreSQL the
+  end of their feed, found in about twice the binary logarithm of its length single-event feed
+  reads.
+
+### Changed
+
+- A page of `GET /api/events?after=<cursor>&limit=<n>` reads at most about `n` events from each
+  store (`story:events-read-bounded`), where it read every event after the cursor's position and
+  dropped all but `n`, so paging through a long log re-read the rest of it on every page.
+  `Store::events_after` and `Reading::events_after` take a limit: the memory, SQLite, PostgreSQL
+  and IndexedDB stores answer the first events after the position, write by write up to the write
+  that brings them to the limit, which is read whole (`whole_writes`). A store that implements
+  `events_after` adds the parameter. The range reads each store until it has `n` events after the
+  cursor or none is left, so the pages still list every event in the order of the whole list.
+
 ## [0.14.0] - 2026-11-11
 
 ### Added

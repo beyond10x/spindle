@@ -1,0 +1,139 @@
+domain: ledger.sessions
+summary: Sessions, each on an account with its minutes, its charge and an optional rating, opened and closed, and the views that aggregate them.
+types:
+  - name: ledger.sessions.SessionId
+    kind: newtype
+    of: String
+  - name: ledger.sessions.AccountId
+    kind: newtype
+    of: String
+entities:
+  - name: ledger.sessions.Session
+    identity:
+      name: session_id
+      type: ledger.sessions.SessionId
+    fields:
+      - name: account_id
+        type: ledger.sessions.AccountId
+      - name: minutes
+        type: Integer
+      - name: charge
+        type: Decimal
+      - name: rating
+        type: Optional<Integer>
+    lifecycle:
+      initial: Open
+      states: [Open, Closed]
+      terminal: [Closed]
+      transitions:
+        - {name: close, from: [Open], to: Closed}
+commands:
+  - name: ledger.sessions.OpenSession
+    input:
+      - name: session_id
+        type: ledger.sessions.SessionId
+      - name: account_id
+        type: ledger.sessions.AccountId
+      - name: minutes
+        type: Integer
+      - name: charge
+        type: Decimal
+      - name: rating
+        type: Optional<Integer>
+    outcomes:
+      - name: opened
+        creates: ledger.sessions.Session
+        instance: session_id
+        sets:
+          account_id: input.account_id
+          minutes: input.minutes
+          charge: input.charge
+          rating: input.rating
+        emits: [ledger.sessions.SessionOpened]
+        payload:
+          ledger.sessions.SessionOpened: {session_id: input.session_id}
+        summary: The session is open.
+  - name: ledger.sessions.CloseSession
+    input:
+      - name: session_id
+        type: ledger.sessions.SessionId
+    outcomes:
+      - name: closed
+        moves: ledger.sessions.Session.close
+        instance: session_id
+        emits: [ledger.sessions.SessionClosed]
+        payload:
+          ledger.sessions.SessionClosed: {session_id: input.session_id}
+        summary: The session is closed.
+events:
+  - name: ledger.sessions.SessionOpened
+    fields:
+      - name: session_id
+        type: ledger.sessions.SessionId
+  - name: ledger.sessions.SessionClosed
+    fields:
+      - name: session_id
+        type: ledger.sessions.SessionId
+views:
+  - name: ledger.sessions.OpenPerAccount
+    source: ledger.sessions.Session
+    consistency: read_your_writes
+    filter: state == Open
+    group_by: [account_id]
+    fields:
+      - {name: account_id, type: ledger.sessions.AccountId}
+      - {name: open_sessions, type: Integer, aggregate: {count: {}}}
+  - name: ledger.sessions.Totals
+    source: ledger.sessions.Session
+    consistency: read_your_writes
+    fields:
+      - {name: sessions, type: Integer, aggregate: {count: {}}}
+      - {name: minutes, type: Integer, aggregate: {sum: minutes}}
+      - {name: charge, type: Decimal, aggregate: {sum: charge}}
+      - {name: mean_minutes, type: Optional<Decimal>, aggregate: {avg: minutes}}
+      - {name: rated, type: Optional<Integer>, aggregate: {sum: rating, skip_absent: true}}
+      - {name: mean_rating, type: Optional<Decimal>, aggregate: {avg: rating, skip_absent: true}}
+  - name: ledger.sessions.OpenTotals
+    source: ledger.sessions.Session
+    consistency: read_your_writes
+    filter: state == Open
+    fields:
+      - {name: open_sessions, type: Integer, aggregate: {count: {}}}
+      - {name: open_charge, type: Decimal, aggregate: {sum: charge}}
+      - {name: mean_open_charge, type: Optional<Decimal>, aggregate: {avg: charge}}
+  - name: ledger.sessions.PerState
+    source: ledger.sessions.Session
+    consistency: read_your_writes
+    group_by: [state]
+    fields:
+      - {name: state, type: ledger.sessions.Session.State}
+      - {name: sessions, type: Integer, aggregate: {count: {}}}
+      - {name: mean_charge, type: Optional<Decimal>, aggregate: {avg: charge}}
+  - name: ledger.sessions.PerRating
+    source: ledger.sessions.Session
+    consistency: read_your_writes
+    group_by: [rating]
+    fields:
+      - {name: rating, type: Optional<Integer>}
+      - {name: sessions, type: Integer, aggregate: {count: {}}}
+      - {name: minutes, type: Integer, aggregate: {sum: minutes}}
+  - name: ledger.sessions.ClosedPerAccount
+    source: ledger.sessions.Session
+    consistency: read_your_writes
+    filter: minutes > 0
+    group_by: [account_id]
+    fields:
+      - {name: account_id, type: ledger.sessions.AccountId}
+      - {name: sessions, type: Integer, aggregate: {count: {}}}
+      - {name: closed, type: Integer, aggregate: {count: {}, where: state == Closed}}
+      - {name: closed_minutes, type: Integer, aggregate: {sum: minutes, where: state == Closed}}
+  - name: ledger.sessions.AccountTotals
+    source: ledger.sessions.Session
+    consistency: read_your_writes
+    params:
+      - name: account
+        type: ledger.sessions.AccountId
+    filter: account_id == param.account
+    fields:
+      - {name: sessions, type: Integer, aggregate: {count: {}}}
+      - {name: minutes, type: Integer, aggregate: {sum: minutes}}

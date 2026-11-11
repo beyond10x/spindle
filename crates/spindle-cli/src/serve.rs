@@ -78,6 +78,10 @@ pub(crate) struct Serving<'a> {
     pub binding: Option<Binding>,
     /// The port, `0` for one the system chooses.
     pub port: u16,
+    /// `--address`: the IP address the listener binds, 127.0.0.1 by default; off loopback only
+    /// with `caller_header`, every request without the proxy's secret refused before it is read
+    /// ([`Listener::bind_reading_on`]).
+    pub address: std::net::IpAddr,
     /// What `ingress.network` is bound to; `http-loopback` adds the console routes.
     pub ingress: &'a str,
     /// `--drop-retries`: run each `on_failure: retry` binding as a `drop` binding.
@@ -188,7 +192,8 @@ fn fixed(ir: &EssIr, caller: &Caller) -> Result<()> {
 }
 
 /// Runs every component of `ir` in one host and serves `serving.components` on
-/// `127.0.0.1:<port>` until SIGINT or SIGTERM, exiting 130 or 143.
+/// `<serving.address>:<port>`, `127.0.0.1` by default, until SIGINT or SIGTERM, exiting 130 or
+/// 143.
 ///
 /// Prints one JSON line once listening, `{"listening": "<address>", "components": [...]}`, then
 /// runs each command and reset on this thread in arrival order, and answers each read beside it
@@ -324,17 +329,8 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         (None, _) => surface,
     };
     let unserved = surface.unserved();
-    for route in &unserved {
-        eprintln!(
-            "b10x-spindle: not served: {} at {} {}: {}",
-            route.operation,
-            route.method.as_str().to_uppercase(),
-            route.path,
-            route
-                .unserved()
-                .map(ToString::to_string)
-                .unwrap_or_default()
-        );
+    for line in unserved.iter().filter_map(|route| route.not_served()) {
+        eprintln!("b10x-spindle: {line}");
     }
     for route in surface.routes() {
         for (outcome, why) in route.refused() {
@@ -395,7 +391,7 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             );
         }
     }
-    let listener = Listener::bind_reading(serving.port, surface, host.reader())
+    let listener = Listener::bind_reading_on(serving.address, serving.port, surface, host.reader())
         .context("binding the HTTP listener")?;
     let worlds = |ir: &EssIr, body: &serde_json::Value| {
         crate::world::read(ir, body, |table| {
