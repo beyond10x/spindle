@@ -25,9 +25,11 @@ use spindle_timer::{BindingName, Clock, CompleteError, Instant, LifetimeError, T
 use crate::admission::{Placements, Refusal, admit};
 
 mod component;
+mod range;
 mod reader;
 mod rows;
 
+pub use range::{Cursor, Page};
 pub use reader::Reader;
 use rows::Counted;
 
@@ -273,6 +275,10 @@ pub enum HostError {
     /// [`Host::reset_to`] refused a world before it changed anything.
     #[error("the world was refused: {0}")]
     World(String),
+    /// A cursor names a component this host does not run ([`Host::published_after`]):
+    /// one another run answered. Nothing was read.
+    #[error("{0}")]
+    Cursor(String),
     /// One call delivered [`DELIVERY_LIMIT`] envelopes and more were still in flight; those
     /// were discarded, and nothing runs after them.
     /// What the call ran before it stopped is committed; the commands it reported as not
@@ -546,6 +552,9 @@ pub struct Host {
     /// each component's store committed merge back into the order published by it
     /// ([`Host::published`]). The host keeps no list of the events itself.
     sequence: u64,
+    /// This run of the host, drawn at random when it opens: a [`Cursor`] marks the stores of the
+    /// run it was taken in ([`Host::published_after`]).
+    run: u64,
     /// Every event a store appended since the host started, by the command whose write carried it
     /// and the event: a reset keeps the counts, as it keeps the counters.
     emitted: Arc<Mutex<BTreeMap<(String, String), u64>>>,
@@ -930,6 +939,7 @@ impl Host {
             periodic,
             remote: None,
             sequence: 0,
+            run: Uuid::new_v4().as_u64_pair().0.max(1),
             emitted: Arc::default(),
             decider: decider.unwrap_or_else(|| Box::new(NoExternals)),
             answers: None,
@@ -1020,6 +1030,28 @@ impl Host {
         Ok(merged(committed))
     }
 
+    /// The events published after `after`, at most `limit`, in the order [`Host::published`]
+    /// lists them, and the cursor after the last of them ([`Page`]); with `after` at the end,
+    /// none and the same cursor. Each component's store is read only after the position the
+    /// cursor marks for it ([`Store::events_after`]), so a read with the cursor at the end reads
+    /// no event, however many the stores hold. Where a store was replaced since the cursor was
+    /// taken, by a reset or because the host was opened again, it is read from its start once.
+    ///
+    /// # Errors
+    /// [`HostError::Cursor`] where `after` names a component this host does not run, and
+    /// [`HostError::Store`] where a store cannot be read.
+    pub fn published_after(&mut self, after: &Cursor, limit: usize) -> Result<Page, HostError> {
+        let stores = self
+            .components
+            .iter()
+            .map(|(name, component)| (name.clone(), component.store.generation()))
+            .collect::<Vec<_>>();
+        let components = &mut self.components;
+        range::range(self.run, &stores, after, limit, |name, position| {
+            Ok(store_of(components, name)?.events_after(position)?)
+        })
+    }
+
     /// How many events each command appended since the host started, by command and event,
     /// counted where a component's store commits them, as its `event.<Event>.appended` counter
     /// is: a set outcome that publishes an event once per changed row counts each row's, and an
@@ -1057,6 +1089,7 @@ impl Host {
                     .collect(),
             ),
             emitted: Arc::clone(&self.emitted),
+            run: self.run,
         }
     }
 

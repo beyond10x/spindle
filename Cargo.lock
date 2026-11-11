@@ -2005,6 +2005,7 @@ dependencies = [
 name = "spindle-host"
 version = "0.13.0"
 dependencies = [
+ "base64",
  "ess-compiler",
  "ess-conformance",
  "ess-domain",

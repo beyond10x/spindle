@@ -112,7 +112,13 @@ pub enum Command {
     /// answers `{"rows": [...]}`. Beside those it serves a model console's routes: `GET
     /// /api/model` (`{"ir", "subjects"}`, the IR as `ess specify compile --format json` prints it
     /// and each outcome's subject), `GET /api/events` (`{"events": [...]}`, every event published
-    /// so far, in order) and `POST /api/reset` (empties every store, `{"emptied": [...]}`); a
+    /// so far, in order; with `?after=<cursor>&limit=<n>`, `{"events": [...], "next": <cursor>}`,
+    /// at most `n` events after the cursor in that order and the cursor after the last of them,
+    /// either parameter optional: no `after` reads from the first event, `limit` is 100 by
+    /// default and 1,000 at most, a larger one answered with 1,000, and a malformed `after` or
+    /// `limit` refused `400`; the cursor is opaque, still resumes after a restart or a reset, and
+    /// with it at the end the answer is no event and the same cursor) and `POST /api/reset`
+    /// (empties every store, `{"emptied": [...]}`); a
     /// route the binding or ESS publishes at one of those paths exits 1 before listening.
     /// Commands and the reset run one at a time, in arrival order. Reads are answered beside
     /// them, each on a thread of its own, from the state the last finished command left: a view,

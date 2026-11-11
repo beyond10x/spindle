@@ -33,6 +33,8 @@ mod concurrent_reads;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod console;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod events_range;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod frame;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod generated;

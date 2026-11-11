@@ -25,7 +25,7 @@ use spindle_host::{Failed, Host, Reader};
 
 use crate::answer::Answer;
 use crate::console::{Console, Worlds};
-use crate::observe::{Answered, By, Note, Reserved};
+use crate::observe::{Answered, By, Note, Reserved, Target};
 use crate::router::{Asked, BODY_LIMIT, Pending, Response as Reply};
 use crate::surface::{Caller, Route, Surface};
 
@@ -350,9 +350,19 @@ async fn handle(
     let started = Instant::now();
     let method = request.method().as_str().to_owned();
     let path = request.uri().path().to_owned();
+    // The query string as the routes read it: without the token a guarded listener reads.
+    let query = request.uri().query().unwrap_or_default();
+    let query = match &served.guard {
+        Some(guard) => guard.strip(query),
+        None => query.to_owned(),
+    };
     let (reply, note) = answer(&served, request).await;
     if let Some(note) = note {
-        recorder.record(at, started.elapsed(), &method, &path, &reply, note);
+        let target = Target {
+            path: &path,
+            query: &query,
+        };
+        recorder.record(at, started.elapsed(), &method, target, &reply, note);
     }
     Ok(replied(reply))
 }
