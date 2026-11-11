@@ -30,7 +30,9 @@ are Spindle's releases.
   instance, up to 1,000 instances and about 32 MiB of rows to one `read_many` call of eventlog,
   each a bounded read that takes no lock, so a transaction
   left open elsewhere on the server never delays it, another process's commits on the same tables
-  never wait for it, and it holds the entity's rows in memory, not the log. The new `b10x-spindle store migrate <spec>
+  never wait for it, and it holds the entity's rows in memory, not the log. The rows the host
+  counts when the store opens (`Store::counts`, for `spindle_entity_rows`) are read from each
+  entity's own stream alone, no row read. The new `b10x-spindle store migrate <spec>
   --environment <env>` creates every postgres-bound component's tables with the owner role,
   idempotent (a second one started meanwhile waits for the first), one JSON line per component.
   The example environment is `examples/environments/postgres.toml`. `task check:postgres` runs the
@@ -80,6 +82,69 @@ are Spindle's releases.
   that name no instances (0.10.0's, which name none, and those before 0.7.0, which record no
   entity version) is scanned whole when its stream `spindle:log` `unnamed-writes` exists, or
   when the entity's stream holds such a write.
+
+## [0.12.1] - 2026-11-11
+
+### Fixed
+
+- `GET /__spindle/metrics` no longer scans any store, and requests are no longer held behind it
+  (`story:metrics-read-without-scan`). Since 0.10.0 every read counted `spindle_entity_rows` by
+  scanning each entity's store, and a scan of a SQLite store reads its whole log, so one read
+  cost the log once per entity, on the host's thread, while every request waited. A downstream
+  consumer measured 42 s per read (504 commands, 125 entities, a few thousand rows) and its
+  readiness probe timed out during each. The host now keeps each entity's rows: counted once when
+  a store opens (one read of a SQLite store's log for all its entities, `Store::counts`), then
+  moved by each write that lands, so the gauge answers what it did, a reset included, without a
+  read. The kept counts see only the writes this process lands: one Spindle process writes a state
+  directory, and a second writer on the same store (another process on the same SQLite files)
+  moves rows the gauge shows only once the store is next opened. The gauge's `# HELP` line now
+  says so ("kept from the writes this process lands and taken once from its store when the store
+  opens"), the one line of the exposition whose bytes change. A family's series are found by an
+  index instead of a search of every series, and each sample's labels are escaped once; every
+  other byte of the exposition is as before. The regression test (500
+  commands, 100 entities, 5,000 events on SQLite, a debug build on a heavily loaded machine)
+  measured a read at 41.7 s to 56.3 s and a command sent during it at 53.4 s to 57.0 s before;
+  after, five reads took 31 ms to 45 ms and the commands 40 ms to 73 ms. The read still runs on
+  the host's thread, so a request that arrives during it waits for it, now for milliseconds.
+
+## [0.12.0] - 2026-11-11
+
+### Changed
+
+- ESS 0.92.0: every ESS crate, `schema-contract` included, and CI's `ess` CLI move to tag 0.92.0; the
+  specification requires ess 0.92 and the generated output is restamped. A specification in format
+  `ess/34`, `ess/35` or `ess/36` is admitted, served over HTTP and conformed unchanged; before,
+  `ess/36` was refused whole as `unsupported_format_version`. A format newer than `ess/36` is still
+  refused whole, as ESS 0.92.0 refuses it.
+
+## [0.11.0] - 2026-11-11
+
+### Added
+
+- `run` serving HTTP proves each request's caller with `--trusted-caller-header <name>`: a proxy
+  in front of the ingress authenticates the request and sets that header to one JSON object,
+  `{"actor": "<qualified actor>", "caller": {"<attribute>": <value>}}`, bound against the model as
+  `--fixed-caller` is. The proxy is trusted by a shared secret: `--trusted-caller-secret <file>`
+  is required with the header option (exit 1 without it, or for a file that cannot be read or is
+  empty), and the proxy sends the secret on every request in the header `Spindle-Proxy-Secret`. A
+  command that reads its caller then runs for that caller instead of answering `501`, and a
+  read-granted view is read as it. A request for a command or view without the caller header,
+  with it twice, with a value that names a member twice or proves no caller of the model, or
+  without the right secret is refused `403` `{"refused": "not granted", "actor": null}` and writes
+  nothing; no default caller is taken, and neither header's value nor the secret is ever printed.
+  On such a run the console routes (`/api/*`) and `/__spindle/*` require the secret alone and are
+  refused the same way without it. The ingress must be
+  reachable only through that proxy, which must remove both headers from client requests. With
+  `--fixed-actor` the run exits 1 (design § 11, `architecture-decision-record:http-caller-proof`).
+
+- An event binding with a payload condition (`when: {event: X, where: …}`, ess/22) runs: the
+  channel no longer refuses it at start ("a `where` condition is not supported by the channel").
+  The condition is decided on each event's payload before the input is mapped, by ESS's own
+  evaluator, as ESS 0.90.0's interpreter decides it: true invokes the command, false invokes
+  nothing and reports nothing as failed, and a condition that reads an absent or `null` Optional
+  field is unknown, invokes nothing and is reported as unmet binding input, with zero attempts,
+  while the event's other bindings still run (`spindle_channel::Route::holds`,
+  `MappingError::Undecided`).
 
 ## [0.10.0] - 2026-11-10
 

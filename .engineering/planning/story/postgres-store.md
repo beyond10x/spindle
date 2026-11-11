@@ -16,6 +16,8 @@ scope:
   path: Taskfile.yml
 - confidence: cited
   path: crates/spindle-capability/src/environment.rs
+- confidence: inferred
+  path: crates/spindle-cli/src/cli.rs
 - confidence: cited
   path: crates/spindle-cli/src/main.rs
 - confidence: cited
@@ -30,7 +32,7 @@ scope:
   path: crates/spindle-kernel/src/sqlite.rs
 - confidence: inferred
   path: examples/environments/postgres.toml
-revision: 8
+revision: 10
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-10T15:08:56Z", actor: "human:timo", revision: 6}
 - {from: "proposed", to: "active", at: "2026-11-10T15:08:57Z", actor: "human:timo", revision: 7}
@@ -120,9 +122,11 @@ Settings are read as Spindle reads every setting (`SPINDLE_SETTING_<NAME>`):
   isolated mode, for tests and a local database.
 - `database_schema`: the owner schema, default `public`.
 - `database_pool`: connections per component store, default 4.
-- `database_connections`: the connection budget the serving role may use; `run` refuses to start
-  when components × `database_pool` + 1 exceeds it (eventlog `open`, one reserved connection,
-  replicas 1 per process).
+- `database_connections`: the database's connection budget available to this deployment; `run`
+  refuses to start when components × `database_pool` + 1 exceeds it (eventlog `open`, one reserved
+  connection, replicas 1 per process). It is not the serving role's CONNECTION LIMIT: eventlog
+  requires that limit between 1 and components × `database_pool`
+  (review-result:w19-u1-adversary-1, finding 3).
 - The table prefix is not a setting: `spindle_<component>`, made to pass eventlog's prefix rule.
 
 `b10x-spindle store migrate <spec> --environment <env>` creates every component's tables with
@@ -132,7 +136,9 @@ role's rights eventlog requires.
 
 A downstream deployment checked this against its database on 2026-11-10: Aurora PostgreSQL 17.10,
 an owner role and a serving role, serving connection limit 8, one component, one replica, one URL
-per role composed by its chart. Pool 4 plus 1 reserved fits.
+per role composed by its chart. With one component and pool 4, eventlog admits a serving
+CONNECTION LIMIT of 1 to 4 and a `database_connections` of at least 5; a limit of 8 needs pool 8
+and a budget of 9 (review-result:w19-u1-adversary-1, finding 3).
 
 ## Acceptance added
 

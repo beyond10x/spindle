@@ -247,7 +247,8 @@ impl ExternalAnswer {
     }
 }
 
-/// One event binding whose input the event did not fill, so its command was not invoked
+/// One event binding whose input the event did not fill, or whose payload condition decided
+/// Unknown, so its command was not invoked
 /// (`spindle.observe.UnmetInput`, `docs/design/spindle.md` § 11, unmet binding input).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct UnmetInput {

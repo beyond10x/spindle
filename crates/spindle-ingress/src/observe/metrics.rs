@@ -5,7 +5,9 @@
 //! Read when scraped, on the host's thread: the request and external cause families from the
 //! [`Recorder`] (the external causes as the run's decider noted them, [`Recorder::answered`]), the
 //! command, event, binding, timer and store families from the [`Counters`] the host holds per
-//! component ([`Host::counters`]), and the rows each entity holds from its store ([`Host::rows`]).
+//! component ([`Host::counters`]), and the rows each entity holds as the host keeps them from its
+//! store's writes ([`Host::rows`]), so a scrape reads no store and holds the host's thread only
+//! while it writes the series.
 //! A reset empties the stores and leaves every count, so every counter stays monotonic; only
 //! `spindle_entity_rows` falls. A scrape counts nothing and is not recorded.
 //!
@@ -13,7 +15,8 @@
 //! The request histogram also has `_sum` and `_count`; a command's has its buckets only, since its
 //! counters keep no sum, and its `+Inf` bucket is its count.
 
-use std::collections::BTreeMap;
+use std::collections::hash_map::Entry;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
 
 use spindle_host::{Host, HostError};
@@ -117,7 +120,8 @@ pub(crate) const FAMILIES: [Family; 14] = [
         name: "spindle_entity_rows",
         kind: "gauge",
         labels: &["entity"],
-        summary: "Rows each entity holds now, read from its store when scraped; falls on a reset.",
+        summary: "Rows each entity holds now, kept from the writes this process lands and taken \
+                  once from its store when the store opens; falls on a reset.",
     },
     Family {
         name: "spindle_resets_total",
@@ -172,97 +176,144 @@ impl Value {
     }
 }
 
+/// The series of one family, each once, in the order first seen, each under its labels as the
+/// text writes them ([`pairs`]) and found by them through an index, not a search of every
+/// series. The escaping is one-to-one, so two series share the text only where they share every
+/// label value.
+#[derive(Debug, Default)]
+struct Series {
+    held: Vec<(String, Value)>,
+    /// Where in `held` the series with each label text is.
+    at: HashMap<String, usize>,
+}
+
 /// The samples of every family, each series once, in the order first seen.
 #[derive(Debug, Default)]
 struct Samples {
-    families: BTreeMap<&'static str, Vec<(Vec<String>, Value)>>,
+    families: BTreeMap<&'static str, Series>,
 }
 
 impl Samples {
-    /// Adds `value` to the series of `family` with the label values `labels`.
-    fn add(&mut self, family: &'static str, labels: Vec<String>, value: Value) {
+    /// Adds `value` to the series of `family` with the label values `values`, one per label of the
+    /// family in its order.
+    fn add(&mut self, family: &'static str, values: &[impl AsRef<str>], value: Value) {
+        let names = FAMILIES
+            .iter()
+            .find(|declared| declared.name == family)
+            .map_or(&[][..], |declared| declared.labels);
+        let labels = pairs(names, values);
         let series = self.families.entry(family).or_default();
-        match series.iter_mut().find(|(held, _)| *held == labels) {
-            Some((_, held)) => held.add(value),
-            None => series.push((labels, value)),
+        let next = series.held.len();
+        match series.at.entry(labels) {
+            Entry::Occupied(at) => series.held[*at.get()].1.add(value),
+            Entry::Vacant(vacant) => {
+                series.held.push((vacant.key().clone(), value));
+                vacant.insert(next);
+            }
         }
     }
 
     /// The exposition: each family of [`FAMILIES`] in order, its `# HELP` and `# TYPE`, then its
-    /// samples.
+    /// samples, each bucket bound written once.
     fn text(&self) -> String {
+        let bounds = DURATION_BOUNDS_US
+            .iter()
+            .map(|bound| seconds(*bound))
+            .collect::<Vec<_>>();
         let mut text = String::new();
         for family in FAMILIES {
             let _ = writeln!(text, "# HELP {} {}", family.name, help(family.summary));
             let _ = writeln!(text, "# TYPE {} {}", family.name, family.kind);
-            for (values, value) in self.families.get(family.name).into_iter().flatten() {
-                let labels = family
-                    .labels
-                    .iter()
-                    .zip(values)
-                    .map(|(label, value)| (*label, value.as_str()))
-                    .collect::<Vec<_>>();
-                write_sample(&mut text, family.name, &labels, value);
+            let held = self.families.get(family.name).map(|series| &series.held);
+            for (labels, value) in held.into_iter().flatten() {
+                write_sample(&mut text, family.name, labels, value, &bounds);
             }
         }
         text
     }
 }
 
-/// Writes the lines of one sample of the family `name`.
-fn write_sample(text: &mut String, name: &str, labels: &[(&str, &str)], value: &Value) {
+/// Writes the lines of one sample of the family `name`: `labels` its label pairs as
+/// [`pairs`] writes them, `bounds` each bucket's bound in seconds, the last bucket's `+Inf`.
+fn write_sample(text: &mut String, name: &str, labels: &str, value: &Value, bounds: &[String]) {
     match value {
         Value::Number(value) => {
-            let _ = writeln!(text, "{name}{} {value}", series(labels, None));
+            text.push_str(name);
+            braced(text, labels, None);
+            let _ = writeln!(text, " {value}");
         }
         Value::Buckets { counts, sum_us } => {
             let mut cumulative = 0u64;
             for (index, count) in counts.iter().enumerate() {
                 cumulative = cumulative.saturating_add(*count);
-                let bound = DURATION_BOUNDS_US
-                    .get(index)
-                    .map_or_else(|| "+Inf".to_owned(), |bound| seconds(*bound));
-                let _ = writeln!(
-                    text,
-                    "{name}_bucket{} {cumulative}",
-                    series(labels, Some(&bound))
-                );
+                let bound = bounds.get(index).map_or("+Inf", String::as_str);
+                text.push_str(name);
+                text.push_str("_bucket");
+                braced(text, labels, Some(bound));
+                let _ = writeln!(text, " {cumulative}");
             }
             if let Some(sum_us) = sum_us {
-                let _ = writeln!(
-                    text,
-                    "{name}_sum{} {}",
-                    series(labels, None),
-                    seconds(*sum_us)
-                );
+                text.push_str(name);
+                text.push_str("_sum");
+                braced(text, labels, None);
+                let _ = writeln!(text, " {}", seconds(*sum_us));
             }
-            let _ = writeln!(text, "{name}_count{} {cumulative}", series(labels, None));
+            text.push_str(name);
+            text.push_str("_count");
+            braced(text, labels, None);
+            let _ = writeln!(text, " {cumulative}");
         }
     }
 }
 
-/// `{label="value",...}`, `le` last where given; empty without any label.
-fn series(labels: &[(&str, &str)], le: Option<&str>) -> String {
-    let mut pairs = labels
-        .iter()
-        .map(|(label, value)| format!("{label}=\"{}\"", escaped(value)))
-        .collect::<Vec<_>>();
-    if let Some(le) = le {
-        pairs.push(format!("le=\"{le}\""));
+/// `label="value",...`, each label of `labels` with its value of `values`, escaped
+/// ([`escape`]); empty without any label.
+fn pairs(labels: &[&str], values: &[impl AsRef<str>]) -> String {
+    let mut text = String::with_capacity(64);
+    for (index, (label, value)) in labels.iter().zip(values).enumerate() {
+        if index > 0 {
+            text.push(',');
+        }
+        text.push_str(label);
+        text.push_str("=\"");
+        escape(&mut text, value.as_ref());
+        text.push('"');
     }
-    if pairs.is_empty() {
-        String::new()
-    } else {
-        format!("{{{}}}", pairs.join(","))
-    }
+    text
 }
 
-/// A label value as the text format writes it: `\`, `"` and a line feed escaped.
-fn escaped(value: &str) -> String {
-    value
-        .replace('\\', r"\\")
-        .replace('"', "\\\"")
-        .replace('\n', r"\n")
+/// Writes `{<labels>}`, with `le` last where given; nothing without a label or `le`.
+fn braced(text: &mut String, labels: &str, le: Option<&str>) {
+    if labels.is_empty() && le.is_none() {
+        return;
+    }
+    text.push('{');
+    text.push_str(labels);
+    if let Some(le) = le {
+        if !labels.is_empty() {
+            text.push(',');
+        }
+        text.push_str("le=\"");
+        text.push_str(le);
+        text.push('"');
+    }
+    text.push('}');
+}
+
+/// Writes a label value as the text format writes it: `\`, `"` and a line feed escaped.
+fn escape(text: &mut String, value: &str) {
+    if !(value.contains('\\') || value.contains('"') || value.contains('\n')) {
+        text.push_str(value);
+        return;
+    }
+    for character in value.chars() {
+        match character {
+            '\\' => text.push_str(r"\\"),
+            '"' => text.push_str("\\\""),
+            '\n' => text.push_str(r"\n"),
+            other => text.push(other),
+        }
+    }
 }
 
 /// A `# HELP` text as the text format writes it: `\` and a line feed escaped.
@@ -283,7 +334,8 @@ pub(crate) fn seconds(micros: u64) -> String {
 }
 
 /// The metrics of the run `host` runs, the requests `recorder` counted, as the text exposition;
-/// the reason they could not be read otherwise, such as a store that cannot be scanned.
+/// the reason they could not be read otherwise: a store whose rows had to be counted and could not
+/// be read, as one a failed reset lost ([`Host::rows`]).
 pub(crate) fn exposition(recorder: &Recorder, host: &mut Host) -> Result<String, HostError> {
     let mut samples = Samples::default();
     let Traffic {
@@ -294,15 +346,11 @@ pub(crate) fn exposition(recorder: &Recorder, host: &mut Host) -> Result<String,
         externals,
     } = recorder.traffic();
     for (labels, count) in requests {
-        samples.add(
-            "spindle_http_requests_total",
-            labels.to_vec(),
-            Value::Number(count),
-        );
+        samples.add("spindle_http_requests_total", &labels, Value::Number(count));
     }
     samples.add(
         "spindle_http_request_duration_seconds",
-        Vec::new(),
+        &[] as &[&str],
         Value::Buckets {
             counts: durations,
             sum_us: Some(duration_sum_us),
@@ -317,15 +365,19 @@ pub(crate) fn exposition(recorder: &Recorder, host: &mut Host) -> Result<String,
     for (entity, rows) in host.rows()? {
         samples.add(
             "spindle_entity_rows",
-            vec![entity],
+            &[entity],
             Value::Number(u64::try_from(rows).unwrap_or(u64::MAX)),
         );
     }
-    samples.add("spindle_resets_total", Vec::new(), Value::Number(resets));
+    samples.add(
+        "spindle_resets_total",
+        &[] as &[&str],
+        Value::Number(resets),
+    );
     for (labels, count) in externals {
         samples.add(
             "spindle_external_causes_total",
-            labels.to_vec(),
+            &labels,
             Value::Number(count),
         );
     }
@@ -380,11 +432,7 @@ fn counted(samples: &mut Samples, component: &str, counters: &Counters) {
             Key::RowsWritten => ("spindle_store_rows_written_total", vec![component]),
             Key::BytesWritten => ("spindle_store_bytes_written_total", vec![component]),
         };
-        samples.add(
-            family,
-            labels.into_iter().map(str::to_owned).collect(),
-            value,
-        );
+        samples.add(family, &labels, value);
     }
 }
 
@@ -428,5 +476,176 @@ mod tests {
         assert_eq!(seconds(1_000_000), "1");
         assert_eq!(seconds(2_500_001), "2.500001");
         assert_eq!(seconds(0), "0");
+    }
+
+    /// The samples and their text as 0.11.0 wrote them, word for word: each series found by a
+    /// search of every series of its family, and each line's labels escaped again
+    /// (`story:metrics-read-without-scan`).
+    mod reference {
+        use std::fmt::Write as _;
+
+        use super::super::{DURATION_BOUNDS_US, FAMILIES, Value, help, seconds};
+
+        #[derive(Default)]
+        pub(super) struct Samples {
+            families: std::collections::BTreeMap<&'static str, Vec<(Vec<String>, Value)>>,
+        }
+
+        impl Samples {
+            pub(super) fn add(&mut self, family: &'static str, labels: Vec<String>, value: Value) {
+                let series = self.families.entry(family).or_default();
+                match series.iter_mut().find(|(held, _)| *held == labels) {
+                    Some((_, held)) => held.add(value),
+                    None => series.push((labels, value)),
+                }
+            }
+
+            pub(super) fn text(&self) -> String {
+                let mut text = String::new();
+                for family in FAMILIES {
+                    let _ = writeln!(text, "# HELP {} {}", family.name, help(family.summary));
+                    let _ = writeln!(text, "# TYPE {} {}", family.name, family.kind);
+                    for (values, value) in self.families.get(family.name).into_iter().flatten() {
+                        let labels = family
+                            .labels
+                            .iter()
+                            .zip(values)
+                            .map(|(label, value)| (*label, value.as_str()))
+                            .collect::<Vec<_>>();
+                        write_sample(&mut text, family.name, &labels, value);
+                    }
+                }
+                text
+            }
+        }
+
+        fn write_sample(text: &mut String, name: &str, labels: &[(&str, &str)], value: &Value) {
+            match value {
+                Value::Number(value) => {
+                    let _ = writeln!(text, "{name}{} {value}", series(labels, None));
+                }
+                Value::Buckets { counts, sum_us } => {
+                    let mut cumulative = 0u64;
+                    for (index, count) in counts.iter().enumerate() {
+                        cumulative = cumulative.saturating_add(*count);
+                        let bound = DURATION_BOUNDS_US
+                            .get(index)
+                            .map_or_else(|| "+Inf".to_owned(), |bound| seconds(*bound));
+                        let _ = writeln!(
+                            text,
+                            "{name}_bucket{} {cumulative}",
+                            series(labels, Some(&bound))
+                        );
+                    }
+                    if let Some(sum_us) = sum_us {
+                        let _ = writeln!(
+                            text,
+                            "{name}_sum{} {}",
+                            series(labels, None),
+                            seconds(*sum_us)
+                        );
+                    }
+                    let _ = writeln!(text, "{name}_count{} {cumulative}", series(labels, None));
+                }
+            }
+        }
+
+        fn series(labels: &[(&str, &str)], le: Option<&str>) -> String {
+            let mut pairs = labels
+                .iter()
+                .map(|(label, value)| format!("{label}=\"{}\"", escaped(value)))
+                .collect::<Vec<_>>();
+            if let Some(le) = le {
+                pairs.push(format!("le=\"{le}\""));
+            }
+            if pairs.is_empty() {
+                String::new()
+            } else {
+                format!("{{{}}}", pairs.join(","))
+            }
+        }
+
+        fn escaped(value: &str) -> String {
+            value
+                .replace('\\', r"\\")
+                .replace('"', "\\\"")
+                .replace('\n', r"\n")
+        }
+    }
+
+    #[test]
+    fn the_exposition_is_written_byte_for_byte_as_before() {
+        use super::{Samples, Value as Sample};
+
+        let buckets = |offset: u64, sum_us: Option<u64>| Sample::Buckets {
+            counts: (0..=12).map(|index| (index * 7 + offset) % 5).collect(),
+            sum_us,
+        };
+        let labelled = |values: &[&str]| values.iter().map(|value| (*value).to_owned()).collect();
+        let added: Vec<(&'static str, Vec<String>, Sample)> = vec![
+            (
+                "spindle_http_requests_total",
+                labelled(&["GET", "/a/{b}", "x.y.Z", "view", "served", "2xx"]),
+                Sample::Number(3),
+            ),
+            (
+                "spindle_http_request_duration_seconds",
+                Vec::new(),
+                buckets(1, Some(2_500_001)),
+            ),
+            (
+                "spindle_commands_total",
+                labelled(&["x.y.Open", "opened"]),
+                Sample::Number(1),
+            ),
+            (
+                "spindle_commands_total",
+                labelled(&["x.y.Take", "a \"quoted\" \\ back\nline"]),
+                Sample::Number(4),
+            ),
+            (
+                "spindle_commands_total",
+                labelled(&["x.y.Open", "opened"]),
+                Sample::Number(6),
+            ),
+            (
+                "spindle_command_duration_seconds",
+                labelled(&["x.y.Open"]),
+                buckets(2, None),
+            ),
+            (
+                "spindle_command_duration_seconds",
+                labelled(&["x.y.Take"]),
+                buckets(3, Some(10)),
+            ),
+            (
+                "spindle_command_duration_seconds",
+                labelled(&["x.y.Open"]),
+                buckets(4, None),
+            ),
+            (
+                "spindle_entity_rows",
+                labelled(&["x.y.Desk"]),
+                Sample::Number(0),
+            ),
+            ("spindle_resets_total", Vec::new(), Sample::Number(2)),
+            ("spindle_resets_total", Vec::new(), Sample::Number(5)),
+        ];
+        let mut samples = Samples::default();
+        let mut before = reference::Samples::default();
+        for (family, labels, value) in added {
+            samples.add(family, &labels, value.clone());
+            before.add(family, labels, value);
+        }
+        let text = samples.text();
+        assert_eq!(text, before.text());
+        assert!(
+            text.contains(r#"spindle_commands_total{command="x.y.Open",outcome="opened"} 7"#),
+            "{text}"
+        );
+        assert!(
+            text.contains(r#"outcome="a \"quoted\" \\ back\nline"} 4"#),
+            "{text}"
+        );
     }
 }

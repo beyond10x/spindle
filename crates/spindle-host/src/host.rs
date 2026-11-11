@@ -25,6 +25,9 @@ use spindle_timer::{BindingName, Clock, CompleteError, Instant, LifetimeError, T
 use crate::admission::{Placements, Refusal, admit};
 
 mod component;
+mod rows;
+
+use rows::Counted;
 
 /// The channel implementation this host carries bindings on.
 const IN_PROCESS: &str = "in-process";
@@ -399,6 +402,10 @@ impl Store for Tallied<'_> {
         self.store.scan(entity)
     }
 
+    fn counts(&mut self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
+        self.store.counts(entities)
+    }
+
     fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
         self.store.commit(change)?;
         self.tally(&change.events);
@@ -448,10 +455,15 @@ impl Store for Supplied {
     fn scan(&mut self, entity: &str) -> Result<spindle_kernel::Scan, StoreError> {
         self.0.scan(entity)
     }
+
+    fn counts(&mut self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
+        self.0.counts(entities)
+    }
 }
 
 struct Component {
-    store: Box<dyn Store>,
+    /// The store, with the rows each entity the component owns holds.
+    store: Counted,
     /// Where the store keeps its state.
     kept: Kept,
     sender: Sender,
@@ -773,6 +785,7 @@ impl Host {
                     },
                 };
             let sender = Sender::new(name, router.clone())?.with_telemetry(sink.clone());
+            let store = Counted::new(store, owned(&ir, name));
             components.insert(
                 name.clone(),
                 Component {
@@ -1045,9 +1058,10 @@ impl Host {
         let mut emptied = Vec::new();
         for (name, component) in &mut self.components {
             if matches!(component.kept, Kept::Supplied) {
-                if let Err(error) = removed_all(&self.ir, component.store.as_mut()) {
-                    component.store =
-                        Box::new(Lost(format!("{name}'s store was lost in a reset: {error}")));
+                if let Err(error) = removed_all(&self.ir, &mut component.store) {
+                    component.store.replace(Box::new(Lost(format!(
+                        "{name}'s store was lost in a reset: {error}"
+                    ))));
                     return Err(HostError::Reset {
                         component: name.clone(),
                         error,
@@ -1056,25 +1070,26 @@ impl Host {
                 }
             } else if let Kept::File(file) = &component.kept {
                 let file = file.clone();
-                let closed = std::mem::replace(
-                    &mut component.store,
-                    Box::new(Lost(format!("{name}'s store is being reset"))),
-                );
+                let closed = component
+                    .store
+                    .replace(Box::new(Lost(format!("{name}'s store is being reset"))));
                 drop(closed);
                 match emptied_file(&file, &component.sink) {
-                    Ok(store) => component.store = store,
+                    Ok(store) => {
+                        component.store.replace(store);
+                    }
                     Err(error) => {
                         let restored = match opened(Some(&file), &component.sink) {
                             Ok(store) => {
-                                component.store = store;
+                                component.store.replace(store);
                                 true
                             }
                             Err(again) => {
-                                component.store = Box::new(Lost(format!(
+                                component.store.replace(Box::new(Lost(format!(
                                     "{name}'s store was lost in a reset: {error}; reopening {} \
                                      failed: {again}",
                                     file.display()
-                                )));
+                                ))));
                                 false
                             }
                         };
@@ -1086,7 +1101,7 @@ impl Host {
                     }
                 }
             } else {
-                component.store = opened(None, &component.sink)?;
+                component.store.replace(opened(None, &component.sink)?);
             }
             emptied.push(name.clone());
         }
@@ -1107,12 +1122,22 @@ impl Host {
             .map(|component| component.counters.as_ref())
     }
 
-    /// The rows each entity holds now, by entity name in the IR's order, each read by scanning
-    /// the store of the component that owns its domain; an entity no component here owns is left
-    /// out. A reset leaves the counters as they are and empties these.
+    /// The rows each entity holds now, by entity name in the IR's order, as the store of the
+    /// component that owns its domain holds them; an entity no component here owns is left out.
+    /// A reset leaves the counters as they are and empties these.
+    ///
+    /// They are kept, not read: each store's rows are counted once when it is opened (one read of
+    /// a SQLite store's feed), then moved by each write that lands, so reading them reads no store
+    /// ([`Store::counts`]). Only where that count failed are they counted again when read.
+    ///
+    /// They see only the writes this host lands: a store has one writer, as a state directory has
+    /// one Spindle process. A second writer on the same store, another host on the same SQLite
+    /// files or on a shared supplied store, moves its rows without moving these, until the store is
+    /// next opened.
     ///
     /// # Errors
-    /// [`HostError::Store`] when a store cannot be scanned.
+    /// [`HostError::Store`] when the rows had to be counted and a store could not be read, as a
+    /// store a failed reset lost cannot.
     pub fn rows(&mut self) -> Result<Vec<(String, usize)>, HostError> {
         let ir = Arc::clone(&self.ir);
         let mut rows = Vec::new();
@@ -1126,7 +1151,12 @@ impl Host {
                 continue;
             };
             let name = entity.name.to_string();
-            let held = component.store.scan(&name)?.rows.len();
+            let held = component
+                .store
+                .rows()?
+                .get(&name)
+                .copied()
+                .unwrap_or_default();
             rows.push((name, held));
         }
         Ok(rows)
@@ -1442,7 +1472,7 @@ impl Host {
         let started = Instant::now();
         let clock = &self.clock;
         let mut tallied = Tallied {
-            store: held.store.as_mut(),
+            store: &mut held.store,
             appended: Vec::new(),
         };
         let result = spindle_kernel::execute_refusing(
@@ -1879,6 +1909,23 @@ fn read_instant(
         .and_then(|_| crate::view::instant(clock.wall()))
 }
 
+/// The entities whose domain the component `name` owns, by qualified name: those whose rows its
+/// store counts.
+fn owned(ir: &EssIr, name: &str) -> Vec<String> {
+    let Some(component) = ir
+        .components()
+        .values()
+        .find(|component| component.name.as_str() == name)
+    else {
+        return Vec::new();
+    };
+    ir.entities()
+        .values()
+        .filter(|entity| component.owns.contains(&entity.domain))
+        .map(|entity| entity.name.to_string())
+        .collect()
+}
+
 /// The store of the running component `owner`.
 fn store_of<'a>(
     components: &'a mut BTreeMap<String, Component>,
@@ -1886,6 +1933,6 @@ fn store_of<'a>(
 ) -> Result<&'a mut dyn Store, HostError> {
     components
         .get_mut(owner)
-        .map(|component| component.store.as_mut() as &mut dyn Store)
+        .map(|component| &mut component.store as &mut dyn Store)
         .ok_or_else(|| HostError::Unsupported(format!("{owner} is not running")))
 }

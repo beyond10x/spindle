@@ -1,0 +1,129 @@
+{
+  "tasks": [
+    {
+      "id": "install",
+      "question": "Find the install command",
+      "start": "",
+      "words": [
+        "install",
+        "get started",
+        "getting started",
+        "build"
+      ],
+      "truth": {
+        "path": "docs/getting-started",
+        "anchor": "#build",
+        "text": "cargo build --locked --release -p spindle-cli"
+      }
+    },
+    {
+      "id": "http",
+      "question": "Find how to run a specification over HTTP",
+      "start": "",
+      "words": [
+        "HTTP",
+        "serve",
+        "ingress",
+        "run"
+      ],
+      "truth": {
+        "path": "docs/concepts/capabilities",
+        "anchor": "#serving-ingressnetwork-over-http",
+        "text": "over HTTP on"
+      }
+    },
+    {
+      "id": "observe",
+      "question": "Find what run --observe serves",
+      "start": "docs/examples/rally",
+      "words": [
+        "--observe",
+        "observe",
+        "run"
+      ],
+      "truth": {
+        "path": "docs/reference/cli",
+        "anchor": "#run",
+        "text": "Record every request the listener answers outside"
+      }
+    },
+    {
+      "id": "release",
+      "question": "Find the release and version status",
+      "start": "",
+      "words": [
+        "release",
+        "version",
+        "changelog",
+        "status"
+      ],
+      "truth": {
+        "path": null,
+        "href": "https://github.com/beyond10x/spindle/blob/main/CHANGELOG.md",
+        "anchor": "CHANGELOG.md, the releases (0.9.0 on 2026-11-10)",
+        "text": "CHANGELOG.md"
+      }
+    },
+    {
+      "id": "environment",
+      "question": "Find what an environment document is",
+      "start": "",
+      "words": [
+        "environment document",
+        "environment",
+        "admission"
+      ],
+      "truth": {
+        "path": "docs/concepts/environment-and-admission",
+        "anchor": "#the-environment",
+        "text": "An environment document"
+      }
+    },
+    {
+      "id": "http-call",
+      "question": "Find how to answer an external cause with an outbound HTTP call",
+      "start": "",
+      "words": [
+        "HTTP call",
+        "external",
+        "HTTP",
+        "environment"
+      ],
+      "truth": {
+        "path": "docs/concepts/environment-and-admission",
+        "anchor": "#an-external-cause-bound-to-an-http-call",
+        "text": "An environment may declare HTTP calls"
+      }
+    },
+    {
+      "id": "topology",
+      "question": "Find what the topology of an observed run answers",
+      "start": "docs/concepts/observe",
+      "words": [
+        "topology",
+        "--observe",
+        "observe"
+      ],
+      "truth": {
+        "path": "docs/reference/cli",
+        "anchor": "#run",
+        "text": "graph derived from the specification"
+      }
+    },
+    {
+      "id": "request-log-size",
+      "question": "Find how many request records an observed run keeps, and how to change it",
+      "start": "docs/getting-started",
+      "words": [
+        "request records",
+        "--observe-requests",
+        "observe"
+      ],
+      "truth": {
+        "path": "docs/reference/cli",
+        "anchor": "#run--observe-requests",
+        "text": "How many request records"
+      }
+    }
+  ]
+}

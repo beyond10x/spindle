@@ -11,10 +11,20 @@ const sidebars: SidebarsConfig = {
       items: [
         'concepts/specification',
         'concepts/capabilities',
+        {
+          type: 'html',
+          value: '<a class="menu__link" href="/spindle/docs/concepts/capabilities#serving-ingressnetwork-over-http">Serving ingress.network over HTTP</a>',
+          defaultStyle: true,
+        },
         'concepts/environment-and-admission',
         'concepts/components-and-bindings',
         'concepts/deployment-targets',
         'concepts/observe',
+        {
+          type: 'html',
+          value: '<a class="menu__link" href="/spindle/docs/reference/cli#run--observe">run --observe</a>',
+          defaultStyle: true,
+        },
       ],
     },
     {

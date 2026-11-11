@@ -448,8 +448,8 @@ dependencies = [
 
 [[package]]
 name = "ess-compiler"
-version = "0.90.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.90.0#9a2468ef48e995f1e0f378297a8dc3df7d1a536d"
+version = "0.92.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.92.0#5c54de2902f8b3725d1c880f91038bd03b32a1b2"
 dependencies = [
  "ess-domain",
  "ess-primitives",
@@ -460,8 +460,8 @@ dependencies = [
 
 [[package]]
 name = "ess-conformance"
-version = "0.90.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.90.0#9a2468ef48e995f1e0f378297a8dc3df7d1a536d"
+version = "0.92.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.92.0#5c54de2902f8b3725d1c880f91038bd03b32a1b2"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -475,8 +475,8 @@ dependencies = [
 
 [[package]]
 name = "ess-domain"
-version = "0.90.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.90.0#9a2468ef48e995f1e0f378297a8dc3df7d1a536d"
+version = "0.92.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.92.0#5c54de2902f8b3725d1c880f91038bd03b32a1b2"
 dependencies = [
  "ess-primitives",
  "ess-yaml",
@@ -488,8 +488,8 @@ dependencies = [
 
 [[package]]
 name = "ess-gen"
-version = "0.90.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.90.0#9a2468ef48e995f1e0f378297a8dc3df7d1a536d"
+version = "0.92.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.92.0#5c54de2902f8b3725d1c880f91038bd03b32a1b2"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -505,8 +505,8 @@ dependencies = [
 
 [[package]]
 name = "ess-http"
-version = "0.90.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.90.0#9a2468ef48e995f1e0f378297a8dc3df7d1a536d"
+version = "0.92.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.92.0#5c54de2902f8b3725d1c880f91038bd03b32a1b2"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -519,8 +519,8 @@ dependencies = [
 
 [[package]]
 name = "ess-primitives"
-version = "0.90.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.90.0#9a2468ef48e995f1e0f378297a8dc3df7d1a536d"
+version = "0.92.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.92.0#5c54de2902f8b3725d1c880f91038bd03b32a1b2"
 dependencies = [
  "ess-yaml",
  "schemars",
@@ -531,8 +531,8 @@ dependencies = [
 
 [[package]]
 name = "ess-transport"
-version = "0.90.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.90.0#9a2468ef48e995f1e0f378297a8dc3df7d1a536d"
+version = "0.92.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.92.0#5c54de2902f8b3725d1c880f91038bd03b32a1b2"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -543,8 +543,8 @@ dependencies = [
 
 [[package]]
 name = "ess-yaml"
-version = "0.90.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.90.0#9a2468ef48e995f1e0f378297a8dc3df7d1a536d"
+version = "0.92.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.92.0#5c54de2902f8b3725d1c880f91038bd03b32a1b2"
 dependencies = [
  "serde",
  "serde_norway",
@@ -1668,8 +1668,8 @@ dependencies = [
 
 [[package]]
 name = "schema-contract"
-version = "0.90.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.90.0#9a2468ef48e995f1e0f378297a8dc3df7d1a536d"
+version = "0.92.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.92.0#5c54de2902f8b3725d1c880f91038bd03b32a1b2"
 dependencies = [
  "base64",
  "ess-gen",
@@ -1866,7 +1866,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-capability"
-version = "0.10.0"
+version = "0.12.1"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -1879,10 +1879,11 @@ dependencies = [
 
 [[package]]
 name = "spindle-channel"
-version = "0.10.0"
+version = "0.12.1"
 dependencies = [
  "ess-compiler",
  "ess-domain",
+ "ess-primitives",
  "serde",
  "serde_json",
  "spindle-kernel",
@@ -1894,7 +1895,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-cli"
-version = "0.10.0"
+version = "0.12.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1932,7 +1933,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-conformance"
-version = "0.10.0"
+version = "0.12.1"
 dependencies = [
  "ess-compiler",
  "ess-conformance",
@@ -1950,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-control"
-version = "0.10.0"
+version = "0.12.1"
 dependencies = [
  "ess-compiler",
  "http-body-util",
@@ -1975,7 +1976,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-docs"
-version = "0.10.0"
+version = "0.12.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1985,7 +1986,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-firecracker"
-version = "0.10.0"
+version = "0.12.1"
 dependencies = [
  "clap",
  "libc",
@@ -2002,7 +2003,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-host"
-version = "0.10.0"
+version = "0.12.1"
 dependencies = [
  "ess-compiler",
  "ess-conformance",
@@ -2023,7 +2024,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-ingress"
-version = "0.10.0"
+version = "0.12.1"
 dependencies = [
  "ess-compiler",
  "ess-conformance",
@@ -2046,7 +2047,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-kernel"
-version = "0.10.0"
+version = "0.12.1"
 dependencies = [
  "ess-compiler",
  "ess-conformance",
@@ -2081,7 +2082,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-qemu"
-version = "0.10.0"
+version = "0.12.1"
 dependencies = [
  "clap",
  "libc",
@@ -2098,7 +2099,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-spec"
-version = "0.10.0"
+version = "0.12.1"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -2110,7 +2111,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-store-browser"
-version = "0.10.0"
+version = "0.12.1"
 dependencies = [
  "js-sys",
  "serde",
@@ -2126,7 +2127,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-target"
-version = "0.10.0"
+version = "0.12.1"
 dependencies = [
  "ess-compiler",
  "rustix",
@@ -2141,7 +2142,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-telemetry"
-version = "0.10.0"
+version = "0.12.1"
 dependencies = [
  "ess-compiler",
  "libc",
@@ -2156,7 +2157,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-timer"
-version = "0.10.0"
+version = "0.12.1"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -2168,7 +2169,7 @@ dependencies = [
 
 [[package]]
 name = "spindle-wasm"
-version = "0.10.0"
+version = "0.12.1"
 dependencies = [
  "ess-compiler",
  "ess-gen",

@@ -156,7 +156,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Bindings",
         "Event bindings in process and over TCP",
-        "spindle-channel carries an event to the command it binds to, in process or as length-prefixed JSON frames over TCP; at_least_once redelivers.",
+        "spindle-channel carries an event to the command it binds to, in process or as length-prefixed JSON frames over TCP; the receiver acknowledges an at_least_once envelope, and no runtime path resends one whose acknowledgement is overdue.",
         "/docs/concepts/components-and-bindings",
         "crates/spindle-channel/tests/spindle-channel/channel.rs::an_event_reaches_the_bound_component_over_tcp",
     ),
@@ -348,6 +348,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "run --fixed-actor with --fixed-caller sends served commands as actors and callers fixed for the whole run, so a command that reads its caller is served: a test-backend switch, not authentication, opt-in only and printed on stderr at startup. The grant check still runs: a command the actor may not send answers 403 not granted and writes nothing. Given more than once, each command is sent as the first fixed actor its grant names.",
         "/docs/concepts/capabilities",
         "crates/spindle-cli/tests/spindle-cli/fixed_caller.rs::a_command_reading_the_caller_runs_with_the_fixed_caller",
+    ),
+    shipped(
+        "Execution",
+        "Caller proven by a trusted proxy header",
+        "run --trusted-caller-header reads each request's actor and caller attributes from one JSON header a proxy in front of the ingress sets once it has authenticated the request, so a command that reads its caller runs for that caller and a read-granted view is read as it. The proxy is trusted by a shared secret: --trusted-caller-secret names the file holding it, and the proxy presents it on every request in the Spindle-Proxy-Secret header. A request without a valid caller header or the right secret is refused 403 not granted naming no actor and writes nothing, and so is a console or /__spindle/ request without the secret; the secret is never printed. The ingress must be reachable only through the proxy, which must remove both headers from client requests.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-cli/tests/spindle-cli/trusted_caller.rs::a_command_reading_the_caller_runs_for_the_caller_the_request_proves",
     ),
     shipped(
         "Conformance",

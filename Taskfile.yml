@@ -138,6 +138,37 @@ tasks:
       - npm ci --allow-git=root
       - npm run build
 
+  ux:docs:
+    desc: The documentation site's UX fast loop, hermetic and without keys - the site built, website/ux's unit and findings tests, the layout contract and the screen-only reader at the gating viewports in both themes, then the ratchet against website/ux/baseline.json (Playwright's Chromium must be installed)
+    dir: website/ux
+    cmds:
+      - task: website
+      - npm ci
+      - npm test
+      - npm run typecheck
+      - npx playwright test -c playwright.config.ts --project=gating
+      - node cli/round.ts measure
+      - node cli/ratchet.ts
+
+  ux:docs:baseline:
+    desc: Take the last ux:docs measurement into website/ux/baseline.json; a worse value needs DECISION=<id>
+    dir: website/ux
+    cmds:
+      - node cli/round.ts measure
+      - node cli/ratchet.ts --update {{if .DECISION}}--decision {{.DECISION}}{{end}}
+
+  ux:docs:round:
+    desc: 'Measure a round of the documentation site, ROUND=R-nn (STAGE=after for the re-measure) - every viewport, then website/ux/rounds/<ROUND>/ report.md, round.json, shots/ and trend.md'
+    dir: website/ux
+    requires:
+      vars: [ROUND]
+    cmds:
+      - task: website
+      - npm ci
+      - cmd: npx playwright test -c playwright.config.ts
+        ignore_error: true
+      - node cli/round.ts write {{.ROUND}} {{.STAGE}}
+
   generate:observe:
     desc: Regenerate the observe API schema and types from ess/
     cmds:

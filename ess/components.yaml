@@ -34,11 +34,12 @@ components:
         - spindle.placement.InstanceRefused
         - spindle.placement.InstanceLaunched
         - spindle.placement.InstanceExited
-    # UNMAPPED: how a caller proves which actor it is, and with which attributes, has no place in
-    # this format: a served surface is handed the authenticated caller, and the contract never
-    # states how a request proves it. `reached_by: network` is the one construct that makes the
-    # specification state what a request with no caller is answered (the standard refusal, naming
-    # no actor). It is not declared: no caller outside the process sends these commands, and the
-    # control process answers reads only. Open question for the owner
-    # (story:ingress-caller-identity-specified).
+    # How a caller proves which actor it is, and with which attributes, has no place in this
+    # format: a served surface is handed the authenticated caller, and the contract never states
+    # how a request proves it. The runtime decides it (design § 11,
+    # architecture-decision-record:http-caller-proof): a header a trusted proxy in front of the
+    # ingress sets, read only where the run is told to trust it, and a request without it is
+    # answered the standard refusal naming no actor. `reached_by: network` is not declared here:
+    # no caller outside the process sends these commands, and the control process answers reads
+    # only.
     reached_by: in_process

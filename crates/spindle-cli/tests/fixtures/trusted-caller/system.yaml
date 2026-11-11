@@ -1,0 +1,19 @@
+format: ess/34
+system: porch
+version: v1
+summary: Visits recorded over the network for the person each request proves, and a log only an auditor reads.
+domains:
+  - porch.visit
+components:
+  - component: front
+    summary: Records visits for callers outside the process.
+    owns:
+      domains:
+        - porch.visit
+    accepts:
+      commands:
+        - porch.visit.RecordVisit
+    publishes:
+      events:
+        - porch.visit.VisitRecorded
+    reached_by: network

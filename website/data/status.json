@@ -88,7 +88,7 @@
     },
     {
       "area": "Bindings",
-      "detail": "spindle-channel carries an event to the command it binds to, in process or as length-prefixed JSON frames over TCP; at_least_once redelivers.",
+      "detail": "spindle-channel carries an event to the command it binds to, in process or as length-prefixed JSON frames over TCP; the receiver acknowledges an at_least_once envelope, and no runtime path resends one whose acknowledgement is overdue.",
       "href": "/docs/concepts/components-and-bindings",
       "label": "Event bindings in process and over TCP",
       "status": "shipped"
@@ -280,6 +280,13 @@
       "detail": "run --fixed-actor with --fixed-caller sends served commands as actors and callers fixed for the whole run, so a command that reads its caller is served: a test-backend switch, not authentication, opt-in only and printed on stderr at startup. The grant check still runs: a command the actor may not send answers 403 not granted and writes nothing. Given more than once, each command is sent as the first fixed actor its grant names.",
       "href": "/docs/concepts/capabilities",
       "label": "Fixed caller (test backend)",
+      "status": "shipped"
+    },
+    {
+      "area": "Execution",
+      "detail": "run --trusted-caller-header reads each request's actor and caller attributes from one JSON header a proxy in front of the ingress sets once it has authenticated the request, so a command that reads its caller runs for that caller and a read-granted view is read as it. The proxy is trusted by a shared secret: --trusted-caller-secret names the file holding it, and the proxy presents it on every request in the Spindle-Proxy-Secret header. A request without a valid caller header or the right secret is refused 403 not granted naming no actor and writes nothing, and so is a console or /__spindle/ request without the secret; the secret is never printed. The ingress must be reachable only through the proxy, which must remove both headers from client requests.",
+      "href": "/docs/concepts/capabilities",
+      "label": "Caller proven by a trusted proxy header",
       "status": "shipped"
     },
     {

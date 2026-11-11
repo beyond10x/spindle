@@ -99,6 +99,40 @@ pub(crate) struct Serving<'a> {
     /// `GET /__spindle/metrics`, on this thread as every exchange is, and
     /// `GET /__spindle/ui` with the panel this build embeds ([`PANEL`]).
     pub observe: Option<usize>,
+    /// `--trusted-caller-header`: each request proves its caller in this header, which a proxy in
+    /// front of the listener sets ([`Surface::proving_callers`]); never with `callers`.
+    pub caller_header: Option<&'a str>,
+    /// `--trusted-caller-secret`: the file, and the secret read from it ([`proxy_secret`]), that
+    /// the proxy presents in [`Surface::SECRET_HEADER`]; given exactly when `caller_header` is.
+    pub proxy_secret: Option<(&'a Path, String)>,
+}
+
+/// The secret in the file `path` (`--trusted-caller-secret`), one trailing newline (`\n` or
+/// `\r\n`) dropped. No message names the secret or any of the file's text.
+///
+/// # Errors
+/// A file that cannot be read as UTF-8, is empty once the newline is dropped, or holds a byte
+/// that is no visible ASCII character, which no header could carry.
+pub(crate) fn proxy_secret(path: &Path) -> Result<String> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("reading --trusted-caller-secret {}", path.display()))?;
+    let secret = text.strip_suffix('\n').map_or(text.as_str(), |line| {
+        line.strip_suffix('\r').unwrap_or(line)
+    });
+    if secret.is_empty() {
+        bail!(
+            "--trusted-caller-secret {} is empty: the proxy must present a secret",
+            path.display()
+        );
+    }
+    if !secret.bytes().all(|byte| byte.is_ascii_graphic()) {
+        bail!(
+            "--trusted-caller-secret {} holds a byte that is no visible ASCII character, which no \
+             header carries",
+            path.display()
+        );
+    }
+    Ok(secret.to_owned())
 }
 
 // `PANEL`: the observe panel, `ui/dist-panel/panel.html`, where it was built before this crate
@@ -187,7 +221,10 @@ fn fixed(ir: &EssIr, caller: &Caller) -> Result<()> {
 ///
 /// With `serving.callers`, each command is sent as the first of them its grant names, each bound
 /// against the model and printed on stderr, in order, before listening; a caller the model refuses
-/// stops the run first.
+/// stops the run first. With `serving.caller_header` instead, each request proves its own caller
+/// in that header beside the proxy's secret, `serving.proxy_secret` ([`Surface::proving_callers`]);
+/// the header's name and the secret's file, never a value, are printed on stderr before
+/// listening, and a name that is no HTTP field name stops the run.
 pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     for caller in &serving.callers {
         fixed(&ir, caller)?;
@@ -246,13 +283,36 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             }
         }
     }
-    let surface = Surface::fixing_callers(
-        &ir,
-        &serving.components,
-        serving.binding.as_ref(),
-        &serving.callers,
-    )?
+    let surface = match (serving.caller_header, &serving.proxy_secret) {
+        (Some(header), Some((_, secret))) => Surface::proving_callers(
+            &ir,
+            &serving.components,
+            serving.binding.as_ref(),
+            header,
+            secret,
+        )?,
+        (Some(header), None) => {
+            bail!("--trusted-caller-header {header} needs --trusted-caller-secret <FILE>")
+        }
+        (None, _) => Surface::fixing_callers(
+            &ir,
+            &serving.components,
+            serving.binding.as_ref(),
+            &serving.callers,
+        )?,
+    }
     .with_console(serving.ingress)?;
+    if let (Some(header), Some((path, _))) = (serving.caller_header, &serving.proxy_secret) {
+        eprintln!(
+            "b10x-spindle: each request's caller is read from its {header} header \
+             (--trusted-caller-header) where it carries the proxy's secret, read from {} \
+             (--trusted-caller-secret), in its {} header; both are trusted only because a proxy \
+             in front of this listener sets them: nothing may reach the listener but that proxy, \
+             and the proxy must remove both headers from every client request",
+            path.display(),
+            Surface::SECRET_HEADER
+        );
+    }
     let surface = match (serving.observe, PANEL) {
         (Some(capacity), Some(page)) => surface.observing(capacity).with_panel(page),
         (Some(capacity), None) => surface.observing(capacity),

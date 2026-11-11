@@ -1,0 +1,27 @@
+domain: parcels.intake
+summary: Parcels as they arrive, each a letter or a box.
+types:
+  - name: parcels.intake.Kind
+    kind: enum
+    variants: [letter, box]
+errors: []
+commands:
+  - name: parcels.intake.ReceiveParcel
+    input:
+      - name: parcel_id
+        type: String
+      - name: kind
+        type: parcels.intake.Kind
+    outcomes:
+      - name: received
+        emits: [parcels.intake.ParcelReceived]
+        payload:
+          parcels.intake.ParcelReceived: {parcel_id: input.parcel_id, kind: input.kind}
+        summary: The parcel is received as it arrived.
+events:
+  - name: parcels.intake.ParcelReceived
+    fields:
+      - name: parcel_id
+        type: String
+      - name: kind
+        type: parcels.intake.Kind

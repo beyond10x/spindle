@@ -188,6 +188,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
             drop_retries,
             fixed_actor,
             fixed_caller,
+            trusted_caller_header,
+            trusted_caller_secret,
             observe,
             observe_requests,
             scenario: None,
@@ -202,6 +204,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
             drop_retries,
             callers: serve::callers(fixed_actor, fixed_caller)?,
             observe: observe.then_some(usize::from(observe_requests)),
+            caller_header: trusted_caller_header.as_deref(),
+            caller_secret: trusted_caller_secret.as_deref(),
         }),
         Command::Play {
             spec,
@@ -416,6 +420,10 @@ struct Execute<'a> {
     callers: Vec<spindle_ingress::Caller>,
     /// With `--observe`, how many request records to keep.
     observe: Option<usize>,
+    /// `--trusted-caller-header`: the header each request proves its caller in.
+    caller_header: Option<&'a str>,
+    /// `--trusted-caller-secret`: the file holding the secret the proxy presents.
+    caller_secret: Option<&'a Path>,
 }
 
 fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
@@ -430,7 +438,29 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         drop_retries,
         ref callers,
         observe,
+        caller_header,
+        caller_secret,
     } = *arguments;
+    if let (Some(header), Some(caller)) = (caller_header, callers.first()) {
+        bail!(
+            "--trusted-caller-header {header} and --fixed-actor {} are given together: each \
+             request proves its own caller, or one is fixed for the run, not both",
+            caller.actor
+        );
+    }
+    let proxy_secret = match (caller_header, caller_secret) {
+        (Some(_), Some(path)) => Some((path, serve::proxy_secret(path)?)),
+        (Some(header), None) => bail!(
+            "--trusted-caller-header {header} needs --trusted-caller-secret <FILE>: the proxy is \
+             trusted only by the secret it presents on every request"
+        ),
+        (None, Some(path)) => bail!(
+            "--trusted-caller-secret {} is given without --trusted-caller-header, so it would be \
+             ignored",
+            path.display()
+        ),
+        (None, None) => None,
+    };
     let loaded = spindle_spec::load(spec)?;
     let answers = decisions::load(&loaded.ir, decisions, answer_default)?;
     let requirements = spindle_capability::derive(&loaded.ir, None)
@@ -497,6 +527,8 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 answers: answers.calling(calls),
                 callers: callers.clone(),
                 observe,
+                caller_header,
+                proxy_secret,
             },
         );
     }
@@ -511,6 +543,13 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
             "nothing in {} requires ingress.network, so --fixed-actor {} would be ignored",
             spec.display(),
             caller.actor
+        );
+    }
+    if let Some(header) = caller_header {
+        bail!(
+            "nothing in {} requires ingress.network, so --trusted-caller-header {header} would be \
+             ignored",
+            spec.display()
         );
     }
     if let Some(path) = http {

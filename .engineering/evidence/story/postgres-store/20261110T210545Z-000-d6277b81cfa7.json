@@ -1,0 +1,14 @@
+{
+  "at": "2026-11-10T21:05:45Z",
+  "actor": "human:timo",
+  "artifact": "story:postgres-store",
+  "kind": "story",
+  "revision": 10,
+  "change": {
+    "change": "evidence",
+    "kind": "review_outcome",
+    "source": "review-result:w19-u1-adversary-2",
+    "review": "review-result:w19-u1-adversary-2",
+    "outcome": "fixed"
+  }
+}

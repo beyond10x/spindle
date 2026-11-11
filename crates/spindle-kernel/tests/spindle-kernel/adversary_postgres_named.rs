@@ -9,13 +9,20 @@
 //! measuring cases are meant for a release build (`cargo test --release`), one at a time.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use eventlog_core::{
+    AppendGroup, AtomicEventStore, CommandMeta, Expected, NewEvent, StreamAppend, StreamId,
+    TenantId, new_event_id, request_hash,
+};
+use eventlog_sqlite::SqliteEventStore;
 use serde_json::{Map, Value, json};
 use spindle_kernel::{
-    Change, Database, Event, PostgresStore, Removal, Row, Scan, Scanned, SqliteStore, Store, Write,
+    Change, Database, Event, PostgresStore, Removal, Row, Scan, Scanned, SqliteStore, StateLock,
+    StateSource, StateTarget, Store, Write,
 };
 
 const SCHEMA: &str = "adv3_w19";
@@ -571,6 +578,102 @@ fn mark(component: &str) {
     ));
 }
 
+/// A `run --state` file as 0.10.0's SQLite store wrote it: each write a `spindle.row` event on
+/// its instance's stream and a `spindle.written` event of schema 1, naming no instances, on its
+/// entity's stream.
+struct Release0100 {
+    log: SqliteEventStore,
+    tenant: TenantId,
+    runtime: tokio::runtime::Runtime,
+}
+
+impl Release0100 {
+    /// The file at `path`, created as the store creates it.
+    fn create(path: &Path) -> Self {
+        drop(SqliteStore::open(path).expect("the file is created"));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        let log = runtime
+            .block_on(SqliteEventStore::open(
+                path.to_str().expect("a UTF-8 path"),
+                "spindle",
+            ))
+            .expect("the file opens");
+        Self {
+            log,
+            tenant: TenantId::new("local").expect("a tenant"),
+            runtime,
+        }
+    }
+
+    /// One write creating `identity` of `entity` with `row`, as 0.10.0 appended it.
+    fn create_row(&self, entity: &str, identity: &Value, row: &Row) {
+        let appends = vec![
+            StreamAppend {
+                stream: StreamId::new(self.tenant.clone(), "spindle:entity", entity)
+                    .expect("a stream"),
+                expected: Expected::Any,
+                events: vec![NewEvent::new("spindle.written", 1, json!({})).expect("an event")],
+            },
+            StreamAppend {
+                stream: StreamId::new(self.tenant.clone(), entity, identity.to_string())
+                    .expect("a stream"),
+                expected: Expected::NoStream,
+                events: vec![
+                    NewEvent::new(
+                        "spindle.row",
+                        1,
+                        serde_json::to_value(row).expect("a row is JSON"),
+                    )
+                    .expect("an event"),
+                ],
+            },
+        ];
+        let entries: Vec<&Vec<NewEvent>> = appends.iter().map(|append| &append.events).collect();
+        let group = AppendGroup {
+            tenant: self.tenant.clone(),
+            meta: CommandMeta {
+                idempotency_key: new_event_id(),
+                request_hash: request_hash(&entries).expect("a hash"),
+                subject: "release-0.10.0".to_owned(),
+                actor: "spindle-kernel".to_owned(),
+                request_id: new_event_id(),
+                trace_id: new_event_id(),
+                causation_id: None,
+                causation_depth: 0,
+                occurred_at: time::OffsetDateTime::now_utc(),
+                claim: None,
+            },
+            appends,
+        };
+        self.runtime
+            .block_on(self.log.append_group(&group))
+            .expect("the write is appended");
+    }
+}
+
+/// Moves the file at `path` into `component`'s tables in `database` as `b10x-spindle state move`
+/// does: the file checked, the schema's lock taken, the tables found empty, the file copied, the
+/// tables closed and the lock released.
+fn moved(path: &Path, database: &Database, component: &str, entity: &str) {
+    let source = StateSource::open(path).expect("the file opens");
+    let checked = source.check().expect("the file can move");
+    let lock = StateLock::take(database).expect("the schema's lock is taken");
+    let target = StateTarget::open(database, component, 1).expect("the tables open");
+    assert!(
+        target
+            .is_empty(&[entity.to_owned()], &source)
+            .expect("the tables are read"),
+        "the tables of {component} are empty"
+    );
+    let copied = target.copy(&source).expect("the file is copied");
+    assert_eq!(copied, checked);
+    target.close().expect("the tables close");
+    lock.release().expect("the lock is released");
+}
+
 fn timed(store: &mut dyn Store, entity: &str) -> (Duration, Scan) {
     let started = Instant::now();
     let scan = store.scan(entity).expect("scans");
@@ -634,33 +737,23 @@ fn adv3_a_scan_of_many_instances_costs_no_more_than_reading_the_log() {
     );
 }
 
-/// A log moved from a state directory 0.10.0 wrote: `state move` copies each event as it is,
-/// so the entity's stream keeps a schema-1 `spindle.written` naming no instances, for good.
-/// Every later scan of that entity then reads the whole log under eventlog's publication lock,
-/// as before fix pass 2: once the log has grown to 400,000 events, a scan takes seconds, and
-/// another process's commits on the same tables during it wait on that lock.
+/// A log moved from a state directory 0.10.0 wrote, whose entity's stream holds a schema-1
+/// `spindle.written` naming no instances. Were it copied as it is, every later scan of that
+/// entity would read the whole log under eventlog's publication lock, as before fix pass 2:
+/// once the log has grown to 400,000 events, a scan takes seconds, and another process's
+/// commits on the same tables during it wait on that lock. The file is moved by `state move`
+/// ([`moved`]), which copies each such event naming the instances its write left.
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn adv3_an_entity_moved_from_0_10_0_scans_without_reading_the_whole_log() {
     let database = database();
     let component = fresh("moved");
-    let mut store = open(&database, &component);
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let path = directory.path().join(format!("{component}.sqlite"));
     let identity = json!("from-0.10.0");
-    store
-        .commit(&Change {
-            entity: ALPHA.to_owned(),
-            identity: identity.clone(),
-            expected: None,
-            row: row("open", 0, &identity),
-            events: Vec::new(),
-            scanned: Vec::new(),
-        })
-        .expect("written");
-    sql(&format!(
-        "UPDATE {} SET data = '{{}}'::jsonb, event_schema_version = 1 \
-         WHERE event_name = 'spindle.written'",
-        table(&component)
-    ));
+    Release0100::create(&path).create_row(ALPHA, &identity, &row("open", 0, &identity));
+    moved(&path, &database, &component, ALPHA);
+    let mut store = open(&database, &component);
     for index in 0..50 {
         let identity = json!(format!("since-{index}"));
         store
@@ -756,10 +849,10 @@ fn digest(scan: &Scan) -> Vec<(Value, u64, String, usize, String)> {
 
 /// A downstream deployment holds about 1,300 live instances of one entity whose rows carry
 /// texts of up to 1 MiB, written by 0.8.0 and 0.10.0 on SQLite and to be moved into PostgreSQL.
-/// 1,300 instances, each row a 1 MiB text: a scan on PostgreSQL by the entity's stream, the
-/// same log as a move from 0.10.0 leaves it (schema-1 `spindle.written`, read whole), and
-/// SQLite, each timed with this process's peak memory during the scan. All three answer the
-/// same rows.
+/// 1,300 instances, each row a 1 MiB text: a scan on PostgreSQL by the entity's stream, on
+/// SQLite (the file as 0.10.0 wrote it, schema-1 `spindle.written`), and on PostgreSQL once
+/// `state move` moved that file (in a schema of its own, whose lock no other case waits on),
+/// each timed with this process's peak memory during the scan. All three answer the same rows.
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL with about 4 GB free"]
 fn adv3_a_scan_of_1300_rows_of_a_mebibyte_each() {
@@ -768,7 +861,9 @@ fn adv3_a_scan_of_1300_rows_of_a_mebibyte_each() {
     let database = database();
     let component = fresh("mebibyte");
     let mut postgres = open(&database, &component);
-    let (_directory, mut reference) = sqlite();
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let path = directory.path().join("mebibyte.sqlite");
+    let earlier = Release0100::create(&path);
     let compressible = std::env::var_os("ADV3_COMPRESSIBLE").is_some();
     let mut letters = Rng(0x1e77_e125_0019_0003);
     let started = Instant::now();
@@ -803,9 +898,19 @@ fn adv3_a_scan_of_1300_rows_of_a_mebibyte_each() {
             scanned: Vec::new(),
         };
         postgres.commit(&change).expect("PostgreSQL takes the row");
-        reference.commit(&change).expect("SQLite takes the row");
+        earlier.create_row(ALPHA, &identity, &change.row);
     }
+    drop(earlier);
+    let mut reference = SqliteStore::open(&path).expect("the file 0.10.0 wrote opens");
     eprintln!("written in {:?}", started.elapsed());
+    let mut elsewhere = database.clone();
+    elsewhere.schema = format!("{SCHEMA}_{}", fresh("moved").replace('-', "_"));
+    sql(&format!("CREATE SCHEMA {}", elsewhere.schema));
+    let mover = fresh("mebibyte");
+    let started = Instant::now();
+    moved(&path, &elsewhere, &mover, ALPHA);
+    eprintln!("moved in {:?}", started.elapsed());
+    let mut moved_store = open(&elsewhere, &mover);
     let mut measured = Vec::new();
     let mut digests = Vec::new();
     let mut failed = Vec::new();
@@ -832,12 +937,7 @@ fn adv3_a_scan_of_1300_rows_of_a_mebibyte_each() {
     };
     measure("PostgreSQL by the entity's stream", &mut postgres);
     measure("SQLite", &mut reference);
-    sql(&format!(
-        "UPDATE {} SET data = '{{}}'::jsonb, event_schema_version = 1 \
-         WHERE event_name = 'spindle.written'",
-        table(&component)
-    ));
-    measure("PostgreSQL moved from 0.10.0 (whole log)", &mut postgres);
+    measure("PostgreSQL moved from 0.10.0", &mut moved_store);
     eprintln!("{}", measured.join("\n"));
     assert!(failed.is_empty(), "{failed:#?}");
     let (_, expected) = &digests[1];

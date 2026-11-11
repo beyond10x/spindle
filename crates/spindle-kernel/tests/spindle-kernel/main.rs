@@ -10,6 +10,7 @@ mod adversary_admission_checked;
 mod adversary_append;
 mod adversary_boolean;
 mod adversary_bytes;
+mod adversary_counts;
 mod adversary_creation_unknown;
 mod adversary_deletes;
 mod adversary_environment;
@@ -23,7 +24,7 @@ mod adversary_mint_text;
 mod adversary_placement;
 #[cfg(feature = "postgres")]
 mod adversary_postgres;
-#[cfg(feature = "postgres")]
+#[cfg(all(feature = "postgres", feature = "sqlite"))]
 mod adversary_postgres_named;
 #[cfg(feature = "postgres")]
 mod adversary_postgres_scan;

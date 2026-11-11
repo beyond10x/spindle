@@ -29,10 +29,11 @@ projection = ["in-process"]
 ```
 
 - Each list is in order of preference.
-- A key ending in `.*` provides every capability under that prefix; an exact key wins over it.
+- A key ending in `.*` provides every capability under that prefix, and an exact key wins over it.
 - A document in another format, an unknown field, or a capability with an empty list is refused.
 
-The repository ships two: `examples/environments/laptop.toml` and
+The repository ships four: `examples/environments/browser.toml`,
+`examples/environments/laptop.toml`, `examples/environments/laptop-processes.toml` and
 `examples/environments/microvm.toml`.
 
 ## Admission
@@ -41,11 +42,11 @@ Admission takes the capabilities a specification (or one component) requires and
 and answers one of two things:
 
 - **admitted**, with exactly one implementation bound to every required capability: the first one
-  the environment lists for it;
-- **refused**, naming every capability the environment has no implementation for.
+  the environment lists for it
+- **refused**, with every capability the environment has no implementation for
 
-The specification never chooses an implementation. `b10x-spindle admit` prints the result and
-exits 0 when admitted, 3 when refused; `--json` prints it as JSON.
+The specification does not choose an implementation. `b10x-spindle admit` prints the result and
+exits 0 when admitted, 3 when refused, and `--json` prints it as JSON.
 
 ```console
 $ b10x-spindle admit examples/rally/ess --environment examples/environments/microvm.toml
@@ -59,7 +60,7 @@ admitted on microvm
 
 ## What the runtime does with a binding
 
-Admission binds names. The parts that run today act on these bindings:
+Admission binds names, and the parts that run today act on these bindings:
 
 | Capability | Implementations the runtime runs today |
 |---|---|
@@ -72,15 +73,16 @@ Admission binds names. The parts that run today act on these bindings:
 | `external.*` | answered by `run` from the line, `--decisions` or `--answer-default`, whatever the binding names, unless it names an HTTP call the environment declares (below); `decisions-file` in the Service Worker host: each external outcome answered from the decisions file it is opened with, as `run --decisions` answers it |
 
 A host refuses, as unsupported, a binding it cannot run: the one-process host refuses a `tcp`
-channel, and a host opened with nothing to answer external causes refuses every `external.*`
-outcome. `run` serves `ingress.network` only where it is bound to `http-loopback`, and the Service
-Worker host only where it is bound to `service-worker`; any other binding of it is refused before
-anything is served.
+channel. A host opened with nothing to answer external causes refuses every `external.*` outcome.
+`run` serves `ingress.network` only where it is bound to `http-loopback`, and the Service Worker
+host only where it is bound to `service-worker`. Any other binding of it is refused before anything
+is served.
 
 ## An external cause bound to an HTTP call
 
-An environment may declare HTTP calls, each an `[http.<name>]` table, and bind an external cause
-to one by naming it as the implementation of the cause's `external.<command>.<outcome>` key:
+An environment may declare HTTP calls, one `[http.<name>]` table each. It binds an external cause
+to a call by listing the call as the implementation of the cause's `external.<command>.<outcome>`
+key:
 
 ```toml
 [provides]
@@ -95,21 +97,32 @@ secret_env = "APPROVALS_TOKEN"
 ```
 
 Each time `run` asks that cause, on a stdin line or a served request, it sends one request to the
-call: a `spindle-external/1` JSON body with `format`, `capability`, `command`, `outcome`, `cause`
-and the command's `input`. A `2xx` reply `{"holds": true}` or `{"holds": false}` answers the
-cause, and the outcome it selects is committed. A timeout, a failure, another status, a reply
-body over 64 KiB or another body fails the command as `undecided` and writes nothing; served, it
-answers `501`. A call holds the thread that runs every command until it is answered or times out,
-so a served run answers nothing else meanwhile.
+call. The body is `spindle-external/1` JSON with `format`, `capability`, `command`, `outcome`,
+`cause` and the command's `input`.
 
-The document never holds the secret: `secret_env` names an environment variable, read when `run`
-starts and sent as `Authorization: Bearer <value>`. An unset variable stops `run` before the first
-request. A table no `external.` key names, a `timeout_ms` outside 1 to 30000, a `url` carrying
-userinfo (`user:password@`), or a `secret_env` that is not a variable name is refused when the
-document is read, naming the table and never repeating the value. This build calls `http://` URLs
-only; a served run whose every external cause is bound to a call needs neither `--decisions` nor
-`--answer-default`. With `--observe`, a cause a call answers is listed and counted with the source
-`call`, and one whose call failed as `unanswered`.
+| Reply | Result |
+|---|---|
+| `2xx` with `{"holds": true}` or `{"holds": false}` | answers the cause, and the outcome it selects is committed |
+| a timeout, a failure, another status, a body over 64 KiB or another body | the command fails as `undecided` and writes nothing; a served request is answered `501` |
+
+A call holds the thread that runs every command until it is answered or times out. A served run
+answers nothing else meanwhile.
+
+The document never holds the secret. `secret_env` is the name of an environment variable, read
+when `run` starts and sent as `Authorization: Bearer <value>`. An unset variable stops `run` before
+the first request.
+
+These are refused when the document is read. The message gives the table's name, never the
+value:
+
+- a table that no `external.` key uses
+- a `timeout_ms` outside 1 to 30000
+- a `url` carrying userinfo (`user:password@`)
+- a `secret_env` that is not a variable name
+
+This build calls `http://` URLs only. A served run whose every external cause is bound to a call
+needs neither `--decisions` nor `--answer-default`. With `--observe`, a cause a call answers is
+listed and counted with the source `call`, and one whose call failed as `unanswered`.
 
 ## State in PostgreSQL
 

@@ -22,7 +22,7 @@
 //! that appends groups and answers the tenant's whole log ([`Log`]), and the PostgreSQL store
 //! (`PostgresStore`, the `postgres` feature) is the same store on PostgreSQL.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 #[cfg(feature = "sqlite")]
 use std::path::Path;
 
@@ -400,6 +400,31 @@ impl<L: Log> Store for LogStore<L> {
         }
         self.scan_named(entity)
     }
+
+    /// How many instances each of `entities` holds, as [`Store::scan`] answers them: from each
+    /// entity's own stream alone ([`LogStore::resting`]), reading no row, or, for a log that may
+    /// hold writes naming no instances and for an entity whose stream holds one, from one read
+    /// of the whole log for all of them ([`LogStore::count_log`]), where a scan of each reads the
+    /// whole log again.
+    fn counts(&mut self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
+        if L::UNMARKED || self.marked()? {
+            return self.count_log(entities);
+        }
+        let mut counts = BTreeMap::new();
+        let mut unnamed = Vec::new();
+        for entity in entities {
+            match self.resting(entity)? {
+                Some((resting, _)) => {
+                    counts.insert(entity.clone(), resting.len());
+                }
+                None => unnamed.push(entity.clone()),
+            }
+        }
+        if !unnamed.is_empty() {
+            counts.extend(self.count_log(&unnamed)?);
+        }
+        Ok(counts)
+    }
 }
 
 impl<L: Log> LogStore<L> {
@@ -437,32 +462,9 @@ impl<L: Log> LogStore<L> {
     /// 1, as the store of 0.10.0 wrote it) is scanned from the whole log instead
     /// ([`LogStore::scan_log`]).
     fn scan_named(&self, entity: &str) -> Result<Scan, StoreError> {
-        let stream = self.entity_stream(entity)?;
-        let mut resting = BTreeMap::<String, u64>::new();
-        let mut version = 0;
-        loop {
-            let page = self
-                .runtime
-                .block_on(self.log.read_stream(&stream, version, MAX_READ_LIMIT))
-                .map_err(backend)?;
-            let read = page.events.len();
-            for event in page.events {
-                if event.version != version + 1 {
-                    return Err(StoreError::Backend(format!(
-                        "the stream of {entity} skips from version {version} to {}",
-                        event.version
-                    )));
-                }
-                version = event.version;
-                let Some(written) = Written::read(&event, entity)? else {
-                    return self.scan_log(entity);
-                };
-                written.apply(&mut resting);
-            }
-            if page.end_of_stream || read == 0 {
-                break;
-            }
-        }
+        let Some((resting, version)) = self.resting(entity)? else {
+            return self.scan_log(entity);
+        };
         let resting: Vec<(String, u64)> = resting.into_iter().collect();
         let mut rows = Vec::with_capacity(resting.len());
         let mut size = FIRST_READ_BATCH;
@@ -522,6 +524,70 @@ impl<L: Log> LogStore<L> {
             size = (READ_BYTES / largest.max(1)).clamp(1, READ_BATCH);
         }
         Ok(Scan { rows, version })
+    }
+
+    /// Reads the entity's stream, page by page, to its end ([`LogStore::scan_named`]): each
+    /// instance whose row rests, by stream id at the version of its stream there, and the
+    /// entity's version. `None` where the stream holds a `spindle.written` event that names no
+    /// instances (schema 1).
+    fn resting(&self, entity: &str) -> Result<Option<Resting>, StoreError> {
+        let stream = self.entity_stream(entity)?;
+        let mut resting = BTreeMap::<String, u64>::new();
+        let mut version = 0;
+        loop {
+            let page = self
+                .runtime
+                .block_on(self.log.read_stream(&stream, version, MAX_READ_LIMIT))
+                .map_err(backend)?;
+            let read = page.events.len();
+            for event in page.events {
+                if event.version != version + 1 {
+                    return Err(StoreError::Backend(format!(
+                        "the stream of {entity} skips from version {version} to {}",
+                        event.version
+                    )));
+                }
+                version = event.version;
+                let Some(written) = Written::read(&event, entity)? else {
+                    return Ok(None);
+                };
+                written.apply(&mut resting);
+            }
+            if page.end_of_stream || read == 0 {
+                return Ok(Some((resting, version)));
+            }
+        }
+    }
+
+    /// Reads the tenant's log once ([`Log::each_event`]), as [`LogStore::scan_log`] reads it, and
+    /// keeps for each stream of every entity of `entities` only whether its last `spindle.row` or
+    /// `spindle.removed` event is a row: one read for every entity, where a scan of each reads the
+    /// whole log again.
+    fn count_log(&self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
+        let counted = entities.iter().collect::<BTreeSet<_>>();
+        let mut rests = BTreeMap::<(String, String), bool>::new();
+        self.log
+            .each_event(&self.runtime, &self.tenant, &mut |event: RecordedEvent| {
+                if (event.name == ROW || event.name == REMOVED)
+                    && counted.contains(&event.stream_type)
+                {
+                    rests.insert((event.stream_type, event.stream_id), event.name == ROW);
+                }
+                Ok(())
+            })?;
+        let mut counts = entities
+            .iter()
+            .map(|entity| (entity.clone(), 0))
+            .collect::<BTreeMap<_, _>>();
+        for ((entity, _), rests) in rests {
+            if !rests {
+                continue;
+            }
+            if let Some(count) = counts.get_mut(&entity) {
+                *count += 1;
+            }
+        }
+        Ok(counts)
     }
 
     /// Reads the tenant's log in commit order ([`Log::each_event`]) and keeps, for each stream of
@@ -603,6 +669,10 @@ impl Log for SqliteEventStore {
         }
     }
 }
+
+/// Each instance of an entity whose row rests, by stream id at the version of its stream there,
+/// and the entity's version ([`LogStore::resting`]).
+type Resting = (BTreeMap<String, u64>, u64);
 
 /// What one write's `spindle.written` event names (schema [`WRITTEN_SCHEMA`]): each instance of
 /// the entity whose row the write left, and each it removed, by stream id, at the version its

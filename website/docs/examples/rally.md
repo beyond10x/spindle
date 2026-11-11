@@ -3,11 +3,11 @@ title: Rally
 sidebar_position: 1
 description: The rally example, a two-player paddle-and-ball game written as an ESS system of three components that talk only through bindings.
 lede: Three components, one periodic binding and four event bindings play a match to a winner, with no game code outside the specification.
-source: examples/rally/ess, crates/spindle-host/tests/spindle-host/rally.rs, crates/spindle-host/src/rally.rs, crates/spindle-cli/tests/spindle-cli/play.rs, crates/spindle-cli/tests/spindle-cli/processes.rs, crates/spindle-cli/tests/spindle-cli/adversary_processes.rs, crates/spindle-host/src/host/component.rs, docs/design/spindle.md §13
+source: examples/rally/ess, crates/spindle-host/tests/spindle-host/rally.rs, crates/spindle-host/src/rally.rs, crates/spindle-cli/tests/spindle-cli/play.rs, crates/spindle-cli/tests/spindle-cli/processes.rs, crates/spindle-cli/tests/spindle-cli/adversary_processes.rs, crates/spindle-host/src/host/component.rs, crates/spindle-qemu/tests/spindle-qemu/rally.rs, crates/spindle-firecracker/tests/spindle-firecracker/rally.rs, examples/rally/placement.toml, docs/design/spindle.md §13
 ---
 
 Rally is an original two-player paddle-and-ball game, written as an ESS system in
-`examples/rally/ess`. The grid is 16 columns wide and 9 rows high; the west paddle stands in column
+`examples/rally/ess`. The grid is 16 columns wide and 9 rows high. The west paddle stands in column
 0, the east paddle in column 15, and the ball moves one cell across and one cell up or down per
 tick. Every value change is a guard plus an increment on an integer field, so the game needs no
 arithmetic beyond what ESS has.
@@ -44,11 +44,13 @@ the four event bindings between components, and `ingress.network` because the ta
 $ b10x-spindle play examples/rally/ess --environment examples/environments/laptop.toml
 ```
 
-`play` admits each component on its own against the environment, opens a match
-(`--target-score`, default 3; `--match-id`, default `rally`), starts the `tick` binding and redraws
-the grid from the table's `MatchState` view after every tick. `]` and `[` are the paddles and `o`
-is the ball. It exits 0 once a side has won, 3 when admission refuses a component, and 130 or 143
-on SIGINT or SIGTERM. [Getting started](/docs/getting-started#play-it) has the first and last
+`play` admits each component on its own against the environment, opens a match, starts the `tick`
+binding and redraws the grid from the table's `MatchState` view after every tick. The match takes
+`--target-score`, default 3, and `--match-id`, default `rally`. `]` and `[` are the paddles and
+`o` is the ball.
+
+It exits 0 once a side has won, 3 when admission refuses a component, and 130 or
+143 on SIGINT or SIGTERM. [Getting started](/docs/getting-started#play-it) has the first and last
 frames of a real run.
 
 ## Drive it by hand
@@ -71,7 +73,7 @@ $ b10x-spindle run examples/rally/ess --environment examples/environments/laptop
 {"command":"rally.table.OpenMatch","failure":{"kind":"undeclared","message":"rally.table.OpenMatch: a `rally.table.Match` already has the identity \"m1\", and `creates:` never replaces an instance"}}
 ```
 
-The third line is a failure, not a declared outcome: `OpenMatch` declares no outcome for a match
+The third line is a failure, not a declared outcome. `OpenMatch` declares no outcome for a match
 that already exists, and `creates:` never replaces an instance.
 
 `store.durable` is bound to `sqlite` on the laptop environment, so `run` needs `--state`.
@@ -91,17 +93,25 @@ $ SPINDLE_COMPONENT=rally-player-west SPINDLE_LISTEN=127.0.0.1:7101 SPINDLE_PEER
 
 Each process listens, connects to every component its events lead to and waits for a link from
 every component whose events lead to it, up to 30 s in all. A link counts only once its first
-message names both ends, so a stray connection changes nothing. A component whose events lead to a
-peer with no `SPINDLE_PEER_<COMPONENT>` exits 1 before it runs anything, naming each such peer and
-variable. Each prints one JSON line per command it runs. Everything a tick leads to runs on every
-process before the next tick, so three processes play the match one process plays. The table opens
-the match, runs the tick, prints `{"view": …}`, the `MatchState` row, after each and, once a side
-has won, tells both players the match is over; all three exit 0. Only the table may say so. A link
-that closes before that, or a peer that breaks the link protocol, exits 1 naming the peer, and SIGINT or SIGTERM exits 130 or 143. With `SPINDLE_TELEMETRY` set, each sends its own counters as
-`spindle-telemetry/1` frames. `--speed` runs the match clock that many times faster than real time.
+message names both ends, so a stray connection changes nothing. A component whose events lead to
+a peer with no `SPINDLE_PEER_<COMPONENT>` exits 1 before it runs anything, and its message lists
+each such peer and variable.
 
-:::caution[Planned]
-Each component in its own microVM is planned. It is the design's showcase: one deployment to the
-environment `microvm` (`channel = tcp`), its three components placed on three microVM targets,
-with admission the only step that differs from the laptop. See [status](/docs/status).
-:::
+Everything a tick leads to runs on every process before the next tick, so three processes play the
+match one process plays.
+
+The table opens the match, runs the tick and prints `{"view": …}`, the `MatchState` row, after
+each. Once a side has won, the table tells both players the match is over, and all three exit 0.
+Only the table may say so. A link that closes before that, or a peer that breaks the link
+protocol, exits 1 with the peer in its message.
+
+The processes print one JSON line per command they run. SIGINT or SIGTERM exits 130 or 143. With
+`SPINDLE_TELEMETRY` set, each process sends its own counters as `spindle-telemetry/1` frames.
+`--speed` runs the match clock that many times faster than real time.
+
+## Three microVMs
+
+Each component also runs in its own microVM, one `b10x-spindle play` per VM in its per-component
+mode. The three are joined by TCP channels across the VM network and play a match to a winner. One
+placement, `examples/rally/placement.toml`, runs on QEMU and on Firecracker. Its tests run on a
+host with `/dev/kvm` (`task check:vm`), not in CI. See [status](/docs/status).

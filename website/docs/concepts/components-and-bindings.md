@@ -3,26 +3,26 @@ title: Components and bindings
 sidebar_position: 4
 description: How the components of one ESS system run together, and how periodic and event bindings drive their commands.
 lede: Components own domains and accept commands; bindings are the only way one drives another.
-source: crates/spindle-host/src/lib.rs, crates/spindle-timer/src/lib.rs, crates/spindle-timer/tests/spindle-timer/periodic.rs, crates/spindle-channel/src/lib.rs, crates/spindle-channel/tests/spindle-channel/channel.rs, examples/rally/ess/components.yaml
+source: crates/spindle-host/src/lib.rs, crates/spindle-timer/src/lib.rs, crates/spindle-timer/tests/spindle-timer/periodic.rs, crates/spindle-channel/src/lib.rs, crates/spindle-channel/tests/spindle-channel/channel.rs, examples/rally/ess/components.yaml, Cargo.toml, ess/domains/observe.yaml
 ---
 
 ## Components
 
 An ESS system declares **components**. Each owns one or more domains, accepts commands, publishes
 events and says how it is reached (`reached_by: network`, `command_line` or `in_process`). A
-component is the unit Spindle admits and places: `--component` derives and admits for one of them,
-and the one-process host admits each component on its own and gives each its own store.
+component is the unit Spindle admits and places: `--component` derives and admits for one of them.
+The one-process host admits each component on its own and gives each its own store.
 
 ## Bindings
 
 A **binding** invokes a command. Its cause is either periodic or an event, and it maps fields into
-the command's input. Spindle runs both kinds from the compiled IR; nothing about them is configured
-outside the specification.
+the command's input. Spindle runs both kinds from the compiled IR. They are not configured outside
+the specification.
 
 ### Periodic bindings
 
 `spindle-timer` reads every periodic binding and answers, for an instant from a clock, which are
-due. The clock is a port, so tests run a system on a manual clock without sleeping. ESS 0.85.0
+due. The clock is a port, so tests run a system on a manual clock without sleeping. ESS 0.90.0
 admits one periodic profile, and the timer honours each word of it:
 
 | Word | Value | Meaning |
@@ -39,9 +39,9 @@ admits one periodic profile, and the timer honours each word of it:
 another:
 
 - A sender maps each event into one envelope per binding and holds it in an **outbox** until the
-  state that produced the event is durable; only then is it sent.
+  state that produced the event is durable. Only then is it sent.
 - `at_most_once` envelopes are sent once. `at_least_once` envelopes are acknowledged by the
-  receiver; nothing resends one whose acknowledgement is overdue.
+  receiver. An envelope whose acknowledgement is overdue is not resent.
 - Two channels implement the port: `in-process`, a pair of queues, and `tcp`, length-prefixed JSON
   frames over a TCP stream.
 
@@ -56,7 +56,6 @@ components, until nothing is left in flight. A view is answered from the store o
 that owns its source. `b10x-spindle play` is this host driving the
 [rally example](/docs/examples/rally).
 
-:::caution[Planned]
-Components in separate processes or microVMs joined by the `tcp` channel are planned; see
-[status](/docs/status).
-:::
+Components also run in separate processes or microVMs joined by the `tcp` channel: the rally
+example plays a match as three processes and as three microVMs
+([rally](/docs/examples/rally#three-processes), [status](/docs/status)).

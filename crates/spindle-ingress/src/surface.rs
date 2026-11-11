@@ -105,17 +105,105 @@ pub struct Route {
     refused: Vec<(String, Unserved)>,
     caller: Option<Caller>,
     not_granted: bool,
+    /// Whether each request proves its own caller ([`Surface::proving_callers`]).
+    proves: bool,
 }
 
-/// An actor and caller a surface sends commands as, fixed for the whole run
-/// ([`Surface::fixing_caller`], [`Surface::fixing_callers`]): a test-backend switch, not
-/// authentication. A request proves nothing about who sends it.
+/// An actor and caller a surface sends commands as: fixed for the whole run
+/// ([`Surface::fixing_caller`], [`Surface::fixing_callers`]), a test-backend switch, not
+/// authentication; or proven by each request in the header a trusted proxy sets
+/// ([`Surface::proving_callers`], [`Caller::proven`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Caller {
     /// The qualified name of the actor.
     pub actor: String,
     /// The caller's attributes, by declared attribute name.
     pub attributes: Map<String, Value>,
+}
+
+impl Caller {
+    /// The caller a header `value` proves, as [`Surface::proving_callers`] reads it: one JSON
+    /// object, `{"actor": "<qualified actor>", "caller": {"<attribute>": <value>}}`, `caller` left
+    /// out for an actor with no attribute. `None` for any other value: not UTF-8 JSON, not an
+    /// object, an object at any depth naming a member twice under any spelling of its name
+    /// ([`unique_members`]), `actor` missing or not a string, `caller` not an object, or any other
+    /// member. The caller is not bound here against a model; [`crate::answer`] binds it before it
+    /// is used.
+    pub fn proven(value: &[u8]) -> Option<Self> {
+        let Ok(Value::Object(mut proof)) = serde_json::from_slice::<Value>(value) else {
+            return None;
+        };
+        if !unique_members(std::str::from_utf8(value).ok()?) {
+            return None;
+        }
+        let Some(Value::String(actor)) = proof.remove("actor") else {
+            return None;
+        };
+        let attributes = match proof.remove("caller") {
+            None => Map::new(),
+            Some(Value::Object(attributes)) => attributes,
+            Some(_) => return None,
+        };
+        proof.is_empty().then_some(Self { actor, attributes })
+    }
+
+    /// Whether `ir` declares this caller's actor and binds its attributes as the kernel binds a
+    /// caller ([`spindle_kernel::caller_binds`]).
+    pub(crate) fn binds(&self, ir: &EssIr) -> bool {
+        ir.actors()
+            .keys()
+            .any(|name| name.to_string() == self.actor)
+            && spindle_kernel::caller_binds(ir, Some(&self.actor), Some(&self.attributes)).is_ok()
+    }
+}
+
+/// Whether every object in `json`, text that parses as JSON, names each member once: each name
+/// is compared once its escapes are decoded, so `"actor"` and `"actor"` are the same member.
+/// A parser keeps one of two same-named members, and which one differs between parsers, so a
+/// proxy and this ingress could read two different callers from one value.
+fn unique_members(json: &str) -> bool {
+    // Per open object, the names seen and whether a name comes next; `None` for an array.
+    let mut open: Vec<Option<(std::collections::BTreeSet<String>, bool)>> = Vec::new();
+    let bytes = json.as_bytes();
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'{' => open.push(Some((std::collections::BTreeSet::new(), true))),
+            b'[' => open.push(None),
+            b'}' | b']' => {
+                open.pop();
+            }
+            b',' => {
+                if let Some(Some((_, name_next))) = open.last_mut() {
+                    *name_next = true;
+                }
+            }
+            b':' => {
+                if let Some(Some((_, name_next))) = open.last_mut() {
+                    *name_next = false;
+                }
+            }
+            b'"' => {
+                let start = at;
+                at += 1;
+                while at < bytes.len() && bytes[at] != b'"' {
+                    at += if bytes[at] == b'\\' { 2 } else { 1 };
+                }
+                if let Some(Some((seen, true))) = open.last_mut() {
+                    let Some(Ok(name)) = json.get(start..=at).map(serde_json::from_str::<String>)
+                    else {
+                        return false;
+                    };
+                    if !seen.insert(name) {
+                        return false;
+                    }
+                }
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    true
 }
 
 /// Why a route is kept but its operation not served.
@@ -367,6 +455,12 @@ impl Route {
         self.not_granted
     }
 
+    /// Whether each request for this route proves its own caller ([`Surface::proving_callers`]):
+    /// one that proves none is refused, and the route fixes no caller.
+    pub fn proves(&self) -> bool {
+        self.proves
+    }
+
     /// The input `path` carries in its variables, read as [`ess_gen::http::Flat`] says; `None`
     /// when `path` does not match the template or leaves a variable's segment empty (ESS's
     /// served application matches only a variable holding a segment that is not empty),
@@ -578,6 +672,12 @@ pub enum SurfaceError {
         /// What it uses.
         what: String,
     },
+    /// The header a caller is proven in ([`Surface::proving_callers`]) is no HTTP field name, or
+    /// is [`Surface::SECRET_HEADER`].
+    Header(String),
+    /// The proxy's secret ([`Surface::proving_callers`]) is empty or holds a byte that is no
+    /// visible ASCII character, so no header could carry it. The secret is not held here.
+    Secret,
 }
 
 impl fmt::Display for SurfaceError {
@@ -616,6 +716,15 @@ impl fmt::Display for SurfaceError {
             Self::Unsupported { operation, what } => {
                 write!(formatter, "{operation}: this ingress does not serve {what}")
             }
+            Self::Header(name) => write!(
+                formatter,
+                "`{name}` is no HTTP header name for the caller: one or more of the token \
+                 characters of RFC 9110 §5.6.2, other than {}",
+                Surface::SECRET_HEADER
+            ),
+            Self::Secret => formatter.write_str(
+                "the proxy's secret is empty or holds a byte that is no visible ASCII character",
+            ),
         }
     }
 }
@@ -629,9 +738,37 @@ pub struct Surface {
     console: bool,
     recorder: Option<Recorder>,
     panel: Option<&'static str>,
+    /// The header each request proves its caller in, lowercase ([`Surface::proving_callers`]).
+    caller_header: Option<String>,
+    /// The secret the proxy presents in [`Surface::SECRET_HEADER`] on each such request.
+    caller_secret: Option<Secret>,
+}
+
+/// The proxy's secret: never written by `Debug`, so no surface printed for a diagnosis shows it.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct Secret(String);
+
+impl Secret {
+    /// The secret itself, to compare a request's with; only the listener reads a request's
+    /// headers.
+    #[cfg_attr(not(feature = "listener"), allow(dead_code))]
+    pub(crate) fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for Secret {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("Secret(..)")
+    }
 }
 
 impl Surface {
+    /// The header a proxy presents the secret in on each request to a surface made
+    /// [`Surface::proving_callers`]; a request without it, or with another value, proves no
+    /// caller.
+    pub const SECRET_HEADER: &'static str = "Spindle-Proxy-Secret";
+
     /// The surface of `components`: for each, the operations ESS derives for it, its accepted
     /// commands and, where it is `reached_by: network`, the views of the domains it owns.
     ///
@@ -665,7 +802,7 @@ impl Surface {
         components: &[String],
         binding: Option<&Binding>,
     ) -> Result<Self, SurfaceError> {
-        Self::routed(ir, components, binding, &[])
+        Self::routed(ir, components, binding, &[], false)
     }
 
     /// [`Surface::new`], every command sent as `caller`: a command that reads its caller is
@@ -680,7 +817,7 @@ impl Surface {
         binding: Option<&Binding>,
         caller: &Caller,
     ) -> Result<Self, SurfaceError> {
-        Self::routed(ir, components, binding, std::slice::from_ref(caller))
+        Self::routed(ir, components, binding, std::slice::from_ref(caller), false)
     }
 
     /// [`Surface::new`], each command sent as the first of `callers` whose actor's `may:` names
@@ -698,7 +835,67 @@ impl Surface {
         binding: Option<&Binding>,
         callers: &[Caller],
     ) -> Result<Self, SurfaceError> {
-        Self::routed(ir, components, binding, callers)
+        Self::routed(ir, components, binding, callers, false)
+    }
+
+    /// [`Surface::new`], each request for a command or view proving its own caller in the header
+    /// `header` ([`Caller::proven`]), which a proxy in front of the listener sets once it has
+    /// authenticated the request, beside `secret` in [`Surface::SECRET_HEADER`], by which the
+    /// proxy is trusted: the listener reads both, and a command that reads its caller is served
+    /// rather than marked [`Unserved::Ingress`]. Each request's caller is bound against the
+    /// model before it is used, and the grant check runs as for a fixed caller: a command its
+    /// actor's `may:` does not name, or a read-granted view it may not read, answers ESS's standard
+    /// `403` naming that actor. A request without the header, with it more than once, or with a
+    /// value that proves no caller of the model, and one whose secret is missing, given more than
+    /// once or another (compared in time that depends only on the lengths), answers the standard
+    /// refusal for a request authenticated as no caller, `403`
+    /// `{"refused": "not granted", "actor": null}`, and nothing is read or written; no default
+    /// caller is taken. The console routes and those under `/__spindle/` serve operator tooling
+    /// behind the proxy: each answers a request that carries the secret, with or without a caller,
+    /// and refuses one without it the same way, doing nothing. A request [`crate::route`] answers
+    /// carries no header, so there every request but one for a path no route has is refused.
+    ///
+    /// The headers are trusted only because the proxy sets them: the listener must be reachable
+    /// only through the proxy, and the proxy must remove both from every request it forwards
+    /// before setting its own.
+    ///
+    /// # Errors
+    /// As [`Surface::new`]; [`SurfaceError::Header`] for a `header` that is no HTTP field name or
+    /// is [`Surface::SECRET_HEADER`], and [`SurfaceError::Secret`] for a `secret` that is empty or
+    /// holds a byte that is no visible ASCII character.
+    pub fn proving_callers(
+        ir: &EssIr,
+        components: &[String],
+        binding: Option<&Binding>,
+        header: &str,
+        secret: &str,
+    ) -> Result<Self, SurfaceError> {
+        if header.is_empty()
+            || !header.bytes().all(token)
+            || header.eq_ignore_ascii_case(Self::SECRET_HEADER)
+        {
+            return Err(SurfaceError::Header(header.to_owned()));
+        }
+        if secret.is_empty() || !secret.bytes().all(|byte| byte.is_ascii_graphic()) {
+            return Err(SurfaceError::Secret);
+        }
+        let mut surface = Self::routed(ir, components, binding, &[], true)?;
+        surface.caller_header = Some(header.to_ascii_lowercase());
+        surface.caller_secret = Some(Secret(secret.to_owned()));
+        Ok(surface)
+    }
+
+    /// The secret the proxy presents on each request, where the surface was made
+    /// [`Surface::proving_callers`]; only the listener reads a request's headers.
+    #[cfg_attr(not(feature = "listener"), allow(dead_code))]
+    pub(crate) fn caller_secret(&self) -> Option<&Secret> {
+        self.caller_secret.as_ref()
+    }
+
+    /// The header each request proves its caller in, lowercase, where the surface was made
+    /// [`Surface::proving_callers`].
+    pub fn caller_header(&self) -> Option<&str> {
+        self.caller_header.as_deref()
     }
 
     fn routed(
@@ -706,6 +903,7 @@ impl Surface {
         components: &[String],
         binding: Option<&Binding>,
         callers: &[Caller],
+        proves: bool,
     ) -> Result<Self, SurfaceError> {
         if let Some(binding) = binding
             && let Some(key) = binding.ir().refusals().keys().next()
@@ -723,7 +921,7 @@ impl Surface {
                 .find(|component| component.name.as_str() == name)
                 .ok_or_else(|| SurfaceError::NoComponent(name.clone()))?;
             for bound in ess_gen::http::bound_routes(ir, component, binding) {
-                let route = route(ir, name, &bound, callers)?;
+                let route = route(ir, name, &bound, callers, proves)?;
                 if Reserved::of(&route.path).is_some() {
                     return Err(SurfaceError::Reserved {
                         operation: route.operation.to_string(),
@@ -748,6 +946,8 @@ impl Surface {
             console: false,
             recorder: None,
             panel: None,
+            caller_header: None,
+            caller_secret: None,
         })
     }
 
@@ -918,8 +1118,14 @@ fn same_template(left: &[Segment], right: &[Segment]) -> bool {
         })
 }
 
+/// Whether `byte` is a token character (RFC 9110 §5.6.2), what an HTTP field name is made of.
+fn token(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte)
+}
+
 /// One route of `component`, owned: served, or kept and marked [`Unserved`] with what it uses
-/// that this ingress, the kernel or the host does not run.
+/// that this ingress, the kernel or the host does not run. Where `proves`, each request proves its
+/// own caller ([`Route::proves`]).
 ///
 /// # Errors
 /// [`SurfaceError::Unsupported`] when the route's path is not a template ESS reads, so that no
@@ -929,6 +1135,7 @@ fn route(
     component: &str,
     bound: &ess_gen::http::Route<'_>,
     callers: &[Caller],
+    proves: bool,
 ) -> Result<Route, SurfaceError> {
     let operation = bound.serves.operation();
     let path = bound.path.clone();
@@ -957,6 +1164,7 @@ fn route(
         refused: Vec::new(),
         caller: caller.cloned(),
         not_granted: false,
+        proves,
     };
     match (served(ir, bound, &mut route), &route.operation) {
         (Err(what), _) => {
@@ -1011,7 +1219,7 @@ fn may_run(ir: &EssIr, actor: &str, command: &str) -> bool {
 /// Whether `actor` may read `view`, by ESS's read grants: a view no actor's `may:` names is open
 /// to every actor; a read-granted one only to an actor whose `may:` names it
 /// ([`ess_compiler::ir::ResolvedActor::may_read`]).
-fn may_read(ir: &EssIr, actor: &str, view: &str) -> bool {
+pub(crate) fn may_read(ir: &EssIr, actor: &str, view: &str) -> bool {
     let names = |declared: &ess_compiler::ir::ResolvedActor| {
         declared
             .may_read
@@ -1073,8 +1281,8 @@ fn refuse(ir: &EssIr, command: &ess_compiler::ir::ResolvedCommand, route: &mut R
 /// refusal the binding answers its own way, a command whose outcome answers with its retained
 /// result, a path variable or a view parameter in the query string that is not a scalar, or a
 /// command that reads its caller where the
-/// route fixes no caller: how an HTTP caller proves its attributes is an authentication technical
-/// not yet decided (design §11).
+/// route neither fixes a caller nor has each request prove one ([`Surface::proving_callers`],
+/// design §11).
 fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Result<(), String> {
     for (variable, field) in ess_gen::http::path_fields(ir, bound) {
         let position = route
@@ -1098,7 +1306,7 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
     match bound.serves {
         ess_gen::http::Served::Command(handle) => {
             let read = spindle_kernel::caller_reads(ir, ir.command(handle));
-            if !read.is_empty() && route.caller.is_none() {
+            if !read.is_empty() && route.caller.is_none() && !route.proves {
                 return Err(format!(
                     "the caller attributes it reads ({}), which no HTTP caller proves here",
                     read.iter()
@@ -1260,8 +1468,36 @@ fn unwritten(listed: &ess_http::Outcome) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Flat, Queried, Surface};
+    use super::{Caller, Flat, Queried, Surface, unique_members};
     use serde_json::{Value, json};
+
+    #[test]
+    fn a_member_named_twice_at_any_depth_or_spelling_is_found() {
+        for twice in [
+            r#"{"actor": "A", "actor": "B"}"#,
+            r#"{"actor": "A", "actor": "B"}"#,
+            r#"{"actor": "A", "caller": {"id": 1, "id": 2}}"#,
+            r#"{"actor": "A", "caller": {"list": [{"x": 1, "x": 2}]}}"#,
+        ] {
+            assert!(!unique_members(twice), "{twice}");
+            assert_eq!(Caller::proven(twice.as_bytes()), None, "{twice}");
+        }
+    }
+
+    #[test]
+    fn names_in_values_and_in_sibling_objects_are_not_members_named_twice() {
+        for once in [
+            r#"{"actor": "actor", "caller": {"actor": "\"actor\": {\"a\": 1, \"a\": 2}"}}"#,
+            r#"{"actor": "A", "caller": {"rows": [{"id": 1}, {"id": 2}], "id": 3}}"#,
+            r#"{"actor": "A", "caller": {"k\"ey": 1, "key": 2}}"#,
+        ] {
+            assert!(unique_members(once), "{once}");
+        }
+        assert!(
+            Caller::proven(br#"{"actor": "A", "caller": {"actor": "B"}}"#).is_some(),
+            "an attribute may share the name actor"
+        );
+    }
 
     #[test]
     fn a_surface_without_observe_holds_no_recorder() {
