@@ -45,7 +45,10 @@ are Spindle's releases.
   counts when the store opens (`Store::counts`, for `spindle_entity_rows`) are read from each
   entity's own stream alone, no row read. Its reading handle (`Store::reading`) reads through the
   store's own pool beside the writer, one statement per connection taken and no lock held, and
-  opens no connection beyond `database_pool`, so the connection budget is unchanged and `GET`
+  opens no connection beyond `database_pool`. Reads beside the writer are capped at
+  `database_pool` - 1 (1 with a pool of 1), scans and reads of a related field alike, so a
+  connection is always left for the writer; a read over the cap waits its turn, in arrival order,
+  and fails with a store error only after 30 s. The connection budget is unchanged and `GET`
   views, `/api/model`, `/api/events` and `/__spindle/*` read a postgres-bound component off the
   host's thread as they read a SQLite one; a reset, which empties its tables in place, waits for
   the reads already running, and reads wait for the reset. The new `b10x-spindle store migrate <spec>
