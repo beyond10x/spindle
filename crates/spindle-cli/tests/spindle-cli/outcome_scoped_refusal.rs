@@ -5,9 +5,9 @@
 //! `tests/fixtures/outcome-scoped-refusal` declares one component reached over the network.
 //! `PlaceBox` places a box (`placed`), or, where the request sets `weigh`, places it at a generated
 //! `Decimal` weight (`weighed`), which the runtime does not mint. `LabelBox` relabels a box
-//! (`labelled`), or, where the request sets `announce`, relabels it under a header
-//! (`announced`). `tests/fixtures/outcome-scoped-refusal-http.yaml` binds `LabelBox` and declares
-//! that header for `announced`, which this ingress does not write.
+//! (`labelled`), or, where the request sets `announce`, relabels it (`announced`).
+//! `tests/fixtures/outcome-scoped-refusal-http.yaml` binds `LabelBox` and answers `announced` with
+//! a redirect to the label, which this ingress does not write.
 //!
 //! `tests/fixtures/outcome-scoped-refusal-effects` declares one component reached in process, so
 //! `run` reads stdin. `CloseLot` closes a lot (`closed`), or, where the request sets `sweep`,
@@ -34,7 +34,7 @@ const LABEL_BOX: &str = "shelf.box.LabelBox";
 const ALL_BOXES: &str = "shelf.box.AllBoxes";
 /// The outcome of `PlaceBox` whose generated `Decimal` weight the runtime does not mint.
 const WEIGHED: &str = "shelf.box.PlaceBox/weighed";
-/// The outcome of `LabelBox` the binding answers with a header this ingress does not write.
+/// The outcome of `LabelBox` the binding answers with a redirect this ingress does not write.
 const ANNOUNCED: &str = "shelf.box.LabelBox/announced";
 
 /// How long `run` may take to admit, open its state and print where it listens.

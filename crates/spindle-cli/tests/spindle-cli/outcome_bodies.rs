@@ -1,7 +1,8 @@
 //! A command outcome whose `ess-http/1` binding lists a success body, `response`,
 //! `response.<field>` or `none`, is answered with that body and the bound status; one bound with
-//! headers, a redirect or a non-default encoding still answers `501`, naming the outcome and what
-//! this ingress does not write (`story:http-outcome-bodies`).
+//! headers answers them beside it (`story:outcome-response-headers`); one bound with a redirect or
+//! a non-default encoding still answers `501`, naming the outcome and what this ingress does not
+//! write (`story:http-outcome-bodies`).
 //!
 //! `tests/fixtures/outcome-bodies` declares one component reached over the network and six
 //! commands, each creating one parcel. `tests/fixtures/outcome-bodies-http.yaml` binds the one
@@ -354,16 +355,35 @@ fn a_none_body_answers_no_content() {
 }
 
 #[test]
+fn a_header_outcome_answers_its_header_beside_the_envelope() {
+    let contract = Contract::load(Some(BINDING));
+    let served = serve(&["--http", BINDING]);
+    let reply = served.send(
+        &contract,
+        ANNOUNCE,
+        &json!({"parcel_id": "p4", "label": "loud", "announce": true}),
+    );
+    assert_eq!(reply.status, 201, "the bound status: {reply:?}");
+    assert_eq!(reply.header("x-announced"), Some("yes"), "{reply:?}");
+    let declared = &contract.response(ANNOUNCE, 201)["headers"]["X-Announced"];
+    assert_eq!(
+        declared["schema"]["const"], "yes",
+        "the value the projection declares: {declared}"
+    );
+    let answer = reply.json();
+    assert_eq!(answer["outcome"], "announced", "{answer}");
+    contract.validate(ANNOUNCE, reply.status, &answer);
+    assert_eq!(
+        served.rows(&contract),
+        json!({"rows": [{"parcel_id": "p4", "label": "loud"}]})
+    );
+}
+
+#[test]
 fn an_unserved_outcome_presentation_is_refused_by_name() {
     let contract = Contract::load(Some(BINDING));
     let served = serve(&["--http", BINDING]);
     for (id, outcome, missing, input) in [
-        (
-            ANNOUNCE,
-            "depot.parcel.AnnounceParcel/announced",
-            "headers",
-            json!({"parcel_id": "p4", "label": "loud", "announce": true}),
-        ),
         (
             FORWARD,
             "depot.parcel.ForwardParcel/forwarded",

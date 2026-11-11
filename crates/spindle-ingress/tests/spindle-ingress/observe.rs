@@ -173,6 +173,7 @@ fn a_responded_exchange_is_classed_by_its_answer() {
         .respond(spindle_ingress::Answer {
             status: 200,
             body: Some(serde_json::json!({"rows": []})),
+            headers: Vec::new(),
         });
     let (status, body) = asked.join().expect("the request thread ends");
     assert_eq!(status, 200, "{body}");

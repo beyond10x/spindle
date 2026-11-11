@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use ess_compiler::EssIr;
 use ess_compiler::ir::{ResolvedCommand, ResolvedError, ResolvedField};
 use ess_gen::http::{FORBIDDEN, NOT_GRANTED};
-use ess_http::{Body, Encoding, Operation};
+use ess_http::{AnswerSource, Body, Challenge, Encoding, Header, Operation, Param};
 use serde_json::{Map, Value, json};
 use spindle_host::{Failed, Host, HostError, Reader};
 use spindle_kernel::{DeclaredError, Event, ExecuteError};
@@ -18,7 +18,8 @@ use crate::surface::{Caller, Route, Unserved, may_read, may_run};
 /// ([`crate::observe`]).
 pub(crate) const NO_INPUT_FIELD: &str = " declares no input field ";
 
-/// A status and the JSON body written under it, where it has one.
+/// A status, the JSON body written under it, where it has one, and the response headers the
+/// binding declares for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Answer {
     /// The HTTP status.
@@ -26,6 +27,10 @@ pub struct Answer {
     /// The body, written as `application/json`; `None` for an answer with no body and no
     /// `Content-Type`, as a binding's `body: none` declares.
     pub body: Option<Value>,
+    /// The response headers the binding declares for the outcome answered, as `(name, value)`
+    /// in name order, each value one a header carries ([`declared_headers`]); empty for every
+    /// other answer.
+    pub headers: Vec<(String, String)>,
 }
 
 impl Answer {
@@ -35,6 +40,7 @@ impl Answer {
         Self {
             status,
             body: Some(json!({"refused": detail.into()})),
+            headers: Vec::new(),
         }
     }
 
@@ -44,6 +50,7 @@ impl Answer {
         Self {
             status: FORBIDDEN.parse().unwrap_or(403),
             body: Some(json!({"refused": NOT_GRANTED, "actor": actor})),
+            headers: Vec::new(),
         }
     }
 
@@ -54,6 +61,7 @@ impl Answer {
         Self {
             status: FORBIDDEN.parse().unwrap_or(403),
             body: Some(json!({"refused": NOT_GRANTED, "actor": null})),
+            headers: Vec::new(),
         }
     }
 
@@ -63,6 +71,7 @@ impl Answer {
         Self {
             status: 501,
             body: Some(json!({"refused": detail.into(), "committed": committed})),
+            headers: Vec::new(),
         }
     }
 }
@@ -91,7 +100,10 @@ impl Answer {
 /// where the outcome answers no response), `{<member>: error}` on a refusing outcome an object
 /// whose `<member>` is the error's wire name beside the error's fields under their wire names, and
 /// `none` no body and no `Content-Type`. A refusal answered so writes nothing, as under the
-/// envelope.
+/// envelope. Beside either, an outcome the binding declares response headers for answers them
+/// ([`Answer::headers`]), as ESS's served application writes them; one whose value, read from
+/// the request or the outcome, a header cannot carry answers `501` naming the header, with
+/// `committed` saying whether the outcome's effect was written, and none of its headers.
 ///
 /// A view answers `200` with the body ESS publishes for it, `{"rows": [...]}`, every row it
 /// holds for its parameters: those `carried` holds from the path, and those `query` holds
@@ -334,6 +346,7 @@ fn listed(rows: Result<Vec<Map<String, Value>>, HostError>) -> (Answer, Answered
             Answer {
                 status: 200,
                 body: Some(json!({"rows": rows})),
+                headers: Vec::new(),
             },
             Answered::model(None, Vec::new()),
         ),
@@ -375,6 +388,11 @@ fn run(
         }
         input.insert(field.clone(), value.clone());
     }
+    let given = if route.declares_headers() {
+        input.clone()
+    } else {
+        Map::new()
+    };
     let answer = match host.submit_refusing(
         command,
         input,
@@ -384,18 +402,22 @@ fn run(
     ) {
         Ok(report) => {
             let (answer, answered) = match report.ran.first() {
-                Some(ran) => (
-                    envelope(
-                        host.ir(),
-                        route,
-                        command,
-                        &ran.executed.outcome,
-                        &ran.executed.events,
-                        None,
-                        ran.executed.response.as_ref(),
+                Some(ran) => match envelope(
+                    host.ir(),
+                    route,
+                    command,
+                    &ran.executed.outcome,
+                    &ran.executed.events,
+                    None,
+                    ran.executed.response.as_ref(),
+                    &given,
+                ) {
+                    Ok(answer) => (
+                        answer,
+                        selected(route, &ran.executed.outcome, &ran.executed.events),
                     ),
-                    selected(route, &ran.executed.outcome, &ran.executed.events),
-                ),
+                    Err(unfinished) => (unfinished, Answered::ingress()),
+                },
                 None => (
                     Answer::unfinished(format!("{command} ran and reported nothing"), true),
                     Answered::ingress(),
@@ -404,8 +426,19 @@ fn run(
             return (answer, report.failed, answered);
         }
         Err(HostError::CommandRefused { outcome, error, .. }) => {
-            let answered = selected(route, &outcome, &[]);
-            let answer = envelope(host.ir(), route, command, &outcome, &[], Some(&error), None);
+            let (answer, answered) = match envelope(
+                host.ir(),
+                route,
+                command,
+                &outcome,
+                &[],
+                Some(&error),
+                None,
+                &given,
+            ) {
+                Ok(answer) => (answer, selected(route, &outcome, &[])),
+                Err(unfinished) => (unfinished, Answered::ingress()),
+            };
             return (answer, Vec::new(), answered);
         }
         Err(HostError::Execute { error, .. }) => match *error {
@@ -500,8 +533,13 @@ fn form(
 const FORM: &str = "application/x-www-form-urlencoded";
 
 /// The envelope ESS publishes for `outcome` of `command`, at the status `route` gives it, or the
-/// body the binding answers in its place ([`bare`]). The command's response, in either, is
-/// written as ESS publishes it ([`Written`]).
+/// body the binding answers in its place ([`bare`]), with the headers the binding declares for
+/// the outcome, read from `given`, the command's input, and the outcome ([`declared_headers`]).
+/// The command's response, in either, is written as ESS publishes it ([`Written`]).
+///
+/// `Err` is the ingress's `501`, `committed` where the outcome is no refusal: for an outcome the
+/// command does not declare, and for one whose header a value cannot be written in.
+#[allow(clippy::too_many_arguments)]
 fn envelope(
     ir: &EssIr,
     route: &Route,
@@ -510,16 +548,23 @@ fn envelope(
     emitted: &[Event],
     refusal: Option<&DeclaredError>,
     response: Option<&Map<String, Value>>,
-) -> Answer {
+    given: &Map<String, Value>,
+) -> Result<Answer, Answer> {
     let Some(status) = route.status(outcome) else {
-        return Answer::unfinished(
+        return Err(Answer::unfinished(
             format!("{command} selected {outcome}, which it does not declare"),
             refusal.is_none(),
-        );
+        ));
     };
     let written = Written::of(ir, command);
+    let headers = declared_headers(route, outcome, &written, given, refusal, response)
+        .map_err(|detail| Answer::unfinished(detail, refusal.is_none()))?;
     if let Some(body) = bare(route, outcome, response, refusal, &written) {
-        return Answer { status, body };
+        return Ok(Answer {
+            status,
+            body,
+            headers,
+        });
     }
     let mut body = Map::new();
     body.insert("outcome".to_owned(), Value::String(outcome.to_owned()));
@@ -547,10 +592,138 @@ fn envelope(
             Value::Object(written.response(response)),
         );
     }
-    Answer {
+    Ok(Answer {
         status,
         body: Some(Value::Object(body)),
+        headers,
+    })
+}
+
+/// The headers the binding declares for `outcome` ([`Route::headers`]), as ESS's served
+/// application writes them (`ess-synth` `rust/http/bound.rs`, `outcome_arm`): in name order, a
+/// literal as compiled, a source as the text of the scalar it reads ([`scalar_text`]), left out
+/// where that is absent, and a `WWW-Authenticate` challenge as [`challenge`] writes it. A source
+/// reads `given`, the command's input with what the path carries, `response` where the outcome
+/// answers it, the fields `refusal` carries, each written as ESS publishes it ([`Written`]), or
+/// the error's wire name.
+///
+/// `Err` names the header or challenge param whose value a header cannot carry
+/// ([`field_value`], [`challenge`]); such a value is never written, cut or re-encoded, so a
+/// value from the request cannot end its header line or start another.
+fn declared_headers(
+    route: &Route,
+    outcome: &str,
+    written: &Written<'_>,
+    given: &Map<String, Value>,
+    refusal: Option<&DeclaredError>,
+    response: Option<&Map<String, Value>>,
+) -> Result<Vec<(String, String)>, String> {
+    let Some(declared) = route.headers(outcome) else {
+        return Ok(Vec::new());
+    };
+    let response = response.filter(|_| route.responds(outcome));
+    let carried = refusal.filter(|refusal| !refusal.unknown_instance);
+    let read = |source: &AnswerSource| -> Option<String> {
+        match source {
+            AnswerSource::Input(field) => given.get(field).and_then(scalar_text),
+            AnswerSource::Response(field) => response
+                .and_then(|response| response.get(field))
+                .map(|held| written.field(field, held))
+                .as_ref()
+                .and_then(scalar_text),
+            AnswerSource::Error(field) => carried
+                .and_then(|refusal| written.error_field(outcome, refusal, field))
+                .as_ref()
+                .and_then(scalar_text),
+            AnswerSource::ErrorWire => Some(written.error_wire(outcome, refusal)),
+        }
+    };
+    let mut headers = Vec::with_capacity(declared.len());
+    for (name, header) in declared {
+        let value = match header {
+            Header::Literal(text) => Some(text.clone()),
+            Header::Source(source) => read(source)
+                .map(|value| field_value(name, value))
+                .transpose()?,
+            Header::Challenge(declared) => Some(challenge(declared, read)?),
+        };
+        if let Some(value) = value {
+            headers.push((name.clone(), value));
+        }
     }
+    Ok(headers)
+}
+
+/// A scalar a header reads, as text, as ESS's served application writes it (`ess-synth`
+/// `http::scalar_text`): a string as itself, a number as its spelling, a boolean as `true` or
+/// `false`; `None` for anything else, an absent optional's `null` among it.
+fn scalar_text(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => Some(text.clone()),
+        Value::Number(number) => Some(number.to_string()),
+        Value::Bool(value) => Some(value.to_string()),
+        Value::Null | Value::Array(_) | Value::Object(_) => None,
+    }
+}
+
+/// `value` for the header `name` where it is field-value text (RFC 9110 §5.5), as ESS's served
+/// application checks it (`ess-synth` `http::push_header`): no control character other than a
+/// horizontal tab, so it cannot end its header line or start another, and no space or tab at
+/// either end, which a reader strips. `Err` names the header and the character, not the value.
+fn field_value(name: &str, value: String) -> Result<String, String> {
+    if let Some(found) = value.chars().find(|c| c.is_control() && *c != '\t') {
+        return Err(format!(
+            "header `{name}` would hold {found:?}, which is not field-value text"
+        ));
+    }
+    if value.starts_with([' ', '\t']) || value.ends_with([' ', '\t']) {
+        return Err(format!(
+            "header `{name}` would start or end with a space or a tab, which a reader strips"
+        ));
+    }
+    Ok(value)
+}
+
+/// One RFC 9110 §11.6.1 challenge, as ESS's served application writes it (`ess-synth`
+/// `http::challenge`): the scheme, then each param present as `name="value"` in name order,
+/// separated by `, `, each value a quoted string whose `"` and `\` are escaped so that no value
+/// can leave it. A param whose source `read` finds absent is left out.
+///
+/// `Err` names a param whose value holds a control character other than a horizontal tab,
+/// which a quoted string cannot carry.
+fn challenge(
+    declared: &Challenge,
+    read: impl Fn(&AnswerSource) -> Option<String>,
+) -> Result<String, String> {
+    let mut out = declared.scheme.clone();
+    let mut first = true;
+    for (name, param) in &declared.params {
+        let value = match param {
+            Param::Literal(text) => text.clone(),
+            Param::Source(source) => match read(source) {
+                Some(value) => value,
+                None => continue,
+            },
+        };
+        if let Some(found) = value.chars().find(|c| c.is_control() && *c != '\t') {
+            return Err(format!(
+                "challenge param `{name}` would hold {found:?}, which a quoted string cannot \
+                 carry"
+            ));
+        }
+        out.push_str(if first { " " } else { ", " });
+        first = false;
+        out.push_str(name);
+        out.push_str("=\"");
+        for c in value.chars() {
+            if c == '"' || c == '\\' {
+                out.push('\\');
+            }
+            out.push(c);
+        }
+        out.push('"');
+    }
+    Ok(out)
 }
 
 /// The body the binding answers `outcome` with in place of the envelope, where it does
@@ -636,7 +809,22 @@ impl<'ir> Written<'ir> {
     /// identity no record carries, which ESS answers without a payload.
     fn error_object(&self, outcome: &str, member: &str, refusal: Option<&DeclaredError>) -> Value {
         let declared = self.declared_error(outcome);
-        let wire = declared.map_or_else(
+        let mut object = Map::new();
+        object.insert(
+            member.to_owned(),
+            Value::String(self.error_wire(outcome, refusal)),
+        );
+        if let Some(refusal) = refusal.filter(|refusal| !refusal.unknown_instance) {
+            let fields = declared.map_or(&[][..], |error| error.fields.as_slice());
+            object.extend(crate::wire::fields(self.ir, fields, &refusal.fields));
+        }
+        Value::Object(object)
+    }
+
+    /// The wire name of the error `outcome` reports (`naming.wire`, else its local name), as
+    /// `{<member>: error}` and `error.wire` write it; empty where the outcome reports none.
+    fn error_wire(&self, outcome: &str, refusal: Option<&DeclaredError>) -> String {
+        self.declared_error(outcome).map_or_else(
             || {
                 refusal.map_or_else(String::new, |refusal| {
                     refusal
@@ -648,14 +836,21 @@ impl<'ir> Written<'ir> {
                 })
             },
             |error| error.naming.wire_or(&error.name).to_owned(),
-        );
-        let mut object = Map::new();
-        object.insert(member.to_owned(), Value::String(wire));
-        if let Some(refusal) = refusal.filter(|refusal| !refusal.unknown_instance) {
-            let fields = declared.map_or(&[][..], |error| error.fields.as_slice());
-            object.extend(crate::wire::fields(self.ir, fields, &refusal.fields));
-        }
-        Value::Object(object)
+        )
+    }
+
+    /// The value of the field declared `field` that `refusal` carries, written as ESS publishes
+    /// it; `None` where it carries none.
+    fn error_field(&self, outcome: &str, refusal: &DeclaredError, field: &str) -> Option<Value> {
+        let held = refusal.fields.get(field)?;
+        Some(
+            self.declared_error(outcome)
+                .and_then(|error| error.fields.iter().find(|declared| declared.name == field))
+                .map_or_else(
+                    || held.clone(),
+                    |declared| crate::wire::value(self.ir, &declared.type_ref, held),
+                ),
+        )
     }
 
     /// The whole response, keyed by wire name.

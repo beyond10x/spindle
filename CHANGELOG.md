@@ -10,6 +10,13 @@ are Spindle's releases.
 
 ### Added
 
+- A command outcome an `ess-http/1` binding declares response headers for answers them beside
+  its declared status and body, as ESS's served application writes them, instead of `501`: a
+  literal as declared, a source as the text of the scalar it reads (left out where that is
+  absent), and a `WWW-Authenticate` challenge with each param a quoted string. A value read from
+  the request or the outcome that a header cannot carry (a control character other than a tab,
+  or a space or tab at either end of a plain header) is never written: the request answers `501`
+  naming the header. A declared header never replaces one the listener writes itself.
 - The kernel runs an outcome that declares `when_state_changes: true` or `false`, which it refused
   as unsupported (`501`): the branch holds where its own move does, or does not, change the state
   the subject holds immediately before selection, and its `when:` holds too. It answers among the

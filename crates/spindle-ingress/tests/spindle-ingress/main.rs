@@ -18,6 +18,7 @@ mod exposed;
 mod grants;
 mod metrics_read;
 mod observe;
+mod outcome_headers;
 mod refusal_payload;
 mod router;
 mod served;

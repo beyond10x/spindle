@@ -1,0 +1,42 @@
+domain: keep.door
+summary: A pass is accepted or refused at the door; a refusal says why in words.
+types:
+  - name: keep.door.DoorId
+    kind: newtype
+    of: String
+errors:
+  - name: keep.door.PassRefused
+    summary: The pass is not accepted, with why in words.
+    naming: {wire: invalid_token}
+    fields:
+      - name: description
+        type: String
+        naming: {wire: error_description}
+commands:
+  - name: keep.door.PassDoor
+    input:
+      - name: door_id
+        type: keep.door.DoorId
+      - name: accepted
+        type: Boolean
+      - name: why
+        type: String
+      - name: realm
+        type: Optional<String>
+    outcomes:
+      - name: refused
+        when: accepted == false
+        error: keep.door.PassRefused
+        payload:
+          keep.door.PassRefused: {description: input.why}
+        summary: A pass that is not accepted is refused, saying why.
+      - name: passed
+        emits: [keep.door.DoorPassed]
+        payload:
+          keep.door.DoorPassed: {door_id: input.door_id}
+        summary: An accepted pass lets its holder through.
+events:
+  - name: keep.door.DoorPassed
+    fields:
+      - name: door_id
+        type: keep.door.DoorId

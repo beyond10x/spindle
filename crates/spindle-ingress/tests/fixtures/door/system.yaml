@@ -1,0 +1,19 @@
+format: ess/34
+system: keep
+version: v1
+summary: A door that lets the holder of an accepted pass through and refuses every other pass with a challenge.
+domains:
+  - keep.door
+components:
+  - component: door
+    summary: Checks passes at the door.
+    owns:
+      domains:
+        - keep.door
+    accepts:
+      commands:
+        - keep.door.PassDoor
+    publishes:
+      events:
+        - keep.door.DoorPassed
+    reached_by: network
