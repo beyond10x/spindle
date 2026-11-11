@@ -6,7 +6,9 @@ use std::fmt;
 
 use ess_compiler::EssIr;
 use ess_gen::http::{Binding, Flat, Shape};
-use ess_http::{Body, Encoding, Method, Operation, ResponseEncoding, Segment, Unknown, ViewBody};
+use ess_http::{
+    Body, Encoding, Header, Method, Operation, ResponseEncoding, Segment, Unknown, ViewBody,
+};
 use serde_json::{Map, Value};
 
 use crate::console::Console;
@@ -104,6 +106,9 @@ pub struct Route {
     /// The outcomes the binding answers with a body other than the envelope, each with it:
     /// `response`, `response.<field>`, `{<member>: error}` or `none`.
     bodies: BTreeMap<String, Body>,
+    /// The outcomes the binding answers with response headers, each with them by name, in name
+    /// order ([`Route::headers`]).
+    headers: BTreeMap<String, BTreeMap<String, Header>>,
     unserved: Option<Unserved>,
     /// The command's outcomes not run, in declaration order, each with why.
     refused: Vec<(String, Unserved)>,
@@ -284,6 +289,19 @@ impl Route {
     /// `None` for an outcome answered with the envelope.
     pub(crate) fn body(&self, outcome: &str) -> Option<&Body> {
         self.bodies.get(outcome)
+    }
+
+    /// The response headers the binding declares for the command's outcome `outcome`, by name in
+    /// name order, as ESS compiles them: a literal, a scalar the outcome supplies, or a
+    /// `WWW-Authenticate` challenge. `None` for an outcome the binding declares none for.
+    pub(crate) fn headers(&self, outcome: &str) -> Option<&BTreeMap<String, Header>> {
+        self.headers.get(outcome)
+    }
+
+    /// Whether the binding declares response headers for any of the command's outcomes
+    /// ([`Route::headers`]).
+    pub(crate) fn declares_headers(&self) -> bool {
+        !self.headers.is_empty()
     }
 
     /// The path's variables.
@@ -810,7 +828,7 @@ impl Surface {
     /// variable that is not a scalar. A command the kernel cannot select among the outcomes of
     /// ([`selects`](spindle_kernel::selects)) is marked [`Unserved::Kernel`], and a view the
     /// host's [`reads`](spindle_host::reads) refuses [`Unserved::Host`]. A command's outcome
-    /// answered with headers, a redirect or the `text` encoding, or one the kernel does not take
+    /// answered with a redirect or the `text` encoding, or one the kernel does not take
     /// ([`takes`](spindle_kernel::takes)) refuses that outcome alone ([`Route::refused`]); a
     /// command none of whose outcomes is left is marked as a whole.
     ///
@@ -1183,6 +1201,7 @@ fn route(
         parameters: Vec::new(),
         responding: Vec::new(),
         bodies: BTreeMap::new(),
+        headers: BTreeMap::new(),
         unserved: None,
         refused: Vec::new(),
         caller: caller.cloned(),
@@ -1202,6 +1221,7 @@ fn route(
             route.statuses.clear();
             route.responding.clear();
             route.bodies.clear();
+            route.headers.clear();
             route.refused.clear();
             route.unserved = Some(Unserved::Ingress(what));
         }
@@ -1311,6 +1331,7 @@ fn refuse(ir: &EssIr, command: &ess_compiler::ir::ResolvedCommand, route: &mut R
         route.statuses.clear();
         route.responding.clear();
         route.bodies.clear();
+        route.headers.clear();
         route.unserved = Some(why);
     } else {
         route.unserved = selection
@@ -1319,9 +1340,9 @@ fn refuse(ir: &EssIr, command: &ess_compiler::ir::ResolvedCommand, route: &mut R
     }
 }
 
-/// Fills `route`'s variables, input, request, statuses and the bodies its outcomes answer other
-/// than with the envelope, and lists among its refused outcomes each one answered with headers, a
-/// redirect or the `text` encoding ([`unwritten`]), or
+/// Fills `route`'s variables, input, request, statuses, the bodies its outcomes answer other
+/// than with the envelope and the headers they declare, and lists among its refused outcomes
+/// each one answered with a redirect or the `text` encoding ([`unwritten`]), or
 /// without a status; `Err` names what it uses that this ingress does not serve: a view answered
 /// other than as `rows`, a standard
 /// refusal the binding answers its own way, a command whose outcome answers with its retained
@@ -1408,6 +1429,11 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
                                     .bodies
                                     .insert(outcome.name.to_string(), listed.body.clone());
                             }
+                            if !listed.headers.is_empty() {
+                                route
+                                    .headers
+                                    .insert(outcome.name.to_string(), listed.headers.clone());
+                            }
                             Ok(listed.status)
                         }
                     },
@@ -1469,8 +1495,8 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
 /// What of `listed`, a command outcome's answer as the binding lists it, this ingress does not
 /// write, in words; `None` where it writes all of it: the status with the envelope,
 /// `response`, `response.<field>`, the error object `{<member>: error}` or `none` as
-/// `application/json` or no body. Each of bound headers, a redirect and a response encoding other
-/// than `json` is named.
+/// `application/json` or no body, with the headers it declares ([`Route::headers`]). Each of a
+/// redirect and a response encoding other than `json` is named.
 ///
 /// Every member of the answer is read by name, so a member a later ESS adds fails to compile here
 /// rather than going unwritten unnamed.
@@ -1479,7 +1505,7 @@ fn unwritten(listed: &ess_http::Outcome) -> Option<String> {
         status: _,
         body,
         encoding,
-        headers,
+        headers: _,
         redirect,
     } = listed;
     let mut what = Vec::new();
@@ -1493,14 +1519,6 @@ fn unwritten(listed: &ess_http::Outcome) -> Option<String> {
     match encoding {
         ResponseEncoding::Json => {}
         ResponseEncoding::Text => what.push(format!("in the `{encoding}` encoding")),
-    }
-    if !headers.is_empty() {
-        let names = headers
-            .keys()
-            .map(|name| format!("`{name}`"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        what.push(format!("with headers ({names})"));
     }
     if redirect.is_some() {
         what.push("with a redirect".to_owned());

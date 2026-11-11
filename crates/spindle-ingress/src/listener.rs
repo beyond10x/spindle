@@ -13,8 +13,8 @@ use ess_http::Operation;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::{Bytes, Incoming};
 use hyper::header::{
-    ALLOW, AUTHORIZATION, CONTENT_LENGTH, CONTENT_SECURITY_POLICY, CONTENT_TYPE, HOST, HeaderMap,
-    HeaderValue, TRANSFER_ENCODING,
+    ALLOW, AUTHORIZATION, CONNECTION, CONTENT_LENGTH, CONTENT_SECURITY_POLICY, CONTENT_TYPE, HOST,
+    HeaderMap, HeaderName, HeaderValue, TRANSFER_ENCODING,
 };
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
@@ -639,6 +639,25 @@ fn replied(reply: Reply) -> Response<Full<Bytes>> {
         .and_then(|allow| HeaderValue::from_str(allow).ok())
     {
         response.headers_mut().insert(ALLOW, value);
+    }
+    // The headers the binding declares, after those this listener writes, none of which one of
+    // them replaces, and never the framing hyper writes: ESS refuses a binding that declares
+    // `Content-Type`, `Content-Length`, `Transfer-Encoding` or `Connection` (`ESS-HTTP-026`), so
+    // this only holds the line. Each name is a token and each value field-value text by now
+    // (`answer::declared_headers`).
+    for (name, value) in &reply.headers {
+        let (Ok(name), Ok(value)) = (
+            HeaderName::from_bytes(name.as_bytes()),
+            HeaderValue::from_str(value),
+        ) else {
+            continue;
+        };
+        if response.headers().contains_key(&name)
+            || [CONTENT_LENGTH, TRANSFER_ENCODING, CONNECTION].contains(&name)
+        {
+            continue;
+        }
+        response.headers_mut().append(name, value);
     }
     response
 }

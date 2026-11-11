@@ -136,7 +136,7 @@ pub enum Command {
     ///
     /// An outcome the kernel does not run (such as one that generates a value of a type the
     /// runtime does not mint), or one this ingress does not answer as the binding lists it
-    /// (headers, a redirect or the `text` encoding), refuses only the request that selects it: its
+    /// (a redirect or the `text` encoding), refuses only the request that selects it: its
     /// command keeps its route and answers every other outcome as declared, and that request
     /// answers `501` naming the outcome and what it lacks, with nothing written. Before listening,
     /// `run` prints one line on stderr per such outcome. A command none of whose outcomes runs is

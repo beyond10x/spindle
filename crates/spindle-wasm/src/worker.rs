@@ -115,6 +115,7 @@ impl Inner {
                 allow: None,
                 panel: false,
                 metrics: false,
+                headers: Vec::new(),
                 body: serde_json::json!({"refused": format!("{} is outside this host", request.url())})
                     .to_string(),
             });
@@ -153,7 +154,8 @@ const NULL_BODY: [u16; 5] = [101, 103, 204, 205, 304];
 
 /// `response` as a `Response`: its status, its body as [`spindle_ingress::CONTENT_TYPE`] (or the
 /// panel's or the metrics' media type, where the response says it is one of them) where
-/// it has one and the status may carry one ([`NULL_BODY`]), and `Allow` where it carries it.
+/// it has one and the status may carry one ([`NULL_BODY`]), `Allow` where it carries it, and the
+/// headers the binding declares for it.
 fn respond(response: &spindle_ingress::Response) -> Result<Response, JsValue> {
     let headers = Headers::new()?;
     let body = (!response.body.is_empty() && !NULL_BODY.contains(&response.status))
@@ -168,6 +170,13 @@ fn respond(response: &spindle_ingress::Response) -> Result<Response, JsValue> {
     }
     if let Some(allow) = &response.allow {
         headers.set("allow", allow)?;
+    }
+    // The headers the binding declares, after those written above, none of which one of them
+    // replaces.
+    for (name, value) in &response.headers {
+        if !headers.has(name)? {
+            headers.append(name, value)?;
+        }
     }
     let init = ResponseInit::new();
     init.set_status(response.status);

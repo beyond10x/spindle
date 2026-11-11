@@ -232,6 +232,7 @@ fn listed(published: &[Published]) -> Answer {
     Answer {
         status: 200,
         body: Some(json!({"events": events})),
+        headers: Vec::new(),
     }
 }
 
@@ -265,6 +266,7 @@ pub fn reset(host: &mut Host, body: &[u8], worlds: Option<Worlds<'_>>) -> Answer
         Ok(emptied) => Answer {
             status: 200,
             body: Some(json!({"emptied": emptied})),
+            headers: Vec::new(),
         },
         Err(error @ HostError::World(_)) => Answer::refusal(400, error.to_string()),
         Err(error) => Answer::refusal(500, error.to_string()),

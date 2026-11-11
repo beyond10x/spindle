@@ -1071,6 +1071,7 @@ pub(crate) fn reserved(
                 allow: None,
                 panel: false,
                 metrics: false,
+                headers: Vec::new(),
                 body: recorder.log(&classes).to_string(),
             },
             Err(why) => Answer::refusal(400, why).into(),
@@ -1153,6 +1154,7 @@ fn answered(
             allow: None,
             panel: false,
             metrics: false,
+            headers: Vec::new(),
             body: topology::topology(recorder, reader).to_string(),
         };
     }
@@ -1162,6 +1164,7 @@ fn answered(
             allow: None,
             panel: false,
             metrics: true,
+            headers: Vec::new(),
             body: metrics::exposition(recorder, reader, rows),
         },
         Err(error) => Answer::refusal(500, error.to_string()).into(),
@@ -1186,6 +1189,7 @@ fn panel(panel: Option<&'static str>, method: &str, path: &str) -> Option<Respon
             allow: None,
             panel: true,
             metrics: false,
+            headers: Vec::new(),
             body: page.to_owned(),
         },
         None => Answer::refusal(
@@ -1240,6 +1244,7 @@ mod tests {
         let declared = |status| Answer {
             status,
             body: Some(serde_json::json!({"outcome": "done", "published": []})),
+            headers: Vec::new(),
         };
         assert_eq!(class(declared(201), By::Model), Class::Served);
         assert_eq!(class(declared(410), By::Model), Class::Served);

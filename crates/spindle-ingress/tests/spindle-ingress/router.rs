@@ -129,6 +129,7 @@ fn send(
         allow: header("allow"),
         panel: false,
         metrics: false,
+        headers: Vec::new(),
         body: body.to_owned(),
     }
 }

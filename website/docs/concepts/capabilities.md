@@ -118,7 +118,8 @@ envelope ESS publishes for that outcome:
 | `body: response.<field>` | the value of that one field alone, as `application/json` |
 | `body: none` | no body and no `Content-Type` |
 | an error object, `body: {<member>: error}`, on a refusing outcome | its bound status with an object whose `<member>` is the error's wire name, beside the error's fields under their wire names. Nothing is written. |
-| headers, a redirect or the `text` encoding | `501` naming the outcome and which of those it is. Nothing is written. |
+| `headers:` beside any of the above or the envelope | the same answer with each declared header, in name order: a literal as declared, a source as the text of the scalar it reads (left out where that is absent), a `WWW-Authenticate` challenge with each param a quoted string whose `"` and `\` are escaped. A value that holds a control character other than a tab, or a plain header's value that starts or ends with a space or a tab, is never written: the request answers `501` naming the header, without its headers. A declared header never replaces one the listener writes itself. |
+| a redirect or the `text` encoding | `501` naming the outcome and which of those it is. Nothing is written. |
 
 A view answers `200` with the body ESS publishes for it, `{"rows": [...]}`. Refusals the surface
 makes, as ESS's served application makes them, are `{"refused": "<why>"}`:
