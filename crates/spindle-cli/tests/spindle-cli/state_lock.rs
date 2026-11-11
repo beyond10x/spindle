@@ -216,6 +216,51 @@ fn a_killed_holder_does_not_block() {
     assert_eq!(status(address), 200);
 }
 
+/// `run` reading stdin locks its state file itself: a second one given a hard link to the file the
+/// first holds, a path that resolves to no other, exits 1 naming the path it was given.
+#[test]
+fn a_second_stdin_run_on_a_hard_link_to_the_held_state_file_exits_1() {
+    let scratch = scratch();
+    let file = scratch.path().join("state.sqlite");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+        .current_dir(root())
+        .args(["run", "ess", "--environment", LAPTOP, "--state"])
+        .arg(&file)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .expect("b10x-spindle starts");
+    let stdin = child.stdin.take();
+    let _first = Running { child, stdin };
+    let lock = scratch.path().join("state.sqlite.lock");
+    let deadline = Instant::now() + STARTUP;
+    while std::fs::read_to_string(&lock).map_or(true, |written| written.trim().is_empty()) {
+        assert!(
+            Instant::now() < deadline,
+            "{} is not written within {STARTUP:?}",
+            lock.display()
+        );
+        std::thread::sleep(POLL);
+    }
+    let linked = scratch.path().join("linked.sqlite");
+    std::fs::hard_link(&file, &linked).expect("the hard link is made");
+    let second = finished(&[
+        "run".as_ref(),
+        "ess".as_ref(),
+        "--environment".as_ref(),
+        LAPTOP.as_ref(),
+        "--state".as_ref(),
+        linked.as_os_str(),
+    ]);
+    assert_eq!(second.status.code(), Some(1), "{second:?}");
+    let stderr = String::from_utf8_lossy(&second.stderr);
+    assert!(
+        stderr.contains(&linked.display().to_string()) && stderr.contains("in use"),
+        "the path given is named in use: {stderr}"
+    );
+}
+
 /// `run` reading stdin takes the lock beside its state file: a second one on the same file exits
 /// 1 while the first still reads.
 #[test]
