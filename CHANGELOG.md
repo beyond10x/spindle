@@ -174,8 +174,12 @@ are Spindle's releases.
   one, is refused as a conflict and writes nothing where another writer wrote a row of the
   scanned entity between the scan and the write. `Removal` carries the scanned entities
   (`Removal::scanned`), which `remove` and `commit_all` check in the transaction that writes, on
-  the memory, SQLite, PostgreSQL and IndexedDB stores alike. A set outcome's writes are still not
-  conditioned on the scan that selected its rows.
+  the memory, SQLite, PostgreSQL and IndexedDB stores alike.
+
+- A set outcome (`instances:`) is conditioned on the scan that selected its rows: where another
+  writer wrote a row of the entity between that scan and the write (a grant given while every
+  grant of the person is revoked), the outcome is refused as a conflict and writes nothing,
+  rather than landing and leaving the new row unselected.
 
 - A second `run` on the same SQLite state is refused (`story:state-directory-lock`). Two runs
   given one `--state` each kept their own outbox and event list over one database. Now `run

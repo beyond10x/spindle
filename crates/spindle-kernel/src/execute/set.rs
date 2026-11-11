@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use super::{Run, write};
 use crate::facts::{Facts, Selector};
-use crate::store::{Change, Removal, Row, Stored, Write};
+use crate::store::{Change, Removal, Row, Scanned, Stored, Write};
 use crate::{Event, ExecuteError, Executed};
 
 impl Run<'_, '_> {
@@ -32,9 +32,12 @@ impl Run<'_, '_> {
     /// Every row is decided before any is written. All are then written in one
     /// [`Store::commit_all`](crate::Store::commit_all), each naming the version it was selected
     /// at, the outcome's events with the last: every row and every event, or, where one row is
-    /// refused, none. With no row selected the events are a write of their own
+    /// refused, none. The group is conditioned on the scan that selected the rows, and on every
+    /// entity a row-set guard scanned ([`Run::condition`]): a row of one written after its scan,
+    /// a row the filter would have selected among them, refuses the group as a conflict and
+    /// nothing is written. With no row selected the events are a write of their own
     /// ([`Store::commit_events`](crate::Store::commit_events)), as for an outcome without a
-    /// subject, conditioned on the run's scans as the group would be.
+    /// subject, conditioned alike: a row written after the scan that selected none refuses them.
     pub(super) fn take_set(
         &mut self,
         outcome: &ResolvedOutcome,
@@ -92,10 +95,9 @@ impl Run<'_, '_> {
                 Write::Commit(change) => change.events.clone_from(&events),
                 Write::Remove(removal) => removal.events.clone_from(&events),
             }
-            // Conditioned on every entity a row-set guard scanned, carried by the first write,
-            // a change or a removal alike. Not conditioned on the scan that selected the rows: a
-            // row of the entity created after it is left out unrefused, an open gap no story
-            // covers yet.
+            // Conditioned on the scan that selected the rows and on every entity a row-set guard
+            // scanned, carried by the first write, a change or a removal alike: a row of one
+            // written after its scan refuses the whole group.
             self.condition(&mut writes);
             self.store.commit_all(&writes)?;
         } else {
@@ -125,7 +127,15 @@ impl Run<'_, '_> {
         let ir = self.ir;
         let input = Facts::values(ir, &self.spec.input, self.input);
         let mut selected = Vec::new();
-        for (identity, stored) in self.store.scan(&entity.name.to_string())? {
+        let name = entity.name.to_string();
+        let scan = self.store.scan(&name)?;
+        if !self.scanned.iter().any(|scanned| scanned.entity == name) {
+            self.scanned.push(Scanned {
+                entity: name,
+                version: scan.version,
+            });
+        }
+        for (identity, stored) in scan {
             if let ResolvedEffect::Moves { transition } = &set.effect
                 && !transition
                     .from

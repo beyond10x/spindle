@@ -467,8 +467,9 @@ struct Run<'a, 'ir> {
     /// What the decider answered for each external branch it was asked about, by outcome name:
     /// asked once per run, whether the look-ahead or selection reads the branch first.
     answered: BTreeMap<String, bool>,
-    /// Each entity a row-set guard scanned, at the version its first scan answered: the change
-    /// the selected outcome commits is conditioned on them ([`crate::Write::scanned`]).
+    /// Each entity the run scanned (a row-set guard, an `affects:` entry, a set outcome's
+    /// selection), at the version its first scan answered: every write group the selected
+    /// outcome commits is conditioned on them ([`crate::Write::scanned`]).
     scanned: Vec<Scanned>,
     /// The outcomes the caller does not serve, by name, each with why ([`execute_refusing`]).
     refused: &'a BTreeMap<String, String>,
