@@ -1,0 +1,36 @@
+{"command":"library.books.ShelveBook","input":{"book_id":"b01","title":"Title 1"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b02","title":"Title 2"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b03","title":"Title 3"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b04","title":"Title 4"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b05","title":"Title 5"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b06","title":"Title 6"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b07","title":"Title 7"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b08","title":"Title 8"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b09","title":"Title 9"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b10","title":"Title 10"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b11","title":"Title 11"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b12","title":"Title 12"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b13","title":"Title 13"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b14","title":"Title 14"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b15","title":"Title 15"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b16","title":"Title 16"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b17","title":"Title 17"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b18","title":"Title 18"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b19","title":"Title 19"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b20","title":"Title 20"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b21","title":"Title 21"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b22","title":"Title 22"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b23","title":"Title 23"}}
+{"command":"library.books.ShelveBook","input":{"book_id":"b24","title":"Title 24"}}
+{"command":"library.books.LendBook","input":{"book_id":"b02"}}
+{"command":"library.books.LendBook","input":{"book_id":"b04"}}
+{"command":"library.books.LendBook","input":{"book_id":"b06"}}
+{"command":"library.books.LendBook","input":{"book_id":"b08"}}
+{"command":"library.books.LendBook","input":{"book_id":"b10"}}
+{"command":"library.books.LendBook","input":{"book_id":"b12"}}
+{"command":"library.books.RemoveBook","input":{"book_id":"b01"}}
+{"command":"library.books.RemoveBook","input":{"book_id":"b03"}}
+{"command":"library.books.RemoveBook","input":{"book_id":"b05"}}
+{"command":"library.books.RemoveBook","input":{"book_id":"b07"}}
+{"command":"library.books.RemoveBook","input":{"book_id":"b09"}}
+{"command":"library.books.RemoveBook","input":{"book_id":"b04"}}

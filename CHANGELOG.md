@@ -6,6 +6,35 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- A view read on a SQLite state costs the rows of its entity, not the whole log
+  (`story:view-read-without-log-scan`). Every `Store::scan` of a SQLite store read the tenant's
+  whole feed and kept the events of the entity asked for, and 0.13.0 only moved that read beside
+  the writer; a downstream consumer on 0.12.1 measured two filtered view reads over entities of
+  tens of rows at about 480 ms each on a 142 MB state, while `GET /api/events` took 16 ms. The
+  SQLite store now keeps each entity's rows as they rest, with their stream versions and the
+  entity's version: folded from one read of its log when it opens, then from only the events
+  appended since, read after each write it lands and before each scan or count, so a write by
+  another handle on the same file is still seen. Scans and counts, on the store and on its reading
+  handle, answer from them; the reading handle's connections share them, a read takes the rows of
+  its entity as they stand at one position of the feed, and new events are folded in under a lock
+  held only while they are applied, copying an entity only while a read still holds it. So a read
+  still sees a write group whole or not at all, a group longer than one page of the feed included,
+  and the reading pool's cap is unchanged. A reset or a restart opens a new store, which reads its
+  log again. Memory holds the rows that rest, never the history: a log of 1,300 rows of 1 MiB,
+  1,200 of them then written again small, holds 111 MiB once opened, scanned and counted; reading
+  it in order holds, for a moment, the rows resting at each point of it (1.3 GiB here, as a scan
+  of it did before). `SqliteStore::events_read` answers how
+  many events of its log a store has read: the whole log once when it opens, then only what was
+  appended. Measured in a debug build on a machine at load 30 to 80, a state of 100,091 events
+  whose read entity holds 40 rows: a view read took 1.51 s on the store and 1.31 s on its reading
+  handle at the median of 5 before, and 0.45 ms and 0.34 ms after; opening it takes one read of the
+  log (2.5 s), which the host already paid when it opened a store to count its rows. Every scan
+  and count, on the store, its reading handle and a second handle on the file, equals a read of the
+  whole feed after each step of drawn writes, refused groups, restarts and resets, on a new file and
+  on one the 0.10.0 release binary wrote.
+
 ## [0.13.0] - 2026-11-11
 
 ### Fixed
