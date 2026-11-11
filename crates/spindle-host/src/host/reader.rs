@@ -131,13 +131,17 @@ impl Reader {
     }
 
     /// Whether this reader answers `view`: one the host reads ([`crate::reads`]), whose owning
-    /// component's store gives a reading handle now. A view it does not answer is read on the
-    /// host's thread.
+    /// component's store gives a reading handle now, and that declares no field read through a
+    /// reference: such a field reads the row its reference names by its identity
+    /// ([`spindle_kernel::Store::load`]), which a reading handle does not answer. A view it does
+    /// not answer is read on the host's thread.
     pub fn reads(&self, view: &str) -> bool {
-        readable(&self.ir, view).is_ok_and(|(_, owner)| {
-            self.components
-                .get(&owner)
-                .is_some_and(|read| read.shared.reading().is_some())
+        readable(&self.ir, view).is_ok_and(|(declared, owner)| {
+            !crate::view::reads_related(declared)
+                && self
+                    .components
+                    .get(&owner)
+                    .is_some_and(|read| read.shared.reading().is_some())
         })
     }
 
@@ -154,13 +158,19 @@ impl Reader {
     ///
     /// # Errors
     /// As [`super::Host::list_with`]; [`HostError::Unsupported`] where that store gives no
-    /// reading handle ([`Reader::reads`]).
+    /// reading handle, or the view declares a field read through a reference
+    /// ([`Reader::reads`]), before anything is read.
     pub fn list_with(
         &self,
         view: &str,
         parameters: &Map<String, Value>,
     ) -> Result<Vec<Map<String, Value>>, HostError> {
         let listing = listing(&self.ir, self.clock.as_ref(), view, parameters)?;
+        if crate::view::reads_related(listing.declared) {
+            return Err(HostError::Unsupported(format!(
+                "view {view} reads fields through a reference, read on the host's thread only"
+            )));
+        }
         let reading = self
             .components
             .get(&listing.owner)
@@ -172,7 +182,7 @@ impl Reader {
                 ))
             })?;
         let scan = reading.scan(&listing.entity)?;
-        listing.rows(&self.ir, view, scan)
+        listing.rows(&self.ir, view, scan, None)
     }
 }
 

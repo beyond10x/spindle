@@ -231,6 +231,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "crates/spindle-host/tests/spindle-host/views.rs::a_state_filter_keeps_only_instances_in_that_state",
     ),
     shipped(
+        "Execution",
+        "View fields read through a reference",
+        "A view field declared field: {related: {via, field}} answers what the row the reference names holds now, from any component, and is left out where the reference is empty or names no row, as ESS's interpreter answers; each referenced row is loaded once per read by its identity.",
+        "/docs/concepts/specification",
+        "crates/spindle-host/tests/spindle-host/related.rs::related_fields_agree_with_the_interpreter",
+    ),
+    shipped(
         "Observe",
         "Counters derived from the specification",
         "spindle-telemetry counts commands by outcome, events, bindings, timer ticks and store writes per component; b10x-spindle metrics prints the catalogue, play prints the table's counters.",

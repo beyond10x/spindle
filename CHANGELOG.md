@@ -78,6 +78,15 @@ are Spindle's releases.
   result past a bound (an Integer past 64 bits, an instant past the year 9999) is never wrapped:
   the command determines no value and commits nothing. An expression in an error's fields stays
   refused by name, as ESS's interpreter computes none there.
+- A view field read through a reference is served (`story:view-related-fields`). A field declared
+  `field: {related: {via: <reference>, field: <field>}}` answered `501`; a downstream consumer's
+  specification has 26 such views. It now answers what the row the reference names holds now (a
+  stored field, its identity or its `state`), from that entity's component, another one included,
+  and is left out where the reference is empty or names no row, a removed one included, as ESS's
+  interpreter answers. A read loads each referenced row once by its identity (`Store::load`),
+  however many rows name it, and never scans the referenced entity. Such a view is read on the
+  host's thread, since a store's reading handle answers no row by identity. A filter that reads
+  through a reference is still refused.
 
 ### Changed
 

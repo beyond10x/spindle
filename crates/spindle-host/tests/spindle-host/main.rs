@@ -51,6 +51,8 @@ mod rally;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod refusal;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod related;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod retries;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod retry;
