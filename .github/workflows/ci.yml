@@ -75,8 +75,8 @@ jobs:
 
       - name: Install ess
         env:
-          ESS_VERSION: '0.90.0'
-          ESS_SHA256: 3a439345a9cf0debe7514dd9041768c88125679f2c1d6fc507a8921797a02a03
+          ESS_VERSION: '0.92.0'
+          ESS_SHA256: 6ed7a9cb37229d0e85fce43d3dcf0285485e59ae244a87bfd04f2069989fa73f
         run: |
           set -o pipefail
           archive="ess-$ESS_VERSION-x86_64-unknown-linux-gnu"

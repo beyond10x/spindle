@@ -14,13 +14,13 @@ publish = false
 [workspace.dependencies]
 spindle-spec = { path = "crates/spindle-spec" }
 spindle-capability = { path = "crates/spindle-capability" }
-ess-compiler = { git = "https://github.com/beyond10x/ess", tag = "0.90.0" }
-ess-conformance = { git = "https://github.com/beyond10x/ess", tag = "0.90.0" }
-ess-domain = { git = "https://github.com/beyond10x/ess", tag = "0.90.0" }
-ess-gen = { git = "https://github.com/beyond10x/ess", tag = "0.90.0" }
-ess-http = { git = "https://github.com/beyond10x/ess", tag = "0.90.0" }
-ess-primitives = { git = "https://github.com/beyond10x/ess", tag = "0.90.0" }
-ess-yaml = { git = "https://github.com/beyond10x/ess", tag = "0.90.0" }
+ess-compiler = { git = "https://github.com/beyond10x/ess", tag = "0.92.0" }
+ess-conformance = { git = "https://github.com/beyond10x/ess", tag = "0.92.0" }
+ess-domain = { git = "https://github.com/beyond10x/ess", tag = "0.92.0" }
+ess-gen = { git = "https://github.com/beyond10x/ess", tag = "0.92.0" }
+ess-http = { git = "https://github.com/beyond10x/ess", tag = "0.92.0" }
+ess-primitives = { git = "https://github.com/beyond10x/ess", tag = "0.92.0" }
+ess-yaml = { git = "https://github.com/beyond10x/ess", tag = "0.92.0" }
 anyhow = "1"
 clap = { version = "4.6", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
