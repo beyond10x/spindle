@@ -30,5 +30,8 @@ spindle-timer = { path = "../spindle-timer" }
 spindle-spec = { path = "../spindle-spec" }
 tempfile = "3"
 
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dev-dependencies]
+spindle-kernel = { path = "../spindle-kernel", features = ["postgres"] }
+
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]
 wasm-bindgen-test = "0.3"

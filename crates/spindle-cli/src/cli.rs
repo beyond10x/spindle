@@ -415,6 +415,92 @@ pub enum Command {
         #[arg(long, requires = "known_failing")]
         accounting_out: Option<PathBuf>,
     },
+    /// Manage where a specification's state is kept.
+    Store {
+        #[command(subcommand)]
+        command: StoreCommand,
+    },
+    /// Move a specification's state from one store into another.
+    State {
+        #[command(subcommand)]
+        command: StateCommand,
+    },
+}
+
+/// One `b10x-spindle state` command.
+#[derive(Debug, Subcommand)]
+pub enum StateCommand {
+    /// Move the state a `run --state` directory holds into the PostgreSQL tables of every
+    /// component whose `store.durable` is bound to `postgres`, every stream at its versions.
+    ///
+    /// Stop Spindle first: the move does not keep a running Spindle off the directory or the
+    /// tables. Each component's `<component>.sqlite` is read, creating nothing, and its events
+    /// appended in their order into the tables `spindle_<component>_*`, the events one write
+    /// recorded as one transaction, so a command decided after the move names the version the
+    /// directory's last write left. Event ids and recording times are new; a write of 0.7.0 to
+    /// 0.10.0 arrives naming the instances it left, as this release writes it, and a directory
+    /// holding writes from before 0.7.0 arrives with its log marked, so its scans read the whole
+    /// log. The settings are the ones `run` reads (`database_url`, `database_ca`,
+    /// `database_schema`, `database_pool`, `database_connections`); on a hosted database `store
+    /// migrate` creates the tables first and `database_url` names the serving role.
+    ///
+    /// One move at a time writes into a schema: a move holds a PostgreSQL advisory lock on it, on a
+    /// connection of its own, from before it reads the tables to after its last append, and opens
+    /// one component's tables beside it at a time: two connections of its role at once. Exits 1,
+    /// writing nothing, when another move holds the schema still after 5 s, naming it; when the
+    /// role's `CONNECTION LIMIT` is 1, naming the two connections; and, naming
+    /// the component, when the directory lacks a component's file, a file holds a JSON string or
+    /// key with U+0000 (the SQLite store keeps it, PostgreSQL refuses it; every file is read before
+    /// connecting, and the refusal names the stream), or a component's tables already hold the
+    /// stream of an entity the specification declares or the file holds, or a partial move's mark;
+    /// a refused move creates no table, also on a loopback database. A move that fails partway leaves a partial copy the next move refuses: drop the component's
+    /// tables, run `store migrate` and move again.
+    /// Prints one line per component, `{"component": "<component>", "streams": <n>, "events":
+    /// <n>}`. Exits 3, moving nothing, when admission is refused.
+    Move {
+        /// The state directory `run --state` kept: one `<component>.sqlite` per component.
+        #[arg(long)]
+        from: PathBuf,
+        /// The specification directory.
+        spec: PathBuf,
+        /// The `spindle-environment/1` document binding `store.durable` to `postgres`.
+        #[arg(long)]
+        environment: PathBuf,
+    },
+}
+
+/// One `b10x-spindle store` command.
+#[derive(Debug, Subcommand)]
+pub enum StoreCommand {
+    /// Create the PostgreSQL tables of every component whose `store.durable` is bound to
+    /// `postgres`.
+    ///
+    /// Each component's tables are `spindle_<component>_*` (each `-` as `_`), in the schema
+    /// `database_schema` names. The settings are the ones `run` reads, as `SPINDLE_SETTING_<NAME>`:
+    /// `database_url` (required; `postgres://user:password@host:port/database`, never printed),
+    /// `database_ca` (a PEM CA bundle: the server is reached over TLS, `sslmode=require`, and
+    /// verified against it; without it the host must be loopback or a Unix socket),
+    /// `database_schema` (default `public`), `database_pool` (connections per component, default
+    /// 4) and `database_connections` (the database's connection budget available to this
+    /// deployment; `run` requires it with `database_ca` and refuses a budget below components x
+    /// `database_pool` + 1).
+    ///
+    /// `store migrate` takes the URL of the role that owns the schema and is the only command
+    /// that runs DDL; `run` with `database_ca` opens with a serving role that can run none, whose
+    /// `CONNECTION LIMIT` is from 1 to components x `database_pool`, and exits 1 before listening
+    /// on any other role. A migrate started while another of the same tables runs waits for it,
+    /// up to 60 s. Tables already there of the same shape are left as they are, so a second
+    /// migrate changes nothing. Prints one line per component,
+    /// `{"migrated": "<component>", "tables": "spindle_<component>_*", "schema": "<schema>"}`.
+    /// Exits 0 once every component's tables exist, 1 when a setting is missing or the database
+    /// refuses, and 3, creating nothing, when admission is refused.
+    Migrate {
+        /// The specification directory.
+        spec: PathBuf,
+        /// The `spindle-environment/1` document.
+        #[arg(long)]
+        environment: PathBuf,
+    },
 }
 
 /// A JSON object, as `--fixed-caller` reads it.

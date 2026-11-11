@@ -9,8 +9,9 @@ repository.workspace = true
 publish.workspace = true
 
 [features]
-default = ["sqlite"]
+default = ["sqlite", "postgres"]
 sqlite = ["dep:eventlog-core", "dep:eventlog-sqlite", "dep:tokio"]
+postgres = ["dep:eventlog-core", "dep:eventlog-postgres", "dep:rustls", "dep:tokio", "dep:tokio-postgres", "dep:tokio-postgres-rustls", "tokio/net", "tokio/time"]
 
 [dependencies]
 ess-compiler.workspace = true
@@ -18,13 +19,17 @@ ess-conformance.workspace = true
 ess-domain.workspace = true
 ess-primitives.workspace = true
 spindle-capability.workspace = true
-eventlog-core = { git = "https://github.com/beyond10x/eventlog", tag = "0.9.2", optional = true }
-eventlog-sqlite = { git = "https://github.com/beyond10x/eventlog", tag = "0.9.2", optional = true }
+eventlog-core = { git = "https://github.com/beyond10x/eventlog", tag = "0.9.3", optional = true }
+eventlog-postgres = { git = "https://github.com/beyond10x/eventlog", tag = "0.9.3", optional = true }
+eventlog-sqlite = { git = "https://github.com/beyond10x/eventlog", tag = "0.9.3", optional = true }
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 time = { version = "0.3", features = ["formatting"] }
 tokio = { version = "1", default-features = false, features = ["rt"], optional = true }
+tokio-postgres = { version = "0.7", default-features = false, features = ["runtime"], optional = true }
+tokio-postgres-rustls = { version = "0.14", default-features = false, features = ["ring"], optional = true }
 uuid = { version = "1.29", features = ["v4"] }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
@@ -35,3 +40,5 @@ web-time = "1.1"
 spindle-capability = { path = "../spindle-capability" }
 spindle-spec = { path = "../spindle-spec" }
 tempfile = "3"
+tokio = { version = "1", default-features = false, features = ["rt", "net", "time"] }
+tokio-postgres = "0.7"

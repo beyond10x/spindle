@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:state-directory-lock
 kind: story
-status: draft
+status: active
 title: A second process on the same SQLite state is refused
 relations:
 - serves: vision:spindle
@@ -17,7 +17,10 @@ scope:
   path: crates/spindle-cli/src/state_lock.rs
 - confidence: cited
   path: crates/spindle-cli/tests/spindle-cli
-revision: 4
+revision: 6
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-11T09:40:09Z", actor: "human:timo", revision: 5}
+- {from: "proposed", to: "active", at: "2026-11-11T09:40:09Z", actor: "human:timo", revision: 6}
 ---
 # A second run on the same SQLite state is refused
 

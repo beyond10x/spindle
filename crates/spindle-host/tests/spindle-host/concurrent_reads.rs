@@ -30,7 +30,7 @@ fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rows")
 }
 
-fn environment(store: &str) -> Environment {
+pub(crate) fn environment(store: &str) -> Environment {
     Environment::parse(&format!(
         concat!(
             "format = \"spindle-environment/1\"\n",
@@ -163,62 +163,77 @@ fn reading(reader: &Reader, stop: &AtomicBool) -> Vec<Vec<Map<String, Value>>> {
 fn every_read_beside_the_host_is_the_state_after_a_prefix_of_the_commands() {
     let mut between = 0;
     for store in ["memory", "sqlite"] {
-        for seed in 0..SEQUENCES {
-            let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state");
-            let ir = spindle_spec::load(&fixture())
-                .expect("the rows fixture compiles")
-                .ir;
-            let mut host = Host::new(
-                ir,
+        between += prefixes_read(store, &|state: &Path| {
+            Host::new(
+                rows_fixture(),
                 &environment(store),
                 Arc::new(ManualClock::new()),
-                state.path(),
+                state,
             )
-            .unwrap_or_else(|error| panic!("the {store} host opens: {error}"));
-            let reader = host.reader();
-            let stop = Arc::new(AtomicBool::new(false));
-            let reads = {
-                let stop = Arc::clone(&stop);
-                std::thread::spawn(move || reading(&reader, &stop))
-            };
-
-            let mut draw = Draw::new(seed);
-            let mut done = Vec::new();
-            let mut prefixes = vec![host.list(VIEW).expect("the view lists")];
-            for _ in 0..STEPS {
-                done.push(step(&mut draw, &mut host));
-                prefixes.push(host.list(VIEW).expect("the view lists"));
-            }
-            stop.store(true, Ordering::SeqCst);
-            let reads = reads.join().expect("the reader thread ends");
-
-            // Each read is the state after some prefix, at or after the prefix the read before
-            // it saw: the earliest such prefix, so a later read is never held to a later one
-            // than it must be.
-            let mut at = 0;
-            for (index, read) in reads.iter().enumerate() {
-                let Some(found) = prefixes[at..].iter().position(|prefix| prefix == read) else {
-                    panic!(
-                        "{store}, seed {seed}: read {index} of {} is the state after no prefix \
-                         from {at} on: {read:#?}\nafter {done:#?}",
-                        reads.len()
-                    );
-                };
-                at += found;
-                if at > 0 && at < STEPS {
-                    between += 1;
-                }
-            }
-            assert_eq!(
-                reads.last(),
-                prefixes.last(),
-                "{store}, seed {seed}: the last read, after the sequence, is its end"
-            );
-        }
+            .unwrap_or_else(|error| panic!("the {store} host opens: {error}"))
+        });
     }
     assert!(
         between > 0,
         "no read landed between the first and the last step: the reads did not run beside the \
          commands"
     );
+}
+
+/// The fixture's specification, compiled.
+pub(crate) fn rows_fixture() -> ess_compiler::EssIr {
+    spindle_spec::load(&fixture())
+        .expect("the rows fixture compiles")
+        .ir
+}
+
+/// Runs [`SEQUENCES`] drawn sequences on hosts `open` opens on a state directory, a reader
+/// thread reading beside each, and holds every read to the state after a prefix of its
+/// sequence; answers how many reads landed between the first and the last step.
+pub(crate) fn prefixes_read(store: &str, open: &dyn Fn(&Path) -> Host) -> usize {
+    let mut between = 0;
+    for seed in 0..SEQUENCES {
+        let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state");
+        let mut host = open(state.path());
+        let reader = host.reader();
+        let stop = Arc::new(AtomicBool::new(false));
+        let reads = {
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || reading(&reader, &stop))
+        };
+
+        let mut draw = Draw::new(seed);
+        let mut done = Vec::new();
+        let mut prefixes = vec![host.list(VIEW).expect("the view lists")];
+        for _ in 0..STEPS {
+            done.push(step(&mut draw, &mut host));
+            prefixes.push(host.list(VIEW).expect("the view lists"));
+        }
+        stop.store(true, Ordering::SeqCst);
+        let reads = reads.join().expect("the reader thread ends");
+
+        // Each read is the state after some prefix, at or after the prefix the read before
+        // it saw: the earliest such prefix, so a later read is never held to a later one
+        // than it must be.
+        let mut at = 0;
+        for (index, read) in reads.iter().enumerate() {
+            let Some(found) = prefixes[at..].iter().position(|prefix| prefix == read) else {
+                panic!(
+                    "{store}, seed {seed}: read {index} of {} is the state after no prefix \
+                         from {at} on: {read:#?}\nafter {done:#?}",
+                    reads.len()
+                );
+            };
+            at += found;
+            if at > 0 && at < STEPS {
+                between += 1;
+            }
+        }
+        assert_eq!(
+            reads.last(),
+            prefixes.last(),
+            "{store}, seed {seed}: the last read, after the sequence, is its end"
+        );
+    }
+    between
 }

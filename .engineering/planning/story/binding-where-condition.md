@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:binding-where-condition
 kind: story
-status: active
+status: implemented
 title: Bindings with a when.where payload condition are evaluated
 relations:
 - decomposes: epic:downstream-kernel-constructs
@@ -14,10 +14,11 @@ scope:
   path: crates/spindle-channel/src/route.rs
 - confidence: inferred
   path: crates/spindle-channel/tests
-revision: 5
+revision: 6
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-10T09:02:54Z", actor: "human:timo", revision: 4}
 - {from: "proposed", to: "active", at: "2026-11-10T09:02:54Z", actor: "human:timo", revision: 5}
+- {from: "active", to: "implemented", at: "2026-11-11T00:52:27Z", actor: "human:timo", revision: 6, decided_on: {"recorded":{"test_result":1}}}
 ---
 # Bindings with a `when.where` payload condition are evaluated
 
