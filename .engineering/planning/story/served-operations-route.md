@@ -2,14 +2,15 @@
 format: aep.planning-md/3
 id: story:served-operations-route
 kind: story
-status: active
+status: implemented
 title: A running Spindle answers which operations it serves and why not
 relations:
 - serves: vision:spindle
-revision: 3
+revision: 4
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-11T20:31:12Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-11T20:32:22Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-11T23:08:11Z", actor: "human:timo", revision: 4, decided_on: {"recorded":{"test_result":1}}}
 ---
 ## Outcome
 

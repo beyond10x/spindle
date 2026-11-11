@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:ingress-bind-address
 kind: story
-status: active
+status: implemented
 title: The HTTP ingress listens on an address the operator chooses
 tags:
 - downstream-gap
@@ -33,10 +33,11 @@ scope:
   path: website/docs/concepts/capabilities.md
 - confidence: cited
   path: website/docs/reference/cli.md
-revision: 6
+revision: 7
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-09T22:14:35Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-09T22:14:35Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-11T23:08:11Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"test_result":1}}}
 ---
 # The HTTP ingress listens on an address the operator chooses
 

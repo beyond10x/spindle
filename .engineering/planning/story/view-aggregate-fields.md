@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:view-aggregate-fields
 kind: story
-status: active
+status: implemented
 title: A view with aggregate fields is served
 tags:
 - downstream-gap
@@ -22,10 +22,11 @@ scope:
   path: crates/spindle-host/src/view.rs
 - confidence: cited
   path: website/docs/concepts/specification.md
-revision: 6
+revision: 7
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-09T22:14:36Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-09T22:14:36Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-11T23:08:10Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"test_result":1}}}
 ---
 # A view with aggregate fields is served
 
