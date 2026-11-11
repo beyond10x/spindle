@@ -138,8 +138,12 @@ are Spindle's releases.
 - A request log record's `reason` never holds a value the caller sent
   (`story:refusal-reason-bounded`). One refused command with an 800 KB mistyped field grew
   `GET /__spindle/requests` by 804,364 bytes. Now every value in the refusal text is written `…`,
-  the field and the type it expected kept, and the reason is at most 512 bytes. The answer the
-  caller receives is unchanged.
+  the field and the type it expected kept, and the reason is at most 512 bytes. A map key, struct
+  member or input field name the caller sent is written `…` too, and a record's `path` is at most
+  2,048 bytes, cut with `…`: a ring of 10,000 records of 404s for paths near 64 KiB held about
+  640 MiB. The answer the caller receives keeps an unknown field's name; the kernel now quotes a
+  map key or struct member the caller sent (`"key"` where it wrote `` `key` `` or `[key]`), and the
+  ingress text it could not percent-decode (`found "…"` where it wrote ``found `…` ``).
 
 ### Fixed
 
@@ -163,7 +167,13 @@ are Spindle's releases.
   authenticated as no caller, `403` `{"refused": "not granted", "actor": null}`
   (`story:unauthenticated-grant-refusals`). Such a view was read for anyone and such a command run
   as no actor. Nothing is read or written. A view and a command no actor's grant names are served
-  as before.
+  as before. The grant is checked before anything else this ingress does not serve, so a granted
+  command that reads its caller answers this `403` too, not a `501` naming the attributes it reads.
+  The same holds wherever a model is served over HTTP with no caller: the Service Worker
+  (`spindle-wasm`) and each deployed component process's ingress refuse every such view and
+  command `403`. Neither takes `--fixed-actor` or a trusted-caller header, so neither can grant
+  one; serve a model whose commands and views a caller must be granted with `b10x-spindle run`
+  and `--fixed-actor` or `--trusted-caller-header` (behind a proxy that sets it).
 - A view read on a SQLite state costs the rows of its entity, not the whole log
   (`story:view-read-without-log-scan`). Every `Store::scan` of a SQLite store read the tenant's
   whole feed and kept the events of the entity asked for, and 0.13.0 only moved that read beside

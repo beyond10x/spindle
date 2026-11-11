@@ -1,0 +1,59 @@
+domain: tally.sheet
+summary: A clerk stamps a sheet with the desk it sits at; anyone tallies counts keyed by number or by name.
+actors:
+  - name: tally.sheet.Clerk
+    attributes:
+      - name: desk
+        type: String
+    may:
+      - tally.sheet.Stamp
+entities:
+  - name: tally.sheet.Sheet
+    identity:
+      name: number
+      type: Integer
+    fields:
+      - name: desk
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+commands:
+  - name: tally.sheet.Stamp
+    input:
+      - name: number
+        type: Integer
+    outcomes:
+      - name: stamped
+        creates: tally.sheet.Sheet
+        instance: number
+        sets:
+          desk: {caller: desk}
+        emits: [tally.sheet.Stamped]
+        payload:
+          tally.sheet.Stamped: {number: input.number}
+        summary: The sheet is stamped with the clerk's desk; only a clerk may stamp.
+  - name: tally.sheet.Tally
+    input:
+      - name: number
+        type: Integer
+      - name: by_number
+        type: Optional<Map<Integer, String>>
+      - name: by_name
+        type: Optional<Map<String, Integer>>
+    outcomes:
+      - name: tallied
+        emits: [tally.sheet.Tallied]
+        payload:
+          tally.sheet.Tallied: {number: input.number}
+        summary: The tally is taken; no actor's grant names this command.
+events:
+  - name: tally.sheet.Stamped
+    fields:
+      - name: number
+        type: Integer
+  - name: tally.sheet.Tallied
+    fields:
+      - name: number
+        type: Integer

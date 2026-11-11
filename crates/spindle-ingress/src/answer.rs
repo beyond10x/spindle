@@ -13,6 +13,11 @@ use spindle_kernel::{DeclaredError, Event, ExecuteError};
 use crate::observe::Answered;
 use crate::surface::{Caller, Route, Unserved, may_read, may_run};
 
+/// What the refusal of a JSON body's key the command declares no input field for says between
+/// the command and the key: the request log elides the key, which the caller sent
+/// ([`crate::observe`]).
+pub(crate) const NO_INPUT_FIELD: &str = " declares no input field ";
+
 /// A status and the JSON body written under it, where it has one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Answer {
@@ -244,9 +249,11 @@ type AnsweredAs<'a> = (Option<&'a Caller>, Cow<'a, Map<String, Value>>);
 /// a route whose requests prove their caller, `proven` once the model binds it, and otherwise the
 /// route's fixed caller, if any. The refusal, before anything is read, run or written, in this
 /// order: [`Answer::not_proven`] where no caller is proven or the model does not bind it; the
-/// `501` of an operation this ingress does not route ([`Unserved::Ingress`]); and the grant check
-/// ([`granted`]). Only then is a path the router left unread read ([`Carried::Unread`]), `400`
-/// for a variable that does not read.
+/// grant check ([`granted`]), as ESS's served surface checks the grant first; and the `501` of an
+/// operation this ingress does not route ([`Unserved::Ingress`]), so a granted command that reads
+/// its caller, served without one, is refused `403` rather than naming what it reads. Only then
+/// is a path the router left unread read ([`Carried::Unread`]), `400` for a variable that does
+/// not read.
 fn answered_as<'a>(
     ir: &EssIr,
     route: &'a Route,
@@ -262,13 +269,13 @@ fn answered_as<'a>(
     } else {
         route.caller()
     };
+    granted(ir, route, caller)?;
     if let Some(unserved @ Unserved::Ingress(_)) = route.unserved() {
         return Err(Answer::unfinished(
             format!("{}: {unserved}", route.operation),
             false,
         ));
     }
-    granted(ir, route, caller)?;
     let carried = match carried {
         Carried::Read(carried) => Cow::Borrowed(carried),
         Carried::Unread(path) => Cow::Owned(
@@ -350,7 +357,7 @@ fn run(
         .find(|field| !route.input().iter().any(|declared| declared == *field))
     {
         return (
-            Answer::refusal(400, format!("{command} declares no input field {field}")),
+            Answer::refusal(400, format!("{command}{NO_INPUT_FIELD}{field}")),
             Vec::new(),
             Answered::ingress(),
         );
