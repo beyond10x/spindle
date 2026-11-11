@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:http-caller-proves-actor
 kind: story
-status: active
+status: implemented
 title: An HTTP request proves its caller, and a command that reads the caller runs for it
 tags:
 - downstream-gap
@@ -36,10 +36,11 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 8
+revision: 9
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-09T22:14:34Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-09T22:14:34Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-11T00:52:26Z", actor: "human:timo", revision: 9, decided_on: {"recorded":{"test_result":1,"review_outcome":1}}}
 ---
 # An HTTP request proves its caller, and a command that reads the caller runs for it
 
