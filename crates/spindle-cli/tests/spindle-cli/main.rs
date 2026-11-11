@@ -3,6 +3,7 @@
 //! module path.
 
 mod admit;
+mod adversary2_console_paths;
 mod adversary2_http_cause;
 mod adversary_binding_where;
 mod adversary_caller;

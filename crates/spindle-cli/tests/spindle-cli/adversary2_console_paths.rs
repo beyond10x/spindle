@@ -264,7 +264,10 @@ fn no_spelling_of_a_run_owned_route_answers_without_the_secret() {
                     (None, vec![]),
                     (Some("localhost"), vec![]),
                     (Some(host.as_str()), vec![(HEADER, proof.as_str())]),
-                    (Some(host.as_str()), vec![(SECRET_HEADER, wrong_secret.as_str())]),
+                    (
+                        Some(host.as_str()),
+                        vec![(SECRET_HEADER, wrong_secret.as_str())],
+                    ),
                     (Some(host.as_str()), vec![(SECRET_HEADER, lowered.as_str())]),
                     (Some(host.as_str()), vec![(SECRET_HEADER, "")]),
                     (Some(host.as_str()), vec![("X-Forwarded-For", "127.0.0.1")]),
@@ -302,7 +305,9 @@ fn no_spelling_of_a_run_owned_route_answers_without_the_secret() {
     let auditor = json!({"actor": AUDITOR}).to_string();
     let rows = with_secret(&served, &method, &path, &[(HEADER, &auditor)])["rows"].clone();
     assert!(
-        leaks.is_empty() && events.as_array().map(Vec::len) == Some(1) && !rows.to_string().contains(FORGED),
+        leaks.is_empty()
+            && events.as_array().map(Vec::len) == Some(1)
+            && !rows.to_string().contains(FORGED),
         "{} of {probes} probes without the secret answered state: {leaks:#?}; events now {events}; \
          visits now {rows}",
         leaks.len()
@@ -316,10 +321,9 @@ fn no_spelling_of_a_run_owned_route_answers_without_the_secret() {
 fn a_pipelined_request_carries_no_secret_from_the_one_before() {
     let served = trusting();
     let host = served.address.to_string();
-    let mut both = format!(
-        "GET /api/model HTTP/1.1\r\nHost: {host}\r\n{SECRET_HEADER}: {SECRET}\r\n\r\n"
-    )
-    .into_bytes();
+    let mut both =
+        format!("GET /api/model HTTP/1.1\r\nHost: {host}\r\n{SECRET_HEADER}: {SECRET}\r\n\r\n")
+            .into_bytes();
     both.extend_from_slice(
         format!("GET /api/events HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n").as_bytes(),
     );

@@ -181,7 +181,9 @@ type Seen = (BTreeSet<String>, bool);
 fn interpreted(input: &Map<String, Value>, case: usize) -> Seen {
     let target = Interpreted::for_model(probe());
     let context = ScenarioContext::new(
-        "probe.core/authored/adversary".parse().expect("a scenario id"),
+        "probe.core/authored/adversary"
+            .parse()
+            .expect("a scenario id"),
         CorrelationId::new(format!("case-{case}")).expect("a correlation id"),
     );
     target.begin_scenario(&context).expect("the scenario opens");
@@ -224,7 +226,9 @@ fn interpreted(input: &Map<String, Value>, case: usize) -> Seen {
 }
 
 fn hosted(host: &mut Host, input: &Map<String, Value>) -> (Seen, BTreeSet<String>) {
-    let report = host.submit(PLACE, input.clone()).expect("the parcel is placed");
+    let report = host
+        .submit(PLACE, input.clone())
+        .expect("the parcel is placed");
     let invoked = report
         .ran
         .iter()
@@ -277,15 +281,32 @@ fn every_condition_shape_decides_as_ess_interprets_it() {
     let expected: [(&[&str], bool); 6] = [
         (&["on-any", "on-not", "on-rush"], true),
         (
-            &["on-any", "on-defined", "on-enum", "on-gift", "on-note", "on-zone"],
+            &[
+                "on-any",
+                "on-defined",
+                "on-enum",
+                "on-gift",
+                "on-note",
+                "on-zone",
+            ],
             false,
         ),
         (&["on-defined", "on-enum", "on-not"], true),
         (
-            &["on-any", "on-defined", "on-gift", "on-not", "on-note", "on-rush"],
+            &[
+                "on-any",
+                "on-defined",
+                "on-gift",
+                "on-not",
+                "on-note",
+                "on-rush",
+            ],
             false,
         ),
-        (&["on-any", "on-defined", "on-note", "on-rush", "on-zone"], false),
+        (
+            &["on-any", "on-defined", "on-note", "on-rush", "on-zone"],
+            false,
+        ),
         (&["on-enum", "on-not"], true),
     ];
     let mut differences = Vec::new();
@@ -295,7 +316,10 @@ fn every_condition_shape_decides_as_ess_interprets_it() {
         let (here, unmet) = hosted(&mut host, &input);
         let (invoked, undecided) = expected[case];
         let literal = (
-            invoked.iter().map(|b| (*b).to_owned()).collect::<BTreeSet<_>>(),
+            invoked
+                .iter()
+                .map(|b| (*b).to_owned())
+                .collect::<BTreeSet<_>>(),
             undecided,
         );
         if here != ess || here != literal {

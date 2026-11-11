@@ -112,7 +112,11 @@ fn space(rng: &mut Rng) -> &'static str {
 
 /// A random JSON value as text; `twice` is set where any object in it names a member twice.
 fn value(rng: &mut Rng, depth: usize, twice: &mut bool) -> String {
-    let kind = if depth == 0 { rng.below(4) } else { rng.below(7) };
+    let kind = if depth == 0 {
+        rng.below(4)
+    } else {
+        rng.below(7)
+    };
     match kind {
         0 => {
             let text = TEXTS[rng.below(TEXTS.len())];
@@ -129,7 +133,11 @@ fn value(rng: &mut Rng, depth: usize, twice: &mut bool) -> String {
             let items = (0..rng.below(4))
                 .map(|_| value(rng, depth - 1, twice))
                 .collect::<Vec<_>>();
-            format!("[{}{}]", space(rng), items.join(&format!(",{}", space(rng))))
+            format!(
+                "[{}{}]",
+                space(rng),
+                items.join(&format!(",{}", space(rng)))
+            )
         }
     }
 }
@@ -218,8 +226,9 @@ fn a_proof_proves_a_caller_exactly_when_no_object_names_a_member_twice() {
     let mut proofs = 0;
     for iteration in 0..20_000 {
         let (text, twice, actor) = proof(&mut rng);
-        let parsed: Value = serde_json::from_str(&text)
-            .unwrap_or_else(|error| panic!("#{iteration} generated invalid JSON {text:?}: {error}"));
+        let parsed: Value = serde_json::from_str(&text).unwrap_or_else(|error| {
+            panic!("#{iteration} generated invalid JSON {text:?}: {error}")
+        });
         let proven = Caller::proven(text.as_bytes());
         if twice {
             duplicates += 1;
@@ -240,7 +249,10 @@ fn a_proof_proves_a_caller_exactly_when_no_object_names_a_member_twice() {
             );
         }
     }
-    assert!(duplicates > 1_000 && proofs > 1_000, "{duplicates} {proofs}");
+    assert!(
+        duplicates > 1_000 && proofs > 1_000,
+        "{duplicates} {proofs}"
+    );
 }
 
 /// Each spelling of `actor` JSON allows is the one member `actor`: none of them lets a second
@@ -270,7 +282,11 @@ fn every_spelling_of_a_name_is_that_name() {
     let upper = r#"{"actor": "A", "caller": {"😀": 1, "😀": 2}}"#;
     assert_eq!(Caller::proven(upper.as_bytes()), None, "{upper}");
     let lone = r#"{"actor": "A", "caller": {"\ud83d": 1}}"#;
-    assert_eq!(Caller::proven(lone.as_bytes()), None, "a lone surrogate: {lone}");
+    assert_eq!(
+        Caller::proven(lone.as_bytes()),
+        None,
+        "a lone surrogate: {lone}"
+    );
     // Unicode normalisation: NFC and NFD é are two members to JSON, not one.
     let forms = "{\"actor\": \"A\", \"caller\": {\"caf\u{e9}\": 1, \"cafe\u{301}\": 2}}";
     let proven = Caller::proven(forms.as_bytes()).expect("two distinct names prove a caller");
@@ -289,7 +305,11 @@ fn deep_nesting_is_answered_without_overflow() {
         )
     };
     assert!(Caller::proven(deep(100).as_bytes()).is_some(), "depth 100");
-    assert_eq!(Caller::proven(deep(200_000).as_bytes()), None, "depth 200000");
+    assert_eq!(
+        Caller::proven(deep(200_000).as_bytes()),
+        None,
+        "depth 200000"
+    );
     let objects = |depth: usize| {
         format!(
             r#"{{"actor": "A", "caller": {}1{}}}"#,
@@ -297,8 +317,15 @@ fn deep_nesting_is_answered_without_overflow() {
             "}".repeat(depth)
         )
     };
-    assert!(Caller::proven(objects(100).as_bytes()).is_some(), "object depth 100");
-    assert_eq!(Caller::proven(objects(200_000).as_bytes()), None, "object depth 200000");
+    assert!(
+        Caller::proven(objects(100).as_bytes()).is_some(),
+        "object depth 100"
+    );
+    assert_eq!(
+        Caller::proven(objects(200_000).as_bytes()),
+        None,
+        "object depth 200000"
+    );
 }
 
 /// A proof the size of the largest head hyper reads (about 400 kB) is answered in linear-ish time,
@@ -313,7 +340,10 @@ fn large_proofs_are_answered_quickly() {
     let again = format!(r#"{{"actor": "A", "caller": {{{members}, "k00000": 0}}}}"#);
     let long = "\\u0061".repeat(30_000);
     let escaped = format!(r#"{{"actor": "A", "caller": {{"{long}": 1, "{long}b": 2}}}}"#);
-    let slashes = format!(r#"{{"actor": "{}", "caller": {{}}}}"#, "\\\\".repeat(150_000));
+    let slashes = format!(
+        r#"{{"actor": "{}", "caller": {{}}}}"#,
+        "\\\\".repeat(150_000)
+    );
     let started = Instant::now();
     assert!(Caller::proven(many.as_bytes()).is_some());
     assert_eq!(Caller::proven(again.as_bytes()), None);
