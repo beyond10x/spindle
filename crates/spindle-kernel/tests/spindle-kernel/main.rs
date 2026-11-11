@@ -74,3 +74,4 @@ mod state_move;
 mod store_contract;
 mod structured_responses;
 mod unsupported;
+mod upsert_creation_related_refusal;

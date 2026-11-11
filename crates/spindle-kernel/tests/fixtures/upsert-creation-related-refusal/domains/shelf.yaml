@@ -1,0 +1,119 @@
+domain: store.shelf
+summary: Boxes placed by identity, notes created or refreshed under a key and tickets opened under a minted identity, each note and ticket onto a box that must exist.
+types:
+  - name: store.shelf.TicketId
+    kind: newtype
+    of: Uuid
+  - name: store.shelf.NoteKey
+    kind: newtype
+    of: String
+entities:
+  - name: store.shelf.Box
+    identity: {name: box_id, type: Uuid}
+    fields:
+      - {name: label, type: String}
+    lifecycle: {initial: Placed, states: [Placed], terminal: [Placed]}
+  - name: store.shelf.Note
+    identity: {name: key, type: store.shelf.NoteKey}
+    fields:
+      - {name: box_id, type: Uuid}
+      - {name: text, type: String}
+    lifecycle: {initial: Kept, states: [Kept], terminal: [Kept]}
+  - name: store.shelf.Ticket
+    identity: {name: ticket_id, type: store.shelf.TicketId}
+    fields:
+      - {name: box_id, type: Uuid}
+    lifecycle: {initial: Open, states: [Open], terminal: [Open]}
+errors:
+  - {name: store.shelf.BoxNotFound, summary: No box carries the identity., fields: []}
+events:
+  - name: store.shelf.BoxPlaced
+    fields: [{name: box_id, type: Uuid}]
+  - name: store.shelf.NoteRecorded
+    fields: [{name: key, type: store.shelf.NoteKey}]
+  - name: store.shelf.TicketOpened
+    fields: [{name: ticket_id, type: store.shelf.TicketId}]
+commands:
+  - name: store.shelf.PlaceBox
+    naming:
+      display: Place a box
+      summary: Place a box under the identity the input names.
+    input:
+      - {name: box_id, type: Uuid}
+      - {name: label, type: String}
+    outcomes:
+      - name: placed
+        creates: store.shelf.Box
+        instance: box_id
+        sets:
+          label: input.label
+        emits: [store.shelf.BoxPlaced]
+        payload:
+          store.shelf.BoxPlaced:
+            box_id: input.box_id
+        summary: The box is placed.
+  - name: store.shelf.RecordNote
+    naming:
+      display: Record a note
+      summary: Create or refresh the note under this key; the box must exist.
+    input:
+      - {name: key, type: store.shelf.NoteKey}
+      - {name: box_id, type: Uuid}
+      - {name: text, type: String}
+    outcomes:
+      - name: no-box
+        when_related: {via: input.box_id, exists: false}
+        error: store.shelf.BoxNotFound
+        summary: No box carries the identity.
+      - name: recorded
+        unknown_instance: true
+        creates: store.shelf.Note
+        instance: key
+        sets:
+          box_id: input.box_id
+          text: input.text
+        emits: [store.shelf.NoteRecorded]
+        payload:
+          store.shelf.NoteRecorded:
+            key: input.key
+        summary: The note is created under the key.
+      - name: refreshed
+        updates: store.shelf.Note
+        instance: key
+        sets:
+          text: input.text
+        emits: [store.shelf.NoteRecorded]
+        payload:
+          store.shelf.NoteRecorded:
+            key: input.key
+        summary: The note under the key takes the new text.
+  - name: store.shelf.OpenTicket
+    naming:
+      display: Open a ticket
+      summary: Open a ticket under a minted identity; the box must exist.
+    input:
+      - {name: box_id, type: Uuid}
+    outcomes:
+      - name: no-box
+        when_related: {via: input.box_id, exists: false}
+        error: store.shelf.BoxNotFound
+        summary: No box carries the identity.
+      - name: opened
+        creates: store.shelf.Ticket
+        instance: ticket_id
+        sets:
+          box_id: input.box_id
+        emits: [store.shelf.TicketOpened]
+        payload:
+          store.shelf.TicketOpened:
+            ticket_id: {generated: true}
+        summary: The ticket is opened.
+views:
+  - name: store.shelf.Notes
+    source: store.shelf.Note
+    consistency: read_your_writes
+    fields:
+      - {name: key, type: store.shelf.NoteKey}
+      - {name: box_id, type: Uuid}
+      - {name: text, type: String}
+      - {name: state, type: store.shelf.Note.State}
