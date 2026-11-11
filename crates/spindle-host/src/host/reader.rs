@@ -29,7 +29,7 @@ pub struct Reader {
     pub(super) clock: Arc<dyn Clock>,
     pub(super) placements: Arc<Placements>,
     pub(super) components: Arc<BTreeMap<String, Read>>,
-    pub(super) published: Arc<RwLock<Arc<Vec<Published>>>>,
+    pub(super) published: Arc<RwLock<History>>,
     pub(super) emitted: Arc<Mutex<BTreeMap<(String, String), u64>>>,
 }
 
@@ -125,13 +125,7 @@ impl Reader {
 
     /// Every event published, as [`super::Host::published`] answers them.
     pub fn published(&self) -> Vec<Published> {
-        let published = Arc::clone(
-            &self
-                .published
-                .read()
-                .unwrap_or_else(PoisonError::into_inner),
-        );
-        published.as_ref().clone()
+        listed(&self.published)
     }
 
     /// Whether this reader answers `view`: one the host reads ([`crate::reads`]), whose owning
@@ -178,4 +172,51 @@ impl Reader {
         let scan = reading.scan(&listing.entity)?;
         listing.rows(&self.ir, view, scan)
     }
+}
+
+/// How many events one chunk of a [`History`] holds before it is sealed.
+const CHUNK: usize = 256;
+
+/// Every event published since the host started or was last reset, in the order published, as
+/// chunks its readers share. A sealed chunk never changes again; only the open one grows, and
+/// where a read still holds it, the event lands on a copy of it alone. So a read takes the chunks
+/// as they stand under the lock, one pointer each, and reads them without it, and the host's
+/// thread never copies more than one chunk for a read.
+#[derive(Debug, Default)]
+pub(super) struct History {
+    sealed: Vec<Arc<Vec<Published>>>,
+    open: Arc<Vec<Published>>,
+}
+
+impl History {
+    /// Appends `events`, in order.
+    pub(super) fn extend(&mut self, events: impl IntoIterator<Item = Published>) {
+        for event in events {
+            if self.open.len() >= CHUNK {
+                let full = std::mem::take(&mut self.open);
+                self.sealed.push(full);
+            }
+            Arc::make_mut(&mut self.open).push(event);
+        }
+    }
+
+    fn chunks(&self) -> Vec<Arc<Vec<Published>>> {
+        self.sealed
+            .iter()
+            .chain(std::iter::once(&self.open))
+            .cloned()
+            .collect()
+    }
+}
+
+/// Every event `history` holds now: its chunks taken under its lock, read without it.
+pub(super) fn listed(history: &RwLock<History>) -> Vec<Published> {
+    let chunks = history
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .chunks();
+    chunks
+        .iter()
+        .flat_map(|chunk| chunk.iter().cloned())
+        .collect()
 }

@@ -58,7 +58,9 @@ const FEED_PAGE: usize = 500;
 pub struct SqliteStore {
     log: SqliteEventStore,
     tenant: TenantId,
-    runtime: tokio::runtime::Runtime,
+    /// What drives its log's calls: its own, or the one every connection of its reading handle
+    /// shares.
+    runtime: Arc<tokio::runtime::Runtime>,
     path: PathBuf,
     /// Its reading handle, once one was asked for: retired when this store is dropped.
     reading: Option<Arc<SqliteReading>>,
@@ -79,19 +81,23 @@ impl SqliteStore {
     /// # Errors
     /// [`StoreError::Backend`] when the file cannot be opened or provisioned.
     pub fn open(path: &Path) -> Result<Self, StoreError> {
-        Self::opening(path, true)
+        Self::opening(path, true, runtime()?)
     }
 
     /// Opens the database at `path`, which a store opened before provisioned, on a connection of
-    /// its own: what a reading handle reads through.
-    fn open_existing(path: &Path) -> Result<Self, StoreError> {
-        Self::opening(path, false)
+    /// its own driven by `runtime`: what a reading handle reads through.
+    fn open_existing(
+        path: &Path,
+        runtime: Arc<tokio::runtime::Runtime>,
+    ) -> Result<Self, StoreError> {
+        Self::opening(path, false, runtime)
     }
 
-    fn opening(path: &Path, create: bool) -> Result<Self, StoreError> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .map_err(|error| StoreError::Backend(error.to_string()))?;
+    fn opening(
+        path: &Path,
+        create: bool,
+        runtime: Arc<tokio::runtime::Runtime>,
+    ) -> Result<Self, StoreError> {
         let location = path.to_str().ok_or_else(|| {
             StoreError::Backend(format!("{} is not a UTF-8 path", path.display()))
         })?;
@@ -385,17 +391,25 @@ impl Store for SqliteStore {
         Ok(counts)
     }
 
-    /// Reads the same file on connections of its own: one opened with the handle, more as reads
-    /// that run at once need them, each kept for the next read. Every call answers the same
-    /// handle; `None` where no connection could be opened.
+    /// Reads the same file on connections of its own, which share one runtime: one opened with
+    /// the handle, more as reads that run at once need them, up to as many as the machine runs
+    /// threads at once (at least 2). Every call answers the same handle; `None` where no
+    /// connection could be opened.
     fn reading(&mut self) -> Option<Arc<dyn Reading>> {
         if self.reading.is_none() {
-            let first = Self::open_existing(&self.path).ok()?;
+            let runtime = runtime().ok()?;
+            let first = Self::open_existing(&self.path, Arc::clone(&runtime)).ok()?;
+            let cap = std::thread::available_parallelism()
+                .map_or(2, std::num::NonZero::get)
+                .max(2);
             self.reading = Some(Arc::new(SqliteReading {
                 path: self.path.clone(),
+                runtime,
+                cap,
                 connections: Mutex::new(Connections {
                     idle: vec![first],
                     live: 1,
+                    waiting: 0,
                 }),
                 returned: Condvar::new(),
                 retired: AtomicBool::new(false),
@@ -405,6 +419,15 @@ impl Store for SqliteStore {
             .clone()
             .map(|reading| reading as Arc<dyn Reading>)
     }
+}
+
+/// A runtime of its own for a store's log calls: one thread, no driver, so it holds no
+/// descriptor.
+fn runtime() -> Result<Arc<tokio::runtime::Runtime>, StoreError> {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .map(Arc::new)
+        .map_err(|error| StoreError::Backend(error.to_string()))
 }
 
 /// The store is closed: its reading handle opens no further connection by its path, which a
@@ -417,10 +440,20 @@ impl Drop for SqliteStore {
     }
 }
 
+/// How many connections a [`SqliteReading`] keeps open beyond those its reads hold, when no read
+/// waits for one.
+const IDLE: usize = 2;
+
 /// The reading handle of a [`SqliteStore`]: the file, and its connections. Reads that run at
-/// once each read on a connection of their own.
+/// once each read on a connection of their own, up to `cap` of them; a read beyond that waits for
+/// one handed back. Once no read waits, at most [`IDLE`] are kept for the next reads and the rest
+/// closed.
 struct SqliteReading {
     path: PathBuf,
+    /// What drives every connection's log calls.
+    runtime: Arc<tokio::runtime::Runtime>,
+    /// How many connections may be open at once.
+    cap: usize,
     connections: Mutex<Connections>,
     /// Signalled whenever a connection is handed back or given up.
     returned: Condvar,
@@ -435,11 +468,14 @@ struct Connections {
     idle: Vec<SqliteStore>,
     /// How many are open, idle or held, or being opened.
     live: usize,
+    /// How many reads wait for one.
+    waiting: usize,
 }
 
 impl SqliteReading {
-    /// Runs `read` on an idle connection, else a new one, else, once the store is closed, the
-    /// next one handed back; keeps the connection for the next read unless the read failed.
+    /// Runs `read` on a connection no other read holds ([`SqliteReading::connection`]); hands it
+    /// back for a read that waits, or keeps it idle up to [`IDLE`], and closes it otherwise or
+    /// where the read failed.
     fn with<T>(
         &self,
         read: impl FnOnce(&mut SqliteStore) -> Result<T, StoreError>,
@@ -447,13 +483,25 @@ impl SqliteReading {
         let mut connection = self.connection()?;
         let read = read(&mut connection);
         let mut connections = self.lock();
+        let mut closed = Vec::new();
         if read.is_ok() {
             connections.idle.push(connection);
         } else {
             connections.live -= 1;
+            closed.push(connection);
+        }
+        // A read woken for a connection counts as waiting until it runs again, so a burst can
+        // leave more idle than any read waits for: the last read of a burst closes them.
+        let kept = IDLE.max(connections.waiting);
+        while connections.idle.len() > kept {
+            if let Some(connection) = connections.idle.pop() {
+                connections.live -= 1;
+                closed.push(connection);
+            }
         }
         drop(connections);
         self.returned.notify_all();
+        drop(closed);
         read
     }
 
@@ -463,7 +511,22 @@ impl SqliteReading {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// A connection no other read holds. A new one is opened only while the store is open, and
+    /// Waits for a connection to be handed back or given up.
+    fn wait<'a>(
+        &self,
+        mut connections: std::sync::MutexGuard<'a, Connections>,
+    ) -> std::sync::MutexGuard<'a, Connections> {
+        connections.waiting += 1;
+        let mut connections = self
+            .returned
+            .wait(connections)
+            .unwrap_or_else(PoisonError::into_inner);
+        connections.waiting -= 1;
+        connections
+    }
+
+    /// A connection no other read holds: an idle one, else a new one while fewer than `cap` are
+    /// open, else the next one handed back. A new one is opened only while the store is open, and
     /// kept only where it still was once the connection opened: the path names the store's own
     /// file until the store is closed, and the file is moved aside only after that.
     fn connection(&self) -> Result<SqliteStore, StoreError> {
@@ -478,15 +541,16 @@ impl SqliteReading {
                         "the store was closed while it was read".to_owned(),
                     ));
                 }
-                connections = self
-                    .returned
-                    .wait(connections)
-                    .unwrap_or_else(PoisonError::into_inner);
+                connections = self.wait(connections);
+                continue;
+            }
+            if connections.live >= self.cap {
+                connections = self.wait(connections);
                 continue;
             }
             connections.live += 1;
             drop(connections);
-            let opened = SqliteStore::open_existing(&self.path);
+            let opened = SqliteStore::open_existing(&self.path, Arc::clone(&self.runtime));
             let open = !self.retired.load(Ordering::SeqCst);
             connections = self.lock();
             match opened {

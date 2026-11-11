@@ -508,9 +508,8 @@ pub struct Host {
     timer: Timer,
     periodic: BTreeMap<String, Periodic>,
     remote: Option<component::Remote>,
-    /// Every event published, as one value its readers share: a command extends it in place where
-    /// no read holds it, else a copy that then stands in its place.
-    published: Arc<RwLock<Arc<Vec<Published>>>>,
+    /// Every event published, in chunks its readers share ([`reader::History`]).
+    published: Arc<RwLock<reader::History>>,
     /// Every event a store appended since the host started, by the command whose write carried it
     /// and the event: a reset keeps the counts, as it keeps the counters.
     emitted: Arc<Mutex<BTreeMap<(String, String), u64>>>,
@@ -936,13 +935,7 @@ impl Host {
     /// they led to. A refused command publishes none. Held in memory: the events of an earlier
     /// process that kept its state in SQLite are not among them.
     pub fn published(&self) -> Vec<Published> {
-        let published = Arc::clone(
-            &self
-                .published
-                .read()
-                .unwrap_or_else(PoisonError::into_inner),
-        );
-        published.as_ref().clone()
+        reader::listed(&self.published)
     }
 
     /// How many events each command appended since the host started, by command and event,
@@ -1053,6 +1046,9 @@ impl Host {
                 Uuid::parse_str(tail).ok()
             })
             .collect::<Vec<_>>();
+        for component in self.components.values_mut() {
+            component.store.hold();
+        }
         let loaded = self.load(world.rows, owners);
         // Its readers read the emptied stores, and the world in them, only now: until here they
         // read every store as the last command left it.
@@ -1138,7 +1134,7 @@ impl Host {
         *self
             .published
             .write()
-            .unwrap_or_else(PoisonError::into_inner) = Arc::default();
+            .unwrap_or_else(PoisonError::into_inner) = reader::History::default();
         Ok(emptied)
     }
 
@@ -1518,7 +1514,7 @@ impl Host {
                 .published
                 .write()
                 .unwrap_or_else(PoisonError::into_inner);
-            Arc::make_mut(&mut published).extend(executed.events.iter().map(|event| Published {
+            published.extend(executed.events.iter().map(|event| Published {
                 component: component.to_owned(),
                 command: command.to_owned(),
                 event: event.clone(),

@@ -381,32 +381,63 @@ pub(crate) fn identity_from_key(text: &str) -> Result<Value, StoreError> {
 /// Instances held only while the process runs: `store.ephemeral`, or `store.durable` bound to
 /// `memory` in an environment that accepts losing state on restart.
 ///
-/// Its rows are one value, shared with its reading handles ([`Store::reading`]): a write changes
-/// that value under a lock held only while the write lands, and a read takes the value as it stands
-/// and reads it without the lock. Where a read still holds the value a write changes, the write
-/// changes a copy of it, so neither waits for the other.
+/// Its rows are shared with its reading handles ([`Store::reading`]), each entity's as its own
+/// value: a write changes them under a lock held only while the write lands, and a read takes
+/// them as they stand and reads them without the lock. Where a read still holds an entity a write
+/// changes, the write changes a copy of that entity alone, so neither waits for the other and a
+/// write never copies an entity it does not change.
 #[derive(Debug, Default)]
 pub struct MemoryStore {
-    held: Arc<RwLock<Arc<Held>>>,
+    held: Arc<RwLock<Held>>,
     events: Vec<Event>,
 }
 
-/// What a [`MemoryStore`] holds, as one value its reads share.
-#[derive(Debug, Default, Clone)]
+/// What a [`MemoryStore`] holds: each entity's instances, by qualified name, each as one value its
+/// reads share.
+#[derive(Debug, Default)]
 struct Held {
-    rows: BTreeMap<(String, String), Stored>,
-    /// The last version of each removed instance, so one created again under its identity goes
-    /// on from it and no commit that read the removed row matches the new one.
-    removed: BTreeMap<(String, String), u64>,
-    /// Each entity's version: how many writes of its instances landed.
-    entities: BTreeMap<String, u64>,
+    entities: BTreeMap<String, Arc<Instances>>,
 }
 
+/// The instances of one entity in a [`MemoryStore`].
+#[derive(Debug, Default, Clone)]
+struct Instances {
+    /// Each instance's row, by its identity as canonical JSON text.
+    rows: BTreeMap<String, Stored>,
+    /// The last version of each removed instance, so one created again under its identity goes
+    /// on from it and no commit that read the removed row matches the new one.
+    removed: BTreeMap<String, u64>,
+    /// How many writes of its instances landed.
+    version: u64,
+}
+
+/// What one instance held before a group of writes touched it: its row and its last removed
+/// version.
+type Before = (Option<Stored>, Option<u64>);
+
 impl Held {
+    fn version(&self, entity: &str) -> u64 {
+        self.entities
+            .get(entity)
+            .map_or(0, |instances| instances.version)
+    }
+
+    /// The instances of `entity`, to change: copied first where a read still holds them.
+    fn changing(&mut self, entity: &str) -> &mut Instances {
+        if !self.entities.contains_key(entity) {
+            self.entities.insert(entity.to_owned(), Arc::default());
+        }
+        Arc::make_mut(
+            self.entities
+                .get_mut(entity)
+                .expect("the entity was inserted"),
+        )
+    }
+
     /// Refuses a write conditioned on an entity that moved since it was scanned.
     fn unmoved(&self, scanned: &[Scanned]) -> Result<(), StoreError> {
         for scanned in scanned {
-            let actual = self.entities.get(&scanned.entity).copied().unwrap_or(0);
+            let actual = self.version(&scanned.entity);
             if actual != scanned.version {
                 return Err(moved(scanned, actual));
             }
@@ -417,69 +448,82 @@ impl Held {
     /// Writes `change`, checking only the version of its instance; its events are recorded on
     /// `events`.
     fn put(&mut self, change: &Change, events: &mut Vec<Event>) -> Result<(), StoreError> {
-        let key = key(&change.entity, &change.identity);
-        let actual = self.rows.get(&key).map(|stored| stored.version);
+        let identity = change.identity.to_string();
+        let actual = self
+            .entities
+            .get(&change.entity)
+            .and_then(|instances| instances.rows.get(&identity))
+            .map(|stored| stored.version);
         if actual != change.expected {
             return Err(StoreError::Conflict {
                 entity: change.entity.clone(),
-                identity: key.1,
+                identity,
                 expected: change.expected,
                 actual,
             });
         }
+        let instances = self.changing(&change.entity);
         let version = actual
-            .or_else(|| self.removed.get(&key).copied())
+            .or_else(|| instances.removed.get(&identity).copied())
             .unwrap_or(0)
             + 1;
-        self.rows.insert(
-            key,
+        instances.rows.insert(
+            identity,
             Stored {
                 row: change.row.clone(),
                 version,
             },
         );
-        *self.entities.entry(change.entity.clone()).or_default() += 1;
+        instances.version += 1;
         events.extend(change.events.iter().cloned());
         Ok(())
     }
 
     /// Removes the instance `removal` names; its events are recorded on `events`.
     fn remove(&mut self, removal: &Removal, events: &mut Vec<Event>) -> Result<(), StoreError> {
-        let key = key(&removal.entity, &removal.identity);
-        let actual = self.rows.get(&key).map(|stored| stored.version);
+        let identity = removal.identity.to_string();
+        let actual = self
+            .entities
+            .get(&removal.entity)
+            .and_then(|instances| instances.rows.get(&identity))
+            .map(|stored| stored.version);
         if actual != Some(removal.expected) {
             return Err(StoreError::Conflict {
                 entity: removal.entity.clone(),
-                identity: key.1,
+                identity,
                 expected: Some(removal.expected),
                 actual,
             });
         }
-        self.rows.remove(&key);
-        self.removed.insert(key, removal.expected);
-        *self.entities.entry(removal.entity.clone()).or_default() += 1;
+        let instances = self.changing(&removal.entity);
+        instances.rows.remove(&identity);
+        instances.removed.insert(identity, removal.expected);
+        instances.version += 1;
         events.extend(removal.events.iter().cloned());
         Ok(())
     }
 
     /// Checks every write's scanned entities, then writes each in turn, keeping what each
-    /// instance it touches held before; where one is refused, every instance is put back and the
-    /// events recorded since dropped.
+    /// instance it touches held before and each entity's version; where one is refused, every
+    /// instance and version is put back and the events recorded since dropped.
     fn commit_all(&mut self, writes: &[Write], events: &mut Vec<Event>) -> Result<(), StoreError> {
-        type Before = (Option<Stored>, Option<u64>);
         for write in writes {
             self.unmoved(write.scanned())?;
         }
         let mut before: BTreeMap<(String, String), Before> = BTreeMap::new();
+        let mut versions: BTreeMap<String, u64> = BTreeMap::new();
         let recorded = events.len();
-        let entities = self.entities.clone();
         for write in writes {
             let (entity, identity) = write.instance();
             let key = key(entity, identity);
+            if !versions.contains_key(entity) {
+                versions.insert(entity.to_owned(), self.version(entity));
+            }
             if let std::collections::btree_map::Entry::Vacant(vacant) = before.entry(key) {
+                let instances = self.entities.get(entity);
                 let held = (
-                    self.rows.get(vacant.key()).cloned(),
-                    self.removed.get(vacant.key()).copied(),
+                    instances.and_then(|instances| instances.rows.get(&vacant.key().1).cloned()),
+                    instances.and_then(|instances| instances.removed.get(&vacant.key().1).copied()),
                 );
                 vacant.insert(held);
             }
@@ -488,17 +532,20 @@ impl Held {
                 Write::Remove(removal) => self.remove(removal, events),
             };
             if let Err(error) = landed {
-                for (key, (row, removed)) in before {
+                for ((entity, identity), (row, removed)) in before {
+                    let instances = self.changing(&entity);
                     match row {
-                        Some(row) => self.rows.insert(key.clone(), row),
-                        None => self.rows.remove(&key),
+                        Some(row) => instances.rows.insert(identity.clone(), row),
+                        None => instances.rows.remove(&identity),
                     };
                     match removed {
-                        Some(version) => self.removed.insert(key, version),
-                        None => self.removed.remove(&key),
+                        Some(version) => instances.removed.insert(identity, version),
+                        None => instances.removed.remove(&identity),
                     };
                 }
-                self.entities = entities;
+                for (entity, version) in versions {
+                    self.changing(&entity).version = version;
+                }
                 events.truncate(recorded);
                 return Err(error);
             }
@@ -506,23 +553,42 @@ impl Held {
         Ok(())
     }
 
-    fn scan(&self, entity: &str) -> Result<Scan, StoreError> {
+    fn load(&self, entity: &str, identity: &Value) -> Option<Stored> {
+        self.entities
+            .get(entity)?
+            .rows
+            .get(&identity.to_string())
+            .cloned()
+    }
+}
+
+impl Instances {
+    fn scan(&self) -> Result<Scan, StoreError> {
         let rows = self
             .rows
             .iter()
-            .filter(|((held, _), _)| held == entity)
-            .map(|((_, identity), stored)| Ok((identity_from_key(identity)?, stored.clone())))
+            .map(|(identity, stored)| Ok((identity_from_key(identity)?, stored.clone())))
             .collect::<Result<_, StoreError>>()?;
         Ok(Scan {
             rows,
-            version: self.entities.get(entity).copied().unwrap_or(0),
+            version: self.version,
         })
     }
 }
 
-/// The value `held` stands at now: taken under its lock, read without it.
-fn standing(held: &RwLock<Arc<Held>>) -> Arc<Held> {
-    Arc::clone(&held.read().unwrap_or_else(PoisonError::into_inner))
+/// What `held` holds of `entity` now: taken under its lock, read without it. Only the entity is
+/// taken, so a write of any other entity changes it in place.
+fn standing(held: &RwLock<Held>, entity: &str) -> Option<Arc<Instances>> {
+    held.read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .entities
+        .get(entity)
+        .cloned()
+}
+
+/// Every instance of `entity` in `held`, as it stands.
+fn scanned(held: &RwLock<Held>, entity: &str) -> Result<Scan, StoreError> {
+    standing(held, entity).map_or_else(|| Ok(Scan::default()), |instances| instances.scan())
 }
 
 impl MemoryStore {
@@ -531,20 +597,21 @@ impl MemoryStore {
         &self.events
     }
 
-    /// Lands one write on what the store holds, under its lock: on the value itself where no
-    /// read holds it, else on a copy that then stands in its place.
+    /// Lands one write on what the store holds, under its lock: on each entity it changes
+    /// itself where no read holds it, else on a copy of that entity that then stands in its place.
     fn write<T>(&mut self, write: impl FnOnce(&mut Held, &mut Vec<Event>) -> T) -> T {
         let mut held = self.held.write().unwrap_or_else(PoisonError::into_inner);
-        write(Arc::make_mut(&mut held), &mut self.events)
+        write(&mut held, &mut self.events)
     }
 }
 
 impl Store for MemoryStore {
     fn load(&mut self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
-        Ok(standing(&self.held)
-            .rows
-            .get(&key(entity, identity))
-            .cloned())
+        Ok(self
+            .held
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .load(entity, identity))
     }
 
     fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
@@ -566,7 +633,7 @@ impl Store for MemoryStore {
     }
 
     fn scan(&mut self, entity: &str) -> Result<Scan, StoreError> {
-        standing(&self.held).scan(entity)
+        scanned(&self.held, entity)
     }
 
     fn reading(&mut self) -> Option<Arc<dyn Reading>> {
@@ -575,10 +642,25 @@ impl Store for MemoryStore {
 }
 
 /// The reading handle of a [`MemoryStore`]: what it holds, read as it stands.
-struct MemoryReading(Arc<RwLock<Arc<Held>>>);
+struct MemoryReading(Arc<RwLock<Held>>);
 
 impl Reading for MemoryReading {
     fn scan(&self, entity: &str) -> Result<Scan, StoreError> {
-        standing(&self.0).scan(entity)
+        scanned(&self.0, entity)
+    }
+
+    /// Every entity's count as one write left them all: taken under one lock.
+    fn counts(&self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
+        let held = self.0.read().unwrap_or_else(PoisonError::into_inner);
+        Ok(entities
+            .iter()
+            .map(|entity| {
+                let rows = held
+                    .entities
+                    .get(entity)
+                    .map_or(0, |instances| instances.rows.len());
+                (entity.clone(), rows)
+            })
+            .collect())
     }
 }

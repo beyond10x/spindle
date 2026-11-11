@@ -17,10 +17,13 @@ are Spindle's releases.
   `GET /api/events`, `GET /__spindle/metrics` and `GET /__spindle/topology`
   (`GET /__spindle/requests` and `/__spindle/ui` were already answered by the listener). A view
   reads its store through the store's new reading handle (`Store::reading`): SQLite reads the file
-  on connections of its own under its write-ahead log, and the memory store keeps its rows as one
-  value a write replaces, copied only while a read still holds it, so a read sees the store as the
-  last write that landed left it, never part of one, and neither waits for the other. A reset hands
-  readers the emptied stores only once its world is loaded. The trusted-caller proof and the read
+  on connections of its own under its write-ahead log, at most one per processor (at least 2), at
+  most 2 kept idle, all driven by one runtime; the memory store keeps each entity's rows as one
+  value a write replaces, copying only an entity a read still holds. So a read sees the store as
+  the last write that landed left it, never part of one, and neither waits for the other. The row
+  counts a reader reads move a whole write group at once, and the events it lists are kept in
+  chunks of 256, so a command never copies more than one chunk for a read. A reset hands readers
+  the emptied stores, and their counts, only once its world is loaded. The trusted-caller proof and the read
   grants are checked on the read path as on the host's thread. A store with no reading handle, the
   browser's IndexedDB store, is still read on the host's thread. `spindle_host::Reader` reads a
   host from any thread, and `Listener::bind_reading` serves through one; the store contract gains
