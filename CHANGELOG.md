@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-11
+
 ### Added
 
 - The kernel runs an outcome that declares `when_state_changes: true` or `false`, which it refused
