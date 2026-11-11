@@ -1,12 +1,12 @@
 {
   "format": "ess-types-report/3",
-  "source_digest": "2a6e06f3f85f284455d8a509aa3c9fdca3754041212193e9074e0240eaabb3e8",
+  "source_digest": "dbf6c2957b929f6db0b3ad7a408f6ddbf37d9275e6df3cb2233f83ec5f6a2fc8",
   "input": {
     "kind": "model",
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:b90fe1f54ceda24cd981d31bd5aa4ad48f6f03cce7599a033d0d914dbdef6233",
-    "projection_digest": "13a54b35f345fc74a218277291de09d2b308fc8a75b58b7ace1546da0072543b"
+    "contract_digest": "slice-sha256/2:ca594fa1c8e7b8f204be4b82d9895163bf6f34a61a9d49cc74aff9f802c6333c",
+    "projection_digest": "d0b507a5cdcd8e73778a1cca59f8a9c22de06ab6f3d3f7e17411bd2d38614a95"
   },
   "generator_version": "0.92.0",
   "target": "typescript",

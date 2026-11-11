@@ -106,6 +106,20 @@ are Spindle's releases.
   that name no instances (0.10.0's, which name none, and those before 0.7.0, which record no
   entity version) is scanned whole when its stream `spindle:log` `unnamed-writes` exists, or
   when the entity's stream holds such a write.
+- `GET /__spindle/metrics` writes a series only once something was counted in it
+  (`story:metrics-observed-series`). Every command, failure kind, event, binding and entity series
+  was written from the start: a downstream consumer's model of 471 commands scraped 15,565 series,
+  261 of them non-zero, 1.5 MB per scrape. A served model of 500 commands that has run none now
+  writes one series, `spindle_resets_total`; a counted series keeps its value and stays written.
+  `spindle_entity_rows` is written from the first scrape that finds the entity holding a row.
+  `spindle_http_request_duration_seconds` is now labelled by `method` and `route` template, so a
+  slow route shows in its own series, and the new gauge `spindle_metrics_scrape_duration_seconds`
+  reports how long the scrape before took.
+- A request log record's `reason` never holds a value the caller sent
+  (`story:refusal-reason-bounded`). One refused command with an 800 KB mistyped field grew
+  `GET /__spindle/requests` by 804,364 bytes. Now every value in the refusal text is written `…`,
+  the field and the type it expected kept, and the reason is at most 512 bytes. The answer the
+  caller receives is unchanged.
 
 ### Fixed
 

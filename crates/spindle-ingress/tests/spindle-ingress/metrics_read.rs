@@ -444,3 +444,207 @@ fn a_metrics_read_scans_no_store() {
         "{body}"
     );
 }
+
+// story:metrics-observed-series: a scrape writes a series only once something was counted in it.
+
+/// The series a scrape of the generated model writes before anything is executed: only
+/// `spindle_resets_total`, which every scrape writes. 0.13.0 wrote 15,565 series for a model of
+/// 471 commands, about 33 per declared command.
+const UNEXECUTED_SERIES: usize = 1;
+
+/// The sample lines of `exposition`: one per series, each histogram bucket its own.
+fn sample_lines(exposition: &str) -> Vec<&str> {
+    exposition
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.is_empty())
+        .collect()
+}
+
+/// No counter sample of `exposition` is 0, but `spindle_resets_total`: a counter is written
+/// only once counted.
+fn no_zero_counter(exposition: &str) {
+    for line in sample_lines(exposition) {
+        let (series, value) = line.rsplit_once(' ').expect("a sample has a value");
+        if series.ends_with("_total") || series.contains("_total{") {
+            assert!(
+                series == "spindle_resets_total" || value != "0",
+                "{line} is written before it was counted:\n{exposition}"
+            );
+        }
+    }
+}
+
+/// `GET /__spindle/metrics` on `address`, every exchange served on `host` until it is answered.
+fn scraped(listener: &Listener, host: &mut Host, address: SocketAddr) -> String {
+    let scrape = thread::spawn(move || send(address, "GET", "/__spindle/metrics", ""));
+    serve_until(listener, host, &scrape);
+    let (status, body) = scrape.join().expect("the scrape thread ends");
+    assert_eq!(status, 200, "{body}");
+    body
+}
+
+/// `method target` with `body`, every exchange served on `host` until it is answered.
+fn sent(
+    listener: &Listener,
+    host: &mut Host,
+    address: SocketAddr,
+    (method, target): (&str, &str),
+    body: &Value,
+) -> (u16, String) {
+    let (method, target, body) = (method.to_owned(), target.to_owned(), body.to_string());
+    let asked = thread::spawn(move || send(address, &method, &target, &body));
+    serve_until(listener, host, &asked);
+    asked.join().expect("the request thread ends")
+}
+
+/// The generated model of [`DOMAINS`] domains served on memory stores, observed.
+fn served_hall(root: &Path) -> (Listener, Host, Surface) {
+    let ir = spindle_spec::load(&generated(root))
+        .unwrap_or_else(|error| panic!("the generated model compiles: {error}"))
+        .ir;
+    assert!(
+        ir.commands().len() >= 400,
+        "{} commands",
+        ir.commands().len()
+    );
+    let surface = Surface::new(&ir, &[COMPONENT.to_owned()], None)
+        .expect("the hall surface is served")
+        .observing(64);
+    let state = root.join("state");
+    std::fs::create_dir_all(&state).expect("a state directory");
+    let host = Host::new(
+        ir,
+        &environment("memory"),
+        Arc::new(ManualClock::new()),
+        &state,
+    )
+    .unwrap_or_else(|error| panic!("the host admits the hall: {error}"));
+    let listener = Listener::bind(0, surface.clone()).expect("the listener binds");
+    (listener, host, surface)
+}
+
+#[test]
+fn an_unexecuted_model_of_500_commands_writes_fewer_than_1000_series() {
+    let root = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let (listener, mut host, _) = served_hall(root.path());
+    let address = listener.local_addr();
+    let body = scraped(&listener, &mut host, address);
+    let series = sample_lines(&body).len();
+    eprintln!(
+        "{series} series, {} bytes, for {} commands executed none",
+        body.len(),
+        DOMAINS * COMMANDS.len()
+    );
+    assert!(series < 1_000, "{series} series:\n{body}");
+    assert_eq!(series, UNEXECUTED_SERIES, "{body}");
+    assert_eq!(sample_lines(&body), ["spindle_resets_total 0"], "{body}");
+}
+
+#[test]
+fn a_series_appears_once_counted_and_stays_after_a_reset() {
+    let root = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let (listener, mut host, surface) = served_hall(root.path());
+    let address = listener.local_addr();
+    let opening = surface
+        .routes()
+        .iter()
+        .find(|route| route.operation.name() == "load.d7.OpenDesk")
+        .expect("the surface serves OpenDesk");
+    let (method, path) = (opening.method.as_str().to_uppercase(), opening.path.clone());
+
+    let before = scraped(&listener, &mut host, address);
+    assert!(!before.contains("load.d7."), "{before}");
+
+    let (status, answer) = sent(
+        &listener,
+        &mut host,
+        address,
+        (&method, &path),
+        &json!({"desk_id": "desk-1", "holder": "a reader"}),
+    );
+    assert!(status < 300, "{status} {answer}");
+    let (status, answer) = sent(
+        &listener,
+        &mut host,
+        address,
+        (&method, &path),
+        &json!({"desk_id": "desk-2", "holder": 5}),
+    );
+    assert_eq!(status, 400, "{answer}");
+
+    let counted = [
+        r#"spindle_commands_total{command="load.d7.OpenDesk",outcome="opened"} 1"#,
+        r#"spindle_command_failures_total{command="load.d7.OpenDesk",failure="invalid_input"} 1"#,
+        r#"spindle_command_duration_seconds_bucket{command="load.d7.OpenDesk",le="+Inf"} 2"#,
+        r#"spindle_events_appended_total{event="load.d7.DeskOpened"} 1"#,
+        r#"spindle_store_rows_written_total{component="hall"} 1"#,
+    ];
+    let after = scraped(&listener, &mut host, address);
+    for line in counted {
+        assert!(after.lines().any(|held| held == line), "{line}:\n{after}");
+    }
+    let rows = r#"spindle_entity_rows{entity="load.d7.Desk"}"#;
+    assert!(
+        after.lines().any(|line| line == format!("{rows} 1")),
+        "{after}"
+    );
+    assert!(!after.contains("load.d8."), "{after}");
+    assert!(!after.contains("load.d7.TakeDesk"), "{after}");
+    no_zero_counter(&after);
+
+    host.reset().expect("the stores are reset");
+    let reset = scraped(&listener, &mut host, address);
+    for line in counted {
+        assert!(reset.lines().any(|held| held == line), "{line}:\n{reset}");
+    }
+    assert!(
+        reset.lines().any(|line| line == format!("{rows} 0")),
+        "an entity's rows stay written once counted:\n{reset}"
+    );
+    no_zero_counter(&reset);
+}
+
+#[test]
+fn a_binding_series_appears_once_an_envelope_was_counted() {
+    let ir = spindle_spec::load(&fixtures().join("library"))
+        .expect("the library fixture compiles")
+        .ir;
+    let surface = Surface::new(&ir, &["lending".to_owned()], None)
+        .expect("the lending surface is served")
+        .observing(16);
+    let close = surface
+        .routes()
+        .iter()
+        .find(|route| route.operation.name() == "library.lending.CloseLoan")
+        .expect("the surface serves CloseLoan");
+    let (method, path) = (close.method.as_str().to_uppercase(), close.path.clone());
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let mut host = Host::new(
+        ir,
+        &environment("memory"),
+        Arc::new(ManualClock::new()),
+        state.path(),
+    )
+    .unwrap_or_else(|error| panic!("the host admits the library: {error}"));
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+
+    let before = scraped(&listener, &mut host, address);
+    assert!(!before.contains("spindle_bindings_total{"), "{before}");
+    let (status, answer) = sent(
+        &listener,
+        &mut host,
+        address,
+        (&method, &path),
+        &json!({"loan_id": "loan-1", "member_id": "m-7"}),
+    );
+    assert!(status < 300, "{status} {answer}");
+    let after = scraped(&listener, &mut host, address);
+    assert!(
+        after.lines().any(|line| {
+            line.starts_with("spindle_bindings_total{") && line.contains("thank-on-close")
+        }),
+        "{after}"
+    );
+    no_zero_counter(&after);
+}
