@@ -6,6 +6,16 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- A second `run` on the same SQLite state is refused (`story:state-directory-lock`). Two runs
+  given one `--state` each kept their own outbox and event list over one database. Now `run
+  --state <path>` takes an exclusive advisory lock before it opens any store and holds it until it
+  exits: on `spindle.lock` inside the directory where it serves HTTP, on `<file>.lock` beside the
+  file where it reads stdin. A second run on the same state exits 1 before opening anything,
+  naming the state and the id of the process that holds it. The operating system releases the
+  lock with the process, after a SIGKILL too.
+
 ## [0.13.0] - 2026-11-11
 
 ### Fixed

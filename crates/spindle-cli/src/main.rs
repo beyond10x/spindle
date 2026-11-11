@@ -8,6 +8,7 @@ mod deploy;
 mod replay;
 mod scaled;
 mod serve;
+mod state_lock;
 mod world;
 
 use std::collections::BTreeMap;
@@ -560,6 +561,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         );
     }
     let scratch;
+    let _lock;
     let mut store: Box<dyn Store> = match (durable, state) {
         (None | Some("memory"), None) => Box::new(MemoryStore::default()),
         (None, Some(path)) => bail!(
@@ -573,7 +575,10 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
             parsed.name,
             path.display()
         ),
-        (Some("sqlite"), Some(path)) => Box::new(SqliteStore::open(path)?),
+        (Some("sqlite"), Some(path)) => {
+            _lock = state_lock::file(path)?;
+            Box::new(SqliteStore::open(path)?)
+        }
         (Some("sqlite"), None) => {
             scratch = tempfile::tempdir().context("creating a temporary state directory")?;
             removed_on_signal(scratch.path())?;
