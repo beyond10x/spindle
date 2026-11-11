@@ -17,7 +17,7 @@ use spindle_channel::{
 };
 use spindle_kernel::{
     Change, Committed, Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, Mint,
-    NoExternals, Origin, Reading, Row, Seeded, Store, StoreError, Stored, Uuid, UuidV4,
+    NoExternals, Origin, Reading, Row, Scanned, Seeded, Store, StoreError, Stored, Uuid, UuidV4,
 };
 use spindle_telemetry::{Counters, CountingStore, Retried, Sink};
 use spindle_timer::{BindingName, Clock, CompleteError, Instant, LifetimeError, Timer};
@@ -420,6 +420,16 @@ impl Store for Tallied<'_> {
         self.store.events_after(position)
     }
 
+    /// Kept for [`Host::published`], tallied as no write's: an event no write carries counts
+    /// nothing appended ([`Host::emitted`]).
+    fn commit_events(&mut self, events: &[Event], scanned: &[Scanned]) -> Result<(), StoreError> {
+        self.store.commit_events(events, scanned)
+    }
+
+    fn forget_events(&mut self) -> Result<(), StoreError> {
+        self.store.forget_events()
+    }
+
     fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
         self.store.commit(change)?;
         self.tally(&change.events);
@@ -480,6 +490,14 @@ impl Store for Supplied {
 
     fn attribute(&mut self, origin: Option<Origin>) {
         self.0.attribute(origin);
+    }
+
+    fn commit_events(&mut self, events: &[Event], scanned: &[Scanned]) -> Result<(), StoreError> {
+        self.0.commit_events(events, scanned)
+    }
+
+    fn forget_events(&mut self) -> Result<(), StoreError> {
+        self.0.forget_events()
     }
 
     fn events_after(&mut self, position: u64) -> Result<Vec<Committed>, StoreError> {
@@ -981,9 +999,10 @@ impl Host {
 
     /// Every event a command committed since its component's store was last
     /// [reset](Self::reset), in the order published: a command's own events in emit order, then
-    /// those of the commands they led to. A refused command publishes none, and an event no write
-    /// carries (one of an outcome without a subject, that preserves its subject, or of a set
-    /// outcome that selected no row) is committed to no store.
+    /// those of the commands they led to. A refused command publishes none. An event no write of
+    /// a row carries (one of an outcome without a subject, that preserves its subject, or of a set
+    /// outcome that selected no row) is committed to its store on its own
+    /// ([`Store::commit_events`]).
     ///
     /// Read from each component's store ([`Store::events_after`]), not held by the host: a store
     /// in SQLite or PostgreSQL answers the events of an earlier process too. The stores' events
@@ -1046,17 +1065,20 @@ impl Host {
     ///
     /// A store in memory is replaced by an empty one. A store in SQLite is closed, its file and
     /// the SQLite side files beside it moved aside, and an empty one opened at the same path; the
-    /// moved files are removed only once the empty store is open. A store the host was given keeps
-    /// its log: the host reads its events past the last it held at the reset only, until it
-    /// stops. Periodic bindings keep running, and the counters keep their counts. The answers and
+    /// moved files are removed only once the empty store is open. A store the host was given is
+    /// emptied in place and records that its events so far are forgotten
+    /// ([`Store::forget_events`]), so a host opened on it later does not read them either.
+    /// Periodic bindings keep running, and the counters keep their counts. The answers and
     /// the mint of the world an earlier [`Host::reset_to`] loaded are dropped.
     ///
     /// # Errors
     /// [`HostError::Reset`] when a component's files cannot be moved aside or the empty store
     /// cannot be opened. Its files are moved back and its store reopened as it was
     /// (`restored: true`); where even that fails, every read and write of that component fails
-    /// from then on, naming why (`restored: false`). The components emptied before it stay
-    /// empty, their events forgotten with them; the others keep theirs.
+    /// from then on, naming why (`restored: false`). A store the host was given that cannot be
+    /// emptied, or cannot record that its events are forgotten, is lost alike
+    /// (`restored: false`). The components emptied before it stay empty, their events forgotten
+    /// with them; the others keep theirs.
     pub fn reset(&mut self) -> Result<Vec<String>, HostError> {
         self.reset_to(World::default())
     }
@@ -1147,7 +1169,13 @@ impl Host {
         let mut emptied = Vec::new();
         for (name, component) in &mut self.components {
             if matches!(component.kept, Kept::Supplied) {
-                if let Err(error) = removed_all(&self.ir, &mut component.store) {
+                let forgotten = removed_all(&self.ir, &mut component.store).and_then(|()| {
+                    component
+                        .store
+                        .forget_events()
+                        .map_err(|error| format!("forgetting its events: {error}"))
+                });
+                if let Err(error) = forgotten {
                     component.store.replace(Box::new(Lost(format!(
                         "{name}'s store was lost in a reset: {error}"
                     ))));
@@ -1157,7 +1185,6 @@ impl Host {
                         restored: false,
                     });
                 }
-                component.store.forget_events();
             } else if let Kept::File(file) = &component.kept {
                 let file = file.clone();
                 let closed = component

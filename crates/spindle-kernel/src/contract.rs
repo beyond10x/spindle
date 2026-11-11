@@ -110,6 +110,14 @@ pub const CASES: &[Case] = &[
         run: the_store_reads_events_after_a_position,
     },
     Case {
+        name: "events_no_write_of_a_row_carries_are_read_back",
+        run: events_no_write_of_a_row_carries_are_read_back,
+    },
+    Case {
+        name: "forgotten_events_are_not_read_back",
+        run: forgotten_events_are_not_read_back,
+    },
+    Case {
         name: "a_position_scans_and_loads_one_state_of_the_store",
         run: a_position_scans_and_loads_one_state_of_the_store,
     },
@@ -1140,6 +1148,159 @@ fn the_store_reads_events_after_a_position(store: &mut dyn Store) {
             );
         }
     }
+}
+
+/// The names of `committed`, read without their domain.
+fn names(committed: &[Committed]) -> Vec<&str> {
+    committed
+        .iter()
+        .map(|committed| committed.event.name.trim_start_matches("contract.tasks."))
+        .collect()
+}
+
+/// Events committed with no row ([`Store::commit_events`]) are read back with the others, in
+/// commit order, at a position of their own past the last write's, attributed as the writes are,
+/// and move no row. None commits nothing and is never refused. Conditioned on a scan of an entity
+/// another write moved since, they are refused as a write group is ([`Write::scanned`]), and none
+/// is read back; on a scan that still holds, they land.
+fn events_no_write_of_a_row_carries_are_read_back(store: &mut dyn Store) {
+    let case = "events_no_write_of_a_row_carries_are_read_back";
+    let first = json!("t1");
+    store.attribute(origin("Open", 3));
+    let mut opened = change(TASK, &first, None, row("Open", "1"));
+    opened.events = vec![named("A")];
+    commit(case, store, &opened);
+    let rows = everything(case, store);
+    store.attribute(origin("Ping", 4));
+    store
+        .commit_events(&[named("P"), named("Q")], &[])
+        .unwrap_or_else(|error| panic!("{case}: the events commit: {error}"));
+    store
+        .commit_events(&[], &[])
+        .unwrap_or_else(|error| panic!("{case}: no events commit: {error}"));
+    assert_eq!(everything(case, store), rows, "{case}: no row moves");
+    let every = after(case, store, 0);
+    assert_eq!(names(&every), ["A", "P", "Q"], "{case}: in commit order");
+    assert_eq!(
+        every
+            .iter()
+            .map(|committed| committed.origin.clone())
+            .collect::<Vec<_>>(),
+        [origin("Open", 3), origin("Ping", 4), origin("Ping", 4)],
+        "{case}: attributed as the writes are"
+    );
+    assert!(
+        every[0].position < every[1].position && every[1].position == every[2].position,
+        "{case}: a position of their own, shared: {every:?}"
+    );
+
+    let stale = Scanned {
+        entity: TASK.to_owned(),
+        version: scanned(case, store, TASK).version,
+    };
+    let one = held(case, store, &first);
+    commit(
+        case,
+        store,
+        &change(TASK, &first, Some(one.version), row("Open", "moved")),
+    );
+    let rows = everything(case, store);
+    let read = after(case, store, 0);
+    let last = read.last().map_or(0, |committed| committed.position);
+    let now = scanned(case, store, TASK).version;
+    let result = store.commit_events(&[named("Stale")], std::slice::from_ref(&stale));
+    if let Err(StoreError::Conflict {
+        entity, identity, ..
+    }) = &result
+    {
+        assert_eq!(
+            (entity.as_str(), identity.as_str()),
+            (TASK, EVERY_INSTANCE),
+            "{case}: the conflict names the scanned entity"
+        );
+    }
+    conflict(
+        case,
+        "events conditioned on a moved scan",
+        result,
+        Some(stale.version),
+        Some(now),
+    );
+    assert_eq!(
+        everything(case, store),
+        rows,
+        "{case}: the refusal moves no row"
+    );
+    assert_eq!(
+        after(case, store, 0),
+        read,
+        "{case}: refused events are not read back"
+    );
+    store
+        .commit_events(&[], std::slice::from_ref(&stale))
+        .unwrap_or_else(|error| panic!("{case}: no events on a moved scan is no write: {error}"));
+    let holding = Scanned {
+        entity: TASK.to_owned(),
+        version: now,
+    };
+    store
+        .commit_events(&[named("Fresh")], std::slice::from_ref(&holding))
+        .unwrap_or_else(|error| panic!("{case}: events on a scan that holds commit: {error}"));
+    assert_eq!(
+        names(&after(case, store, last)),
+        ["Fresh"],
+        "{case}: events on a scan that holds are read back"
+    );
+    if let Some(reading) = store.reading() {
+        let read = reading
+            .events_after(0)
+            .unwrap_or_else(|error| panic!("{case}: the handle reads the events: {error}"));
+        assert_eq!(
+            read,
+            after(case, store, 0),
+            "{case}: the handle reads them alike"
+        );
+    }
+}
+
+/// Once a store forgets its events ([`Store::forget_events`]), they are no longer read back, by
+/// the store or its reading handle, and its rows stay as they were; an event committed after is
+/// read back at a position past every forgotten one.
+fn forgotten_events_are_not_read_back(store: &mut dyn Store) {
+    let case = "forgotten_events_are_not_read_back";
+    let mut opened = change(TASK, &json!("t1"), None, row("Open", "1"));
+    opened.events = vec![named("A")];
+    commit(case, store, &opened);
+    store
+        .commit_events(&[named("P")], &[])
+        .unwrap_or_else(|error| panic!("{case}: the events commit: {error}"));
+    let forgotten = after(case, store, 0);
+    assert_eq!(names(&forgotten), ["A", "P"], "{case}: before");
+    let rows = everything(case, store);
+    store
+        .forget_events()
+        .unwrap_or_else(|error| panic!("{case}: the events are forgotten: {error}"));
+    assert_eq!(after(case, store, 0), [], "{case}: none is read back");
+    assert_eq!(everything(case, store), rows, "{case}: the rows stay");
+    if let Some(reading) = store.reading() {
+        let read = reading
+            .events_after(0)
+            .unwrap_or_else(|error| panic!("{case}: the handle reads the events: {error}"));
+        assert_eq!(read, [], "{case}: the handle reads none either");
+    }
+    let mut second = change(TASK, &json!("t2"), None, row("Open", "2"));
+    second.events = vec![named("B")];
+    commit(case, store, &second);
+    let later = after(case, store, 0);
+    assert_eq!(
+        names(&later),
+        ["B"],
+        "{case}: only what was committed after"
+    );
+    assert!(
+        later[0].position > forgotten[1].position,
+        "{case}: positions go on growing: {later:?} after {forgotten:?}"
+    );
 }
 
 /// How many positions [`a_position_scans_and_loads_one_state_of_the_store`] takes at most before

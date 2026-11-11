@@ -73,6 +73,18 @@ pub(crate) const WRITTEN_SCHEMA: u32 = 2;
 /// ([`Store::attribute`]): `{"command": <qualified name>, "sequence": <n>}`. A write attributed
 /// to none, and every write of a release before it, carries none.
 const ORIGIN: &str = "origin";
+/// The stream of the events a command committed with no row ([`Store::commit_events`]): each
+/// such write appends them, then one [`PUBLISHED_END`] event naming the command under
+/// [`ORIGIN`]. Of the stream type [`MARKS`] is of, which a scan and a state move count as no
+/// entity's.
+pub(crate) const PUBLISHED: (&str, &str) = ("spindle:log", "published");
+/// The event closing each write of [`PUBLISHED`].
+const PUBLISHED_END: &str = "spindle.published";
+/// The stream a reset of a store emptied in place appends one [`RESET_MARK`] event to
+/// ([`Store::forget_events`]): the events read back are those committed after the last.
+pub(crate) const RESET: (&str, &str) = ("spindle:log", "reset");
+/// The event of [`RESET`].
+const RESET_MARK: &str = "spindle.reset";
 /// The stream type of the streams carrying an entity's version, one per entity: no qualified
 /// entity name holds a colon.
 pub(crate) const ENTITY: &str = "spindle:entity";
@@ -509,10 +521,7 @@ impl<L: Log> Store for LogStore<L> {
         for (entity, expected) in marks {
             let mut body = written.remove(entity).unwrap_or_default().body();
             if let (Some(origin), Value::Object(fields)) = (&self.origin, &mut body) {
-                fields.insert(
-                    ORIGIN.to_owned(),
-                    serde_json::json!({"command": origin.command, "sequence": origin.sequence}),
-                );
+                fields.insert(ORIGIN.to_owned(), origin_body(origin));
             }
             appends.push(StreamAppend {
                 stream: self.entity_stream(entity)?,
@@ -585,8 +594,100 @@ impl<L: Log> Store for LogStore<L> {
         self.origin = origin;
     }
 
+    /// Appends `events` to the stream [`PUBLISHED`], closed by a `spindle.published` event
+    /// naming the command they are attributed to, as one append group. The group is conditioned
+    /// on `scanned` as [`Store::commit_all`] conditions one: one `spindle.written` event naming
+    /// no instance appended to the stream of each entity, at the version its scan answered.
+    fn commit_events(
+        &mut self,
+        events: &[crate::Event],
+        scanned: &[Scanned],
+    ) -> Result<(), StoreError> {
+        if events.is_empty() {
+            return Ok(());
+        }
+        for scanned in scanned {
+            self.unmoved(scanned)?;
+        }
+        let mut appends = Vec::with_capacity(scanned.len() + 1);
+        for scanned in scanned {
+            let mut body = Written::default().body();
+            if let (Some(origin), Value::Object(fields)) = (&self.origin, &mut body) {
+                fields.insert(ORIGIN.to_owned(), origin_body(origin));
+            }
+            appends.push(StreamAppend {
+                stream: self.entity_stream(&scanned.entity)?,
+                expected: match scanned.version {
+                    0 => Expected::NoStream,
+                    version => Expected::Exact(version),
+                },
+                events: vec![NewEvent::new(WRITTEN, WRITTEN_SCHEMA, body).map_err(backend)?],
+            });
+        }
+        let mut body = serde_json::Map::new();
+        if let Some(origin) = &self.origin {
+            body.insert(ORIGIN.to_owned(), origin_body(origin));
+        }
+        let end = NewEvent::new(PUBLISHED_END, SCHEMA, Value::Object(body)).map_err(backend)?;
+        let (kind, id) = PUBLISHED;
+        appends.push(StreamAppend {
+            stream: StreamId::new(self.tenant.clone(), kind, id).map_err(backend)?,
+            expected: Expected::Any,
+            events: recorded(events, end)?,
+        });
+        match self.append(appends) {
+            Ok(()) => {
+                // As after a write group: the entity versions it moved are folded in now.
+                #[cfg(feature = "sqlite")]
+                if let Some(rows) = &self.rows {
+                    drop(self.caught_up(rows));
+                }
+                Ok(())
+            }
+            Err(EventLogError::Conflict { .. }) => {
+                for scanned in scanned {
+                    self.unmoved(scanned)?;
+                }
+                Err(StoreError::Backend(
+                    "another writer moved an entity while the events were appended".to_owned(),
+                ))
+            }
+            Err(other) => Err(backend(other)),
+        }
+    }
+
+    /// Appends one `spindle.reset` event to the stream [`RESET`]: the events read back are
+    /// those committed after the last such event ([`LogStore::committed_after`]).
+    fn forget_events(&mut self) -> Result<(), StoreError> {
+        let mark = NewEvent::new(RESET_MARK, SCHEMA, Value::Object(serde_json::Map::new()))
+            .map_err(backend)?;
+        let (kind, id) = RESET;
+        self.append(vec![StreamAppend {
+            stream: StreamId::new(self.tenant.clone(), kind, id).map_err(backend)?,
+            expected: Expected::Any,
+            events: vec![mark],
+        }])
+        .map_err(backend)
+    }
+
     fn events_after(&mut self, position: u64) -> Result<Vec<Committed>, StoreError> {
         self.committed_after(position)
+    }
+}
+
+impl<L: Log> LogStore<L> {
+    /// Appends `appends` as one append group.
+    fn append(&self, appends: Vec<StreamAppend>) -> Result<(), EventLogError> {
+        let entries: Vec<&Vec<NewEvent>> = appends.iter().map(|append| &append.events).collect();
+        let hash =
+            request_hash(&entries).map_err(|error| EventLogError::Backend(error.to_string()))?;
+        let group = AppendGroup {
+            tenant: self.tenant.clone(),
+            meta: meta(hash),
+            appends,
+        };
+        self.runtime.block_on(self.log.append_group(&group))?;
+        Ok(())
     }
 }
 
@@ -870,7 +971,18 @@ impl<L: Log> LogStore<L> {
                     }
                     continue;
                 }
-                if event.stream_type == MARKS.0 || event.name == ROW || event.name == REMOVED {
+                let stream = (event.stream_type.as_str(), event.stream_id.as_str());
+                if stream == RESET {
+                    groups.clear();
+                    continue;
+                }
+                if stream == PUBLISHED && event.name == PUBLISHED_END {
+                    if group.origin.is_none() {
+                        group.origin = origin_of(&event.data);
+                    }
+                    continue;
+                }
+                if stream == MARKS || event.name == ROW || event.name == REMOVED {
                     continue;
                 }
                 let Value::Object(payload) = event.data else {
@@ -907,6 +1019,11 @@ impl<L: Log> LogStore<L> {
             })
             .collect())
     }
+}
+
+/// What a body names `origin` as, under [`ORIGIN`].
+fn origin_body(origin: &Origin) -> Value {
+    serde_json::json!({"command": origin.command, "sequence": origin.sequence})
 }
 
 /// The command a `spindle.written` event's body names under [`ORIGIN`], if it names one.

@@ -8,8 +8,8 @@ use js_sys::{Array, Promise, Reflect};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use spindle_kernel::{
-    Change, Committed, EVERY_INSTANCE, Event, Origin, Removal, Row, Scan, Store, StoreError,
-    Stored, Write,
+    Change, Committed, EVERY_INSTANCE, Event, Origin, Removal, Row, Scan, Scanned, Store,
+    StoreError, Stored, Write,
 };
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
@@ -41,7 +41,9 @@ struct Record {
 }
 
 /// An event as the `events` object store holds it, with the command its write was attributed to
-/// ([`Store::attribute`]), where it was attributed to one.
+/// ([`Store::attribute`]), where it was attributed to one. An event no write of an instance
+/// carried names no entity. A record marked `reset` is no event: it marks that every event before
+/// it is forgotten ([`Store::forget_events`]).
 #[derive(Serialize, Deserialize)]
 struct Recorded {
     entity: String,
@@ -52,6 +54,8 @@ struct Recorded {
     command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sequence: Option<u64>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    reset: bool,
 }
 
 impl Recorded {
@@ -144,6 +148,8 @@ struct Shared {
     /// since, in commit order ([`Store::events_after`]); the events another global scope commits
     /// meanwhile are read when the database is next opened.
     events: Vec<Committed>,
+    /// The position of the last write that committed an event, kept past a reset that forgot it.
+    position: u64,
     /// The command the writes are attributed to ([`Store::attribute`]).
     origin: Option<Origin>,
     /// Settles when the last write's transaction completes or aborts.
@@ -228,8 +234,10 @@ impl BrowserStore {
         self.shared.borrow().healthy()?;
         texts
             .iter()
-            .map(|text| {
-                parse::<Recorded>(text, "an event").map(|recorded| Event {
+            .map(|text| parse::<Recorded>(text, "an event"))
+            .filter(|recorded| !matches!(recorded, Ok(Recorded { reset: true, .. })))
+            .map(|recorded| {
+                recorded.map(|recorded| Event {
                     name: recorded.event,
                     payload: recorded.payload,
                 })
@@ -272,6 +280,7 @@ impl Shared {
             removed: BTreeMap::new(),
             entities: BTreeMap::new(),
             events: Vec::new(),
+            position: 0,
             origin: None,
             written: None,
             failed: Rc::new(RefCell::new(None)),
@@ -307,7 +316,11 @@ impl Shared {
         for text in read_all(&database, EVENTS).await? {
             events.push(parse::<Recorded>(&text, "an event")?);
         }
-        shared.borrow_mut().events = committed(events);
+        let (events, position) = committed(events);
+        let mut held = shared.borrow_mut();
+        held.events = events;
+        held.position = position;
+        drop(held);
         Ok(shared)
     }
 
@@ -317,7 +330,8 @@ impl Shared {
         if events.is_empty() {
             return;
         }
-        let position = self.events.last().map_or(0, |last| last.position) + 1;
+        self.position += 1;
+        let position = self.position;
         let origin = self.origin.clone();
         self.events
             .extend(events.into_iter().map(|event| Committed {
@@ -421,6 +435,33 @@ impl Shared {
         })
     }
 
+    /// Adds `recorded` to the `events` object store in one readwrite transaction of its own,
+    /// queued after every write before it.
+    fn append(&mut self, recorded: &[Recorded]) -> Result<(), StoreError> {
+        let texts = recorded
+            .iter()
+            .map(serde_json::to_string)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(json)?;
+        let transaction = self
+            .database
+            .transaction_with_str_and_mode(EVENTS, IdbTransactionMode::Readwrite)
+            .map_err(js)?;
+        let added = (|| -> Result<(), JsValue> {
+            let log = transaction.object_store(EVENTS)?;
+            for text in texts {
+                log.add(&text.into())?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = added {
+            let _ = transaction.abort();
+            return Err(js(error));
+        }
+        self.written = Some(watch(&transaction, &self.failed, None));
+        Ok(())
+    }
+
     /// Writes every record of `pending` and its events in one readwrite transaction, if the
     /// database still holds each instance where this global scope believed it stood before them;
     /// otherwise the transaction aborts and none of them lands. The requests are queued before
@@ -452,6 +493,7 @@ impl Shared {
                         payload: event.payload.clone(),
                         command: self.origin.as_ref().map(|origin| origin.command.clone()),
                         sequence: self.origin.as_ref().map(|origin| origin.sequence),
+                        reset: false,
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()
@@ -653,6 +695,61 @@ impl Store for BrowserStore {
         self.shared.borrow_mut().origin = origin;
     }
 
+    /// Checks `scanned` against the versions this global scope holds, as
+    /// [`Store::commit_all`] does, then adds `events` to the database in a transaction of their
+    /// own, naming no instance.
+    fn commit_events(&mut self, events: &[Event], scanned: &[Scanned]) -> Result<(), StoreError> {
+        let mut shared = self.shared.borrow_mut();
+        shared.healthy()?;
+        if events.is_empty() {
+            return Ok(());
+        }
+        for scanned in scanned {
+            let actual = shared.entities.get(&scanned.entity).copied().unwrap_or(0);
+            if actual != scanned.version {
+                return Err(StoreError::Conflict {
+                    entity: scanned.entity.clone(),
+                    identity: EVERY_INSTANCE.to_owned(),
+                    expected: Some(scanned.version),
+                    actual: Some(actual),
+                });
+            }
+        }
+        let recorded = events
+            .iter()
+            .map(|event| Recorded {
+                entity: String::new(),
+                identity: Value::Null,
+                event: event.name.clone(),
+                payload: event.payload.clone(),
+                command: shared.origin.as_ref().map(|origin| origin.command.clone()),
+                sequence: shared.origin.as_ref().map(|origin| origin.sequence),
+                reset: false,
+            })
+            .collect::<Vec<_>>();
+        shared.append(&recorded)?;
+        shared.record(events.to_vec());
+        Ok(())
+    }
+
+    /// Adds a mark that every event before it is forgotten, read as such when the database is next
+    /// opened, and forgets them in memory.
+    fn forget_events(&mut self) -> Result<(), StoreError> {
+        let mut shared = self.shared.borrow_mut();
+        shared.healthy()?;
+        shared.append(&[Recorded {
+            entity: String::new(),
+            identity: Value::Null,
+            event: String::new(),
+            payload: Map::new(),
+            command: None,
+            sequence: None,
+            reset: true,
+        }])?;
+        shared.events.clear();
+        Ok(())
+    }
+
     /// The events committed after `position`, read from memory: those the database held when this
     /// global scope opened it, and those it committed since.
     fn events_after(&mut self, position: u64) -> Result<Vec<Committed>, StoreError> {
@@ -669,17 +766,24 @@ fn key(entity: &str, identity: &Value) -> Key {
     (entity.to_owned(), identity.to_string())
 }
 
-/// The events the `events` object store holds, in key order, at their positions: the events of
-/// one attributed command, one write, share one; an event attributed to none has one of its own.
-fn committed(recorded: Vec<Recorded>) -> Vec<Committed> {
+/// The events the `events` object store holds past its last reset mark, in key order, at their
+/// positions, and the last position: the events of one attributed command, one write, share
+/// one; an event attributed to none has one of its own. Positions go on growing past a mark.
+fn committed(recorded: Vec<Recorded>) -> (Vec<Committed>, u64) {
     let mut committed: Vec<Committed> = Vec::with_capacity(recorded.len());
+    let mut position = 0;
+    let mut last: Option<Option<Origin>> = None;
     for recorded in recorded {
+        if recorded.reset {
+            committed.clear();
+            last = None;
+            continue;
+        }
         let origin = recorded.origin();
-        let position = match committed.last() {
-            Some(last) if origin.is_some() && last.origin == origin => last.position,
-            Some(last) => last.position + 1,
-            None => 1,
-        };
+        if !(origin.is_some() && last.as_ref() == Some(&origin)) {
+            position += 1;
+        }
+        last = Some(origin.clone());
         committed.push(Committed {
             position,
             origin,
@@ -689,7 +793,7 @@ fn committed(recorded: Vec<Recorded>) -> Vec<Committed> {
             },
         });
     }
-    committed
+    (committed, position)
 }
 
 fn describe_standing(standing: Standing) -> String {

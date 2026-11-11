@@ -309,6 +309,18 @@ impl Store for Shared {
         }
     }
 
+    fn commit_events(
+        &mut self,
+        events: &[spindle_kernel::Event],
+        scanned: &[spindle_kernel::Scanned],
+    ) -> Result<(), StoreError> {
+        self.with(|store| store.commit_events(events, scanned))
+    }
+
+    fn forget_events(&mut self) -> Result<(), StoreError> {
+        self.with(|store| store.forget_events())
+    }
+
     fn events_after(
         &mut self,
         position: u64,

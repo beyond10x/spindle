@@ -289,6 +289,47 @@ pub trait Store {
         let _ = origin;
     }
 
+    /// Records `events`, which a command emitted with no row to write them with (an outcome
+    /// without a subject, one that preserves its subject, a set outcome that selected no row), as
+    /// one write of its own: read back with the events the store committed
+    /// ([`Store::events_after`]), at a position of its own, attributed as the writes are. No
+    /// instance moves. Like a write group ([`Write::scanned`]), it is conditioned on `scanned`,
+    /// each entity the command decided on by scanning it at the version the scan answered: where
+    /// another write of one landed in between, nothing is recorded. A store that conditions a
+    /// write by appending to the entity's version (SQLite, PostgreSQL) moves it, as
+    /// [`Store::commit_all`] does. No events is no write: nothing is recorded or checked.
+    ///
+    /// This default, for a store that does not read back its events, keeps nothing and checks
+    /// each entity of `scanned` by scanning it.
+    ///
+    /// # Errors
+    /// [`StoreError::Conflict`] when an entity of `scanned` is not at the version it names, and
+    /// [`StoreError::Backend`] when the store cannot be written.
+    fn commit_events(&mut self, events: &[Event], scanned: &[Scanned]) -> Result<(), StoreError> {
+        if events.is_empty() {
+            return Ok(());
+        }
+        for scanned in scanned {
+            let actual = self.scan(&scanned.entity)?.version;
+            if actual != scanned.version {
+                return Err(moved(scanned, actual));
+            }
+        }
+        Ok(())
+    }
+
+    /// Forgets every event committed so far, as the store records it: from now on
+    /// [`Store::events_after`] answers only the events committed after this, after a restart too.
+    /// What a reset that empties a store in place records. Positions go on growing.
+    ///
+    /// This default, for a store that does not read back its events, keeps nothing to forget.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be written.
+    fn forget_events(&mut self) -> Result<(), StoreError> {
+        Ok(())
+    }
+
     /// Every event committed by a write after the one at `position`, in commit order, each with
     /// its write's position and origin; `0` reads every event. The events of one write are read
     /// together or not at all, and a refused write committed none.
@@ -837,6 +878,27 @@ impl Store for MemoryStore {
 
     fn attribute(&mut self, origin: Option<Origin>) {
         self.origin = origin;
+    }
+
+    fn commit_events(&mut self, events: &[Event], scanned: &[Scanned]) -> Result<(), StoreError> {
+        if events.is_empty() {
+            return Ok(());
+        }
+        self.write(|held, recorded| {
+            held.unmoved(scanned)?;
+            recorded.extend(events.iter().cloned());
+            Ok(())
+        })
+    }
+
+    /// Drops every event held; a read still holding their chunks reads them still.
+    fn forget_events(&mut self) -> Result<(), StoreError> {
+        let mut held = self.held.write().unwrap_or_else(PoisonError::into_inner);
+        held.events = Events {
+            position: held.events.position,
+            ..Events::default()
+        };
+        Ok(())
     }
 
     fn events_after(&mut self, position: u64) -> Result<Vec<Committed>, StoreError> {

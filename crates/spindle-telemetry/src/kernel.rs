@@ -126,6 +126,19 @@ impl<S: Store> Store for CountingStore<S> {
         self.inner.attribute(origin);
     }
 
+    /// Not counted: an event no write of a row carries counts nothing appended.
+    fn commit_events(
+        &mut self,
+        events: &[spindle_kernel::Event],
+        scanned: &[spindle_kernel::Scanned],
+    ) -> Result<(), StoreError> {
+        self.inner.commit_events(events, scanned)
+    }
+
+    fn forget_events(&mut self) -> Result<(), StoreError> {
+        self.inner.forget_events()
+    }
+
     fn events_after(
         &mut self,
         position: u64,

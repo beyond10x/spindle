@@ -32,8 +32,9 @@ impl Run<'_, '_> {
     /// Every row is decided before any is written. All are then written in one
     /// [`Store::commit_all`](crate::Store::commit_all), each naming the version it was selected
     /// at, the outcome's events with the last: every row and every event, or, where one row is
-    /// refused, none. With no row selected the events are answered and no store records them, as
-    /// for an outcome without a subject.
+    /// refused, none. With no row selected the events are a write of their own
+    /// ([`Store::commit_events`](crate::Store::commit_events)), as for an outcome without a
+    /// subject, conditioned on the run's scans as the group would be.
     pub(super) fn take_set(
         &mut self,
         outcome: &ResolvedOutcome,
@@ -97,6 +98,8 @@ impl Run<'_, '_> {
             // covers yet.
             self.condition(&mut writes);
             self.store.commit_all(&writes)?;
+        } else {
+            self.store.commit_events(&events, &self.scanned)?;
         }
         Ok(Executed {
             outcome: outcome.name.as_str().to_owned(),
