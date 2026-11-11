@@ -1,6 +1,7 @@
 //! The HTTP server: one socket on 127.0.0.1, hyper on a thread of its own, and every request for
 //! a route handed to the caller's thread as an [`Exchange`], answered there by the router
-//! ([`crate::route`]).
+//! ([`crate::route`]); on a listener given the host's [`Reader`], every read answered through it
+//! on a blocking thread of its own instead ([`Listener::bind_reading`]).
 
 use std::convert::Infallible;
 use std::io;
@@ -20,7 +21,7 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use serde_json::{Map, Value};
 use tokio::sync::oneshot;
 
-use spindle_host::{Failed, Host};
+use spindle_host::{Failed, Host, Reader};
 
 use crate::answer::Answer;
 use crate::console::{Console, Worlds};
@@ -121,6 +122,9 @@ struct Served {
     surface: Surface,
     exchanges: mpsc::Sender<Exchange>,
     guard: Option<Guard>,
+    /// The host's reader, where the listener answers reads beside the host's thread
+    /// ([`Listener::bind_reading`]).
+    reader: Option<Reader>,
 }
 
 /// What every request to a guarded listener must carry: a `Host` header naming the listener on
@@ -222,7 +226,7 @@ impl Listener {
     /// # Errors
     /// When the socket cannot be bound or the server thread cannot start.
     pub fn bind(port: u16, surface: Surface) -> io::Result<Self> {
-        Self::serve(port, surface, None)
+        Self::serve(port, surface, None, None)
     }
 
     /// As [`Listener::bind`], every request first checked: one whose `Host` header is neither
@@ -233,10 +237,32 @@ impl Listener {
     /// # Errors
     /// As [`Listener::bind`].
     pub fn bind_guarded(port: u16, surface: Surface, token: &str) -> io::Result<Self> {
-        Self::serve(port, surface, Some(token.to_owned()))
+        Self::serve(port, surface, Some(token.to_owned()), None)
     }
 
-    fn serve(port: u16, surface: Surface, token: Option<String>) -> io::Result<Self> {
+    /// As [`Listener::bind`], every read answered beside the host's thread through the host's
+    /// `reader` ([`spindle_host::Host::reader`]), each on a thread of its own, so a read waits
+    /// neither for a command, a binding or a tick the host's thread runs nor for another read.
+    ///
+    /// The reads are a view whose owning component's store the reader reads ([`Reader::reads`]),
+    /// `GET /api/model`, `GET /api/events` and, on an observing surface, `GET /__spindle/metrics`
+    /// and `GET /__spindle/topology`; a view answers the rows the last write that landed left,
+    /// never part of a write. The caller is proven and the grants checked as on the host's
+    /// thread. Every command, `POST /api/reset` and a view whose store is read on the host's
+    /// thread only still arrive on [`Listener::next`], one at a time in arrival order.
+    ///
+    /// # Errors
+    /// As [`Listener::bind`].
+    pub fn bind_reading(port: u16, surface: Surface, reader: Reader) -> io::Result<Self> {
+        Self::serve(port, surface, None, Some(reader))
+    }
+
+    fn serve(
+        port: u16,
+        surface: Surface,
+        token: Option<String>,
+        reader: Option<Reader>,
+    ) -> io::Result<Self> {
         let socket = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port))?;
         socket.set_nonblocking(true)?;
         let address = socket.local_addr()?;
@@ -254,6 +280,7 @@ impl Listener {
             surface,
             exchanges: sender,
             guard,
+            reader,
         });
         std::thread::Builder::new()
             .name("spindle-ingress".to_owned())
@@ -366,8 +393,8 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         if let Some(reply) = reply {
             return (reply, None);
         }
-        // The metrics and the topology read the stores and counters, so they are answered on the
-        // host's thread.
+        // The metrics and the topology read the counters and kept rows: answered beside the host's
+        // thread where the listener has its reader, else on it.
         let pending = Pending {
             asked: Asked::Hosted(reserved),
             carried: Map::new(),
@@ -507,9 +534,22 @@ fn once<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a HeaderValue> {
     values.next().is_none().then_some(value)
 }
 
-/// Hands `pending` to the host's thread as an [`Exchange`] and waits for its answer; the `503`
-/// refusal where the listener is stopping or stopped before answering.
+/// The answer to `pending`: a read the listener's reader answers ([`Pending::reads`]) on a
+/// blocking thread of its own, beside the host's thread and every other read; anything else
+/// handed to the host's thread as an [`Exchange`]. The `503` refusal where the listener is
+/// stopping or stopped before answering, and `500` where a read stopped without an answer.
 async fn handed(served: &Served, pending: Pending) -> Result<(Reply, Answered), Answer> {
+    let pending = match &served.reader {
+        Some(reader) if pending.reads(reader) => {
+            let reader = reader.clone();
+            match tokio::task::spawn_blocking(move || pending.read(&reader)).await {
+                Ok(Ok(read)) => return Ok(read),
+                Ok(Err(pending)) => *pending,
+                Err(_) => return Err(Answer::refusal(500, "the read stopped before answering")),
+            }
+        }
+        _ => pending,
+    };
     let (reply, replying) = oneshot::channel();
     if served.exchanges.send(Exchange { pending, reply }).is_err() {
         return Err(Answer::refusal(503, "the listener is stopping"));

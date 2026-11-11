@@ -34,6 +34,7 @@ mod adversary_world;
 mod adversary_world_spec;
 mod binding_where;
 mod caller;
+mod concurrent_reads;
 mod conform;
 mod console;
 mod decisions;

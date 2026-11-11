@@ -2,12 +2,12 @@
 //! 0.0.4 ([`METRICS_MEDIA`]), with exactly the families `spindle.observe.MetricFamilies` specifies
 //! (`ess/fixtures/observe/metrics/families.json`), in its order.
 //!
-//! Read when scraped, on the host's thread: the request and external cause families from the
-//! [`Recorder`] (the external causes as the run's decider noted them, [`Recorder::answered`]), the
-//! command, event, binding, timer and store families from the [`Counters`] the host holds per
-//! component ([`Host::counters`]), and the rows each entity holds as the host keeps them from its
-//! store's writes ([`Host::rows`]), so a scrape reads no store and holds the host's thread only
-//! while it writes the series.
+//! Read when scraped, beside the host's thread where the listener has the host's [`Reader`], else
+//! on it: the request and external cause families from the [`Recorder`] (the external causes as
+//! the run's decider noted them, [`Recorder::answered`]), the command, event, binding, timer and
+//! store families from the [`Counters`] the host holds per component ([`Reader::counters`]), and
+//! the rows each entity holds as the host keeps them from its store's writes ([`Reader::rows`]),
+//! so a scrape reads no store and never waits for a command.
 //! A reset empties the stores and leaves every count, so every counter stays monotonic; only
 //! `spindle_entity_rows` falls. A scrape counts nothing and is not recorded.
 //!
@@ -19,7 +19,7 @@ use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
 
-use spindle_host::{Host, HostError};
+use spindle_host::Reader;
 use spindle_telemetry::{Counters, DURATION_BOUNDS_US, Key, Kind};
 
 use super::{Recorder, Traffic};
@@ -333,10 +333,10 @@ pub(crate) fn seconds(micros: u64) -> String {
     format!("{whole}.{}", fraction.trim_end_matches('0'))
 }
 
-/// The metrics of the run `host` runs, the requests `recorder` counted, as the text exposition;
-/// the reason they could not be read otherwise: a store whose rows had to be counted and could not
-/// be read, as one a failed reset lost ([`Host::rows`]).
-pub(crate) fn exposition(recorder: &Recorder, host: &mut Host) -> Result<String, HostError> {
+/// The metrics of the run `host` reads, the requests `recorder` counted and the rows each entity
+/// holds, `rows` ([`Reader::rows`], or [`spindle_host::Host::rows`] on the host's thread), as the
+/// text exposition.
+pub(crate) fn exposition(recorder: &Recorder, host: &Reader, rows: Vec<(String, usize)>) -> String {
     let mut samples = Samples::default();
     let Traffic {
         requests,
@@ -362,7 +362,7 @@ pub(crate) fn exposition(recorder: &Recorder, host: &mut Host) -> Result<String,
             counted(&mut samples, component, counters);
         }
     }
-    for (entity, rows) in host.rows()? {
+    for (entity, rows) in rows {
         samples.add(
             "spindle_entity_rows",
             &[entity],
@@ -381,7 +381,7 @@ pub(crate) fn exposition(recorder: &Recorder, host: &mut Host) -> Result<String,
             Value::Number(count),
         );
     }
-    Ok(samples.text())
+    samples.text()
 }
 
 /// Adds every counter and histogram of `component`'s `counters` to `samples`, each catalogue

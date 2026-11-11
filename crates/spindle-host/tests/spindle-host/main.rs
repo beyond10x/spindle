@@ -10,6 +10,8 @@ mod adversary;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_any_filter;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod adversary_concurrent_reads;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_console;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_links;
@@ -26,6 +28,8 @@ mod adversary_views;
 mod adversary_wasm;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod any_filter;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod concurrent_reads;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod console;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
