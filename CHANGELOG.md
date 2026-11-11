@@ -24,6 +24,8 @@ are Spindle's releases.
   same one scan of the source's resting rows as any view, on the host's thread and beside it.
   Before, such a view answered `501` "declares an aggregation". A read of one row by identity of
   an aggregate view, and an aggregation beside a field read through a reference, stay refused.
+### Added
+
 - `run --address <IP>` serves HTTP on the IPv4 or IPv6 address given instead of `127.0.0.1`, so a
   container port can reach it; without it `run` still binds `127.0.0.1` only. A value that is not
   an IP address (a host name, a port, brackets) exits 2 before anything listens. The start line
@@ -51,6 +53,14 @@ are Spindle's releases.
   the memory and IndexedDB stores the position of their last write, SQLite and PostgreSQL the
   end of their feed, found in about twice the binary logarithm of its length single-event feed
   reads.
+- A view that declares computed fields (`expr:`) answers each row with the value ESS's
+  interpreter computes over the row's own fields, by ESS's evaluator and the kernel's one
+  computation of a value expression, the one an outcome's `{expr: …}` is written with: `null`
+  where an `Optional` operand is absent or a divisor is zero outside `coalesce`, an `Integer` as
+  a JSON integer and a `Decimal` as ESS writes it, beside fields read through a reference, on
+  the host's thread, through its reader and by identity. A value ESS determines none of (an
+  `Integer` past `i64`) refuses the read, as the interpreter refuses it. Before, such a view
+  answered `501` "declares computed fields".
 
 ### Changed
 

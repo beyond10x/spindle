@@ -1,0 +1,25 @@
+format: ess/34
+system: league
+version: v1
+summary: Teams and the entries scored for them, read by views that compute figures from each entry.
+domains:
+  - league.teams
+  - league.entries
+components:
+  - component: table
+    summary: Keeps teams and entries and answers the views over them.
+    owns:
+      domains:
+        - league.teams
+        - league.entries
+    accepts:
+      commands:
+        - league.teams.AddTeam
+        - league.teams.DropTeam
+        - league.entries.Enter
+    publishes:
+      events:
+        - league.teams.TeamAdded
+        - league.teams.TeamDropped
+        - league.entries.Entered
+    reached_by: in_process

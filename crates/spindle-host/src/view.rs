@@ -51,11 +51,9 @@ const STATE: &str = "state";
 ///
 /// An aggregation (`group_by:` and fields with `aggregate:`) is answered ([`aggregate`]) where
 /// each measure's `where:` is a filter read here, and no field of the view is read through a
-/// reference.
+/// reference. A computed field (`expr:`) is answered ([`project`]).
 pub(crate) fn unsupported(ir: &EssIr, view: &ResolvedView) -> Option<String> {
-    if !view.computed.is_empty() {
-        Some("computed fields".to_owned())
-    } else if let Some(construct) = view
+    if let Some(construct) = view
         .aggregation
         .as_ref()
         .and_then(|aggregation| unread_aggregation(ir, view, aggregation))
@@ -820,16 +818,63 @@ pub(crate) fn references<'v>(
 /// row, the field follows the presence the compiler carried onto it from its source field: `null`
 /// under `null_when_absent`, left out otherwise. A field read through a reference carries none, so
 /// it is left out, which ESS reads as the `null` its interpreter answers.
+///
+/// A computed field (`expr:`) answers what ESS's evaluator computes over the source row, as
+/// ESS's interpreter computes it (`ess-conformance` `src/interpret/views.rs:436-447` at ESS
+/// 0.92.0, `project` and `computed`): each path it reads is the stored field of that name, the
+/// identity or the `state`, one the row holds nothing or `null` in absent. It is computed and
+/// spelled by the kernel's one computation of a value expression ([`spindle_kernel::compute`]),
+/// the one an outcome's `{expr: …}` is written with: an `Integer` as a JSON integer, any other
+/// value as ESS writes it. An absent value, a zero divisor outside `coalesce` among them, is
+/// answered `null` whatever the field's presence, as ESS's interpreter writes it.
+///
+/// # Errors
+/// Naming the computed field, where ESS's interpreter refuses the read: its value is unknown or
+/// has no spelling of its type (an `Integer` past `i64`), it is absent and the field is not
+/// `Optional`, or it is not a value of the field's type ([`spindle_kernel::admits`]).
 pub(crate) fn project(
     ir: &EssIr,
     view: &ResolvedView,
     identity: &Value,
     row: &Row,
     referenced: &Referenced<'_>,
-) -> Map<String, Value> {
+) -> Result<Map<String, Value>, String> {
     let entity: &ResolvedEntity = ir.entity(&view.source);
     let mut answer = Map::new();
+    let state = Value::String(row.state.clone());
     for field in &view.fields {
+        if let Some(expr) = view.computed.get(&field.name) {
+            let read = |path: &FactPath| -> Option<Option<&Value>> {
+                let name = path.to_string();
+                Some(if name == entity.identity.name {
+                    Some(identity)
+                } else if name == STATE {
+                    Some(&state)
+                } else {
+                    row.fields.get(&name)
+                })
+            };
+            let refused = |why: &dyn std::fmt::Display| {
+                format!(
+                    "the computed field `{}`, the value `{expr}` computes for a row, {why}, so \
+                     the model does not determine it",
+                    field.name
+                )
+            };
+            let value = match spindle_kernel::compute(ir, &field.type_ref, expr, &read) {
+                Ok(Some(value)) => {
+                    spindle_kernel::admits(ir, &field.type_ref, &value).map_err(|error| {
+                        refused(&format_args!("is not a value of its type: {error}"))
+                    })?;
+                    value
+                }
+                Ok(None) if field.type_ref.is_optional() => Value::Null,
+                Ok(None) => return Err(refused(&"is absent and the field is not Optional")),
+                Err(why) => return Err(refused(&why)),
+            };
+            answer.insert(field.name.clone(), value);
+            continue;
+        }
         let value = if let Some((reference, read)) = view.related_read(&field.name) {
             referenced
                 .get(reference.via.as_str())
@@ -865,7 +910,7 @@ pub(crate) fn project(
             None => {}
         }
     }
-    answer
+    Ok(answer)
 }
 
 /// Sorts `rows`, each an identity and the view's row for it, into the order the view answers:

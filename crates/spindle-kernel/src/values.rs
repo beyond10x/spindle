@@ -398,48 +398,22 @@ impl<'a> Sources<'a, '_> {
         field: &ResolvedPayloadField,
         expr: &Expr,
     ) -> Result<Option<Value>, ExecuteError> {
-        let reads = |path: &FactPath| -> Reading {
+        let read = |path: &FactPath| -> Option<Option<&Value>> {
             let text = path.to_string();
             if let Some(read) = text.strip_prefix("input.") {
-                return borrowed_input(self.input, read).map_or(Reading::Absent, reading);
+                return Some(borrowed_input(self.input, read));
             }
             if let Some(read) = text.strip_prefix("subject.") {
-                return match self.before {
-                    Some(row) => row.fields.get(read).map_or(Reading::Absent, reading),
-                    None => Reading::Unknown,
-                };
+                return self.before.map(|row| row.fields.get(read));
             }
-            Reading::Unknown
+            None
         };
-        let no_value = |why: &str| ExecuteError::NoValue {
+        compute(self.ir, &field.target_type, expr, &read).map_err(|why| ExecuteError::NoValue {
             what: format!(
                 "`{}`, the value `{expr}` computes, which {why}",
                 field.target
             ),
-        };
-        match expr.evaluate(&reads) {
-            Evaluated::Unknown => Err(no_value(
-                "reads an undetermined value or passes a bound of its type",
-            )),
-            evaluated => match evaluated.to_node() {
-                Some(Node::Null) => Ok(None),
-                // An `Integer` is written as the integer, as `{increment: …}` writes one; ESS's
-                // `Number` writes an integral value as `2.0`, one number either way.
-                Some(Node::Number(number))
-                    if self.ir.literal_primitive(&field.target_type)
-                        == Some(Primitive::Integer) =>
-                {
-                    number
-                        .as_i64()
-                        .map(|integer| Some(Value::from(integer)))
-                        .ok_or_else(|| no_value("has no spelling of its type"))
-                }
-                Some(node) => serde_json::to_value(node)
-                    .map(Some)
-                    .map_err(|_| no_value("has no spelling of its type")),
-                None => Err(no_value("has no spelling of its type")),
-            },
-        }
+        })
     }
 
     /// `{append: input.<read>}` (ess/31), as ESS determines it (`interpret::execute::determined::
@@ -491,6 +465,72 @@ fn borrowed_input<'v>(input: &'v Map<String, Value>, read: &str) -> Option<&'v V
         value = value.as_object()?.get(segment)?;
     }
     Some(value)
+}
+
+/// Why an expression determines no value ([`compute`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Undetermined {
+    /// It reads a value nothing observed, or passes a bound of its type: ESS's
+    /// [`Evaluated::Unknown`].
+    Unknown,
+    /// Its value has no spelling of its type: an `Integer` past `i64`, a `Decimal` with more
+    /// places than a written number keeps, a negative `Duration`.
+    Unspelled,
+}
+
+impl std::fmt::Display for Undetermined {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Unknown => "reads an undetermined value or passes a bound of its type",
+            Self::Unspelled => "has no spelling of its type",
+        })
+    }
+}
+
+/// The value `expr` computes for a field of type `target`, by ESS's own evaluator
+/// ([`Expr::evaluate`]), spelled as ESS spells it ([`Evaluated::to_node`]): `None` where it is
+/// absent (an absent `Optional` read, or a zero divisor outside `coalesce`). An `Integer` field's
+/// value is written as the integer, as `{increment: …}` writes one; ESS's `Number` writes an
+/// integral value as `2.0`, one number either way. The one computation of a value expression
+/// for a command's outcome (`sets:`, `payload:`) and a view's computed field.
+///
+/// `read` answers each path the expression reads: `None` where nothing is observed there
+/// (unknown), `Some(None)` where it is absent, and `Some(Some(value))` for a value, read as ESS
+/// reads a document's value ([`Reading::of_node`]: `null` absent, a list or a mapping unknown).
+///
+/// # Errors
+/// [`Undetermined`], where the value is unknown or has no spelling of its type.
+pub fn compute<'v>(
+    ir: &EssIr,
+    target: &ResolvedTypeRef,
+    expr: &Expr,
+    read: &dyn Fn(&FactPath) -> Option<Option<&'v Value>>,
+) -> Result<Option<Value>, Undetermined> {
+    let reads = |path: &FactPath| -> Reading {
+        match read(path) {
+            Some(Some(value)) => reading(value),
+            Some(None) => Reading::Absent,
+            None => Reading::Unknown,
+        }
+    };
+    match expr.evaluate(&reads) {
+        Evaluated::Unknown => Err(Undetermined::Unknown),
+        evaluated => match evaluated.to_node() {
+            Some(Node::Null) => Ok(None),
+            Some(Node::Number(number))
+                if ir.literal_primitive(target) == Some(Primitive::Integer) =>
+            {
+                number
+                    .as_i64()
+                    .map(|integer| Some(Value::from(integer)))
+                    .ok_or(Undetermined::Unspelled)
+            }
+            Some(node) => serde_json::to_value(node)
+                .map(Some)
+                .map_err(|_| Undetermined::Unspelled),
+            None => Err(Undetermined::Unspelled),
+        },
+    }
 }
 
 /// What an expression reads `value` as ([`Reading::of_node`]): `null` is absent, a scalar its

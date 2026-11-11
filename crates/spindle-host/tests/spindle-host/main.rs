@@ -31,6 +31,8 @@ mod aggregates;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod any_filter;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod computed;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod concurrent_reads;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod console;

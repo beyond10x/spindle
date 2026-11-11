@@ -12,6 +12,7 @@ mod adversary_refusal;
 mod adversary_retry;
 mod adversary_w17_conformance;
 mod aggregates;
+mod computed;
 mod conversions;
 mod establish;
 mod forcing;

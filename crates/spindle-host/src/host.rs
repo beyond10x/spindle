@@ -1527,11 +1527,13 @@ impl Host {
     /// reference is empty or names no row, a removed one included.
     ///
     /// A view that declares parameters is read as [`Host::list_with`] reads it with no parameter
-    /// values, so a required parameter is refused as left out.
+    /// values, so a required parameter is refused as left out. A computed field (`expr:`) is
+    /// answered as [`Host::list_with`] answers it.
     ///
     /// # Errors
-    /// [`HostError::NoView`], [`HostError::Unsupported`] for a view [`Host::list`] cannot answer
-    /// and for an aggregate view, whose rows are groups and none an instance's,
+    /// [`HostError::NoView`], [`HostError::Unsupported`] for a view [`Host::list`] cannot answer,
+    /// for a computed field ESS determines no value of for the row, and for an aggregate view,
+    /// whose rows are groups and none an instance's,
     /// [`HostError::Parameters`] for a view with a required parameter, and [`HostError::Store`]
     /// when the store cannot be read.
     pub fn view(
@@ -1578,13 +1580,9 @@ impl Host {
             identity,
             &stored.row,
         )?;
-        Ok(Some(crate::view::project(
-            &self.ir,
-            declared,
-            identity,
-            &stored.row,
-            &referenced,
-        )))
+        crate::view::project(&self.ir, declared, identity, &stored.row, &referenced)
+            .map(Some)
+            .map_err(|detail| HostError::Unsupported(format!("view {view}: {detail}")))
     }
 
     /// Every row `view` holds: [`Host::list_with`] with no parameter values.
@@ -1628,15 +1626,21 @@ impl Host {
     /// per group in the order of the group keys, and without `group_by` one row even over no
     /// instance. It reads the same one scan of the source's rows as any view.
     ///
+    /// A computed field (`expr:`) answers, in each row, what ESS's evaluator computes over the
+    /// source row's own fields, as ESS's interpreter answers it ([`crate::view::project`]):
+    /// `null` where an `Optional` operand is absent or a divisor is zero outside `coalesce`, an
+    /// `Integer` as a JSON integer, any other value as ESS writes it.
+    ///
     /// # Errors
     /// [`HostError::NoView`]; [`HostError::Unsupported`], naming the construct, for a view that
-    /// declares computed fields, paging, a filter read through a reference, a default row for an
-    /// absent identity, an aggregation beside a field read through a reference, or any other
-    /// filter, a measure's `where:` included; [`HostError::Parameters`], naming the parameter,
-    /// for a value the view does not declare, a required one left out or one not of its declared
-    /// type or newtype, before anything is read; [`HostError::Unsupported`] for a filter unknown
-    /// for a row, and for an aggregate ESS determines no value of; and [`HostError::Store`] when
-    /// the store cannot be read.
+    /// declares paging, a filter read through a reference, a default row for an absent identity,
+    /// an aggregation beside a field read through a reference, or any other filter, a measure's
+    /// `where:` included; [`HostError::Parameters`], naming the parameter, for a value the view
+    /// does not declare, a required one left out or one not of its declared type or newtype,
+    /// before anything is read; [`HostError::Unsupported`] for a filter unknown for a row, for an
+    /// aggregate ESS determines no value of, and for a computed field ESS determines no value of
+    /// for a row (one unknown, absent where the field is required, or with no spelling of its
+    /// type); and [`HostError::Store`] when the store cannot be read.
     pub fn list_with(
         &mut self,
         view: &str,
@@ -2298,7 +2302,10 @@ impl Listing<'_> {
             )? {
                 let referenced = far.referenced(ir, self.declared, load, &identity, &stored.row)?;
                 let row =
-                    crate::view::project(ir, self.declared, &identity, &stored.row, &referenced);
+                    crate::view::project(ir, self.declared, &identity, &stored.row, &referenced)
+                        .map_err(|detail| {
+                            HostError::Unsupported(format!("view {view}: {detail}"))
+                        })?;
                 rows.push((identity, row));
             }
         }
