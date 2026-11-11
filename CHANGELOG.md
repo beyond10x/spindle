@@ -6,10 +6,24 @@ are Spindle's releases.
 
 ## [Unreleased]
 
-## [0.15.0] - 2026-11-11
-
 ### Added
 
+- A view that declares computed fields (`expr:`) answers each row with the value ESS's
+  interpreter computes over the row's own fields, by ESS's evaluator and the kernel's one
+  computation of a value expression, the one an outcome's `{expr: …}` is written with: `null`
+  where an `Optional` operand is absent or a divisor is zero outside `coalesce`, an `Integer` as
+  a JSON integer and a `Decimal` as ESS writes it, beside fields read through a reference, on
+  the host's thread, through its reader and by identity. A value ESS determines none of (an
+  `Integer` past `i64`) refuses the read, as the interpreter refuses it. Before, such a view
+  answered `501` "declares computed fields".
+- An event payload that reads the command's own response (`{response: <field>}`), which the
+  kernel refused as unsupported (`501`) "the value source response field", publishes the value the
+  same request answers in that field, a struct member too. A creation whose identity reads it
+  creates its row under the answered value, so a view lists the row under the id the request
+  returned. The response is prepared where ESS's interpreter prepares it: before a creation takes
+  its identity and its `sets:`, and after an existing row's `sets:` and `affects:`, before the
+  events. A `sets:` value read through `{payload: <Event>.<field>}` from a published value that
+  reads the response stays refused, as ESS's interpreter does not interpret it.
 - A command outcome an `ess-http/1` binding declares response headers for answers them beside
   its declared status and body, as ESS's served application writes them, instead of `501`: a
   literal as declared, a source as the text of the scalar it reads (left out where that is
@@ -17,6 +31,11 @@ are Spindle's releases.
   the request or the outcome that a header cannot carry (a control character other than a tab,
   or a space or tab at either end of a plain header) is never written: the request answers `501`
   naming the header. A declared header never replaces one the listener writes itself.
+
+## [0.15.0] - 2026-11-11
+
+### Added
+
 - The kernel runs an outcome that declares `when_state_changes: true` or `false`, which it refused
   as unsupported (`501`): the branch holds where its own move does, or does not, change the state
   the subject holds immediately before selection, and its `when:` holds too. It answers among the
@@ -31,8 +50,6 @@ are Spindle's releases.
   same one scan of the source's resting rows as any view, on the host's thread and beside it.
   Before, such a view answered `501` "declares an aggregation". A read of one row by identity of
   an aggregate view, and an aggregation beside a field read through a reference, stay refused.
-### Added
-
 - `run --address <IP>` serves HTTP on the IPv4 or IPv6 address given instead of `127.0.0.1`, so a
   container port can reach it; without it `run` still binds `127.0.0.1` only. A value that is not
   an IP address (a host name, a port, brackets) exits 2 before anything listens. The start line
@@ -60,22 +77,6 @@ are Spindle's releases.
   the memory and IndexedDB stores the position of their last write, SQLite and PostgreSQL the
   end of their feed, found in about twice the binary logarithm of its length single-event feed
   reads.
-- A view that declares computed fields (`expr:`) answers each row with the value ESS's
-  interpreter computes over the row's own fields, by ESS's evaluator and the kernel's one
-  computation of a value expression, the one an outcome's `{expr: …}` is written with: `null`
-  where an `Optional` operand is absent or a divisor is zero outside `coalesce`, an `Integer` as
-  a JSON integer and a `Decimal` as ESS writes it, beside fields read through a reference, on
-  the host's thread, through its reader and by identity. A value ESS determines none of (an
-  `Integer` past `i64`) refuses the read, as the interpreter refuses it. Before, such a view
-  answered `501` "declares computed fields".
-- An event payload that reads the command's own response (`{response: <field>}`), which the
-  kernel refused as unsupported (`501`) "the value source response field", publishes the value the
-  same request answers in that field, a struct member too. A creation whose identity reads it
-  creates its row under the answered value, so a view lists the row under the id the request
-  returned. The response is prepared where ESS's interpreter prepares it: before a creation takes
-  its identity and its `sets:`, and after an existing row's `sets:` and `affects:`, before the
-  events. A `sets:` value read through `{payload: <Event>.<field>}` from a published value that
-  reads the response stays refused, as ESS's interpreter does not interpret it.
 
 ### Changed
 

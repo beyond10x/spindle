@@ -31,8 +31,7 @@
       "kind": "view",
       "method": "GET",
       "path": "/pad/views/DoubledCounts",
-      "served": false,
-      "reason": "unsupported: view notes.pad.DoubledCounts declares computed fields"
+      "served": true
     },
     {
       "component": "pad",

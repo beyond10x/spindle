@@ -267,6 +267,7 @@ impl Pending {
                 allow: None,
                 panel: false,
                 metrics: false,
+                headers: Vec::new(),
                 body: body.to_string(),
             },
             None => Answer::refusal(404, format!("no route serves {}", self.path)).into(),

@@ -197,7 +197,10 @@ fn a_stored_copy_of_an_answered_value_is_refused_before_anything_is_written() {
         "{executed:?}"
     );
     assert_eq!(
-        store.events_after(0).expect("the store reads").len(),
+        store
+            .events_after(0, usize::MAX)
+            .expect("the store reads")
+            .len(),
         0,
         "nothing is written"
     );
