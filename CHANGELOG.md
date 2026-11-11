@@ -203,9 +203,11 @@ are Spindle's releases.
   exits: on `spindle.lock` inside the directory where it serves HTTP, on `<file>.lock` beside the
   file where it reads stdin. A second run on the same state exits 1 before opening anything,
   naming the state and the id of the process that holds it. The operating system releases the
-  lock with the process, after a SIGKILL too. Reading stdin, `run` also locks the database file
-  itself and names its lock file after the path the state resolves to, so a second run given a
-  symbolic or hard link to a held state file exits 1 too.
+  lock with the process, after a SIGKILL too. Reading stdin, `run` names its lock file after the
+  path the state resolves to, so a second run given a symbolic link to a held state file exits 1
+  too. On Linux it also locks the database file itself, so a second run given a hard link exits 1
+  as well; macOS takes no lock on the database file, where an `flock` excludes SQLite's own
+  byte-range locks and SQLite would find its database locked.
 - A served command checks its caller's grant before it reads the request
   (`story:command-grant-before-request`), as ESS's served application does. A fixed actor whose
   `may:` does not name the command, or a proven one, is refused `403` "not granted" naming that
