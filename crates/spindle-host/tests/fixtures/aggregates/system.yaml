@@ -1,0 +1,21 @@
+format: ess/34
+system: ledger
+version: v1
+summary: Sessions opened on accounts and closed, read by views that count, total and average them.
+domains:
+  - ledger.sessions
+components:
+  - component: desk
+    summary: Opens and closes sessions and answers the views over them.
+    owns:
+      domains:
+        - ledger.sessions
+    accepts:
+      commands:
+        - ledger.sessions.OpenSession
+        - ledger.sessions.CloseSession
+    publishes:
+      events:
+        - ledger.sessions.SessionOpened
+        - ledger.sessions.SessionClosed
+    reached_by: in_process

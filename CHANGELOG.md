@@ -6,6 +6,18 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- A view that declares aggregate fields (`aggregate: {count: {}}`, `sum`, `avg` and the rest of
+  ESS's functions), with or without `group_by`, behind a filter the host reads and with each
+  measure's own `where:`, answers the rows ESS's interpreter answers for the same state: one row
+  per group in the order of the group keys, one row without `group_by` even over no instance, a
+  `count` or required `sum` `0` and an `avg` `null` over none, every field answered (`null` where
+  absent, as ESS writes an aggregate row), integers answered as integers. It is read from the
+  same one scan of the source's resting rows as any view, on the host's thread and beside it.
+  Before, such a view answered `501` "declares an aggregation". A read of one row by identity of
+  an aggregate view, and an aggregation beside a field read through a reference, stay refused.
+
 ## [0.14.0] - 2026-11-11
 
 ### Added
