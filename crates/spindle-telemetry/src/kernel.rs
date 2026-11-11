@@ -83,6 +83,13 @@ impl<S: Store> Store for CountingStore<S> {
         self.inner.scan(entity)
     }
 
+    fn counts(
+        &mut self,
+        entities: &[String],
+    ) -> Result<std::collections::BTreeMap<String, usize>, StoreError> {
+        self.inner.counts(entities)
+    }
+
     fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
         self.inner.commit(change)?;
         self.committed(change);

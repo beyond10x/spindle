@@ -222,6 +222,19 @@ pub trait Store {
     /// # Errors
     /// [`StoreError::Backend`] when the store cannot be read.
     fn scan(&mut self, entity: &str) -> Result<Scan, StoreError>;
+
+    /// How many instances each of `entities` holds, by entity: as many as [`Store::scan`] answers
+    /// rows for. This default scans each entity in turn; a store that reads every entity at once
+    /// (SQLite reads its whole feed for one scan) counts them in one read.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read.
+    fn counts(&mut self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
+        entities
+            .iter()
+            .map(|entity| Ok((entity.clone(), self.scan(entity)?.rows.len())))
+            .collect()
+    }
 }
 
 /// [`Store::commit_all`] on a store that writes one instance at a time: every write's version
