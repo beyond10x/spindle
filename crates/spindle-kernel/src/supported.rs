@@ -2,11 +2,10 @@
 //!
 //! The kernel runs the conditions, effects and value sources Spindle's own specification and the
 //! `rally` example use, a value read from the row an input field names, a value an expression
-//! computes outside an error, a guard over a row set, and a set outcome (`instances:`) with the
-//! rows it changed. Every other construct is refused by
-//! name, as
-//! [`ExecuteError::Unsupported`], before anything is written; what it refuses depends on what
-//! reads the construct.
+//! computes outside an error, a guard over a row set, a set outcome (`instances:`) with the rows
+//! it changed, and secondary effects (`affects:`) selecting their rows by a filter. Every other
+//! construct is refused by name, as [`ExecuteError::Unsupported`], before anything is written;
+//! what it refuses depends on what reads the construct.
 //!
 //! A construct selection reads refuses the whole command before anything is read ([`selects`]):
 //! a condition, a `when_related:` read two ways, or the shape of an outcome (the rows it acts on,
@@ -14,7 +13,8 @@
 //! understanding one of them would be a guess.
 //!
 //! A construct only the taken outcome reads refuses that outcome alone ([`takes`]): an effect
-//! beyond its subject (a compensating refusal, `affects:`, `sets:` without a subject), a value it
+//! beyond its subject (a compensating refusal, an `affects:` entry over an input list, `sets:`
+//! without a subject), a value it
 //! writes, publishes or answers, the identity it mints, or an error field it fills. Selection
 //! never reads one, so a request that selects another outcome of the command runs, and only a
 //! request that selects this one is refused, once it is selected and before anything is minted
@@ -131,6 +131,7 @@ pub fn takes(
     let fields = outcome
         .sets
         .iter()
+        .chain(outcome.affects.iter().flat_map(|affect| &affect.sets))
         .chain(other_fields)
         .map(|field| (field, false));
     let errors = outcome.error_payload.iter().map(|field| (field, true));
@@ -300,19 +301,55 @@ fn mixed_references(command: &ResolvedCommand) -> Option<&ResolvedOutcome> {
 }
 
 /// The effect beyond the outcome's subject, named, when the kernel does not run it: the change a
-/// refusal makes to its row, the rows it affects besides its subject, or fields it sets with no
-/// subject to set them on and no set of rows (`instances:`). Neither the kernel's selection nor
-/// ESS's precedence plan reads one (`compensates`, `affects:` and `sets:` are read only when the
+/// refusal makes to its row, a secondary effect ([`affects`]), or fields it sets with no subject
+/// to set them on and no set of rows (`instances:`). Neither the kernel's selection nor ESS's
+/// precedence plan reads one (`compensates`, `affects:` and `sets:` are read only when the
 /// outcome is taken), so it refuses the outcome alone.
 fn effect(outcome: &ResolvedOutcome) -> Option<&'static str> {
     if outcome.compensates {
         return Some("a refusal that changes its row (`compensates: true`)");
     }
-    if !outcome.affects.is_empty() {
-        return Some("secondary effects (`affects:`)");
+    if let Some(what) = affects(outcome) {
+        return Some(what);
     }
     if outcome.subject.is_none() && outcome.instances.is_none() && !outcome.sets.is_empty() {
         return Some("`sets:` without a subject");
+    }
+    None
+}
+
+/// The secondary effect (`affects:`), named, when the kernel does not run it. The kernel runs an
+/// entry that selects its rows by a filter beside a subject the input names and that moves,
+/// updates or removes it ([`crate::execute`]). An entry naming its rows by the elements of an
+/// input list (`each:`), a filter that walks the rows of an entity, and an entry beside any other
+/// subject stay refused.
+fn affects(outcome: &ResolvedOutcome) -> Option<&'static str> {
+    if outcome.affects.is_empty() {
+        return None;
+    }
+    let beside = outcome.instances.is_none()
+        && outcome.subject.as_ref().is_some_and(|subject| {
+            matches!(subject.instance, ResolvedInstance::Supplied { .. })
+                && matches!(
+                    subject.effect,
+                    ResolvedEffect::Moves { .. }
+                        | ResolvedEffect::Updates
+                        | ResolvedEffect::Deletes
+                )
+        });
+    if !beside {
+        return Some(
+            "secondary effects (`affects:`) beside no subject the input names that moves, \
+             updates or removes",
+        );
+    }
+    for affect in &outcome.affects {
+        let Some(filter) = &affect.filter else {
+            return Some("an `affects:` entry over an input list (`each:`)");
+        };
+        if !ess_domain::command::related_rows::walked(filter).is_empty() {
+            return Some("a rows quantifier in an `affects:` filter");
+        }
     }
     None
 }

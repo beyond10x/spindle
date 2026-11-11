@@ -60,6 +60,7 @@ mod related_values;
 mod responses;
 mod row_set_guards;
 mod scan;
+mod secondary_effects;
 mod set_outcomes;
 #[cfg(all(feature = "postgres", feature = "sqlite"))]
 mod state_move;

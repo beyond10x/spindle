@@ -1,0 +1,230 @@
+domain: writing.notebooks
+summary: A notebook holds pages and drafts. Archiving it archives its open pages with a note and removes its drafts; promoting its pages ranks them, stamps every page that was unranked and unpromotes every other active notebook.
+entities:
+  - name: writing.notebooks.Notebook
+    identity:
+      name: notebook_id
+      type: String
+    fields:
+      - name: promoted
+        type: Optional<Boolean>
+    lifecycle:
+      initial: Active
+      states: [Active, Archived]
+      terminal: [Archived]
+      transitions:
+        - {name: archive, from: [Active], to: Archived}
+  - name: writing.notebooks.Page
+    identity:
+      name: page_id
+      type: String
+    fields:
+      - name: notebook_id
+        type: String
+      - name: rank
+        type: Integer
+      - name: archived_note
+        type: Optional<String>
+      - name: stamp
+        type: Optional<String>
+    invariants:
+      - rank <= 10
+    lifecycle:
+      initial: Open
+      states: [Open, Archived]
+      terminal: [Archived]
+      transitions:
+        - {name: archive, from: [Open], to: Archived}
+  - name: writing.notebooks.Draft
+    identity:
+      name: draft_id
+      type: String
+    fields:
+      - name: notebook_id
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+errors:
+  - name: writing.notebooks.NotActive
+    summary: The notebook is already archived.
+    fields: []
+commands:
+  - name: writing.notebooks.OpenNotebook
+    input:
+      - name: notebook_id
+        type: String
+    outcomes:
+      - name: opened
+        creates: writing.notebooks.Notebook
+        instance: notebook_id
+        emits: [writing.notebooks.NotebookOpened]
+        payload:
+          writing.notebooks.NotebookOpened:
+            notebook_id: input.notebook_id
+        summary: The notebook is opened.
+  - name: writing.notebooks.AddPage
+    input:
+      - name: page_id
+        type: String
+      - name: notebook_id
+        type: String
+    outcomes:
+      - name: added
+        creates: writing.notebooks.Page
+        instance: page_id
+        sets:
+          notebook_id: input.notebook_id
+          rank: 0
+        emits: [writing.notebooks.PageAdded]
+        payload:
+          writing.notebooks.PageAdded:
+            page_id: input.page_id
+        summary: The page is added to the notebook, unranked.
+  - name: writing.notebooks.ArchivePage
+    input:
+      - name: page_id
+        type: String
+    outcomes:
+      - name: archived
+        moves: writing.notebooks.Page.archive
+        instance: page_id
+        emits: [writing.notebooks.PageArchived]
+        payload:
+          writing.notebooks.PageArchived:
+            page_id: input.page_id
+        summary: The page is archived on its own, with no note.
+  - name: writing.notebooks.AddDraft
+    input:
+      - name: draft_id
+        type: String
+      - name: notebook_id
+        type: String
+    outcomes:
+      - name: drafted
+        creates: writing.notebooks.Draft
+        instance: draft_id
+        sets:
+          notebook_id: input.notebook_id
+        emits: [writing.notebooks.DraftAdded]
+        payload:
+          writing.notebooks.DraftAdded:
+            draft_id: input.draft_id
+        summary: The draft is added to the notebook.
+  - name: writing.notebooks.ArchiveNotebook
+    input:
+      - name: notebook_id
+        type: String
+    outcomes:
+      - name: archived
+        moves: writing.notebooks.Notebook.archive
+        instance: notebook_id
+        affects:
+          - entity: writing.notebooks.Page
+            where: notebook_id == input.notebook_id
+            moves: writing.notebooks.Page.archive
+            sets:
+              archived_note: notebook archived
+          - entity: writing.notebooks.Draft
+            where: notebook_id == input.notebook_id
+            deletes: writing.notebooks.Draft
+        emits: [writing.notebooks.NotebookArchived]
+        payload:
+          writing.notebooks.NotebookArchived:
+            notebook_id: input.notebook_id
+        summary: The notebook is archived, its open pages archived with a note and its drafts removed.
+      - name: not-active
+        wrong_state: true
+        error: writing.notebooks.NotActive
+        summary: The notebook is already archived.
+  - name: writing.notebooks.PromotePages
+    input:
+      - name: notebook_id
+        type: String
+      - name: rank
+        type: Integer
+    outcomes:
+      - name: promoted
+        updates: writing.notebooks.Notebook
+        instance: notebook_id
+        sets:
+          promoted: true
+        affects:
+          - entity: writing.notebooks.Page
+            where: notebook_id == subject.notebook_id
+            sets:
+              rank: input.rank
+          - entity: writing.notebooks.Page
+            where: rank == 0
+            sets:
+              stamp: was unranked
+          - entity: writing.notebooks.Notebook
+            where: state == Active
+            sets:
+              promoted: false
+        emits: [writing.notebooks.PagesPromoted]
+        payload:
+          writing.notebooks.PagesPromoted:
+            notebook_id: input.notebook_id
+        summary: The notebook is promoted, its pages take the rank given, every page unranked before is stamped and every other active notebook is unpromoted.
+events:
+  - name: writing.notebooks.NotebookOpened
+    fields:
+      - name: notebook_id
+        type: String
+  - name: writing.notebooks.PageAdded
+    fields:
+      - name: page_id
+        type: String
+  - name: writing.notebooks.PageArchived
+    fields:
+      - name: page_id
+        type: String
+  - name: writing.notebooks.DraftAdded
+    fields:
+      - name: draft_id
+        type: String
+  - name: writing.notebooks.NotebookArchived
+    fields:
+      - name: notebook_id
+        type: String
+  - name: writing.notebooks.PagesPromoted
+    fields:
+      - name: notebook_id
+        type: String
+views:
+  - name: writing.notebooks.NotebookCard
+    source: writing.notebooks.Notebook
+    consistency: read_your_writes
+    fields:
+      - name: notebook_id
+        type: String
+      - name: promoted
+        type: Optional<Boolean>
+      - name: state
+        type: writing.notebooks.Notebook.State
+  - name: writing.notebooks.PageCard
+    source: writing.notebooks.Page
+    consistency: read_your_writes
+    fields:
+      - name: page_id
+        type: String
+      - name: notebook_id
+        type: String
+      - name: rank
+        type: Integer
+      - name: archived_note
+        type: Optional<String>
+      - name: stamp
+        type: Optional<String>
+      - name: state
+        type: writing.notebooks.Page.State
+  - name: writing.notebooks.DraftCard
+    source: writing.notebooks.Draft
+    consistency: read_your_writes
+    fields:
+      - name: draft_id
+        type: String
+      - name: notebook_id
+        type: String

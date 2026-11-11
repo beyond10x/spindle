@@ -7,6 +7,11 @@ types:
   - name: bay.lot.TagId
     kind: newtype
     of: String
+  - name: bay.lot.Swept
+    kind: struct
+    fields:
+      - name: tag_id
+        type: bay.lot.TagId
 entities:
   - name: bay.lot.Lot
     identity:
@@ -74,9 +79,14 @@ commands:
         type: bay.lot.LotId
       - name: sweep
         type: Boolean
+      - name: tags
+        type: List<bay.lot.Swept>
     outcomes:
       - name: swept
-        when: sweep == true
+        when:
+          all:
+            - sweep == true
+            - distinct: {in: tags, as: swept, by: swept.tag_id}
         moves: bay.lot.Lot.close
         instance: lot_id
         emits: [bay.lot.LotClosed]
@@ -84,9 +94,10 @@ commands:
           bay.lot.LotClosed: {lot_id: input.lot_id}
         affects:
           - entity: bay.lot.Tag
-            where: lot_id == input.lot_id
+            each: {in: input.tags, as: swept}
+            instance: swept.tag_id
             moves: bay.lot.Tag.sweep
-        summary: The lot is closed and its tags swept, a secondary effect the runtime does not run.
+        summary: The lot is closed and the tags listed swept, a secondary effect over an input list the runtime does not run.
       - name: closed
         moves: bay.lot.Lot.close
         instance: lot_id

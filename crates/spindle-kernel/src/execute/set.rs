@@ -67,7 +67,7 @@ impl Run<'_, '_> {
             self.generator.rewind(published);
             write(
                 &self.sources(outcome, &entity.name, None, None),
-                outcome,
+                &outcome.sets,
                 &mut after.fields,
             )?;
             let change = Change {
@@ -136,7 +136,7 @@ impl Run<'_, '_> {
             match set.filter.evaluate(&facts) {
                 Truth::True => selected.push((identity, stored)),
                 Truth::False => {}
-                Truth::Unknown if only_absent(&set.filter, entity, &stored.row) => {}
+                Truth::Unknown if only_absent(&set.filter, entity, &stored.row, None) => {}
                 Truth::Unknown => {
                     return Err(ExecuteError::Undecidable {
                         outcome: format!("{}/{}", self.command, outcome.name.as_str()),
@@ -182,32 +182,42 @@ impl Run<'_, '_> {
     }
 }
 
-/// Whether every value `filter` reads of `row` that holds nothing is an `Optional` field of
-/// `entity` holding nothing: what leaves an `Unknown` filter a row not selected rather than an
-/// undecidable outcome (ESS `set_effects::only_absent`). An `input.` operand is supplied or
-/// absent, never unknown, and a set outcome reads no subject; the identity is always held. A
-/// required field the row does not hold keeps the filter undecidable.
-fn only_absent(filter: &Predicate, entity: &ResolvedEntity, row: &Row) -> bool {
+/// Whether every value `filter` reads of `row`, or under `subject.` of `subject` (an entity and
+/// its row as it was before the outcome), that holds nothing is an `Optional` field holding
+/// nothing: what leaves an `Unknown` filter a row not selected rather than an undecidable outcome
+/// (ESS `set_effects::only_absent`). An `input.` operand is supplied or absent, never unknown, and
+/// a set outcome reads no subject (`subject: None`); the identity is always held. A required field
+/// the row does not hold keeps the filter undecidable.
+pub(super) fn only_absent(
+    filter: &Predicate,
+    entity: &ResolvedEntity,
+    row: &Row,
+    subject: Option<(&ResolvedEntity, &Row)>,
+) -> bool {
     filter.fact_paths().into_iter().all(|path| {
         let segments = path.segments();
         let Some((first, rest)) = segments.split_first() else {
             return true;
         };
-        if !rest.is_empty()
-            && (first == crate::facts::INPUT
-                || first == ess_domain::command::set_effects::SUBJECT_NAMESPACE)
-        {
-            return true;
-        }
+        let (owner, held, field) = match rest.first() {
+            Some(_) if first == crate::facts::INPUT => return true,
+            Some(field) if first == ess_domain::command::set_effects::SUBJECT_NAMESPACE => {
+                match subject {
+                    Some((owner, held)) => (owner, held, field),
+                    None => return true,
+                }
+            }
+            _ => (entity, row, first),
+        };
         // A value the row holds was observed when it was written, and a held `null` is absent.
-        match row.fields.get(first) {
+        match held.fields.get(field) {
             Some(_) => true,
             None => {
-                entity.identity.name == *first
-                    || entity
+                owner.identity.name == *field
+                    || owner
                         .fields
                         .iter()
-                        .any(|declared| declared.name == *first && declared.type_ref.is_optional())
+                        .any(|declared| declared.name == *field && declared.type_ref.is_optional())
             }
         }
     })
@@ -215,7 +225,7 @@ fn only_absent(filter: &Predicate, entity: &ResolvedEntity, row: &Row) -> bool {
 
 /// Identities in ascending order as ESS orders them ([`Node`]'s order: text by its characters,
 /// numbers by value), the canonical JSON text where one is no [`Node`].
-fn identity_order(left: &Value, right: &Value) -> Ordering {
+pub(super) fn identity_order(left: &Value, right: &Value) -> Ordering {
     match (
         serde_json::from_value::<Node>(left.clone()),
         serde_json::from_value::<Node>(right.clone()),

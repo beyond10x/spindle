@@ -8,6 +8,17 @@ are Spindle's releases.
 
 ### Added
 
+- The kernel runs an outcome that declares secondary effects (`affects:`), which it refused as
+  unsupported (`501`): after the subject's own move, update or removal, each entry selects the rows
+  of its entity whose `where:` holds in the store as it was before the outcome, the subject
+  excepted, and moves them (a row outside the move's `from` states is skipped), removes them or
+  writes its `sets:` into them, entries in the order written. Every row left in place is checked
+  against its entity's invariants, and the subject and every row land in one write group on every
+  store, or nothing is written. A row of an entity an entry selected from, written by another
+  command between the selection and the write, refuses the command as a conflict, unless every
+  write of the group removes a row. An entry over an input list (`each:`) and a filter walking
+  another entity's rows stay refused.
+
 - `store.durable` bound to `postgres` keeps each component's state in an operator's PostgreSQL
   (13 or later), through `eventlog-postgres` at the pinned eventlog tag, rows and events encoded as
   the SQLite store encodes them and under the table prefix `spindle_<component>`, so components
