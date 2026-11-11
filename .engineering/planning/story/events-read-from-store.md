@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:events-read-from-store
 kind: story
-status: draft
+status: implemented
 title: /api/events answers the events the store holds, so they survive a restart
 relations:
 - serves: vision:spindle
@@ -23,7 +23,11 @@ scope:
   path: crates/spindle-kernel/src/store.rs
 - confidence: cited
   path: crates/spindle-store-browser/src/indexeddb.rs
-revision: 4
+revision: 7
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-11T10:11:25Z", actor: "human:timo", revision: 5}
+- {from: "proposed", to: "active", at: "2026-11-11T10:11:26Z", actor: "human:timo", revision: 6}
+- {from: "active", to: "implemented", at: "2026-11-11T20:31:05Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"test_result":1}}}
 ---
 # /api/events answers the events the store holds, so they survive a restart
 

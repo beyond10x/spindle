@@ -17,6 +17,11 @@ relations:
 - decides: story:state-directory-lock
 - decides: story:view-related-fields
 - decides: story:kernel-value-expressions
+- decides: story:release-dependency-list
+- decides: story:kernel-secondary-effects
+- decides: story:events-read-from-store
+- decides: story:events-range-read
+- decides: story:events-read-bounded
 revision: 2
 transitions:
 - {from: "draft", to: "accepted", at: "2026-11-11T09:40:13Z", actor: "human:timo", revision: 2}

@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:kernel-value-expressions
 kind: story
-status: active
+status: implemented
 title: Arithmetic value expressions in outcomes are computed
 tags:
 - downstream-gap
@@ -20,10 +20,11 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/main.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/spindle-kernel/unsupported.rs
-revision: 6
+revision: 7
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-09T22:14:36Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-09T22:14:36Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-11T20:31:04Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"test_result":1}}}
 ---
 # Arithmetic value expressions in outcomes are computed
 
