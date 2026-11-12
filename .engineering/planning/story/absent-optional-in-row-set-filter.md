@@ -2,16 +2,17 @@
 format: aep.planning-md/3
 id: story:absent-optional-in-row-set-filter
 kind: story
-status: active
+status: implemented
 title: A row-set guard over an absent Optional field names the field and the way out when it refuses as undecidable
 tags:
 - downstream-gap
 relations:
 - serves: vision:spindle
-revision: 3
+revision: 4
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-09T22:22:01Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-09T22:22:02Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-12T01:42:33Z", actor: "human:timo", revision: 4, decided_on: {"recorded":{"test_result":1}}}
 ---
 
 
