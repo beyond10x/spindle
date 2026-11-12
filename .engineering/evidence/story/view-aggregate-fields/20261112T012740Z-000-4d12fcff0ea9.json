@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-12T01:27:40Z",
+  "actor": "human:timo",
+  "artifact": "story:view-aggregate-fields",
+  "kind": "story",
+  "revision": 7,
+  "change": {
+    "change": "evidence",
+    "kind": "deployment_result",
+    "source": "downstream consumer dev deployment on 0.15.0 since 2026-11-12T01:27:40Z, 0.14.0 SQLite state of 495,583,232 bytes opened in place, 0 error lines: a count view with where: and a group_by view answer 200 where 0.14.0 answered 501"
+  }
+}

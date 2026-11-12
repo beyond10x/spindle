@@ -2,15 +2,16 @@
 format: aep.planning-md/3
 id: story:view-filter-through-reference
 kind: story
-status: active
+status: implemented
 title: A view filter read through a reference or against a parameter is served
 relations:
 - serves: vision:spindle
 - depends_on: story:view-related-fields
-revision: 3
+revision: 4
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-11T20:31:12Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-11T20:32:22Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-12T01:42:32Z", actor: "human:timo", revision: 4, decided_on: {"recorded":{"test_result":1}}}
 ---
 ## Outcome
 
