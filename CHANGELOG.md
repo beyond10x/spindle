@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-12
+
 ### Added
 
 - A view filter that reads a field through a reference (`person_id.state == Active`), compares a
