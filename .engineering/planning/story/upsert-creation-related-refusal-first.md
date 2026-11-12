@@ -18,7 +18,7 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/main.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/spindle-kernel/upsert_creation_related_refusal.rs
-revision: 6
+revision: 7
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-09T22:47:56Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-09T22:47:56Z", actor: "human:timo", revision: 3}
@@ -124,3 +124,20 @@ Derived 2026-11-10 by `story-scoper`. Every line is **cited** (read from the sto
 - **Would collide with:** units touching `execute.rs` selection (`Run::select` and helpers) and units adding a `mod` line to `crates/spindle-kernel/tests/spindle-kernel/main.rs`
 - **Safety fact:** the change affects only commands with an addressed absent row and an `exists: false` branch over a row the input names: the `RelatedRow` read is gated on `!stored && reads_missing(&plan, Phase::RelatedRow)` (:496) and the existence answer on `addressed.stored.is_none()` (:503-505) — unproven
 - **Not established:** the root cause (likely `no-box` placed in `PresentRelated`, read late); whether `creation_takes_absent` applies; whether copying ESS's `existence::existing` call inside its `RelatedRow` arm (`ess-conformance` `src/interpret/execute.rs:622` at `9a2468e`) is the fix; whether `values::related` (:262) is involved.
+
+## Finding (wave 24): the interpreter answers 202 for the upsert creation
+
+ESS 0.92.0's interpreter, and 0.90.0's (`interpret/execute.rs` and `command/precedence.rs` are
+byte-identical), answer request 2, the upsert creation naming a missing box, `202 recorded`, not
+`409 no-box`. From `ess/27` an `exists: false` branch over an input-named row is read at the
+related-row step (`PresentRelated`, ess-domain `command/precedence.rs:487`), after the existence step
+where `unknown_instance:` takes the absent row. ESS's `docs/design/generic-language-features.md`
+(lines 460, 488-494) calls `selection-plan.md`, which this story cites, stale. Under `ess/26` the
+validator refuses this command (ESS-COMMAND-004).
+
+The kernel already answers as the interpreter does and is unchanged. Commit fe4f4a3d pins the plain
+creation and the upsert refresh to `no-box`, the upsert creation to `recorded`, and every answer and
+stored row of four step lists to the interpreter's. The acceptance line "409 for all three" cannot
+hold beside "equal to the interpreter"; the downstream consumer takes it up on the model side.
+ESS's own refusal hint (ess-domain `command/related_guard.rs:782`) says the unknown identity answers
+after an `exists: false` over the input's row, which contradicts its precedence and interpreter.

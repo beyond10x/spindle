@@ -171,6 +171,13 @@
       "status": "shipped"
     },
     {
+      "area": "Execution",
+      "detail": "A view filter that reads a field of the row a reference names (person_id.state == Active), or compares a field with another field or a parameter (person_id.name == holder, person_id.team == param.team), answers the rows ESS's interpreter answers, on the host's thread and through its reader, a row whose reference is empty or names no row left out where the filter is unknown only for that; each referenced row is loaded once per read by its identity.",
+      "href": "/docs/concepts/specification",
+      "label": "View filters read through a reference",
+      "status": "shipped"
+    },
+    {
       "area": "Observe",
       "detail": "spindle-telemetry counts commands by outcome, events, bindings, timer ticks and store writes per component; b10x-spindle metrics prints the catalogue, play prints the table's counters.",
       "href": "/docs/concepts/observe",

@@ -165,10 +165,13 @@ pub enum ExecuteError {
     #[error("invalid input: {0}")]
     InvalidInput(String),
     /// A guard evaluated to `Unknown` over the facts at hand.
-    #[error("the guard of `{outcome}` is undecidable over the held instance and the input")]
+    #[error("the guard of `{outcome}` is undecidable{}", undecidable(.why))]
     Undecidable {
         /// The outcome whose guard it is.
         outcome: String,
+        /// What left it open, where the kernel can say: for a row-set guard, the predicate unknown
+        /// on stored rows, how many, and the absent field each reads with the way to rule it out.
+        why: Option<String>,
     },
     /// The decider gave no answer for an external cause.
     #[error("{capability} gave no answer: {reason}")]
@@ -215,6 +218,15 @@ pub enum ExecuteError {
         /// The qualified name of the actor it was sent as.
         actor: String,
     },
+}
+
+/// The tail of [`ExecuteError::Undecidable`]'s message: what left the guard open, or the facts it
+/// was read over.
+fn undecidable(why: &Option<String>) -> String {
+    why.as_ref().map_or_else(
+        || " over the held instance and the input".to_owned(),
+        |why| format!(": {why}"),
+    )
 }
 
 impl ExecuteError {

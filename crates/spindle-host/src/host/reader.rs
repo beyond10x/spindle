@@ -210,8 +210,8 @@ impl Reader {
     }
 
     /// Whether this reader answers `view`: one the host reads ([`crate::reads`]) whose owning
-    /// component's store gives a reading handle now, and, where the view declares fields read
-    /// through a reference, so does the store of each component owning an entity a reference
+    /// component's store gives a reading handle now, and, where the view reads through a
+    /// reference, so does the store of each component owning an entity a reference
     /// names. A view it does not answer is read on the host's thread.
     pub fn reads(&self, view: &str) -> bool {
         readable(&self.ir, view).is_ok_and(|(declared, owner)| {
@@ -236,12 +236,12 @@ impl Reader {
     /// Every row `view` holds for `parameters`, as [`super::Host::list_with`] answers them, read
     /// through the reading handle of the store of the component that owns the view's source.
     ///
-    /// A view declaring fields read through a reference reads one position of each store it
-    /// reads ([`spindle_kernel::Reading::at`]): the source's instances are scanned, and each row
-    /// a reference names loaded by its identity, from the same position of its store, so a read
-    /// sees each write group whole or not at all. Each component's writes land in its own store,
-    /// so the rows of two components are each as some write left them. Where a store cannot take
-    /// its entities at once (PostgreSQL) and one of them moved while it was read, the view is
+    /// A view that reads through a reference (a field, or its filter) reads one position of each
+    /// store it reads ([`spindle_kernel::Reading::at`]): the source's instances are scanned, and
+    /// each row a reference names loaded by its identity, from the same position of its store, so
+    /// a read sees each write group whole or not at all. Each component's writes land in its own
+    /// store, so the rows of two components are each as some write left them. Where a store cannot
+    /// take its entities at once (PostgreSQL) and one of them moved while it was read, the view is
     /// read again from a new position, up to [`POSITIONS`] times.
     ///
     /// # Errors
@@ -270,12 +270,12 @@ impl Reader {
                 Ok((component, (reading, entities)))
             })
             .collect::<Result<BTreeMap<_, _>, HostError>>()?;
-        if !crate::view::reads_related(listing.declared) {
+        if !listing.declared.reads_through() {
             let (reading, _) = &readings[&listing.owner];
             let scan = reading.scan(&listing.entity)?;
             return listing.rows(&self.ir, view, scan, &mut |_, entity, _| {
                 Err(HostError::Unsupported(format!(
-                    "view {view} reads no field through a reference, yet {entity} was loaded"
+                    "view {view} reads through no reference, yet {entity} was loaded"
                 )))
             });
         }
@@ -316,7 +316,8 @@ impl Reader {
 const POSITIONS: usize = 8;
 
 /// The entities a read of `declared`, whose source `owner` owns, reads, by the component that
-/// owns each: the source, and every entity a field of it reads through a reference names.
+/// owns each: the source, and every entity a reference it reads through names (a field reads
+/// through it, or its filter navigates it).
 ///
 /// # Errors
 /// [`HostError::Unsupported`] where no component owns a referenced entity.
@@ -326,11 +327,7 @@ fn read_from(
     owner: String,
 ) -> Result<BTreeMap<String, Vec<String>>, HostError> {
     let mut read = BTreeMap::from([(owner, vec![ir.entity(&declared.source).name.to_string()])]);
-    for reference in declared
-        .references
-        .iter()
-        .filter(|reference| !reference.fields.is_empty())
-    {
+    for reference in declared.references.iter() {
         let entity = ir.entity(&reference.entity);
         let entities = read.entry(owner_of(ir, entity)?).or_default();
         let name = entity.name.to_string();

@@ -1,0 +1,99 @@
+domain: org.people
+summary: People, each with a name, a team, an optional nickname and the instant they joined, who leave and are removed.
+types:
+  - name: org.people.PersonId
+    kind: newtype
+    of: String
+entities:
+  - name: org.people.Person
+    identity:
+      name: person_id
+      type: org.people.PersonId
+    fields:
+      - name: name
+        type: String
+      - name: team
+        type: String
+      - name: nickname
+        type: Optional<String>
+      - name: level
+        type: Integer
+      - name: joined_at
+        type: Timestamp
+    lifecycle:
+      initial: Active
+      states: [Active, Left]
+      terminal: [Left]
+      transitions:
+        - {name: leave, from: [Active], to: Left}
+errors:
+  - name: org.people.WrongState
+    summary: The person has left.
+    fields: []
+commands:
+  - name: org.people.AddPerson
+    input:
+      - name: person_id
+        type: org.people.PersonId
+      - name: name
+        type: String
+      - name: team
+        type: String
+      - name: nickname
+        type: Optional<String>
+      - name: level
+        type: Integer
+      - name: joined_at
+        type: Timestamp
+    outcomes:
+      - name: added
+        creates: org.people.Person
+        instance: person_id
+        sets:
+          name: input.name
+          team: input.team
+          nickname: input.nickname
+          level: input.level
+          joined_at: input.joined_at
+        emits: [org.people.PersonAdded]
+        payload:
+          org.people.PersonAdded: {person_id: input.person_id}
+        summary: The person is kept.
+  - name: org.people.LeavePerson
+    input:
+      - name: person_id
+        type: org.people.PersonId
+    outcomes:
+      - name: left
+        moves: org.people.Person.leave
+        instance: person_id
+        emits: [org.people.PersonLeft]
+        payload:
+          org.people.PersonLeft: {person_id: input.person_id}
+        summary: The person has left.
+      - {name: wrong-state, wrong_state: true, error: org.people.WrongState}
+  - name: org.people.RemovePerson
+    input:
+      - name: person_id
+        type: org.people.PersonId
+    outcomes:
+      - name: removed
+        deletes: org.people.Person
+        instance: person_id
+        emits: [org.people.PersonRemoved]
+        payload:
+          org.people.PersonRemoved: {person_id: input.person_id}
+        summary: The person is gone.
+events:
+  - name: org.people.PersonAdded
+    fields:
+      - name: person_id
+        type: org.people.PersonId
+  - name: org.people.PersonLeft
+    fields:
+      - name: person_id
+        type: org.people.PersonId
+  - name: org.people.PersonRemoved
+    fields:
+      - name: person_id
+        type: org.people.PersonId

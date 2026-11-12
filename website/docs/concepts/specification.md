@@ -47,6 +47,14 @@ pinned to a released tag in the workspace `Cargo.toml`.
 
 A guard that evaluates to *unknown* refuses the command. It does not take a branch by default.
 
+A `when_related:` guard over a row set, `{entity, where: [...], count: {gte: 1}}` or `exists:` or
+`forall:`, reads every stored row of the entity, as ESS's interpreter does. A comparison with an
+`Optional` field a row does not hold, such as `box_id == input.id` on an item in no box, is
+*unknown* for that row, not false. The row may or may not be in the set, so a count it could change
+refuses the command as undecidable. The refusal names the filter, the entity and the absent field, and
+no stored row. To leave such a row out of the set, write `defined(<field>)` beside the
+comparison: `where: [defined(box_id), box_id == input.id]`.
+
 A `creates:` outcome whose identity is neither an input nor a payload source (`generated: true`,
 or no source) leaves the identity to the runtime, which mints it. A `Uuid` identity, or a `Uuid`
 newtype without invariants, is minted as a UUIDv4. A `String` newtype identity whose prefix and
@@ -78,16 +86,25 @@ A field read through a reference, `field: {related: {via: resource_id, field: na
 the row the reference names holds now: a stored field, its identity or its `state`. The row may
 belong to another component. Each row a list names is loaded once by its identity, however many
 rows name it. The field is left out where the reference is empty or names no row, a removed one
-included, as ESS's interpreter answers it. A filter that reads through a reference is refused.
+included, as ESS's interpreter answers it.
+
+A filter may read a field of the row a reference names, `person_id.state == Active`, from any
+component. That row is loaded the same way, once per read by its identity, and the referenced
+entity is never scanned. A row whose reference is empty or names no row is left out where the
+filter is unknown only for that reason, as ESS's interpreter leaves it out.
 
 A filter is read where each leaf does one of these:
 
 - compares a field with a literal of its type: `archived == false`, `priority >= 3`. The ordered
-  operators apply only where ESS orders the type. A timestamp also compares against `now`, read on
-  the host's clock.
+  operators apply only where ESS orders the type. A timestamp also compares against `now`, or
+  `now - 5m`, read on the host's clock.
 - lists a field `in:` or `none_of:` literals
-- compares a parameter with a field by `==` or `!=`
+- compares a field with a parameter or another field: `person_id == param.viewer`,
+  `person_id.name == holder`. The ordered operators apply where ESS orders both fields and they
+  are of one kind: `started_at > person_id.joined_at`.
 - asks `defined`
+
+A field here is a field of the row, or of the row a reference names.
 
 The leaves are combined by `any`, `all` and `not`, or quantified by `exists` or `forall` over a
 list parameter or a list field of the row. Each filter is evaluated as ESS evaluates it. A filter

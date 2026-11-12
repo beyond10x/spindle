@@ -1,0 +1,158 @@
+domain: store.shelf
+summary: Boxes, and items that may or may not sit in a box.
+errors:
+  - name: store.shelf.BoxNotFound
+    summary: No box has this id.
+    fields: []
+  - name: store.shelf.BoxStateConflict
+    summary: The box is not Open.
+    fields:
+      - name: state
+        type: store.shelf.Box.State
+  - name: store.shelf.BoxNotEmpty
+    summary: Items are still in the box.
+    fields:
+      - name: id
+        type: Uuid
+  - name: store.shelf.ItemNotFound
+    summary: No item has this id.
+    fields: []
+entities:
+  - name: store.shelf.Box
+    identity:
+      name: id
+      type: Uuid
+    fields:
+      - name: label
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open, Retired]
+      terminal: [Retired]
+      transitions:
+        - {name: retire, from: [Open], to: Retired}
+  - name: store.shelf.Item
+    identity:
+      name: id
+      type: Uuid
+    fields:
+      - name: label
+        type: String
+      - name: box_id
+        type: Optional<Uuid>
+    relations:
+      - {name: box, kind: references, target: store.shelf.Box, cardinality: one, via: box_id}
+    lifecycle:
+      initial: Stored
+      states: [Stored]
+      terminal: [Stored]
+commands:
+  - name: store.shelf.CreateBox
+    input:
+      - name: id
+        type: Uuid
+      - name: label
+        type: String
+    outcomes:
+      - name: created
+        creates: store.shelf.Box
+        instance: id
+        sets:
+          label: input.label
+        emits: [store.shelf.BoxCreated]
+        payload:
+          store.shelf.BoxCreated:
+            id: input.id
+        summary: The box is created, open and empty.
+  - name: store.shelf.AddItem
+    input:
+      - name: id
+        type: Uuid
+      - name: label
+        type: String
+    outcomes:
+      - name: added
+        creates: store.shelf.Item
+        instance: id
+        sets:
+          label: input.label
+        emits: [store.shelf.ItemAdded]
+        payload:
+          store.shelf.ItemAdded:
+            id: input.id
+        summary: The item is added, in no box.
+  - name: store.shelf.PutItemInBox
+    input:
+      - name: id
+        type: Uuid
+      - name: box_id
+        type: Uuid
+    outcomes:
+      - name: unknown
+        unknown_instance: true
+        error: store.shelf.ItemNotFound
+        summary: No item has this id.
+      - name: boxed
+        updates: store.shelf.Item
+        instance: id
+        sets:
+          box_id: input.box_id
+        emits: [store.shelf.ItemBoxed]
+        payload:
+          store.shelf.ItemBoxed:
+            id: input.id
+            box_id: input.box_id
+        summary: The item is put in the box.
+  - name: store.shelf.RetireBox
+    input:
+      - name: id
+        type: Uuid
+    outcomes:
+      - name: unknown
+        unknown_instance: true
+        error: store.shelf.BoxNotFound
+        summary: No box has this id.
+      - name: not-empty
+        when_related:
+          entity: store.shelf.Item
+          where: [box_id == input.id]
+          count: {gte: 1}
+        error: store.shelf.BoxNotEmpty
+        payload:
+          store.shelf.BoxNotEmpty:
+            id: input.id
+        summary: An item is still in the box.
+      - name: retired
+        moves: store.shelf.Box.retire
+        instance: id
+        emits: [store.shelf.BoxRetired]
+        payload:
+          store.shelf.BoxRetired:
+            id: input.id
+        summary: The empty box is retired.
+      - name: wrong-state
+        wrong_state: true
+        error: store.shelf.BoxStateConflict
+        payload:
+          store.shelf.BoxStateConflict:
+            state: {subject: state}
+        summary: The box is already retired.
+events:
+  - name: store.shelf.BoxCreated
+    fields:
+      - name: id
+        type: Uuid
+  - name: store.shelf.ItemAdded
+    fields:
+      - name: id
+        type: Uuid
+  - name: store.shelf.ItemBoxed
+    fields:
+      - name: id
+        type: Uuid
+      - name: box_id
+        type: Uuid
+  - name: store.shelf.BoxRetired
+    fields:
+      - name: id
+        type: Uuid

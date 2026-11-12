@@ -4,6 +4,7 @@
 
 mod rally_cases;
 
+mod absent_optional;
 mod adversary;
 mod adversary_admission;
 mod adversary_admission_checked;
@@ -64,6 +65,7 @@ mod related_values;
 mod response_source;
 mod responses;
 mod resting_rows;
+mod review_undecidable_disclosure;
 mod row_set_guards;
 mod scan;
 mod secondary_effects;
@@ -74,3 +76,4 @@ mod state_move;
 mod store_contract;
 mod structured_responses;
 mod unsupported;
+mod upsert_creation_related_refusal;

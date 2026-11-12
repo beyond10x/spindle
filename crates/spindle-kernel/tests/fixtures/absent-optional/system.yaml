@@ -1,0 +1,25 @@
+format: ess/35
+system: store
+version: v1
+summary: Boxes, and items that sit in one box or in none, behind a row-set guard over the optional box reference.
+domains:
+  - store.shelf
+components:
+  - component: keeper
+    summary: Creates and retires boxes, adds items and puts them in boxes.
+    owns:
+      domains:
+        - store.shelf
+    accepts:
+      commands:
+        - store.shelf.CreateBox
+        - store.shelf.AddItem
+        - store.shelf.PutItemInBox
+        - store.shelf.RetireBox
+    publishes:
+      events:
+        - store.shelf.BoxCreated
+        - store.shelf.ItemAdded
+        - store.shelf.ItemBoxed
+        - store.shelf.BoxRetired
+    reached_by: in_process

@@ -6,6 +6,29 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-12
+
+### Added
+
+- A view filter that reads a field through a reference (`person_id.state == Active`), compares a
+  field with another field of the row or of a referenced row (`person_id.name == holder`,
+  `started_at > person_id.joined_at`), or a referenced field with a parameter
+  (`person_id.team == param.team`), answers the rows ESS's interpreter answers for the same state,
+  on the memory and SQLite stores, on the host's thread, through its reader and by identity.
+  Before, such a view answered `501` "only a field compared with a literal of its type or ordered
+  against `now`". A row whose reference is empty or names no row is left out where the filter is
+  unknown only for that, as the interpreter leaves it out (`absent_navigation`). Each row a
+  reference names is loaded once per read by its identity; the referenced entity is not scanned.
+
+### Changed
+
+- A `when_related:` row-set guard left open by stored rows its filter or `forall` test reads
+  as unknown is still refused `501 undecidable`, as ESS's interpreter refuses it, but the refusal
+  now says why: the predicate, the entity and each absent `Optional` field it reads, with the
+  way out, `defined(<field>)` beside the comparison. It names no stored row and no count: the
+  guard reads rows the request did not name. Before, it named only the outcome. `ExecuteError::Undecidable` carries
+  this as `why`.
+
 ## [0.16.0] - 2026-11-12
 
 ### Added
