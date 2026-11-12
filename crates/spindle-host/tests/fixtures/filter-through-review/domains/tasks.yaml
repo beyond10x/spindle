@@ -1,0 +1,145 @@
+domain: org.tasks
+summary: Tasks, each held under a name by a person, reviewed by one or none and under a parent task or none, read by views whose filters read the rows a task names.
+types:
+  - name: org.tasks.TaskId
+    kind: newtype
+    of: String
+entities:
+  - name: org.tasks.Task
+    identity:
+      name: task_id
+      type: org.tasks.TaskId
+    fields:
+      - name: holder
+        type: String
+      - name: person_id
+        type: org.people.PersonId
+      - name: reviewer_id
+        type: Optional<org.people.PersonId>
+      - name: parent_id
+        type: Optional<org.tasks.TaskId>
+      - name: score
+        type: Decimal
+      - name: started_at
+        type: Timestamp
+    relations:
+      - {name: person, kind: references, target: org.people.Person, cardinality: one, via: person_id}
+      - {name: reviewer, kind: references, target: org.people.Person, cardinality: one, via: reviewer_id}
+      - {name: parent, kind: references, target: org.tasks.Task, cardinality: one, via: parent_id}
+    lifecycle:
+      initial: Open
+      states: [Open, Closed]
+      terminal: [Closed]
+      transitions:
+        - {name: close, from: [Open], to: Closed}
+errors:
+  - name: org.tasks.WrongState
+    summary: The task is closed.
+    fields: []
+commands:
+  - name: org.tasks.OpenTask
+    input:
+      - name: task_id
+        type: org.tasks.TaskId
+      - name: holder
+        type: String
+      - name: person_id
+        type: org.people.PersonId
+      - name: reviewer_id
+        type: Optional<org.people.PersonId>
+      - name: parent_id
+        type: Optional<org.tasks.TaskId>
+      - name: score
+        type: Decimal
+      - name: started_at
+        type: Timestamp
+    outcomes:
+      - name: opened
+        creates: org.tasks.Task
+        instance: task_id
+        sets:
+          holder: input.holder
+          person_id: input.person_id
+          reviewer_id: input.reviewer_id
+          parent_id: input.parent_id
+          score: input.score
+          started_at: input.started_at
+        emits: [org.tasks.TaskOpened]
+        payload:
+          org.tasks.TaskOpened: {task_id: input.task_id}
+        summary: The task is kept.
+  - name: org.tasks.CloseTask
+    input:
+      - name: task_id
+        type: org.tasks.TaskId
+    outcomes:
+      - name: closed
+        moves: org.tasks.Task.close
+        instance: task_id
+        emits: [org.tasks.TaskClosed]
+        payload:
+          org.tasks.TaskClosed: {task_id: input.task_id}
+        summary: The task is closed.
+      - {name: wrong-state, wrong_state: true, error: org.tasks.WrongState}
+events:
+  - name: org.tasks.TaskOpened
+    fields:
+      - name: task_id
+        type: org.tasks.TaskId
+  - name: org.tasks.TaskClosed
+    fields:
+      - name: task_id
+        type: org.tasks.TaskId
+views:
+  - name: org.tasks.NeitherLeft
+    source: org.tasks.Task
+    consistency: read_your_writes
+    filter:
+      not:
+        any: [person_id.state == Left, reviewer_id.state == Left]
+    fields: &fields
+      - name: task_id
+        type: org.tasks.TaskId
+      - name: holder
+        type: String
+  - name: org.tasks.ActiveOrEve
+    source: org.tasks.Task
+    consistency: read_your_writes
+    filter:
+      any: [person_id.state == Active, holder == "eve"]
+    fields: *fields
+  - name: org.tasks.NoNicknamedReviewer
+    source: org.tasks.Task
+    consistency: read_your_writes
+    filter:
+      not: defined(reviewer_id.nickname)
+    fields: *fields
+  - name: org.tasks.HeldByNameOrNickA
+    source: org.tasks.Task
+    consistency: read_your_writes
+    filter:
+      any: [person_id.name == holder, reviewer_id.nickname == "A"]
+    fields: *fields
+  - name: org.tasks.ScoredAboveLevel
+    source: org.tasks.Task
+    consistency: read_your_writes
+    filter: score > person_id.level
+    fields: *fields
+  - name: org.tasks.JoinedBefore
+    source: org.tasks.Task
+    consistency: read_your_writes
+    params:
+      - name: before
+        type: Timestamp
+    filter: person_id.joined_at < param.before
+    fields: *fields
+  - name: org.tasks.UnderOpenParent
+    source: org.tasks.Task
+    consistency: read_your_writes
+    filter: parent_id.state == Open
+    fields: *fields
+  - name: org.tasks.ReviewerJoinedFirst
+    source: org.tasks.Task
+    consistency: read_your_writes
+    filter: reviewer_id.joined_at < person_id.joined_at
+    fields: *fields

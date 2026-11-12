@@ -51,8 +51,8 @@ A `when_related:` guard over a row set, `{entity, where: [...], count: {gte: 1}}
 `forall:`, reads every stored row of the entity, as ESS's interpreter does. A comparison with an
 `Optional` field a row does not hold, such as `box_id == input.id` on an item in no box, is
 *unknown* for that row, not false. The row may or may not be in the set, so a count it could change
-refuses the command as undecidable. The refusal names the filter, the entity, how many rows left it
-open and the absent field. To leave such a row out of the set, write `defined(<field>)` beside the
+refuses the command as undecidable. The refusal names the filter, the entity and the absent field, and
+no stored row. To leave such a row out of the set, write `defined(<field>)` beside the
 comparison: `where: [defined(box_id), box_id == input.id]`.
 
 A `creates:` outcome whose identity is neither an input nor a payload source (`generated: true`,
