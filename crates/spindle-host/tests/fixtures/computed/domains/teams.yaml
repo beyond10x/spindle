@@ -1,0 +1,56 @@
+domain: league.teams
+summary: Teams, each with a name, added and dropped.
+types:
+  - name: league.teams.TeamId
+    kind: newtype
+    of: String
+entities:
+  - name: league.teams.Team
+    identity:
+      name: team_id
+      type: league.teams.TeamId
+    fields:
+      - name: name
+        type: String
+    lifecycle:
+      initial: Active
+      states: [Active]
+      terminal: [Active]
+commands:
+  - name: league.teams.AddTeam
+    input:
+      - name: team_id
+        type: league.teams.TeamId
+      - name: name
+        type: String
+    outcomes:
+      - name: added
+        creates: league.teams.Team
+        instance: team_id
+        sets:
+          name: input.name
+        emits: [league.teams.TeamAdded]
+        payload:
+          league.teams.TeamAdded: {team_id: input.team_id}
+        summary: The team is kept.
+  - name: league.teams.DropTeam
+    input:
+      - name: team_id
+        type: league.teams.TeamId
+    outcomes:
+      - name: dropped
+        deletes: league.teams.Team
+        instance: team_id
+        emits: [league.teams.TeamDropped]
+        payload:
+          league.teams.TeamDropped: {team_id: input.team_id}
+        summary: The team is gone.
+events:
+  - name: league.teams.TeamAdded
+    fields:
+      - name: team_id
+        type: league.teams.TeamId
+  - name: league.teams.TeamDropped
+    fields:
+      - name: team_id
+        type: league.teams.TeamId

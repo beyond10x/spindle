@@ -9,7 +9,7 @@
 //! answers `wrong-state` for a crate that is not open. `WeighCrate` has one outcome, which the
 //! runtime does not run. The actor `Packer` may send `PackCrate` alone.
 //! `tests/fixtures/adversary-outcome-scoped-refusal-http.yaml` binds `SealCrate` and answers
-//! `wrong-state` with a header this ingress does not write.
+//! `wrong-state` with a header, which this ingress writes (`story:outcome-response-headers`).
 //! `tests/fixtures/adversary-outcome-scoped-refusal-bound` takes parcels over the network and
 //! records each through a retrying binding, weighed there only where the sender opts in.
 //!
@@ -192,6 +192,17 @@ fn serve_spec(spec: &str, binding: Option<&'static str>, arguments: &[&str]) -> 
 
 impl Served {
     fn exchange(&self, method: &str, path: &str, body: Option<&Value>) -> (u16, Value) {
+        let (status, _, body) = self.exchanged(method, path, body);
+        (status, body)
+    }
+
+    /// [`Served::exchange`], with the answer's header lines.
+    fn exchanged(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&Value>,
+    ) -> (u16, Vec<String>, Value) {
         let mut stream =
             TcpStream::connect_timeout(&self.address, ANSWER).expect("the listener accepts");
         stream
@@ -219,7 +230,8 @@ impl Served {
             .and_then(|status| status.parse().ok())
             .unwrap_or_else(|| panic!("a status line: {head:?}"));
         let body = serde_json::from_str(body).unwrap_or_else(|error| panic!("{error}: {body:?}"));
-        (status, body)
+        let lines = head.split("\r\n").skip(1).map(str::to_owned).collect();
+        (status, lines, body)
     }
 
     pub(super) fn call(&self, id: &str, body: &Value) -> (u16, Value) {
@@ -334,11 +346,11 @@ fn an_actor_not_granted_is_refused_before_the_unsupported_outcome() {
     assert_eq!(served.events(), published, "nothing was published");
 }
 
-/// The `wrong-state` refusal the binding answers with a header this ingress does not write is
-/// refused where a request selects it, naming it, through the wrong-state path of the kernel
-/// (`Run::refusal`); the command's other outcomes answer as bound.
+/// The `wrong-state` refusal the binding answers with a header is answered with it where a
+/// request selects it, through the wrong-state path of the kernel (`Run::refusal`), and is not
+/// listed as unsupported; the command's other outcomes answer as bound.
 #[test]
-fn a_bound_wrong_state_answer_the_ingress_does_not_write_refuses_where_selected() {
+fn a_bound_wrong_state_answer_answers_its_header_where_selected() {
     let served = serve(Some(BINDING), &[]);
     let listed = served
         .stderr
@@ -346,7 +358,7 @@ fn a_bound_wrong_state_answer_the_ingress_does_not_write_refuses_where_selected(
         .into_iter()
         .filter(|line| line.contains(&format!("`{SEAL}/wrong-state`")))
         .collect::<Vec<_>>();
-    assert_eq!(listed.len(), 1, "{:#?}", served.stderr.lines());
+    assert!(listed.is_empty(), "{:#?}", served.stderr.lines());
 
     let crate_id = served.open_crate("kept");
     let (status, answer) = served.exchange(
@@ -358,18 +370,17 @@ fn a_bound_wrong_state_answer_the_ingress_does_not_write_refuses_where_selected(
     assert_eq!(answer["outcome"], "sealed", "{answer}");
     let published = served.events();
 
-    let (status, answer) = served.exchange(
+    let (status, head, answer) = served.exchanged(
         "PUT",
         "/crates/seal",
         Some(&json!({"crate_id": crate_id, "weigh": false})),
     );
-    assert_eq!(status, 501, "{answer}");
-    assert_eq!(answer["committed"], false, "{answer}");
-    let refused = answer["refused"].as_str().expect("a refusal in words");
+    assert_eq!(status, 409, "the bound status: {answer}");
+    assert_eq!(answer["outcome"], "wrong-state", "{answer}");
     assert!(
-        refused.contains(&format!("`{SEAL}/wrong-state`"))
-            && refused.contains("this ingress does not serve"),
-        "the 501 names the wrong-state outcome and why: {refused}"
+        head.iter()
+            .any(|line| line.eq_ignore_ascii_case("x-conflict: sealed")),
+        "the declared header: {head:#?}"
     );
     assert_eq!(served.events(), published, "nothing was published");
 }

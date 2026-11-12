@@ -3,9 +3,9 @@
 //! and `admit` printing, without serving, the same line for each view `run` does not serve.
 //!
 //! The fixture `crates/spindle-ingress/tests/fixtures/served-operations` declares one command that
-//! runs and one the kernel does not run, three views the host reads (one an aggregation) and one
-//! view of each construct it does not read: a filter, a computed field, paging and a default row
-//! for an absent identity. `ess/fixtures/observe/served/notes.json` is the answer `run` gives for it.
+//! runs and one the kernel does not run, four views the host reads (one an aggregation, one with a
+//! computed field) and one view of each construct it does not read: a filter, paging and a
+//! default row for an absent identity. `ess/fixtures/observe/served/notes.json` is the answer `run` gives for it.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -191,7 +191,7 @@ fn served_rows_equal_the_start_logs_not_served_lines() {
     let (status, answered) = get(served.address, "/api/served");
     assert_eq!(status, 200, "{answered}");
     let listed = lines(&answered);
-    assert_eq!(listed.len(), 5, "one command and four views: {listed:#?}");
+    assert_eq!(listed.len(), 4, "one command and three views: {listed:#?}");
     let logged = not_served(&served.stderr.until(&listed[listed.len() - 1]));
     assert_eq!(listed, logged, "{answered:#}");
     let rows = answered["operations"].as_array().expect("rows");
@@ -256,7 +256,7 @@ fn admit_names_each_view_run_does_not_serve() {
         .into_iter()
         .filter(|line| line.starts_with("b10x-spindle: not served: view "))
         .collect();
-    assert_eq!(run_views.len(), 4, "{run_views:#?}");
+    assert_eq!(run_views.len(), 3, "{run_views:#?}");
     assert_eq!(
         views, run_views,
         "admit prints each view run does not serve, in the same words: {printed:#?}"

@@ -103,8 +103,14 @@ an average over none is `null`, as is an optional group key a group holds no val
 are answered as integers. An aggregate view has no row by identity, and an aggregation beside a
 field read through a reference is refused.
 
-Computed fields, a default row for an absent identity, paging and any other filter are refused as
-unsupported, and the refusal names the construct.
+A computed field, `score_change: {type: Integer, expr: "score - coalesce(previous_score, score)"}`,
+answers what ESS's evaluator computes over the row's own fields, as ESS's interpreter answers it,
+beside any field read through a reference. An absent optional operand, or a zero divisor outside
+`coalesce`, answers `null`. An `Integer` is answered as an integer, a `Decimal` as ESS writes it.
+A value ESS determines none of, such as an `Integer` past 64 bits, refuses the read.
+
+A default row for an absent identity, paging and any other filter are refused as unsupported, and
+the refusal names the construct.
 
 `run` prints each view and command it does not serve at startup, as
 ``not served: view `<name>` at GET <path>: <reason>``. `admit` prints the same line for each view

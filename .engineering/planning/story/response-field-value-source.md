@@ -19,7 +19,7 @@ scope:
   path: crates/spindle-kernel/src/supported.rs
 - confidence: inferred
   path: crates/spindle-kernel/src/values.rs
-revision: 8
+revision: 9
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-06T15:02:53Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"review_outcome":4}}}
 - {from: "proposed", to: "active", at: "2026-11-06T15:02:53Z", actor: "human:timo", revision: 8, decided_on: {"recorded":{"review_outcome":4}}}
@@ -71,3 +71,12 @@ event payload and sets it on the created row.
 A consumer serving a specification as a UI test backend (2026-11-06, on main 62b97a9): one create
 route answered 501 with this refusal, 8 calls in one UI run. Follows
 `story:structured-response-values`.
+
+## Delivered (wave 23)
+
+An event payload reads the response field, and a creation whose identity reads it creates its
+row under the answered id. The acceptance line `sets_reads_the_returned_response_field` is met
+through that identity: ESS 0.92.0 refuses `{response: ...}` in `sets:` when it validates
+(ess-domain `command.rs:5062`, "response and generated sources are admitted only in event
+payloads"), and does not run a `sets:` that reads it through `{payload: E.f}`, so Spindle refuses
+that copy too, before anything is written. Commit 159cd59d, merged in wave/w23.

@@ -52,6 +52,10 @@ pub struct Response {
     /// The body is the metrics, `GET /__spindle/metrics`: it is
     /// [`METRICS_MEDIA`](crate::METRICS_MEDIA), the Prometheus text format.
     pub metrics: bool,
+    /// The response headers the binding declares for the outcome answered ([`Answer::headers`]),
+    /// as `(name, value)` in name order; a header the transport writes itself is never replaced by
+    /// one of these.
+    pub headers: Vec<(String, String)>,
     /// The body.
     pub body: String,
 }
@@ -63,6 +67,7 @@ impl From<Answer> for Response {
             allow: None,
             panel: false,
             metrics: false,
+            headers: answer.headers,
             body: answer.body.map(|body| body.to_string()).unwrap_or_default(),
         }
     }
@@ -262,6 +267,7 @@ impl Pending {
                 allow: None,
                 panel: false,
                 metrics: false,
+                headers: Vec::new(),
                 body: body.to_string(),
             },
             None => Answer::refusal(404, format!("no route serves {}", self.path)).into(),
@@ -321,6 +327,7 @@ impl Pending {
                     allow: None,
                     panel: false,
                     metrics: false,
+                    headers: Vec::new(),
                     body: crate::console::model(reader.ir()),
                 },
                 Answered::ingress(),
@@ -390,6 +397,7 @@ impl Pending {
                     allow: None,
                     panel: false,
                     metrics: false,
+                    headers: Vec::new(),
                     body: crate::console::model(host.ir()),
                 },
                 Vec::new(),

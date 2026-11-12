@@ -36,6 +36,7 @@ impl<'ir> Run<'_, 'ir> {
         let stored = stored.clone();
         self.publish_reads(outcome, Some(&stored.row))?;
         let affected = self.affect(outcome, entity, &identity, &stored.row)?;
+        self.prepare(outcome)?;
         let events = self.emit(outcome, Some(&stored.row))?;
         let error = self.declared_error(outcome, Some(&stored.row))?;
         let response = self.response(outcome)?;

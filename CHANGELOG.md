@@ -6,6 +6,44 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-12
+
+### Added
+
+- A view that declares computed fields (`expr:`) answers each row with the value ESS's
+  interpreter computes over the row's own fields, by ESS's evaluator and the kernel's one
+  computation of a value expression, the one an outcome's `{expr: …}` is written with: `null`
+  where an `Optional` operand is absent or a divisor is zero outside `coalesce`, an `Integer` as
+  a JSON integer and a `Decimal` as ESS writes it, beside fields read through a reference, on
+  the host's thread, through its reader and by identity. A value ESS determines none of (an
+  `Integer` past `i64`) refuses the read, as the interpreter refuses it. Before, such a view
+  answered `501` "declares computed fields".
+- An event payload that reads the command's own response (`{response: <field>}`), which the
+  kernel refused as unsupported (`501`) "the value source response field", publishes the value the
+  same request answers in that field, a struct member too. A creation whose identity reads it
+  creates its row under the answered value, so a view lists the row under the id the request
+  returned. The response is prepared where ESS's interpreter prepares it: before a creation takes
+  its identity and its `sets:`, and after an existing row's `sets:` and `affects:`, before the
+  events. A `sets:` value read through `{payload: <Event>.<field>}` from a published value that
+  reads the response stays refused, as ESS's interpreter does not interpret it.
+- A command outcome an `ess-http/1` binding declares response headers for answers them beside
+  its declared status and body, as ESS's served application writes them, instead of `501`: a
+  literal as declared, a source as the text of the scalar it reads (left out where that is
+  absent), and a `WWW-Authenticate` challenge with each param a quoted string. A value read from
+  the request or the outcome that a header cannot carry (a control character other than a tab,
+  or a space or tab at either end of a plain header) is never written: the request answers `501`
+  naming the header. A declared header never replaces one the listener writes itself.
+
+### Fixed
+
+- A PostgreSQL store reads back every event it committed, and its head is past them, while a
+  transaction older than the write is open anywhere on the server. eventlog's feed withholds an
+  event until every such transaction has ended, so `events_after` and `events_head` (and
+  `GET /api/events`) answered none of the store's latest writes meanwhile; they now wait for the
+  feed to answer the store's own last write, up to 30 s, and then fail naming the open
+  transaction. Events of another writer of the same tables may still be answered late, never
+  skipped.
+
 ## [0.15.0] - 2026-11-11
 
 ### Added

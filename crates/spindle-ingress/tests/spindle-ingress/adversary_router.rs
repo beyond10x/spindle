@@ -124,6 +124,7 @@ fn announce(address: SocketAddr, method: &str, target: &str, length: usize) -> R
                     && value.trim() == spindle_ingress::METRICS_MEDIA
             })
         }),
+        headers: Vec::new(),
         body: body.to_owned(),
     }
 }

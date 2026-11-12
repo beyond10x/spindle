@@ -110,31 +110,7 @@ fn two_components_share_a_database_apart() {
 fn a_scan_holds_a_commit_while_an_older_transaction_is_open() {
     let database = database();
     let mut store = open(&database, &fresh("lagging"));
-    let url = database.url.clone();
-    let (opened, older) = std::sync::mpsc::channel();
-    let holder = std::thread::spawn(move || {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("a runtime");
-        runtime.block_on(async {
-            let (mut client, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls)
-                .await
-                .expect("a second connection");
-            let driver = tokio::spawn(connection);
-            let transaction = client.transaction().await.expect("a transaction");
-            transaction
-                .simple_query("SELECT pg_current_xact_id()")
-                .await
-                .expect("the transaction takes an id");
-            opened.send(()).expect("the test waits");
-            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-            transaction.commit().await.expect("the transaction ends");
-            drop(client);
-            let _ = driver.await;
-        });
-    });
-    older.recv().expect("the older transaction is open");
+    let holder = older_transaction(Duration::from_millis(1500));
     store
         .commit(&created("west"))
         .expect("the match is created");
@@ -152,6 +128,99 @@ fn a_scan_holds_a_commit_while_an_older_transaction_is_open() {
         "the scan waited {took:?} for the older transaction"
     );
     holder.join().expect("the older transaction ends");
+}
+
+/// Opens a write transaction on the test database from a connection of its own, and holds it
+/// open for `held` once it took a transaction id; answers once it has, and the thread that ends
+/// it.
+fn older_transaction(held: Duration) -> std::thread::JoinHandle<()> {
+    let url = database().url;
+    let (opened, older) = std::sync::mpsc::channel();
+    let holder = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        runtime.block_on(async {
+            let (mut client, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls)
+                .await
+                .expect("a second connection");
+            let driver = tokio::spawn(connection);
+            let transaction = client.transaction().await.expect("a transaction");
+            transaction
+                .simple_query("SELECT pg_current_xact_id()")
+                .await
+                .expect("the transaction takes an id");
+            opened.send(()).expect("the test waits");
+            tokio::time::sleep(held).await;
+            transaction.commit().await.expect("the transaction ends");
+            drop(client);
+            let _ = driver.await;
+        });
+    });
+    older.recv().expect("the older transaction is open");
+    holder
+}
+
+/// A write transaction older than a commit, still open anywhere on the server, does not hide the
+/// commit's events from the store that committed them: eventlog's feed withholds them until that
+/// transaction ends, and the store's read of them, and of its head, waits for it. The read of
+/// its reading handle too.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_writer_reads_its_own_events_while_an_older_transaction_is_open() {
+    let database = database();
+    let mut store = open(&database, &fresh("own"));
+    let reading = store
+        .reading()
+        .expect("a PostgreSQL store reads beside its writer");
+    let holder = older_transaction(Duration::from_millis(1500));
+    let mut change = created("west");
+    change.events = vec![spindle_kernel::Event {
+        name: "apart.match.Opened".to_owned(),
+        payload: serde_json::Map::new(),
+    }];
+    store.commit(&change).expect("the match is created");
+    let names = |committed: Vec<spindle_kernel::Committed>| {
+        committed
+            .into_iter()
+            .map(|committed| committed.event.name)
+            .collect::<Vec<_>>()
+    };
+    let own = store.events_after(0, usize::MAX).expect("the events read");
+    let position = own.first().map(|committed| committed.position);
+    assert_eq!(
+        names(own),
+        ["apart.match.Opened"],
+        "the writer reads the event it committed"
+    );
+    assert_eq!(
+        names(
+            reading
+                .events_after(0, usize::MAX)
+                .expect("the events read")
+        ),
+        ["apart.match.Opened"],
+        "the reading handle reads it too"
+    );
+    let head = store.events_head().expect("the head reads");
+    assert!(
+        position.is_some_and(|position| head >= position),
+        "the head {head} is at or past the event's position {position:?}"
+    );
+    assert_eq!(
+        reading.events_head().expect("the head reads"),
+        head,
+        "the reading handle's head"
+    );
+    holder.join().expect("the older transaction ends");
+    assert_eq!(
+        store
+            .events_after(head, usize::MAX)
+            .expect("the events read"),
+        [],
+        "no event committed before the head is after it"
+    );
 }
 
 #[test]
@@ -244,19 +313,33 @@ fn a_long_scan_lets_another_process_commit() {
     let columns = "tenant_id, stream_type, stream_id, version, event_id, event_name, \
                    event_schema_version, occurred_at, recorded_at, subject, actor, request_id, \
                    trace_id, data";
-    sql(&format!(
-        "INSERT INTO {table} ({columns}) SELECT 'local', 'spindle:entity', '{LISTED}', g, \
-         gen_random_uuid(), 'spindle.written', 2, now(), now(), 'a', 'a', 'r' || g, 'r' || g, \
-         jsonb_build_object('rows', jsonb_build_object('\"i' || ((g - 1) % {INSTANCES}) || \
-         '\"', (g - 1) / {INSTANCES} + 1), 'removed', '{{}}'::jsonb) \
-         FROM generate_series(1, {WRITES}) g; \
-         INSERT INTO {table} ({columns}) SELECT 'local', '{LISTED}', \
-         '\"i' || ((g - 1) % {INSTANCES}) || '\"', (g - 1) / {INSTANCES} + 1, \
-         gen_random_uuid(), 'spindle.row', 1, now(), now(), 'a', 'a', 'r' || g, 'r' || g, \
-         jsonb_build_object('state', 'open', 'fields', jsonb_build_object('id', \
-         'i' || ((g - 1) % {INSTANCES}))) FROM generate_series(1, {WRITES}) g; \
-         ANALYZE {table}"
-    ));
+    // A transaction of every chunk of writes, in turn: one of all 300,000 rows would be the
+    // oldest open on the server for seconds, which every other case's feed reads wait out.
+    let chunks = (0..WRITES).step_by(10_000);
+    let mut statements = String::new();
+    for from in chunks.clone() {
+        let (from, to) = (from + 1, (from + 10_000).min(WRITES));
+        statements.push_str(&format!(
+            "BEGIN; INSERT INTO {table} ({columns}) SELECT 'local', 'spindle:entity', \
+             '{LISTED}', g, gen_random_uuid(), 'spindle.written', 2, now(), now(), 'a', 'a', \
+             'r' || g, 'r' || g, jsonb_build_object('rows', jsonb_build_object('\"i' || \
+             ((g - 1) % {INSTANCES}) || '\"', (g - 1) / {INSTANCES} + 1), 'removed', \
+             '{{}}'::jsonb) FROM generate_series({from}, {to}) g ORDER BY g; COMMIT; "
+        ));
+    }
+    for from in chunks {
+        let (from, to) = (from + 1, (from + 10_000).min(WRITES));
+        statements.push_str(&format!(
+            "BEGIN; INSERT INTO {table} ({columns}) SELECT 'local', '{LISTED}', \
+             '\"i' || ((g - 1) % {INSTANCES}) || '\"', (g - 1) / {INSTANCES} + 1, \
+             gen_random_uuid(), 'spindle.row', 1, now(), now(), 'a', 'a', 'r' || g, 'r' || g, \
+             jsonb_build_object('state', 'open', 'fields', jsonb_build_object('id', \
+             'i' || ((g - 1) % {INSTANCES}))) FROM generate_series({from}, {to}) g ORDER BY g; \
+             COMMIT; "
+        ));
+    }
+    statements.push_str(&format!("ANALYZE {table}"));
+    sql(&statements);
     let first = scanner.scan(LISTED).expect("the long log scans");
     assert_eq!(
         (first.rows.len() as u64, first.version),

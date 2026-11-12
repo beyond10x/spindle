@@ -3,7 +3,8 @@
 //! The kernel runs the conditions, effects and value sources Spindle's own specification and the
 //! `rally` example use, a value read from the row an input field names, a value an expression
 //! computes outside an error, a guard over a row set, a set outcome (`instances:`) with the rows
-//! it changed, and secondary effects (`affects:`) selecting their rows by a filter. Every other
+//! it changed, secondary effects (`affects:`) selecting their rows by a filter, and an event
+//! payload value read from the response the outcome answers (`{response: …}`). Every other
 //! construct is refused by name, as [`ExecuteError::Unsupported`], before anything is written;
 //! what it refuses depends on what reads the construct.
 //!
@@ -24,9 +25,9 @@ use std::collections::BTreeSet;
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::{
-    EntityHandle, ResolvedCommand, ResolvedCondition, ResolvedEffect, ResolvedInstance,
-    ResolvedOutcome, ResolvedPayloadField, ResolvedPayloadValue, ResolvedRelatedVia,
-    ResolvedTypeRef,
+    EntityHandle, EventHandle, ResolvedCommand, ResolvedCondition, ResolvedEffect,
+    ResolvedInstance, ResolvedOutcome, ResolvedPayloadField, ResolvedPayloadValue,
+    ResolvedRelatedVia, ResolvedTypeRef,
 };
 
 use crate::ExecuteError;
@@ -117,6 +118,15 @@ pub fn takes(
         .iter()
         .filter(|payload| creating.is_none_or(|event| *event != payload.event))
         .flat_map(|payload| &payload.fields);
+    // An event payload of an outcome that answers the response reads it (ESS
+    // `interpret::execute::take` prepares the response before the creation and before `emit`);
+    // `sets:`, `affects:` and an error's fields do not.
+    let answers = crate::mint::answers(outcome);
+    let reading = Reading {
+        set,
+        error: false,
+        response: answers,
+    };
     for field in identity_fields {
         if matches!(field.value, ResolvedPayloadValue::Generated { .. })
             && minted.is_some_and(|(_, identity)| identity.name == field.target)
@@ -124,21 +134,36 @@ pub fn takes(
         {
             continue;
         }
-        if let Some(what) = value(ir, field, set, false) {
+        if let Some(what) = value(ir, field, reading) {
             return refuse(&what);
         }
     }
+    let stored = Reading {
+        response: false,
+        ..reading
+    };
     let fields = outcome
         .sets
         .iter()
         .chain(outcome.affects.iter().flat_map(|affect| &affect.sets))
-        .chain(other_fields)
-        .map(|field| (field, false));
-    let errors = outcome.error_payload.iter().map(|field| (field, true));
-    for (field, error) in fields.chain(errors) {
-        if let Some(what) = value(ir, field, set, error) {
+        .map(|field| (field, stored))
+        .chain(other_fields.map(|field| (field, reading)));
+    let errors = outcome.error_payload.iter().map(|field| {
+        (
+            field,
+            Reading {
+                error: true,
+                ..stored
+            },
+        )
+    });
+    for (field, reading) in fields.chain(errors) {
+        if let Some(what) = value(ir, field, reading) {
             return refuse(&what);
         }
+    }
+    if let Some(what) = published_response(outcome) {
+        return refuse(&what);
     }
     if let Some(what) = unfilled_error_field(ir, command, outcome) {
         return refuse(&what);
@@ -436,12 +461,121 @@ fn response(ir: &EssIr, command: &ResolvedCommand, outcome: &ResolvedOutcome) ->
     })
 }
 
+/// Where a determined field is read, as [`value`] asks.
+#[derive(Clone, Copy)]
+struct Reading {
+    /// The outcome is a set outcome (`instances:`).
+    set: bool,
+    /// The field is an error's.
+    error: bool,
+    /// The field is an event payload's, of an outcome that answers the command's response.
+    response: bool,
+}
+
+/// The first `{payload: <Event>.<field>}` of `outcome`, named, whose published value reads the
+/// command's response, in `sets:`, `affects:`, a payload or an error's fields. ESS's interpreter
+/// resolves every such read before it prepares the response (`interpret::execute::take` calls
+/// `publish_reads` first), so it does not interpret one, and neither does the kernel.
+fn published_response(outcome: &ResolvedOutcome) -> Option<String> {
+    fn reads<'f>(fields: &'f [ResolvedPayloadField], out: &mut Vec<&'f ResolvedPayloadField>) {
+        for field in fields {
+            match &field.value {
+                ResolvedPayloadValue::PayloadRead { .. } => out.push(field),
+                ResolvedPayloadValue::Struct { fields } => reads(fields, out),
+                _ => {}
+            }
+        }
+    }
+    let mut found = Vec::new();
+    reads(&outcome.sets, &mut found);
+    for affect in &outcome.affects {
+        reads(&affect.sets, &mut found);
+    }
+    for payload in &outcome.payload {
+        reads(&payload.fields, &mut found);
+    }
+    reads(&outcome.error_payload, &mut found);
+    found.into_iter().find_map(|field| {
+        let ResolvedPayloadValue::PayloadRead {
+            event, field: read, ..
+        } = &field.value
+        else {
+            return None;
+        };
+        let answered = answered_read(outcome, event, read, 0)?;
+        Some(format!(
+            "`{}` stored from `{{payload: {}.{read}}}`, which reads the response field \
+             `{answered}` before the outcome answers it",
+            field.target,
+            event.name()
+        ))
+    })
+}
+
+/// The response field the published `event`.`read` of `outcome` reaches, through its struct
+/// members and the published values it reads in turn; `None` where it reads none. A chain longer
+/// than [`ess_domain::types::MAX_TYPE_DEPTH`] reads none: ESS refuses a cycle of them.
+fn answered_read<'o>(
+    outcome: &'o ResolvedOutcome,
+    event: &EventHandle,
+    read: &str,
+    depth: usize,
+) -> Option<&'o str> {
+    fn reaches<'o>(
+        outcome: &'o ResolvedOutcome,
+        value: &'o ResolvedPayloadValue,
+        depth: usize,
+    ) -> Option<&'o str> {
+        match value {
+            ResolvedPayloadValue::ResponseField { field, .. } => Some(field),
+            ResolvedPayloadValue::Struct { fields } => fields
+                .iter()
+                .find_map(|member| reaches(outcome, &member.value, depth)),
+            ResolvedPayloadValue::PayloadRead { event, field, .. } => {
+                answered_read(outcome, event, field, depth + 1)
+            }
+            _ => None,
+        }
+    }
+    if depth > ess_domain::types::MAX_TYPE_DEPTH {
+        return None;
+    }
+    let source = outcome
+        .payload
+        .iter()
+        .filter(|payload| payload.event == *event)
+        .flat_map(|payload| &payload.fields)
+        .find(|source| source.target == read)?;
+    reaches(outcome, &source.value, depth)
+}
+
+/// Whether an event payload of `outcome` reads the command's response (`{response: <field>}`),
+/// struct members included: the outcome whose response is prepared before its creation and its
+/// events ([`crate::execute`]), as ESS's interpreter prepares it (`interpret::response::required`).
+pub(crate) fn reads_response(outcome: &ResolvedOutcome) -> bool {
+    fn reads(field: &ResolvedPayloadField) -> bool {
+        match &field.value {
+            ResolvedPayloadValue::ResponseField { .. } => true,
+            ResolvedPayloadValue::Struct { fields } => fields.iter().any(reads),
+            _ => false,
+        }
+    }
+    outcome
+        .payload
+        .iter()
+        .any(|payload| payload.fields.iter().any(reads))
+}
+
 /// The value source, named, when the kernel does not read it. A generated value is read where
 /// its type is one the runtime mints ([`crate::mint::minted`]), and the refusal of one that is
 /// not names the field and its type. What a set outcome changed (`{count: changed}`,
-/// `{changed: …}`) is read where `set`, the outcome being one. A computed value (`{expr: …}`) is
-/// read outside an `error`'s fields, where ESS's interpreter computes none.
-fn value(ir: &EssIr, field: &ResolvedPayloadField, set: bool, error: bool) -> Option<String> {
+/// `{changed: …}`) is read where the outcome is a set outcome. A computed value (`{expr: …}`) is
+/// read outside an error's fields, where ESS's interpreter computes none. A response field
+/// (`{response: …}`) is read in an event payload of an outcome that answers the response, as
+/// ESS's interpreter reads it (`interpret::execute::determined::response`); anywhere else ESS
+/// has no response in hand.
+fn value(ir: &EssIr, field: &ResolvedPayloadField, reading: Reading) -> Option<String> {
+    let Reading { set, error, .. } = reading;
     let mintable = |present: bool| {
         (!crate::mint::absent(&field.target_type, present)
             && crate::mint::generated(ir, &field.target_type, present).is_none())
@@ -475,13 +609,19 @@ fn value(ir: &EssIr, field: &ResolvedPayloadField, set: bool, error: bool) -> Op
         // expression in an error's fields (`interpret::execute::error_value`), so neither does
         // the kernel.
         ResolvedPayloadValue::Expression { .. } if !error => None,
+        ResolvedPayloadValue::ResponseField { .. } if reading.response => None,
+        ResolvedPayloadValue::ResponseField { .. } => Some(format!(
+            "the value source {} outside an event payload of an outcome that answers the \
+             response",
+            field.value.describe()
+        )),
         ResolvedPayloadValue::Generated { present } => mintable(*present),
         ResolvedPayloadValue::InputOrGenerated {
             otherwise: None, ..
         } => mintable(false),
-        ResolvedPayloadValue::Struct { fields } => fields
-            .iter()
-            .find_map(|member| value(ir, member, set, error)),
+        ResolvedPayloadValue::Struct { fields } => {
+            fields.iter().find_map(|member| value(ir, member, reading))
+        }
         // The field or the held state of the row an input field names (ess/16, ess/28), read as
         // the store held it before the outcome ([`crate::values::related`]). A reference stored on
         // the subject, a chain through a further reference, and a list of references stay

@@ -87,6 +87,7 @@ impl Run<'_, '_> {
             self.at_rest(entity, &change)?;
             writes.push(Write::Commit(change));
         }
+        self.prepare(outcome)?;
         let events = self.emit_set(outcome, set, &changed, published)?;
         let error = self.declared_error(outcome, None)?;
         let response = self.response(outcome)?;

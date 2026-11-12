@@ -10,7 +10,9 @@ routes:
     parameters: {box_id: input.box_id}
     outcomes:
       announced:
-        status: 200
-        headers:
-          X-Announced: {literal: "yes"}
+        status: 303
+        body: none
+        redirect:
+          location: input.label
+          mode: query
       labelled: {status: 200}

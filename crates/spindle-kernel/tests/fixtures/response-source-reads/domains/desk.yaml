@@ -1,0 +1,138 @@
+domain: parcels.desk
+summary: A parcel registered under the id its registration answers, relabelled with a ticket its answer returns, and copied.
+types:
+  - name: parcels.desk.Stamp
+    kind: struct
+    fields:
+      - name: ticket
+        type: Uuid
+      - name: label
+        type: String
+entities:
+  - name: parcels.desk.Parcel
+    identity:
+      name: id
+      type: Uuid
+    fields:
+      - name: label
+        type: String
+      - name: receipt
+        type: Optional<Uuid>
+    lifecycle:
+      initial: Registered
+      states: [Registered]
+      terminal: [Registered]
+errors:
+  - name: parcels.desk.NoSuchParcel
+    summary: No parcel carries the id.
+    fields: []
+commands:
+  - name: parcels.desk.RegisterParcel
+    input:
+      - name: label
+        type: String
+    response:
+      - name: id
+        type: Uuid
+      - name: receipt
+        type: Optional<Uuid>
+    outcomes:
+      - name: registered
+        creates: parcels.desk.Parcel
+        instance: id
+        sets:
+          label: input.label
+        emits: [parcels.desk.ParcelRegistered]
+        payload:
+          parcels.desk.ParcelRegistered:
+            id: {response: id}
+            label: input.label
+            receipt: {response: receipt}
+        returns: true
+        summary: The parcel is registered under the id this answer returns, its receipt published.
+  - name: parcels.desk.RelabelParcel
+    input:
+      - name: id
+        type: Uuid
+      - name: label
+        type: String
+    response:
+      - name: ticket
+        type: Uuid
+    outcomes:
+      - name: no-such-parcel
+        unknown_instance: true
+        error: parcels.desk.NoSuchParcel
+        summary: No parcel carries the id.
+      - name: relabelled
+        updates: parcels.desk.Parcel
+        instance: id
+        sets:
+          label: input.label
+        emits: [parcels.desk.ParcelRelabelled]
+        payload:
+          parcels.desk.ParcelRelabelled:
+            id: input.id
+            ticket: {response: ticket}
+            stamp:
+              ticket: {response: ticket}
+              label: input.label
+        returns: true
+        summary: The parcel is relabelled; the ticket this answer returns is published.
+  - name: parcels.desk.CopyParcel
+    input:
+      - name: label
+        type: String
+    response:
+      - name: id
+        type: Uuid
+      - name: receipt
+        type: Uuid
+    outcomes:
+      - name: copied
+        creates: parcels.desk.Parcel
+        instance: id
+        sets:
+          label: input.label
+          receipt: {payload: parcels.desk.ParcelCopied.receipt}
+        emits: [parcels.desk.ParcelCopied]
+        payload:
+          parcels.desk.ParcelCopied:
+            id: {response: id}
+            receipt: {response: receipt}
+        returns: true
+        summary: The copy is registered, and stores the receipt its event publishes from this answer.
+events:
+  - name: parcels.desk.ParcelRegistered
+    fields:
+      - name: id
+        type: Uuid
+      - name: label
+        type: String
+      - name: receipt
+        type: Optional<Uuid>
+  - name: parcels.desk.ParcelRelabelled
+    fields:
+      - name: id
+        type: Uuid
+      - name: ticket
+        type: Uuid
+      - name: stamp
+        type: parcels.desk.Stamp
+  - name: parcels.desk.ParcelCopied
+    fields:
+      - name: id
+        type: Uuid
+      - name: receipt
+        type: Uuid
+views:
+  - name: parcels.desk.Parcels
+    source: parcels.desk.Parcel
+    consistency: read_your_writes
+    fields:
+      - name: id
+        type: Uuid
+      - name: label
+        type: String
+      - name: receipt
+        type: Optional<Uuid>
