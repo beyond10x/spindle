@@ -444,26 +444,19 @@ struct Open {
     test: Unknowns,
 }
 
-/// The rows one predicate leaves `Unknown`: how many, the first one's identity, and every
-/// `Optional` field it reads that one of them holds nothing in.
+/// The rows one predicate leaves `Unknown`: how many, and every `Optional` field it reads that one
+/// of them holds nothing in. The refusal names neither the count nor a row: a row-set guard reads
+/// rows the request did not name, which its caller may not read.
 #[derive(Default)]
 struct Unknowns {
     rows: usize,
-    first: Option<Value>,
     absent: Vec<String>,
 }
 
 impl Unknowns {
-    /// Counts the row `identity` of `entity`, which `predicate` leaves `Unknown`.
-    fn read(
-        &mut self,
-        predicate: &Predicate,
-        entity: &ResolvedEntity,
-        identity: &Value,
-        row: &Row,
-    ) {
+    /// Counts a row of `entity`, which `predicate` leaves `Unknown`.
+    fn read(&mut self, predicate: &Predicate, entity: &ResolvedEntity, row: &Row) {
         self.rows += 1;
-        self.first.get_or_insert_with(|| identity.clone());
         for path in predicate.fact_paths() {
             let [field] = path.segments() else {
                 continue;
@@ -485,16 +478,7 @@ impl Unknowns {
     /// out where an absent `Optional` field is why: `defined(<field>)` beside it reads such a row
     /// `false` (ESS `docs/design/cross-record-and-stored-field-guards.md`, "Optional fields").
     fn why(&self, entity: &ResolvedEntity, predicate: &Predicate, place: &str) -> String {
-        let first = match &self.first {
-            Some(Value::String(identity)) => format!(" (`{identity}` first)"),
-            Some(identity) => format!(" (`{identity}` first)"),
-            None => String::new(),
-        };
-        let rows = if self.rows == 1 { "row" } else { "rows" };
-        let mut why = format!(
-            "`{predicate}` is unknown on {} `{}` {rows}{first}",
-            self.rows, entity.name
-        );
+        let mut why = format!("`{predicate}` is unknown on a `{}` row", entity.name);
         if !self.absent.is_empty() {
             let quoted = |format: fn(&String) -> String, separator: &str| {
                 self.absent
@@ -924,10 +908,9 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 (Some(predicate), _) => predicate.evaluate(&facts),
             };
             if selected == Truth::Unknown {
-                open.filter
-                    .read(&selection.filter, entity, &identity, &stored.row);
+                open.filter.read(&selection.filter, entity, &stored.row);
             } else if let (Some(predicate), Truth::Unknown) = (test.predicate(), satisfies) {
-                open.test.read(predicate, entity, &identity, &stored.row);
+                open.test.read(predicate, entity, &stored.row);
             }
             members.push(RowMember {
                 selected,
