@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:view-computed-fields
 kind: story
-status: active
+status: implemented
 title: A computed view field is served
 tags:
 - downstream-gap
@@ -20,10 +20,11 @@ scope:
   path: crates/spindle-host/tests/fixtures/views/board.yaml
 - confidence: inferred
   path: crates/spindle-host/tests/spindle-host/views.rs
-revision: 6
+revision: 7
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-09T22:14:37Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-09T22:14:37Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-12T00:31:04Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"test_result":1}}}
 ---
 # A computed view field is served
 

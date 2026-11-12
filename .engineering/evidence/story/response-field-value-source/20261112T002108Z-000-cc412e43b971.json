@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-12T00:21:08Z",
+  "actor": "human:timo",
+  "artifact": "story:response-field-value-source",
+  "kind": "story",
+  "revision": 9,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "task check, task check:postgres (CI on merge 45a70370, release 0.16.0)",
+    "reference": "https://github.com/beyond10x/spindle/actions/runs/43125418499"
+  }
+}

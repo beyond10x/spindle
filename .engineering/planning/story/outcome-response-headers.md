@@ -2,14 +2,15 @@
 format: aep.planning-md/3
 id: story:outcome-response-headers
 kind: story
-status: active
+status: implemented
 title: An outcome bound to a response header is served over HTTP
 relations:
 - serves: vision:spindle
-revision: 3
+revision: 4
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-10T17:56:30Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-10T17:56:30Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-12T00:31:05Z", actor: "human:timo", revision: 4, decided_on: {"recorded":{"test_result":1}}}
 ---
 # An outcome bound to a response header is served over HTTP
 
