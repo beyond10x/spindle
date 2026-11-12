@@ -6,8 +6,6 @@ are Spindle's releases.
 
 ## [Unreleased]
 
-## [0.16.0] - 2026-11-12
-
 ### Added
 
 - A view filter that reads a field through a reference (`person_id.state == Active`), compares a
@@ -19,6 +17,20 @@ are Spindle's releases.
   against `now`". A row whose reference is empty or names no row is left out where the filter is
   unknown only for that, as the interpreter leaves it out (`absent_navigation`). Each row a
   reference names is loaded once per read by its identity; the referenced entity is not scanned.
+
+### Changed
+
+- A `when_related:` row-set guard left open by stored rows its filter or `forall` test reads
+  as unknown is still refused `501 undecidable`, as ESS's interpreter refuses it, but the refusal
+  now says why: the predicate, the entity, how many rows left it open and the first one's
+  identity, and each absent `Optional` field it reads, with the way out, `defined(<field>)`
+  beside the comparison. Before, it named only the outcome. `ExecuteError::Undecidable` carries
+  this as `why`.
+
+## [0.16.0] - 2026-11-12
+
+### Added
+
 - A view that declares computed fields (`expr:`) answers each row with the value ESS's
   interpreter computes over the row's own fields, by ESS's evaluator and the kernel's one
   computation of a value expression, the one an outcome's `{expr: …}` is written with: `null`
