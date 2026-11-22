@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:environment-binds-external-decisions
 kind: story
-status: draft
+status: proposed
 title: The environment binds external causes to a decisions file
 relations:
 - serves: vision:spindle
@@ -15,7 +15,9 @@ scope:
   path: crates/spindle-cli/src/main.rs
 - confidence: inferred
   path: examples/environments/laptop.toml
-revision: 3
+revision: 4
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-22T18:23:53Z", actor: "human:timo", revision: 4}
 ---
 # The environment binds external causes to a decisions file
 

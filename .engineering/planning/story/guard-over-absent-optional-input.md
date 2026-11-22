@@ -2,11 +2,13 @@
 format: aep.planning-md/3
 id: story:guard-over-absent-optional-input
 kind: story
-status: draft
+status: proposed
 title: A guard over an absent optional input is decided as ESS decides it
 relations:
 - serves: vision:spindle
-revision: 1
+revision: 2
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-22T18:23:52Z", actor: "human:timo", revision: 2}
 ---
 # A guard over an absent optional input is decided as ESS decides it
 

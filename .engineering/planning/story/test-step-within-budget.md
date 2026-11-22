@@ -2,11 +2,13 @@
 format: aep.planning-md/3
 id: story:test-step-within-budget
 kind: story
-status: draft
+status: proposed
 title: The test step ends within 2 minutes and kills a test at 60 s
 relations:
 - serves: vision:spindle
-revision: 4
+revision: 5
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-22T18:23:51Z", actor: "human:timo", revision: 5}
 ---
 # The test step ends within 2 minutes and kills a test at 60 s
 
