@@ -16,6 +16,48 @@ pub const PROTOCOL: &str = "spindle-telemetry/1";
 /// The most bytes of an event payload a [`RecentAnswer`] keeps.
 pub const PAYLOAD_LIMIT: usize = 1024;
 
+/// The most answers a frame carries: [`Answers::new`] keeps at most this many.
+pub const RECENT_LIMIT: usize = 16;
+
+/// The most bytes of one frame's JSON, its newline not counted. [`FrameReader`] refuses a longer
+/// line after reading at most one byte more, and a `Transmitter` drops a frame that would be
+/// longer instead of sending it, so both ends hold the same limit.
+///
+/// It is sized from the largest frame a `Transmitter` writes for a large catalogue:
+///
+/// | part | at most |
+/// |---|---|
+/// | the fixed fields: keys, an instance id of 256 bytes, three numbers of 20 digits, `at`, the four readings | 1 KiB |
+/// | one recent answer: its payload, [`PAYLOAD_LIMIT`] bytes that JSON escaping grows at most sixfold (`\u0001`), and `at`, the command, the outcome and the event names in 2 KiB | 8 KiB |
+/// | [`RECENT_LIMIT`] answers | 128 KiB |
+/// | one histogram: 12 bounds, 13 counts and a sum of up to 20 digits each, and keys | 640 bytes and its name |
+/// | one counter: a value of up to 20 digits, and keys | 48 bytes and its name |
+///
+/// 1 MiB holds that with 600 histograms and 4,000 counters whose names are up to 64 bytes each
+/// (checked at compile time below, and against a built frame in this module's tests); a catalogue
+/// has one histogram per command, so that is 600 commands. A frame of a larger catalogue is
+/// dropped and counted by its sender, never cut.
+pub const FRAME_LIMIT: usize = 1 << 20;
+
+/// The parts of [`FRAME_LIMIT`]'s derivation, each an upper bound in bytes.
+mod sizing {
+    pub const FIXED: usize = 1024;
+    pub const ANSWER: usize = 6 * super::PAYLOAD_LIMIT + 2048;
+    pub const NAME: usize = 64;
+    pub const HISTOGRAM: usize = 640 + NAME;
+    pub const COUNTER: usize = 48 + NAME;
+    pub const HISTOGRAMS: usize = 600;
+    pub const COUNTERS: usize = 4_000;
+}
+
+const _: () = assert!(
+    sizing::FIXED
+        + RECENT_LIMIT * sizing::ANSWER
+        + sizing::HISTOGRAMS * sizing::HISTOGRAM
+        + sizing::COUNTERS * sizing::COUNTER
+        <= FRAME_LIMIT
+);
+
 /// One sample of one instance: `spindle.observe.Sample`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -74,10 +116,13 @@ pub struct ResourceReading {
 }
 
 /// Reads frames, one per line, from a collector's side of a connection.
+///
+/// A line longer than [`FRAME_LIMIT`] is refused once one byte past the limit is read: the reader
+/// holds at most the limit and one byte, beside what the `BufRead` it reads holds.
 #[derive(Debug)]
 pub struct FrameReader<R> {
     reader: R,
-    line: String,
+    line: Vec<u8>,
 }
 
 impl<R: BufRead> FrameReader<R> {
@@ -85,19 +130,58 @@ impl<R: BufRead> FrameReader<R> {
     pub fn new(reader: R) -> Self {
         Self {
             reader,
-            line: String::new(),
+            line: Vec::new(),
         }
     }
 
-    /// The next frame; `None` at the end of the stream.
+    /// The next frame; `None` at the end of the stream. A line longer than [`FRAME_LIMIT`] is
+    /// [`io::ErrorKind::InvalidData`], as is one that is not a frame.
     pub fn next_frame(&mut self) -> io::Result<Option<Frame>> {
         self.line.clear();
-        if self.reader.read_line(&mut self.line)? == 0 {
+        loop {
+            let available = match self.reader.fill_buf() {
+                Ok(available) => available,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            };
+            if available.is_empty() {
+                break;
+            }
+            let room = FRAME_LIMIT + 1 - self.line.len();
+            let window = &available[..available.len().min(room)];
+            let (taken, ended) = match window.iter().position(|byte| *byte == b'\n') {
+                Some(newline) => (newline + 1, true),
+                None => (window.len(), false),
+            };
+            reserve_within(&mut self.line, taken);
+            self.line.extend_from_slice(&window[..taken]);
+            self.reader.consume(taken);
+            if ended {
+                break;
+            }
+            if self.line.len() > FRAME_LIMIT {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("a frame longer than {FRAME_LIMIT} bytes"),
+                ));
+            }
+        }
+        if self.line.is_empty() {
             return Ok(None);
         }
-        serde_json::from_str(&self.line)
+        serde_json::from_slice(&self.line)
             .map(Some)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+    }
+}
+
+/// Makes room in `line` for `more` bytes, doubling its capacity as `Vec` does but never past
+/// [`FRAME_LIMIT`] and one byte.
+fn reserve_within(line: &mut Vec<u8>, more: usize) {
+    let needed = line.len() + more;
+    if needed > line.capacity() {
+        let target = needed.max(line.capacity() * 2).min(FRAME_LIMIT + 1);
+        line.reserve_exact(target - line.len());
     }
 }
 
@@ -112,8 +196,9 @@ pub struct Answers {
 }
 
 impl Answers {
-    /// Keeps the last `capacity` answers.
+    /// Keeps the last `capacity` answers, at most [`RECENT_LIMIT`].
     pub fn new(capacity: usize) -> Self {
+        let capacity = capacity.min(RECENT_LIMIT);
         Self {
             capacity,
             answers: Mutex::new(VecDeque::with_capacity(capacity)),
@@ -253,5 +338,126 @@ mod tests {
         );
         let payload = recent[1].payload.as_deref().expect("a payload");
         assert!(payload.len() <= PAYLOAD_LIMIT && payload.len() > PAYLOAD_LIMIT - 2);
+    }
+
+    #[test]
+    fn answers_keep_at_most_the_recent_limit() {
+        let answers = Answers::new(RECENT_LIMIT + 5);
+        for _ in 0..RECENT_LIMIT * 2 {
+            assert!(answers.record("a.A", "ok", &[], None));
+        }
+        assert_eq!(answers.recent().len(), RECENT_LIMIT);
+    }
+
+    fn reading() -> ResourceReading {
+        ResourceReading {
+            cpu_seconds: 0.0,
+            memory_bytes: 0,
+            cpu_share: None,
+            memory_share: None,
+        }
+    }
+
+    /// A frame whose JSON is exactly `bytes` long.
+    fn frame_of(bytes: usize) -> Vec<u8> {
+        let mut frame = Frame {
+            instance_id: String::new(),
+            sequence: 0,
+            at: timestamp(UNIX_EPOCH),
+            period_ms: 1000,
+            counters: Vec::new(),
+            histograms: Vec::new(),
+            recent: Vec::new(),
+            resources: reading(),
+            dropped_frames: 0,
+        };
+        let empty = serde_json::to_vec(&frame).expect("a frame").len();
+        frame.instance_id = "x".repeat(bytes - empty);
+        let line = serde_json::to_vec(&frame).expect("a frame");
+        assert_eq!(line.len(), bytes);
+        line
+    }
+
+    #[test]
+    fn a_frame_of_the_limit_is_read_and_one_byte_more_is_refused() {
+        let mut at_limit = frame_of(FRAME_LIMIT);
+        at_limit.push(b'\n');
+        let mut over = frame_of(FRAME_LIMIT + 1);
+        over.push(b'\n');
+        let mut stream = at_limit.clone();
+        stream.extend_from_slice(&over);
+        stream.extend_from_slice(&at_limit);
+        let mut reader = FrameReader::new(io::BufReader::new(stream.as_slice()));
+        let first = reader.next_frame().expect("a frame of the limit is read");
+        assert!(first.is_some(), "a frame of the limit is read");
+        match reader.next_frame() {
+            Err(error) => assert_eq!(error.kind(), io::ErrorKind::InvalidData),
+            Ok(frame) => panic!(
+                "a frame one byte over the limit was read: {:?} bytes of instance id",
+                frame.map(|frame| frame.instance_id.len())
+            ),
+        }
+    }
+
+    /// The bytes of `value` as JSON.
+    fn bytes<T: Serialize>(value: &T) -> usize {
+        serde_json::to_vec(value).expect("serialises").len()
+    }
+
+    #[test]
+    fn the_frame_limit_holds_the_largest_frame_it_was_sized_for() {
+        let name = |prefix: &str, index: usize| {
+            let name = format!("{prefix}.{index}.");
+            format!("{name}{}", "n".repeat(sizing::NAME - name.len()))
+        };
+        let answer = RecentAnswer {
+            at: timestamp(UNIX_EPOCH),
+            command: "c".repeat(512),
+            outcome: "o".repeat(256),
+            events: (0..8).map(|_| "e".repeat(100)).collect(),
+            payload: Some("\u{1}".repeat(PAYLOAD_LIMIT)),
+        };
+        let frame = Frame {
+            instance_id: "i".repeat(256),
+            sequence: u64::MAX,
+            at: timestamp(UNIX_EPOCH),
+            period_ms: u64::MAX,
+            counters: (0..sizing::COUNTERS)
+                .map(|index| CounterValue {
+                    name: name("counter", index),
+                    value: u64::MAX,
+                })
+                .collect(),
+            histograms: (0..sizing::HISTOGRAMS)
+                .map(|index| HistogramValue {
+                    name: name("histogram", index),
+                    bounds: crate::counters::DURATION_BOUNDS_US.to_vec(),
+                    counts: vec![u64::MAX; crate::counters::DURATION_BOUNDS_US.len() + 1],
+                    sum_us: u64::MAX,
+                })
+                .collect(),
+            recent: vec![answer.clone(); RECENT_LIMIT],
+            resources: ResourceReading {
+                cpu_seconds: -1.234_567_890_123_456_7e-300,
+                memory_bytes: u64::MAX,
+                cpu_share: Some(-1.234_567_890_123_456_7e-300),
+                memory_share: Some(-1.234_567_890_123_456_7e-300),
+            },
+            dropped_frames: u64::MAX,
+        };
+        assert!(
+            bytes(&answer) <= sizing::ANSWER,
+            "an answer: {}",
+            bytes(&answer)
+        );
+        let histogram = bytes(&frame.histograms[0]);
+        assert!(histogram <= sizing::HISTOGRAM, "a histogram: {histogram}");
+        let counter = bytes(&frame.counters[0]);
+        assert!(counter <= sizing::COUNTER, "a counter: {counter}");
+        let whole = bytes(&frame);
+        assert!(
+            whole <= FRAME_LIMIT,
+            "the frame the limit was sized for is {whole} bytes, over {FRAME_LIMIT}"
+        );
     }
 }

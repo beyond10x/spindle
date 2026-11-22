@@ -1,12 +1,15 @@
 //! Recording never blocks a command: it allocates nothing, takes no lock, and loses no count
-//! while other threads record and read.
+//! while other threads record and read. Reading an oversized frame holds no more memory than the
+//! frame limit.
 //!
-//! This binary counts the allocations of each thread, so the recording thread's own count is
-//! exact whatever else runs.
+//! This binary counts the allocations of each thread, and the bytes each thread holds, so a
+//! thread's own count is exact whatever else runs.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
+use std::io::{BufReader, ErrorKind, Read};
 use std::path::Path;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -14,31 +17,48 @@ use std::time::Duration;
 use serde_json::{Map, json};
 use spindle_kernel::{Change, Event, Executed, Row, Store, StoreError, Stored};
 use spindle_telemetry::{
-    Carried, Counters, CountingStore, Outcome, Record, Sink, Telemetry, Timed, catalogue,
+    Carried, Counters, CountingStore, FRAME_LIMIT, FrameReader, Outcome, Record, Sink, Telemetry,
+    Timed, catalogue,
 };
 
 struct Counting;
 
 thread_local! {
     static ALLOCATIONS: Cell<u64> = const { Cell::new(0) };
+    static HELD: Cell<usize> = const { Cell::new(0) };
+    static PEAK: Cell<usize> = const { Cell::new(0) };
 }
 
-// SAFETY: every call is forwarded to the system allocator unchanged; the thread-local counter is
-// const-initialised and has no destructor, so touching it never allocates.
+/// Notes that this thread holds `gained` bytes more and `lost` bytes fewer. Memory freed on
+/// another thread than the one that took it is not seen, so a thread's count may only be read
+/// while it alone takes and frees what it measures.
+fn hold(gained: usize, lost: usize) {
+    HELD.with(|held| {
+        let now = (held.get() + gained).saturating_sub(lost);
+        held.set(now);
+        PEAK.with(|peak| peak.set(peak.get().max(now)));
+    });
+}
+
+// SAFETY: every call is forwarded to the system allocator unchanged; the thread-local counters
+// are const-initialised and have no destructor, so touching them never allocates.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         ALLOCATIONS.with(|count| count.set(count.get() + 1));
+        hold(layout.size(), 0);
         // SAFETY: the caller's contract is passed on unchanged.
         unsafe { System.alloc(layout) }
     }
 
     unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+        hold(0, layout.size());
         // SAFETY: the caller's contract is passed on unchanged.
         unsafe { System.dealloc(pointer, layout) }
     }
 
     unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
         ALLOCATIONS.with(|count| count.set(count.get() + 1));
+        hold(size, layout.size());
         // SAFETY: the caller's contract is passed on unchanged.
         unsafe { System.realloc(pointer, layout, size) }
     }
@@ -49,6 +69,58 @@ static ALLOCATOR: Counting = Counting;
 
 fn allocations() -> u64 {
     ALLOCATIONS.with(Cell::get)
+}
+
+/// The bytes this thread holds now, and the most it held since the last call.
+fn held() -> (usize, usize) {
+    let now = HELD.with(Cell::get);
+    let peak = PEAK.with(|peak| peak.replace(now));
+    (now, peak)
+}
+
+/// `total` bytes of `x` with no newline, counting what was read of them.
+struct Endless {
+    total: usize,
+    served: Rc<Cell<usize>>,
+}
+
+impl Read for Endless {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let count = buffer.len().min(self.total - self.served.get());
+        buffer[..count].fill(b'x');
+        self.served.set(self.served.get() + count);
+        Ok(count)
+    }
+}
+
+/// The capacity of a default `BufReader`: what one read past the limit may take.
+const ONE_READ: usize = 8 * 1024;
+
+#[test]
+fn an_oversized_frame_is_refused_without_holding_more_than_the_limit() {
+    let served = Rc::new(Cell::new(0));
+    let mut reader = FrameReader::new(BufReader::new(Endless {
+        total: 8 * FRAME_LIMIT,
+        served: Rc::clone(&served),
+    }));
+    let (before, _) = held();
+    let error = reader
+        .next_frame()
+        .expect_err("a line longer than the limit is refused");
+    let (_, peak) = held();
+    assert_eq!(error.kind(), ErrorKind::InvalidData);
+    assert!(
+        served.get() <= FRAME_LIMIT + 1 + ONE_READ,
+        "the reader read {} bytes of a line with no newline, past the limit of {FRAME_LIMIT} and \
+         one read",
+        served.get()
+    );
+    assert!(
+        peak - before <= FRAME_LIMIT + 1 + ONE_READ,
+        "reading an oversized line held {} bytes more, past the limit of {FRAME_LIMIT} and one \
+         read",
+        peak - before
+    );
 }
 
 /// A store that keeps nothing, so a commit through [`CountingStore`] measures the counting alone.

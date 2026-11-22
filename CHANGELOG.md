@@ -6,6 +6,17 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- The control process bounds what one telemetry connection can make it hold. A line longer than
+  `FRAME_LIMIT` (1 MiB) ends its connection after at most one byte past the limit is read; a
+  connection with no complete frame for five send periods is closed; at most one reader per
+  instance and eight more run, and a connection over that is closed at accept; the queue to the
+  supervisor is bounded, and a frame it has no room for is dropped and counted
+  (`Control::dropped_frames`). Before, each connection had a thread of its own, a line had no
+  limit and no deadline, and the queue had no bound. The sender drops a frame longer than
+  `FRAME_LIMIT` instead of sending it, and `Answers` keeps at most 16 answers (`RECENT_LIMIT`).
+
 ## [0.17.0] - 2026-11-12
 
 ### Added

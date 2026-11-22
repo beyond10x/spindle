@@ -1,9 +1,8 @@
 //! Launch, collect and serve: the control process of one deployment.
 
 use std::collections::BTreeMap;
-use std::io::BufReader;
 use std::net::{SocketAddr, TcpListener};
-use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
@@ -16,9 +15,10 @@ use spindle_target::{
     Artifact, EnvironmentAdmission, LaunchPlan, Launcher, Peer, Placement, ProcessLauncher,
     Running, Target, TargetKind, TargetState, place,
 };
-use spindle_telemetry::{Frame, FrameReader};
+use spindle_telemetry::Frame;
 
 use crate::answer::{self, DeployedInstance, Deployment, InstanceState};
+use crate::collect::{Counts, Limits, collect};
 use crate::history::{Clock, SystemClock, WINDOW};
 use crate::hub::Hub;
 use crate::placement::{InstanceEntry, PlacementDocument};
@@ -129,6 +129,7 @@ pub struct Control {
     stop: Arc<AtomicBool>,
     supervisor: Option<JoinHandle<()>>,
     collector: Option<JoinHandle<()>>,
+    collected: Arc<Counts>,
     socket: PathBuf,
     _socket_dir: Option<tempfile::TempDir>,
 }
@@ -303,12 +304,15 @@ impl Control {
             .set_nonblocking(true)
             .map_err(io("setting the telemetry socket non-blocking"))?;
         let stop = Arc::new(AtomicBool::new(false));
-        let (frames, received) = mpsc::channel();
+        let limits = Limits::for_instances(planned.len());
+        let (frames, received) = mpsc::sync_channel(limits.queue);
+        let collected = Arc::new(Counts::default());
         let collector = {
             let stop = Arc::clone(&stop);
+            let collected = Arc::clone(&collected);
             std::thread::Builder::new()
                 .name("spindle-control-collect".to_owned())
-                .spawn(move || collect(&listener, &frames, &stop))
+                .spawn(move || collect(&listener, &frames, limits, &collected, &stop))
                 .map_err(io("starting the collector"))?
         };
 
@@ -361,6 +365,7 @@ impl Control {
             stop,
             supervisor: Some(supervisor),
             collector: Some(collector),
+            collected,
             socket,
             _socket_dir: socket_dir,
         })
@@ -398,6 +403,12 @@ impl Control {
     /// Every instance that was not run, and why.
     pub fn not_run(&self) -> &[NotRun] {
         &self.not_run
+    }
+
+    /// Telemetry frames dropped because the supervisor had not yet taken the frames read before
+    /// them: the queue between the collector's readers and the supervisor is bounded.
+    pub fn dropped_frames(&self) -> u64 {
+        self.collected.dropped()
     }
 
     /// Stops every instance, then the server.
@@ -475,82 +486,6 @@ fn socket_path(work: &Path) -> Result<(PathBuf, Option<tempfile::TempDir>), Cont
             base.display()
         )))?;
     Ok((dir.path().join(SOCKET), Some(dir)))
-}
-
-/// Accepts instances' telemetry connections until `stop`, reading each on a thread of its own.
-fn collect(
-    listener: &UnixListener,
-    frames: &mpsc::Sender<(Option<u32>, Frame)>,
-    stop: &AtomicBool,
-) {
-    while !stop.load(Ordering::SeqCst) {
-        match listener.accept() {
-            Ok((stream, _)) => {
-                let frames = frames.clone();
-                let _ = std::thread::Builder::new()
-                    .name("spindle-control-frames".to_owned())
-                    .spawn(move || read(stream, &frames));
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(POLL);
-            }
-            Err(_) => std::thread::sleep(POLL),
-        }
-    }
-}
-
-/// Reads frames from one connection until it closes or sends something that is not a frame, each
-/// with the process id of the connection's peer.
-///
-/// The connection is bound to the instance id of its first frame: a later frame naming another id
-/// is dropped. Which connection may speak for an instance is the supervisor's check
-/// ([`Supervisor::frame`]): the peer must be in the instance's process group.
-fn read(stream: UnixStream, frames: &mpsc::Sender<(Option<u32>, Frame)>) {
-    if stream.set_nonblocking(false).is_err() {
-        return;
-    }
-    let peer = peer_pid(&stream);
-    let mut reader = FrameReader::new(BufReader::new(stream));
-    let mut bound: Option<String> = None;
-    while let Ok(Some(frame)) = reader.next_frame() {
-        let id = bound.get_or_insert_with(|| frame.instance_id.clone());
-        if frame.instance_id == *id && frames.send((peer, frame)).is_err() {
-            return;
-        }
-    }
-}
-
-/// The process id of the peer of a Unix stream: `SO_PEERCRED` on Linux, `LOCAL_PEERPID` on
-/// Apple systems; `None` where neither exists, so no frame counts for an instance in a process
-/// group of its own.
-#[cfg(target_os = "linux")]
-fn peer_pid(stream: &UnixStream) -> Option<u32> {
-    rustix::net::sockopt::socket_peercred(stream)
-        .ok()
-        .map(|credentials| credentials.pid.as_raw_nonzero().get().unsigned_abs())
-}
-
-#[cfg(target_vendor = "apple")]
-fn peer_pid(stream: &UnixStream) -> Option<u32> {
-    use std::os::fd::AsRawFd as _;
-    let mut pid: libc::pid_t = 0;
-    let mut length = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
-    // SAFETY: `pid` and `length` are valid for writing for the duration of the call.
-    let result = unsafe {
-        libc::getsockopt(
-            stream.as_raw_fd(),
-            libc::SOL_LOCAL,
-            libc::LOCAL_PEERPID,
-            (&raw mut pid).cast(),
-            &raw mut length,
-        )
-    };
-    (result == 0 && pid > 0).then_some(pid.unsigned_abs())
-}
-
-#[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
-fn peer_pid(_stream: &UnixStream) -> Option<u32> {
-    None
 }
 
 /// The thread that owns the launchers and the running instances.

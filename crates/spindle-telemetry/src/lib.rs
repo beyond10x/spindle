@@ -43,7 +43,8 @@
 //! [`Readings`]. Counters are cumulative, so a lost frame loses no count. The sender runs on its
 //! own thread and never holds up a command: with no collector, or a slow one, it drops frames and
 //! counts them in the next ([`Frame::dropped_frames`]). [`FrameReader`] reads frames on a
-//! collector's side.
+//! collector's side and refuses a line longer than [`FRAME_LIMIT`]; the sender drops a frame that
+//! long instead of sending it.
 
 mod catalogue;
 mod counters;
@@ -73,8 +74,8 @@ pub use endpoint::{
     MAX_UNIX_PATH, VSOCK_HOST_CID,
 };
 pub use frame::{
-    Answers, Frame, FrameReader, PAYLOAD_LIMIT, PROTOCOL, RecentAnswer, ResourceReading, civil_now,
-    timestamp,
+    Answers, FRAME_LIMIT, Frame, FrameReader, PAYLOAD_LIMIT, PROTOCOL, RECENT_LIMIT, RecentAnswer,
+    ResourceReading, civil_now, timestamp,
 };
 #[cfg(feature = "kernel")]
 pub use kernel::CountingStore;
