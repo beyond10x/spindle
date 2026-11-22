@@ -8,7 +8,7 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::sync::Mutex;
 
-use rustix::fs::Mode;
+use rustix::fs::{Mode, RawMode};
 use spindle_kernel::SqliteStore;
 
 fn mode(path: &Path) -> String {
@@ -26,7 +26,7 @@ fn mode(path: &Path) -> String {
 static UMASK: Mutex<()> = Mutex::new(());
 
 /// Runs `body` with the process umask set to `umask`, restoring the one before.
-fn under_umask<T>(umask: u32, body: impl FnOnce() -> T) -> T {
+fn under_umask<T>(umask: RawMode, body: impl FnOnce() -> T) -> T {
     let _held = UMASK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
