@@ -2057,6 +2057,7 @@ dependencies = [
  "eventlog-core",
  "eventlog-postgres",
  "eventlog-sqlite",
+ "rustix",
  "rustls",
  "serde",
  "serde_json",

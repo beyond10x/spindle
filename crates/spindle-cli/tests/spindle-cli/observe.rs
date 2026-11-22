@@ -359,8 +359,10 @@ fn a_variable_only_route_never_answers_under_the_reserved_prefix() {
     let answered = log(&observed, "");
     assert_eq!(answered["format"], "spindle-requests/1", "{answered}");
     assert_eq!(answered["recorded"], 1, "{answered}");
+    // A record keeps the route template as its path, not the values in the path
+    // (`story:private-local-state`).
     assert_eq!(
-        answered["requests"][0]["path"], "/x/metrics/y",
+        answered["requests"][0]["path"], "/{a}/metrics/{b}",
         "{answered}"
     );
     assert_eq!(

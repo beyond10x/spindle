@@ -548,7 +548,8 @@ const PATH_MOST: usize = 2_048;
 
 /// `spindle.observe.RequestRecord.path`: a request for a path of 60,000 bytes that no route
 /// serves adds one record whose path is its first bytes, cut to 2,048 with `…`, so a full ring
-/// of 10,000 such records holds about 20 MiB of paths rather than 600 MiB.
+/// of 10,000 such records holds about 20 MiB of paths rather than 600 MiB. Of a path of more
+/// segments only the first is kept (`story:private-local-state`).
 #[test]
 fn a_long_unrouted_path_is_recorded_cut_to_its_bound() {
     let (listener, _host, _surface, _state) = served_desk();
@@ -572,5 +573,5 @@ fn a_long_unrouted_path_is_recorded_cut_to_its_bound() {
     let (status, short) = send(address, "GET", "/no/such/route");
     assert_eq!(status, 404, "{short}");
     let (_, log) = send(address, "GET", "/__spindle/requests");
-    assert_eq!(log["requests"][0]["path"], "/no/such/route", "{log}");
+    assert_eq!(log["requests"][0]["path"], "/no/…", "{log}");
 }

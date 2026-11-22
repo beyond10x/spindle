@@ -7,7 +7,7 @@
 //! reads files a run still writes. The operating system releases the lock with the process, after
 //! a SIGKILL too.
 
-use std::fs::{File, OpenOptions, TryLockError};
+use std::fs::{File, TryLockError};
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
@@ -31,7 +31,8 @@ pub(crate) fn directory(directory: &Path) -> Result<StateLock> {
     })
 }
 
-/// Locks the state file `file`, created empty where it does not exist yet: the database file
+/// Locks the state file `file`, created empty and `0600` where it does not exist yet
+/// ([`spindle_kernel::private`]): the database file
 /// itself, so every path to it, a symbolic or a hard link included, meets one lock; then
 /// `<path>.lock` beside the path it resolves to, symbolic links followed, into which this
 /// process writes its id, so a second run reached through a link names the holder too (one
@@ -43,12 +44,7 @@ pub(crate) fn directory(directory: &Path) -> Result<StateLock> {
 /// there only `<path>.lock` is taken, and a run reached through a hard link takes a lock file of
 /// its own.
 pub(crate) fn file(file: &Path) -> Result<StateLock> {
-    let database = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(file)
+    let database = spindle_kernel::private::open_or_create(file)
         .with_context(|| format!("opening the state file {}", file.display()))?;
     let resolved = file
         .canonicalize()
@@ -100,12 +96,7 @@ fn holder(lock: &Path) -> String {
 /// Takes the lock on `lock` for `state` without waiting, then writes this process's id into it;
 /// where another process holds it, an error naming `state` and the id that process wrote.
 fn acquire(state: &Path, lock: PathBuf) -> Result<File> {
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&lock)
+    let mut file = spindle_kernel::private::open_or_create(&lock)
         .with_context(|| format!("opening the lock file {}", lock.display()))?;
     match file.try_lock() {
         Ok(()) => {}

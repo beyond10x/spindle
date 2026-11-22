@@ -15,7 +15,9 @@
 //!
 //! A record keeps a bounded reason ([`reason`]): the answer's `refused` text with every value in
 //! it written `…`, at most [`REASON_MOST`] bytes, so a refused value is never recorded. Each
-//! unmet binding input it lists keeps its reason bounded the same way ([`UnmetInput::of`]).
+//! unmet binding input it lists keeps its reason bounded the same way ([`UnmetInput::of`]). A
+//! record keeps the route template a request resolved to as its path, and of a request no route
+//! serves the first segment only, so it holds no resource identifier from a path ([`kept_path`]).
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -575,8 +577,9 @@ impl Recorder {
         self.ring(|ring| ring.capacity)
     }
 
-    /// Records one request: `method` and the path of its `target` (without the query string, cut
-    /// to [`PATH_MOST`] bytes with `…` where longer: [`recorded_path`]), the query string of a
+    /// Records one request: `method` and what is kept of the path of its `target`: the route
+    /// template, or of an unrouted request the first segment ([`kept_path`]), cut to
+    /// [`PATH_MOST`] bytes with `…` where longer ([`recorded_path`]); the query string of a
     /// console request as [`recorded_query`] keeps it, its head read `at`,
     /// answered with `response` after `duration`, for what `note` says. Its class is read from
     /// the answer ([`Class::of`]); its reason is the answer's `refused` text with every value in
@@ -593,6 +596,7 @@ impl Recorder {
         note: Note,
     ) {
         let Target { path, query } = target;
+        let kept = kept_path(path, note.route.as_deref());
         let query = (note.kind == Some("console") && !query.is_empty())
             .then(|| recorded_query(query, response.status == 200));
         let refused = refused(&response.body);
@@ -628,7 +632,7 @@ impl Recorder {
                 sequence: ring.recorded,
                 at,
                 method: method.to_owned(),
-                path: recorded_path(path),
+                path: recorded_path(&kept),
                 query,
                 route: note.route,
                 operation: note.operation,
@@ -638,7 +642,7 @@ impl Recorder {
                 outcome: note.answered.outcome,
                 reason: refused
                     .filter(|_| class != Class::Served)
-                    .map(|refused| reason(&refused)),
+                    .map(|refused| reason(&without_path(&refused, path, &kept))),
                 duration,
                 events: note.answered.events,
                 externals: note.answered.externals,
@@ -869,7 +873,35 @@ pub(crate) fn reason(refused: &str) -> String {
     kept
 }
 
-/// The path a record keeps of the request's `path`: at most [`PATH_MOST`] bytes, cut on a
+/// What a record keeps of a request's `path` (`story:private-local-state`): the route template
+/// `route` it resolved to (`/loans/{id}`), never the path with the resource identifiers in it; for
+/// a request no route serves, its first segment, `/…` after it where the path has more
+/// (`/loans/…`).
+fn kept_path(path: &str, route: Option<&str>) -> String {
+    if let Some(route) = route {
+        return route.to_owned();
+    }
+    match path
+        .char_indices()
+        .skip(1)
+        .find(|(_, character)| *character == '/')
+    {
+        Some((second, _)) => format!("{}/{ELIDED}", &path[..second]),
+        None => path.to_owned(),
+    }
+}
+
+/// The refused text `refused` with the request's raw `path` written as the record keeps it,
+/// `kept`, so its reason names no segment the record's path leaves out.
+fn without_path<'a>(refused: &'a str, path: &str, kept: &str) -> Cow<'a, str> {
+    if path.is_empty() || path == kept || !refused.contains(path) {
+        Cow::Borrowed(refused)
+    } else {
+        Cow::Owned(refused.replace(path, kept))
+    }
+}
+
+/// What a record keeps of `path`, as [`kept_path`] keeps it: at most [`PATH_MOST`] bytes, cut on a
 /// character boundary with `…` where longer.
 fn recorded_path(path: &str) -> String {
     let mut end = path.len().min(PATH_MOST + 1);
@@ -1474,6 +1506,24 @@ mod tests {
         let exact = format!("/{}", "p".repeat(super::PATH_MOST - 1));
         assert_eq!(super::recorded_path(&exact), exact);
         assert_eq!(super::recorded_path("/a/b"), "/a/b");
+    }
+
+    #[test]
+    fn a_record_keeps_the_route_template_or_the_first_segment() {
+        let kept = super::kept_path;
+        assert_eq!(kept("/loans/abc-123", Some("/loans/{id}")), "/loans/{id}");
+        assert_eq!(kept("/loans/abc-123/notes", None), "/loans/…");
+        assert_eq!(kept("/loans/", None), "/loans/…");
+        assert_eq!(kept("/loans", None), "/loans");
+        assert_eq!(kept("/", None), "/");
+        assert_eq!(kept("", None), "");
+        assert_eq!(kept("/é/x", None), "/é/…");
+        let reason = super::without_path(
+            "no route serves /loans/abc-123/x",
+            "/loans/abc-123/x",
+            "/loans/…",
+        );
+        assert_eq!(reason, "no route serves /loans/…");
     }
 
     #[test]

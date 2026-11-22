@@ -57,6 +57,7 @@ mod grant;
 mod mint;
 #[cfg(feature = "postgres")]
 mod postgres;
+pub mod private;
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
 mod sqlite;
 #[cfg(all(feature = "sqlite", feature = "postgres"))]

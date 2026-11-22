@@ -60,6 +60,10 @@ not a series for every declared command:
 `spindle_http_request_duration_seconds` is labelled by `method` and `route`, the route template,
 so a slow route shows in its own series. An unrouted request has an empty `route`.
 
+A record's `path` is the route template the request resolved to, `/loans/{id}` for a request to
+`/loans/abc-123`, so the log holds no identifier a caller put in a path. Of a request no route
+serves it keeps the first segment, `/loans/…`.
+
 A record's `reason` is the refusal text with every value the caller sent written `…`, and every
 map key, struct member or input field name the caller sent too: a refused field is named with the
 type it expected, never with what was sent. It is at most 512 bytes, and a record's `path` at most
