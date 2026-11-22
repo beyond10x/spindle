@@ -6,7 +6,7 @@ status: draft
 title: conform runs a supplied suite without synthesising one, on one shared admission
 relations:
 - serves: vision:spindle
-revision: 2
+revision: 3
 ---
 # conform runs a supplied suite without synthesising one, on one shared admission
 
@@ -37,3 +37,8 @@ revision: 2
 ## Origin
 
 Spindle 0.17.0 review, 2026-11-22: performance findings 1 and 2.
+
+## Residual
+
+- For a supplied suite the four construct refusals are not printed (`ess conform synthesize`
+  before it prints them); a synthesised authored scenario reusing an id is not checked.

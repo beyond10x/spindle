@@ -6,7 +6,7 @@ status: draft
 title: Hot paths skip work whose result nothing reads
 relations:
 - serves: vision:spindle
-revision: 2
+revision: 3
 ---
 # Hot paths skip work whose result nothing reads
 
@@ -35,3 +35,9 @@ revision: 2
 ## Origin
 
 Spindle 0.17.0 review, 2026-11-22: performance findings 3, 4 and 5.
+
+## Residual
+
+- `metrics`, `play`, `deploy`, `state` and `database` still read scenarios.
+- A PostgreSQL bulk write still reads each row: the eventlog batched read cannot ask a stream for
+  its version.

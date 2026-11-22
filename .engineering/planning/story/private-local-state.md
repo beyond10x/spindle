@@ -6,7 +6,7 @@ status: draft
 title: Local state and diagnostics keep row and identity data private
 relations:
 - serves: vision:spindle
-revision: 2
+revision: 3
 ---
 # Local state and diagnostics keep row and identity data private
 
@@ -36,3 +36,10 @@ revision: 2
 ## Origin
 
 Spindle 0.17.0 review, 2026-11-22: "Persistent SQLite state" and "Identity data in diagnostics".
+
+## Residual
+
+- A refusal reason that quotes an identity in backticks is still kept in the request record
+  (implementor, wave review-017); no view was checked for such a reason.
+- The request record keeps the field `path`, now holding the route template, so readers of the
+  observe API need no shape change.

@@ -6,7 +6,7 @@ status: draft
 title: The telemetry collector bounds what one component can make it hold
 relations:
 - serves: vision:spindle
-revision: 2
+revision: 3
 ---
 # The telemetry collector bounds what one component can make it hold
 
@@ -39,3 +39,9 @@ After this story:
 ## Origin
 
 Spindle 0.17.0 review, 2026-11-22: "Local deployment telemetry".
+
+## Residual
+
+- A local process can hold every reader slot until each connection reaches its deadline;
+  refusing peers outside every instance process group at accept would close that.
+- `Answers` keeps at most 16 answers (`RECENT_LIMIT`), so a frame has a bound size.
