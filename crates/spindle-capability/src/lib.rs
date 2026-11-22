@@ -18,4 +18,6 @@ pub mod mint;
 
 pub use admission::{Admission, Binding, admit};
 pub use derive::{Capability, Reason, Requirements, derive};
-pub use environment::{Environment, EnvironmentError, FORMAT as ENVIRONMENT_FORMAT, HttpCall};
+pub use environment::{
+    Environment, EnvironmentError, FORMAT as ENVIRONMENT_FORMAT, HttpCall, loopback_host,
+};

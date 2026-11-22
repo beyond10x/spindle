@@ -24,6 +24,8 @@ ess-primitives.workspace = true
 http-body-util = "0.1"
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
+rustls-native-certs = "0.8"
 serde.workspace = true
 serde_json.workspace = true
 spindle-capability.workspace = true
@@ -38,12 +40,14 @@ spindle-telemetry = { path = "../spindle-telemetry" }
 signal-hook = "0.3"
 tempfile = "3"
 tokio = { version = "1", default-features = false, features = ["net", "rt", "time"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 toml.workspace = true
 
 [dev-dependencies]
 serde_json = { workspace = true, features = ["raw_value"] }
 jsonschema = { version = "0.52.1", default-features = false }
 openmetrics-parser = "0.5"
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
 rustix = { version = "1", features = ["process"] }
 spindle-channel = { path = "../spindle-channel" }
 spindle-observe-api = { path = "../spindle-observe-api", default-features = false }
