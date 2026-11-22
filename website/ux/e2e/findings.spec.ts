@@ -109,9 +109,24 @@ test('UXF-018 a version Getting started shows is the latest release CHANGELOG.md
   expect(shown.filter((v) => v !== latest)).toEqual([]);
 });
 
-test('UXF-011 key data (table cells, code blocks, status chips and strips) is set at 14 px or more', async ({ page: p }) => {
-  const small: string[] = [];
-  for (const name of ['landing', 'status', 'reference-cli', 'getting-started', 'concepts-capabilities']) {
+test('UXF-022 and UXF-024 the Observe page names the request-log size and its link lands on the --observe-requests row', async ({ page: p }) => {
+  await prepare(p, desktop, adapter.themes[0]!);
+  await p.goto(`${adapter.base}docs/concepts/observe`);
+  await settle(p, adapter.notReady);
+  const link = p.locator(`${adapter.article} a[href$="/docs/reference/cli#run--observe-requests"]`);
+  await expect(link).toHaveCount(1);
+  await expect(link).toHaveText('--observe-requests');
+  await link.click();
+  await settle(p, adapter.notReady);
+  const row = p.locator('tr#run--observe-requests');
+  await expect(row).toContainText('How many request records');
+  await expect(row).toBeInViewport();
+});
+
+// One test per page, so each stays well under the 60 s test timeout on a loaded host.
+for (const name of ['landing', 'status', 'reference-cli', 'getting-started', 'concepts-capabilities']) {
+  test(`UXF-011 key data (table cells, code blocks, status chips and strips) is set at 14 px or more, ${name}`, async ({ page: p }) => {
+    const small: string[] = [];
     for (const viewport of adapter.gating) {
       await prepare(p, viewport, adapter.themes[0]!);
       await p.goto(`${adapter.base}${page(name).path}`);
@@ -132,9 +147,9 @@ test('UXF-011 key data (table cells, code blocks, status chips and strips) is se
       });
       small.push(...[...new Set(found)].slice(0, 3).map((f) => `${name} ${viewport.name}: ${f}`));
     }
-  }
-  expect(small).toEqual([]);
-});
+    expect(small).toEqual([]);
+  });
+}
 
 for (const viewport of adapter.gating) {
   test(`UXF-013 the "run --observe" link lands on the --observe row, ${viewport.name}`, async ({ page: p }) => {
@@ -166,10 +181,11 @@ test('UXF-016 the concept kickers count the concept pages, without gaps', async 
 // R-02 assets: written red against the R-02 site as measured (`UX_BUILD=.out/R-02-build`) and
 // turned green by R-02's change set.
 
-for (const theme of adapter.themes) {
-  test(`UXF-009 on a phone every table cell is inside the screen without scrolling the table, ${theme.name}`, async ({ page: p }) => {
+// One test per page and theme, so each stays well under the 60 s test timeout on a loaded host.
+for (const theme of adapter.themes) for (const site of adapter.pages) {
+  test(`UXF-009 on a phone every table cell is inside the screen without scrolling the table, ${site.name}, ${theme.name}`, async ({ page: p }) => {
     const cut: string[] = [];
-    for (const site of adapter.pages) {
+    {
       await prepare(p, phone, theme);
       await p.goto(`${adapter.base}${site.path}`);
       await settle(p, adapter.notReady);
@@ -187,9 +203,9 @@ for (const theme of adapter.themes) {
     expect(cut).toEqual([]);
   });
 
-  test(`UXF-019 at desktop width every docs table fits its column, ${theme.name}`, async ({ page: p }) => {
+  test(`UXF-019 at desktop width every docs table fits its column, ${site.name}, ${theme.name}`, async ({ page: p }) => {
     const wide: string[] = [];
-    for (const site of adapter.pages) {
+    {
       await prepare(p, desktop, theme);
       await p.goto(`${adapter.base}${site.path}`);
       await settle(p, adapter.notReady);

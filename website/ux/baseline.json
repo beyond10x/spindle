@@ -158,16 +158,19 @@
         "tolerance": 0
       },
       "reading_load.long_paragraphs": {
-        "value": 1,
-        "tolerance": 0
+        "value": 2,
+        "tolerance": 0,
+        "decision": "R-03"
       },
       "reading_load.max_paragraph": {
-        "value": 82,
-        "tolerance": 0
+        "value": 184,
+        "tolerance": 0,
+        "decision": "R-03"
       },
       "reading_load.words": {
-        "value": 1042,
-        "tolerance": 0
+        "value": 1328,
+        "tolerance": 0,
+        "decision": "R-03"
       }
     },
     "page.concepts-components-and-bindings": {
@@ -261,20 +264,57 @@
         "tolerance": 0
       },
       "reading_load.long_paragraphs": {
+        "value": 1,
+        "tolerance": 0,
+        "decision": "R-03"
+      },
+      "reading_load.max_paragraph": {
+        "value": 83,
+        "tolerance": 0,
+        "decision": "R-03"
+      },
+      "reading_load.words": {
+        "value": 2869,
+        "tolerance": 0,
+        "decision": "R-03"
+      }
+    },
+    "page.concepts-observe": {
+      "always_visible.misses": {
+        "value": 1,
+        "tolerance": 0
+      },
+      "axe.dark": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "axe.light": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "layout_shift.score": {
+        "value": 0,
+        "tolerance": 0.01
+      },
+      "overflow.elements": {
+        "value": 0,
+        "tolerance": 0
+      },
+      "reading_load.long_paragraphs": {
         "value": 0,
         "tolerance": 0
       },
       "reading_load.max_paragraph": {
-        "value": 67,
+        "value": 78,
         "tolerance": 0
       },
       "reading_load.words": {
-        "value": 840,
+        "value": 1524,
         "tolerance": 0,
-        "decision": "R-02-unslop"
+        "decision": "R-03"
       }
     },
-    "page.concepts-observe": {
+    "page.concepts-specification": {
       "always_visible.misses": {
         "value": 1,
         "tolerance": 0
@@ -304,44 +344,9 @@
         "tolerance": 0
       },
       "reading_load.words": {
-        "value": 933,
+        "value": 1759,
         "tolerance": 0,
-        "decision": "R-02-unslop"
-      }
-    },
-    "page.concepts-specification": {
-      "always_visible.misses": {
-        "value": 1,
-        "tolerance": 0
-      },
-      "axe.dark": {
-        "value": 0,
-        "tolerance": 0
-      },
-      "axe.light": {
-        "value": 0,
-        "tolerance": 0
-      },
-      "layout_shift.score": {
-        "value": 0,
-        "tolerance": 0.01
-      },
-      "overflow.elements": {
-        "value": 0,
-        "tolerance": 0
-      },
-      "reading_load.long_paragraphs": {
-        "value": 2,
-        "tolerance": 0
-      },
-      "reading_load.max_paragraph": {
-        "value": 84,
-        "tolerance": 0
-      },
-      "reading_load.words": {
-        "value": 1089,
-        "tolerance": 0,
-        "decision": "R-02-unslop"
+        "decision": "R-03"
       }
     },
     "page.docs": {
@@ -436,18 +441,19 @@
         "tolerance": 0
       },
       "reading_load.long_paragraphs": {
-        "value": 0,
-        "tolerance": 0
+        "value": 1,
+        "tolerance": 0,
+        "decision": "R-03"
       },
       "reading_load.max_paragraph": {
-        "value": 77,
+        "value": 91,
         "tolerance": 0,
-        "decision": "R-02-unslop"
+        "decision": "R-03"
       },
       "reading_load.words": {
-        "value": 1284,
+        "value": 1375,
         "tolerance": 0,
-        "decision": "R-02-release-0.10.0"
+        "decision": "R-03"
       }
     },
     "page.landing": {
@@ -480,9 +486,9 @@
         "tolerance": 0
       },
       "reading_load.words": {
-        "value": 2263,
+        "value": 2890,
         "tolerance": 0,
-        "decision": "R-02-unslop"
+        "decision": "R-03"
       }
     },
     "page.reference-cli": {
@@ -507,17 +513,19 @@
         "tolerance": 0
       },
       "reading_load.long_paragraphs": {
-        "value": 12,
+        "value": 17,
         "tolerance": 0,
-        "decision": "R-01-base-82faeb87"
+        "decision": "R-03"
       },
       "reading_load.max_paragraph": {
-        "value": 322,
-        "tolerance": 0
+        "value": 408,
+        "tolerance": 0,
+        "decision": "R-03"
       },
       "reading_load.words": {
-        "value": 3445,
-        "tolerance": 0
+        "value": 4953,
+        "tolerance": 0,
+        "decision": "R-03"
       }
     },
     "page.search": {
@@ -584,38 +592,35 @@
         "tolerance": 0
       },
       "reading_load.words": {
-        "value": 2792,
+        "value": 3611,
         "tolerance": 0,
-        "decision": "R-02-unslop"
+        "decision": "R-03"
       }
     },
     "release": {
       "glance_cost.median": {
-        "value": 3,
+        "value": 1.5,
         "tolerance": 0.05
       },
       "glance_cost.p95": {
-        "value": 3,
+        "value": 2,
         "tolerance": 0.05
       },
       "keyboard.tabs": {
-        "value": 170,
+        "value": 35,
         "tolerance": 0.3
       },
       "screen_only.actions": {
-        "value": 25,
-        "tolerance": 0,
-        "decision": "R-02-release-0.10.0"
+        "value": 3,
+        "tolerance": 0
       },
       "screen_only.detours": {
-        "value": 2,
-        "tolerance": 0,
-        "decision": "R-01"
+        "value": 1,
+        "tolerance": 0
       },
       "screen_only.looks": {
-        "value": 59,
-        "tolerance": 0,
-        "decision": "R-02-release-0.10.0"
+        "value": 4,
+        "tolerance": 0
       }
     },
     "request-log-size": {
@@ -624,15 +629,15 @@
         "tolerance": 0.05
       },
       "glance_cost.p95": {
-        "value": 3,
+        "value": 2,
         "tolerance": 0.05
       },
       "keyboard.tabs": {
-        "value": 400,
+        "value": 221,
         "tolerance": 0.3
       },
       "screen_only.actions": {
-        "value": 14,
+        "value": 10,
         "tolerance": 0
       },
       "screen_only.detours": {
@@ -640,7 +645,7 @@
         "tolerance": 0
       },
       "screen_only.looks": {
-        "value": 24,
+        "value": 11,
         "tolerance": 0
       }
     },

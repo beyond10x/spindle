@@ -11,6 +11,8 @@ custom_edit_url: null
 
 Checked against `main` and the planning store on 2026-11-04: 48 shipped, 2 planned. Every **shipped** item is held by a test on `main`, listed under the table. **Planned** is a story that is not implemented yet, or a milestone of the design with no story; nothing planned runs today.
 
+The releases, each with its version, date and changes, are in [CHANGELOG.md](https://github.com/beyond10x/spindle/blob/main/CHANGELOG.md).
+
 | Area | Capability | Status | What it means |
 |---|---|---|---|
 | Specification | [Load and compile](/docs/concepts/specification) | shipped | A directory of ESS documents is compiled by ess-compiler to the resolved IR; a document ESS refuses is refused with ESS's diagnostics. |

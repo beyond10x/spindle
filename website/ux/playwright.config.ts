@@ -9,7 +9,7 @@ export default defineConfig({
   outputDir: join(OUT, '..', 'test-results'),
   fullyParallel: true,
   workers: Number(process.env.UX_WORKERS ?? 6),
-  timeout: 180_000,
+  timeout: 60_000,
   reporter: [['list'], ['json', { outputFile: join(OUT, '..', 'playwright.json') }]],
   use: {
     browserName: 'chromium',

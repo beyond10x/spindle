@@ -64,6 +64,15 @@ export function choose(all: readonly Candidate[], words: readonly string[], used
   return ranked[0]?.c ?? null;
 }
 
+/**
+ * While reading a page: a usable link in the text (not navigation, not a search result) whose name
+ * carries a task word, the best word first, or null to read on.
+ */
+export function readingPick(all: readonly Candidate[], words: readonly string[], used: ReadonlySet<string>, here: string): Candidate | null {
+  const inText = all.filter((c) => c.role === 'link' && !c.navigation && rank(c, words) >= 0 && rank(c, words) % 2 === 0);
+  return choose(inText, words, used, here);
+}
+
 /** The first reveal control on screen not yet used on this page. */
 export function revealer(all: readonly Candidate[], reveal: readonly Control[], used: ReadonlySet<string>, page: string): Candidate | null {
   for (const r of reveal) {
@@ -199,6 +208,14 @@ export async function play(page: Page, adapter: Adapter, task: Task, viewport: V
         continue;
       }
       if (reading) {
+        const seen = readingPick(await page.evaluate(candidates, adapter.navigation), task.words, used, page.url());
+        if (seen) {
+          used.add(target(seen));
+          const from = page.url();
+          await step(seen, glanceOf(seen), '');
+          reading = page.url() !== from && onSite();
+          continue;
+        }
         const y = await page.evaluate(() => window.scrollY);
         await page.evaluate(() => window.scrollBy(0, Math.round(window.innerHeight * 0.85)));
         await settle(page, adapter.notReady);

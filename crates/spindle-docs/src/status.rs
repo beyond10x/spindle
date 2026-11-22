@@ -480,6 +480,8 @@ pub fn page() -> String {
          Every **shipped** item is held by a test on `main`, listed under the table. **Planned** \
          is a story that is not implemented yet, or a milestone of the design with no story; \
          nothing planned runs today.\n\n\
+         The releases, each with its version, date and changes, are in \
+         [CHANGELOG.md](https://github.com/beyond10x/spindle/blob/main/CHANGELOG.md).\n\n\
          | Area | Capability | Status | What it means |\n|---|---|---|---|\n",
         count("shipped"),
         count("planned"),
