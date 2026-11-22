@@ -2,11 +2,15 @@
 format: aep.planning-md/3
 id: story:conform-reuses-supplied-suite
 kind: story
-status: draft
+status: implemented
 title: conform runs a supplied suite without synthesising one, on one shared admission
 relations:
 - serves: vision:spindle
-revision: 3
+revision: 6
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-22T11:26:06Z", actor: "human:timo", revision: 4}
+- {from: "proposed", to: "active", at: "2026-11-22T11:26:06Z", actor: "human:timo", revision: 5}
+- {from: "active", to: "implemented", at: "2026-11-22T11:26:06Z", actor: "human:timo", revision: 6, decided_on: {"recorded":{"test_result":1}}}
 ---
 # conform runs a supplied suite without synthesising one, on one shared admission
 

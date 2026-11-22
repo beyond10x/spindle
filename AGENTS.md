@@ -79,6 +79,11 @@ environment, and executes it. Humans start at [`README.md`](README.md); the desi
   the process); `spindle-docs` refuses any other. A test that re-runs its own binary names itself
   with its module path (`--exact <module>::<name>`).
 - Tests that need a directory use `tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR"))`.
+- A platform type is named by its crate's alias, never by a fixed width: `rustix::fs::RawMode`
+  is `u32` on Linux and `u16` on Apple systems (PR 58: a `u32` umask in a kernel test passed
+  the Linux gate and failed CI's `macOS` job). A Linux host cannot run that job's
+  `cargo check --target *-apple-darwin`, because `ring` needs an Apple C compiler; this rule is
+  the local gate's only guard.
 - A change that removes or renames an `adversary_` test names its story (`story:<id>`) in a comment in that hunk; the organisation's release check refuses a release whose diff removes one otherwise.
 - Planning store mutations use `aep plan artifact` only. Scratch bodies go in
   `.engineering/drafts/`, which is git-ignored.

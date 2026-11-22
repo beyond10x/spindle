@@ -6,7 +6,7 @@ status: draft
 title: The test step ends within 2 minutes and kills a test at 60 s
 relations:
 - serves: vision:spindle
-revision: 2
+revision: 3
 ---
 # The test step ends within 2 minutes and kills a test at 60 s
 
@@ -30,7 +30,11 @@ a loaded build pool (host load about 100):
   `metrics_read::a_metrics_read_and_a_command_sent_during_it_answer_within_the_budget`,
   `adversary_replay::a_long_scenario_replays_in_time_linear_in_its_steps`,
   `adversary::bindings_that_trigger_each_other_do_not_hang_the_host` (5 s deadline), and the UI test
-  `TopologyPanel.adversary.test.ts › a graph of 2000 commands` (5 s).
+  `TopologyPanel.adversary.test.ts › a graph of 2000 commands` (5 s);
+- `spindle-target`'s `adversary_sampling::an_instance_that_ended_without_a_wait_is_not_sampled`
+  failed once on PR 58's `Gate` (run 45015271776, `a20329e2`; the wave does not touch
+  `spindle-target`): its wait loop stops on a sample with `memory_bytes == 0` and then asserts no
+  sample, so a zombie read as `Some` with zero memory fails it.
 
 After this story the test step runs under cargo-nextest with `slow-timeout` and `terminate-after`
 killing a test at 60 s, prints its ten slowest tests, and fails when it runs over 120 s, locally

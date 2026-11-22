@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-22T11:26:05Z",
+  "actor": "human:timo",
+  "artifact": "story:bounded-telemetry-collector",
+  "kind": "story",
+  "revision": 5,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "https://github.com/beyond10x/spindle/actions/runs/45015271776 (PR 58 Gate, macOS, Build documentation green on a20329e2; merged a3eb3962)"
+  }
+}
