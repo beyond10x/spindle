@@ -24,6 +24,7 @@ pub fn create_dir_all(directory: &Path) -> io::Result<()> {
     if let Some(parent) = directory.parent() {
         create_dir_all(parent)?;
     }
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut builder = fs::DirBuilder::new();
     #[cfg(unix)]
     std::os::unix::fs::DirBuilderExt::mode(&mut builder, DIRECTORY);
