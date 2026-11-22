@@ -6,6 +6,11 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Changed
+
+- ESS is pinned at 0.97.4 (the crates, and the `ess` CLI CI installs with its checksum); it was
+  0.97.3. The synthesised suite, its 79 scenarios and `conformance.toml` are unchanged.
+
 ## [0.18.0] - 2026-11-22
 
 ### Changed
