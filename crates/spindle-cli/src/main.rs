@@ -65,7 +65,7 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<ExitCode> {
     match cli.command {
         Command::Check { spec, json } => {
-            let loaded = spindle_spec::load(&spec)?;
+            let loaded = spindle_spec::load_model(&spec)?;
             let ir = &loaded.ir;
             let summary = serde_json::json!({
                 "system": ir.system().to_string(),
@@ -139,7 +139,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             component,
             json,
         } => {
-            let loaded = spindle_spec::load(&spec)?;
+            let loaded = spindle_spec::load_model(&spec)?;
             let requirements = spindle_capability::derive(&loaded.ir, component.as_deref())
                 .with_context(|| {
                     format!("{} declares no component {component:?}", spec.display())
@@ -810,7 +810,7 @@ fn unserved_views(ir: &spindle_spec::EssIr, component: Option<&str>) -> Vec<Stri
 }
 
 fn requirements(spec: &std::path::Path, component: Option<&str>) -> Result<Requirements> {
-    let loaded = spindle_spec::load(spec)?;
+    let loaded = spindle_spec::load_model(spec)?;
     spindle_capability::derive(&loaded.ir, component)
         .with_context(|| format!("{} declares no component {component:?}", spec.display()))
 }

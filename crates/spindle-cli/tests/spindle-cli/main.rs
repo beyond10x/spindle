@@ -64,6 +64,7 @@ mod response_source;
 mod responses;
 mod route_precedence;
 mod run;
+mod scenario_reads;
 mod served_decisions;
 mod served_operations;
 mod served_world;

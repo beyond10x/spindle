@@ -53,13 +53,19 @@ pub fn at_rest(ir: &EssIr, entity: &str, identity: &Value, row: &Row) -> Result<
     rests(ir, resolved, identity, row)
 }
 
-/// [`at_rest`] for a resolved entity.
+/// [`at_rest`] for a resolved entity. An entity that declares no invariant reads nothing of the
+/// row, so no facts are built for it. The invariants of a newtype a field is declared by are
+/// not read here: a value is checked against its type where it is taken in
+/// ([`crate::typed::validate`]).
 fn rests(
     ir: &EssIr,
     entity: &ResolvedEntity,
     identity: &Value,
     row: &Row,
 ) -> Result<(), ExecuteError> {
+    if entity.invariants.is_empty() {
+        return Ok(());
+    }
     let facts = Facts::row(ir, entity, identity, row, None);
     for invariant in &entity.invariants {
         if invariant.predicate.evaluate(&facts) == Truth::False {
@@ -2229,4 +2235,81 @@ fn check_input(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use serde_json::{Value, json};
+
+    use super::at_rest;
+    use crate::ExecuteError;
+    use crate::facts::ROWS_BUILT;
+    use crate::store::Row;
+
+    fn built() -> usize {
+        ROWS_BUILT.with(std::cell::Cell::get)
+    }
+
+    fn row(state: &str, fields: Value) -> Row {
+        let Value::Object(fields) = fields else {
+            panic!("an object, not {fields}")
+        };
+        Row {
+            state: state.to_owned(),
+            fields: fields.into_iter().collect(),
+        }
+    }
+
+    /// `tests/fixtures/adversary-affects`: `Account` declares no invariant, `Session` declares
+    /// `hits <= 100`. Checking an `Account` row builds no facts; a `Session` row still does, and
+    /// one that breaks the invariant is still refused.
+    #[test]
+    fn an_entity_without_invariants_builds_no_facts() {
+        let ir = spindle_spec::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/adversary-affects"),
+        )
+        .expect("the fixture compiles")
+        .ir;
+        let before = built();
+        for index in 0..240 {
+            at_rest(
+                &ir,
+                "tenancy.accounts.Account",
+                &json!(format!("a-{index}")),
+                &row("Active", json!({"level": index})),
+            )
+            .expect("an account rests");
+        }
+        assert_eq!(
+            built() - before,
+            0,
+            "facts built for an entity with no invariant"
+        );
+
+        let before = built();
+        at_rest(
+            &ir,
+            "tenancy.accounts.Session",
+            &json!("s"),
+            &row("Live", json!({"account_id": "a-0", "hits": 3})),
+        )
+        .expect("a session within its invariant rests");
+        assert_eq!(
+            built() - before,
+            1,
+            "a declared invariant reads the row's facts"
+        );
+        let broken = at_rest(
+            &ir,
+            "tenancy.accounts.Session",
+            &json!("s"),
+            &row("Live", json!({"account_id": "a-0", "hits": 101})),
+        );
+        assert!(
+            matches!(broken, Err(ExecuteError::BrokenInvariant { .. })),
+            "{broken:?}"
+        );
+    }
 }
