@@ -10,7 +10,7 @@ use crate::counters::Counters;
 use crate::endpoint::{
     Connection, DEFAULT_PERIOD, ENV_TELEMETRY, ENV_TELEMETRY_PERIOD_MS, Endpoint,
 };
-use crate::frame::{Answers, Frame, ResourceReading, timestamp};
+use crate::frame::{Answers, FRAME_LIMIT, Frame, ResourceReading, timestamp};
 use crate::resources::{Readings, read_resources};
 
 /// The instance id variable a launcher sets.
@@ -116,7 +116,8 @@ pub enum Delivery {
 ///
 /// A frame's counters are a [`Counters::snapshot`], so a lost frame loses no count: the next
 /// carries every total again. A frame is dropped, never queued, when it cannot be written: the
-/// connection is closed, and the next frame connects anew.
+/// connection is closed, and the next frame connects anew. A frame longer than
+/// [`FRAME_LIMIT`], which a collector refuses, is dropped before it is sent.
 #[derive(Debug)]
 pub struct Transmitter {
     counters: Arc<Counters>,
@@ -176,6 +177,10 @@ impl Transmitter {
             Ok(line) => line,
             Err(_) => return self.drop_frame(),
         };
+        if line.len() > FRAME_LIMIT {
+            self.dropped += 1;
+            return Delivery::Dropped;
+        }
         line.push(b'\n');
         if self.connection.is_none() {
             match self.options.endpoint.connect(self.options.period) {

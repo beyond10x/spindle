@@ -89,6 +89,13 @@ as written (they implement `Display`), so a name in the UI is the name in the sp
   control process read it: a Unix socket takes writes into a connection the listener has not yet
   accepted, until its buffer is full. The sequence number and the cumulative counters let the
   control process see what it missed.
+- **The collector is bounded too.** A frame is at most `FRAME_LIMIT` (1 MiB) of JSON, sized for
+  16 answers and a catalogue of 600 commands and 4,000 counters; the sender drops a longer one
+  and the collector ends a connection that sends one, after reading at most one byte past the
+  limit. A connection without a complete frame for five send periods (at least 5 s, at most
+  5 minutes) is closed; at most one reader per instance and eight more run, and a connection over
+  that is closed at accept; the queue to the supervisor is bounded, and a frame it has no room
+  for is dropped and counted.
 - **Endpoints are checked where they are given.** A Unix socket path must be UTF-8 and fit
   `sun_path` less its NUL (107 bytes on Linux, 103 on macOS); the launcher and the sender refuse
   any other by name instead of dropping every frame. QEMU guest context ids come from one count per process,
