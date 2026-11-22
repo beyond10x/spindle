@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-22
+
 ### Changed
 
 - ESS is pinned at 0.97.3 (the crates, the `ess` CLI CI installs and its checksum, and
