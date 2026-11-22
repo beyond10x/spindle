@@ -8,7 +8,7 @@
     "contract_digest": "slice-sha256/2:a885b5d5473bb59161e6aa6f6cffd74c7334987e79851288e0b00c64f8047513",
     "projection_digest": "7c88ba15e408d9a8877f7c9401e9a56318c781e1438c3eb1a85fa55aa6835755"
   },
-  "generator_version": "0.92.0",
+  "generator_version": "0.97.3",
   "target": "typescript",
   "configuration": {
     "language": "typescript"
