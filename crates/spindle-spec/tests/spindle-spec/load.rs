@@ -97,6 +97,47 @@ fn the_scenarios_an_inputs_manifest_lists_are_read() {
     );
 }
 
+/// `load_model` checks the manifest and every file it lists as `load` does, and reads no scenario
+/// text: a listed scenario that does not read as text loads the model, which `load` refuses; one
+/// that is missing is refused by both.
+#[test]
+fn a_model_load_reads_no_scenario() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+    let root = directory.path();
+    fs::write(
+        root.join("system.yaml"),
+        "format: ess/34\nsystem: listed\nversion: v1\ndomains: []\n",
+    )
+    .expect("write");
+    fs::create_dir(root.join("scenarios")).expect("the scenarios directory");
+    fs::write(root.join("scenarios/one.yaml"), [0xff, 0xfe, 0x00, 0x80]).expect("write");
+    fs::write(
+        root.join("ess-inputs.yaml"),
+        "format: ess-inputs/2\nspecification:\n  - system.yaml\nscenarios:\n  - scenarios/one.yaml\n",
+    )
+    .expect("write");
+    let model = spindle_spec::load_model(root).expect("the model loads without the scenario");
+    assert_eq!(model.files, vec!["system.yaml"]);
+    assert_eq!(model.ir.system().to_string(), "listed");
+    let error = spindle_spec::load(root).expect_err("load reads the scenario");
+    assert!(error.to_string().contains("scenarios/one.yaml"), "{error}");
+
+    fs::write(
+        root.join("ess-inputs.yaml"),
+        "format: ess-inputs/2\nspecification:\n  - system.yaml\nscenarios:\n  - scenarios/missing.yaml\n",
+    )
+    .expect("write");
+    for error in [
+        spindle_spec::load_model(root).expect_err("a listed scenario that is missing is refused"),
+        spindle_spec::load(root).expect_err("a listed scenario that is missing is refused"),
+    ] {
+        assert!(
+            error.to_string().contains("scenarios/missing.yaml"),
+            "{error}"
+        );
+    }
+}
+
 #[test]
 fn a_refused_document_reports_what_ess_said() {
     let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");

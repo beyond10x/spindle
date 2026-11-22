@@ -8,6 +8,17 @@ are Spindle's releases.
 
 ### Changed
 
+- `check`, `capabilities` and `admit` no longer read the authored scenarios `ess-inputs.yaml` lists
+  under `scenarios:`; the manifest and every file it lists are still checked, so a listed scenario
+  that is missing is still refused. `conform`, `run --scenario` and every other command read them
+  as before (`spindle_spec::load_model`, `Model`).
+- A write of several rows on the SQLite store reads the version of every row that rests from its
+  folded rows, caught up once, instead of two blocking log reads per row: renewing 24 rows makes as
+  many log calls as renewing one. A row another writer moved is still a conflict naming it.
+- Checking a row against its entity's invariants builds no facts where the entity declares none.
+- `conform --suite` runs the supplied suite without synthesising one first, and `HostTarget`
+  admits the specification once and shares the compiled model with the host of every scenario,
+  each with fresh stores.
 - A decision call leaves the host only over verified TLS. An `[http.<name>]` call to an
   `https://` URL is made over TLS, the server's certificate verified against the platform's trust
   roots, or against the PEM file a new optional `ca_file` key names; a certificate that does not

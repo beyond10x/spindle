@@ -38,6 +38,13 @@ pub(crate) const CALLER: &str = ess_domain::command::caller_value::CALLER_NAMESP
 /// The namespace a row-set selector reads the addressed subject under.
 const SUBJECT: &str = ess_domain::command::set_effects::SUBJECT_NAMESPACE;
 
+#[cfg(test)]
+thread_local! {
+    /// How many times [`Facts::row`] built a row's facts on this thread: what a test reads to
+    /// tell that a path skipped them.
+    pub(crate) static ROWS_BUILT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Bound facts and the fields that declare them.
 pub(crate) struct Facts<'a> {
     ir: &'a EssIr,
@@ -107,6 +114,8 @@ impl<'a> Facts<'a> {
         row: &Row,
         input: Option<(&'a [ResolvedField], &Map<String, Value>)>,
     ) -> Self {
+        #[cfg(test)]
+        ROWS_BUILT.with(|built| built.set(built.get() + 1));
         let mut fields = entity.fields.clone();
         fields.push(entity.identity.clone());
         let mut facts = Self::empty(ir, fields);

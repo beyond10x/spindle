@@ -8,7 +8,8 @@
 //! IR `ess specify compile` produces, because it is the same code.
 //!
 //! The authored scenarios the manifest lists under `scenarios:` are read beside it, as text, for
-//! ESS to compile against the IR ([`Specification::scenarios`]).
+//! ESS to compile against the IR ([`Specification::scenarios`]); [`load_model`] checks that they
+//! are listed and present but reads none, for a command that runs no scenario.
 //!
 //! Spindle never re-implements ESS parsing or validation. A document `ess specify validate`
 //! refuses is refused here too, with the compiler's own diagnostics.
@@ -69,10 +70,40 @@ pub enum LoadError {
     Refused(Vec<String>),
 }
 
-/// Loads and compiles the specification rooted at `root`.
+/// A compiled specification without its authored scenarios: what a command that runs none loads
+/// ([`load_model`]).
+#[derive(Debug)]
+pub struct Model {
+    /// The resolved IR.
+    pub ir: EssIr,
+    /// The source files read, relative to the specification root, in the order read.
+    pub files: Vec<String>,
+}
+
+/// Loads and compiles the specification rooted at `root`, with the authored scenarios its
+/// manifest lists ([`Specification::scenarios`]).
 ///
 /// `root` is a directory, or a single source file for a one-file specification.
 pub fn load(root: &Path) -> Result<Specification, LoadError> {
+    let (model, scenarios) = loading(root, true)?;
+    Ok(Specification {
+        ir: model.ir,
+        files: model.files,
+        scenarios,
+    })
+}
+
+/// [`load`] without reading the authored scenarios: the manifest and every file it lists, a
+/// listed scenario included, are checked as `load` checks them, and refused alike, but no
+/// scenario's text is read. For a command that runs no scenario (`check`, `capabilities`,
+/// `admit`).
+pub fn load_model(root: &Path) -> Result<Model, LoadError> {
+    loading(root, false).map(|(model, _)| model)
+}
+
+/// Discovers, reads and compiles the specification rooted at `root`; reads its scenarios too
+/// where `scenarios` is set, after its source documents and before compiling them.
+fn loading(root: &Path, scenarios: bool) -> Result<(Model, Vec<Scenario>), LoadError> {
     let Discovered {
         specification: paths,
         scenarios: scenario_paths,
@@ -92,18 +123,24 @@ pub fn load(root: &Path) -> Result<Specification, LoadError> {
         texts.push(read(path)?);
         identities.push(identity(root, path));
     }
-    let mut scenarios = Vec::with_capacity(scenario_paths.len());
-    for path in &scenario_paths {
-        scenarios.push(Scenario {
-            origin: identity(root, path),
-            text: read(path)?,
-        });
+    let mut read_scenarios = Vec::new();
+    if scenarios {
+        read_scenarios.reserve(scenario_paths.len());
+        for path in &scenario_paths {
+            read_scenarios.push(Scenario {
+                origin: identity(root, path),
+                text: read(path)?,
+            });
+        }
     }
-    compile(&identities, &texts).map(|ir| Specification {
-        ir,
-        files: identities,
-        scenarios,
-    })
+    let ir = compile(&identities, &texts)?;
+    Ok((
+        Model {
+            ir,
+            files: identities,
+        },
+        read_scenarios,
+    ))
 }
 
 /// Compiles source documents already in memory: `identities[i]` names `texts[i]`.
