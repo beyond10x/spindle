@@ -191,6 +191,17 @@ fn fixed(ir: &EssIr, caller: &Caller) -> Result<()> {
         .with_context(|| format!("--fixed-caller for --fixed-actor {}", caller.actor))
 }
 
+/// What the startup line says a fixed caller carries: the names of its attributes, in order, never
+/// their values (`story:private-local-state`), so a log of the run holds no identity it was fixed
+/// with: `the caller attributes owner_id, tenant`, or `no caller attributes`.
+fn carried(caller: &Caller) -> String {
+    if caller.attributes.is_empty() {
+        return "no caller attributes".to_owned();
+    }
+    let names: Vec<&str> = caller.attributes.keys().map(String::as_str).collect();
+    format!("the caller attributes {}", names.join(", "))
+}
+
 /// Runs every component of `ir` in one host and serves `serving.components` on
 /// `<serving.address>:<port>`, `127.0.0.1` by default, until SIGINT or SIGTERM, exiting 130 or
 /// 143.
@@ -228,8 +239,9 @@ fn fixed(ir: &EssIr, caller: &Caller) -> Result<()> {
 /// answers is noted on the surface's recorder with what answered it ([`decisions::deciding`]).
 ///
 /// With `serving.callers`, each command is sent as the first of them its grant names, each bound
-/// against the model and printed on stderr, in order, before listening; a caller the model refuses
-/// stops the run first. With `serving.caller_header` instead, each request proves its own caller
+/// against the model and printed on stderr, in order, before listening: its actor and the names of
+/// its attributes, never their values ([`carried`]); a caller the model refuses stops the run
+/// first. With `serving.caller_header` instead, each request proves its own caller
 /// in that header beside the proxy's secret, `serving.proxy_secret` ([`Surface::proving_callers`]);
 /// the header's name and the secret's file, never a value, are printed on stderr before
 /// listening, and a name that is no HTTP field name stops the run.
@@ -243,7 +255,7 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     let _lock;
     let directory = match (serving.durable, serving.state) {
         (Some("sqlite"), Some(directory)) => {
-            std::fs::create_dir_all(directory)
+            spindle_kernel::private::create_dir_all(directory)
                 .with_context(|| format!("creating the state directory {}", directory.display()))?;
             _lock = crate::state_lock::directory(directory)?;
             directory
@@ -274,21 +286,21 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     match serving.callers.as_slice() {
         [] => {}
         [caller] => eprintln!(
-            "b10x-spindle: every command is sent as {} with the caller {} (--fixed-actor, \
+            "b10x-spindle: every command is sent as {} with {} (--fixed-actor, \
              --fixed-caller): a test backend, not authentication",
             caller.actor,
-            serde_json::Value::Object(caller.attributes.clone())
+            carried(caller)
         ),
         callers => {
             for (position, caller) in callers.iter().enumerate() {
                 eprintln!(
-                    "b10x-spindle: fixed actor {} of {}: {} with the caller {}; an operation is \
+                    "b10x-spindle: fixed actor {} of {}: {} with {}; an operation is \
                      sent as the first fixed actor its grant names (--fixed-actor, \
                      --fixed-caller): a test backend, not authentication",
                     position + 1,
                     callers.len(),
                     caller.actor,
-                    serde_json::Value::Object(caller.attributes.clone())
+                    carried(caller)
                 );
             }
         }

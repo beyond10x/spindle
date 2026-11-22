@@ -302,7 +302,9 @@ fn every_userinfo_form_is_refused_and_an_at_sign_elsewhere_is_not() {
         "http://127.0.0.1:1/#a@b",
         "http://127.0.0.1:1/a%40b",
         "http://[::1]:1/",
-        "http://[fe80::1%25eth0]:1/",
+        // story:decision-calls-tls: a link-local host is off loopback, so plain http:// to it is
+        // refused as `HttpOffHost`; the zone is checked for userinfo over https:// instead.
+        "https://[fe80::1%25eth0]:1/",
     ] {
         let parsed = parse(url);
         assert!(parsed.is_ok(), "{url}: {parsed:?}");

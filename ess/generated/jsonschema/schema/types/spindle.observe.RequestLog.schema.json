@@ -5,7 +5,7 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:f8f9b31ae1b1a55fe50d26df78b8e76d0c1a770061a4e758a65b38a4c0fcb86c",
+    "contract_digest": "slice-sha256/2:4fcf58212da6167ada68772e0d4eac8d52b1b8e01c7cb958a0734d0b22240841",
     "regenerate": "ess generate"
   },
   "$defs": {
@@ -157,7 +157,7 @@
           "type": "string"
         },
         "path": {
-          "description": "The request's path, without the query string. At most 2,048 bytes, cut on a character boundary with `…` where longer.",
+          "description": "What the record keeps of the request's path, without the query string: the route template it resolved to (`/loans/{id}`), never the path with the resource identifiers in it; for an unrouted request its first segment, with `/…` after it where the path has more (`/loans/…`). At most 2,048 bytes, cut on a character boundary with `…` where longer.",
           "type": "string"
         },
         "query": {

@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use spindle_telemetry::{
-    Counters, Delivery, Endpoint, FrameReader, Outcome, Readings, Record, SenderOptions, Telemetry,
-    Transmitter, catalogue, read_resources,
+    Catalogue, Counter, Counters, Delivery, Endpoint, FRAME_LIMIT, FrameReader, Key, Kind, Outcome,
+    Readings, Record, SenderOptions, Source, Telemetry, Transmitter, catalogue, read_resources,
 };
 
 const COMMAND: &str = "rally.table.OpenMatch";
@@ -108,6 +108,32 @@ fn a_lost_frame_loses_no_count() {
     assert_eq!(totals(&third), expected);
     assert_eq!(totals(&third)[OPENED], 9);
     assert_eq!(third.histograms, snapshot.histograms);
+}
+
+#[test]
+fn a_frame_over_the_limit_is_dropped_not_sent() {
+    let (_dir, socket) = directory();
+    let listener = UnixListener::bind(&socket).expect("the collector listens");
+    listener.set_nonblocking(true).expect("non-blocking");
+    let counters = Arc::new(Counters::new(Catalogue {
+        component: "big".to_owned(),
+        counters: vec![Counter {
+            name: "n".repeat(FRAME_LIMIT),
+            kind: Kind::Counter,
+            source: Source::Kernel,
+            key: Key::Outcome {
+                command: "big.Ping".to_owned(),
+                outcome: "ok".to_owned(),
+            },
+        }],
+    }));
+    let mut transmitter = Transmitter::new(counters, options(&socket, Duration::from_secs(1)));
+    assert_eq!(transmitter.send(), Delivery::Dropped);
+    assert_eq!(transmitter.dropped(), 1);
+    assert!(
+        matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+        "a frame the collector would refuse was sent"
+    );
 }
 
 #[test]

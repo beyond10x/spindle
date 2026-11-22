@@ -3,7 +3,7 @@ title: Observe
 sidebar_position: 6
 description: What a running Spindle instance counts without the specification saying anything about metrics, the observe API contract and the observe UI.
 lede: Every effect of an instance passes through the runtime, so the runtime counts it, and the counters are derived from the specification like capabilities.
-source: crates/spindle-telemetry/src/lib.rs, crates/spindle-ingress/src/observe.rs, crates/spindle-ingress/src/observe/metrics.rs, crates/spindle-target/src/process.rs, crates/spindle-qemu/src/lib.rs, crates/spindle-firecracker/src/lib.rs, crates/spindle-telemetry/tests, crates/spindle-target/src/sample.rs, crates/spindle-target/tests/spindle-target/sampling.rs, ess/domains/observe.yaml, Taskfile.yml, ui/, docs/design/observe.md
+source: crates/spindle-telemetry/src/lib.rs, crates/spindle-telemetry/src/frame.rs, crates/spindle-control/src/collect.rs, crates/spindle-ingress/src/observe.rs, crates/spindle-ingress/src/observe/metrics.rs, crates/spindle-target/src/process.rs, crates/spindle-qemu/src/lib.rs, crates/spindle-firecracker/src/lib.rs, crates/spindle-telemetry/tests, crates/spindle-target/src/sample.rs, crates/spindle-target/tests/spindle-target/sampling.rs, ess/domains/observe.yaml, Taskfile.yml, ui/, docs/design/observe.md
 ---
 
 ## Counters
@@ -60,6 +60,10 @@ not a series for every declared command:
 `spindle_http_request_duration_seconds` is labelled by `method` and `route`, the route template,
 so a slow route shows in its own series. An unrouted request has an empty `route`.
 
+A record's `path` is the route template the request resolved to, `/loans/{id}` for a request to
+`/loans/abc-123`, so the log holds no identifier a caller put in a path. Of a request no route
+serves it keeps the first segment, `/loans/…`.
+
 A record's `reason` is the refusal text with every value the caller sent written `…`, and every
 map key, struct member or input field name the caller sent too: a refused field is named with the
 type it expected, never with what was sent. It is at most 512 bytes, and a record's `path` at most
@@ -99,6 +103,10 @@ The sender runs on its own thread. With no collector, or a slow one, it drops fr
 the number dropped in the next frame it delivers. A command does not wait for it. A frame counts as
 sent once it is written to the socket, which does not prove a collector read it.
 
+A frame is at most 1 MiB of JSON (`FRAME_LIMIT`), and a frame carries at most 16 answers. That
+holds a catalogue of 600 commands and 4,000 counters with names of up to 64 bytes. The sender drops
+a longer frame and counts it. A collector ends a connection that sends a longer line.
+
 A Unix socket path must be UTF-8 and fit the platform's `sun_path` less its NUL: at most 107 bytes on Linux and
 103 on macOS. The launcher refuses any other.
 
@@ -118,7 +126,10 @@ prints the URL to open, with the development token `dev`.
 
 `b10x-spindle deploy` places and launches the instances of a `spindle-placement/1` document, each
 on its target as `spindle.placement.PlaceInstance` decides. It collects the frames they send over a
-Unix socket and keeps the last 15 minutes of samples per instance in memory. It serves the observe
+Unix socket and keeps the last 15 minutes of samples per instance in memory. It bounds what one
+connection can make it hold. It closes a connection that sends no complete frame within five send
+periods, or at most 5 minutes. It runs one reader per instance and eight more, and closes any
+connection over that at once. It drops and counts a frame when the queue to its supervisor is full. It serves the observe
 API and the UI on `127.0.0.1`. The UI is built into the binary at compile time from `ui/dist`, so
 `deploy` needs nothing installed. `task build` builds `ui/` before cargo.
 

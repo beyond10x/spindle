@@ -666,6 +666,34 @@ impl Host {
         Self::open(ir, environment, clock, state, Some(decider), retries)
     }
 
+    /// [`Host::deciding`], on a model and an admission made once and shared by every host opened
+    /// from them: `ir` as it is shared, and `placements` as [`admit`] answered for `ir` on the
+    /// environment. Nothing is cloned or admitted again; each host still opens stores of its own.
+    ///
+    /// # Errors
+    /// As [`Host::deciding`], except that admission is not refused here: it was decided by the
+    /// [`admit`] that answered `placements`.
+    pub fn admitted(
+        ir: Arc<EssIr>,
+        placements: Arc<Placements>,
+        clock: Arc<dyn Clock>,
+        state: &Path,
+        decider: Box<dyn Decider + Send>,
+    ) -> Result<Self, HostError> {
+        Self::assemble(
+            ir,
+            clock,
+            state,
+            placements,
+            IN_PROCESS,
+            Opening {
+                decider: Some(decider),
+                retries: Retries::Retried,
+                stores: Stores::new(),
+            },
+        )
+    }
+
     /// [`Host::new`], where a component whose state admission bound to an implementation this
     /// host has no store of its own for (neither `memory` nor `sqlite`) keeps it in the store
     /// `stores` holds for it, such as a browser's IndexedDB store; every `external:` cause is
@@ -689,10 +717,10 @@ impl Host {
     ) -> Result<Self, HostError> {
         let placements = admit(&ir, environment).map_err(HostError::Refused)?;
         Self::assemble(
-            ir,
+            Arc::new(ir),
             clock,
             Path::new(""),
-            placements,
+            Arc::new(placements),
             IN_PROCESS,
             Opening {
                 decider,
@@ -720,10 +748,10 @@ impl Host {
     ) -> Result<Self, HostError> {
         let placements = admit(&ir, environment).map_err(HostError::Refused)?;
         Self::assemble(
-            ir,
+            Arc::new(ir),
             clock,
             state,
-            placements,
+            Arc::new(placements),
             IN_PROCESS,
             Opening {
                 decider,
@@ -743,10 +771,10 @@ impl Host {
     ) -> Result<Self, HostError> {
         let placements = admit(&ir, environment).map_err(HostError::Refused)?;
         Self::assemble(
-            ir,
+            Arc::new(ir),
             clock,
             state,
-            placements,
+            Arc::new(placements),
             IN_PROCESS,
             Opening {
                 decider,
@@ -759,10 +787,10 @@ impl Host {
     /// The host of the components in `placements`, their bindings carried on `carried`: every
     /// pair joined in this process when it is [`IN_PROCESS`], none otherwise.
     fn assemble(
-        ir: EssIr,
+        ir: Arc<EssIr>,
         clock: Arc<dyn Clock>,
         state: &Path,
-        placements: Placements,
+        placements: Arc<Placements>,
         carried: &str,
         opening: Opening,
     ) -> Result<Self, HostError> {
@@ -778,7 +806,6 @@ impl Host {
                  invocation that fails and does not escalate it"
             )));
         }
-        let ir = Arc::new(ir);
         let router = match retries {
             Retries::Retried => Router::from_shared(&ir)?,
             Retries::Dropped => Router::from_shared(&ir)?.dropping_retries(),
@@ -790,7 +817,7 @@ impl Host {
             .map(|route| (route.binding.clone(), Arc::new(route.clone())))
             .collect();
         let mut components = BTreeMap::new();
-        for (name, bindings) in &placements {
+        for (name, bindings) in placements.iter() {
             for binding in bindings {
                 let capability = binding.capability.as_str();
                 let implementation = binding.implementation.as_str();
@@ -943,7 +970,7 @@ impl Host {
         Ok(Self {
             ir,
             clock,
-            placements: Arc::new(placements),
+            placements,
             components,
             receivers,
             timer,

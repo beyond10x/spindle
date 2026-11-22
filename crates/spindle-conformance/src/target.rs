@@ -20,7 +20,7 @@ use ess_primitives::consistency::ConsistencyToken;
 use ess_primitives::node::Node;
 use serde_json::{Map, Value};
 use spindle_capability::Environment;
-use spindle_host::{Cause, Host, HostError, RETRY_ATTEMPTS, SystemClock};
+use spindle_host::{Cause, Host, HostError, Placements, RETRY_ATTEMPTS, Refusal, SystemClock};
 use spindle_kernel::{Decider, ExecuteError, External};
 
 /// The outcome a scenario forced for the next invocation of its command: `(command, outcome)`.
@@ -28,7 +28,10 @@ type Forcing = Arc<Mutex<Option<(String, String)>>>;
 
 /// Every component of the system in one [`Host`], opened afresh for each scenario.
 ///
-/// Each scenario starts from empty stores, bound as the environment binds them; pass it through
+/// The model is admitted on the environment once, when the target is made, and every host it
+/// opens shares that model and that admission ([`Host::admitted`]); a refused admission is
+/// answered by [`HostTarget::open`]. Each scenario starts from empty stores of its own, bound as
+/// the environment binds them; pass it through
 /// [`in_memory`](crate::in_memory) first so a run writes nothing to disk. An `external:` cause is
 /// answered as the scenario forced it ([`ConformanceTarget::configure_external_outcome`]): the
 /// forced outcome's cause holds and every other cause of that command does not, for the next
@@ -46,8 +49,9 @@ type Forcing = Arc<Mutex<Option<(String, String)>>>;
 /// `on_failure: retry` binding gave up after [`RETRY_ATTEMPTS`](spindle_host::RETRY_ATTEMPTS), as
 /// ESS's interpreter answers a retry that exceeds its execution budget.
 pub struct HostTarget {
-    ir: EssIr,
-    environment: Environment,
+    ir: Arc<EssIr>,
+    /// The admission of `ir` on the environment, made once and shared by every host opened.
+    admission: Result<Arc<Placements>, Refusal>,
     running: RefCell<Option<Running>>,
     forced: Forcing,
     /// How many commands this target has sent to a host.
@@ -85,9 +89,10 @@ impl Decider for Forced {
 impl HostTarget {
     /// A target running `ir` on `environment`.
     pub fn new(ir: EssIr, environment: Environment) -> Self {
+        let admission = spindle_host::admit(&ir, &environment).map(Arc::new);
         Self {
-            ir,
-            environment,
+            ir: Arc::new(ir),
+            admission,
             running: RefCell::new(None),
             forced: Arc::default(),
             commands: Cell::new(0),
@@ -114,9 +119,10 @@ impl HostTarget {
     }
 
     fn host(&self) -> Result<Host, HostError> {
-        Host::deciding(
-            self.ir.clone(),
-            &self.environment,
+        let placements = self.admission.clone().map_err(HostError::Refused)?;
+        Host::admitted(
+            Arc::clone(&self.ir),
+            placements,
             Arc::new(SystemClock),
             Path::new(""),
             Box::new(Forced(self.forced.clone())),

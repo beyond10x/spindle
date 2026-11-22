@@ -204,6 +204,22 @@ impl<L> Drop for LogStore<L> {
 #[cfg(feature = "sqlite")]
 pub type SqliteStore = LogStore<SqliteEventStore>;
 
+#[cfg(test)]
+thread_local! {
+    /// How many calls of its event store a [`LogStore`] blocked on, on this thread: what a test
+    /// reads to tell how many log reads a write made.
+    static LOG_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+impl<L> LogStore<L> {
+    /// Blocks on `call`, one call of the event store, on the store's runtime.
+    fn call<F: std::future::Future>(&self, call: F) -> F::Output {
+        #[cfg(test)]
+        LOG_CALLS.with(|calls| calls.set(calls.get() + 1));
+        self.runtime.block_on(call)
+    }
+}
+
 impl<L> std::fmt::Debug for LogStore<L> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -265,6 +281,9 @@ impl LogStore<SqliteEventStore> {
         let location = path.to_str().ok_or_else(|| {
             StoreError::Backend(format!("{} is not a UTF-8 path", path.display()))
         })?;
+        if create {
+            provisioned(path, location)?;
+        }
         let log = if create {
             runtime.block_on(SqliteEventStore::open(location, PREFIX))
         } else {
@@ -275,6 +294,28 @@ impl LogStore<SqliteEventStore> {
         store.rows = rows;
         Ok(store)
     }
+}
+
+/// Creates the database file at `path` before SQLite opens it, and its missing directories, kept
+/// private ([`crate::private`]): the directories `0700`, the file `0600`, whatever the umask.
+/// SQLite gives each journal, WAL and shared-memory file it creates beside a database the mode of
+/// the database, so they are `0600` too. A file or directory that exists keeps its mode, and an
+/// in-memory or URI location (`:memory:`, `file:…`) is SQLite's to open.
+#[cfg(feature = "sqlite")]
+fn provisioned(path: &Path, location: &str) -> Result<(), StoreError> {
+    if location.is_empty() || location == ":memory:" || location.starts_with("file:") {
+        return Ok(());
+    }
+    let failed = |what: &str, at: &Path, error: std::io::Error| {
+        StoreError::Backend(format!("{what} {}: {error}", at.display()))
+    };
+    if let Some(directory) = path.parent() {
+        crate::private::create_dir_all(directory)
+            .map_err(|error| failed("creating the state directory", directory, error))?;
+    }
+    crate::private::open_or_create(path)
+        .map(drop)
+        .map_err(|error| failed("creating the state file", path, error))
 }
 
 /// A runtime of its own for a SQLite store's log calls: one thread, no driver, so it holds no
@@ -358,15 +399,13 @@ impl<L: Log> LogStore<L> {
     /// The stream's version and its last event, or `None` for a stream never written.
     fn last(&self, stream: &StreamId) -> Result<Option<(u64, RecordedEvent)>, StoreError> {
         let Some(version) = self
-            .runtime
-            .block_on(self.log.stream_version(stream))
+            .call(self.log.stream_version(stream))
             .map_err(backend)?
         else {
             return Ok(None);
         };
         let slice = self
-            .runtime
-            .block_on(self.log.read_stream(stream, version.saturating_sub(1), 1))
+            .call(self.log.read_stream(stream, version.saturating_sub(1), 1))
             .map_err(backend)?;
         let last = slice.events.into_iter().last().ok_or_else(|| {
             StoreError::Backend(format!("the stream {stream:?} has no event at {version}"))
@@ -390,15 +429,58 @@ impl<L: Log> LogStore<L> {
                 )));
             }
         };
-        if actual == write.expected() {
-            return Ok(removed);
+        stands(write, actual, removed)
+    }
+
+    /// [`LogStore::stands_at`] for each of `firsts`, by instance, read together: a store that
+    /// folds the rows of a SQLite file answers each instance whose row rests there from those
+    /// rows, caught up to the feed's end once ([`LogStore::caught_up`]); every other instance (one
+    /// never written or removed, a row that did not read, any instance of a PostgreSQL store) is
+    /// read from its stream. A stream another writer moves after this read refuses the append
+    /// group, which names the version each stream stands at.
+    fn standing<'w>(
+        &self,
+        firsts: &[&'w Write],
+    ) -> Result<BTreeMap<(&'w str, String), Option<u64>>, StoreError> {
+        let resting = self.resting_versions(firsts)?;
+        let mut standing = BTreeMap::new();
+        for (write, resting) in firsts.iter().zip(resting) {
+            let removed = match resting {
+                Some(version) => stands(write, Some(version), None)?,
+                None => self.stands_at(write)?,
+            };
+            let (entity, identity) = write.instance();
+            standing.insert((entity, identity.to_string()), removed);
         }
-        Err(StoreError::Conflict {
-            entity: entity.to_owned(),
-            identity: identity.to_string(),
-            expected: write.expected(),
-            actual,
-        })
+        Ok(standing)
+    }
+
+    /// The version of each of `firsts`' instances whose row rests in the folded rows of a SQLite
+    /// file, caught up once; `None` for every other.
+    #[cfg(feature = "sqlite")]
+    fn resting_versions(&self, firsts: &[&Write]) -> Result<Vec<Option<u64>>, StoreError> {
+        let Some(rows) = &self.rows else {
+            return Ok(vec![None; firsts.len()]);
+        };
+        let folded = self.caught_up(rows)?;
+        Ok(firsts
+            .iter()
+            .map(|write| {
+                let (entity, identity) = write.instance();
+                folded
+                    .entities
+                    .get(entity)
+                    .and_then(|rows| rows.rows.get(&identity.to_string()))
+                    .map(|stored| stored.version)
+            })
+            .collect())
+    }
+
+    /// Without SQLite no store folds rows: `None` for every instance.
+    #[cfg(not(feature = "sqlite"))]
+    #[allow(clippy::unused_self, clippy::unnecessary_wraps)]
+    fn resting_versions(&self, firsts: &[&Write]) -> Result<Vec<Option<u64>>, StoreError> {
+        Ok(vec![None; firsts.len()])
     }
 
     /// The stream every write of an instance of `entity` appends one event to: its version is
@@ -411,8 +493,7 @@ impl<L: Log> LogStore<L> {
     fn entity_version(&self, entity: &str) -> Result<u64, StoreError> {
         let stream = self.entity_stream(entity)?;
         Ok(self
-            .runtime
-            .block_on(self.log.stream_version(&stream))
+            .call(self.log.stream_version(&stream))
             .map_err(backend)?
             .unwrap_or(0))
     }
@@ -467,7 +548,8 @@ impl<L: Log> Store for LogStore<L> {
     /// Appends every write's events and its `spindle.row` or `spindle.removed` event as one
     /// append group: one transaction over every stream, each at the version its write names. A
     /// write naming a version its instance does not stand at is refused before anything is
-    /// appended, naming that instance; a stream moved in between refuses the whole group. The
+    /// appended, naming that instance, the versions of all of them read together
+    /// ([`LogStore::standing`]); a stream moved in between refuses the whole group. The
     /// group appends one `spindle.written` event to the stream of each entity it writes, and of
     /// each entity a write was conditioned on ([`Write::scanned`]), that one at the version the
     /// scan answered: a write of the entity landed since refuses the group. Each names the
@@ -482,14 +564,9 @@ impl<L: Log> Store for LogStore<L> {
             self.unmoved(scanned)?;
         }
         let firsts = first_writes(writes);
-        // Where each instance's stream ends removed before the group: one read per instance,
-        // which a write naming no version appends after.
-        let mut ends_removed = BTreeMap::<(&str, String), Option<u64>>::new();
-        for write in &firsts {
-            let removed = self.stands_at(write)?;
-            let (entity, identity) = write.instance();
-            ends_removed.insert((entity, identity.to_string()), removed);
-        }
+        // Where each instance's stream ends removed before the group, which a write naming no
+        // version appends after: every instance whose row rests read together, not one read each.
+        let ends_removed = self.standing(&firsts)?;
         let mut marks = BTreeMap::<&str, Expected>::new();
         for scanned in &scanned {
             let expected = match scanned.version {
@@ -553,7 +630,7 @@ impl<L: Log> Store for LogStore<L> {
             meta: meta(request_hash(&entries).map_err(backend)?),
             appends,
         };
-        match self.runtime.block_on(self.log.append_group(&group)) {
+        match self.call(self.log.append_group(&group)) {
             Ok(landed) => {
                 self.landed(&landed);
                 // The group landed: its rows are folded in now, so a read finds no more to fold.
@@ -708,7 +785,7 @@ impl<L: Log> LogStore<L> {
             meta: meta(hash),
             appends,
         };
-        let landed = self.runtime.block_on(self.log.append_group(&group))?;
+        let landed = self.call(self.log.append_group(&group))?;
         self.landed(&landed);
         Ok(())
     }
@@ -751,8 +828,7 @@ impl<L: Log> LogStore<L> {
             // The feed answers a prefix of the committed events, so it answers the one at
             // `committed` where it answers any at or past it.
             let page = self
-                .runtime
-                .block_on(self.log.read_feed(&self.tenant, committed - 1, 1))
+                .call(self.log.read_feed(&self.tenant, committed - 1, 1))
                 .map_err(backend)?;
             if !page.events.is_empty() {
                 self.own.published.fetch_max(committed, Ordering::SeqCst);
@@ -1079,8 +1155,7 @@ impl<L: Log> LogStore<L> {
         self.published()?;
         let next = |after: u64| -> Result<Option<u64>, StoreError> {
             let page = self
-                .runtime
-                .block_on(self.log.read_feed(&self.tenant, after, 1))
+                .call(self.log.read_feed(&self.tenant, after, 1))
                 .map_err(backend)?;
             Ok(page.events.first().map(|event| event.global_seq))
         };
@@ -1124,8 +1199,7 @@ impl<L: Log> LogStore<L> {
         let mut at = position;
         loop {
             let page = self
-                .runtime
-                .block_on(self.log.read_feed(&self.tenant, at, FEED_PAGE))
+                .call(self.log.read_feed(&self.tenant, at, FEED_PAGE))
                 .map_err(backend)?;
             for event in page.events {
                 if groups
@@ -1268,8 +1342,7 @@ impl<L: Log> LogStore<L> {
         let (kind, id) = MARKS;
         let mark = StreamId::new(self.tenant.clone(), kind, id).map_err(backend)?;
         Ok(self
-            .runtime
-            .block_on(self.log.stream_version(&mark))
+            .call(self.log.stream_version(&mark))
             .map_err(backend)?
             .is_some())
     }
@@ -1316,7 +1389,7 @@ impl<L: Log> LogStore<L> {
                     })
                 })
                 .collect::<Result<Vec<_>, StoreError>>()?;
-            let answered = match self.runtime.block_on(self.log.read_many(&reads)) {
+            let answered = match self.call(self.log.read_many(&reads)) {
                 Ok(answered) => answered,
                 // Rows larger than those read so far outlasted the store's deadline: read
                 // fewer at once.
@@ -1371,8 +1444,7 @@ impl<L: Log> LogStore<L> {
         let mut version = 0;
         loop {
             let page = self
-                .runtime
-                .block_on(self.log.read_stream(&stream, version, MAX_READ_LIMIT))
+                .call(self.log.read_stream(&stream, version, MAX_READ_LIMIT))
                 .map_err(backend)?;
             let read = page.events.len();
             for event in page.events {
@@ -1550,8 +1622,7 @@ impl<L: Log> LogStore<L> {
     ) -> Result<u64, StoreError> {
         loop {
             let page = self
-                .runtime
-                .block_on(self.log.read_feed(&self.tenant, position, FEED_PAGE))
+                .call(self.log.read_feed(&self.tenant, position, FEED_PAGE))
                 .map_err(backend)?;
             let read = u64::try_from(page.events.len()).unwrap_or(u64::MAX);
             rows.read.fetch_add(read, Ordering::SeqCst);
@@ -2063,6 +2134,26 @@ impl Written {
 
 /// About how many bytes `value` takes as JSON: its strings and keys, and a few bytes for each
 /// other value, without writing it.
+/// Refuses `write` where its instance stands at `actual`, a version other than the one it names
+/// (`None`: no row), as [`StoreError::Conflict`]; otherwise answers `removed`, the version its
+/// stream ends at with a `spindle.removed` event, if it does.
+fn stands(
+    write: &Write,
+    actual: Option<u64>,
+    removed: Option<u64>,
+) -> Result<Option<u64>, StoreError> {
+    if actual == write.expected() {
+        return Ok(removed);
+    }
+    let (entity, identity) = write.instance();
+    Err(StoreError::Conflict {
+        entity: entity.to_owned(),
+        identity: identity.to_string(),
+        expected: write.expected(),
+        actual,
+    })
+}
+
 fn weight(value: &Value) -> usize {
     match value {
         Value::String(text) => text.len() + 2,
@@ -2211,6 +2302,87 @@ mod tests {
         assert_eq!(scan.rows.len(), 1);
         assert_eq!(scan.rows[0].0, json!("b"));
         assert_eq!(scan.rows[0].1.version, 2);
+    }
+
+    fn log_calls() -> u64 {
+        LOG_CALLS.with(std::cell::Cell::get)
+    }
+
+    /// Writes 24 tasks, `t-0` to `t-23`, into `store` in one group: each at version 1.
+    fn seed(store: &mut SqliteStore) {
+        let created: Vec<Write> = (0..24)
+            .map(|index| Write::Commit(change(&format!("t-{index}"), None, "Open")))
+            .collect();
+        store.commit_all(&created).expect("24 rows");
+    }
+
+    /// How many calls of the event store renewing the first `rows` of `store`'s tasks in one
+    /// group made, each named at version `at`.
+    fn renewing(store: &mut SqliteStore, rows: usize, at: u64) -> u64 {
+        let writes: Vec<Write> = (0..rows)
+            .map(|index| Write::Commit(change(&format!("t-{index}"), Some(at), "Renewed")))
+            .collect();
+        let before = log_calls();
+        store.commit_all(&writes).expect("the renewal lands");
+        log_calls() - before
+    }
+
+    /// 0.17.0: renewing 24 loans made 48 blocking log reads, two per row, before one append. A
+    /// bulk write reads the version of every row it names together: renewing 24 rows makes as
+    /// many calls of the log as renewing one, and a row another writer moved in between is still
+    /// a conflict naming it, with nothing appended.
+    #[test]
+    fn a_bulk_write_reads_versions_in_one_batch() {
+        // A unit test has no `CARGO_TARGET_TMPDIR`: the workspace's own `target/tmp`, which
+        // cargo makes for the integration tests.
+        let scratch = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp");
+        std::fs::create_dir_all(&scratch).expect("the scratch directory");
+        let directory = tempfile::tempdir_in(scratch).expect("a directory");
+        let path = directory.path().join("state.sqlite");
+
+        let mut single = store();
+        seed(&mut single);
+        let one = renewing(&mut single, 1, 1);
+        let mut bulk = store();
+        seed(&mut bulk);
+        let all = renewing(&mut bulk, 24, 1);
+        assert_eq!(
+            all, one,
+            "renewing 24 rows made {all} calls of the log, renewing one made {one}"
+        );
+        assert!(all <= 6, "renewing 24 rows made {all} calls of the log");
+
+        let mut store = SqliteStore::open(&path).expect("the store opens");
+        seed(&mut store);
+        renewing(&mut store, 24, 1);
+
+        let mut other = SqliteStore::open(&path).expect("a second writer opens");
+        other
+            .commit(&change("t-5", Some(2), "Moved"))
+            .expect("the second writer moves one row");
+        let writes: Vec<Write> = (0..24)
+            .map(|index| Write::Commit(change(&format!("t-{index}"), Some(2), "Again")))
+            .collect();
+        match store.commit_all(&writes) {
+            Err(StoreError::Conflict {
+                identity,
+                expected,
+                actual,
+                ..
+            }) => {
+                assert_eq!(identity, json!("t-5").to_string());
+                assert_eq!((expected, actual), (Some(2), Some(3)));
+            }
+            other => panic!("a conflict naming t-5, not {other:?}"),
+        }
+        let scan = store.scan(TASK).expect("scans");
+        assert!(
+            scan.rows.iter().all(|(identity, stored)| {
+                let moved = *identity == json!("t-5");
+                stored.row.state == if moved { "Moved" } else { "Renewed" }
+            }),
+            "the refused group appended nothing: {scan:?}"
+        );
     }
 
     /// A write as the store of 0.10.0 appended it: its `spindle.written` event names nothing.

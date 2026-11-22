@@ -153,17 +153,20 @@ pub enum Command {
     /// the environment binds every one of them to an HTTP call.
     ///
     /// An external cause whose capability the environment binds to an `[http.<name>]` table
-    /// (`method`, `url`, `timeout_ms`, `secret_env`) is answered, on a stdin line or a served
-    /// request, by one request to that call before any other source: a `spindle-external/1`
-    /// JSON body (`format`, `capability`, `command`, `outcome`, `cause`, `input`), with
-    /// `Authorization: Bearer` set from the environment variable `secret_env` names. A `2xx`
-    /// reply `{"holds": true | false}` answers the cause; a timeout, a failure, a reply body over
-    /// 64 KiB or any other reply fails the command `undecided` and writes nothing (`501` when
-    /// served). An unset variable, a URL other than `http://` or carrying userinfo, or a
-    /// `timeout_ms` outside 1 to 30000 exits 1 before the first request. A call blocks every
-    /// other command until it is answered or times out; a served read does not wait for it. With
-    /// `--observe`, each such cause is listed and counted with the source `call`, or
-    /// `unanswered` where its call failed.
+    /// (`method`, `url`, `timeout_ms`, `secret_env`, `ca_file`) is answered, on a stdin line or a
+    /// served request, by one request to that call before any other source: a
+    /// `spindle-external/1` JSON body (`format`, `capability`, `command`, `outcome`, `cause`,
+    /// `input`), with `Authorization: Bearer` set from the environment variable `secret_env`
+    /// names. A `2xx` reply `{"holds": true | false}` answers the cause; a timeout, a failure, a
+    /// reply body over 64 KiB or any other reply fails the command `undecided` and writes nothing
+    /// (`501` when served). An `https://` call is made over TLS, the server's certificate verified
+    /// against the platform's trust roots or the PEM file `ca_file` names; one that does not
+    /// verify fails the call before the request is written. An unset variable, a URL neither
+    /// `https://` nor `http://` to a loopback host (`localhost`, `127.0.0.0/8`, `[::1]`), one
+    /// carrying userinfo, a `ca_file` that cannot be read, or a `timeout_ms` outside 1 to 30000
+    /// exits 1 before the first request. A call blocks every other command until it is answered
+    /// or times out; a served read does not wait for it. With `--observe`, each such cause is
+    /// listed and counted with the source `call`, or `unanswered` where its call failed.
     ///
     /// `POST /api/reset` may carry a world as its JSON body, each key optional: `{"rows":
     /// [{"entity", "identity", "state", "fields"}], "decisions": {...}, "mint": <seed>}`. Every
@@ -393,7 +396,9 @@ pub enum Command {
     /// scenario ESS refuses is printed and exits 1, running nothing. Its scenarios are run by
     /// ESS's conformance runner on empty in-memory stores; an `external:` cause holds only where a
     /// scenario forces it. Prints every construct the synthesis refused (`refused:
-    /// refusal[<code>]: ...`) and how many, then `failed <id>` or `error <id>` with what was
+    /// refusal[<code>]: ...`) and how many; with `--suite` nothing is synthesised, the listed
+    /// scenarios are still checked by ESS, and one line says the refusal report is not produced
+    /// for a supplied suite. Then it prints `failed <id>` or `error <id>` with what was
     /// expected and observed for each executed scenario that did not pass, `skipped <id>:
     /// <reason>` for each the target cannot carry out (`unsupported`), and the counts.
     ///

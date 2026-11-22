@@ -18,6 +18,7 @@
 mod establish;
 mod target;
 
+use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::io::{self, Write};
 
@@ -26,7 +27,8 @@ use ess_conformance::counts::CountReport;
 use ess_conformance::known_failures::{self, Accounting, Declaration, Refusal as KnownRefusal};
 use ess_conformance::{
     AdmissionError, AdmittedSuite, AdvancingClock, ConformanceReport, ConformanceTarget,
-    ExecutedRun, Ids, Runner, RunnerConfig, ScenarioResult, Status, Synthesis,
+    ExecutedRun, Ids, Refusal, Runner, RunnerConfig, ScenarioResult, Status, SuiteProvenance,
+    Synthesis,
 };
 use spindle_capability::Environment;
 use spindle_spec::Specification;
@@ -52,26 +54,16 @@ const MEMORY: &str = "memory";
 /// # Errors
 /// When ESS refuses a listed scenario, or one has the id of a scenario already in the suite.
 pub fn synthesize(specification: &Specification) -> Result<Synthesis, SynthesisError> {
+    SYNTHESES.with(|count| count.set(count.get() + 1));
     let ir = &specification.ir;
     let mut synthesis = ess_conformance::synthesize(ir);
     if specification.scenarios.is_empty() {
         synthesis.suite.select_fresh_format_for(ir);
         return Ok(synthesis);
     }
-    let sources = specification
-        .scenarios
-        .iter()
-        .map(|scenario| Source::new(scenario.origin.clone(), scenario.text.clone()))
-        .collect::<Vec<_>>();
-    let authoring = ess_conformance::authored::compile(ir, &sources);
+    let authoring = ess_conformance::authored::compile(ir, &sources(specification));
     if !authoring.is_complete() {
-        return Err(SynthesisError::Authored(
-            authoring
-                .refusals
-                .iter()
-                .map(|refusal| refusal.to_string().trim_end().to_owned())
-                .collect(),
-        ));
+        return Err(refused(&authoring));
     }
     ess_conformance::synthesize::withdraw_witnessed_children(
         ir,
@@ -86,6 +78,123 @@ pub fn synthesize(specification: &Specification) -> Result<Synthesis, SynthesisE
     }
     synthesis.suite.select_fresh_format_for(ir);
     Ok(synthesis)
+}
+
+thread_local! {
+    /// How many times [`synthesize`] ran on this thread.
+    static SYNTHESES: Cell<u64> = const { Cell::new(0) };
+}
+
+/// What `run` returns, and how many times [`synthesize`] ran on this thread while it ran: the
+/// work a test bounds where a wall-clock bound would depend on the machine.
+#[doc(hidden)]
+pub fn syntheses<R>(run: impl FnOnce() -> R) -> (R, u64) {
+    let before = SYNTHESES.with(Cell::get);
+    let result = run();
+    (result, SYNTHESES.with(Cell::get) - before)
+}
+
+/// The suite a run of `specification` executes: `supplied`, the text of a suite `ess conform
+/// synthesize` wrote, admitted as it was written; or, with none, the one [`synthesize`] writes.
+///
+/// A supplied suite is not synthesised again, so its synthesis refusals are not known here
+/// ([`Prepared::refusals`] is `None`): the synthesis that wrote it lists them. The authored
+/// scenarios `specification` lists are still compiled by ESS against its model
+/// ([`ess_conformance::authored::compile`]), and a refusal refuses the run as it refuses a
+/// synthesised one.
+///
+/// # Errors
+/// [`Unprepared::Refused`] when ESS refuses a listed scenario (or, synthesising, one has the id of
+/// a scenario already in the suite); [`Unprepared::Admission`] when ESS does not admit the suite;
+/// [`Unprepared::Foreign`] when the supplied suite is not one of `specification`.
+pub fn prepare(
+    specification: &Specification,
+    supplied: Option<&str>,
+) -> Result<Prepared, Unprepared> {
+    let Some(text) = supplied else {
+        let synthesis = synthesize(specification)?;
+        let suite = AdmittedSuite::from_suite(&synthesis.suite).map_err(Unprepared::Admission)?;
+        return Ok(Prepared {
+            suite,
+            refusals: Some(synthesis.refusals),
+        });
+    };
+    authored(specification)?;
+    let suite = AdmittedSuite::from_json(text).map_err(Unprepared::Admission)?;
+    let expected = SuiteProvenance::of(&specification.ir);
+    let provenance = &suite.suite().provenance;
+    if provenance.system != expected.system || provenance.spec_digest != expected.spec_digest {
+        return Err(Unprepared::Foreign {
+            system: provenance.system.clone(),
+            spec_digest: provenance.spec_digest.to_string(),
+        });
+    }
+    Ok(Prepared {
+        suite,
+        refusals: None,
+    })
+}
+
+/// The authored scenarios `specification` lists, compiled by ESS against its model without
+/// synthesising a suite; none listed compiles nothing, as [`synthesize`] compiles nothing then.
+fn authored(specification: &Specification) -> Result<(), SynthesisError> {
+    if specification.scenarios.is_empty() {
+        return Ok(());
+    }
+    let authoring = ess_conformance::authored::compile(&specification.ir, &sources(specification));
+    if authoring.is_complete() {
+        Ok(())
+    } else {
+        Err(refused(&authoring))
+    }
+}
+
+/// The authored scenarios `specification` lists, as ESS reads them.
+fn sources(specification: &Specification) -> Vec<Source> {
+    specification
+        .scenarios
+        .iter()
+        .map(|scenario| Source::new(scenario.origin.clone(), scenario.text.clone()))
+        .collect()
+}
+
+/// ESS's refusals of `authoring`, each as ESS renders it.
+fn refused(authoring: &ess_conformance::authored::Authoring) -> SynthesisError {
+    SynthesisError::Authored(
+        authoring
+            .refusals
+            .iter()
+            .map(|refusal| refusal.to_string().trim_end().to_owned())
+            .collect(),
+    )
+}
+
+/// What [`prepare`] admitted for a run.
+pub struct Prepared {
+    /// The suite the run executes.
+    pub suite: AdmittedSuite,
+    /// Every construct the synthesis refused, where the suite was synthesised here; `None` for a
+    /// supplied suite.
+    pub refusals: Option<Vec<Refusal>>,
+}
+
+/// Why [`prepare`] admitted no suite.
+#[derive(Debug, thiserror::Error)]
+pub enum Unprepared {
+    /// ESS refused a listed scenario, or the synthesis wrote no suite.
+    #[error(transparent)]
+    Refused(#[from] SynthesisError),
+    /// ESS did not admit the suite.
+    #[error("{0}")]
+    Admission(AdmissionError),
+    /// The supplied suite is one of another specification: its system and specification digest.
+    #[error("a suite of {system} {spec_digest}")]
+    Foreign {
+        /// The system it checks.
+        system: String,
+        /// The digest of the specification it was written from.
+        spec_digest: String,
+    },
 }
 
 /// Why [`synthesize`] wrote no suite.

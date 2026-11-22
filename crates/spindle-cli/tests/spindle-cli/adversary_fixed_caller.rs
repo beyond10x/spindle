@@ -260,7 +260,8 @@ fn an_optional_attribute_may_be_left_out() {
         .find(|line| line.contains("--fixed-actor"))
         .unwrap_or_else(|| panic!("{stderr}"));
     assert!(line.contains(LIBRARIAN), "{line}");
-    assert!(line.contains("branch") && line.contains("North"), "{line}");
+    // The line names attributes, never their values (`story:private-local-state`).
+    assert!(line.contains("branch") && !line.contains("North"), "{line}");
     assert!(line.contains("level"), "{line}");
 }
 

@@ -6,6 +6,50 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Changed
+
+- `check`, `capabilities` and `admit` no longer read the authored scenarios `ess-inputs.yaml` lists
+  under `scenarios:`; the manifest and every file it lists are still checked, so a listed scenario
+  that is missing is still refused. `conform`, `run --scenario` and every other command read them
+  as before (`spindle_spec::load_model`, `Model`).
+- A write of several rows on the SQLite store reads the version of every row that rests from its
+  folded rows, caught up once, instead of two blocking log reads per row: renewing 24 rows makes as
+  many log calls as renewing one. A row another writer moved is still a conflict naming it.
+- Checking a row against its entity's invariants builds no facts where the entity declares none.
+- `conform --suite` runs the supplied suite without synthesising one first, and `HostTarget`
+  admits the specification once and shares the compiled model with the host of every scenario,
+  each with fresh stores.
+- A decision call leaves the host only over verified TLS. An `[http.<name>]` call to an
+  `https://` URL is made over TLS, the server's certificate verified against the platform's trust
+  roots, or against the PEM file a new optional `ca_file` key names; a certificate that does not
+  verify fails the call before the request, and with it the bearer token, is written. A plain
+  `http://` URL is accepted only on loopback (`localhost`, `127.0.0.0/8`, `[::1]`); any other is
+  refused when the environment document is read, naming the table, before any connection. Before,
+  only `http://` was called, to any host.
+
+### Fixed
+
+- The control process bounds what one telemetry connection can make it hold. A line longer than
+  `FRAME_LIMIT` (1 MiB) ends its connection after at most one byte past the limit is read; a
+  connection with no complete frame for five send periods is closed; at most one reader per
+  instance and eight more run, and a connection over that is closed at accept; the queue to the
+  supervisor is bounded, and a frame it has no room for is dropped and counted
+  (`Control::dropped_frames`). Before, each connection had a thread of its own, a line had no
+  limit and no deadline, and the queue had no bound. The sender drops a frame longer than
+  `FRAME_LIMIT` instead of sending it, and `Answers` keeps at most 16 answers (`RECENT_LIMIT`).
+
+### Security
+
+- A SQLite store creates a missing state directory `0700` and its database, lock, journal and WAL
+  files `0600` on Unix, whatever the umask; a file or directory that exists keeps its mode. Before,
+  under umask `0022`, the databases were created `0644`, readable by every local user.
+- A record of `GET /__spindle/requests` keeps the route template as its `path` (`/loans/{id}`),
+  never the raw path with its identifiers, and of a request no route serves the first segment
+  only (`/loans/…`); a refusal's reason names the path the same way. Before, the raw path was kept
+  beside the template.
+- The startup line of `run --fixed-actor` names the fixed caller's attribute names, never their
+  values. Before, it printed the caller as JSON.
+
 ## [0.17.0] - 2026-11-12
 
 ### Added

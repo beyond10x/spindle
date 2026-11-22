@@ -726,7 +726,7 @@
           "type": "string"
         },
         "path": {
-          "description": "The request's path, without the query string. At most 2,048 bytes, cut on a character boundary with `…` where longer.",
+          "description": "What the record keeps of the request's path, without the query string: the route template it resolved to (`/loans/{id}`), never the path with the resource identifiers in it; for an unrouted request its first segment, with `/…` after it where the path has more (`/loans/…`). At most 2,048 bytes, cut on a character boundary with `…` where longer.",
           "type": "string"
         },
         "query": {
@@ -1312,8 +1312,8 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-ess-provenance": {
-    "contract_digest": "slice-sha256/2:a606a0470e57188466428844f8d967159bcad5f54d5651704fbbbb0f004332f8",
-    "source_digest": "c13f24dff1d905b526d145df54ca2cc25618a9406f7177b59ea6e583acf9516a",
+    "contract_digest": "slice-sha256/2:a885b5d5473bb59161e6aa6f6cffd74c7334987e79851288e0b00c64f8047513",
+    "source_digest": "4c880f243a4d43be2788637aaa80c87ee2f19ff7e287401d1a273896f41ef8ac",
     "specification_version": "v1",
     "system": "spindle"
   }

@@ -80,6 +80,10 @@ pub struct HttpCall {
     /// The environment variable holding the call's secret, never the secret itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret_env: Option<String>,
+    /// A PEM file of the certificates an `https://` call's server is verified against, in place
+    /// of the platform's trust roots; a path relative to where the runtime starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ca_file: Option<String>,
 }
 
 /// Why an environment document was refused.
@@ -138,6 +142,22 @@ pub enum EnvironmentError {
         /// The call.
         name: String,
     },
+    /// A plain `http://` URL whose host is not loopback: a call that leaves the host goes over
+    /// TLS. The URL is not repeated.
+    #[error(
+        "[http.{name}] url is http:// to a host that is not loopback (localhost, 127.0.0.0/8, \
+         [::1]): a call that leaves the host is made over https://"
+    )]
+    HttpOffHost {
+        /// The call.
+        name: String,
+    },
+    /// A `ca_file` on a plain `http://` call, which no certificate verifies.
+    #[error("[http.{name}] names a ca_file, but its url is not https://")]
+    HttpCaWithoutTls {
+        /// The call.
+        name: String,
+    },
     /// A `secret_env` that is no variable name; the value is not repeated, in case it is a secret.
     #[error(
         "[http.{name}] secret_env is not an environment variable name (ASCII letters, digits and \
@@ -178,8 +198,8 @@ impl Environment {
     }
 
     /// Refuses an `[http.<name>]` table no `external.` key names or another key names, one with
-    /// no time to answer or more than [`MAX_TIMEOUT_MS`], a URL carrying userinfo, and a
-    /// `secret_env` that is no variable name.
+    /// no time to answer or more than [`MAX_TIMEOUT_MS`], a URL carrying userinfo, a plain
+    /// `http://` URL off loopback or with a `ca_file`, and a `secret_env` that is no variable name.
     fn check_http(&self) -> Result<(), EnvironmentError> {
         for (name, call) in &self.http {
             let naming: Vec<&String> = self
@@ -208,6 +228,14 @@ impl Environment {
             }
             if userinfo(&call.url) {
                 return Err(EnvironmentError::UrlUserinfo { name: name.clone() });
+            }
+            if let Some(host) = plain_http_host(&call.url) {
+                if !loopback_host(host) {
+                    return Err(EnvironmentError::HttpOffHost { name: name.clone() });
+                }
+                if call.ca_file.is_some() {
+                    return Err(EnvironmentError::HttpCaWithoutTls { name: name.clone() });
+                }
             }
             if call
                 .secret_env
@@ -293,6 +321,41 @@ fn userinfo(url: &str) -> bool {
         .is_some_and(|authority| authority.contains('@'))
 }
 
+/// The host of a plain `http://` URL (scheme in any case), as written: `[::1]` keeps its
+/// brackets. `None` for any other scheme.
+fn plain_http_host(url: &str) -> Option<&str> {
+    let (scheme, rest) = url.split_once("://")?;
+    if !scheme.eq_ignore_ascii_case("http") {
+        return None;
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = match authority.strip_prefix('[') {
+        Some(inside) => inside
+            .find(']')
+            .map_or(authority, |end| &authority[..end + 2]),
+        None => authority.split(':').next().unwrap_or_default(),
+    };
+    Some(host)
+}
+
+/// Whether `host`, as a URL writes it, names this host only: `localhost` (in any case), an IPv4
+/// address in `127.0.0.0/8`, or `[::1]`. Nothing is resolved; any other spelling is not loopback.
+pub fn loopback_host(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    if let Some(inside) = host
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+    {
+        return inside
+            .parse::<std::net::Ipv6Addr>()
+            .is_ok_and(|address| address == std::net::Ipv6Addr::LOCALHOST);
+    }
+    host.parse::<std::net::Ipv4Addr>()
+        .is_ok_and(|address| address.is_loopback())
+}
+
 /// Whether `name` is a portable environment variable name: ASCII letters, digits and `_`, not
 /// starting with a digit.
 fn variable_name(name: &str) -> bool {
@@ -328,6 +391,7 @@ mod tests {
                 url: "http://127.0.0.1:8080/approvals".to_owned(),
                 timeout_ms: 2000,
                 secret_env: Some("APPROVALS_TOKEN".to_owned()),
+                ca_file: None,
             })
         );
         assert_eq!(

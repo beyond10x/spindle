@@ -25,6 +25,13 @@
 //! from a peer process in that group. The last [`WINDOW`] of samples is kept per instance
 //! ([`History`]). An instance that ends moves to `Exited`.
 //!
+//! What one connection can make the collector hold is bounded. A line longer than
+//! [`spindle_telemetry::FRAME_LIMIT`] ends its connection, and so does a connection that sends no
+//! complete frame within five send periods (at least 5 s, at most 5 minutes). At most one reader
+//! per instance and eight more run at once; a connection accepted over that is closed. The queue
+//! from the readers to the supervisor is bounded: a frame it has no room for is dropped and
+//! counted ([`Control::dropped_frames`]).
+//!
 //! # Serve
 //!
 //! On `127.0.0.1` only, every request checked for its `Host` header and a random token:
@@ -38,6 +45,7 @@
 //! | `GET /` | the UI, embedded at compile time from `ui/dist` |
 
 mod answer;
+mod collect;
 mod control;
 mod history;
 mod hub;

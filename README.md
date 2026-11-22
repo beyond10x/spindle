@@ -135,6 +135,13 @@ prefix, and an exact key wins over it.
 | `postgres` | the tables `spindle_<component>_*` of the PostgreSQL the settings `database_url`, `database_ca`, `database_schema`, `database_pool` and `database_connections` name; `b10x-spindle store migrate` creates them ([environment and admission](https://beyond10x.github.io/spindle/docs/concepts/environment-and-admission#state-in-postgresql)); `b10x-spindle state move` moves a `run --state` directory into them, versions kept ([moving a state directory](https://beyond10x.github.io/spindle/docs/concepts/environment-and-admission#moving-a-state-directory-into-postgresql)) |
 | `indexeddb` | one IndexedDB database per component, in the Service Worker host |
 
+An `external.` key may name an HTTP call the document declares as `[http.<name>]`, which `run`
+asks for each such cause ([an external cause bound to an HTTP call](https://beyond10x.github.io/spindle/docs/concepts/environment-and-admission#an-external-cause-bound-to-an-http-call)).
+The call leaves the host only over verified TLS: an `https://` URL, its certificate verified
+against the platform's trust roots or the PEM file `ca_file` names. A plain `http://` URL is
+accepted only on loopback (`localhost`, `127.0.0.0/8`, `[::1]`); any other is refused when the
+document is read.
+
 ## Layout
 
 | path | what |
