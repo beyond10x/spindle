@@ -2,9 +2,11 @@
 //! one process.
 //!
 //! The suite is synthesised from the specification by ESS, with the authored scenarios its
-//! `ess-inputs.yaml` lists ([`spindle_conformance::synthesize`]), or read from `--suite`, and run
-//! by ESS's runner against [`HostTarget`]. Every construct the synthesis refused is printed with
-//! its code first, so a scenario the suite does not hold is not silently absent.
+//! `ess-inputs.yaml` lists ([`spindle_conformance::synthesize`]), or read from `--suite` without
+//! synthesising one ([`spindle_conformance::prepare`]), and run by ESS's runner against
+//! [`HostTarget`]. Every construct the synthesis refused is printed with its code first, so a
+//! scenario the suite does not hold is not silently absent; a supplied suite's refusals are
+//! listed by the synthesis that wrote it, and one line says so.
 
 use std::io::Write;
 use std::path::Path;
@@ -13,9 +15,8 @@ use std::process::ExitCode;
 use anyhow::{Context, Result};
 use ess_conformance::counts::CountRun;
 use ess_conformance::known_failures::Declaration;
-use ess_conformance::{AdmittedSuite, SuiteProvenance};
 use spindle_capability::Environment;
-use spindle_conformance::{Counts, HostTarget};
+use spindle_conformance::{Counts, HostTarget, Unprepared};
 use spindle_host::HostError;
 
 /// Exit status of a run the environment refused.
@@ -49,44 +50,52 @@ pub(crate) fn conform(arguments: &Conform<'_>) -> Result<ExitCode> {
 
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
-    let synthesis = match spindle_conformance::synthesize(&loaded) {
-        Ok(synthesis) => synthesis,
-        Err(refused) => {
+    // A supplied suite is read and admitted as it was written, and nothing is synthesised.
+    let supplied = arguments
+        .suite
+        .map(|path| {
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))
+        })
+        .transpose()?;
+    let prepared = match spindle_conformance::prepare(&loaded, supplied.as_deref()) {
+        Ok(prepared) => prepared,
+        Err(Unprepared::Refused(refused)) => {
             writeln!(out, "{refused}")?;
             out.flush()?;
             return Ok(ExitCode::FAILURE);
         }
-    };
-    for refusal in &synthesis.refusals {
-        writeln!(out, "refused: {}", refusal.to_string().trim_end())?;
-    }
-    writeln!(out, "{} refusal(s)", synthesis.refusals.len())?;
-
-    let suite = match arguments.suite {
-        None => AdmittedSuite::from_suite(&synthesis.suite)
-            .context("admitting the synthesised suite")?,
-        Some(path) => {
-            let text = std::fs::read_to_string(path)
-                .with_context(|| format!("reading {}", path.display()))?;
-            let suite = AdmittedSuite::from_json(&text)
-                .with_context(|| format!("admitting {}", path.display()))?;
-            let expected = SuiteProvenance::of(&loaded.ir);
-            let provenance = &suite.suite().provenance;
-            if provenance.system != expected.system
-                || provenance.spec_digest != expected.spec_digest
-            {
-                eprintln!(
-                    "b10x-spindle: {} is a suite of {} {}, not of {}",
-                    path.display(),
-                    provenance.system,
-                    provenance.spec_digest,
-                    arguments.spec.display()
-                );
-                return Ok(ExitCode::FAILURE);
-            }
-            suite
+        Err(Unprepared::Admission(error)) => {
+            return Err(anyhow::Error::new(error).context(match arguments.suite {
+                Some(path) => format!("admitting {}", path.display()),
+                None => "admitting the synthesised suite".to_owned(),
+            }));
+        }
+        Err(Unprepared::Foreign {
+            system,
+            spec_digest,
+        }) => {
+            eprintln!(
+                "b10x-spindle: {} is a suite of {system} {spec_digest}, not of {}",
+                arguments.suite.unwrap_or(Path::new("")).display(),
+                arguments.spec.display()
+            );
+            return Ok(ExitCode::FAILURE);
         }
     };
+    match &prepared.refusals {
+        Some(refusals) => {
+            for refusal in refusals {
+                writeln!(out, "refused: {}", refusal.to_string().trim_end())?;
+            }
+            writeln!(out, "{} refusal(s)", refusals.len())?;
+        }
+        None => writeln!(
+            out,
+            "refusal report not produced for a supplied suite: the synthesis that wrote it \
+             lists its refusals"
+        )?,
+    }
+    let suite = prepared.suite;
 
     // The declaration binds this run before the target is made, as ESS's own runner binds it.
     let declaration = match arguments.known_failing {

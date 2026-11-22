@@ -393,7 +393,9 @@ pub enum Command {
     /// scenario ESS refuses is printed and exits 1, running nothing. Its scenarios are run by
     /// ESS's conformance runner on empty in-memory stores; an `external:` cause holds only where a
     /// scenario forces it. Prints every construct the synthesis refused (`refused:
-    /// refusal[<code>]: ...`) and how many, then `failed <id>` or `error <id>` with what was
+    /// refusal[<code>]: ...`) and how many; with `--suite` nothing is synthesised, the listed
+    /// scenarios are still checked by ESS, and one line says the refusal report is not produced
+    /// for a supplied suite. Then it prints `failed <id>` or `error <id>` with what was
     /// expected and observed for each executed scenario that did not pass, `skipped <id>:
     /// <reason>` for each the target cannot carry out (`unsupported`), and the counts.
     ///

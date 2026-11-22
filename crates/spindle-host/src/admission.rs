@@ -1,5 +1,6 @@
 //! Admission per component: every component of the system is admitted on its own.
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -33,12 +34,27 @@ impl fmt::Display for Refusal {
     }
 }
 
+thread_local! {
+    /// How many times [`admit`] ran on this thread.
+    static ADMISSIONS: Cell<u64> = const { Cell::new(0) };
+}
+
+/// What `run` returns, and how many times [`admit`] ran on this thread while it ran: the work a
+/// test bounds where a wall-clock bound would depend on the machine.
+#[doc(hidden)]
+pub fn admissions<R>(run: impl FnOnce() -> R) -> (R, u64) {
+    let before = ADMISSIONS.with(Cell::get);
+    let result = run();
+    (result, ADMISSIONS.with(Cell::get) - before)
+}
+
 /// Admits every component of `ir` against `environment`, each with the capabilities it needs
 /// when it runs on its own ([`spindle_capability::derive`] with the component).
 ///
 /// # Errors
 /// A [`Refusal`] naming every component the environment cannot run and everything each lacks.
 pub fn admit(ir: &EssIr, environment: &Environment) -> Result<Placements, Refusal> {
+    ADMISSIONS.with(|count| count.set(count.get() + 1));
     let mut placements = Placements::new();
     let mut missing = BTreeMap::new();
     for component in ir.components().values() {

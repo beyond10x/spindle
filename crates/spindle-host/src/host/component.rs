@@ -459,10 +459,10 @@ impl Host {
             }
         };
         let mut host = Self::assemble(
-            ir,
+            Arc::new(ir),
             clock,
             state,
-            placements,
+            Arc::new(placements),
             TCP,
             Opening {
                 decider: None,

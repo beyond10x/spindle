@@ -164,4 +164,6 @@ parameters. A step that needs one is reported as unsupported, which also exits 1
 `b10x-spindle conform` runs the suite ESS synthesises from a specification, or one written for it,
 against every component in one process. `task check` runs it on Spindle's own specification. It
 lists every synthesis refusal with its code and holds the executed and skipped counts
-([status](/docs/status)).
+([status](/docs/status)). Given a suite with `--suite`, it synthesises nothing: ESS still checks
+the authored scenarios the specification lists, and one line says the refusal report is left to
+the synthesis that wrote the suite.
