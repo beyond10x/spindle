@@ -2,11 +2,13 @@
 format: aep.planning-md/3
 id: story:identity-mint-types-and-fallback
 kind: story
-status: draft
+status: proposed
 title: The host mints every identity type ESS mints, and reads value-source fallbacks
 relations:
 - serves: vision:spindle
-revision: 1
+revision: 2
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-22T18:23:52Z", actor: "human:timo", revision: 2}
 ---
 # The host mints every identity type ESS mints, and reads value-source fallbacks
 

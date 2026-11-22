@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:upsert-creation-related-refusal-first
 kind: story
-status: active
+status: implemented
 title: 'An upsert''s creation answers its exists: false refusal first'
 tags:
 - downstream-gap
@@ -18,10 +18,11 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/main.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/spindle-kernel/upsert_creation_related_refusal.rs
-revision: 7
+revision: 8
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-09T22:47:56Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-09T22:47:56Z", actor: "human:timo", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-22T18:23:53Z", actor: "human:timo", revision: 8, decided_on: {"recorded":{"test_result":1}}}
 ---
 # An upsert's creation answers its `exists: false` refusal first
 

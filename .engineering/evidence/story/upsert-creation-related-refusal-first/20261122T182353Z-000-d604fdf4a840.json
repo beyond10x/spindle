@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-22T18:23:53Z",
+  "actor": "human:timo",
+  "artifact": "story:upsert-creation-related-refusal-first",
+  "kind": "story",
+  "revision": 7,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "CI Gate on main at 0.18.0 (64b2b2cc) runs crates/spindle-kernel/tests/spindle-kernel/upsert_creation_related_refusal.rs",
+    "reference": "https://github.com/beyond10x/spindle/actions/runs/45045101909"
+  }
+}

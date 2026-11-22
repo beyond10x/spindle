@@ -2,11 +2,13 @@
 format: aep.planning-md/3
 id: story:decisions-rules-on-input-predicates
 kind: story
-status: draft
+status: proposed
 title: Decision rules match on the command's input
 relations:
 - serves: vision:spindle
-revision: 1
+revision: 2
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-22T18:23:52Z", actor: "human:timo", revision: 2}
 ---
 # Decision rules match on the command's input
 
