@@ -3,7 +3,7 @@ title: Environment and admission
 sidebar_position: 3
 description: An environment names the implementations available where Spindle runs; admission binds one to every capability or refuses.
 lede: The environment, not the specification, chooses the implementations, and admission is the only step that differs between a laptop and a VM.
-source: crates/spindle-capability/src/environment.rs, crates/spindle-capability/src/admission.rs, crates/spindle-capability/tests/spindle-capability/admission.rs, crates/spindle-cli/tests/spindle-cli/admit.rs, crates/spindle-host/src/host.rs, crates/spindle-kernel/src/postgres.rs, crates/spindle-cli/src/database.rs, crates/spindle-cli/tests/spindle-cli/postgres.rs
+source: crates/spindle-capability/src/environment.rs, crates/spindle-capability/src/admission.rs, crates/spindle-cli/src/calls.rs, crates/spindle-cli/tests/spindle-cli/tls_cause.rs, crates/spindle-capability/tests/spindle-capability/admission.rs, crates/spindle-cli/tests/spindle-cli/admit.rs, crates/spindle-host/src/host.rs, crates/spindle-kernel/src/postgres.rs, crates/spindle-cli/src/database.rs, crates/spindle-cli/tests/spindle-cli/postgres.rs
 ---
 
 ## The environment
@@ -115,16 +115,37 @@ The document never holds the secret. `secret_env` is the name of an environment 
 when `run` starts and sent as `Authorization: Bearer <value>`. An unset variable stops `run` before
 the first request.
 
+A call leaves the host only over verified TLS:
+
+| `url` | How the call is made |
+|---|---|
+| `https://` | over TLS. The server's certificate is verified against the platform's trust roots, or, where the table has `ca_file`, against the PEM certificates in that file only. A certificate that does not verify fails the call before the request is written, and the failure names the certificate |
+| `http://` on loopback | in plain text. Loopback is `localhost`, an address in `127.0.0.0/8` or `[::1]` |
+
+`ca_file` is a path, relative to the directory `run` starts in. It is read when `run` starts: a
+file that cannot be read or holds no certificate stops `run` before the first request.
+
+```toml
+[http.approvals]
+method = "POST"
+url = "https://approvals.example/approvals"
+timeout_ms = 2000
+secret_env = "APPROVALS_TOKEN"
+ca_file = "approvals-ca.pem"
+```
+
 These are refused when the document is read. The message gives the table's name, never the
 value:
 
 - a table that no `external.` key uses
 - a `timeout_ms` outside 1 to 30000
 - a `url` carrying userinfo (`user:password@`)
+- an `http://` `url` whose host is not loopback
+- a `ca_file` on an `http://` `url`
 - a `secret_env` that is not a variable name
 
-This build calls `http://` URLs only. A served run whose every external cause is bound to a call
-needs neither `--decisions` nor `--answer-default`. With `--observe`, a cause a call answers is
+A served run whose every external cause is bound to a call needs neither `--decisions` nor
+`--answer-default`. With `--observe`, a cause a call answers is
 listed and counted with the source `call`, and one whose call failed as `unanswered`.
 
 ## State in PostgreSQL

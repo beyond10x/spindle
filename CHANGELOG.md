@@ -6,6 +6,16 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Changed
+
+- A decision call leaves the host only over verified TLS. An `[http.<name>]` call to an
+  `https://` URL is made over TLS, the server's certificate verified against the platform's trust
+  roots, or against the PEM file a new optional `ca_file` key names; a certificate that does not
+  verify fails the call before the request, and with it the bearer token, is written. A plain
+  `http://` URL is accepted only on loopback (`localhost`, `127.0.0.0/8`, `[::1]`); any other is
+  refused when the environment document is read, naming the table, before any connection. Before,
+  only `http://` was called, to any host.
+
 ## [0.17.0] - 2026-11-12
 
 ### Added
