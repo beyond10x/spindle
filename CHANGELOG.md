@@ -8,6 +8,10 @@ are Spindle's releases.
 
 ### Changed
 
+- ESS is pinned at 0.97.3 (the crates, the `ess` CLI CI installs and its checksum, and
+  `requires: ess 0.97` in `ess/ess-inputs.yaml`); it was 0.92.0. The suite ESS synthesises still
+  has 79 scenarios, all executed and passed, `conformance.toml` is unchanged, and the observe types differ
+  only in their header.
 - `check`, `capabilities` and `admit` no longer read the authored scenarios `ess-inputs.yaml` lists
   under `scenarios:`; the manifest and every file it lists are still checked, so a listed scenario
   that is missing is still refused. `conform`, `run --scenario` and every other command read them
