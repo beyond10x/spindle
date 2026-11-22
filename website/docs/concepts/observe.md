@@ -40,11 +40,12 @@ prints the table's non-zero counters under the grid
 ## A served run's metrics and request log
 
 `b10x-spindle run --observe` answers `GET /__spindle/metrics` in the Prometheus text format and
-`GET /__spindle/requests` with the last requests it answered.
+`GET /__spindle/requests` with the last 256 request records, newest first.
+[`--observe-requests`](../reference/cli.md#run--observe-requests) sets how many request records it
+keeps, from 1 to 10000.
 
 A scrape writes a series only once something was counted in it, and keeps writing it after that.
-So a model of hundreds of commands that has run none writes one series, `spindle_resets_total`,
-not a series for every declared command:
+So a model of hundreds of commands that has run none writes one series, `spindle_resets_total`:
 
 | Family | Written from |
 |---|---|
@@ -60,25 +61,23 @@ not a series for every declared command:
 `spindle_http_request_duration_seconds` is labelled by `method` and `route`, the route template,
 so a slow route shows in its own series. An unrouted request has an empty `route`.
 
-A record's `path` is the route template the request resolved to, `/loans/{id}` for a request to
-`/loans/abc-123`, so the log holds no identifier a caller put in a path. Of a request no route
-serves it keeps the first segment, `/loans/…`.
+| Request log field | Holds | At most |
+|---|---|---|
+| `path` | the route template the request resolved to, `/loans/{id}` for a request to `/loans/abc-123`. Of a request no route serves, the first segment, `/loans/…` | 2,048 bytes |
+| `reason` | the refusal text, with every value and every map key, struct member or input field name the caller sent written `…`. A refused field is named with the type it expected | 512 bytes |
+| `query` | the query string of a console request (`/api/model`, `/api/events`, `/api/reset`): `after` with the cursor only where the read was answered, `limit` with its value only where it is digits, every other name and value written `…` | 2,048 bytes |
 
-A record's `reason` is the refusal text with every value the caller sent written `…`, and every
-map key, struct member or input field name the caller sent too: a refused field is named with the
-type it expected, never with what was sent. It is at most 512 bytes, and a record's `path` at most
-2,048 bytes, each cut with `…` where longer, so the record of a refused request holds its method,
-its path and the names of its route, and under 1 KiB besides, whatever its body held. A record
-of a console request (`/api/model`, `/api/events`, `/api/reset`) that carried a query string
-keeps it as `query`, at most 2,048 bytes as the path is: `after` and `limit` with their values,
-the cursor only where the read was answered and the limit only where it is digits, and every
-other name and value written `…`. So a poller's cursor is in the log and nothing else it sent. The `reason` of each binding listed under `unmet` is bounded
-the same way: it names the binding, the input and the type it expected, never the value the event
-carried.
+A longer field is cut with `…`. So the log holds no identifier a caller put in a path, and the
+record of a refused request holds its method, its path and the names of its route, and under
+1 KiB besides, whatever its body held. A poller's cursor is in the log, and no other value it
+sent.
+
+The `reason` of each binding listed under `unmet` is bounded the same way: it gives the binding,
+the input and the type it expected, and not the value the event carried.
 
 ## Resources
 
-Each launcher samples what an instance costs the host from `/proc`: CPU seconds (user and system
+A launcher samples from `/proc` what an instance costs the host: CPU seconds (user and system
 time) and resident memory, and its share of the vCPUs and memory the instance asked for. A process
 instance without a limit reports no quota.
 
@@ -103,12 +102,12 @@ The sender runs on its own thread. With no collector, or a slow one, it drops fr
 the number dropped in the next frame it delivers. A command does not wait for it. A frame counts as
 sent once it is written to the socket, which does not prove a collector read it.
 
-A frame is at most 1 MiB of JSON (`FRAME_LIMIT`), and a frame carries at most 16 answers. That
-holds a catalogue of 600 commands and 4,000 counters with names of up to 64 bytes. The sender drops
-a longer frame and counts it. A collector ends a connection that sends a longer line.
+A frame is at most 1 MiB of JSON (`FRAME_LIMIT`), and a frame carries at most 16 answers. One
+frame holds a catalogue of 600 commands and 4,000 counters with names of up to 64 bytes. The sender
+drops a longer frame and counts it. A collector ends a connection that sends a longer line.
 
-A Unix socket path must be UTF-8 and fit the platform's `sun_path` less its NUL: at most 107 bytes on Linux and
-103 on macOS. The launcher refuses any other.
+A Unix socket path must be UTF-8 and fit the platform's `sun_path` less its NUL: at most 107 bytes
+on Linux and 103 on macOS. The launcher refuses any other.
 
 ## The observe API and UI
 
@@ -127,11 +126,15 @@ prints the URL to open, with the development token `dev`.
 `b10x-spindle deploy` places and launches the instances of a `spindle-placement/1` document, each
 on its target as `spindle.placement.PlaceInstance` decides. It collects the frames they send over a
 Unix socket and keeps the last 15 minutes of samples per instance in memory. It bounds what one
-connection can make it hold. It closes a connection that sends no complete frame within five send
-periods, or at most 5 minutes. It runs one reader per instance and eight more, and closes any
-connection over that at once. It drops and counts a frame when the queue to its supervisor is full. It serves the observe
-API and the UI on `127.0.0.1`. The UI is built into the binary at compile time from `ui/dist`, so
-`deploy` needs nothing installed. `task build` builds `ui/` before cargo.
+connection can make it hold:
+
+- It closes a connection that sends no complete frame within five send periods, or at most
+  5 minutes.
+- It runs one reader per instance and eight more, and closes any connection over that at once.
+- It drops and counts a frame when the queue to its supervisor is full.
+
+It serves the observe API and the UI on `127.0.0.1`. The UI is built into the binary at compile
+time from `ui/dist`, so `deploy` runs from the binary alone. `task build` builds `ui/` before cargo.
 
 ```console
 task build

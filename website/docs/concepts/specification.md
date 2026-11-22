@@ -23,9 +23,8 @@ refuses is refused here too:
 - an entry that passes through a symlink
 
 It parses the files together, so a type declared in one file may be used in another. It
-assembles them and compiles them with `ess-compiler`. The result is the resolved IR: every
-reference checked, every guard a typed ESS predicate. It is the same IR `ess specify compile`
-produces.
+assembles and compiles them with `ess-compiler` into the resolved IR that `ess specify compile`
+also produces: every reference checked, every guard a typed ESS predicate.
 
 Spindle does not re-implement ESS parsing or validation. A document `ess specify validate` refuses
 is refused by `b10x-spindle check` too, with the compiler's own diagnostics. The ESS crates are
@@ -50,29 +49,31 @@ A guard that evaluates to *unknown* refuses the command. It does not take a bran
 A `when_related:` guard over a row set, `{entity, where: [...], count: {gte: 1}}` or `exists:` or
 `forall:`, reads every stored row of the entity, as ESS's interpreter does. A comparison with an
 `Optional` field a row does not hold, such as `box_id == input.id` on an item in no box, is
-*unknown* for that row, not false. The row may or may not be in the set, so a count it could change
-refuses the command as undecidable. The refusal names the filter, the entity and the absent field, and
-no stored row. To leave such a row out of the set, write `defined(<field>)` beside the
-comparison: `where: [defined(box_id), box_id == input.id]`.
+*unknown* for that row. It does not evaluate to false.
+
+The row may or may not be in the set, so a count it could change refuses the command as
+undecidable. The message gives the filter, the entity and the absent field, and no stored row. To
+leave such a row out of the set, write `defined(<field>)` beside the comparison:
+`where: [defined(box_id), box_id == input.id]`.
 
 A `creates:` outcome whose identity is neither an input nor a payload source (`generated: true`,
-or no source) leaves the identity to the runtime, which mints it. A `Uuid` identity, or a `Uuid`
-newtype without invariants, is minted as a UUIDv4. A `String` newtype identity whose prefix and
-alphabet admit a UUID's text, and whose invariants bound only its length, is minted as its prefix
-and a UUIDv4's text. Any other identity type is refused. This needs the `identity.mint` capability
-([capabilities](/docs/concepts/capabilities)).
+or no source) leaves the identity to the runtime, which mints it with the `identity.mint`
+capability ([capabilities](/docs/concepts/capabilities)).
+
+A `Uuid` identity, or a `Uuid` newtype without invariants, is minted as a UUIDv4. A `String`
+newtype identity whose prefix and alphabet admit a UUID's text, and whose invariants bound only
+its length, is minted as its prefix and a UUIDv4's text. Any other identity type is refused.
 
 The kernel runs the constructs Spindle's own specification and the rally example use. Any other
-construct is refused as unsupported before anything is written, and the refusal names the
-construct.
+construct is refused as unsupported before anything is written, with the construct in the
+message.
 
 - A construct that decides which outcome a request selects, a condition or an outcome's shape,
   refuses the whole command before it reads anything.
-- A construct only the selected outcome reads refuses that outcome alone. Examples are a value it
-  would generate of a type the runtime does not mint, and a secondary effect over an input list
-  (an `affects:` entry with `each:`). A
-  request that selects the outcome is refused with the outcome in the message, and every other
-  outcome of the command runs.
+- A construct only the selected outcome reads refuses that outcome alone, such as a generated
+  value of a type the runtime does not mint, or a secondary effect over an input list, an
+  `affects:` entry with `each:`. A request that selects the outcome is refused with the outcome in
+  the message, and every other outcome of the command runs.
 
 `admit` and `run` print each such outcome on stderr. A command none of whose outcomes runs is
 printed once instead, as not served.
@@ -90,7 +91,7 @@ included, as ESS's interpreter answers it.
 
 A filter may read a field of the row a reference names, `person_id.state == Active`, from any
 component. That row is loaded the same way, once per read by its identity, and the referenced
-entity is never scanned. A row whose reference is empty or names no row is left out where the
+entity is not scanned. A row whose reference is empty or names no row is left out where the
 filter is unknown only for that reason, as ESS's interpreter leaves it out.
 
 A filter is read where each leaf does one of these:
@@ -115,19 +116,20 @@ A view with aggregate fields, `open_sessions: {aggregate: {count: {}}}` or `sum`
 the rows ESS's interpreter answers. The filter keeps the instances first. They are then grouped by
 the `group_by` fields, one row per group in the order of the group keys. A view without `group_by`
 answers one row, also over no instance. A measure's own `where:` counts only the instances it
-keeps, and is read where it is a filter that is read. A count and a sum over no instance are `0`,
-an average over none is `null`, as is an optional group key a group holds no value for. Integers
-are answered as integers. An aggregate view has no row by identity, and an aggregation beside a
-field read through a reference is refused.
+keeps, and is read where it is a filter that is read.
+
+A count and a sum over no instance are `0`, an average over none is `null`, as is an optional group
+key a group holds no value for. Integers are answered as integers. An aggregate view has no row by
+identity, and an aggregation beside a field read through a reference is refused.
 
 A computed field, `score_change: {type: Integer, expr: "score - coalesce(previous_score, score)"}`,
-answers what ESS's evaluator computes over the row's own fields, as ESS's interpreter answers it,
-beside any field read through a reference. An absent optional operand, or a zero divisor outside
+answers what ESS's evaluator computes over the row's own fields, beside any field read through a
+reference. An absent optional operand, or a zero divisor outside
 `coalesce`, answers `null`. An `Integer` is answered as an integer, a `Decimal` as ESS writes it.
 A value ESS determines none of, such as an `Integer` past 64 bits, refuses the read.
 
-A default row for an absent identity, paging and any other filter are refused as unsupported, and
-the refusal names the construct.
+A default row for an absent identity, paging and any other filter are refused as unsupported, with
+the construct in the message.
 
 `run` prints each view and command it does not serve at startup, as
 ``not served: view `<name>` at GET <path>: <reason>``. `admit` prints the same line for each view
@@ -164,6 +166,6 @@ parameters. A step that needs one is reported as unsupported, which also exits 1
 `b10x-spindle conform` runs the suite ESS synthesises from a specification, or one written for it,
 against every component in one process. `task check` runs it on Spindle's own specification. It
 lists every synthesis refusal with its code and holds the executed and skipped counts
-([status](/docs/status)). Given a suite with `--suite`, it synthesises nothing: ESS still checks
+([status](/docs/status)). Given a suite with `--suite`, it skips synthesis: ESS still checks
 the authored scenarios the specification lists, and one line says the refusal report is left to
 the synthesis that wrote the suite.

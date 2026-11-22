@@ -24,11 +24,10 @@ Status: early, and these parts work:
 - per-component counters
 - the rally example in one process, and as three processes or three microVMs joined by TCP
   channels
-- `run`, which serves a network-reached component over HTTP on 127.0.0.1
+- `run`: serves a network-reached component over HTTP on 127.0.0.1
 - the process, QEMU and Firecracker launchers, as libraries that sample each instance's CPU and
   memory
-- `deploy`, which launches the instances of a placement as processes and serves the live observe
-  API and UI
+- `deploy`: launches a placement's instances as processes and serves the live observe API and UI
 
 A bundle uploaded to deploy, and cells with ownership leases, are planned. The
 [status page](https://beyond10x.github.io/spindle/docs/status) lists each item with the test that
@@ -45,8 +44,8 @@ target/release/b10x-spindle play examples/rally/ess --environment examples/envir
 target/release/b10x-spindle admit ess --environment examples/environments/microvm.toml
 ```
 
-The last command is refused: Spindle's own specification has an outcome decided outside the
-model, and the `microvm` environment provides nothing for it. Exit status 3 means refused.
+The last command is refused with exit status 3: Spindle's own specification has an outcome decided
+outside the model, and the `microvm` environment provides no implementation for it.
 
 `task build` builds the observe UI (`ui/`, pnpm) and then `b10x-spindle`, which embeds it. A
 binary built without `ui/dist` answers `GET /` with 503. `b10x-spindle deploy examples/rally/ess
@@ -66,7 +65,7 @@ one an event binding invoked. For each cause it gives the command that asked and
 A cause asked outside any request, by a timer-fired command, is counted and listed in no record.
 
 Under `unmet`, a record lists each event binding whose input an event published on the way did
-not fill. Its command was not invoked. The entry gives the binding, the component, the command and
+not fill, so its command was not invoked. The entry gives the binding, the component, the command and
 why.
 
 `GET /__spindle/metrics` answers the run's metrics in the Prometheus text format
@@ -139,8 +138,8 @@ An `external.` key may name an HTTP call the document declares as `[http.<name>]
 asks for each such cause ([an external cause bound to an HTTP call](https://beyond10x.github.io/spindle/docs/concepts/environment-and-admission#an-external-cause-bound-to-an-http-call)).
 The call leaves the host only over verified TLS: an `https://` URL, its certificate verified
 against the platform's trust roots or the PEM file `ca_file` names. A plain `http://` URL is
-accepted only on loopback (`localhost`, `127.0.0.0/8`, `[::1]`); any other is refused when the
-document is read.
+accepted only on loopback (`localhost`, `127.0.0.0/8`, `[::1]`). Any other URL is refused when
+the document is read.
 
 ## Layout
 

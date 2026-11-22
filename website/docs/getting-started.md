@@ -42,7 +42,7 @@ The binary is `target/release/b10x-spindle`, and the commands below call it `b10
 
 ```console
 $ b10x-spindle --version
-b10x-spindle 0.10.0
+b10x-spindle 0.18.0
 ```
 
 ## Compile the specification

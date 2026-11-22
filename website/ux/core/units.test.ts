@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { carries, choose, glanceOf, normal, onThisPage, rank, revealer } from './bot.ts';
+import { carries, choose, glanceOf, normal, onThisPage, rank, readingPick, revealer } from './bot.ts';
 import { judge, stale } from './gates.ts';
 import type { Mark } from './gates.ts';
 import { median, p95, pageMetrics, taskMetrics, tolerance, UNREACHED } from './metrics.ts';
@@ -134,4 +134,16 @@ test('pages compare without .html or a trailing slash', () => {
 
 test('the keyboard pick and the candidates read the same control list', () => {
   assert.ok(candidates.toString().includes(CONTROLS));
+});
+
+test('while reading, the bot follows a link in the text whose name carries a task word', () => {
+  const words = ['request records', '--observe-requests', 'observe'];
+  const flag = cand({ name: '--observe-requests', href: '/cli#run--observe-requests', context: 'sets how many request records it keeps' });
+  const nav = cand({ name: 'Observe', href: '/observe', navigation: true });
+  const prose = cand({ name: 'docs/design/observe.md', href: '/design', context: 'request records' });
+  const option = cand({ role: 'option', name: '…request records… Observe › A served run' });
+  assert.equal(readingPick([nav, option, prose, flag], words, new Set(), 'here')?.href, flag.href);
+  assert.equal(readingPick([nav, option, prose, flag], words, new Set([flag.href!]), 'here')?.href, prose.href);
+  assert.equal(readingPick([nav, option, cand({ name: 'Rally', href: '/r', context: 'request records' })], words, new Set(), 'here'), null);
+  assert.equal(readingPick([cand({ ...flag, inView: false })], words, new Set(), 'here'), null);
 });

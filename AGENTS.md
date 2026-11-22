@@ -155,7 +155,8 @@ cut from `main`:
 1. On a branch from current `origin/main`, set `version` under `[workspace.package]` in
    `Cargo.toml` and refresh `Cargo.lock` (`cargo update -w`). Rename `## [Unreleased]` in
    `CHANGELOG.md` to `## [<version>] - <YYYY-MM-DD>` and open a new empty `## [Unreleased]` above
-   it. Where `conformance-known-failures.json` exists, rebind it to the version: `implementation`
+   it. Set the `b10x-spindle <version>` line `website/docs/getting-started.md` prints for
+   `b10x-spindle --version` (UXF-018's test in `website/ux` fails on any other). Where `conformance-known-failures.json` exists, rebind it to the version: `implementation`
    is `b10x-spindle <version>` and `implementation_build` is `sha256:` of that string
    (`spindle_conformance::build`); otherwise `check:conformance` refuses the declaration. Where it
    does not, as now, there is nothing to rebind: `check:conformance` reads no declaration.
