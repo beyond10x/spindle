@@ -6,7 +6,7 @@ status: draft
 title: The test step ends within 2 minutes and kills a test at 60 s
 relations:
 - serves: vision:spindle
-revision: 3
+revision: 4
 ---
 # The test step ends within 2 minutes and kills a test at 60 s
 
@@ -34,7 +34,10 @@ a loaded build pool (host load about 100):
 - `spindle-target`'s `adversary_sampling::an_instance_that_ended_without_a_wait_is_not_sampled`
   failed once on PR 58's `Gate` (run 45015271776, `a20329e2`; the wave does not touch
   `spindle-target`): its wait loop stops on a sample with `memory_bytes == 0` and then asserts no
-  sample, so a zombie read as `Some` with zero memory fails it.
+  sample, so a zombie read as `Some` with zero memory fails it;
+- `spindle-cli`'s `concurrent_reads::reads_are_answered_from_the_last_committed_write_while_a_command_is_held`
+  failed in the local gate of PR 60 on a loaded pool (sqlite median 169 ms against its 100 ms
+  bound) and passed on CI.
 
 After this story the test step runs under cargo-nextest with `slow-timeout` and `terminate-after`
 killing a test at 60 s, prints its ten slowest tests, and fails when it runs over 120 s, locally
@@ -52,3 +55,4 @@ the property kept) or their bound is a count, not a wall-clock time.
 
 Wave review-017 (stories from the 0.17.0 review), 2026-11-22: every implementor reported the
 pre-existing slow tests above.
+
