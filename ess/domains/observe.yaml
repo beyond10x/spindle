@@ -371,8 +371,11 @@ types:
       - name: path
         type: String
         summary: >-
-          The request's path, without the query string. At most 2,048 bytes, cut on a character
-          boundary with `…` where longer.
+          What the record keeps of the request's path, without the query string: the route
+          template it resolved to (`/loans/{id}`), never the path with the resource identifiers
+          in it; for an unrouted request its first segment, with `/…` after it where the path has
+          more (`/loans/…`). At most 2,048 bytes, cut on a character boundary with `…` where
+          longer.
       - name: query
         type: Optional<String>
         summary: >-

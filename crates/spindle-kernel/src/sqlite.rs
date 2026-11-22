@@ -265,6 +265,9 @@ impl LogStore<SqliteEventStore> {
         let location = path.to_str().ok_or_else(|| {
             StoreError::Backend(format!("{} is not a UTF-8 path", path.display()))
         })?;
+        if create {
+            provisioned(path, location)?;
+        }
         let log = if create {
             runtime.block_on(SqliteEventStore::open(location, PREFIX))
         } else {
@@ -275,6 +278,28 @@ impl LogStore<SqliteEventStore> {
         store.rows = rows;
         Ok(store)
     }
+}
+
+/// Creates the database file at `path` before SQLite opens it, and its missing directories, kept
+/// private ([`crate::private`]): the directories `0700`, the file `0600`, whatever the umask.
+/// SQLite gives each journal, WAL and shared-memory file it creates beside a database the mode of
+/// the database, so they are `0600` too. A file or directory that exists keeps its mode, and an
+/// in-memory or URI location (`:memory:`, `file:…`) is SQLite's to open.
+#[cfg(feature = "sqlite")]
+fn provisioned(path: &Path, location: &str) -> Result<(), StoreError> {
+    if location.is_empty() || location == ":memory:" || location.starts_with("file:") {
+        return Ok(());
+    }
+    let failed = |what: &str, at: &Path, error: std::io::Error| {
+        StoreError::Backend(format!("{what} {}: {error}", at.display()))
+    };
+    if let Some(directory) = path.parent() {
+        crate::private::create_dir_all(directory)
+            .map_err(|error| failed("creating the state directory", directory, error))?;
+    }
+    crate::private::open_or_create(path)
+        .map(drop)
+        .map_err(|error| failed("creating the state file", path, error))
 }
 
 /// A runtime of its own for a SQLite store's log calls: one thread, no driver, so it holds no

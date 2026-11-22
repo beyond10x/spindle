@@ -58,6 +58,8 @@ mod mint;
 mod placement;
 #[cfg(feature = "postgres")]
 mod postgres;
+#[cfg(all(unix, feature = "sqlite"))]
+mod private_state;
 mod provides;
 mod rally;
 mod related_guards;

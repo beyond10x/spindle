@@ -19,6 +19,7 @@ mod grants;
 mod metrics_read;
 mod observe;
 mod outcome_headers;
+mod private_record;
 mod refusal_payload;
 mod router;
 mod served;

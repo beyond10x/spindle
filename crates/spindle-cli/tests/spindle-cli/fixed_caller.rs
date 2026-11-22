@@ -246,8 +246,25 @@ fn the_fixed_caller_is_printed_on_stderr_at_startup() {
         });
     assert!(line.contains(WRITER), "{line}");
     assert!(line.contains("owner_id"), "{line}");
-    assert!(line.contains(OWNER), "{line}");
     assert!(line.contains("not authentication"), "{line}");
+}
+
+/// `story:private-local-state`: the startup line names the fixed caller's attributes, never
+/// their values, so a log of the run holds no identity a caller was fixed with.
+#[test]
+fn the_fixed_caller_line_names_attributes_only() {
+    let caller = writer();
+    let served = serving(&["--fixed-actor", WRITER, "--fixed-caller", &caller]);
+    let stderr = served.stop();
+    let line = stderr
+        .lines()
+        .find(|line| line.contains("--fixed-actor"))
+        .unwrap_or_else(|| panic!("a line naming the fixed caller: {stderr}"));
+    assert!(line.contains("owner_id"), "the attribute is named: {line}");
+    assert!(
+        !stderr.contains(OWNER),
+        "no value of the caller is printed: {stderr}"
+    );
 }
 
 #[test]

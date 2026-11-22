@@ -311,6 +311,14 @@ fn the_fixed_actors_are_printed_at_startup_in_order() {
         let attributes = |actor: &str| if actor == CLERK { "badge" } else { "key" };
         assert!(first.contains(attributes(order[0])), "{first}");
         assert!(second.contains(attributes(order[1])), "{second}");
+        for line in &lines {
+            for value in ["ada", "early", "brass", "late"] {
+                assert!(
+                    !line.contains(value),
+                    "no attribute value is printed (`story:private-local-state`): {line}"
+                );
+            }
+        }
     }
 }
 

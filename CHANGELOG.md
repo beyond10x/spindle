@@ -27,6 +27,18 @@ are Spindle's releases.
   limit and no deadline, and the queue had no bound. The sender drops a frame longer than
   `FRAME_LIMIT` instead of sending it, and `Answers` keeps at most 16 answers (`RECENT_LIMIT`).
 
+### Security
+
+- A SQLite store creates a missing state directory `0700` and its database, lock, journal and WAL
+  files `0600` on Unix, whatever the umask; a file or directory that exists keeps its mode. Before,
+  under umask `0022`, the databases were created `0644`, readable by every local user.
+- A record of `GET /__spindle/requests` keeps the route template as its `path` (`/loans/{id}`),
+  never the raw path with its identifiers, and of a request no route serves the first segment
+  only (`/loans/…`); a refusal's reason names the path the same way. Before, the raw path was kept
+  beside the template.
+- The startup line of `run --fixed-actor` names the fixed caller's attribute names, never their
+  values. Before, it printed the caller as JSON.
+
 ## [0.17.0] - 2026-11-12
 
 ### Added

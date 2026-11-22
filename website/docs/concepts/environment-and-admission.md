@@ -64,7 +64,7 @@ Admission binds names, and the parts that run today act on these bindings:
 
 | Capability | Implementations the runtime runs today |
 |---|---|
-| `store.durable` | `memory`, `sqlite` (one SQLite file per component; `run --state` names it; the store keeps each entity's rows as they rest, read from the file once when it opens and then from each write, so a view read costs the rows it reads, not the file's history), `postgres` (one set of tables per component in an operator's PostgreSQL, served by `run`; below), `indexeddb` (one IndexedDB database per component, in the Service Worker host) |
+| `store.durable` | `memory`, `sqlite` (one SQLite file per component; `run --state` names it; the store keeps each entity's rows as they rest, read from the file once when it opens and then from each write, so a view read costs the rows it reads, not the file's history; on Unix a state directory it creates is `0700` and each database, lock, journal and WAL file it creates `0600`, whatever the umask, and a file that exists keeps its mode), `postgres` (one set of tables per component in an operator's PostgreSQL, served by `run`; below), `indexeddb` (one IndexedDB database per component, in the Service Worker host) |
 | `channel` | `in-process` in the one-process host (`play`, `run`); `tcp` between processes, one component each (`play --component`) |
 | `timer` | `tokio`, the name the shipped environments give `spindle-timer`'s schedule |
 | `clock` | `system` |
