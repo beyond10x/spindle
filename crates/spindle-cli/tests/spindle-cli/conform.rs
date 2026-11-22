@@ -398,6 +398,79 @@ fn the_target_runs_a_suite_of_another_specification() {
     assert_eq!(foreign.status.code(), Some(1), "{foreign:?}");
 }
 
+/// With `--suite` nothing is synthesised, so no synthesis refusal is listed: one line says the
+/// report is not produced, where a synthesised run lists each refusal and their count
+/// (story:conform-reuses-supplied-suite).
+#[test]
+fn a_supplied_suite_names_the_refusal_report_it_does_not_produce() {
+    let dir = scratch();
+    let loaded = spindle_spec::load(&root().join(OTHER)).expect("the fixture loads");
+    let mut synthesis = ess_conformance::synthesize(&loaded.ir);
+    synthesis.suite.select_fresh_format_for(&loaded.ir);
+    let suite = dir.path().join("suite.json");
+    std::fs::write(
+        &suite,
+        synthesis
+            .suite
+            .to_canonical_json()
+            .expect("the suite renders"),
+    )
+    .expect("writing the suite");
+    let output = conform(&[OTHER, "--environment", LAPTOP, "--suite", utf8(&suite)]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let printed = stdout(&output);
+    let first = printed.lines().next().expect("a first line");
+    assert_eq!(first, NOT_PRODUCED, "{printed}");
+    assert!(!printed.contains("refused: "), "{printed}");
+    assert!(!printed.contains(" refusal(s)"), "{printed}");
+}
+
+/// The line `conform --suite` prints instead of the synthesis refusals.
+const NOT_PRODUCED: &str = "refusal report not produced for a supplied suite: the synthesis that \
+                            wrote it lists its refusals";
+
+/// An authored scenario ESS refuses exits 1 with `--suite` too, printing ESS's refusal and
+/// running nothing.
+#[test]
+fn a_refused_authored_scenario_exits_1_with_a_supplied_suite() {
+    let dir = scratch();
+    let document = "type: ess-scenario/3\n\
+                    domain: spindle.deployment\n\
+                    scenario: not-an-outcome\n\
+                    summary: Takes an outcome the command does not declare.\n\
+                    timeline:\n\
+                    \x20 - at: 2026-01-05T09:00:00Z\n\
+                    \x20   command: spindle.deployment.DeclareEnvironment\n\
+                    \x20   input:\n\
+                    \x20     environment_id: e-1\n\
+                    \x20     os: linux\n\
+                    \x20     arch: x86_64\n\
+                    \x20     provides: []\n\
+                    \x20   outcome: not-an-outcome\n";
+    let spec = spec_with(
+        dir.path(),
+        "refusing-ess",
+        &[("not-an-outcome", document.to_owned())],
+    );
+    let suite = dir.path().join("suite.json");
+    std::fs::write(&suite, "{}").expect("writing a suite");
+    let output = conform(&[
+        utf8(&spec),
+        "--environment",
+        LAPTOP,
+        "--suite",
+        utf8(&suite),
+    ]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let printed = stdout(&output);
+    assert!(
+        printed.starts_with("ESS refused the listed scenarios:"),
+        "{printed}"
+    );
+    assert!(printed.contains("not-an-outcome"), "{printed}");
+    assert!(!printed.contains("scenario(s):"), "nothing ran: {printed}");
+}
+
 /// Runs `conform` on `spec` as `task check:conformance` does, holding the counts in `counts`;
 /// with `known`, reading that declaration and writing its accounting into `dir`.
 fn gate(dir: &Path, spec: &str, counts: &str, known: Option<&Path>) -> Output {

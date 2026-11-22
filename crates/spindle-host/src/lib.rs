@@ -25,7 +25,7 @@ mod host;
 pub mod rally;
 mod view;
 
-pub use admission::{Placements, Refusal, admit};
+pub use admission::{Placements, Refusal, admissions, admit};
 pub use decisions::Answers;
 pub use host::{
     Cause, Cursor, DELIVERY_LIMIT, Failed, Host, HostError, Page, Published, RETRY_ATTEMPTS, Ran,
