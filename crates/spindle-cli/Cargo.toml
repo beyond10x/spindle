@@ -37,7 +37,7 @@ spindle-host = { path = "../spindle-host" }
 spindle-ingress = { path = "../spindle-ingress" }
 spindle-target = { path = "../spindle-target" }
 spindle-telemetry = { path = "../spindle-telemetry" }
-signal-hook = "0.3"
+signal-hook = "0.4"
 tempfile = "3"
 tokio = { version = "1", default-features = false, features = ["net", "rt", "time"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }

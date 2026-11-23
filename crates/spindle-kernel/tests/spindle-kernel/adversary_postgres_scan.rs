@@ -551,7 +551,9 @@ fn adv2_a_serving_role_scans_a_log_it_never_scanned() {
                  SCHEMA {schema} TO {role}; GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES \
                  IN SCHEMA {schema} TO {role}; GRANT USAGE ON ALL SEQUENCES IN SCHEMA {schema} \
                  TO {role}; SELECT pg_advisory_xact_lock({DATABASE_GRANT_LOCK}); GRANT \
-                 TEMPORARY ON DATABASE spindle TO {role}"
+                 TEMPORARY ON DATABASE spindle TO {role}; REVOKE INSERT, UPDATE, DELETE, TRUNCATE \
+                 ON {schema}.{prefix}_schema_version, {schema}.{prefix}_projection_registry, \
+                 {schema}.{prefix}_settlement_floor FROM {role}"
             ),
         );
         if let Some(revoke) = &revoke {

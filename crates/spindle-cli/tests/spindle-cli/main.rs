@@ -80,3 +80,16 @@ mod view_list_parameter;
 /// The PostgreSQL advisory lock a case holds while it runs `GRANT … ON DATABASE`: cases granting
 /// on the one test database at once fail with "tuple concurrently updated".
 const DATABASE_GRANT_LOCK: i64 = 5_312_021_917;
+
+/// The statement that leaves `role` only `SELECT` on the migration metadata of every component
+/// in `schema` (`<prefix>_schema_version`, `<prefix>_projection_registry`,
+/// `<prefix>_settlement_floor`): eventlog's hosted open refuses a role that can write them.
+fn metadata_read_only(schema: &str, role: &str) -> String {
+    format!(
+        "DO $$ DECLARE t text; BEGIN FOR t IN SELECT format('%I.%I', schemaname, tablename) FROM \
+         pg_tables WHERE schemaname = '{schema}' AND (tablename LIKE '%\\_schema\\_version' OR \
+         tablename LIKE '%\\_projection\\_registry' OR tablename LIKE '%\\_settlement\\_floor') \
+         LOOP EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ' || t || ' FROM {role}'; END \
+         LOOP; END $$"
+    )
+}
