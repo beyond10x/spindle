@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-23
+
 ### Added
 
 - An `external:` refusal declared `before_row: true` runs: the kernel asks its cause among the
