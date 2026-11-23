@@ -1,0 +1,23 @@
+format: ess/34
+system: workshop
+version: v1
+summary: Tools added by identity, and kits assembled and revised from a list of tools that must each exist.
+domains:
+  - workshop.bench
+components:
+  - component: bench
+    summary: Adds tools, and assembles and revises kits.
+    owns:
+      domains:
+        - workshop.bench
+    accepts:
+      commands:
+        - workshop.bench.AddTool
+        - workshop.bench.AssembleKit
+        - workshop.bench.ReviseKit
+    publishes:
+      events:
+        - workshop.bench.ToolAdded
+        - workshop.bench.KitAssembled
+        - workshop.bench.KitRevised
+    reached_by: in_process

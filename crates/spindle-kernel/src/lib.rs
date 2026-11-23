@@ -39,14 +39,16 @@
 //! The conditions, effects and value sources that Spindle's own specification and the `rally`
 //! example use, and the guarded forms beside them (an input guard beside `when_subject:`,
 //! `when_subject: {field, equals}`, `when_subject_state:`, `external:` with `when:` or
-//! `when_subject:`), and the caller a command is sent as ([`execute_as`]): `{caller: <attribute>}`
-//! as a value source, `caller.<attribute>` in a guard, and a branch the caller decides. A command
-//! sent as an actor whose `may:` does not name it is [`ExecuteError::NotGranted`]. Any other
-//! construct is [`ExecuteError::Unsupported`], named, before anything is written: one selection
-//! reads refuses the whole command before it reads anything ([`selects`]); one only the taken
-//! outcome reads refuses that outcome alone, once a request selects it ([`takes`]), and every
-//! other outcome of the command runs. [`runs`] makes both checks for every outcome without running
-//! anything, so a host can name what it will not run before it serves.
+//! `when_subject:` or answered before the row, `before_row: true`, and `when_related:` over a list
+//! of references, `exists: false`), and the caller a command is sent as ([`execute_as`]):
+//! `{caller: <attribute>}` as a value source, `caller.<attribute>` in a guard, and a branch the
+//! caller decides. A command sent as an actor whose `may:` does not name it is
+//! [`ExecuteError::NotGranted`]. Any other construct is [`ExecuteError::Unsupported`], named, before
+//! anything is written: one selection reads refuses the whole command before it reads anything
+//! ([`selects`]); one only the taken outcome reads refuses that outcome alone, once a request
+//! selects it ([`takes`]), and every other outcome of the command runs. [`runs`] makes both checks
+//! for every outcome without running anything, so a host can name what it will not run before it
+//! serves.
 
 mod caller;
 pub mod contract;

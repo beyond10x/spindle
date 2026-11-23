@@ -43,6 +43,7 @@ mod adversary_store_contract;
 mod adversary_structured_responses;
 #[cfg(feature = "postgres")]
 mod adversary_w21_store;
+mod before_row;
 mod caller;
 mod creation_takes_unknown_row;
 mod deletes;
@@ -62,6 +63,7 @@ mod postgres;
 mod private_state;
 mod provides;
 mod rally;
+mod reference_list;
 mod related_guards;
 mod related_values;
 mod response_source;
