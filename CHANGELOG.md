@@ -6,6 +6,17 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- An `external:` refusal declared `before_row: true` runs: the kernel asks its cause among the
+  input refusals, in declaration order, before it reads the addressed row, and answers the refusal
+  for a row that exists or not, reading no row, as ESS's interpreter answers it. It was refused
+  as unsupported.
+- A `when_related: {via: input.<list>, exists: false}` guard over a `List` of references runs: the
+  kernel reads the row each element names and takes the branch where any names no row, an empty
+  list naming none, and `{missing: input.<list>}` reads the first such element in list order, as
+  ESS's interpreter decides and answers it. It was refused as unsupported.
+
 ### Changed
 
 - ESS is pinned at 0.98.0 (the crates, the `ess` CLI CI installs and its checksum, and

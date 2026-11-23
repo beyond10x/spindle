@@ -5,7 +5,8 @@
 //! `{append: input.<path>}`, and a field or the state of the row an input field names
 //! (`{related: {via: input.<field>, field: …}}`), and what a set outcome changed
 //! (`{count: changed}`, `{changed: …}`), a value an expression computes (`{expr: …}`, outside
-//! an error), and a field of the response the run answers (`{response: …}`, in an event payload),
+//! an error), a field of the response the run answers (`{response: …}`, in an event payload),
+//! and the first element of a list of references that names no row (`{missing: input.<list>}`),
 //! are read here; the rest are refused by [`crate::supported`] before a command runs.
 //! Numbers are ESS's own [`Number`], so `{increment: N}` adds exactly as ESS adds, an expression
 //! is computed by ESS's own evaluator ([`Expr::evaluate`]), and a literal is typed by
@@ -15,8 +16,8 @@ use std::collections::BTreeMap;
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::{
-    EntityHandle, EventHandle, ResolvedCommand, ResolvedOutcome, ResolvedPayloadField,
-    ResolvedPayloadValue, ResolvedRelatedVia, ResolvedTypeRef,
+    EntityHandle, EventHandle, ResolvedCommand, ResolvedCondition, ResolvedOutcome,
+    ResolvedPayloadField, ResolvedPayloadValue, ResolvedRelatedVia, ResolvedTypeRef,
 };
 use ess_domain::QualifiedName;
 use ess_domain::types::Primitive;
@@ -95,7 +96,60 @@ pub(crate) fn related(
         let row = store.load(&key.0, &identity)?.map(|stored| stored.row);
         related.insert(key, row);
     }
+    for (field, entity) in missing_reads(command) {
+        let Some(Value::Array(elements)) = read_input(input, field) else {
+            continue;
+        };
+        let entity = ir.entity(entity).name.to_string();
+        for element in elements {
+            let key = (entity.clone(), element.to_string());
+            if related.contains_key(&key) {
+                continue;
+            }
+            let row = store.load(&entity, &element)?.map(|stored| stored.row);
+            related.insert(key, row);
+        }
+    }
     Ok(related)
+}
+
+/// Every `{missing: input.<list>}` of `command` (ess/28), with the entity the list names rows of:
+/// the entity of its own outcome's `when_related:` guard over that list.
+fn missing_reads(command: &ResolvedCommand) -> Vec<(&str, &EntityHandle)> {
+    fn reads<'f>(
+        fields: impl IntoIterator<Item = &'f ResolvedPayloadField>,
+        found: &mut Vec<&'f str>,
+    ) {
+        for field in fields {
+            match &field.value {
+                ResolvedPayloadValue::MissingElement { field, .. } => found.push(field),
+                ResolvedPayloadValue::Struct { fields } => reads(fields, found),
+                _ => {}
+            }
+        }
+    }
+    let mut found = Vec::new();
+    for outcome in &command.outcomes {
+        let ResolvedCondition::Related { via, entity, .. } = &outcome.condition else {
+            continue;
+        };
+        let mut fields = Vec::new();
+        reads(
+            outcome
+                .sets
+                .iter()
+                .chain(outcome.payload.iter().flat_map(|payload| &payload.fields))
+                .chain(&outcome.error_payload),
+            &mut fields,
+        );
+        found.extend(
+            fields
+                .into_iter()
+                .filter(|field| *field == via.field())
+                .map(|field| (field, entity)),
+        );
+    }
+    found
 }
 
 /// What a determined field may read: the command's input, the addressed instance as it was
@@ -252,6 +306,7 @@ impl<'a> Sources<'a, '_> {
                 field: read,
                 type_ref,
             } => self.response_field(field, read, type_ref),
+            ResolvedPayloadValue::MissingElement { field: read, .. } => Ok(self.missing(read)),
             ResolvedPayloadValue::EmptyList => Ok(Some(Value::Array(Vec::new()))),
             ResolvedPayloadValue::Cleared => Ok(None),
             ResolvedPayloadValue::Struct { fields } => {
@@ -366,6 +421,30 @@ impl<'a> Sources<'a, '_> {
                 .get(read)
                 .filter(|value| !value.is_null())
                 .cloned(),
+        })
+    }
+
+    /// `{missing: input.<read>}` (ess/28), as ESS reads it
+    /// (`interpret::execute::determined::Reads::missing_element`): the first element, in list
+    /// order, of the list input `read` that names no row of the entity the outcome's
+    /// `when_related:` guard over that list reads, as the store held it before the command ran
+    /// ([`related`]); no value where every element names one or the outcome guards no such list.
+    fn missing(&self, read: &str) -> Option<Value> {
+        let ResolvedCondition::Related { via, entity, .. } = &self.outcome.condition else {
+            return None;
+        };
+        if via.field() != read {
+            return None;
+        }
+        let entity = self.ir.entity(entity).name.to_string();
+        let Some(Value::Array(elements)) = read_input(self.input, read) else {
+            return None;
+        };
+        elements.into_iter().find(|element| {
+            !matches!(
+                self.related.get(&(entity.clone(), element.to_string())),
+                Some(Some(_))
+            )
         })
     }
 

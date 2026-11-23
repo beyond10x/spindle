@@ -2,8 +2,9 @@
 //!
 //! The kernel runs the conditions, effects and value sources Spindle's own specification and the
 //! `rally` example use, a value read from the row an input field names, a value an expression
-//! computes outside an error, a guard over a row set, a set outcome (`instances:`) with the rows
-//! it changed, secondary effects (`affects:`) selecting their rows by a filter, and an event
+//! computes outside an error, a guard over a row set, a guard over a list of references for a
+//! missing row, an external refusal asked before the row, a set outcome (`instances:`) with the
+//! rows it changed, secondary effects (`affects:`) selecting their rows by a filter, and an event
 //! payload value read from the response the outcome answers (`{response: …}`). Every other
 //! construct is refused by name, as [`ExecuteError::Unsupported`], before anything is written;
 //! what it refuses depends on what reads the construct.
@@ -27,7 +28,7 @@ use ess_compiler::EssIr;
 use ess_compiler::ir::{
     EntityHandle, EventHandle, ResolvedCommand, ResolvedCondition, ResolvedEffect,
     ResolvedInstance, ResolvedOutcome, ResolvedPayloadField, ResolvedPayloadValue,
-    ResolvedRelatedVia, ResolvedTypeRef,
+    ResolvedRelatedTest, ResolvedRelatedVia, ResolvedTypeRef,
 };
 
 use crate::ExecuteError;
@@ -285,10 +286,18 @@ fn condition(condition: &ResolvedCondition) -> Option<&'static str> {
         ResolvedCondition::Related { also, .. } if !also.is_empty() => {
             Some("`when_related: {all: […]}` over several rows")
         }
+        // A list of references the input names is read for a missing row alone
+        // ([`crate::execute`]), as ESS reads it (ess/28); a predicate over its rows and a stored
+        // list stay refused, as ESS refuses them.
+        ResolvedCondition::Related {
+            via: ResolvedRelatedVia::Input { .. },
+            test: ResolvedRelatedTest::Absent,
+            ..
+        } => None,
         ResolvedCondition::Related { via, .. }
             if matches!(via.type_ref(), ResolvedTypeRef::List { .. }) =>
         {
-            Some("`when_related:` over a list of references")
+            Some("`when_related:` over a list of references other than `exists: false` on an input")
         }
         ResolvedCondition::Related { .. } => None,
         // A row set is read from the store before selection ([`crate::execute`]); a selector or a
@@ -387,9 +396,8 @@ fn shape(outcome: &ResolvedOutcome) -> Option<&'static str> {
     if outcome.replays.is_some() || outcome.retains_result {
         return Some("a replayed or retained result");
     }
-    if outcome.before_row {
-        return Some("an external refusal before the row (`before_row: true`)");
-    }
+    // An external refusal answered before the row (`before_row: true`) is asked among the input
+    // refusals, before the addressed row is read ([`crate::execute`]).
     // The rows a set outcome changes are selected from the store when it is taken
     // ([`crate::execute`]); a filter that walks the rows of an entity stays refused, as in a
     // row-set guard.
@@ -597,6 +605,9 @@ fn value(ir: &EssIr, field: &ResolvedPayloadField, reading: Reading) -> Option<S
         | ResolvedPayloadValue::EmptyList
         | ResolvedPayloadValue::PayloadRead { .. }
         | ResolvedPayloadValue::CallerAttribute { .. }
+        // The first element of a list of references that names no row, read from the rows the
+        // list names as the store held them before the command ran ([`crate::values::related`]).
+        | ResolvedPayloadValue::MissingElement { .. }
         | ResolvedPayloadValue::Cleared => None,
         ResolvedPayloadValue::ChangedCount
         | ResolvedPayloadValue::ChangedField { .. }

@@ -1,0 +1,99 @@
+domain: lobby.desk
+summary: A seat is opened under an identity, then signed into after a credential check; the check refuses before the seat is read.
+types:
+  - name: lobby.desk.SeatId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: lobby.desk.Seat
+    identity: {name: seat_id, type: lobby.desk.SeatId}
+    fields:
+      - {name: label, type: String}
+    lifecycle:
+      initial: Open
+      states: [Open, Busy]
+      terminal: [Open]
+      transitions:
+        - {name: take, from: [Open], to: Busy}
+        - {name: release, from: [Busy], to: Open}
+errors:
+  - name: lobby.desk.BlankSecret
+    summary: The secret is empty.
+    fields: []
+  - name: lobby.desk.BadCredential
+    summary: The secret is not the one the service derives.
+    fields:
+      - {name: seat_id, type: lobby.desk.SeatId}
+  - name: lobby.desk.NoSeat
+    summary: No seat carries the identity.
+    fields: []
+events:
+  - name: lobby.desk.SeatOpened
+    fields: [{name: seat_id, type: lobby.desk.SeatId}]
+  - name: lobby.desk.SeatTaken
+    fields: [{name: seat_id, type: lobby.desk.SeatId}]
+  - name: lobby.desk.SeatReleased
+    fields: [{name: seat_id, type: lobby.desk.SeatId}]
+commands:
+  - name: lobby.desk.OpenSeat
+    input:
+      - {name: seat_id, type: lobby.desk.SeatId}
+      - {name: label, type: String}
+    outcomes:
+      - name: opened
+        creates: lobby.desk.Seat
+        instance: seat_id
+        sets:
+          label: input.label
+        emits: [lobby.desk.SeatOpened]
+        payload:
+          lobby.desk.SeatOpened:
+            seat_id: input.seat_id
+        summary: The seat is opened.
+  - name: lobby.desk.SignIn
+    input:
+      - {name: seat_id, type: lobby.desk.SeatId}
+      - {name: secret, type: String}
+    outcomes:
+      - name: blank-secret
+        when: secret == ""
+        error: lobby.desk.BlankSecret
+        summary: An empty secret is refused before anything else.
+      - name: bad-credential
+        external: the secret is not the digest the service derives
+        before_row: true
+        error: lobby.desk.BadCredential
+        payload:
+          lobby.desk.BadCredential:
+            seat_id: input.seat_id
+        summary: The credential check refuses before the seat is read.
+      - name: no-seat
+        unknown_instance: true
+        error: lobby.desk.NoSeat
+        summary: No seat carries the identity.
+      - name: taken
+        when_subject_state: Open
+        moves: lobby.desk.Seat.take
+        instance: seat_id
+        emits: [lobby.desk.SeatTaken]
+        payload:
+          lobby.desk.SeatTaken:
+            seat_id: input.seat_id
+        summary: An open seat is taken.
+      - name: released
+        when_subject_state: Busy
+        moves: lobby.desk.Seat.release
+        instance: seat_id
+        emits: [lobby.desk.SeatReleased]
+        payload:
+          lobby.desk.SeatReleased:
+            seat_id: input.seat_id
+        summary: A busy seat is released.
+views:
+  - name: lobby.desk.Seats
+    source: lobby.desk.Seat
+    consistency: read_your_writes
+    fields:
+      - {name: seat_id, type: lobby.desk.SeatId}
+      - {name: label, type: String}
+      - {name: state, type: lobby.desk.Seat.State}
