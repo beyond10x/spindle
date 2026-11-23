@@ -127,7 +127,7 @@ views:
   - name: ledger.slips.PastGreen
     source: ledger.slips.Slip
     consistency: read_your_writes
-    filter: colour > Green
+    filter: {colour: {in: [Blue]}}
     fields: *fields
   - name: ledger.slips.Stale
     source: ledger.slips.Slip

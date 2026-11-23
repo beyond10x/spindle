@@ -409,6 +409,7 @@ fn adv_the_documented_serving_role_limit_and_budget_are_served() {
             crate::DATABASE_GRANT_LOCK
         ),
     );
+    batch(&url, &crate::metadata_read_only(&schema, &role));
     let serving = as_role(&url, &role, PASSWORD);
     // Ok(the first line on stdout) where run listened, else Err((its exit, its refusal)).
     let attempt = |connections: &str| -> Result<String, (Option<i32>, String)> {
