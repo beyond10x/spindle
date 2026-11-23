@@ -19,6 +19,11 @@ are Spindle's releases.
   the new family `spindle_seed_commands_total{counted}`. A file that does not parse, or an entry
   naming a command, input field or actor shape the specification does not declare, stops `run` with
   exit 1 before listening, naming the file and the entry. A run that reads stdin refuses a seed.
+
+## [0.19.0] - 2026-11-23
+
+### Added
+
 - An `external:` refusal declared `before_row: true` runs: the kernel asks its cause among the
   input refusals, in declaration order, before it reads the addressed row, and answers the refusal
   for a row that exists or not, reading no row, as ESS's interpreter answers it. It was refused
