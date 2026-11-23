@@ -30,8 +30,29 @@ are Spindle's releases.
 
 ### Changed
 
-- ESS is pinned at 0.97.4 (the crates, and the `ess` CLI CI installs with its checksum); it was
-  0.97.3. The synthesised suite, its 79 scenarios and `conformance.toml` are unchanged.
+- ESS is pinned at 0.98.0 (the crates, the `ess` CLI CI installs and its checksum, and
+  `requires: ess 0.98` in `ess/ess-inputs.yaml`); it was 0.97.3, and 0.97.4 on `main` since.
+  ESS 0.98.0 refuses an ordering comparison over an enum and an `exists: false` branch declared
+  below a refusal it answers first; neither occurs in `ess/`. The suite ESS
+  synthesises still has 79 scenarios, all executed and passed, `conformance.toml` is unchanged, and
+  the observe types differ only in their header.
+- The PostgreSQL store builds on eventlog 0.10.0; it was 0.9.4. Its tables are a new schema
+  edition: on a hosted database (`database_ca`), run `b10x-spindle store migrate` with the role that
+  owns the schema before `run`, which refuses the tables of an earlier release until then, and
+  again after restoring the database from a backup.
+- The serving role on a hosted database holds `SELECT` and no `INSERT`, `UPDATE`, `DELETE` or
+  `TRUNCATE` on `spindle_<component>_schema_version`, `_projection_registry` and
+  `_settlement_floor`; `run` refuses a role that can write them. A deployment that granted DML on
+  every table revokes it on these three after `store migrate`:
+  `REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON <schema>.spindle_<component>_schema_version,
+  <schema>.spindle_<component>_projection_registry, <schema>.spindle_<component>_settlement_floor
+  FROM <serving role>`. `store migrate` adds two tables per component: grant the serving role
+  `SELECT`, `INSERT`, `UPDATE` and `DELETE` on `spindle_<component>_group_batches` and only
+  `SELECT` on `spindle_<component>_settlement_floor`.
+- Dependencies: `toml` 1.2 (was 0.9), `signal-hook` 0.4 (was 0.3), `base64` 0.23 (was 0.22) and
+  `ruzstd` 0.9 (was 0.8); every other crate at its latest compatible version, and the npm and pnpm
+  lockfiles of `website/`, `website/ux/`, `ui/` and `web/` at the latest versions their ranges
+  admit, Playwright at 1.65.1 in `website/ux/`.
 
 ## [0.18.0] - 2026-11-22
 

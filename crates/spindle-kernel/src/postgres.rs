@@ -473,9 +473,11 @@ fn refused(error: EventLogError, database: &Database, prefix: &str, sharing: usi
          BYPASSRLS: the owner role's URL is for `store migrate`, never `run`); has a CONNECTION \
          LIMIT from 1 to {share} (components {sharing} x database_pool {pool}), which is not \
          database_connections, the database's budget for this deployment, at least {budget}; \
-         holds SELECT, INSERT, UPDATE and DELETE on every {prefix}_* table, USAGE on the \
-         sequence of {prefix}_events and TEMP on the database; and finds the tables `store \
-         migrate` created",
+         holds SELECT, INSERT, UPDATE and DELETE on every {prefix}_* table but \
+         {prefix}_schema_version, {prefix}_projection_registry and {prefix}_settlement_floor, on \
+         which it holds SELECT and no INSERT, UPDATE, DELETE or TRUNCATE, USAGE on the sequence \
+         of {prefix}_events and TEMP on the database; and finds the tables of this release's \
+         `store migrate`",
         schema = database.schema,
         pool = database.pool,
         budget = share.saturating_add(RESERVED),

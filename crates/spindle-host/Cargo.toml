@@ -13,7 +13,7 @@ default = ["sqlite"]
 sqlite = ["spindle-kernel/sqlite"]
 
 [dependencies]
-base64 = "0.22"
+base64 = "0.23"
 ess-compiler.workspace = true
 ess-conformance.workspace = true
 ess-domain.workspace = true

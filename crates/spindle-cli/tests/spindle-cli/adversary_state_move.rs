@@ -896,6 +896,7 @@ fn limited_role(schema: &str, limit: u32) -> String {
         format!("CREATE ROLE {role} LOGIN PASSWORD '{SERVING_PASSWORD}' CONNECTION LIMIT {limit}"),
         format!("GRANT USAGE ON SCHEMA {schema} TO {role}"),
         format!("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {schema} TO {role}"),
+        crate::metadata_read_only(schema, &role),
         format!("GRANT USAGE ON ALL SEQUENCES IN SCHEMA {schema} TO {role}"),
         format!(
             "SELECT pg_advisory_xact_lock({}); GRANT TEMPORARY ON DATABASE {database} TO {role}",
