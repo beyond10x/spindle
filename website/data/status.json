@@ -151,6 +151,20 @@
     },
     {
       "area": "Execution",
+      "detail": "An external: refusal declared before_row: true is asked among the input-guarded refusals, in declaration order, before the addressed row is read: a cause that holds answers the refusal for a row that exists or not, reading no row, and one that does not lets the command go on, as ESS's interpreter answers.",
+      "href": "/docs/concepts/specification",
+      "label": "External refusals before the row",
+      "status": "shipped"
+    },
+    {
+      "area": "Execution",
+      "detail": "A when_related: {via: input.<list>, exists: false} guard over a List of references reads the row each element names and is taken where any names no row, an empty list naming none; {missing: input.<list>} is the first such element in list order, as ESS's interpreter decides and answers it.",
+      "href": "/docs/concepts/specification",
+      "label": "Guards over a list of references",
+      "status": "shipped"
+    },
+    {
+      "area": "Execution",
       "detail": "An outcome that declares instances: selects every row of its entity whose filter holds, read from the store before the outcome, and moves, updates or removes each in ascending order of identity as ESS's interpreter does; a move skips a row outside its from states, and zero rows selected is a successful outcome. {count: changed} reads how many rows changed, and an event declared once per changed row is published once for each. A filter that walks the rows of an entity stays refused, by name.",
       "href": "/docs/concepts/specification",
       "label": "Set outcomes",

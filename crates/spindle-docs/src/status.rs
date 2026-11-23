@@ -218,6 +218,20 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "External refusals before the row",
+        "An external: refusal declared before_row: true is asked among the input-guarded refusals, in declaration order, before the addressed row is read: a cause that holds answers the refusal for a row that exists or not, reading no row, and one that does not lets the command go on, as ESS's interpreter answers.",
+        "/docs/concepts/specification",
+        "crates/spindle-kernel/tests/spindle-kernel/before_row.rs::an_external_refusal_before_the_row_answers_as_the_interpreter",
+    ),
+    shipped(
+        "Execution",
+        "Guards over a list of references",
+        "A when_related: {via: input.<list>, exists: false} guard over a List of references reads the row each element names and is taken where any names no row, an empty list naming none; {missing: input.<list>} is the first such element in list order, as ESS's interpreter decides and answers it.",
+        "/docs/concepts/specification",
+        "crates/spindle-kernel/tests/spindle-kernel/reference_list.rs::a_guard_over_a_list_of_references_is_decided_as_the_interpreter",
+    ),
+    shipped(
+        "Execution",
         "Set outcomes",
         "An outcome that declares instances: selects every row of its entity whose filter holds, read from the store before the outcome, and moves, updates or removes each in ascending order of identity as ESS's interpreter does; a move skips a row outside its from states, and zero rows selected is a successful outcome. {count: changed} reads how many rows changed, and an event declared once per changed row is published once for each. A filter that walks the rows of an entity stays refused, by name.",
         "/docs/concepts/specification",

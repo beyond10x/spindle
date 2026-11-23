@@ -46,6 +46,16 @@ pinned to a released tag in the workspace `Cargo.toml`.
 
 A guard that evaluates to *unknown* refuses the command. It does not take a branch by default.
 
+An `external:` refusal declared `before_row: true` is asked among the input refusals, in the
+order written, before step 1 reads the instance. When its cause holds, the command answers that
+refusal and reads no row, whether the instance exists or not. When it does not, the command goes
+on as above.
+
+A `when_related: {via: input.<list>, exists: false}` guard over a `List` of references reads the
+row each element names. It holds where any element names no row, and an empty list names none.
+`{missing: input.<list>}` in the branch's error or events is the first such element, in list
+order, as ESS's interpreter answers it.
+
 A `when_related:` guard over a row set, `{entity, where: [...], count: {gte: 1}}` or `exists:` or
 `forall:`, reads every stored row of the entity, as ESS's interpreter does. A comparison with an
 `Optional` field a row does not hold, such as `box_id == input.id` on an item in no box, is
