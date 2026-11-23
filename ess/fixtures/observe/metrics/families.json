@@ -85,6 +85,12 @@
       "summary": "External causes a served command asked about, by what answered each: world, file, default, call or unanswered."
     },
     {
+      "name": "spindle_seed_commands_total",
+      "kind": "counter",
+      "labels": ["counted"],
+      "summary": "Entries of the run's seed file: sent, then each applied, already_there (an existing_instance: outcome, or a request id an earlier entry carried) or refused; written from the first scrape of a run given a seed, absent without one."
+    },
+    {
       "name": "spindle_metrics_scrape_duration_seconds",
       "kind": "gauge",
       "labels": [],

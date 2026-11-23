@@ -241,6 +241,21 @@ impl fmt::Display for AnswerSource {
     }
 }
 
+/// What a run's seed counted (`story:seed-at-start`): every entry taken from the file, `sent`, is
+/// then counted once as `applied`, `already_there` or `refused`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SeedCounts {
+    /// Entries taken from the file, in its order.
+    pub sent: u64,
+    /// Entries whose outcome took effect.
+    pub applied: u64,
+    /// Entries answered by an outcome declared `existing_instance:`, or whose request id an
+    /// earlier entry carried.
+    pub already_there: u64,
+    /// Entries refused for any other reason.
+    pub refused: u64,
+}
+
 /// One external cause a command asked about, and what answered it
 /// (`spindle.observe.ExternalAnswer`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -477,6 +492,8 @@ struct Ring {
     resets: u64,
     /// Every external cause answered, by command, outcome and source.
     externals: BTreeMap<[String; 3], u64>,
+    /// What the run's seed counted, where it was given one ([`Recorder::seeded`]).
+    seed: Option<SeedCounts>,
     /// Whether the host's thread is answering a request ([`Recorder::serving`]).
     serving: bool,
     /// The external causes asked since the request being answered began, in the order asked;
@@ -518,6 +535,8 @@ pub(crate) struct Traffic {
     pub(crate) resets: u64,
     /// Every external cause answered, by command, outcome and source, in label order.
     pub(crate) externals: Vec<([String; 3], u64)>,
+    /// What the run's seed counted, where it was given one.
+    pub(crate) seed: Option<SeedCounts>,
 }
 
 /// The requests a served run answered: the last of them, at most its capacity, and the totals
@@ -541,6 +560,7 @@ impl Recorder {
             rows_seen: BTreeSet::new(),
             resets: 0,
             externals: BTreeMap::new(),
+            seed: None,
             serving: false,
             answers: Vec::new(),
             routes: Vec::new(),
@@ -681,6 +701,12 @@ impl Recorder {
         })
     }
 
+    /// Notes what the run's seed counted so far: the metrics write `spindle_seed_commands_total`
+    /// from then on, each of its four series, and a run that never notes one never writes it.
+    pub fn seeded(&self, counts: SeedCounts) {
+        self.ring(|ring| ring.seed = Some(counts));
+    }
+
     /// Counts one reset of the run's stores; it clears no count and no record.
     pub(crate) fn count_reset(&self) {
         self.ring(|ring| ring.resets += 1);
@@ -743,6 +769,7 @@ impl Recorder {
                 .iter()
                 .map(|(series, count)| (series.clone(), *count))
                 .collect(),
+            seed: ring.seed,
         })
     }
 

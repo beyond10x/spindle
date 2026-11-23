@@ -47,6 +47,13 @@ pub const FORMAT: &str = "spindle-environment/1";
 /// timeout_ms = 2000
 /// secret_env = "APPROVALS_TOKEN"
 /// ```
+///
+/// `[seed]` names the seed file a served `run` submits at every start:
+///
+/// ```toml
+/// [seed]
+/// file = "seed/roles.json"
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Environment {
@@ -64,6 +71,17 @@ pub struct Environment {
     /// The HTTP calls an `external.` key may name, by name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub http: BTreeMap<String, HttpCall>,
+    /// `[seed]`: the seed file a served `run` submits at every start, where `--seed` names none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<SeedFile>,
+}
+
+/// The seed file of an environment: `[seed]` with `file`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SeedFile {
+    /// The JSON array of commands, a path relative to where the runtime starts.
+    pub file: String,
 }
 
 /// An HTTP call that answers external causes: `[http.<name>]`.
@@ -407,6 +425,22 @@ mod tests {
         assert!(environment.http.is_empty());
         let written = toml::to_string(&environment).expect("it serialises");
         assert!(!written.contains("http"), "{written}");
+    }
+
+    #[test]
+    fn a_seed_table_names_its_file_and_nothing_else() {
+        let seeded = parse("[seed]\nfile = \"seed/roles.json\"\n").expect("it parses");
+        assert_eq!(
+            seeded.seed,
+            Some(super::SeedFile {
+                file: "seed/roles.json".to_owned()
+            })
+        );
+        assert!(parse("").expect("it parses").seed.is_none());
+        assert!(matches!(
+            parse("[seed]\nfile = \"a.json\"\nfatal = true\n"),
+            Err(EnvironmentError::Parse(_))
+        ));
     }
 
     #[test]

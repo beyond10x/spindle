@@ -1,0 +1,129 @@
+domain: vault.access
+summary: Roles granted once per identity for the operator's tenant, retired once, and vouchers a desk outside the model gives.
+actors:
+  - name: vault.access.Operator
+    attributes:
+      - name: tenant
+        type: String
+    may:
+      - vault.access.GrantRole
+      - vault.access.RetireRole
+      - vault.access.VouchFor
+  - name: vault.access.Visitor
+    may:
+      - vault.access.VouchFor
+entities:
+  - name: vault.access.Role
+    identity:
+      name: role_id
+      type: String
+    fields:
+      - name: title
+        type: String
+      - name: tenant
+        type: String
+    lifecycle:
+      initial: Active
+      states: [Active, Retired]
+      terminal: [Retired]
+      transitions:
+        - {name: retire, from: [Active], to: Retired}
+  - name: vault.access.Voucher
+    identity:
+      name: voucher_id
+      type: String
+    fields:
+      - name: role_id
+        type: String
+    lifecycle:
+      initial: Given
+      states: [Given]
+      terminal: [Given]
+errors:
+  - name: vault.access.RoleExists
+    summary: A role already carries the identity.
+    fields:
+      - {name: role_id, type: String}
+  - name: vault.access.RoleMissing
+    summary: No role carries the identity.
+    fields: []
+  - name: vault.access.NotVouched
+    summary: The desk did not vouch.
+    fields: []
+events:
+  - name: vault.access.RoleGranted
+    fields:
+      - {name: role_id, type: String}
+      - {name: tenant, type: String}
+  - name: vault.access.RoleRetired
+    fields:
+      - {name: role_id, type: String}
+  - name: vault.access.Vouched
+    fields:
+      - {name: voucher_id, type: String}
+commands:
+  - name: vault.access.GrantRole
+    input:
+      - {name: role_id, type: String}
+      - {name: title, type: String}
+    outcomes:
+      - name: duplicate
+        existing_instance: true
+        error: vault.access.RoleExists
+        payload:
+          vault.access.RoleExists: {role_id: input.role_id}
+        summary: A role already carries the identity; nothing changes.
+      - name: granted
+        creates: vault.access.Role
+        instance: role_id
+        sets:
+          title: input.title
+          tenant: {caller: tenant}
+        emits: [vault.access.RoleGranted]
+        payload:
+          vault.access.RoleGranted:
+            role_id: input.role_id
+            tenant: {caller: tenant}
+        summary: The role is granted for the operator's tenant.
+  - name: vault.access.RetireRole
+    input:
+      - {name: role_id, type: String}
+    outcomes:
+      - name: missing
+        unknown_instance: true
+        error: vault.access.RoleMissing
+        summary: No role carries the identity.
+      - name: retired
+        moves: vault.access.Role.retire
+        instance: role_id
+        emits: [vault.access.RoleRetired]
+        payload:
+          vault.access.RoleRetired: {role_id: input.role_id}
+        summary: The role is retired.
+  - name: vault.access.VouchFor
+    input:
+      - {name: voucher_id, type: String}
+      - {name: role_id, type: String}
+    outcomes:
+      - name: vouched
+        external: the desk vouches for the role
+        creates: vault.access.Voucher
+        instance: voucher_id
+        sets:
+          role_id: input.role_id
+        emits: [vault.access.Vouched]
+        payload:
+          vault.access.Vouched: {voucher_id: input.voucher_id}
+        summary: The desk vouched; the voucher is recorded.
+      - name: not-vouched
+        error: vault.access.NotVouched
+        summary: The desk did not vouch.
+views:
+  - name: vault.access.Roles
+    source: vault.access.Role
+    consistency: read_your_writes
+    fields:
+      - {name: role_id, type: String}
+      - {name: title, type: String}
+      - {name: tenant, type: String}
+      - {name: state, type: vault.access.Role.State}

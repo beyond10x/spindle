@@ -3,7 +3,7 @@ title: Environment and admission
 sidebar_position: 3
 description: An environment names the implementations available where Spindle runs; admission binds one to every capability or refuses.
 lede: The environment, not the specification, chooses the implementations, and admission is the only step that differs between a laptop and a VM.
-source: crates/spindle-capability/src/environment.rs, crates/spindle-capability/src/admission.rs, crates/spindle-cli/src/calls.rs, crates/spindle-cli/tests/spindle-cli/tls_cause.rs, crates/spindle-capability/tests/spindle-capability/admission.rs, crates/spindle-cli/tests/spindle-cli/admit.rs, crates/spindle-host/src/host.rs, crates/spindle-kernel/src/postgres.rs, crates/spindle-cli/src/database.rs, crates/spindle-cli/tests/spindle-cli/postgres.rs
+source: crates/spindle-capability/src/environment.rs, crates/spindle-capability/src/admission.rs, crates/spindle-cli/src/calls.rs, crates/spindle-cli/tests/spindle-cli/tls_cause.rs, crates/spindle-capability/tests/spindle-capability/admission.rs, crates/spindle-cli/tests/spindle-cli/admit.rs, crates/spindle-host/src/host.rs, crates/spindle-kernel/src/postgres.rs, crates/spindle-cli/src/database.rs, crates/spindle-cli/tests/spindle-cli/postgres.rs, crates/spindle-cli/src/seed.rs, crates/spindle-cli/tests/spindle-cli/seed.rs
 ---
 
 ## The environment
@@ -149,6 +149,77 @@ These are refused when the document is read. The message gives the table's name,
 A served run whose every external cause is bound to a call needs neither `--decisions` nor
 `--answer-default`. With `--observe`, a cause a call answers is listed and counted with the source
 `call`, and one whose call failed as `unanswered`.
+
+## A seed submitted at start
+
+A served run can submit a list of commands every time it starts, such as the built-in roles of an
+access model. The list is a seed file, named by
+[`run --seed`](../reference/cli.md#run--seed) or by the environment's `[seed]` table:
+
+```toml
+[seed]
+file = "seed/roles.json"
+```
+
+`file` is a path, relative to the directory `run` starts in. `--seed` wins over the table. A run
+that reads stdin, where nothing requires `ingress.network`, stops on either.
+
+The file is one JSON array of entries, submitted in the file's order:
+
+```json
+[
+  {
+    "command": "vault.access.GrantRole",
+    "input": {"role_id": "admin", "title": "Administrator"},
+    "actor": "vault.access.Operator",
+    "caller": {"tenant": "north"},
+    "request_id": "seed-admin"
+  }
+]
+```
+
+| Key | Holds |
+|---|---|
+| `command` | the command's qualified name; a component must accept it |
+| `input` | the command's input, every required field of it; `{}` when left out |
+| `actor` | the actor the command is sent as; left out, it is sent as no caller |
+| `caller` | the caller's attributes, every required one of the actor's; only with `actor` |
+| `request_id` | a non-empty id. An entry whose id an earlier entry carried is not submitted again |
+
+`run` reads and checks the file before listening, against the specification as the kernel checks
+a command before it reads anything. It stops with exit 1, naming the file and the entry (counted
+from 1) and its request id, on:
+
+- a file that is not JSON or not an array, or an entry with another key or no `request_id`
+- a command the specification does not declare or no component accepts
+- an input field the command does not declare, a value its type does not admit, or a required
+  field left out
+- an actor the specification does not declare, a caller that is not one of its callers, or a caller
+  without an actor
+- one request id on two entries that differ
+
+Once listening, `run` submits the entries one at a time, each between the requests the listener
+hands over, so a request does not wait for the seed to finish. An entry does not come through the
+listener: on a run with `--trusted-caller-header` it needs no proxy secret, and with
+`--fixed-actor` it is still sent as its own actor and caller. Each entry counts as one of these:
+
+| Count | An entry |
+|---|---|
+| `applied` | whose outcome took effect |
+| `already_there` | whose outcome the specification declares `existing_instance:`, or whose request id an earlier entry carried |
+| `refused` | refused for any other reason: a declared error, or a refusal of the kernel such as `not_granted`. It is logged as `seed <file> entry <n>: <command> (request id <id>) refused: <error>` and the next entry is submitted |
+
+`sent` counts every entry taken from the file. The run submits the whole file on every start, so a
+second start on the same state applies nothing new when every command answers a held instance with
+an `existing_instance:` outcome. A refusal does not stop the run. When the last entry has run,
+`run` prints one line on stderr:
+
+```text
+b10x-spindle: seed seed/roles.json ended: 3 sent, 2 applied, 1 already there, 0 refused
+```
+
+With `--observe`, `GET /__spindle/metrics` has the same counts as
+`spindle_seed_commands_total{counted="sent"}` and so on, from the first scrape.
 
 ## State in PostgreSQL
 
