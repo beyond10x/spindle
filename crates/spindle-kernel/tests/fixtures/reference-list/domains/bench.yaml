@@ -1,0 +1,121 @@
+domain: workshop.bench
+summary: A kit names the tools it holds; a kit naming a tool no row carries is refused, and the refusal names that tool. A revision is first checked by something the specification does not describe.
+types:
+  - name: workshop.bench.ToolId
+    kind: newtype
+    of: Uuid
+  - name: workshop.bench.KitId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: workshop.bench.Tool
+    identity: {name: tool_id, type: workshop.bench.ToolId}
+    fields:
+      - {name: label, type: String}
+    lifecycle: {initial: Ready, states: [Ready], terminal: [Ready]}
+  - name: workshop.bench.Kit
+    identity: {name: kit_id, type: workshop.bench.KitId}
+    fields:
+      - {name: tools, type: "List<workshop.bench.ToolId>"}
+    relations:
+      - {name: tools, kind: references, target: workshop.bench.Tool, cardinality: many, via: tools}
+    lifecycle: {initial: Packed, states: [Packed], terminal: [Packed]}
+errors:
+  - name: workshop.bench.UnknownTool
+    summary: A tool the kit names does not exist.
+    fields:
+      - {name: tool_id, type: workshop.bench.ToolId}
+  - name: workshop.bench.KitLocked
+    summary: The kit may not be revised now.
+    fields: []
+  - name: workshop.bench.NoKit
+    summary: No kit carries the identity.
+    fields: []
+events:
+  - name: workshop.bench.ToolAdded
+    fields: [{name: tool_id, type: workshop.bench.ToolId}]
+  - name: workshop.bench.KitAssembled
+    fields: [{name: kit_id, type: workshop.bench.KitId}]
+  - name: workshop.bench.KitRevised
+    fields: [{name: kit_id, type: workshop.bench.KitId}]
+commands:
+  - name: workshop.bench.AddTool
+    input:
+      - {name: tool_id, type: workshop.bench.ToolId}
+      - {name: label, type: String}
+    outcomes:
+      - name: added
+        creates: workshop.bench.Tool
+        instance: tool_id
+        sets:
+          label: input.label
+        emits: [workshop.bench.ToolAdded]
+        payload:
+          workshop.bench.ToolAdded:
+            tool_id: input.tool_id
+        summary: The tool is added.
+  - name: workshop.bench.AssembleKit
+    input:
+      - {name: tools, type: "List<workshop.bench.ToolId>"}
+    outcomes:
+      - name: unknown-tool
+        when_related: {via: input.tools, exists: false}
+        error: workshop.bench.UnknownTool
+        payload:
+          workshop.bench.UnknownTool:
+            tool_id: {missing: input.tools}
+        summary: A tool the kit names does not exist.
+      - name: assembled
+        creates: workshop.bench.Kit
+        instance: kit_id
+        sets:
+          tools: input.tools
+        emits: [workshop.bench.KitAssembled]
+        payload:
+          workshop.bench.KitAssembled:
+            kit_id: {generated: true}
+        summary: The kit is assembled.
+  - name: workshop.bench.ReviseKit
+    input:
+      - {name: kit_id, type: workshop.bench.KitId}
+      - {name: tools, type: "List<workshop.bench.ToolId>"}
+    outcomes:
+      - name: locked
+        external: the kit is locked for revision
+        before_row: true
+        error: workshop.bench.KitLocked
+        summary: The lock is checked before the kit is read.
+      - name: no-kit
+        unknown_instance: true
+        error: workshop.bench.NoKit
+        summary: No kit carries the identity.
+      - name: unknown-tool
+        when_related: {via: input.tools, exists: false}
+        error: workshop.bench.UnknownTool
+        payload:
+          workshop.bench.UnknownTool:
+            tool_id: {missing: input.tools}
+        summary: A tool the revision names does not exist.
+      - name: revised
+        updates: workshop.bench.Kit
+        instance: kit_id
+        sets:
+          tools: input.tools
+        emits: [workshop.bench.KitRevised]
+        payload:
+          workshop.bench.KitRevised:
+            kit_id: input.kit_id
+        summary: The kit holds the tools named.
+views:
+  - name: workshop.bench.Kits
+    source: workshop.bench.Kit
+    consistency: read_your_writes
+    fields:
+      - {name: kit_id, type: workshop.bench.KitId}
+      - {name: tools, type: "List<workshop.bench.ToolId>"}
+  - name: workshop.bench.Tools
+    source: workshop.bench.Tool
+    consistency: read_your_writes
+    fields:
+      - {name: tool_id, type: workshop.bench.ToolId}
+      - {name: label, type: String}

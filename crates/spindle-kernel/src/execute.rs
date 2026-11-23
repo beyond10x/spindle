@@ -9,7 +9,7 @@ use ess_compiler::ir::{
     EventHandle, PrecedencePlan, ResolvedCommand, ResolvedCondition, ResolvedEffect,
     ResolvedEntity, ResolvedField, ResolvedInstance, ResolvedOutcome, ResolvedPayloadField,
     ResolvedPayloadValue, ResolvedRelatedTest, ResolvedRelatedVia, ResolvedRowSelection,
-    ResolvedRowSetTest, RowMember,
+    ResolvedRowSetTest, ResolvedTypeRef, RowMember,
 };
 use ess_domain::QualifiedName;
 use ess_domain::command::precedence::Phase;
@@ -250,8 +250,7 @@ pub fn execute_refusing(
     }
     let attributes = crate::caller::bind(ir, actor, caller)?;
     check_input(ir, spec, input)?;
-    let addressed = addressed(ir, spec)?;
-    let held = match addressed {
+    let address = match addressed(ir, spec)? {
         Some((entity, field)) => {
             let identity = input
                 .get(&field.name)
@@ -260,17 +259,10 @@ pub fn execute_refusing(
                     ExecuteError::InvalidInput(format!("`{}` names no instance", field.name))
                 })?
                 .clone();
-            let stored = store.load(&entity.name.to_string(), &identity)?;
-            Some(Addressed {
-                entity,
-                field,
-                identity,
-                stored,
-            })
+            Some((entity, field, identity))
         }
         None => None,
     };
-    let related = crate::values::related(ir, spec, input, store)?;
     let mut run = Run {
         ir,
         spec,
@@ -280,8 +272,8 @@ pub fn execute_refusing(
         attributes,
         store,
         decider,
-        held,
-        related,
+        held: None,
+        related: crate::values::Related::new(),
         generator: Generator::new(mint, now, command),
         instant: Cell::new(None),
         minted: None,
@@ -291,6 +283,22 @@ pub fn execute_refusing(
         refused,
         open: None,
     };
+    if let Some(executed) = run.before_row()? {
+        return Ok(executed);
+    }
+    run.held = match address {
+        Some((entity, field, identity)) => {
+            let stored = run.store.load(&entity.name.to_string(), &identity)?;
+            Some(Addressed {
+                entity,
+                field,
+                identity,
+                stored,
+            })
+        }
+        None => None,
+    };
+    run.related = crate::values::related(ir, spec, input, &mut *run.store)?;
     match run.select()? {
         Selected::Outcome(outcome) => run.take(outcome),
         Selected::Answered(executed) => Ok(executed),
@@ -563,6 +571,30 @@ struct Run<'a, 'ir> {
 }
 
 impl<'a, 'ir> Run<'a, 'ir> {
+    /// The input refusals of a command that declares an external refusal answered before the row
+    /// (`before_row: true`, ess/25), read before the addressed row or any related row is: the
+    /// plan's [`Phase::InputRefusal`], input-guarded refusals and those external refusals in
+    /// declaration order, the first whose guard holds and whose cause the decider says holds
+    /// answered with no row, as ESS's interpreter answers it (`interpret::execute`,
+    /// `refused_by_input`). `None` where none holds, the command declares no such refusal, or the
+    /// plan reads a related row first; selection then reads the rows and goes on
+    /// ([`Self::select`]), each cause already asked keeping its answer ([`Self::ask`]).
+    fn before_row(&mut self) -> Result<Option<Executed>, ExecuteError> {
+        if !self.spec.outcomes.iter().any(|outcome| outcome.before_row) {
+            return Ok(None);
+        }
+        let plan = PrecedencePlan::new(self.spec, self.ir.format());
+        if !plan.branches(Phase::RelatedRow).is_empty() {
+            return Ok(None);
+        }
+        for outcome in plan.branches(Phase::InputRefusal) {
+            if self.holds(outcome)? {
+                return self.refusal(outcome).map(Some);
+            }
+        }
+        Ok(None)
+    }
+
     /// Reads the outcomes in the order of the command's precedence plan; the first whose
     /// condition holds is selected.
     ///
@@ -831,6 +863,10 @@ impl<'a, 'ir> Run<'a, 'ir> {
     /// The row `via` names among `entity`'s, as the store holds it before selection: an input
     /// field, or a stored field of the addressed instance as it was before the branch (ESS
     /// `interpret::execute::related`). A reference left absent or `null` names no row.
+    ///
+    /// A list of references (ess/28) is read for a missing row alone, as ESS reads it
+    /// (`related::names_missing`, `related::held`): `Missing` where any element names no row, in
+    /// list order, else `Absent`, holding no row; an empty list names none.
     fn reference(
         &mut self,
         via: &ResolvedRelatedVia,
@@ -845,6 +881,15 @@ impl<'a, 'ir> Run<'a, 'ir> {
         let Some(identity) = identity.filter(|identity| !identity.is_null()).cloned() else {
             return Ok(Reference::Absent);
         };
+        if matches!(via.type_ref(), ResolvedTypeRef::List { .. }) {
+            let name = entity.name.to_string();
+            for element in identity.as_array().into_iter().flatten() {
+                if self.store.load(&name, element)?.is_none() {
+                    return Ok(Reference::Missing);
+                }
+            }
+            return Ok(Reference::Absent);
+        }
         Ok(
             match self.store.load(&entity.name.to_string(), &identity)? {
                 Some(stored) => Reference::Row(identity, stored.row),

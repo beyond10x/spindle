@@ -1,0 +1,22 @@
+format: ess/34
+system: lobby
+version: v1
+summary: Seats opened by identity and signed into after a check the specification does not describe.
+domains:
+  - lobby.desk
+components:
+  - component: front
+    summary: Opens seats and signs into them.
+    owns:
+      domains:
+        - lobby.desk
+    accepts:
+      commands:
+        - lobby.desk.OpenSeat
+        - lobby.desk.SignIn
+    publishes:
+      events:
+        - lobby.desk.SeatOpened
+        - lobby.desk.SeatTaken
+        - lobby.desk.SeatReleased
+    reached_by: in_process
