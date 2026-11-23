@@ -19,8 +19,9 @@
 //! falls (`story:metrics-observed-series`): a labelled counter or histogram from its first count,
 //! an entity's rows from the first scrape that finds it holding one ([`Recorder::observed_rows`]),
 //! the last scrape's duration from the second scrape. Only `spindle_resets_total` is written from
-//! the start. So a scrape of a model of hundreds of commands that has run none writes one series,
-//! not about 33 per command.
+//! the start, and, in a run given a seed, each series of `spindle_seed_commands_total`. So a
+//! scrape of a model of hundreds of commands that has run none writes one series, not about 33
+//! per command.
 
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
@@ -45,7 +46,7 @@ pub(crate) struct Family {
 
 /// Every family the metrics expose, in the order `ess/fixtures/observe/metrics/families.json`
 /// lists them; a unit test holds the two equal.
-pub(crate) const FAMILIES: [Family; 15] = [
+pub(crate) const FAMILIES: [Family; 16] = [
     Family {
         name: "spindle_http_requests_total",
         kind: "counter",
@@ -144,6 +145,15 @@ pub(crate) const FAMILIES: [Family; 15] = [
         labels: &["command", "outcome", "source"],
         summary: "External causes a served command asked about, by what answered each: world, \
                   file, default, call or unanswered.",
+    },
+    Family {
+        name: "spindle_seed_commands_total",
+        kind: "counter",
+        labels: &["counted"],
+        summary: "Entries of the run's seed file: sent, then each applied, already_there (an \
+                  existing_instance: outcome, or a request id an earlier entry carried) or \
+                  refused; written from the first scrape of a run given a seed, absent without \
+                  one.",
     },
     Family {
         name: "spindle_metrics_scrape_duration_seconds",
@@ -376,6 +386,7 @@ pub(crate) fn exposition(recorder: &Recorder, host: &Reader, rows: Vec<(String, 
         scraped_us,
         resets,
         externals,
+        seed,
     } = recorder.traffic();
     for (labels, count) in requests {
         samples.add("spindle_http_requests_total", &labels, Value::Number(count));
@@ -414,6 +425,20 @@ pub(crate) fn exposition(recorder: &Recorder, host: &Reader, rows: Vec<(String, 
             &labels,
             Value::Number(count),
         );
+    }
+    if let Some(seed) = seed {
+        for (counted, count) in [
+            ("sent", seed.sent),
+            ("applied", seed.applied),
+            ("already_there", seed.already_there),
+            ("refused", seed.refused),
+        ] {
+            samples.add(
+                "spindle_seed_commands_total",
+                &[counted],
+                Value::Number(count),
+            );
+        }
     }
     if let Some(micros) = scraped_us {
         samples.add(
