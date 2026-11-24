@@ -651,6 +651,18 @@ fn value(ir: &EssIr, field: &ResolvedPayloadField, reading: Reading) -> Option<S
         {
             None
         }
+        // A field of the one row a selector selects (ess/22), read from the store as it was
+        // before the outcome ([`crate::values::Selections`]). A selector that reads what its own
+        // outcome publishes (`payload.<Event>.<field>`, ess/27) or walks the rows of an entity
+        // stays refused, and so does one in an error's fields, where ESS's interpreter reads none
+        // (`interpret::execute::error_value`).
+        ResolvedPayloadValue::RelatedSelection { selection, .. }
+            if !error
+                && selection.reads.is_empty()
+                && ess_domain::command::related_rows::walked(&selection.filter).is_empty() =>
+        {
+            None
+        }
         other => Some(format!("the value source {}", other.describe())),
     }
 }

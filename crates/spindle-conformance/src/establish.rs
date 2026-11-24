@@ -16,8 +16,9 @@ const SETUP: &str = "entity setup";
 /// Establishes the row `request` names on `host`, as ESS's interpreter does: checked against the
 /// model by ESS ([`ess_conformance::input::validate_entity_setup`]), then written into the store
 /// of the component that owns the entity ([`Host::establish`]) in the declared state, with its
-/// fields and without history. A field present as `null` is held as absent, as the kernel holds
-/// every field that holds nothing.
+/// fields and without history. A field present as `null` is held as `null`, as ESS's interpreter
+/// holds it: a guard, a filter or an invariant reads it as absent, and a value copied from it
+/// (`{subject: <field>}`) is `null`, which an event then carries.
 ///
 /// # Errors
 /// `unavailable` for a row ESS refuses or an identity already held, as the interpreter answers
@@ -40,7 +41,6 @@ pub(crate) fn establish(
     let fields = request
         .fields
         .iter()
-        .filter(|(_, value)| !matches!(value, Node::Null))
         .map(|(field, value)| json(value).map(|value| (field.clone(), value)))
         .collect::<Result<BTreeMap<_, _>, _>>()?;
     let row = Row {

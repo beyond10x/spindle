@@ -1,0 +1,21 @@
+format: ess/34
+system: relay
+version: v1
+summary: Desks a keeper may hold, handed from one keeper to the next.
+domains:
+  - relay.desk
+components:
+  - component: front
+    summary: Opens desks and hands them on.
+    owns:
+      domains:
+        - relay.desk
+    accepts:
+      commands:
+        - relay.desk.OpenDesk
+        - relay.desk.HandDesk
+    publishes:
+      events:
+        - relay.desk.DeskOpened
+        - relay.desk.DeskHanded
+    reached_by: in_process

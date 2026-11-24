@@ -44,6 +44,12 @@ pinned to a released tag in the workspace `Cargo.toml`.
    against its entity's invariants, and commits every row in one write, or none.
 4. It returns the events the outcome emits, or the error it declares.
 
+An `Optional` event field whose source holds nothing is left out of the event, unless the field
+declares `presence: null_when_absent`, which carries it as `null`. A stored field a row holds as
+`null`, such as one a scenario's `establish` step wrote as `null`, is copied as `null`, so
+`{subject: <field>}` carries `null` there, as ESS's interpreter carries it. A guard, a filter or an
+invariant reads a held `null` as absent.
+
 A guard that evaluates to *unknown* refuses the command. It does not take a branch by default.
 
 An `external:` refusal declared `before_row: true` is asked among the input refusals, in the
@@ -65,6 +71,19 @@ The row may or may not be in the set, so a count it could change refuses the com
 undecidable. The message gives the filter, the entity and the absent field, and no stored row. To
 leave such a row out of the set, write `defined(<field>)` beside the comparison:
 `where: [defined(box_id), box_id == input.id]`.
+
+A value `{related: {entity, where: <predicate>, field}}` in `sets:` or an event payload reads
+`field` of the one row of the entity that the predicate selects, such as
+`where: email == input.email`. The predicate is read like a row-set guard's, over the store as it
+was before the outcome, so a row the outcome itself creates is not a candidate. The identity field
+reads the row's identity, and an `Optional` field the row does not hold is left out.
+
+Where no row is selected, or more than one, the field has no value. The command is refused with
+`no_value` and nothing is written. An `Optional` field does not turn that into an absent value. A
+row the predicate leaves *unknown* refuses the command as undecidable. Guard the outcome with a
+row-set guard to answer these cases yourself, as ESS's interpreter expects. A predicate that
+reads `payload.`, a predicate that walks the rows of an entity, and this value in an error's
+fields stay refused.
 
 A `creates:` outcome whose identity is neither an input nor a payload source (`generated: true`,
 or no source) leaves the identity to the runtime, which mints it with the `identity.mint`

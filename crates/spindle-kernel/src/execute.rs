@@ -274,6 +274,7 @@ pub fn execute_refusing(
         decider,
         held: None,
         related: crate::values::Related::new(),
+        selected: crate::values::Selections::new(),
         generator: Generator::new(mint, now, command),
         instant: Cell::new(None),
         minted: None,
@@ -299,6 +300,7 @@ pub fn execute_refusing(
         None => None,
     };
     run.related = crate::values::related(ir, spec, input, &mut *run.store)?;
+    run.selected = run.selections()?;
     match run.select()? {
         Selected::Outcome(outcome) => run.take(outcome),
         Selected::Answered(executed) => Ok(executed),
@@ -545,6 +547,8 @@ struct Run<'a, 'ir> {
     held: Option<Addressed<'ir>>,
     /// The rows the command's related values name, read before anything else ([`crate::values::related`]).
     related: crate::values::Related,
+    /// What the command's selectors select, read with the related rows ([`Run::selections`]).
+    selected: crate::values::Selections,
     generator: Generator<'a>,
     /// The decision's instant, as every guard and row-set selector reads `now`: read from the
     /// clock once per run, on the first read, and `None` inside where the clock spells no instant
@@ -976,6 +980,78 @@ impl<'a, 'ir> Run<'a, 'ir> {
             ));
         }
         Ok(decided)
+    }
+
+    /// What each `{related: {entity, where, field}}` selector of the command selects (ess/22),
+    /// read from the store as it was before selection, as ESS's interpreter reads it
+    /// (`interpret::execute::row_set::Reader::one`): every stored row of the selector's entity is
+    /// a candidate, read as a row-set guard reads it ([`Self::row_set`]), and ESS decides how many
+    /// are selected ([`ess_compiler::ir::Selected::of`]). Rows the outcome itself writes are no
+    /// candidates. Read before any branch is selected, so a value read after the outcome's own
+    /// writes still reads this snapshot; what selects no row or several is answered where a value
+    /// reads it ([`crate::values::Sources`]).
+    fn selections(&mut self) -> Result<crate::values::Selections, ExecuteError> {
+        use crate::values::Selection;
+        use ess_compiler::ir::Selected as Chosen;
+        let ir = self.ir;
+        let mut selected = crate::values::Selections::new();
+        for selection in crate::values::selections(self.spec) {
+            let key = crate::values::selection_key(ir, selection);
+            if selected.contains_key(&key) {
+                continue;
+            }
+            let entity = ir.entity(&selection.entity);
+            let subject = match &self.held {
+                Some(Addressed {
+                    entity,
+                    identity,
+                    stored: Some(stored),
+                    ..
+                }) => Some(Facts::row(ir, entity, identity, &stored.row, None)),
+                _ => None,
+            };
+            if subject.is_none() && reads_subject(&selection.filter) {
+                selected.insert(key, Selection::Unknown);
+                continue;
+            }
+            let input = Facts::values(ir, &self.spec.input, self.input);
+            let now = self.now();
+            let name = entity.name.to_string();
+            let scan = self.store.scan(&name)?;
+            if !self.scanned.iter().any(|scanned| scanned.entity == name) {
+                self.scanned.push(Scanned {
+                    entity: name,
+                    version: scan.version,
+                });
+            }
+            let mut members = Vec::new();
+            let mut rows = Vec::new();
+            for (identity, stored) in scan {
+                let row = Facts::row(ir, entity, &identity, &stored.row, None);
+                let facts = Selector {
+                    row: &row,
+                    input: &input,
+                    subject: subject.as_ref(),
+                    now,
+                };
+                members.push(RowMember {
+                    selected: selection.filter.evaluate(&facts),
+                    satisfies: Truth::True,
+                });
+                rows.push((identity, stored.row));
+            }
+            let chosen = match Chosen::of(&members) {
+                Chosen::One(index) => {
+                    let (identity, row) = rows.swap_remove(index);
+                    Selection::One(identity, row)
+                }
+                Chosen::None => Selection::None,
+                Chosen::Several => Selection::Several,
+                Chosen::Unknown => Selection::Unknown,
+            };
+            selected.insert(key, chosen);
+        }
+        Ok(selected)
     }
 
     /// `outcome`'s name qualified by the command's, as a refusal names it.
@@ -1861,6 +1937,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
             caller: self.caller,
             before,
             related: &self.related,
+            selected: &self.selected,
             error: false,
             minted: self
                 .minted
@@ -1924,6 +2001,15 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 .is_some_and(|declared| declared.fields.iter().any(|field| field.name == *name))
         {
             payload.insert(name.clone(), minted.clone());
+        }
+        // A field left absent is carried as `null` where it declares `presence: null_when_absent`,
+        // and left out otherwise (ESS `interpret::execute::emit`, beyond10x/ess#765).
+        if let Some(declared) = self.ir.events().get(event.name()) {
+            for field in &declared.fields {
+                if field.naming.presence == Some(ess_domain::types::Presence::NullWhenAbsent) {
+                    payload.entry(field.name.clone()).or_insert(Value::Null);
+                }
+            }
         }
         Ok(Event {
             name: event.name().to_string(),

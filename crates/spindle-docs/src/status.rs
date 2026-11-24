@@ -232,6 +232,13 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "Values from the one row a predicate selects",
+        "A value {related: {entity, where, field}} in sets: or an event payload reads the field of the one row of the entity the predicate selects, from the store as it was before the outcome; no row or several give no value and nothing is written, as ESS's interpreter decides. A predicate reading payload. or walking the rows of an entity, and the value in an error's fields, stay refused.",
+        "/docs/concepts/specification",
+        "crates/spindle-kernel/tests/spindle-kernel/where_selected_values.rs::where_selected_values_agree_with_the_interpreter",
+    ),
+    shipped(
+        "Execution",
         "Set outcomes",
         "An outcome that declares instances: selects every row of its entity whose filter holds, read from the store before the outcome, and moves, updates or removes each in ascending order of identity as ESS's interpreter does; a move skips a row outside its from states, and zero rows selected is a successful outcome. {count: changed} reads how many rows changed, and an event declared once per changed row is published once for each. A filter that walks the rows of an entity stays refused, by name.",
         "/docs/concepts/specification",
