@@ -6,7 +6,7 @@ status: draft
 title: Main CI fails only on a defect
 relations:
 - serves: vision:spindle
-revision: 1
+revision: 2
 ---
 # Main CI fails only on a defect
 
@@ -61,6 +61,11 @@ Tests of the same kind that have not failed `main` yet, for a later story:
 - `spindle-ingress` `metrics_read::a_metrics_read_and_a_command_sent_during_it_answer_within_the_budget`:
   median under 200 ms and every read under 1 s (a latency budget measured on the runner).
 - `spindle-ingress` `adversary2_caller_proof`: four parses under 5 s.
+- `spindle-kernel` `resting_rows::a_view_read_of_forty_rows_beside_a_hundred_thousand_events_answers_in_under_20_ms`:
+  the median of five view reads under 20 ms; the property (a view read does not read the feed)
+  can be held by `LOG_CALLS` or `SqliteStore::events_read` instead.
+- `spindle-kernel` `resting_rows::opening_a_log_of_large_rows_holds_the_rows_that_rest_not_their_history`
+  ran over 60 s on the shared workstation (a test-budget defect beside this story).
 - PostgreSQL lane: `spindle-kernel` `postgres::a_scan_holds_a_commit_while_an_older_transaction_is_open`
   (under 1 s while a 1.5 s transaction is open) and `state_move` (a scan under 1.5 s while a 4 s
   gate is held; a lock in another schema under 1 s).
