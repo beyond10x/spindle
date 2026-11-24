@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-24T02:29:30Z",
+  "actor": "human:timo",
+  "artifact": "story:seed-at-start",
+  "kind": "story",
+  "revision": 4,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "https://github.com/beyond10x/spindle/actions/runs/45288023827 (PR 69 Gate, macOS, Build documentation green on 7025402d; merged 145cbcba; tests crates/spindle-cli/tests/spindle-cli/seed.rs)"
+  }
+}

@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-11-24
+
 ### Added
 
 - The kernel runs a value `{related: {entity, where: <predicate>, field}}` (ess/22) in `sets:`
@@ -15,18 +17,6 @@ are Spindle's releases.
   Before, every outcome carrying one was refused as unsupported. A predicate reading `payload.`
   or walking the rows of an entity, and the value in an error's fields, stay refused. Works on the
   memory, SQLite and PostgreSQL stores (`story:related-row-selected-by-predicate`).
-
-### Fixed
-
-- An `Optional` event field copied from a stored field the row holds as `null` (`{subject: …}`,
-  a changed, related or selected row's field) is carried as `null`, as ESS's interpreter carries
-  it, where Spindle left it out. An `establish` step's `null` is now held as `null` rather than
-  dropped, so a replayed scenario stating `null` for such a field passes. An event field declaring
-  `presence: null_when_absent` is carried as `null` where its source is absent; any other absent
-  field is still left out, as ESS leaves it out. View rows are unchanged: they follow a different
-  ESS rule, tracked in `story:view-rows-absent-optional-fields`
-  (`story:event-payload-absent-optional-null`).
-
 - `run --seed <file>`, or `[seed] file` in the environment document, names a JSON array of
   entries `{"command", "input", "actor", "caller", "request_id"}` that a served run submits on
   every start, after its stores open, one at a time in the file's order between the requests the
@@ -47,6 +37,25 @@ are Spindle's releases.
   to `HostTarget` and to ESS's interpreter and requires the same answers and view rows, the same
   answers twice, and that a step answered `already-ended` changes nothing
   (`docs/hardening/2026-11-23.md`).
+- A view filter that tests a text field with `contains`, `starts_with` or `ends_with` against a
+  text parameter or literal, `address: {contains: {param: text}}`, is served on every store, with
+  the rows ESS's interpreter answers: the match is byte for byte and case-sensitive, the empty text
+  matches every row, an `Optional` parameter left out holds no row, and a field the row does not
+  hold refuses the read. `admit` and `run` named such a view not served, and its route answered
+  `501`.
+- `conform` reads a view with the parameters a scenario gives, so a scenario that queries a view
+  with parameters executes; it was counted unsupported.
+
+### Fixed
+
+- An `Optional` event field copied from a stored field the row holds as `null` (`{subject: …}`,
+  a changed, related or selected row's field) is carried as `null`, as ESS's interpreter carries
+  it, where Spindle left it out. An `establish` step's `null` is now held as `null` rather than
+  dropped, so a replayed scenario stating `null` for such a field passes. An event field declaring
+  `presence: null_when_absent` is carried as `null` where its source is absent; any other absent
+  field is still left out, as ESS leaves it out. View rows are unchanged: they follow a different
+  ESS rule, tracked in `story:view-rows-absent-optional-fields`
+  (`story:event-payload-absent-optional-null`).
 
 ### Changed
 
@@ -72,14 +81,6 @@ are Spindle's releases.
   kernel reads the row each element names and takes the branch where any names no row, an empty
   list naming none, and `{missing: input.<list>}` reads the first such element in list order, as
   ESS's interpreter decides and answers it. It was refused as unsupported.
-- A view filter that tests a text field with `contains`, `starts_with` or `ends_with` against a
-  text parameter or literal, `address: {contains: {param: text}}`, is served on every store, with
-  the rows ESS's interpreter answers: the match is byte for byte and case-sensitive, the empty text
-  matches every row, an `Optional` parameter left out holds no row, and a field the row does not
-  hold refuses the read. `admit` and `run` named such a view not served, and its route answered
-  `501`.
-- `conform` reads a view with the parameters a scenario gives, so a scenario that queries a view
-  with parameters executes; it was counted unsupported.
 
 ### Changed
 
