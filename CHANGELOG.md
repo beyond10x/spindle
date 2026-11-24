@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-24
+
 ### Fixed
 
 - A seed entry that repeats the request id of an earlier entry that was refused is submitted
