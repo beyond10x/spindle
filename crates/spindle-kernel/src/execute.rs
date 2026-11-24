@@ -300,7 +300,6 @@ pub fn execute_refusing(
         None => None,
     };
     run.related = crate::values::related(ir, spec, input, &mut *run.store)?;
-    run.selected = run.selections()?;
     match run.select()? {
         Selected::Outcome(outcome) => run.take(outcome),
         Selected::Answered(executed) => Ok(executed),
@@ -547,7 +546,8 @@ struct Run<'a, 'ir> {
     held: Option<Addressed<'ir>>,
     /// The rows the command's related values name, read before anything else ([`crate::values::related`]).
     related: crate::values::Related,
-    /// What the command's selectors select, read with the related rows ([`Run::selections`]).
+    /// What the selectors of the outcome selection took select, read once it acts
+    /// ([`Run::selections`]); empty until then.
     selected: crate::values::Selections,
     generator: Generator<'a>,
     /// The decision's instant, as every guard and row-set selector reads `now`: read from the
@@ -982,20 +982,25 @@ impl<'a, 'ir> Run<'a, 'ir> {
         Ok(decided)
     }
 
-    /// What each `{related: {entity, where, field}}` selector of the command selects (ess/22),
-    /// read from the store as it was before selection, as ESS's interpreter reads it
+    /// What each `{related: {entity, where, field}}` selector of `outcome` selects (ess/22), read
+    /// from the store as it was before the outcome wrote anything, as ESS's interpreter reads it
     /// (`interpret::execute::row_set::Reader::one`): every stored row of the selector's entity is
     /// a candidate, read as a row-set guard reads it ([`Self::row_set`]), and ESS decides how many
     /// are selected ([`ess_compiler::ir::Selected::of`]). Rows the outcome itself writes are no
-    /// candidates. Read before any branch is selected, so a value read after the outcome's own
-    /// writes still reads this snapshot; what selects no row or several is answered where a value
-    /// reads it ([`crate::values::Sources`]).
-    fn selections(&mut self) -> Result<crate::values::Selections, ExecuteError> {
+    /// candidates. Read once selection took `outcome` and before it mints or writes anything
+    /// ([`Self::acts`]), so a value read after the outcome's own writes still reads this snapshot;
+    /// what selects no row or several is answered where a value reads it
+    /// ([`crate::values::Sources`]). A branch that reads no selector, a refusal among them, scans
+    /// nothing for one, and conditions its commit on no such scan.
+    fn selections(
+        &mut self,
+        outcome: &ResolvedOutcome,
+    ) -> Result<crate::values::Selections, ExecuteError> {
         use crate::values::Selection;
         use ess_compiler::ir::Selected as Chosen;
         let ir = self.ir;
         let mut selected = crate::values::Selections::new();
-        for selection in crate::values::selections(self.spec) {
+        for selection in crate::values::selections(outcome) {
             let key = crate::values::selection_key(ir, selection);
             if selected.contains_key(&key) {
                 continue;
@@ -1636,16 +1641,25 @@ impl<'a, 'ir> Run<'a, 'ir> {
         outcome_runs(self.ir, self.spec, outcome, self.refused)
     }
 
+    /// Refuses the selected `outcome` where it does not run ([`Self::runs`]), and otherwise reads
+    /// what its selectors select ([`Self::selections`]): the outcome is about to act, and nothing
+    /// is minted or written yet.
+    fn acts(&mut self, outcome: &ResolvedOutcome) -> Result<(), ExecuteError> {
+        self.runs(outcome)?;
+        self.selected = self.selections(outcome)?;
+        Ok(())
+    }
+
     /// Applies `outcome`'s effect and commits it, once it is known to act: an outcome that does not
     /// run ([`Self::runs`]) is refused there, and a move from a state the row does not hold is
     /// the wrong-state answer instead.
     fn take(&mut self, outcome: &'ir ResolvedOutcome) -> Result<Executed, ExecuteError> {
         if let Some(set) = &outcome.instances {
-            self.runs(outcome)?;
+            self.acts(outcome)?;
             return self.take_set(outcome, set);
         }
         let Some(subject) = &outcome.subject else {
-            self.runs(outcome)?;
+            self.acts(outcome)?;
             self.publish_reads(outcome, None)?;
             self.prepare(outcome)?;
             let before = self.before();
@@ -1662,12 +1676,12 @@ impl<'a, 'ir> Run<'a, 'ir> {
         if let (ResolvedEffect::Deletes, ResolvedInstance::Supplied { .. }) =
             (&subject.effect, &subject.instance)
         {
-            self.runs(outcome)?;
+            self.acts(outcome)?;
             return self.delete(outcome, entity);
         }
         let (change, affected, events) = match (&subject.effect, &subject.instance) {
             (ResolvedEffect::Creates, ResolvedInstance::Observed { event, field }) => {
-                self.runs(outcome)?;
+                self.acts(outcome)?;
                 self.publish_reads(outcome, None)?;
                 // The creation's identity may itself read the response, so it is prepared first.
                 self.prepare(outcome)?;
@@ -1740,7 +1754,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     }
                     after.state = transition.to.to_string();
                 }
-                self.runs(outcome)?;
+                self.acts(outcome)?;
                 self.publish_reads(outcome, Some(&stored.row))?;
                 let sources = self.sources(outcome, &entity.name, None, Some(&stored.row));
                 write(&sources, &outcome.sets, &mut after.fields)?;

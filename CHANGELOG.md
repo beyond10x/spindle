@@ -18,6 +18,18 @@ are Spindle's releases.
   plays the rally match on a temporary state, and `deploy` hands the same document to every
   component's `play --component` process, where an entry for another component could not run.
   Before, both read the table and said nothing.
+- 0.19.1 said the kernel runs `{related: {entity, where, field}}` "as ESS's interpreter reads
+  it". That holds only for an entity the component running the command owns: the kernel reads only
+  that component's store. Over an entity another component owns, ESS's interpreter reads the row
+  and the kernel found none and answered `no_value` for every request. Such an outcome, and one
+  reading `{related: {via: input.<field>, field}}` over such an entity, is now refused by name
+  before anything is read (`unsupported: the value source … owned by component …`), and `admit`
+  and `run` name it not served. A guard or an `affects:` entry over such an entity has the same
+  limit and is not yet refused (`story:cross-component-related-reads`).
+- The kernel reads what a `{related: {entity, where, field}}` selector selects only for the
+  outcome selection took, once it acts. It scanned every selector's entity for every outcome
+  before selecting, so a refusal paid a read of the rows (a feed read on SQLite) and an accepting
+  outcome that reads no selector conditioned its commit on rows it never read.
 
 ### Changed
 

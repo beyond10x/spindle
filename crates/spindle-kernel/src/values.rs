@@ -144,9 +144,9 @@ pub(crate) fn selection_key(ir: &EssIr, selection: &ResolvedRowSelection) -> (St
     )
 }
 
-/// Every `{related: {entity, where, field}}` selector of `command` (ess/22), in any outcome's
-/// `sets:`, `affects:` or payload, struct members included.
-pub(crate) fn selections(command: &ResolvedCommand) -> Vec<&ResolvedRowSelection> {
+/// Every `{related: {entity, where, field}}` selector of `outcome` (ess/22), in its `sets:`,
+/// `affects:` or payload, struct members included.
+pub(crate) fn selections(outcome: &ResolvedOutcome) -> Vec<&ResolvedRowSelection> {
     fn reads<'f>(
         fields: impl IntoIterator<Item = &'f ResolvedPayloadField>,
         found: &mut Vec<&'f ResolvedRowSelection>,
@@ -160,16 +160,14 @@ pub(crate) fn selections(command: &ResolvedCommand) -> Vec<&ResolvedRowSelection
         }
     }
     let mut found = Vec::new();
-    for outcome in &command.outcomes {
-        reads(
-            outcome
-                .sets
-                .iter()
-                .chain(outcome.affects.iter().flat_map(|affect| &affect.sets))
-                .chain(outcome.payload.iter().flat_map(|payload| &payload.fields)),
-            &mut found,
-        );
-    }
+    reads(
+        outcome
+            .sets
+            .iter()
+            .chain(outcome.affects.iter().flat_map(|affect| &affect.sets))
+            .chain(outcome.payload.iter().flat_map(|payload| &payload.fields)),
+        &mut found,
+    );
     found
 }
 
