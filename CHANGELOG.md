@@ -6,6 +6,13 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Changed
+
+- TypeScript 7.0.2 and `@types/node` 26.6.6 in `ui/`, `web/`, `website/` and `website/ux/`.
+  `tsc` is TypeScript 7 everywhere; `vue-tsc` keeps checking the `.vue` files on TypeScript 6,
+  through `typescript` aliased to `@typescript/typescript6`, because TypeScript 7.0 ships no
+  compiler API. `website/tsconfig.json` drops `baseUrl`, which TypeScript 7 removed.
+
 ## [0.19.1] - 2026-11-24
 
 ### Added
