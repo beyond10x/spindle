@@ -323,6 +323,7 @@ fn play(
         .with_context(|| format!("reading {}", environment.display()))?;
     let parsed =
         Environment::parse(&text).with_context(|| format!("in {}", environment.display()))?;
+    refuse_seed(&parsed, environment, "play")?;
     let state = tempfile::tempdir().context("creating the state directory")?;
     let clock = scaled::Scaled::new(speed);
     let mut host = match Host::new(loaded.ir, &parsed, Arc::new(clock), state.path()) {
@@ -386,6 +387,25 @@ fn play(
             );
         }
     }
+}
+
+/// Refuses `environment`, read from `path`, where it names a seed file in a `[seed]` table:
+/// `command` submits no seed, as only a run serving HTTP does ([`seed`]). `play` plays on a
+/// temporary state, and `deploy` hands the same document to every component's
+/// `play --component` process, where an entry for another component could not run.
+///
+/// # Errors
+/// Naming the document, the table, its file and `command`.
+pub(crate) fn refuse_seed(environment: &Environment, path: &Path, command: &str) -> Result<()> {
+    if let Some(seeded) = &environment.seed {
+        bail!(
+            "{} names the seed file {} in its [seed] table, which {command} would never submit: \
+             a seed is submitted by a run serving HTTP; remove the table for {command}",
+            path.display(),
+            seeded.file
+        );
+    }
+    Ok(())
 }
 
 /// Every counter of `counters` that is not zero, one per line.

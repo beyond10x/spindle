@@ -85,6 +85,27 @@ commands:
         wrong_state: true
         error: guild.roster.NotActive
         summary: The member has left already.
+  - name: guild.roster.Depart
+    input:
+      - name: member_id
+        type: guild.roster.MemberId
+      - name: successor_email
+        type: String
+    outcomes:
+      - name: departed
+        moves: guild.roster.Member.leave
+        instance: member_id
+        sets:
+          former_id: {related: {entity: guild.roster.Member, where: email == input.successor_email, field: member_id}}
+        emits: [guild.roster.MemberLeft]
+        payload:
+          guild.roster.MemberLeft:
+            member_id: input.member_id
+        summary: The member leaves and names the member who holds the successor address.
+      - name: wrong-state
+        wrong_state: true
+        error: guild.roster.NotActive
+        summary: The member has left already, so no successor is read.
   - name: guild.roster.Rejoin
     input:
       - name: member_id

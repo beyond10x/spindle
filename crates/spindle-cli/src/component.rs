@@ -76,6 +76,7 @@ pub(crate) fn play(playing: &Playing<'_>) -> Result<ExitCode> {
         .with_context(|| format!("reading {}", playing.environment.display()))?;
     let parsed = Environment::parse(&text)
         .with_context(|| format!("in {}", playing.environment.display()))?;
+    crate::refuse_seed(&parsed, playing.environment, "play --component")?;
     let state = tempfile::tempdir().context("creating the state directory")?;
     let clock = Scaled::new(playing.speed);
     let mut host =

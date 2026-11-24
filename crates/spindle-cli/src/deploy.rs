@@ -40,6 +40,7 @@ pub(crate) fn deploy(deploying: &Deploying<'_>) -> Result<ExitCode> {
         .with_context(|| format!("reading {}", environment_file.display()))?;
     let environment =
         Environment::parse(&text).with_context(|| format!("in {}", environment_file.display()))?;
+    crate::refuse_seed(&environment, deploying.environment, "deploy")?;
     let text = std::fs::read_to_string(deploying.placement)
         .with_context(|| format!("reading {}", deploying.placement.display()))?;
     let placement = PlacementDocument::parse(&text)

@@ -184,7 +184,7 @@ The file is one JSON array of entries, submitted in the file's order:
 | `input` | the command's input, every required field of it; `{}` when left out |
 | `actor` | the actor the command is sent as; left out, it is sent as no caller |
 | `caller` | the caller's attributes, every required one of the actor's; only with `actor` |
-| `request_id` | a non-empty id. An entry whose id an earlier entry carried is not submitted again |
+| `request_id` | a non-empty id. Within one start, an entry whose id an earlier applied or already-there entry carried is not submitted again |
 
 `run` reads and checks the file before listening, against the specification as the kernel checks
 a command before it reads anything. It stops with exit 1, naming the file and the entry (counted
@@ -206,13 +206,12 @@ listener: on a run with `--trusted-caller-header` it needs no proxy secret, and 
 | Count | An entry |
 |---|---|
 | `applied` | whose outcome took effect |
-| `already_there` | whose outcome the specification declares `existing_instance:`, or whose request id an earlier entry carried |
+| `already_there` | whose outcome the specification declares `existing_instance:`, or whose request id an earlier entry carried that was applied or already there |
 | `refused` | refused for any other reason: a declared error, or a refusal of the kernel such as `not_granted`. It is logged as `seed <file> entry <n>: <command> (request id <id>) refused: <error>` and the next entry is submitted |
 
-`sent` counts every entry taken from the file. The run submits the whole file on every start, so a
-second start on the same state applies nothing new when every command answers a held instance with
-an `existing_instance:` outcome. A refusal does not stop the run. When the last entry has run,
-`run` prints one line on stderr:
+`sent` counts every entry taken from the file. An entry that repeats the request id of a refused
+entry is submitted again and counted by what it becomes. A refusal does not stop the run. When the
+last entry has run, `run` prints one line on stderr:
 
 ```text
 b10x-spindle: seed seed/roles.json ended: 3 sent, 2 applied, 1 already there, 0 refused
@@ -220,6 +219,23 @@ b10x-spindle: seed seed/roles.json ended: 3 sent, 2 applied, 1 already there, 0 
 
 With `--observe`, `GET /__spindle/metrics` has the same counts as
 `spindle_seed_commands_total{counted="sent"}` and so on, from the first scrape.
+
+### What a seed does not do
+
+Spindle keeps no record of request ids: a request id is remembered only by the run that submits
+the file, for that start. The run submits the whole file on every start, so:
+
+- A second start on the same state applies nothing new only when every entry is a create whose
+  command declares `existing_instance:` for an instance already held.
+- Any other entry runs again on every start: an update writes its values over any change made since
+  the last start, and a move from a state the row has left is refused and counted `refused`.
+- Two replicas starting at once each submit the whole file; only `existing_instance:` outcomes keep
+  that from writing twice.
+- `POST /api/reset` empties every store, so what the seed wrote is gone after a reset, and the seed
+  is not submitted again. A reset loads exactly the world it is given; restart the run to seed
+  again, or put the seeded rows into the world.
+- Only a served `run` submits a seed. `play` and `deploy` stop with exit 1 on an environment
+  document with a `[seed]` table, as `run` does where nothing requires `ingress.network`.
 
 ## State in PostgreSQL
 

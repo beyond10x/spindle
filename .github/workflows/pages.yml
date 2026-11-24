@@ -34,6 +34,8 @@ jobs:
         run: cargo run --locked -p spindle-docs -- generate --check
       - name: Build the Docusaurus site
         run: npm --prefix website ci && npm --prefix website run build
+      - name: Typecheck the Docusaurus site
+        run: npm --prefix website run typecheck
       - name: Bind the built site to its source commit
         run: |
           cargo test --locked -p spindle-docs

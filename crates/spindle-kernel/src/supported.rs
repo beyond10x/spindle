@@ -17,7 +17,8 @@
 //! A construct only the taken outcome reads refuses that outcome alone ([`takes`]): an effect
 //! beyond its subject (a compensating refusal, an `affects:` entry over an input list, `sets:`
 //! without a subject), a value it
-//! writes, publishes or answers, the identity it mints, or an error field it fills. Selection
+//! writes, publishes or answers, the identity it mints, an error field it fills, or a value read
+//! from a row of an entity the component running the command does not own. Selection
 //! never reads one, so a request that selects another outcome of the command runs, and only a
 //! request that selects this one is refused, once it is selected and before anything is minted
 //! or written.
@@ -169,7 +170,82 @@ pub fn takes(
     if let Some(what) = unfilled_error_field(ir, command, outcome) {
         return refuse(&what);
     }
+    if let Some(what) = foreign_read(ir, command, outcome) {
+        return refuse(&what);
+    }
     Ok(())
+}
+
+/// The value, named, that reads a row of an entity a component running `command` does not own:
+/// `{related: {entity, where, field}}` (ess/22) or `{related: {via, field}}` (ess/16, ess/28), in
+/// `outcome`'s `sets:`, `affects:`, payloads or error, struct members included. The kernel reads
+/// only the store of the component that runs the command ([`crate::values`]), where no row of
+/// such an entity is kept, so the read would find none and answer `no_value` for every request.
+/// ESS's interpreter holds every entity in one store and reads it: the outcome is refused rather
+/// than answered otherwise. A command no component accepts is not checked.
+fn foreign_read(
+    ir: &EssIr,
+    command: &ResolvedCommand,
+    outcome: &ResolvedOutcome,
+) -> Option<String> {
+    fn reads<'f>(
+        fields: impl IntoIterator<Item = &'f ResolvedPayloadField>,
+        found: &mut Vec<(&'f ResolvedPayloadField, &'f EntityHandle)>,
+    ) {
+        for field in fields {
+            match &field.value {
+                ResolvedPayloadValue::RelatedSelection { selection, .. } => {
+                    found.push((field, &selection.entity));
+                }
+                ResolvedPayloadValue::RelatedField { entity, .. }
+                | ResolvedPayloadValue::RelatedState { entity, .. } => found.push((field, entity)),
+                ResolvedPayloadValue::Struct { fields } => reads(fields, found),
+                _ => {}
+            }
+        }
+    }
+    let name = command.name.to_string();
+    let components = ir.components().values();
+    let runners: Vec<_> = components
+        .clone()
+        .filter(|component| {
+            component
+                .accepts
+                .iter()
+                .any(|accepted| accepted.to_string() == name)
+        })
+        .collect();
+    let mut found = Vec::new();
+    reads(
+        outcome
+            .sets
+            .iter()
+            .chain(outcome.affects.iter().flat_map(|affect| &affect.sets))
+            .chain(outcome.payload.iter().flat_map(|payload| &payload.fields))
+            .chain(&outcome.error_payload),
+        &mut found,
+    );
+    found.into_iter().find_map(|(field, entity)| {
+        let entity = ir.entity(entity);
+        let runner = runners
+            .iter()
+            .find(|runner| !runner.owns.contains(&entity.domain))?;
+        let owner = components
+            .clone()
+            .find(|component| component.owns.contains(&entity.domain))
+            .map_or_else(
+                || "no component".to_owned(),
+                |owner| format!("component `{}`", owner.name.as_str()),
+            );
+        Some(format!(
+            "the value source {} for `{}`, which reads a row of `{}`, owned by {owner}: the \
+             kernel reads only the store of component `{}`, which runs the command",
+            field.value.describe(),
+            field.target,
+            entity.name,
+            runner.name.as_str()
+        ))
+    })
 }
 
 /// Refuses a command whose `when_related:` branches read rows two ways ([`mixed_references`]),

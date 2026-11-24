@@ -138,11 +138,12 @@ tasks:
       - cargo run -q --locked -p spindle-docs -- generate --check
 
   website:
-    desc: Install the site's locked dependencies and build it, as the documentation workflow does
+    desc: Install the site's locked dependencies, build it and typecheck it, as the documentation workflow does
     dir: website
     cmds:
       - npm ci --allow-git=root
       - npm run build
+      - npm run typecheck
 
   ux:docs:
     desc: The documentation site's UX fast loop, hermetic and without keys - the site built, website/ux's unit and findings tests, the layout contract and the screen-only reader at the gating viewports in both themes, then the ratchet against website/ux/baseline.json (Playwright's Chromium must be installed)

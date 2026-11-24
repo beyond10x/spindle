@@ -83,7 +83,15 @@ Where no row is selected, or more than one, the field has no value. The command 
 row the predicate leaves *unknown* refuses the command as undecidable. Guard the outcome with a
 row-set guard to answer these cases yourself, as ESS's interpreter expects. A predicate that
 reads `payload.`, a predicate that walks the rows of an entity, and this value in an error's
-fields stay refused.
+fields stay refused. The predicate is read only for the branch that reads the value, once that
+branch is selected: a refusal reads no row for it.
+
+The kernel reads only the store of the component that runs the command. A value over an entity
+another component owns, `{related: {entity, where, field}}` or `{related: {via: input.<field>,
+field}}`, is refused as unsupported, naming the entity, its owner and the running component, and
+`admit` and `run` list the outcome as not served. ESS's interpreter, which holds every entity in
+one store, would read the row. A `when_related:` guard or an `affects:` entry over such an entity
+has the same limit and is not refused yet.
 
 A `creates:` outcome whose identity is neither an input nor a payload source (`generated: true`,
 or no source) leaves the identity to the runtime, which mints it with the `identity.mint`

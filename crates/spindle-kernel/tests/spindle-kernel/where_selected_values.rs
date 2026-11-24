@@ -19,7 +19,8 @@ use ess_primitives::ids::CorrelationId;
 use ess_primitives::node::Node;
 use serde_json::{Map, Value, json};
 use spindle_kernel::{
-    ExecuteError, Executed, MemoryStore, NoExternals, Row, SqliteStore, Store, execute,
+    Change, ExecuteError, Executed, MemoryStore, NoExternals, Removal, Row, Scan, SqliteStore,
+    Store, StoreError, Stored, execute,
 };
 
 use super::related_guards::{Answer, interpreted, object, spindled};
@@ -32,6 +33,7 @@ const REJOIN: &str = "guild.roster.Rejoin";
 const FOUND: &str = "guild.roster.FoundTeam";
 const DRAFT: &str = "guild.roster.DraftTeam";
 const REFRESH: &str = "guild.roster.Refresh";
+const DEPART: &str = "guild.roster.Depart";
 
 const ADA: &str = "0a0a0a0a-0000-4000-8000-000000000001";
 const BEA: &str = "0a0a0a0a-0000-4000-8000-000000000002";
@@ -290,6 +292,73 @@ fn a_selector_reads_the_addressed_subject() {
     assert_eq!(
         row(&mut store, TEAM, RED).expect("the team").fields["captain_email"],
         json!("bea@example.org")
+    );
+}
+
+/// A memory store that counts the scans of each entity: what a selection reads.
+#[derive(Default)]
+struct Scans {
+    inner: MemoryStore,
+    scanned: Vec<String>,
+}
+
+impl Store for Scans {
+    fn load(&mut self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
+        self.inner.load(entity, identity)
+    }
+
+    fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
+        self.inner.commit(change)
+    }
+
+    fn remove(&mut self, removal: &Removal) -> Result<(), StoreError> {
+        self.inner.remove(removal)
+    }
+
+    fn scan(&mut self, entity: &str) -> Result<Scan, StoreError> {
+        self.scanned.push(entity.to_owned());
+        self.inner.scan(entity)
+    }
+}
+
+/// `Depart` selects its successor in `departed` alone. A request its `wrong-state` refusal
+/// answers reads no selection: no member is scanned, so a refusal costs no read of the rows and
+/// conditions nothing on them. The branch that reads it scans the members once.
+#[test]
+fn a_selection_is_read_only_for_the_branch_that_reads_it() {
+    let ir = ir();
+    let mut store = Scans::default();
+    enrol(&ir, &mut store, ADA, "ada@example.org");
+    enrol(&ir, &mut store, BEA, "bea@example.org");
+    run(&ir, &mut store, LEAVE, json!({"member_id": ADA}));
+    store.scanned.clear();
+
+    let refused = run(
+        &ir,
+        &mut store,
+        DEPART,
+        json!({"member_id": ADA, "successor_email": "bea@example.org"}),
+    );
+    assert_eq!(refused.outcome, "wrong-state");
+    assert_eq!(
+        store.scanned,
+        Vec::<String>::new(),
+        "the refusal reads no selection"
+    );
+
+    let departed = run(
+        &ir,
+        &mut store,
+        DEPART,
+        json!({"member_id": BEA, "successor_email": "ada@example.org"}),
+    );
+    assert_eq!(departed.outcome, "departed");
+    assert_eq!(store.scanned, vec![MEMBER.to_owned()]);
+    assert_eq!(
+        row(&mut store.inner, MEMBER, BEA)
+            .expect("the member")
+            .fields["former_id"],
+        json!(ADA)
     );
 }
 

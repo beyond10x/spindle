@@ -233,7 +233,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "Values from the one row a predicate selects",
-        "A value {related: {entity, where, field}} in sets: or an event payload reads the field of the one row of the entity the predicate selects, from the store as it was before the outcome; no row or several give no value and nothing is written, as ESS's interpreter decides. A predicate reading payload. or walking the rows of an entity, and the value in an error's fields, stay refused.",
+        "A value {related: {entity, where, field}} in sets: or an event payload reads the field of the one row of the entity the predicate selects, from the store as it was before the outcome; no row or several give no value and nothing is written, as ESS's interpreter decides. A predicate reading payload. or walking the rows of an entity, the value in an error's fields, and a selector over an entity another component owns, stay refused.",
         "/docs/concepts/specification",
         "crates/spindle-kernel/tests/spindle-kernel/where_selected_values.rs::where_selected_values_agree_with_the_interpreter",
     ),
@@ -401,7 +401,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "Seed at start",
-        "run --seed, or the environment's [seed] file, names a JSON array of commands, each with its input, actor, caller and request id, that a served run submits on every start after its stores open: checked against the specification before listening, then one at a time in the file's order beside the listener. Each counts as applied, already there (an existing_instance: outcome, or a request id an earlier entry carried) or refused; a refusal is logged and the rest still run, and the counts are in one log line and in /__spindle/metrics.",
+        "run --seed, or the environment's [seed] file, names a JSON array of commands, each with its input, actor, caller and request id, that a served run submits on every start after its stores open: checked against the specification before listening, then one at a time in the file's order beside the listener. Each counts as applied, already there (an existing_instance: outcome, or a request id an earlier applied or already-there entry carried) or refused; a refusal is logged and the rest still run, and the counts are in one log line and in /__spindle/metrics. Request ids are not kept across starts: a restart applies nothing new only where every entry is an existing_instance:-guarded create, and a reset drops what the seed wrote.",
         "/docs/concepts/environment-and-admission#a-seed-submitted-at-start",
         "crates/spindle-cli/tests/spindle-cli/seed.rs::a_second_run_on_one_state_applies_nothing_new",
     ),

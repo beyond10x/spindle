@@ -6,12 +6,49 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- A seed entry that repeats the request id of an earlier entry that was refused is submitted
+  again and counted by what it becomes; it was counted already there though nothing was. A request
+  id is recorded only for an entry that was applied or already there: a refusal left nothing, and
+  what refused it may have changed since (two `RetireRole ghost` entries now end `2 sent,
+  0 applied, 0 already there, 2 refused`).
+- `play` and `deploy` stop with exit 1 on an environment document with a `[seed]` table, naming
+  the table and the file, as `run` stops on a seed it would not submit. They submit no seed: `play`
+  plays the rally match on a temporary state, and `deploy` hands the same document to every
+  component's `play --component` process, where an entry for another component could not run.
+  Before, both read the table and said nothing.
+- 0.19.1 said the kernel runs `{related: {entity, where, field}}` "as ESS's interpreter reads
+  it". That holds only for an entity the component running the command owns: the kernel reads only
+  that component's store. Over an entity another component owns, ESS's interpreter reads the row
+  and the kernel found none and answered `no_value` for every request. Such an outcome, and one
+  reading `{related: {via: input.<field>, field}}` over such an entity, is now refused by name
+  before anything is read (`unsupported: the value source … owned by component …`), and `admit`
+  and `run` name it not served. A guard or an `affects:` entry over such an entity has the same
+  limit and is not yet refused (`story:cross-component-related-reads`).
+- The kernel reads what a `{related: {entity, where, field}}` selector selects only for the
+  outcome selection took, once it acts. It scanned every selector's entity for every outcome
+  before selecting, so a refusal paid a read of the rows (a feed read on SQLite) and an accepting
+  outcome that reads no selector conditioned its commit on rows it never read.
+- Spindle's own scenario `admission-refused` asserts that a refusal keeps no binding the decision
+  sends (`satisfies: missing(bindings)`); it asserted nothing about bindings, so a refusal that
+  stored them passed.
+
 ### Changed
 
+- What a seed does not do: Spindle keeps no record of request ids, across starts or replicas, for
+  a seed entry or any request. A restart applies nothing new only when every entry is a create
+  guarded by `existing_instance:`; any other entry runs again on every start, so an update writes
+  over later changes and a move is refused. `POST /api/reset` drops what the seed wrote and does
+  not submit it again. README, the environment page and `run --help` say so; 0.19.1 said a restart
+  on the same state applies nothing new. The gap is `story:request-id-idempotency`.
 - TypeScript 7.0.2 and `@types/node` 26.6.6 in `ui/`, `web/`, `website/` and `website/ux/`.
-  `tsc` is TypeScript 7 everywhere; `vue-tsc` keeps checking the `.vue` files on TypeScript 6,
-  through `typescript` aliased to `@typescript/typescript6`, because TypeScript 7.0 ships no
-  compiler API. `website/tsconfig.json` drops `baseUrl`, which TypeScript 7 removed.
+  In `ui/` and `web/`, TypeScript 7's `tsc` checks only the build configs, `ui/dev`,
+  `ui/src/api/types.ts` and `web/src/sw.ts`; the app sources, `.ts` and `.vue` alike, are checked
+  by `vue-tsc` on TypeScript 6, through `typescript` aliased to `@typescript/typescript6`, because
+  TypeScript 7.0 ships no compiler API. `website/tsconfig.json` drops `baseUrl`, which TypeScript
+  7 removed, and `task website` and the documentation workflow now run the site's `typecheck`, so
+  that change is checked.
 
 ## [0.19.1] - 2026-11-24
 
