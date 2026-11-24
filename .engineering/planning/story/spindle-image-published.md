@@ -8,6 +8,7 @@ relations:
 - serves: vision:spindle
 - decomposes: epic:kubernetes-target
 - depends_on: story:ingress-bind-address
+- informed_by: story:release-binary-portable-libc
 scope:
 - confidence: cited
   path: .github/workflows/release.yml
@@ -17,7 +18,7 @@ scope:
   path: README.md
 - confidence: cited
   path: website/docs
-revision: 3
+revision: 4
 ---
 # The release publishes a Spindle image with its digest
 
@@ -50,3 +51,14 @@ digest is attached to the release as `IMAGES` (`<image>@sha256:<digest>`) beside
 ## Notes
 
 `story:console-image-published` edits the same workflow; they do not run beside each other.
+
+## Consumer gap
+
+Recorded 2026-11-24. A downstream consumer running a specification on 0.19.1 in a container has
+no published image: every user writes a Dockerfile that downloads the release archive and checks
+it against `SHA256SUMS`. This story is that gap; its acceptance already asks for a versioned image
+with its digest in the release notes.
+
+The image's base must run the binary the release builds: today the Linux binaries need
+`GLIBC_2.39` (built on `ubuntu-24.04`), so a Debian bookworm or distroless base (glibc 2.36)
+fails. A static base is open only after `story:release-binary-portable-libc`.
