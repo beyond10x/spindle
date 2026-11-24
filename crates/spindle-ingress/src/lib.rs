@@ -84,7 +84,7 @@ pub use listener::{BODY_READ, Exchange, HEADER_READ, Listener, exposed};
 pub use observe::metrics::METRICS_MEDIA;
 pub use observe::{
     AnswerSource, By, Class, ExternalAnswer, PANEL_MEDIA, PANEL_POLICY, REQUESTS_DEFAULT,
-    REQUESTS_MOST, RESERVED_SEGMENT, Recorder, Reserved,
+    REQUESTS_MOST, RESERVED_SEGMENT, Recorder, Reserved, SeedCounts,
 };
 pub use router::{BODY_LIMIT, CONTENT_TYPE, Request, Response, Routed, route, route_with};
 pub use surface::{Caller, Queried, Resolved, Route, Surface, SurfaceError, Unserved, Variable};

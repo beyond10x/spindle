@@ -8,6 +8,22 @@ are Spindle's releases.
 
 ### Added
 
+- `run --seed <file>`, or `[seed] file` in the environment document, names a JSON array of
+  entries `{"command", "input", "actor", "caller", "request_id"}` that a served run submits on
+  every start, after its stores open, one at a time in the file's order between the requests the
+  listener hands over, each as its own actor and caller and never through the listener. Each entry
+  counts as applied, already there (an outcome declared `existing_instance:`, or a request id an
+  earlier entry carried, which is not submitted again) or refused; a refusal is logged with the
+  entry, command, request id and error name, and the next entry is submitted. One line on stderr
+  gives the counts when the seed ends, and with `--observe` `GET /__spindle/metrics` has them as
+  the new family `spindle_seed_commands_total{counted}`. A file that does not parse, or an entry
+  naming a command, input field or actor shape the specification does not declare, stops `run` with
+  exit 1 before listening, naming the file and the entry. A run that reads stdin refuses a seed.
+
+## [0.19.0] - 2026-11-23
+
+### Added
+
 - An `external:` refusal declared `before_row: true` runs: the kernel asks its cause among the
   input refusals, in declaration order, before it reads the addressed row, and answers the refusal
   for a row that exists or not, reading no row, as ESS's interpreter answers it. It was refused

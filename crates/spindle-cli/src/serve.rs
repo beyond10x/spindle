@@ -6,6 +6,7 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use ess_gen::http::Binding;
@@ -15,6 +16,7 @@ use spindle_ingress::{Caller, Listener, Surface, Unserved};
 use spindle_spec::EssIr;
 
 use crate::decisions::{self, Run};
+use crate::seed::Seeding;
 use crate::{REFUSED, SIGNAL_POLL, SIGNALLED, signals};
 
 /// The components of `ir` that require `ingress.network` when each runs on its own.
@@ -109,6 +111,9 @@ pub(crate) struct Serving<'a> {
     /// `--trusted-caller-secret`: the file, and the secret read from it ([`proxy_secret`]), that
     /// the proxy presents in [`Surface::SECRET_HEADER`]; given exactly when `caller_header` is.
     pub proxy_secret: Option<(&'a Path, String)>,
+    /// The seed file read and checked before listening ([`crate::seed::load`]): its entries are
+    /// submitted once listening, one between each two exchanges ([`crate::seed::Seeding`]).
+    pub seed: Option<crate::seed::Seed>,
 }
 
 /// The secret in the file `path` (`--trusted-caller-secret`), one trailing newline (`\n` or
@@ -245,6 +250,10 @@ fn carried(caller: &Caller) -> String {
 /// in that header beside the proxy's secret, `serving.proxy_secret` ([`Surface::proving_callers`]);
 /// the header's name and the secret's file, never a value, are printed on stderr before
 /// listening, and a name that is no HTTP field name stops the run.
+///
+/// With `serving.seed`, its entries are submitted once listening, on this thread, one before each
+/// wait for the next exchange, so a request never waits for the whole seed; while one is left the
+/// wait does not block ([`Seeding`]).
 pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     for caller in &serving.callers {
         fixed(&ir, caller)?;
@@ -411,6 +420,14 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         })
         .map_err(|error| format!("{error:#}"))
     };
+    let mut seeding = serving.seed.map(|seed| {
+        eprintln!(
+            "b10x-spindle: seed {}: {} entries, submitted one at a time once listening",
+            seed.path().display(),
+            seed.len()
+        );
+        Seeding::new(seed, recorder.clone())
+    });
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     writeln!(
@@ -428,7 +445,15 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             let signal = u8::try_from(signal).unwrap_or(u8::MAX - SIGNALLED);
             return Ok(ExitCode::from(SIGNALLED.saturating_add(signal)));
         }
-        if let Some(exchange) = listener.next(SIGNAL_POLL) {
+        if let Some(seeding) = seeding.as_mut() {
+            seeding.step(&mut host);
+        }
+        let wait = if seeding.as_ref().is_some_and(Seeding::pending) {
+            Duration::ZERO
+        } else {
+            SIGNAL_POLL
+        };
+        if let Some(exchange) = listener.next(wait) {
             for failed in exchange.serve_with(&mut host, &worlds) {
                 let binding = match &failed.cause {
                     Cause::Delivered { binding } | Cause::Tick { binding } => binding.as_str(),

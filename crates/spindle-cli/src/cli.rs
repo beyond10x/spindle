@@ -293,6 +293,21 @@ pub enum Command {
             conflicts_with = "scenario"
         )]
         observe_requests: u16,
+        /// A seed file to submit at every start: one JSON array of entries `{"command", "input",
+        /// "actor", "caller", "request_id"}`, in place of the environment document's `[seed]
+        /// file`. It is read and checked before listening: a file that does not parse, or an
+        /// entry naming a command, input field or actor shape the specification does not declare,
+        /// exits 1, naming the file and the entry (counted from 1). Once listening, the entries
+        /// are submitted one at a time in the file's order, each as its own actor and caller,
+        /// between the requests the listener hands over, never through the listener. Each counts
+        /// as applied, already there (an outcome the specification declares
+        /// `existing_instance:`, or a request id an earlier entry carried, not submitted again) or
+        /// refused; a refusal is printed on stderr with the entry, command, request id and error
+        /// name, and the next entry is submitted. One line on stderr gives the counts when the
+        /// seed ends; with `--observe`, `GET /__spindle/metrics` has them as
+        /// `spindle_seed_commands_total`. Only where `run` serves HTTP.
+        #[arg(long, value_name = "FILE", conflicts_with = "scenario")]
+        seed: Option<PathBuf>,
         /// The `ess-scenario` document to replay.
         #[arg(long, conflicts_with_all = ["state", "decisions", "answer_default"])]
         scenario: Option<PathBuf>,

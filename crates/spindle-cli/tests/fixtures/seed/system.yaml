@@ -1,0 +1,23 @@
+format: ess/34
+system: vault
+version: v1
+summary: Roles a seed grants at start, retired by an operator, and vouchers a desk outside the model gives.
+domains:
+  - vault.access
+components:
+  - component: gate
+    summary: Grants and retires roles and records vouchers for callers outside the process.
+    owns:
+      domains:
+        - vault.access
+    accepts:
+      commands:
+        - vault.access.GrantRole
+        - vault.access.RetireRole
+        - vault.access.VouchFor
+    publishes:
+      events:
+        - vault.access.RoleGranted
+        - vault.access.RoleRetired
+        - vault.access.Vouched
+    reached_by: network
