@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-24T02:29:39Z",
+  "actor": "human:timo",
+  "artifact": "story:view-filter-text-contains",
+  "kind": "story",
+  "revision": 1,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "https://github.com/beyond10x/spindle/actions/runs/45308001668 (PR 73 Gate, macOS, Build documentation green on 41c39ad9; merged 50c3293c; tests spindle-host text_filters.rs and postgres.rs, spindle-cli view_field_filters.rs)"
+  }
+}

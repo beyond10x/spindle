@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-24T02:29:35Z",
+  "actor": "human:timo",
+  "artifact": "story:related-row-selected-by-predicate",
+  "kind": "story",
+  "revision": 1,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "https://github.com/beyond10x/spindle/actions/runs/45299827675 (PR 72 Gate, macOS, Build documentation green on b8c2ed57; merged a9b2bc48; tests spindle-kernel where_selected_values.rs)"
+  }
+}

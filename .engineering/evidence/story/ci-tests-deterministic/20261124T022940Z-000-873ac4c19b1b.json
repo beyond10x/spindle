@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-24T02:29:40Z",
+  "actor": "human:timo",
+  "artifact": "story:ci-tests-deterministic",
+  "kind": "story",
+  "revision": 2,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "https://github.com/beyond10x/spindle/actions/runs/45302862912 (PR 71 Gate, macOS, Build documentation green on ed2b8915; merged 82418868; tests spindle-cli adversary_processes2.rs, spindle-target adversary_sampling.rs, spindle-kernel main.rs)"
+  }
+}

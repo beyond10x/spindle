@@ -2,13 +2,15 @@
 format: aep.planning-md/3
 id: story:when-related-over-reference-list
 kind: story
-status: proposed
+status: implemented
 title: 'A when_related: guard over a list of references is decided'
 relations:
 - serves: vision:spindle
-revision: 2
+revision: 4
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-22T18:23:51Z", actor: "human:timo", revision: 2}
+- {from: "proposed", to: "active", at: "2026-11-24T02:29:33Z", actor: "human:timo", revision: 3, decided_on: {"recorded":{"test_result":1}}}
+- {from: "active", to: "implemented", at: "2026-11-24T02:29:34Z", actor: "human:timo", revision: 4, decided_on: {"recorded":{"test_result":1}}}
 ---
 # A `when_related:` guard over a list of references is decided
 

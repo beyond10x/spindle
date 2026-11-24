@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-24T02:29:32Z",
+  "actor": "human:timo",
+  "artifact": "story:external-refusal-before-row",
+  "kind": "story",
+  "revision": 3,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "https://github.com/beyond10x/spindle/actions/runs/45220384460 (PR 66 Gate, macOS, Build documentation green on 65283d5c; merged b18f4325; tests spindle-kernel before_row.rs, spindle-conformance before_row_and_reference_lists.rs)"
+  }
+}
