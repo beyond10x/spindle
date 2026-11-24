@@ -34,32 +34,50 @@ fn an_instance_that_ended_without_a_wait_is_not_sampled() {
     };
     let mut running = launcher.launch(&plan).expect("starts");
     let mut steps = 0;
-    while !std::fs::read_to_string(running.console())
-        .unwrap_or_default()
-        .contains("ready")
-    {
+    let console = loop {
+        let console = std::fs::read_to_string(running.console()).unwrap_or_default();
+        if console.contains("ready") {
+            break console;
+        }
         assert!(steps < STEPS, "the fixture never wrote ready");
         steps += 1;
         std::thread::sleep(STEP);
-    }
+    };
+    let pid = console
+        .lines()
+        .find_map(|line| line.strip_prefix("pid "))
+        .and_then(|pid| pid.trim().parse::<u32>().ok())
+        .unwrap_or_else(|| panic!("the fixture names its pid:\n{console}"));
 
-    // The fixture exits at once; its resident set reads zero once it is a zombie. Bounded wait.
-    let mut last = running.resources();
-    for _ in 0..STEPS {
-        match last {
-            None => break,
-            Some(sample) if sample.memory_bytes == 0 => break,
-            Some(_) => {}
-        }
+    // The fixture exits at once. Waits until its leader is a zombie, as `/proc` shows it, before
+    // the one sample (`story:ci-tests-deterministic`): a resident set of zero, which this case
+    // waited for before, is read already while the process is on its way out and not yet a
+    // zombie, and a sample then is rightly of a running instance. Nothing reaps it meanwhile:
+    // only `wait` does.
+    let mut steps = 0;
+    while state(pid) != Some('Z') {
+        assert!(
+            steps < STEPS,
+            "the fixture never became a zombie: {:?}",
+            state(pid)
+        );
+        steps += 1;
         std::thread::sleep(STEP);
-        last = running.resources();
     }
+    let sampled = running.resources();
     let ended = running
         .wait(Duration::ZERO)
         .expect("the instance is observed");
     assert!(ended.is_some(), "the fixture has exited by now");
     assert_eq!(
-        last, None,
+        sampled, None,
         "the instance has ended (exited, not yet reaped), and is still sampled as running"
     );
+}
+
+/// The state of process `pid` (field 3 of `/proc/<pid>/stat`), `None` once it is gone.
+fn state(pid: u32) -> Option<char> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let (_, rest) = stat.rsplit_once(')')?;
+    rest.split_ascii_whitespace().next()?.chars().next()
 }

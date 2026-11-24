@@ -11,7 +11,8 @@ mod adversary_admission_checked;
 mod adversary_append;
 mod adversary_boolean;
 mod adversary_bytes;
-mod adversary_counts;
+// `adversary_counts` moved to the unit tests of `src/sqlite.rs`, held in calls of the event
+// store instead of time (story:ci-tests-deterministic).
 mod adversary_creation_unknown;
 mod adversary_deletes;
 mod adversary_environment;
