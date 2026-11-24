@@ -2,8 +2,8 @@ type: ess-scenario/1
 domain: spindle.deployment
 scenario: admission-refused
 summary: >-
-  A refusal the external cause confirms moves the deployment to Refused and keeps what the
-  admitter answered: the required capabilities and the ones missing, with no binding.
+  A refusal the external cause confirms moves the deployment to Refused and keeps the required
+  and the missing capabilities, and no binding the decision sends.
 timeline:
   - at: 2026-01-05T09:00:00Z
     command: spindle.deployment.DeclareEnvironment
@@ -47,3 +47,5 @@ assert:
       state: Refused
       requires: [channel, store.durable]
       missing: [store.durable]
+  - view: spindle.deployment.DeploymentState
+    satisfies: missing(bindings)

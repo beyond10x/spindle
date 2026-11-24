@@ -30,6 +30,9 @@ are Spindle's releases.
   outcome selection took, once it acts. It scanned every selector's entity for every outcome
   before selecting, so a refusal paid a read of the rows (a feed read on SQLite) and an accepting
   outcome that reads no selector conditioned its commit on rows it never read.
+- Spindle's own scenario `admission-refused` asserts that a refusal keeps no binding the decision
+  sends (`satisfies: missing(bindings)`); it asserted nothing about bindings, so a refusal that
+  stored them passed.
 
 ### Changed
 
