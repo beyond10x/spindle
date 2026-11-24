@@ -512,6 +512,57 @@ fn a_refused_entry_is_logged_and_the_rest_still_run() {
     );
 }
 
+/// A request id is recorded only for an entry that was applied or already there. A later entry
+/// that repeats the id of a refused one is submitted again and counted by what it becomes: here
+/// the first retire is refused (no role yet), the grant creates the role, and the repeated retire
+/// applies.
+#[test]
+fn a_repeat_of_a_refused_entry_is_submitted_again() {
+    let directory = scratch();
+    let retire = json!({"command": RETIRE, "input": {"role_id": "ghost"}, "actor": OPERATOR,
+         "caller": {"tenant": "north"}, "request_id": "seed-retire-ghost"});
+    let seed = write(
+        &directory,
+        "seed.json",
+        &json!([
+            retire,
+            retire,
+            grant("ghost", "north", "seed-grant-ghost"),
+            retire
+        ])
+        .to_string(),
+    );
+    let document = environment(&directory, "memory", None, "");
+    let mut served = serve(&[
+        "--environment",
+        &document,
+        "--seed",
+        &seed,
+        "--answer-default",
+        "--observe",
+    ]);
+    let ended = served.ended();
+    assert!(
+        ended.contains("4 sent, 2 applied, 0 already there, 2 refused"),
+        "a repeat of a refused entry is not already there: {ended}"
+    );
+    assert_eq!(counted(served.address), [4, 2, 0, 2]);
+    let stderr = served.stop();
+    let refusals: Vec<&String> = stderr
+        .iter()
+        .filter(|line| line.contains("seed-retire-ghost") && line.contains("refused:"))
+        .collect();
+    assert_eq!(
+        refusals.len(),
+        2,
+        "entries 1 and 2 are refused: {stderr:#?}"
+    );
+    assert!(
+        refusals[0].contains("entry 1") && refusals[1].contains("entry 2"),
+        "{refusals:#?}"
+    );
+}
+
 /// On a trusted-caller run the seed needs no proxy secret: it does not come through the listener,
 /// and its entries run as the file's actor and caller.
 #[test]
@@ -695,4 +746,95 @@ fn a_seed_file_that_does_not_parse_or_names_what_the_specification_does_not_decl
     };
     assert_eq!(code, Some(1), "{stderr}");
     assert!(stderr.contains("--seed"), "{stderr}");
+}
+
+/// Runs `b10x-spindle` with `arguments` from the workspace root for at most `ANSWER`: its exit
+/// code and stderr, or `None` where it was still running and was killed.
+fn stopped_within(arguments: &[&str]) -> Option<(Option<i32>, String)> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+        .current_dir(root())
+        .args(arguments)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("b10x-spindle starts");
+    let deadline = Instant::now() + ANSWER;
+    while Instant::now() < deadline {
+        if let Ok(Some(status)) = child.try_wait() {
+            let mut stderr = String::new();
+            if let Some(mut piped) = child.stderr.take() {
+                let _ = piped.read_to_string(&mut stderr);
+            }
+            return Some((status.code(), stderr));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    None
+}
+
+/// `play` and `deploy` submit no seed: given an environment document with a `[seed]` table they
+/// stop with exit 1 before running anything, naming the table and the file, as `run` refuses a
+/// seed it would not submit.
+#[test]
+fn play_and_deploy_refuse_an_environment_with_a_seed() {
+    let directory = scratch();
+    let laptop = std::fs::read_to_string(root().join("examples/environments/laptop.toml"))
+        .expect("the laptop environment");
+    let processes =
+        std::fs::read_to_string(root().join("examples/environments/laptop-processes.toml"))
+            .expect("the laptop-processes environment");
+    let seeded = |name: &str, text: &str| {
+        write(
+            &directory,
+            name,
+            &format!("{text}\n[seed]\nfile = \"seed/roles.json\"\n"),
+        )
+    };
+    let laptop = seeded("laptop.toml", &laptop);
+    let processes = seeded("laptop-processes.toml", &processes);
+    let cases: [(&str, Vec<&str>); 3] = [
+        (
+            "play",
+            vec!["play", "examples/rally/ess", "--environment", &laptop],
+        ),
+        (
+            "play --component",
+            vec![
+                "play",
+                "examples/rally/ess",
+                "--environment",
+                &processes,
+                "--component",
+                "rally-table",
+                "--listen",
+                "127.0.0.1:0",
+            ],
+        ),
+        (
+            "deploy",
+            vec![
+                "deploy",
+                "examples/rally/ess",
+                "--environment",
+                &processes,
+                "--placement",
+                "examples/placements/rally-processes.toml",
+                "--port",
+                "0",
+            ],
+        ),
+    ];
+    for (case, arguments) in cases {
+        let Some((code, stderr)) = stopped_within(&arguments) else {
+            panic!("{case} ran with a [seed] table it never submits");
+        };
+        assert_eq!(code, Some(1), "{case}: {stderr}");
+        assert!(
+            stderr.contains("[seed]") && stderr.contains("seed/roles.json"),
+            "{case}: the refusal names the table and the file: {stderr}"
+        );
+    }
 }

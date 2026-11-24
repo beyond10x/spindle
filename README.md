@@ -56,8 +56,13 @@ prints the URL of the observe UI, `http://127.0.0.1:7341/?t=<token>`.
 Where `run` serves HTTP, `--seed <file>` (or `[seed] file` in the environment document) submits a
 JSON array of commands, each with its input, actor, caller and request id, on every start: checked
 before listening, then one at a time in order beside the listener. An outcome declared
-`existing_instance:` counts as already there, so a restart on the same state applies nothing new.
-A refusal is logged and the rest still run; one line on stderr gives the counts when the seed ends.
+`existing_instance:` counts as already there. A restart on the same state applies nothing new only
+when every entry is a create guarded by `existing_instance:`; any other entry runs again on every
+start, so an update writes over later changes and a move is refused. Spindle keeps no record of
+request ids: within one start, an entry whose request id an earlier applied or already-there entry
+carried is not submitted again. A refusal is logged and the rest still run; one line on stderr
+gives the counts when the seed ends. `POST /api/reset` drops what the seed wrote and does not
+submit it again. `play` and `deploy` refuse an environment with a `[seed]` table.
 
 Where `run` serves HTTP, `--observe` records every request it answers. `GET /__spindle/requests`
 lists the last 256 (`--observe-requests <N>`, 1 to 10000), newest first, with totals per class

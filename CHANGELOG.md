@@ -6,8 +6,27 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- A seed entry that repeats the request id of an earlier entry that was refused is submitted
+  again and counted by what it becomes; it was counted already there though nothing was. A request
+  id is recorded only for an entry that was applied or already there: a refusal left nothing, and
+  what refused it may have changed since (two `RetireRole ghost` entries now end `2 sent,
+  0 applied, 0 already there, 2 refused`).
+- `play` and `deploy` stop with exit 1 on an environment document with a `[seed]` table, naming
+  the table and the file, as `run` stops on a seed it would not submit. They submit no seed: `play`
+  plays the rally match on a temporary state, and `deploy` hands the same document to every
+  component's `play --component` process, where an entry for another component could not run.
+  Before, both read the table and said nothing.
+
 ### Changed
 
+- What a seed does not do: Spindle keeps no record of request ids, across starts or replicas, for
+  a seed entry or any request. A restart applies nothing new only when every entry is a create
+  guarded by `existing_instance:`; any other entry runs again on every start, so an update writes
+  over later changes and a move is refused. `POST /api/reset` drops what the seed wrote and does
+  not submit it again. README, the environment page and `run --help` say so; 0.19.1 said a restart
+  on the same state applies nothing new. The gap is `story:request-id-idempotency`.
 - TypeScript 7.0.2 and `@types/node` 26.6.6 in `ui/`, `web/`, `website/` and `website/ux/`.
   `tsc` is TypeScript 7 everywhere; `vue-tsc` keeps checking the `.vue` files on TypeScript 6,
   through `typescript` aliased to `@typescript/typescript6`, because TypeScript 7.0 ships no

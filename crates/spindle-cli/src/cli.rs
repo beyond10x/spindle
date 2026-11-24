@@ -301,11 +301,14 @@ pub enum Command {
         /// are submitted one at a time in the file's order, each as its own actor and caller,
         /// between the requests the listener hands over, never through the listener. Each counts
         /// as applied, already there (an outcome the specification declares
-        /// `existing_instance:`, or a request id an earlier entry carried, not submitted again) or
-        /// refused; a refusal is printed on stderr with the entry, command, request id and error
-        /// name, and the next entry is submitted. One line on stderr gives the counts when the
-        /// seed ends; with `--observe`, `GET /__spindle/metrics` has them as
-        /// `spindle_seed_commands_total`. Only where `run` serves HTTP.
+        /// `existing_instance:`, or a request id an earlier applied or already-there entry of this
+        /// start carried, not submitted again) or refused; a refusal is printed on stderr with the
+        /// entry, command, request id and error name, and the next entry is submitted. One line on
+        /// stderr gives the counts when the seed ends; with `--observe`, `GET /__spindle/metrics`
+        /// has them as `spindle_seed_commands_total`. Only where `run` serves HTTP. Request ids are
+        /// not kept across starts: a restart applies nothing new only where every entry is a
+        /// create its command answers `existing_instance:`, and every other entry runs again.
+        /// `POST /api/reset` drops what the seed wrote and does not submit it again.
         #[arg(long, value_name = "FILE", conflicts_with = "scenario")]
         seed: Option<PathBuf>,
         /// The `ess-scenario` document to replay.
@@ -343,6 +346,9 @@ pub enum Command {
     /// component's routes there as `run` serves them, refusing a request that does not carry the
     /// token in the setting `ingress_token` (as `?t=` or `Authorization: Bearer`) or whose `Host` is
     /// not `127.0.0.1:<port>` or `localhost:<port>`; `ingress` without `ingress_token` exits 1.
+    ///
+    /// Play submits no seed: an environment document with a `[seed]` table exits 1, with or
+    /// without `--component`, before anything runs.
     Play {
         /// The rally specification directory.
         spec: PathBuf,
@@ -389,7 +395,9 @@ pub enum Command {
     /// of the last 15 minutes; `GET /api/views/<component>/<view>` the view's answer from the
     /// ingress of a running instance; `GET /` the observe UI, built into this binary. SIGINT,
     /// SIGTERM or SIGHUP stops every instance and exits 130, 143 or 129. Each instance is also
-    /// sent SIGTERM by the system should `deploy` end without stopping it.
+    /// sent SIGTERM by the system should `deploy` end without stopping it. An environment
+    /// document with a `[seed]` table exits 1 before anything is launched: no instance submits a
+    /// seed.
     Deploy {
         /// The specification directory.
         spec: PathBuf,

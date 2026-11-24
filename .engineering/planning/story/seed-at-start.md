@@ -6,7 +6,7 @@ status: implemented
 title: run applies a seed file of commands in the background at start
 relations:
 - serves: vision:spindle
-revision: 5
+revision: 6
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-10T23:01:13Z", actor: "human:timo", revision: 3}
 - {from: "proposed", to: "active", at: "2026-11-10T23:01:14Z", actor: "human:timo", revision: 4}
@@ -59,3 +59,26 @@ the whole state and is for tests.
 - Generating the file from a domain seed format: the consumer generates it.
 - Ordering or retries across processes (two replicas starting at once): each submits the whole
   file; stable request ids and `existing_instance:` outcomes make that safe.
+
+## Gap found after implementation
+
+Recorded 2026-11-24, after two reviews of `0.19.0..0.19.1`. The story is `implemented`, and its
+lifecycle has no move back from there; this section records what the implementation does not
+meet.
+
+Two acceptance lines are not met:
+
+- "each with the file's actor, caller and request id": each entry is sent with the file's actor
+  and caller, but with no request id. `Host::submit_as` takes none, and Spindle has no request-id
+  idempotency for any request.
+- "a repeated request id is deduplicated as any request is": no request is deduplicated by its
+  request id. The seed skips, in memory and within one start, an entry whose id an earlier applied
+  or already-there entry of the same file carried; a repeat of a refused entry is submitted again.
+
+What holds instead: a restart on the same state applies nothing new only when every entry is a
+create its command answers `existing_instance:`. Any other entry runs again on every start: an
+update writes over later changes, and a move is refused. "Not covered" overclaims the same way:
+two replicas starting at once are safe only for such creates.
+
+The gap is `story:request-id-idempotency`. README, the seed's docs page and `run --help` state
+what holds.

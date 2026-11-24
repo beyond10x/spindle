@@ -8,8 +8,13 @@
 //! a time in the file's order, each as its own actor and caller, on the thread that runs every
 //! command, between the requests the listener hands over ([`Seeding::step`]). Each counts once as
 //! applied, already there (an outcome the specification declares `existing_instance:`, or a
-//! request id an earlier entry of the file carried, which is not submitted again) or refused; a
-//! refusal is logged and the next entry is submitted.
+//! request id an earlier entry of the file carried that was applied or already there, which is not
+//! submitted again) or refused; a refusal is logged and the next entry is submitted.
+//!
+//! A request id is remembered in memory, by this start alone: Spindle keeps no record of request
+//! ids across starts or replicas (`story:request-id-idempotency`). An entry whose id only a
+//! refused entry carried is submitted again, and counts as what it becomes: the refusal left
+//! nothing there, and what refused it may since have changed.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -36,7 +41,8 @@ struct Entry {
     /// The caller's attributes, every required one of the actor's.
     #[serde(default)]
     caller: Option<Map<String, Value>>,
-    /// The entry's request id: an entry whose id an earlier entry carried is not submitted again.
+    /// The entry's request id: an entry whose id an earlier applied or already-there entry
+    /// carried is not submitted again.
     request_id: String,
 }
 
@@ -185,7 +191,8 @@ fn existing(ir: &EssIr, command: &str, outcome: &str) -> bool {
     })
 }
 
-/// A seed being submitted: the next entry, the request ids submitted so far and the counts.
+/// A seed being submitted: the next entry, the request ids of the entries applied or already
+/// there so far, and the counts.
 pub(crate) struct Seeding {
     seed: Seed,
     next: usize,
@@ -249,8 +256,13 @@ impl Seeding {
         let became = if self.submitted.contains(&entry.request_id) {
             Became::AlreadyThere
         } else {
-            self.submitted.insert(entry.request_id.clone());
-            submitted(host, entry)
+            let became = submitted(host, entry);
+            // Only an entry that left its effect in place answers for a later one with its id: a
+            // refused entry left nothing, so a repeat of it is submitted again.
+            if !matches!(became, Became::Refused(_)) {
+                self.submitted.insert(entry.request_id.clone());
+            }
+            became
         };
         match became {
             Became::Applied => self.counts.applied += 1,
