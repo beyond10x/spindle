@@ -192,6 +192,13 @@
       "status": "shipped"
     },
     {
+      "area": "Execution",
+      "detail": "A view filter that tests a text field with contains, starts_with or ends_with against a text parameter or literal (address: {contains: {param: text}}) answers the rows ESS's interpreter answers on every store: byte for byte and case-sensitive, the empty text matching every row, an Optional parameter left out holding no row, a field the row does not hold refusing the read.",
+      "href": "/docs/concepts/specification",
+      "label": "View filters testing text",
+      "status": "shipped"
+    },
+    {
       "area": "Observe",
       "detail": "spindle-telemetry counts commands by outcome, events, bindings, timer ticks and store writes per component; b10x-spindle metrics prints the catalogue, play prints the table's counters.",
       "href": "/docs/concepts/observe",
