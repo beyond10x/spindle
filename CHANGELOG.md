@@ -8,6 +8,25 @@ are Spindle's releases.
 
 ### Added
 
+- The kernel runs a value `{related: {entity, where: <predicate>, field}}` (ess/22) in `sets:`
+  and event payloads: the field of the one row of the entity the predicate selects, read from the
+  store as it was before the outcome, as ESS's interpreter reads it. No row selected, or more than
+  one, gives `no_value` and writes nothing; a row the predicate leaves unknown is undecidable.
+  Before, every outcome carrying one was refused as unsupported. A predicate reading `payload.`
+  or walking the rows of an entity, and the value in an error's fields, stay refused. Works on the
+  memory, SQLite and PostgreSQL stores (`story:related-row-selected-by-predicate`).
+
+### Fixed
+
+- An `Optional` event field copied from a stored field the row holds as `null` (`{subject: …}`,
+  a changed, related or selected row's field) is carried as `null`, as ESS's interpreter carries
+  it, where Spindle left it out. An `establish` step's `null` is now held as `null` rather than
+  dropped, so a replayed scenario stating `null` for such a field passes. An event field declaring
+  `presence: null_when_absent` is carried as `null` where its source is absent; any other absent
+  field is still left out, as ESS leaves it out. View rows are unchanged: they follow a different
+  ESS rule, tracked in `story:view-rows-absent-optional-fields`
+  (`story:event-payload-absent-optional-null`).
+
 - `run --seed <file>`, or `[seed] file` in the environment document, names a JSON array of
   entries `{"command", "input", "actor", "caller", "request_id"}` that a served run submits on
   every start, after its stores open, one at a time in the file's order between the requests the
