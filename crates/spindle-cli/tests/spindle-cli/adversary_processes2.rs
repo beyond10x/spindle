@@ -322,11 +322,18 @@ fn read_message(stream: &mut TcpStream, within: Duration) -> Result<Option<Value
 #[test]
 fn end_from_a_player_does_not_end_the_table_before_a_winner() {
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    // The stand-in binds first and holds its port while the other two are picked: picked first
+    // and released, a port could come back as the stand-in's, and the table then dialled the
+    // stand-in for east as well (`story:ci-tests-deterministic`).
+    let west = TcpListener::bind("127.0.0.1:0").expect("a stand-in west");
+    let west_at = west.local_addr().expect("bound");
     let [table_at, east_at] = free_addresses(2)[..] else {
         unreachable!()
     };
-    let west = TcpListener::bind("127.0.0.1:0").expect("a stand-in west");
-    let west_at = west.local_addr().expect("bound");
+    assert!(
+        west_at != table_at && west_at != east_at,
+        "the stand-in's port was handed out again"
+    );
     let mut east = Proc::spawn(dir.path(), EAST, east_at, &[(TABLE, table_at)], 50, 50);
     let mut table = Proc::spawn(
         dir.path(),
@@ -367,6 +374,7 @@ fn end_from_a_player_does_not_end_the_table_before_a_winner() {
     );
     let stop = Arc::new(AtomicBool::new(false));
     let stopped = Arc::clone(&stop);
+    let (said, end_said) = std::sync::mpsc::channel();
     let player = std::thread::spawn(move || {
         let mut envelopes = 0;
         let deadline = Instant::now() + Duration::from_secs(60);
@@ -377,6 +385,7 @@ fn end_from_a_player_does_not_end_the_table_before_a_winner() {
                     envelopes += 1;
                     if envelopes == 3 {
                         send(&mut to_table, &json!({"end": true}));
+                        let _ = said.send(());
                     }
                 }
                 Ok(_) => {}
@@ -385,7 +394,14 @@ fn end_from_a_player_does_not_end_the_table_before_a_winner() {
         }
         envelopes
     });
-    let status = table.wait(Duration::from_secs(20));
+    // Waits for the end to be said, or the table to stop first; then gives the table the time it
+    // takes to read the end and stop on it. Both are bounds on a hang, not a measure of speed.
+    let linked_by = Instant::now() + Duration::from_secs(20);
+    let mut status = table.wait(Duration::ZERO);
+    while status.is_none() && end_said.try_recv().is_err() && Instant::now() < linked_by {
+        status = table.wait(POLL);
+    }
+    let status = status.or_else(|| table.wait(Duration::from_secs(5)));
     let console = table.console();
     stop.store(true, Ordering::SeqCst);
     let envelopes = player.join().expect("the stand-in west");

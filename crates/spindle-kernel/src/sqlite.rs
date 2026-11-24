@@ -2440,6 +2440,64 @@ mod tests {
             ]
         );
     }
+
+    /// `story:metrics-read-without-scan`: the host counts every store's rows when it opens one,
+    /// so a restart pays for `counts` once per component. The SQLite store answers it in one read
+    /// of the feed; the trait's default scans each entity, one read of the feed per entity (42 s
+    /// on a model of 125 entities). Held in calls of the event store, not in time
+    /// (`story:ci-tests-deterministic`): the case timed `counts` against eight scans and failed
+    /// on a loaded runner with nothing wrong.
+    #[test]
+    fn adversary_counts_sqlite_counts_every_entity_in_about_one_read_of_the_feed() {
+        const ENTITIES: usize = 60;
+        const ROWS: usize = 25;
+        let mut store = store();
+        let entities = (0..ENTITIES)
+            .map(|index| format!("adversary.counts.E{index}"))
+            .collect::<Vec<_>>();
+        for entity in &entities {
+            let writes = (0..ROWS)
+                .map(|index| {
+                    Write::Commit(Change {
+                        entity: entity.clone(),
+                        ..change(&format!("r{index}"), None, "Open")
+                    })
+                })
+                .collect::<Vec<_>>();
+            store.commit_all(&writes).expect("the rows land");
+        }
+        let counts = store.counts(&entities).expect("the store counts");
+        assert_eq!(
+            counts,
+            entities
+                .iter()
+                .map(|entity| (entity.clone(), ROWS))
+                .collect::<BTreeMap<_, _>>()
+        );
+
+        let before = log_calls();
+        store.scan(&entities[0]).expect("a scan");
+        let scan = log_calls() - before;
+        let before = log_calls();
+        store.counts(&entities).expect("the store counts");
+        let counted = log_calls() - before;
+        let before = log_calls();
+        for entity in &entities {
+            store.scan(entity).expect("a scan");
+        }
+        let by_default = log_calls() - before;
+        assert_eq!(scan, 1, "one scan read the feed {scan} times");
+        assert_eq!(
+            by_default,
+            scan * ENTITIES as u64,
+            "a scan of each entity, the trait's default, reads the feed once per entity"
+        );
+        assert_eq!(
+            counted, scan,
+            "counting {ENTITIES} entities made {counted} calls of the event store, one scan \
+             made {scan}: the feed is read once per entity"
+        );
+    }
 }
 
 #[cfg(all(test, feature = "postgres"))]
