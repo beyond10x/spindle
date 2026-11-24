@@ -16,6 +16,14 @@ are Spindle's releases.
   kernel reads the row each element names and takes the branch where any names no row, an empty
   list naming none, and `{missing: input.<list>}` reads the first such element in list order, as
   ESS's interpreter decides and answers it. It was refused as unsupported.
+- A view filter that tests a text field with `contains`, `starts_with` or `ends_with` against a
+  text parameter or literal, `address: {contains: {param: text}}`, is served on every store, with
+  the rows ESS's interpreter answers: the match is byte for byte and case-sensitive, the empty text
+  matches every row, an `Optional` parameter left out holds no row, and a field the row does not
+  hold refuses the read. `admit` and `run` named such a view not served, and its route answered
+  `501`.
+- `conform` reads a view with the parameters a scenario gives, so a scenario that queries a view
+  with parameters executes; it was counted unsupported.
 
 ### Changed
 

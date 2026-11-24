@@ -349,18 +349,35 @@ impl ConformanceTarget for HostTarget {
 
     fn query_view(&self, request: SemanticViewRequest) -> Result<SemanticViewResult, TargetError> {
         let view = request.view.to_string();
-        if !request.params.is_empty() {
-            return Err(TargetError::unsupported(
-                format!("`{view}` read with parameters"),
-                "the in-process host lists views without parameters only",
-            ));
-        }
+        let params = request
+            .params
+            .iter()
+            .map(|(name, value)| {
+                serde_json::to_value(value)
+                    .map(|value| (name.clone(), value))
+                    .map_err(|error| {
+                        TargetError::unsupported(
+                            format!("the parameter `{name}` of `{view}`"),
+                            error.to_string(),
+                        )
+                    })
+            })
+            .collect::<Result<Map<String, Value>, _>>()?;
         let mut running = self.running.borrow_mut();
         let running = running
             .as_mut()
             .ok_or_else(|| TargetError::unavailable(&view, "no scenario is open"))?;
-        let rows = match running.host.list(&view) {
+        let rows = match running.host.list_with(&view, &params) {
             Ok(rows) => rows,
+            // ESS's interpreter refuses a read with a parameter the view does not declare, a
+            // required one left out or one not of its type as unsupported (`interpret/views.rs`,
+            // `query`).
+            Err(HostError::Parameters { detail, .. }) => {
+                return Err(TargetError::unsupported(
+                    format!("reading `{view}`"),
+                    detail,
+                ));
+            }
             Err(HostError::Unsupported(construct)) => {
                 return Err(TargetError::unsupported(
                     format!("reading `{view}`"),

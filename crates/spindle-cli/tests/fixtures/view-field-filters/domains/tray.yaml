@@ -162,5 +162,5 @@ views:
     filter:
       all:
         - archived == false
-        - {kind: {starts_with: dr}}
+        - {kind: {equals_ignore_case: draft}}
     fields: *fields

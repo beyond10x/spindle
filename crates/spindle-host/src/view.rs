@@ -15,7 +15,9 @@ use ess_domain::types::{MAX_TYPE_DEPTH, Presence, Primitive};
 use ess_domain::view::{Direction, ViewSpec};
 use ess_primitives::facts::FactSource;
 use ess_primitives::node::Node;
-use ess_primitives::predicate::{Collection, CompareOp, Operand, Predicate, Truth};
+use ess_primitives::predicate::{
+    Collection, CompareOp, Operand, Predicate, TextNamespace, TextOperand, Truth,
+};
 use ess_primitives::time::CurrentTime;
 use ess_primitives::{FactPath, FactStore, FactValue, Rfc3339Instant};
 use serde_json::{Map, Value};
@@ -46,6 +48,10 @@ const STATE: &str = "state";
 ///   (`book_id == param.id`, `class_id.holder == person_id`), or ordered against one where ESS
 ///   orders both and they are of one scalar kind (`started_at > person_id.joined_at`);
 /// - `defined(param.<name>)` or `defined(<field>)`;
+/// - a text field of the row (or an element of a list field of it) tested by `contains`,
+///   `starts_with` or `ends_with` against a text literal or a text parameter
+///   (`address: {contains: {param: text}}`, `story:view-filter-text-contains`), which ESS
+///   evaluates byte for byte and case-sensitively (`TextOp::holds`);
 ///
 /// leaves combined by `any`, `all` and `not`, or under `exists` or `forall` over a list parameter
 /// or a list field of the row. A list parameter's element is read as a parameter is; a list
@@ -72,8 +78,10 @@ pub(crate) fn unsupported(ir: &EssIr, view: &ResolvedView) -> Option<String> {
             Some(filter) if !reads(ir, view, filter) => Some(format!(
                 "the filter `{filter}`; only a field of the row, or of the row a reference names, \
                  compared with a literal of its type or ordered against `now`, listed `in:` or \
-                 `none_of:` literals, or compared with a parameter or another field, and \
-                 `defined`, combined by `any`, `all` and `not` or quantified over a list \
+                 `none_of:` literals, or compared with a parameter or another field, \
+                 `defined`, and a text field tested by `contains`, `starts_with` or `ends_with` \
+                 against a text literal or parameter, combined by `any`, `all` and `not` or \
+                 quantified over a list \
                  parameter or a list field by `exists` or `forall`, are read"
             )),
             _ => None,
@@ -258,6 +266,23 @@ impl<'a> Scope<'a> {
                 })
             }
             Predicate::Defined(path) => self.typed(path).is_some_and(|typed| !typed.binder),
+            Predicate::TextMatch { path, value, .. } => self.typed(path).is_some_and(|typed| {
+                typed.row
+                    && typed.resolution.scalar == Some(ScalarKind::Text)
+                    && match value {
+                        TextOperand::Literal(literal) => matches!(literal, FactValue::Text(_)),
+                        TextOperand::Fact {
+                            namespace: TextNamespace::Param,
+                            path: read,
+                            ..
+                        } => self.typed(read).is_some_and(|operand| {
+                            !operand.row
+                                && !operand.binder
+                                && operand.resolution.scalar == Some(ScalarKind::Text)
+                        }),
+                        TextOperand::Fact { .. } => false,
+                    }
+            }),
             Predicate::Exists(quantified) | Predicate::Forall(quantified) => {
                 let Collection::Fact(over) = &quantified.over else {
                     return false;
@@ -461,6 +486,30 @@ impl Read<'_> {
                     })
             })
     }
+
+    /// Whether ESS's interpreter hides the row rather than refusing the read, where the filter is
+    /// unknown for it: every path it reads that observes nothing is an `Optional` parameter the
+    /// read left out that a string operator compares with (`ess-conformance`
+    /// `src/interpret/views.rs` at ESS 0.98.0, `absent_text_operands`, beyond10x/ess#200).
+    fn absent_text_operands(&self, filter: &Predicate) -> bool {
+        let mut unobserved = filter
+            .fact_paths()
+            .into_iter()
+            .filter(|path| self.observe(path).is_none())
+            .peekable();
+        unobserved.peek().is_some()
+            && unobserved.all(|path| {
+                let [namespace, name] = path.segments() else {
+                    return false;
+                };
+                namespace == ViewSpec::PARAM
+                    && filter.reads_text_parameter(name)
+                    && self
+                        .params
+                        .iter()
+                        .any(|param| &param.name == name && param.type_ref.is_optional())
+            })
+    }
 }
 
 impl FactSource for Read<'_> {
@@ -553,9 +602,9 @@ pub(crate) fn instant(at: SystemTime) -> Option<Rfc3339Instant> {
 /// `Truth::Unknown => return Err(unsupported())`): one comparing against an `Optional` parameter
 /// the read left out, or an `Optional` field the row does not hold, is unknown, not false. The
 /// row is not held, and the read goes on, where every path the filter reads that observes nothing
-/// reads through a reference that names no row (`absent_navigation`, `views.rs:213`). The
-/// interpreter also hides a row where the omitted parameter is read by a string operator
-/// (`absent_text_operands`, `views.rs:210`), and no filter [`unsupported`] admits has one.
+/// reads through a reference that names no row (`absent_navigation`, `views.rs:213`), or is an
+/// `Optional` parameter the read left out that a string operator (`contains`, `starts_with`,
+/// `ends_with`) compares with (`absent_text_operands`, `views.rs:210` at ESS 0.98.0).
 ///
 /// # Errors
 /// When the row, or a row a reference names, is not a value of its entity's declared fields,
@@ -694,7 +743,8 @@ fn bound(
 /// What ESS evaluates `predicate`, a filter [`unsupported`] admits, to over the row `facts`,
 /// `parameters` and the rows its references name (`navigated`), a `now` operand read as `now`
 /// ([`Read`]); and, where it is unknown, whether it is unknown only through a reference that
-/// names no row ([`Read::absent_navigation`]).
+/// names no row ([`Read::absent_navigation`]) or an `Optional` parameter left out that a string
+/// operator compares with ([`Read::absent_text_operands`]), where ESS's interpreter hides the row.
 fn truth(
     ir: &EssIr,
     view: &ResolvedView,
@@ -718,7 +768,8 @@ fn truth(
     let truth = predicate.evaluate(&read);
     (
         truth,
-        truth == Truth::Unknown && read.absent_navigation(predicate),
+        truth == Truth::Unknown
+            && (read.absent_text_operands(predicate) || read.absent_navigation(predicate)),
     )
 }
 

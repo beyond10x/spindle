@@ -73,5 +73,7 @@ mod supplied;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod telemetry;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod text_filters;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod views;
 mod wasm;

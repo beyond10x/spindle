@@ -193,3 +193,18 @@ fn the_head_reads_no_event_of_a_long_log() {
         open(&fresh()),
     );
 }
+
+/// `story:view-filter-text-contains` on PostgreSQL ([`crate::text_filters::agree_on`]): every
+/// read of the text-filters fixture answers what ESS's interpreter answers, and is refused where
+/// it refuses.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn text_filters_agree_with_the_interpreter() {
+    let url = std::env::var("SPINDLE_TEST_DATABASE_URL")
+        .expect("SPINDLE_TEST_DATABASE_URL names a loopback PostgreSQL (task check:postgres)");
+    let database = Database::new(url);
+    let component = fresh();
+    let store = PostgresStore::open(&database, &component, 1)
+        .unwrap_or_else(|error| panic!("the store of {component} opens: {error}"));
+    crate::text_filters::agree_on("postgres", Box::new(store));
+}

@@ -46,7 +46,7 @@ const FLAGGED: &str = "cards.tray.Flagged";
 const FRESH: &str = "cards.tray.Fresh";
 const TAGGED_WITH: &str = "cards.tray.TaggedWith";
 const TAGGED_ANY: &str = "cards.tray.TaggedAny";
-/// The view whose filter mixes an admitted leaf with one still unread (`starts_with`).
+/// The view whose filter mixes an admitted leaf with one still unread (`equals_ignore_case`).
 const DRAFT_LIKE: &str = "cards.tray.DraftLike";
 
 /// Every view read with each set of parameters it is read with here: the query string and the
@@ -459,7 +459,7 @@ fn an_unread_filter_is_still_refused_whole() {
     let (status, answer) = tray.read(DRAFT_LIKE, "");
     let text = refused(status, &answer);
     assert!(
-        text.contains(DRAFT_LIKE) && text.contains("starts_with"),
+        text.contains(DRAFT_LIKE) && text.contains("equals_ignore_case"),
         "the refusal names the view and its whole filter: {text}"
     );
     assert!(
