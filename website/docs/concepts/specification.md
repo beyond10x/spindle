@@ -44,6 +44,12 @@ pinned to a released tag in the workspace `Cargo.toml`.
    against its entity's invariants, and commits every row in one write, or none.
 4. It returns the events the outcome emits, or the error it declares.
 
+An `Optional` event field whose source holds nothing is left out of the event, unless the field
+declares `presence: null_when_absent`, which carries it as `null`. A stored field a row holds as
+`null`, such as one a scenario's `establish` step wrote as `null`, is copied as `null`, so
+`{subject: <field>}` carries `null` there, as ESS's interpreter carries it. A guard, a filter or an
+invariant reads a held `null` as absent.
+
 A guard that evaluates to *unknown* refuses the command. It does not take a branch by default.
 
 An `external:` refusal declared `before_row: true` is asked among the input refusals, in the

@@ -270,22 +270,19 @@ impl<'a> Sources<'a, '_> {
             {
                 Ok(None)
             }
-            ResolvedPayloadValue::SubjectField { field: read, .. } => Ok(self
-                .before(field)?
-                .fields
-                .get(read)
-                .filter(|value| !value.is_null())
-                .cloned()),
+            // A stored field read as the row holds it: a field it does not hold is absent, and one
+            // it holds as `null` (an established row's) is `null`, as ESS's `determined::subject`
+            // reads it; the same for a changed row and a related or selected row below.
+            ResolvedPayloadValue::SubjectField { field: read, .. } => {
+                Ok(self.before(field)?.fields.get(read).cloned())
+            }
             ResolvedPayloadValue::SubjectState { .. } => {
                 Ok(Some(Value::String(self.before(field)?.state.clone())))
             }
             // ESS `emit` holds the changed row an occurrence is for as the row before the outcome.
-            ResolvedPayloadValue::ChangedField { field: read, .. } => Ok(self
-                .before(field)?
-                .fields
-                .get(read)
-                .filter(|value| !value.is_null())
-                .cloned()),
+            ResolvedPayloadValue::ChangedField { field: read, .. } => {
+                Ok(self.before(field)?.fields.get(read).cloned())
+            }
             ResolvedPayloadValue::ChangedState { .. } => {
                 Ok(Some(Value::String(self.before(field)?.state.clone())))
             }
@@ -483,11 +480,7 @@ impl<'a> Sources<'a, '_> {
         Ok(match read {
             None => Some(Value::String(row.state.clone())),
             Some(read) if read == entity.identity.name => Some(identity),
-            Some(read) => row
-                .fields
-                .get(read)
-                .filter(|value| !value.is_null())
-                .cloned(),
+            Some(read) => row.fields.get(read).cloned(),
         })
     }
 
@@ -514,10 +507,7 @@ impl<'a> Sources<'a, '_> {
             Some(Selection::One(identity, row)) => Ok(if read == entity.identity.name {
                 Some(identity.clone())
             } else {
-                row.fields
-                    .get(read)
-                    .filter(|value| !value.is_null())
-                    .cloned()
+                row.fields.get(read).cloned()
             }),
             Some(Selection::None) | None => Err(no_value("none is")),
             Some(Selection::Several) => Err(no_value("several are, and none is chosen")),

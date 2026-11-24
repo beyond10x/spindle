@@ -2002,6 +2002,15 @@ impl<'a, 'ir> Run<'a, 'ir> {
         {
             payload.insert(name.clone(), minted.clone());
         }
+        // A field left absent is carried as `null` where it declares `presence: null_when_absent`,
+        // and left out otherwise (ESS `interpret::execute::emit`, beyond10x/ess#765).
+        if let Some(declared) = self.ir.events().get(event.name()) {
+            for field in &declared.fields {
+                if field.naming.presence == Some(ess_domain::types::Presence::NullWhenAbsent) {
+                    payload.entry(field.name.clone()).or_insert(Value::Null);
+                }
+            }
+        }
         Ok(Event {
             name: event.name().to_string(),
             payload,

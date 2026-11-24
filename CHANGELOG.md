@@ -16,6 +16,17 @@ are Spindle's releases.
   or walking the rows of an entity, and the value in an error's fields, stay refused. Works on the
   memory, SQLite and PostgreSQL stores (`story:related-row-selected-by-predicate`).
 
+### Fixed
+
+- An `Optional` event field copied from a stored field the row holds as `null` (`{subject: …}`,
+  a changed, related or selected row's field) is carried as `null`, as ESS's interpreter carries
+  it, where Spindle left it out. An `establish` step's `null` is now held as `null` rather than
+  dropped, so a replayed scenario stating `null` for such a field passes. An event field declaring
+  `presence: null_when_absent` is carried as `null` where its source is absent; any other absent
+  field is still left out, as ESS leaves it out. View rows are unchanged: they follow a different
+  ESS rule, tracked in `story:view-rows-absent-optional-fields`
+  (`story:event-payload-absent-optional-null`).
+
 - `run --seed <file>`, or `[seed] file` in the environment document, names a JSON array of
   entries `{"command", "input", "actor", "caller", "request_id"}` that a served run submits on
   every start, after its stores open, one at a time in the file's order between the requests the
