@@ -38,6 +38,27 @@ are Spindle's releases.
   the new family `spindle_seed_commands_total{counted}`. A file that does not parse, or an entry
   naming a command, input field or actor shape the specification does not declare, stops `run` with
   exit 1 before listening, naming the file and the entry. A run that reads stdin refuses a seed.
+- Spindle's own specification lists three more authored scenarios: `admission-missing-provided`
+  and `admission-refused`, for the two `DecideAdmission` outcomes ESS's synthesis cannot arrange
+  (`ESS-SYNTH-003`), and `admission-admitted`, an admission that binds a required capability, which
+  no synthesized scenario sends; `spindle.deployment.EnvironmentState` publishes `os` and `arch`,
+  which `DeclareEnvironment` records and no view showed; `task check:conformance` executes 84
+  scenarios, all passed (it was 79). A seeded walk of 150 command sequences sends every sequence
+  to `HostTarget` and to ESS's interpreter and requires the same answers and view rows, the same
+  answers twice, and that a step answered `already-ended` changes nothing
+  (`docs/hardening/2026-11-23.md`).
+
+### Changed
+
+- Spindle's own specification: `spindle.placement.Resources` declares that no resource is below
+  zero and that `vcpus` fits 32 bits, as `spindle_target::Resources` holds them; a
+  `DeclareTarget` or `PlanInstance` with a negative ceiling or request is refused before anything
+  is written, where it was declared or planned. The outcomes that answer
+  `DeploymentStateConflict` and `InstanceStateConflict` now declare that `state` is the held
+  state, and the one that answers `TargetAlreadyRetired` that `target_id` is the input's. The
+  kernel already filled them from the row; ESS's interpreter left them out, and no scenario
+  checked them. The observe schema and types regenerate:
+  `Resources.vcpus` is an `i64` in the Rust types, with the bounds in the schema.
 
 ## [0.19.0] - 2026-11-23
 

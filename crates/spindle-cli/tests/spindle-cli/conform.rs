@@ -102,7 +102,9 @@ fn spec_with(dir: &Path, name: &str, scenarios: &[(&str, String)]) -> PathBuf {
     assert!(
         listed
             .trim_end()
-            .ends_with("- scenarios/launch-not-admitted.yaml"),
+            .lines()
+            .last()
+            .is_some_and(|line| line.trim_start().starts_with("- scenarios/")),
         "ess-inputs.yaml ends with its scenarios list: {listed}"
     );
     for (stem, document) in scenarios {

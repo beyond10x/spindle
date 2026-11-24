@@ -1,0 +1,40 @@
+type: ess-scenario/1
+domain: spindle.deployment
+scenario: admission-missing-provided
+summary: >-
+  A refusal that names missing a capability the environment provides by its exact key is not
+  refused: the decision is invalid and the deployment stays offered, with nothing recorded.
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: spindle.deployment.DeclareEnvironment
+    input:
+      environment_id: laptop
+      os: linux
+      arch: x86_64
+      provides:
+        - capability: store.durable
+          implementations: [sqlite]
+    outcome: declared
+  - at: 2026-01-05T09:00:01Z
+    command: spindle.deployment.OfferBundle
+    input:
+      deployment_id: provided
+      bundle: sha256:0f
+      environment_id: laptop
+    outcome: offered
+  - at: 2026-01-05T09:00:02Z
+    command: spindle.deployment.DecideAdmission
+    input:
+      deployment_id: provided
+      requires: [store.durable]
+      bindings: []
+      missing: [store.durable]
+    outcome: missing-provided
+    error:
+      name: spindle.deployment.AdmissionDecisionInvalid
+      fields: {}
+assert:
+  - view: spindle.deployment.DeploymentState
+    contains: {deployment_id: provided, state: Offered}
+  - view: spindle.deployment.DeploymentState
+    excludes: {deployment_id: provided, state: Refused}

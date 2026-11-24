@@ -1,12 +1,12 @@
 {
   "format": "ess-types-report/3",
-  "source_digest": "4c880f243a4d43be2788637aaa80c87ee2f19ff7e287401d1a273896f41ef8ac",
+  "source_digest": "6f8b057c5f2c5585c513b2df6e227a2c516c5efa4135820f706a67e960e7fa38",
   "input": {
     "kind": "model",
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:a885b5d5473bb59161e6aa6f6cffd74c7334987e79851288e0b00c64f8047513",
-    "projection_digest": "7c88ba15e408d9a8877f7c9401e9a56318c781e1438c3eb1a85fa55aa6835755"
+    "contract_digest": "slice-sha256/2:1c49170d136bfa13e593adf5f6004998ec4cb204ac613fa9c1398324cf7c59c7",
+    "projection_digest": "d0de74e74a168b7f90fc286de3458c294b10e0c47a85aec04bc8f4373b2f314a"
   },
   "generator_version": "0.98.0",
   "target": "typescript",
@@ -1305,6 +1305,11 @@
       "detail": "model identity and wire mapping retained in source.schema.json"
     },
     {
+      "pointer": "/$defs/spindle.placement.Resources/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
       "pointer": "/$defs/spindle.placement.Resources/title",
       "rule": "title",
       "detail": "retained in source.schema.json; no decoder behavior inferred"
@@ -1952,6 +1957,11 @@
       "detail": "TypeScript number cannot retain arbitrary JSON numeric precision; validate representability before decoding"
     },
     {
+      "pointer": "/$defs/spindle.placement.Resources/properties/disk_mib/minimum",
+      "rule": "minimum",
+      "detail": "validate this constraint against the source schema at runtime"
+    },
+    {
       "pointer": "/$defs/spindle.placement.Resources/properties/memory_mib",
       "rule": "integer",
       "detail": "TypeScript number does not enforce integrality"
@@ -1962,6 +1972,11 @@
       "detail": "TypeScript number cannot retain arbitrary JSON numeric precision; validate representability before decoding"
     },
     {
+      "pointer": "/$defs/spindle.placement.Resources/properties/memory_mib/minimum",
+      "rule": "minimum",
+      "detail": "validate this constraint against the source schema at runtime"
+    },
+    {
       "pointer": "/$defs/spindle.placement.Resources/properties/vcpus",
       "rule": "integer",
       "detail": "TypeScript number does not enforce integrality"
@@ -1970,6 +1985,21 @@
       "pointer": "/$defs/spindle.placement.Resources/properties/vcpus",
       "rule": "json_number_precision",
       "detail": "TypeScript number cannot retain arbitrary JSON numeric precision; validate representability before decoding"
+    },
+    {
+      "pointer": "/$defs/spindle.placement.Resources/properties/vcpus/maximum",
+      "rule": "maximum",
+      "detail": "validate this constraint against the source schema at runtime"
+    },
+    {
+      "pointer": "/$defs/spindle.placement.Resources/properties/vcpus/minimum",
+      "rule": "minimum",
+      "detail": "validate this constraint against the source schema at runtime"
+    },
+    {
+      "pointer": "/$defs/spindle.placement.Resources/x-ess-invariants",
+      "rule": "model_invariants",
+      "detail": "enforce the retained model invariant statements; structural codecs do not evaluate predicates"
     },
     {
       "pointer": "/$defs/spindle.placement.TargetId",

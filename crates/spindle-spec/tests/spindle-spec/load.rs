@@ -36,7 +36,15 @@ fn spindles_own_specification_compiles() {
         .iter()
         .map(|scenario| scenario.origin.as_str())
         .collect::<Vec<_>>();
-    assert_eq!(scenarios, vec!["scenarios/launch-not-admitted.yaml"]);
+    assert_eq!(
+        scenarios,
+        vec![
+            "scenarios/launch-not-admitted.yaml",
+            "scenarios/admission-missing-provided.yaml",
+            "scenarios/admission-refused.yaml",
+            "scenarios/admission-admitted.yaml",
+        ]
+    );
     assert_eq!(
         loaded.scenarios[0].text,
         fs::read_to_string(repository_root().join("ess/scenarios/launch-not-admitted.yaml"))

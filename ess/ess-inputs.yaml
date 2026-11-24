@@ -10,3 +10,6 @@ specification:
   - domains/console.yaml
 scenarios:
   - scenarios/launch-not-admitted.yaml
+  - scenarios/admission-missing-provided.yaml
+  - scenarios/admission-refused.yaml
+  - scenarios/admission-admitted.yaml

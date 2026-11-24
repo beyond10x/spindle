@@ -16,6 +16,7 @@ mod before_row_and_reference_lists;
 mod computed;
 mod conversions;
 mod establish;
+mod explore;
 mod forcing;
 mod gate;
 mod grants;
