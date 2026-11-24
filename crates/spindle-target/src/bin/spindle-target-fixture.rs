@@ -1,7 +1,7 @@
 //! A stand-in instance for the process launcher's tests.
 //!
-//! It prints its arguments and every `SPINDLE_*` variable it was given, one per line, then writes
-//! `ready` to standard error. With the setting `mode` = `exit` it exits with the code in the
+//! It prints its process id (`pid <id>`), its arguments and every `SPINDLE_*` variable it was
+//! given, one per line, then writes `ready` to standard error. With the setting `mode` = `exit` it exits with the code in the
 //! setting `exit_code`. With `mode` = `telemetry` it counts one command and starts the telemetry
 //! sender its launcher asked for. Otherwise, and after that, it runs until it is signalled.
 
@@ -10,6 +10,7 @@ use std::time::Duration;
 
 fn main() {
     let mut out = std::io::stdout().lock();
+    writeln!(out, "pid {}", std::process::id()).expect("stdout");
     for argument in std::env::args().skip(1) {
         writeln!(out, "arg {argument}").expect("stdout");
     }
