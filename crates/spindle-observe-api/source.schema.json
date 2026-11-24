@@ -1216,7 +1216,7 @@
     },
     "spindle.observe.UnmetInput": {
       "additionalProperties": false,
-      "description": "One event binding whose command input the event did not fill: a required field absent, or a value carried across a declared conversion that is no value of the input's type. The command is not invoked: zero attempts, no retry, and the event's other bindings still run; the command that published the event stays committed. ESS 0.90.0 calls this an unmet binding-input obligation, with no attempt and no policy, only for a binding whose failure policy is chosen per refusal, answers the same failure of every other binding unsupported, and defines no observable result for either (`crates/verify/ess-conformance/src/interpret/bindings.rs`). The rule for every binding and this answer are Spindle's (`docs/design/spindle.md` § 11, unmet binding input; `spindle_channel::Unmet`).",
+      "description": "One event binding whose command input the event did not fill: a required field absent, a value carried across a declared conversion that is no value of the input's type, or a payload condition (`when.where`) that decides Unknown on the event, such as a comparison that reads an absent or `null` Optional field (`spindle_channel::Route::holds`). The command is not invoked: zero attempts, no retry, and the event's other bindings still run; the command that published the event stays committed. ESS 0.90.0 calls this an unmet binding-input obligation, with no attempt and no policy, only for a binding whose failure policy is chosen per refusal, answers the same failure of every other binding unsupported, and defines no observable result for either (`crates/verify/ess-conformance/src/interpret/bindings.rs`). The rule for every binding and this answer are Spindle's (`docs/design/spindle.md` § 11, unmet binding input; `spindle_channel::Unmet`).",
       "properties": {
         "binding": {
           "description": "The binding id.",
@@ -1267,14 +1267,19 @@
     },
     "spindle.placement.Resources": {
       "additionalProperties": false,
+      "description": "How much of each resource one instance may take or asks for: virtual CPUs, memory and disk in MiB. None is below zero, and the vCPUs fit 32 bits, as `spindle_target::Resources` holds them (`u32`, `u64`, `u64`).",
       "properties": {
         "disk_mib": {
+          "minimum": 0,
           "type": "integer"
         },
         "memory_mib": {
+          "minimum": 0,
           "type": "integer"
         },
         "vcpus": {
+          "maximum": 4294967295,
+          "minimum": 0,
           "type": "integer"
         }
       },
@@ -1285,6 +1290,12 @@
       ],
       "title": "Resources",
       "type": "object",
+      "x-ess-invariants": [
+        "vcpus >= 0",
+        "vcpus <= 4294967295",
+        "memory_mib >= 0",
+        "disk_mib >= 0"
+      ],
       "x-ess-kind": "struct",
       "x-ess-name": "spindle.placement.Resources"
     },
@@ -1312,8 +1323,8 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-ess-provenance": {
-    "contract_digest": "slice-sha256/2:a885b5d5473bb59161e6aa6f6cffd74c7334987e79851288e0b00c64f8047513",
-    "source_digest": "4c880f243a4d43be2788637aaa80c87ee2f19ff7e287401d1a273896f41ef8ac",
+    "contract_digest": "slice-sha256/2:1c49170d136bfa13e593adf5f6004998ec4cb204ac613fa9c1398324cf7c59c7",
+    "source_digest": "6f8b057c5f2c5585c513b2df6e227a2c516c5efa4135820f706a67e960e7fa38",
     "specification_version": "v1",
     "system": "spindle"
   }

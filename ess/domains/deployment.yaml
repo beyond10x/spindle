@@ -54,8 +54,9 @@ entities:
         summary: >-
           Each capability or `prefix.*` key the environment provides, with its implementations,
           most preferred first. A capability is provided by its exact key, or else by the longest
-          `prefix.*` key that covers it, and an exact key wins over a prefix (README.md:101-102,
-          crates/spindle-capability/src/environment.rs:81-96).
+          `prefix.*` key that covers it, and an exact key wins over a prefix (README.md §
+          Environment, `Environment::implementations` in
+          crates/spindle-capability/src/environment.rs).
 
     lifecycle:
       initial: Declared
@@ -131,11 +132,12 @@ errors:
 
   - name: spindle.deployment.AdmissionDecisionInvalid
     summary: >-
-      The decision binds a capability twice, binds one that is not required or to an
-      implementation the environment does not provide for it, names missing one that is not
-      required, that it binds or that the environment provides, leaves a required one neither
-      bound nor missing, or refuses where no capability it names missing is confirmed missing, so
-      nothing moved.
+      The decision binds a capability twice, binds one that is not required, binds one to an
+      implementation its exact key does not list (or, where the environment holds no `prefix.*`
+      key, one that has no exact key), names missing one that is not required, that it binds or
+      that the environment provides by its exact key, leaves a required one neither bound nor
+      missing, or refuses where no capability it names missing is confirmed missing, so nothing
+      moved.
     fields: []
 
   - name: spindle.deployment.EnvironmentUnknown
@@ -164,7 +166,8 @@ commands:
         error: spindle.environment.ProvidesInvalid
         summary: >-
           The environment lists one key twice, which its document cannot hold, so nothing
-          was recorded (crates/spindle-capability/src/environment.rs:37,45,63).
+          was recorded (`Environment::provides` holds one entry per key, and `Environment::parse`
+          refuses a key listed twice, crates/spindle-capability/src/environment.rs).
 
       - name: no-implementation
         when:
@@ -175,7 +178,7 @@ commands:
         error: spindle.environment.ProvidesInvalid
         summary: >-
           A key lists no implementation, so nothing was recorded
-          (crates/spindle-capability/src/environment.rs:52-57,69-77).
+          (`EnvironmentError::EmptyList`, crates/spindle-capability/src/environment.rs).
 
       - name: declared
         creates: spindle.deployment.Environment
@@ -283,6 +286,9 @@ commands:
       - name: wrong-state
         wrong_state: true
         error: spindle.deployment.DeploymentStateConflict
+        payload:
+          spindle.deployment.DeploymentStateConflict:
+            state: {subject: state}
         summary: >-
           The decision is consistent, but the deployment's admission was already decided, so
           nothing moved. The held state answers before the environment is read, so a binding the
@@ -292,7 +298,7 @@ commands:
       # exact key is guarded, whether or not a prefix key covers it: whether one does is a prefix
       # match against a list element, and an ESS 0.90 string operator compares only with a
       # literal, `{param:}` or `{input:}` (`unparsable_predicate`). The runtime decides it
-      # (environment.rs:81-96).
+      # (`Environment::implementations`).
       - name: not-provided
         when_related:
           via: environment_id
@@ -324,7 +330,8 @@ commands:
           The decision binds a capability to an implementation the deployment's environment does
           not provide for it, so nothing moved: the capability's exact key does not list the
           implementation, or it has no exact key and the environment has no `prefix.*` key at all
-          (README.md:101-102, crates/spindle-capability/src/environment.rs:81-96).
+          (README.md § Environment, `Environment::implementations` in
+          crates/spindle-capability/src/environment.rs).
 
       # UNMAPPED: a capability named missing that only a `prefix.*` key provides is not refused
       # here, for the reason given above `not-provided`.
@@ -412,6 +419,9 @@ commands:
       - name: wrong-state
         wrong_state: true
         error: spindle.deployment.DeploymentStateConflict
+        payload:
+          spindle.deployment.DeploymentStateConflict:
+            state: {subject: state}
         summary: Only an admitted deployment starts.
 
   - name: spindle.deployment.StopDeployment
@@ -502,5 +512,9 @@ views:
         type: spindle.deployment.EnvironmentId
       - name: state
         type: spindle.deployment.Environment.State
+      - name: os
+        type: String
+      - name: arch
+        type: String
       - name: provides
         type: List<spindle.environment.Provision>
