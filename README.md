@@ -53,6 +53,12 @@ binary built without `ui/dist` answers `GET /` with 503. `b10x-spindle deploy ex
 examples/placements/rally-processes.toml` launches the three rally components as processes and
 prints the URL of the observe UI, `http://127.0.0.1:7341/?t=<token>`.
 
+Where `run` serves HTTP, `--seed <file>` (or `[seed] file` in the environment document) submits a
+JSON array of commands, each with its input, actor, caller and request id, on every start: checked
+before listening, then one at a time in order beside the listener. An outcome declared
+`existing_instance:` counts as already there, so a restart on the same state applies nothing new.
+A refusal is logged and the rest still run; one line on stderr gives the counts when the seed ends.
+
 Where `run` serves HTTP, `--observe` records every request it answers. `GET /__spindle/requests`
 lists the last 256 (`--observe-requests <N>`, 1 to 10000), newest first, with totals per class
 since start. `?class=not-served` keeps only the requests answered `501`.
@@ -72,7 +78,8 @@ why.
 (`text/plain; version=0.0.4`). The families are those of `ess/fixtures/observe/metrics/families.json`:
 requests by method, route template, operation, kind, class and status class, their durations,
 commands by outcome and failure, events appended, bindings, timer ticks, store writes, the rows
-each entity holds, the resets and the external causes answered, by command, outcome and source.
+each entity holds, the resets, the external causes answered, by command, outcome and source, and,
+in a run given a seed, its entries sent, applied, already there and refused.
 
 `GET /__spindle/topology` answers the graph of what the run serves (`spindle-topology/1`), derived
 from the specification. It holds the ingress, the specification, its domains, their commands,

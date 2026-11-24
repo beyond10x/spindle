@@ -8,6 +8,7 @@ mod decisions;
 mod deploy;
 mod replay;
 mod scaled;
+mod seed;
 mod serve;
 mod state;
 mod state_lock;
@@ -201,6 +202,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             trusted_caller_secret,
             observe,
             observe_requests,
+            seed,
             scenario: None,
         } => execute(&Execute {
             spec: &spec,
@@ -216,6 +218,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             observe: observe.then_some(usize::from(observe_requests)),
             caller_header: trusted_caller_header.as_deref(),
             caller_secret: trusted_caller_secret.as_deref(),
+            seed: seed.as_deref(),
         }),
         Command::Play {
             spec,
@@ -436,6 +439,8 @@ struct Execute<'a> {
     caller_header: Option<&'a str>,
     /// `--trusted-caller-secret`: the file holding the secret the proxy presents.
     caller_secret: Option<&'a Path>,
+    /// `--seed`: the seed file to submit at every start, in place of the environment's.
+    seed: Option<&'a Path>,
 }
 
 fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
@@ -453,6 +458,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         observe,
         caller_header,
         caller_secret,
+        seed,
     } = *arguments;
     if let Some(address) = address.filter(|address| spindle_ingress::exposed(*address))
         && (caller_header.is_none() || caller_secret.is_none())
@@ -510,6 +516,12 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
     }
     let calls = calls::Calls::bind(&parsed, bindings)
         .with_context(|| format!("in {}", environment.display()))?;
+    let seed_path = seed.map(Path::to_owned).or_else(|| {
+        parsed
+            .seed
+            .as_ref()
+            .map(|seeded| std::path::PathBuf::from(&seeded.file))
+    });
     let durable = bindings
         .iter()
         .find(|binding| binding.capability.as_str() == "store.durable")
@@ -535,6 +547,9 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
             None => None,
         };
         let components = serve::networked(&loaded.ir);
+        let seed = seed_path
+            .map(|path| seed::load(&path, &loaded.ir))
+            .transpose()?;
         return serve::serve(
             loaded.ir,
             serve::Serving {
@@ -553,7 +568,21 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 observe,
                 caller_header,
                 proxy_secret,
+                seed,
             },
+        );
+    }
+    if let Some(path) = seed_path {
+        let given = if seed.is_some() {
+            "--seed"
+        } else {
+            "the environment's [seed] file"
+        };
+        bail!(
+            "nothing in {} requires ingress.network, so {given} {} would never be submitted: a \
+             seed is submitted by a run serving HTTP",
+            spec.display(),
+            path.display()
         );
     }
     if observe.is_some() {

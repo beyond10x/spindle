@@ -386,6 +386,13 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "Seed at start",
+        "run --seed, or the environment's [seed] file, names a JSON array of commands, each with its input, actor, caller and request id, that a served run submits on every start after its stores open: checked against the specification before listening, then one at a time in the file's order beside the listener. Each counts as applied, already there (an existing_instance: outcome, or a request id an earlier entry carried) or refused; a refusal is logged and the rest still run, and the counts are in one log line and in /__spindle/metrics.",
+        "/docs/concepts/environment-and-admission#a-seed-submitted-at-start",
+        "crates/spindle-cli/tests/spindle-cli/seed.rs::a_second_run_on_one_state_applies_nothing_new",
+    ),
+    shipped(
+        "Execution",
         "Reads beside commands",
         "An HTTP run answers every read while a command runs: a view, GET /api/model, GET /api/events and every GET /__spindle/ route are each answered on a thread of their own, from the state the last finished command left, never part of a command, on the memory and SQLite stores. Commands and the reset still run one at a time in arrival order; a slow external call holds the next command, never a read.",
         "/docs/concepts/environment-and-admission",

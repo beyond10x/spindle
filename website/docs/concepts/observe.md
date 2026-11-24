@@ -57,6 +57,7 @@ So a model of hundreds of commands that has run none writes one series, `spindle
 | `spindle_http_requests_total`, `spindle_http_request_duration_seconds`, `spindle_external_causes_total` | the first request or cause counted with those labels |
 | `spindle_metrics_scrape_duration_seconds` | the second scrape; it reports how long the scrape before it took |
 | `spindle_resets_total` | the first scrape |
+| `spindle_seed_commands_total` | the first scrape of a run given a [seed](environment-and-admission.md#a-seed-submitted-at-start), each of `sent`, `applied`, `already_there` and `refused`; a run without one never writes it |
 
 `spindle_http_request_duration_seconds` is labelled by `method` and `route`, the route template,
 so a slow route shows in its own series. An unrouted request has an empty `route`.

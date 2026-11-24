@@ -8,14 +8,17 @@ are Spindle's releases.
 
 ### Added
 
-- An `external:` refusal declared `before_row: true` runs: the kernel asks its cause among the
-  input refusals, in declaration order, before it reads the addressed row, and answers the refusal
-  for a row that exists or not, reading no row, as ESS's interpreter answers it. It was refused
-  as unsupported.
-- A `when_related: {via: input.<list>, exists: false}` guard over a `List` of references runs: the
-  kernel reads the row each element names and takes the branch where any names no row, an empty
-  list naming none, and `{missing: input.<list>}` reads the first such element in list order, as
-  ESS's interpreter decides and answers it. It was refused as unsupported.
+- `run --seed <file>`, or `[seed] file` in the environment document, names a JSON array of
+  entries `{"command", "input", "actor", "caller", "request_id"}` that a served run submits on
+  every start, after its stores open, one at a time in the file's order between the requests the
+  listener hands over, each as its own actor and caller and never through the listener. Each entry
+  counts as applied, already there (an outcome declared `existing_instance:`, or a request id an
+  earlier entry carried, which is not submitted again) or refused; a refusal is logged with the
+  entry, command, request id and error name, and the next entry is submitted. One line on stderr
+  gives the counts when the seed ends, and with `--observe` `GET /__spindle/metrics` has them as
+  the new family `spindle_seed_commands_total{counted}`. A file that does not parse, or an entry
+  naming a command, input field or actor shape the specification does not declare, stops `run` with
+  exit 1 before listening, naming the file and the entry. A run that reads stdin refuses a seed.
 - Spindle's own specification lists three more authored scenarios: `admission-missing-provided`
   and `admission-refused`, for the two `DecideAdmission` outcomes ESS's synthesis cannot arrange
   (`ESS-SYNTH-003`), and `admission-admitted`, an admission that binds a required capability, which
@@ -37,6 +40,22 @@ are Spindle's releases.
   kernel already filled them from the row; ESS's interpreter left them out, and no scenario
   checked them. The observe schema and types regenerate:
   `Resources.vcpus` is an `i64` in the Rust types, with the bounds in the schema.
+
+## [0.19.0] - 2026-11-23
+
+### Added
+
+- An `external:` refusal declared `before_row: true` runs: the kernel asks its cause among the
+  input refusals, in declaration order, before it reads the addressed row, and answers the refusal
+  for a row that exists or not, reading no row, as ESS's interpreter answers it. It was refused
+  as unsupported.
+- A `when_related: {via: input.<list>, exists: false}` guard over a `List` of references runs: the
+  kernel reads the row each element names and takes the branch where any names no row, an empty
+  list naming none, and `{missing: input.<list>}` reads the first such element in list order, as
+  ESS's interpreter decides and answers it. It was refused as unsupported.
+
+### Changed
+
 - ESS is pinned at 0.98.0 (the crates, the `ess` CLI CI installs and its checksum, and
   `requires: ess 0.98` in `ess/ess-inputs.yaml`); it was 0.97.3, and 0.97.4 on `main` since.
   ESS 0.98.0 refuses an ordering comparison over an enum and an `exists: false` branch declared
