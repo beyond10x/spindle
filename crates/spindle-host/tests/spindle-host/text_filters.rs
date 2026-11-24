@@ -215,7 +215,7 @@ pub(crate) fn agree_on(name: &str, store: Box<dyn Store>) {
     let mut host = host(store);
     let reader = host.reader();
     let mut differences = Vec::new();
-    for (view, _) in ir.views() {
+    for view in ir.views().keys() {
         let view = view.to_string();
         if let Err(error) = spindle_host::reads(&ir, &view) {
             differences.push(format!("{view}: not served: {error}"));
