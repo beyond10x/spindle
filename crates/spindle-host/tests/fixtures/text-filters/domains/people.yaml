@@ -1,0 +1,142 @@
+domain: org.people
+summary: People, each with an address, an optional nickname and tags, who leave.
+types:
+  - name: org.people.PersonId
+    kind: newtype
+    of: String
+  - name: org.people.Address
+    kind: newtype
+    of: String
+entities:
+  - name: org.people.Person
+    identity:
+      name: person_id
+      type: org.people.PersonId
+    fields:
+      - name: address
+        type: org.people.Address
+      - name: nickname
+        type: Optional<String>
+      - name: tags
+        type: List<String>
+    lifecycle:
+      initial: Active
+      states: [Active, Left]
+      terminal: [Left]
+      transitions:
+        - {name: leave, from: [Active], to: Left}
+errors:
+  - name: org.people.WrongState
+    summary: The person has left.
+    fields: []
+commands:
+  - name: org.people.AddPerson
+    input:
+      - name: person_id
+        type: org.people.PersonId
+      - name: address
+        type: org.people.Address
+      - name: nickname
+        type: Optional<String>
+      - name: tags
+        type: List<String>
+    outcomes:
+      - name: added
+        creates: org.people.Person
+        instance: person_id
+        sets:
+          address: input.address
+          nickname: input.nickname
+          tags: input.tags
+        emits: [org.people.PersonAdded]
+        payload:
+          org.people.PersonAdded: {person_id: input.person_id}
+        summary: The person is kept.
+  - name: org.people.LeavePerson
+    input:
+      - name: person_id
+        type: org.people.PersonId
+    outcomes:
+      - name: left
+        moves: org.people.Person.leave
+        instance: person_id
+        emits: [org.people.PersonLeft]
+        payload:
+          org.people.PersonLeft: {person_id: input.person_id}
+        summary: The person has left.
+      - {name: wrong-state, wrong_state: true, error: org.people.WrongState}
+events:
+  - name: org.people.PersonAdded
+    fields:
+      - name: person_id
+        type: org.people.PersonId
+  - name: org.people.PersonLeft
+    fields:
+      - name: person_id
+        type: org.people.PersonId
+views:
+  - name: org.people.AddressSearch
+    source: org.people.Person
+    consistency: read_your_writes
+    params:
+      - {name: text, type: String}
+    filter: {address: {contains: {param: text}}}
+    fields:
+      - name: person_id
+        type: org.people.PersonId
+      - name: address
+        type: org.people.Address
+      - name: state
+        type: org.people.Person.State
+  - name: org.people.OptionalSearch
+    source: org.people.Person
+    consistency: read_your_writes
+    params:
+      - {name: text, type: Optional<String>}
+    filter: {address: {contains: {param: text}}}
+    fields:
+      - name: person_id
+        type: org.people.PersonId
+  - name: org.people.ActiveWithout
+    source: org.people.Person
+    consistency: read_your_writes
+    params:
+      - {name: text, type: String}
+    filter: {all: [{state: Active}, {not: {address: {contains: {param: text}}}}]}
+    fields:
+      - name: person_id
+        type: org.people.PersonId
+  - name: org.people.NicknameSearch
+    source: org.people.Person
+    consistency: read_your_writes
+    params:
+      - {name: text, type: String}
+    filter: {nickname: {contains: {param: text}}}
+    fields:
+      - name: person_id
+        type: org.people.PersonId
+  - name: org.people.TagSearch
+    source: org.people.Person
+    consistency: read_your_writes
+    params:
+      - {name: text, type: String}
+    filter: {exists: {in: tags, as: tag, that: {tag: {contains: {param: text}}}}}
+    fields:
+      - name: person_id
+        type: org.people.PersonId
+  - name: org.people.AddressEnds
+    source: org.people.Person
+    consistency: read_your_writes
+    params:
+      - {name: text, type: String}
+    filter: {any: [{address: {starts_with: {param: text}}}, {address: {ends_with: {param: text}}}]}
+    fields:
+      - name: person_id
+        type: org.people.PersonId
+  - name: org.people.ExampleAddresses
+    source: org.people.Person
+    consistency: read_your_writes
+    filter: {address: {contains: "example"}}
+    fields:
+      - name: person_id
+        type: org.people.PersonId

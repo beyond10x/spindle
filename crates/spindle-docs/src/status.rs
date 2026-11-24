@@ -266,6 +266,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "crates/spindle-host/tests/spindle-host/filter_through.rs::filters_through_a_reference_agree_with_the_interpreter",
     ),
     shipped(
+        "Execution",
+        "View filters testing text",
+        "A view filter that tests a text field with contains, starts_with or ends_with against a text parameter or literal (address: {contains: {param: text}}) answers the rows ESS's interpreter answers on every store: byte for byte and case-sensitive, the empty text matching every row, an Optional parameter left out holding no row, a field the row does not hold refusing the read.",
+        "/docs/concepts/specification",
+        "crates/spindle-host/tests/spindle-host/text_filters.rs::text_filters_agree_with_the_interpreter",
+    ),
+    shipped(
         "Observe",
         "Counters derived from the specification",
         "spindle-telemetry counts commands by outcome, events, bindings, timer ticks and store writes per component; b10x-spindle metrics prints the catalogue, play prints the table's counters.",

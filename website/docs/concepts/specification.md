@@ -133,6 +133,9 @@ A filter is read where each leaf does one of these:
   `person_id.name == holder`. The ordered operators apply where ESS orders both fields and they
   are of one kind: `started_at > person_id.joined_at`.
 - asks `defined`
+- tests a text field with `contains`, `starts_with` or `ends_with` against a text parameter or
+  literal: `address: {contains: {param: text}}`. The match is byte for byte and case-sensitive,
+  and the empty text matches every row. An optional parameter the read leaves out holds no row.
 
 A field here is a field of the row, or of the row a reference names.
 

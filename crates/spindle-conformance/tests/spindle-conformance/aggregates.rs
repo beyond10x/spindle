@@ -13,10 +13,6 @@ use spindle_conformance::HostTarget;
 
 const AGGREGATES: &str = "crates/spindle-host/tests/fixtures/aggregates";
 
-/// The one aggregate view the host is not asked through the suite: it declares a parameter, and
-/// the in-process target reads views without parameters only (`HostTarget::query_view`).
-const WITH_PARAMETER: &str = "ledger.sessions.AccountTotals";
-
 /// The aggregate view ESS 0.92.0 synthesises no scenario for, and lists among its refusals.
 const UNSYNTHESISED: &str = "ledger.sessions.ClosedPerAccount";
 
@@ -42,7 +38,8 @@ fn laptop() -> Environment {
 }
 
 /// Every aggregate scenario of the suite synthesised for the fixture passes against the host,
-/// but the one for the view with a parameter, which the target cannot be asked.
+/// the one for the view with a parameter (`ledger.sessions.AccountTotals`) among them: the target
+/// reads a view with the parameters the scenario gives (`HostTarget::query_view`).
 #[test]
 fn every_aggregate_scenario_passes_on_the_host() {
     let loaded = spindle_spec::load(&root().join(AGGREGATES)).expect("the fixture loads");
@@ -77,14 +74,9 @@ fn every_aggregate_scenario_passes_on_the_host() {
         "the aggregate scenarios ESS synthesises for the fixture"
     );
     for (id, status) in &aggregates {
-        let expected = if id.starts_with(WITH_PARAMETER) {
-            Status::Unsupported
-        } else {
-            Status::Passed
-        };
         assert_eq!(
             *status,
-            expected,
+            Status::Passed,
             "{id}: {:?}",
             run.executed
                 .scenarios

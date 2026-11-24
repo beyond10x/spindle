@@ -1,0 +1,21 @@
+format: ess/34
+system: org
+version: v1
+summary: People a directory keeps, each with an address, an optional nickname and tags, read by views whose filters test text against a parameter or a literal.
+domains:
+  - org.people
+components:
+  - component: directory
+    summary: Adds people and lets them leave.
+    owns:
+      domains:
+        - org.people
+    accepts:
+      commands:
+        - org.people.AddPerson
+        - org.people.LeavePerson
+    publishes:
+      events:
+        - org.people.PersonAdded
+        - org.people.PersonLeft
+    reached_by: in_process

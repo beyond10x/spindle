@@ -115,7 +115,7 @@ views:
   - name: tasks.board.ChoreTasks
     source: tasks.board.Task
     consistency: read_your_writes
-    filter: {title: {starts_with: Chores}}
+    filter: {title: {equals_ignore_case: chores}}
     fields:
       - name: task_id
         type: tasks.board.TaskId

@@ -40,7 +40,7 @@
       "method": "GET",
       "path": "/pad/views/KeptNotes",
       "served": false,
-      "reason": "unsupported: view notes.pad.KeptNotes declares the filter `text starts_with \"kept\"`; only a field of the row, or of the row a reference names, compared with a literal of its type or ordered against `now`, listed `in:` or `none_of:` literals, or compared with a parameter or another field, and `defined`, combined by `any`, `all` and `not` or quantified over a list parameter or a list field by `exists` or `forall`, are read"
+      "reason": "unsupported: view notes.pad.KeptNotes declares the filter `text equals_ignore_case \"kept\"`; only a field of the row, or of the row a reference names, compared with a literal of its type or ordered against `now`, listed `in:` or `none_of:` literals, or compared with a parameter or another field, `defined`, and a text field tested by `contains`, `starts_with` or `ends_with` against a text literal or parameter, combined by `any`, `all` and `not` or quantified over a list parameter or a list field by `exists` or `forall`, are read"
     },
     {
       "component": "pad",

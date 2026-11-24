@@ -88,7 +88,7 @@ views:
   - name: notes.pad.KeptNotes
     source: notes.pad.Note
     consistency: read_your_writes
-    filter: {text: {starts_with: kept}}
+    filter: {text: {equals_ignore_case: kept}}
     fields:
       - name: note_id
         type: notes.pad.NoteId
