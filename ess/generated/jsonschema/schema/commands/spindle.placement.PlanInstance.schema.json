@@ -40,7 +40,7 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:a506ca1e4f6784b3792a7a7e80fd4b93d87ec78e18e26f1dc4fc2f95e4802c5d",
+    "contract_digest": "slice-sha256/2:d45f3871fd1675ecbab7c68cd315f1bd3402f8678dd400c8137737f6be62d526",
     "regenerate": "ess generate"
   },
   "$defs": {
@@ -58,18 +58,23 @@
     },
     "spindle.placement.Resources": {
       "title": "Resources",
+      "description": "How much of each resource one instance may take or asks for: virtual CPUs, memory and disk in MiB. None is below zero, and the vCPUs fit 32 bits, as `spindle_target::Resources` holds them (`u32`, `u64`, `u64`).",
       "x-ess-name": "spindle.placement.Resources",
       "x-ess-kind": "struct",
       "type": "object",
       "properties": {
         "vcpus": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
         },
         "memory_mib": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": 0
         },
         "disk_mib": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": 0
         }
       },
       "required": [
@@ -77,7 +82,13 @@
         "memory_mib",
         "disk_mib"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "x-ess-invariants": [
+        "vcpus >= 0",
+        "vcpus <= 4294967295",
+        "memory_mib >= 0",
+        "disk_mib >= 0"
+      ]
     },
     "spindle.placement.Setting": {
       "title": "Setting",

@@ -225,6 +225,15 @@ fn admitting_twice_is_the_wrong_state_error() {
         again.error.as_ref().map(|error| error.name.as_str()),
         Some("spindle.deployment.DeploymentStateConflict")
     );
+    // The error names the state the deployment is held in, the field it declares.
+    assert_eq!(
+        again
+            .error
+            .as_ref()
+            .map(|error| Value::Object(error.fields.clone())),
+        Some(json!({"state": "Admitted"})),
+        "{again:?}"
+    );
     assert!(again.events.is_empty(), "{again:?}");
     // A consistent decision on a deployment already decided answers the held state before any
     // external branch, so `refused`'s cause is never asked.

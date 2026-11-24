@@ -5,7 +5,7 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:4d29d46e85db9d03ba70d838e855f4e69e09c7fcdd83099ad2390f82fa36d642",
+    "contract_digest": "slice-sha256/2:a15ec5aa399241d431965ff49fe1009b012b183fbb86b9adfbcdc29904bbf3ec",
     "regenerate": "ess generate"
   },
   "$defs": {
@@ -186,7 +186,7 @@
     },
     "spindle.observe.UnmetInput": {
       "title": "UnmetInput",
-      "description": "One event binding whose command input the event did not fill: a required field absent, or a value carried across a declared conversion that is no value of the input's type. The command is not invoked: zero attempts, no retry, and the event's other bindings still run; the command that published the event stays committed. ESS 0.90.0 calls this an unmet binding-input obligation, with no attempt and no policy, only for a binding whose failure policy is chosen per refusal, answers the same failure of every other binding unsupported, and defines no observable result for either (`crates/verify/ess-conformance/src/interpret/bindings.rs`). The rule for every binding and this answer are Spindle's (`docs/design/spindle.md` § 11, unmet binding input; `spindle_channel::Unmet`).",
+      "description": "One event binding whose command input the event did not fill: a required field absent, a value carried across a declared conversion that is no value of the input's type, or a payload condition (`when.where`) that decides Unknown on the event, such as a comparison that reads an absent or `null` Optional field (`spindle_channel::Route::holds`). The command is not invoked: zero attempts, no retry, and the event's other bindings still run; the command that published the event stays committed. ESS 0.90.0 calls this an unmet binding-input obligation, with no attempt and no policy, only for a binding whose failure policy is chosen per refusal, answers the same failure of every other binding unsupported, and defines no observable result for either (`crates/verify/ess-conformance/src/interpret/bindings.rs`). The rule for every binding and this answer are Spindle's (`docs/design/spindle.md` § 11, unmet binding input; `spindle_channel::Unmet`).",
       "x-ess-name": "spindle.observe.UnmetInput",
       "x-ess-kind": "struct",
       "type": "object",

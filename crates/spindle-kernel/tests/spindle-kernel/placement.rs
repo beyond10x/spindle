@@ -575,3 +575,127 @@ fn report_exit_of_a_planned_instance_is_stated() {
          changes nothing: no launcher ran it, so the report carries nothing to record",
     );
 }
+
+/// A refusal of a held state names what it conflicts with, the field its error declares: the
+/// instance's state, or the retired target.
+#[test]
+fn a_state_conflict_names_what_it_conflicts_with() {
+    let ir = specification();
+    let mut store = MemoryStore::default();
+    declare(&ir, &mut store, "t1", "Process");
+    planned(&ir, &mut store, "i1");
+    let named = |executed: &Executed| {
+        executed
+            .error
+            .as_ref()
+            .map(|error| (error.name.clone(), Value::Object(error.fields.clone())))
+    };
+    let place = json!({"instance_id": "i1"});
+    let placed = run(
+        &ir,
+        &mut store,
+        &mut Holds::default(),
+        "PlaceInstance",
+        place.clone(),
+    );
+    assert_eq!(placed.outcome, "placed", "{placed:?}");
+    let again = run(
+        &ir,
+        &mut store,
+        &mut Holds::default(),
+        "PlaceInstance",
+        place,
+    );
+    assert_eq!(again.outcome, "wrong-state", "{again:?}");
+    assert_eq!(
+        named(&again),
+        Some((
+            "spindle.placement.InstanceStateConflict".to_owned(),
+            json!({"state": "Placed"})
+        )),
+        "{again:?}"
+    );
+
+    let retire = json!({"target_id": "t1"});
+    let retired = run(
+        &ir,
+        &mut store,
+        &mut Holds::default(),
+        "RetireTarget",
+        retire.clone(),
+    );
+    assert_eq!(retired.outcome, "retired", "{retired:?}");
+    let again = run(
+        &ir,
+        &mut store,
+        &mut Holds::default(),
+        "RetireTarget",
+        retire,
+    );
+    assert_eq!(again.outcome, "already-retired", "{again:?}");
+    assert_eq!(
+        named(&again),
+        Some((
+            "spindle.placement.TargetAlreadyRetired".to_owned(),
+            json!({"target_id": "t1"})
+        )),
+        "{again:?}"
+    );
+}
+
+/// A ceiling or a request below zero in any resource is no value of `Resources`, as no launcher
+/// can hold one (`spindle_target::Resources` is unsigned): the command is refused before anything
+/// is written.
+#[test]
+fn a_resource_below_zero_is_refused() {
+    let ir = specification();
+    let send = |store: &mut dyn Store, command: &str, request: Value| {
+        let Value::Object(input) = request else {
+            unreachable!("an input is an object")
+        };
+        execute(
+            &ir,
+            store,
+            &mut Holds::default(),
+            &format!("spindle.placement.{command}"),
+            &input,
+        )
+    };
+    for resource in ["vcpus", "memory_mib", "disk_mib"] {
+        let mut ceiling = json!({"vcpus": 1, "memory_mib": 128, "disk_mib": 0});
+        ceiling[resource] = json!(-1);
+        let mut store = MemoryStore::default();
+        let declared = send(
+            &mut store,
+            "DeclareTarget",
+            json!({
+                "target_id": "t1",
+                "kind": "Process",
+                "environment_id": "laptop",
+                "ceiling": ceiling,
+            }),
+        );
+        assert!(declared.is_err(), "{resource} -1 is refused: {declared:?}");
+        assert_eq!(store.load(TARGET, &json!("t1")).unwrap(), None);
+
+        let mut store = MemoryStore::default();
+        declare(&ir, &mut store, "t1", "Process");
+        admitted(&ir, &mut store);
+        let mut request = json!({"vcpus": 1, "memory_mib": 64, "disk_mib": 0});
+        request[resource] = json!(-1);
+        let planned = send(
+            &mut store,
+            "PlanInstance",
+            json!({
+                "instance_id": "i1",
+                "deployment_id": "d1",
+                "component": "rally-table",
+                "settings": [],
+                "target_id": "t1",
+                "request": request,
+            }),
+        );
+        assert!(planned.is_err(), "{resource} -1 is refused: {planned:?}");
+        assert_eq!(store.load(INSTANCE, &json!("i1")).unwrap(), None);
+    }
+}

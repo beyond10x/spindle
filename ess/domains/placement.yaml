@@ -26,6 +26,11 @@ types:
 
   - name: spindle.placement.Resources
     kind: struct
+    naming:
+      summary: >-
+        How much of each resource one instance may take or asks for: virtual CPUs, memory and disk
+        in MiB. None is below zero, and the vCPUs fit 32 bits, as `spindle_target::Resources` holds
+        them (`u32`, `u64`, `u64`).
     fields:
       - name: vcpus
         type: Integer
@@ -33,6 +38,11 @@ types:
         type: Integer
       - name: disk_mib
         type: Integer
+    invariants:
+      - vcpus >= 0
+      - vcpus <= 4294967295
+      - memory_mib >= 0
+      - disk_mib >= 0
 
   - name: spindle.placement.RefusalCause
     kind: enum
@@ -230,6 +240,9 @@ commands:
       - name: already-retired
         wrong_state: true
         error: spindle.placement.TargetAlreadyRetired
+        payload:
+          spindle.placement.TargetAlreadyRetired:
+            target_id: input.target_id
         summary: The target was already retired, so nothing moved.
 
   - name: spindle.placement.PlanInstance
@@ -393,6 +406,9 @@ commands:
       - name: wrong-state
         wrong_state: true
         error: spindle.placement.InstanceStateConflict
+        payload:
+          spindle.placement.InstanceStateConflict:
+            state: {subject: state}
         summary: Placement was already decided, so nothing moved.
 
   - name: spindle.placement.LaunchInstance
@@ -429,6 +445,9 @@ commands:
       - name: wrong-state
         wrong_state: true
         error: spindle.placement.InstanceStateConflict
+        payload:
+          spindle.placement.InstanceStateConflict:
+            state: {subject: state}
         summary: Only a placed instance launches.
 
   - name: spindle.placement.ReportExit

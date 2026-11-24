@@ -1,0 +1,49 @@
+type: ess-scenario/1
+domain: spindle.deployment
+scenario: admission-refused
+summary: >-
+  A refusal the external cause confirms moves the deployment to Refused and keeps what the
+  admitter answered: the required capabilities and the ones missing, with no binding.
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: spindle.deployment.DeclareEnvironment
+    input:
+      environment_id: microvm
+      os: linux
+      arch: x86_64
+      provides:
+        - capability: channel
+          implementations: [tcp]
+    outcome: declared
+  - at: 2026-01-05T09:00:01Z
+    command: spindle.deployment.OfferBundle
+    input:
+      deployment_id: lacking
+      bundle: sha256:0f
+      environment_id: microvm
+    outcome: offered
+  - at: 2026-01-05T09:00:02Z
+    command: spindle.deployment.DecideAdmission
+    input:
+      deployment_id: lacking
+      requires: [channel, store.durable]
+      bindings:
+        - capability: channel
+          implementation: tcp
+      missing: [store.durable]
+    outcome: refused
+  - at: 2026-01-05T09:00:03Z
+    command: spindle.deployment.StartDeployment
+    input:
+      deployment_id: lacking
+    outcome: wrong-state
+    error:
+      name: spindle.deployment.DeploymentStateConflict
+      fields: {state: Refused}
+assert:
+  - view: spindle.deployment.DeploymentState
+    contains:
+      deployment_id: lacking
+      state: Refused
+      requires: [channel, store.durable]
+      missing: [store.durable]

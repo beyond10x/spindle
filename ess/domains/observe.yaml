@@ -780,8 +780,10 @@ types:
     kind: struct
     naming:
       summary: >-
-        One event binding whose command input the event did not fill: a required field absent, or
-        a value carried across a declared conversion that is no value of the input's type. The
+        One event binding whose command input the event did not fill: a required field absent, a
+        value carried across a declared conversion that is no value of the input's type, or a
+        payload condition (`when.where`) that decides Unknown on the event, such as a comparison
+        that reads an absent or `null` Optional field (`spindle_channel::Route::holds`). The
         command is not invoked: zero attempts, no retry, and the event's other bindings still run;
         the command that published the event stays committed. ESS 0.90.0 calls this an unmet
         binding-input obligation, with no attempt and no policy, only for a binding whose failure
