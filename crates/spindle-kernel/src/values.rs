@@ -7,6 +7,7 @@
 //! (`{count: changed}`, `{changed: …}`), a value an expression computes (`{expr: …}`, outside
 //! an error), a field of the response the run answers (`{response: …}`, in an event payload),
 //! and the first element of a list of references that names no row (`{missing: input.<list>}`),
+//! and a field of the one row a selector selects (`{related: {entity, where, field}}`),
 //! are read here; the rest are refused by [`crate::supported`] before a command runs.
 //! Numbers are ESS's own [`Number`], so `{increment: N}` adds exactly as ESS adds, an expression
 //! is computed by ESS's own evaluator ([`Expr::evaluate`]), and a literal is typed by
@@ -17,7 +18,8 @@ use std::collections::BTreeMap;
 use ess_compiler::EssIr;
 use ess_compiler::ir::{
     EntityHandle, EventHandle, ResolvedCommand, ResolvedCondition, ResolvedOutcome,
-    ResolvedPayloadField, ResolvedPayloadValue, ResolvedRelatedVia, ResolvedTypeRef,
+    ResolvedPayloadField, ResolvedPayloadValue, ResolvedRelatedVia, ResolvedRowSelection,
+    ResolvedTypeRef,
 };
 use ess_domain::QualifiedName;
 use ess_domain::types::Primitive;
@@ -113,6 +115,64 @@ pub(crate) fn related(
     Ok(related)
 }
 
+/// What one `{related: {entity, where, field}}` selector (ess/22) selects among the rows the store
+/// held before the command ran, as ESS's interpreter reads it
+/// (`interpret::execute::row_set::Reader::one`, `ess_compiler::ir::Selected`).
+#[derive(Debug, Clone)]
+pub(crate) enum Selection {
+    /// Exactly one row: its identity and the row.
+    One(Value, Row),
+    /// No row: the read supplies no value.
+    None,
+    /// Several rows: the read supplies no value, and no first or latest is chosen.
+    Several,
+    /// Which row, or how many, the selector leaves open; or it reads `subject.` where no
+    /// addressed row is held.
+    Unknown,
+}
+
+/// What every selector of a command selects, by its entity's name and its predicate's text: the
+/// input, the addressed subject and the decision's instant are one per run, so one selector
+/// selects one row set however many values read it.
+pub(crate) type Selections = BTreeMap<(String, String), Selection>;
+
+/// The key [`Selections`] holds `selection` under.
+pub(crate) fn selection_key(ir: &EssIr, selection: &ResolvedRowSelection) -> (String, String) {
+    (
+        ir.entity(&selection.entity).name.to_string(),
+        selection.filter.to_string(),
+    )
+}
+
+/// Every `{related: {entity, where, field}}` selector of `command` (ess/22), in any outcome's
+/// `sets:`, `affects:` or payload, struct members included.
+pub(crate) fn selections(command: &ResolvedCommand) -> Vec<&ResolvedRowSelection> {
+    fn reads<'f>(
+        fields: impl IntoIterator<Item = &'f ResolvedPayloadField>,
+        found: &mut Vec<&'f ResolvedRowSelection>,
+    ) {
+        for field in fields {
+            match &field.value {
+                ResolvedPayloadValue::RelatedSelection { selection, .. } => found.push(selection),
+                ResolvedPayloadValue::Struct { fields } => reads(fields, found),
+                _ => {}
+            }
+        }
+    }
+    let mut found = Vec::new();
+    for outcome in &command.outcomes {
+        reads(
+            outcome
+                .sets
+                .iter()
+                .chain(outcome.affects.iter().flat_map(|affect| &affect.sets))
+                .chain(outcome.payload.iter().flat_map(|payload| &payload.fields)),
+            &mut found,
+        );
+    }
+    found
+}
+
 /// Every `{missing: input.<list>}` of `command` (ess/28), with the entity the list names rows of:
 /// the entity of its own outcome's `when_related:` guard over that list.
 fn missing_reads(command: &ResolvedCommand) -> Vec<(&str, &EntityHandle)> {
@@ -163,6 +223,8 @@ pub(crate) struct Sources<'a, 'm> {
     pub(crate) before: Option<&'a Row>,
     /// The rows the command's related values name, read before the command ran ([`related`]).
     pub(crate) related: &'a Related,
+    /// What the command's selectors select, read before the command ran ([`Selections`]).
+    pub(crate) selected: &'a Selections,
     /// Whether the fields are a declared error's: there, a field read from the instance is absent
     /// where no instance is held (the unknown-instance arm of a `wrong_state:` refusal, ESS
     /// `error_value`, beyond10x/ess#458) rather than a value nothing determines.
@@ -302,6 +364,11 @@ impl<'a> Sources<'a, '_> {
                 entity,
                 ..
             } if through.is_empty() => self.related(field, via, entity, None),
+            ResolvedPayloadValue::RelatedSelection {
+                selection,
+                field: read,
+                ..
+            } => self.selected(field, selection, read),
             ResolvedPayloadValue::ResponseField {
                 field: read,
                 type_ref,
@@ -422,6 +489,46 @@ impl<'a> Sources<'a, '_> {
                 .filter(|value| !value.is_null())
                 .cloned(),
         })
+    }
+
+    /// `{related: {entity, where, field: <read>}}` (ess/22), as ESS reads it
+    /// (`interpret::execute::row_set::Reader::one`, `determined::selected`): the field of the one
+    /// row the selector selected among those the store held before the command ran
+    /// ([`Selections`]), the identity field reading the identity itself. No row, or several,
+    /// determines nothing, and an `Optional` target does not make that absence; a selection the
+    /// selector leaves open decides nothing.
+    fn selected(
+        &self,
+        field: &ResolvedPayloadField,
+        selection: &ResolvedRowSelection,
+        read: &str,
+    ) -> Result<Option<Value>, ExecuteError> {
+        let entity = self.ir.entity(&selection.entity);
+        let no_value = |why: &str| ExecuteError::NoValue {
+            what: format!(
+                "`{}`, which reads `{read}` of the one `{}` whose stored fields satisfy `{}`: {why}",
+                field.target, entity.name, selection.filter
+            ),
+        };
+        match self.selected.get(&selection_key(self.ir, selection)) {
+            Some(Selection::One(identity, row)) => Ok(if read == entity.identity.name {
+                Some(identity.clone())
+            } else {
+                row.fields
+                    .get(read)
+                    .filter(|value| !value.is_null())
+                    .cloned()
+            }),
+            Some(Selection::None) | None => Err(no_value("none is")),
+            Some(Selection::Several) => Err(no_value("several are, and none is chosen")),
+            Some(Selection::Unknown) => Err(ExecuteError::Undecidable {
+                outcome: self.outcome.name.as_str().to_owned(),
+                why: Some(format!(
+                    "which `{}` row `{}` selects for `{}` is not known",
+                    entity.name, selection.filter, field.target
+                )),
+            }),
+        }
     }
 
     /// `{missing: input.<read>}` (ess/28), as ESS reads it

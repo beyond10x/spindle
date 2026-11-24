@@ -81,3 +81,4 @@ mod store_contract;
 mod structured_responses;
 mod unsupported;
 mod upsert_creation_related_refusal;
+mod where_selected_values;
