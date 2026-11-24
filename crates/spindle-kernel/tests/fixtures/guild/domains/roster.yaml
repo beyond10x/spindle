@@ -1,0 +1,241 @@
+domain: guild.roster
+summary: Members are known by their address; a team names its captain by the address of an active member, read from the one member row that holds it.
+types:
+  - name: guild.roster.MemberId
+    kind: newtype
+    of: Uuid
+  - name: guild.roster.TeamId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: guild.roster.Member
+    identity:
+      name: member_id
+      type: guild.roster.MemberId
+    fields:
+      - name: email
+        type: String
+      - name: nickname
+        type: Optional<String>
+      - name: former_id
+        type: Optional<guild.roster.MemberId>
+    lifecycle:
+      initial: Active
+      states: [Active, Left]
+      terminal: [Left]
+      transitions:
+        - {name: leave, from: [Active], to: Left}
+  - name: guild.roster.Team
+    identity:
+      name: team_id
+      type: guild.roster.TeamId
+    fields:
+      - name: captain_id
+        type: guild.roster.MemberId
+      - name: captain_nickname
+        type: Optional<String>
+      - name: captain_email
+        type: Optional<String>
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+errors:
+  - name: guild.roster.NoCaptain
+    summary: No active member holds the address.
+    fields: []
+  - name: guild.roster.NotActive
+    summary: The member has left.
+    fields: []
+commands:
+  - name: guild.roster.Enrol
+    input:
+      - name: member_id
+        type: guild.roster.MemberId
+      - name: email
+        type: String
+      - name: nickname
+        type: Optional<String>
+    outcomes:
+      - name: enrolled
+        creates: guild.roster.Member
+        instance: member_id
+        sets:
+          email: input.email
+          nickname: input.nickname
+        emits: [guild.roster.MemberEnrolled]
+        payload:
+          guild.roster.MemberEnrolled:
+            member_id: input.member_id
+        summary: The member is enrolled under the address.
+  - name: guild.roster.Leave
+    input:
+      - name: member_id
+        type: guild.roster.MemberId
+    outcomes:
+      - name: left
+        moves: guild.roster.Member.leave
+        instance: member_id
+        emits: [guild.roster.MemberLeft]
+        payload:
+          guild.roster.MemberLeft:
+            member_id: input.member_id
+        summary: The member leaves the guild.
+      - name: wrong-state
+        wrong_state: true
+        error: guild.roster.NotActive
+        summary: The member has left already.
+  - name: guild.roster.Rejoin
+    input:
+      - name: member_id
+        type: guild.roster.MemberId
+      - name: email
+        type: String
+    outcomes:
+      - name: rejoined
+        creates: guild.roster.Member
+        instance: member_id
+        sets:
+          email: input.email
+          former_id: {related: {entity: guild.roster.Member, where: email == input.email, field: member_id}}
+        emits: [guild.roster.MemberRejoined]
+        payload:
+          guild.roster.MemberRejoined:
+            member_id: input.member_id
+            former_id: {related: {entity: guild.roster.Member, where: email == input.email, field: member_id}}
+        summary: A member who left joins again under a new id that names the one they had, read from the members held before the new one.
+  - name: guild.roster.FoundTeam
+    input:
+      - name: team_id
+        type: guild.roster.TeamId
+      - name: captain_email
+        type: String
+    outcomes:
+      - name: no-captain
+        when_related:
+          entity: guild.roster.Member
+          where:
+            all:
+              - email == input.captain_email
+              - state == Active
+          exists: false
+        error: guild.roster.NoCaptain
+        summary: No active member holds the address.
+      - name: captain-found
+        when_related:
+          entity: guild.roster.Member
+          where:
+            all:
+              - email == input.captain_email
+              - state == Active
+          exists: true
+        creates: guild.roster.Team
+        instance: team_id
+        sets:
+          captain_id: {related: {entity: guild.roster.Member, where: email == input.captain_email, field: member_id}}
+          captain_nickname: {related: {entity: guild.roster.Member, where: email == input.captain_email, field: nickname}}
+        emits: [guild.roster.TeamFounded]
+        payload:
+          guild.roster.TeamFounded:
+            team_id: input.team_id
+            captain_id: {related: {entity: guild.roster.Member, where: email == input.captain_email, field: member_id}}
+            captain_nickname: {related: {entity: guild.roster.Member, where: email == input.captain_email, field: nickname}}
+        summary: An active member holds the address, so the team is founded with that member as captain.
+  - name: guild.roster.DraftTeam
+    input:
+      - name: team_id
+        type: guild.roster.TeamId
+      - name: captain_email
+        type: String
+    outcomes:
+      - name: drafted
+        creates: guild.roster.Team
+        instance: team_id
+        sets:
+          captain_id: {related: {entity: guild.roster.Member, where: email == input.captain_email, field: member_id}}
+        emits: [guild.roster.TeamDrafted]
+        payload:
+          guild.roster.TeamDrafted:
+            team_id: input.team_id
+            captain_id: {related: {entity: guild.roster.Member, where: email == input.captain_email, field: member_id}}
+        summary: The team is drafted with the member who holds the address as captain, unguarded.
+  - name: guild.roster.Refresh
+    input:
+      - name: team_id
+        type: guild.roster.TeamId
+    outcomes:
+      - name: refreshed
+        updates: guild.roster.Team
+        instance: team_id
+        sets:
+          captain_email: {related: {entity: guild.roster.Member, where: member_id == subject.captain_id, field: email}}
+        emits: [guild.roster.TeamRefreshed]
+        payload:
+          guild.roster.TeamRefreshed:
+            team_id: input.team_id
+            captain_email: {related: {entity: guild.roster.Member, where: member_id == subject.captain_id, field: email}}
+        summary: The team copies the address of its captain, the member its stored captain id names.
+events:
+  - name: guild.roster.MemberEnrolled
+    fields:
+      - name: member_id
+        type: guild.roster.MemberId
+  - name: guild.roster.MemberLeft
+    fields:
+      - name: member_id
+        type: guild.roster.MemberId
+  - name: guild.roster.MemberRejoined
+    fields:
+      - name: member_id
+        type: guild.roster.MemberId
+      - name: former_id
+        type: guild.roster.MemberId
+  - name: guild.roster.TeamFounded
+    fields:
+      - name: team_id
+        type: guild.roster.TeamId
+      - name: captain_id
+        type: guild.roster.MemberId
+      - name: captain_nickname
+        type: Optional<String>
+  - name: guild.roster.TeamDrafted
+    fields:
+      - name: team_id
+        type: guild.roster.TeamId
+      - name: captain_id
+        type: guild.roster.MemberId
+  - name: guild.roster.TeamRefreshed
+    fields:
+      - name: team_id
+        type: guild.roster.TeamId
+      - name: captain_email
+        type: Optional<String>
+views:
+  - name: guild.roster.MemberCard
+    source: guild.roster.Member
+    consistency: read_your_writes
+    fields:
+      - name: member_id
+        type: guild.roster.MemberId
+      - name: email
+        type: String
+      - name: nickname
+        type: Optional<String>
+      - name: former_id
+        type: Optional<guild.roster.MemberId>
+      - name: state
+        type: guild.roster.Member.State
+  - name: guild.roster.TeamCard
+    source: guild.roster.Team
+    consistency: read_your_writes
+    fields:
+      - name: team_id
+        type: guild.roster.TeamId
+      - name: captain_id
+        type: guild.roster.MemberId
+      - name: captain_nickname
+        type: Optional<String>
+      - name: captain_email
+        type: Optional<String>
+      - name: state
+        type: guild.roster.Team.State

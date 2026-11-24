@@ -1,0 +1,29 @@
+format: ess/34
+system: guild
+version: v1
+summary: A guild of members known by their address, whose teams name a captain by that address.
+domains:
+  - guild.roster
+components:
+  - component: hall
+    summary: Enrols members, founds and drafts teams, and refreshes what a team copied from its captain.
+    owns:
+      domains:
+        - guild.roster
+    accepts:
+      commands:
+        - guild.roster.Enrol
+        - guild.roster.Leave
+        - guild.roster.Rejoin
+        - guild.roster.FoundTeam
+        - guild.roster.DraftTeam
+        - guild.roster.Refresh
+    publishes:
+      events:
+        - guild.roster.MemberEnrolled
+        - guild.roster.MemberLeft
+        - guild.roster.MemberRejoined
+        - guild.roster.TeamFounded
+        - guild.roster.TeamDrafted
+        - guild.roster.TeamRefreshed
+    reached_by: in_process

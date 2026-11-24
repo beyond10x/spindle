@@ -1,0 +1,46 @@
+type: ess-scenario/4
+domain: relay.desk
+scenario: a-desk-held-by-nobody-is-handed-on
+summary: A desk established with no keeper is handed to one, and the event names no previous keeper as null; a desk with a keeper names that keeper.
+arrange:
+  - instance: empty-desk
+    entity: relay.desk.Desk
+    setup:
+      identity: desk-1
+      fields:
+        keeper_id: null
+      state: Open
+  - instance: kept-desk
+    entity: relay.desk.Desk
+    setup:
+      identity: desk-2
+      fields:
+        keeper_id: keeper-a
+      state: Open
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: relay.desk.HandDesk
+    input:
+      desk_id: {$instance: empty-desk}
+      keeper_id: keeper-b
+    outcome: handed
+    events:
+      - event: relay.desk.DeskHanded
+        payload:
+          desk_id: desk-1
+          keeper_id: keeper-b
+          previous_keeper_id: null
+          noted_keeper_id: null
+  - at: 2026-01-05T09:01:00Z
+    command: relay.desk.HandDesk
+    input:
+      desk_id: {$instance: kept-desk}
+      keeper_id: keeper-c
+    outcome: handed
+    events:
+      - event: relay.desk.DeskHanded
+        payload:
+          desk_id: desk-2
+          keeper_id: keeper-c
+          previous_keeper_id: keeper-a
+          noted_keeper_id: keeper-a

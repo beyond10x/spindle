@@ -1,0 +1,75 @@
+domain: relay.desk
+summary: A desk is opened with or without a keeper and handed to a keeper; the hand-over names the keeper it had.
+entities:
+  - name: relay.desk.Desk
+    identity:
+      name: desk_id
+      type: String
+    fields:
+      - name: keeper_id
+        type: Optional<String>
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+errors:
+  - name: relay.desk.NoSuchDesk
+    summary: No desk carries the id.
+    fields: []
+commands:
+  - name: relay.desk.OpenDesk
+    input:
+      - name: desk_id
+        type: String
+      - name: keeper_id
+        type: Optional<String>
+    outcomes:
+      - name: opened
+        creates: relay.desk.Desk
+        instance: desk_id
+        sets:
+          keeper_id: input.keeper_id
+        emits: [relay.desk.DeskOpened]
+        payload:
+          relay.desk.DeskOpened: {desk_id: input.desk_id}
+        summary: The desk is opened, held by the keeper given if one is.
+  - name: relay.desk.HandDesk
+    input:
+      - name: desk_id
+        type: String
+      - name: keeper_id
+        type: String
+    outcomes:
+      - name: no-such-desk
+        unknown_instance: true
+        error: relay.desk.NoSuchDesk
+        summary: No desk carries the id.
+      - name: handed
+        updates: relay.desk.Desk
+        instance: desk_id
+        sets:
+          keeper_id: input.keeper_id
+        emits: [relay.desk.DeskHanded]
+        payload:
+          relay.desk.DeskHanded:
+            desk_id: input.desk_id
+            keeper_id: input.keeper_id
+            previous_keeper_id: {subject: keeper_id}
+            noted_keeper_id: {subject: keeper_id}
+        summary: The desk is handed to the keeper; the event names the keeper it had.
+events:
+  - name: relay.desk.DeskOpened
+    fields:
+      - name: desk_id
+        type: String
+  - name: relay.desk.DeskHanded
+    fields:
+      - name: desk_id
+        type: String
+      - name: keeper_id
+        type: String
+      - name: previous_keeper_id
+        type: Optional<String>
+      - name: noted_keeper_id
+        type: Optional<String>
+        presence: null_when_absent
