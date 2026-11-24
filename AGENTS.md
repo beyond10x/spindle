@@ -136,9 +136,9 @@ reference and the status page.
   in the same commit. Commands on a page are run and their output pasted from the run.
 - Hand-written pages stay passive Markdown: no `{` and no capitalised tag outside code
   (`generate --check` refuses them). Admonition titles use brackets, `:::caution[Planned]`.
-- Build the site: `task website` (`npm ci --allow-git=root`, `npm run build`). Workflows:
-  `.github/workflows/pages.yml` (`Documentation validation`: generated-page check, site build,
-  `spindle-docs` tests and provenance, artifact `b10x-project-site` on `main`) and
+- Build the site: `task website` (`npm ci --allow-git=root`, `npm run build`,
+  `npm run typecheck`). Workflows: `.github/workflows/pages.yml` (`Documentation validation`:
+  generated-page check, site build, site typecheck, `spindle-docs` tests and provenance, artifact `b10x-project-site` on `main`) and
   `.github/workflows/b10x-docs-site.yml` (`Documentation site`: deploys through the Website's
   `project-site.yml` after a green bot push to `main`).
 

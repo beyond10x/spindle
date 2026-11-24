@@ -43,9 +43,12 @@ are Spindle's releases.
   not submit it again. README, the environment page and `run --help` say so; 0.19.1 said a restart
   on the same state applies nothing new. The gap is `story:request-id-idempotency`.
 - TypeScript 7.0.2 and `@types/node` 26.6.6 in `ui/`, `web/`, `website/` and `website/ux/`.
-  `tsc` is TypeScript 7 everywhere; `vue-tsc` keeps checking the `.vue` files on TypeScript 6,
-  through `typescript` aliased to `@typescript/typescript6`, because TypeScript 7.0 ships no
-  compiler API. `website/tsconfig.json` drops `baseUrl`, which TypeScript 7 removed.
+  In `ui/` and `web/`, TypeScript 7's `tsc` checks only the build configs, `ui/dev`,
+  `ui/src/api/types.ts` and `web/src/sw.ts`; the app sources, `.ts` and `.vue` alike, are checked
+  by `vue-tsc` on TypeScript 6, through `typescript` aliased to `@typescript/typescript6`, because
+  TypeScript 7.0 ships no compiler API. `website/tsconfig.json` drops `baseUrl`, which TypeScript
+  7 removed, and `task website` and the documentation workflow now run the site's `typecheck`, so
+  that change is checked.
 
 ## [0.19.1] - 2026-11-24
 
