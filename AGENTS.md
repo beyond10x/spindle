@@ -87,6 +87,8 @@ environment, and executes it. Humans start at [`README.md`](README.md); the desi
 - A change that removes or renames an `adversary_` test names its story (`story:<id>`) in a comment in that hunk; the organisation's release check refuses a release whose diff removes one otherwise.
 - Planning store mutations use `aep plan artifact` only. Scratch bodies go in
   `.engineering/drafts/`, which is git-ignored.
+- Every `aep` write runs with `AEP_ACTOR=human:operator`; no personal login appears as an actor in
+  this public repository.
 - Use managed worktrees for changes; keep the primary checkout clean.
 
 ## Gate
