@@ -73,6 +73,11 @@ are Spindle's releases.
     `limits` other than the 1 MiB Spindle reads, a view answered under one member, and a view with
     `representations` (CSV). A binding-wide `limits` other than 1 MiB refuses the binding, as a
     binding-wide `refusals` entry does.
+- ESS moves on to 0.99.1 (the crates, and the `ess` CLI CI installs and its checksum;
+  `requires: ess 0.99` is unchanged). Its fixes are in suite synthesis only, and nothing changes
+  for a Spindle user: the suite ESS synthesises from `ess/` is byte for byte the one 0.99.0
+  synthesised, 84 scenarios, all executed and passed, and the observe types differ only in their
+  header.
 - What a seed does not do: Spindle keeps no record of request ids, across starts or replicas, for
   a seed entry or any request. A restart applies nothing new only when every entry is a create
   guarded by `existing_instance:`; any other entry runs again on every start, so an update writes
