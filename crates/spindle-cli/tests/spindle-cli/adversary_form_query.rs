@@ -296,7 +296,10 @@ fn flat_values_ess_accepts_are_read_as_ess_reads_them() {
 }
 
 /// `unknown: ignore` on a query route: an undeclared key, a key that does not decode and the
-/// key the path carries are all dropped, and the path's id is the one acted on.
+/// key the path carries holding the path's value are all dropped, and the path's id is the one
+/// acted on. The key the path carries holding another value is refused `400` naming it and
+/// closes nothing, as ESS 0.99.0's served application holds it (`http::echoed_keys`,
+/// beyond10x/ess#752); 0.98.0's dropped it whatever it held.
 #[test]
 fn unknown_ignore_drops_unknown_and_carried_query_keys() {
     let served = serve();
@@ -308,10 +311,29 @@ fn unknown_ignore_drops_unknown_and_carried_query_keys() {
         file(served.address, "n2", &format!("pages=4&{REST}")).status,
         201
     );
-    let reply = send(
+    let echoed = send(
         served.address,
         "DELETE",
         "/notebooks/n1?id=n2&colour=red&%ZZ=1&reason=worn",
+        None,
+        b"",
+    );
+    assert_eq!(echoed.status, 400, "{}", echoed.text);
+    assert!(
+        echoed
+            .text
+            .contains("query.id: the path carries this field with another value"),
+        "{}",
+        echoed.text
+    );
+    assert_eq!(
+        rows(served.address),
+        json!([{"id": "n1", "pages": 3}, {"id": "n2", "pages": 4}])
+    );
+    let reply = send(
+        served.address,
+        "DELETE",
+        "/notebooks/n1?id=n1&colour=red&%ZZ=1&reason=worn",
         None,
         b"",
     );
