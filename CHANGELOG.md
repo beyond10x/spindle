@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-24
+
 ### Added
 
 - The Node export, `spindle-node`: the host compiled to WebAssembly and bound by
@@ -83,6 +85,15 @@ are Spindle's releases.
     `limits` other than the 1 MiB Spindle reads, and a view with `representations` (CSV); a view
     answered under one member is served (Added). A binding-wide `limits` other than 1 MiB refuses the binding, as a
     binding-wide `refusals` entry does.
+- ESS moves on to 0.99.1 (the crates, and the `ess` CLI CI installs and its checksum). Its fixes
+  are in suite synthesis only, and nothing changes for a Spindle user: the suite ESS synthesises
+  from `ess/` is byte for byte the one 0.99.0 synthesised, 84 scenarios, all executed and passed,
+  and the observe types differ only in their header.
+- For contributors: `ess/ess-inputs.yaml` requires exactly `ess 0.99.1`, and `Taskfile.yml` and
+  `.cargo/config.toml` set `ESS_TOOLCHAIN` to it, so every `ess` a task or a test starts runs
+  that release through the `ess` dispatcher, whatever release is installed. `task check` runs
+  `scripts/check-ess-pin.sh`, which fails naming the file and both values when the requirement,
+  either `ESS_TOOLCHAIN` or the CI workflow's `ESS_VERSION` differ.
 - What a seed does not do: Spindle keeps no record of request ids, across starts or replicas, for
   a seed entry or any request. A restart applies nothing new only when every entry is a create
   guarded by `existing_instance:`; any other entry runs again on every start, so an update writes

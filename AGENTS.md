@@ -70,8 +70,8 @@ environment, and executes it. Humans start at [`README.md`](README.md); the desi
 - **Confidentiality.** This repository is public. No name of an external company, customer,
   product or host, and no absolute home-directory path, in any file or commit message.
 - No comments in `Cargo.toml`, `Taskfile.yml`, workflow files or environment documents.
-- Builds: `CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_INCREMENTAL=0`, the tree's own
-  `target/`; check `df -h /` first. While implementing, build only the targets you change
+- Builds: `CARGO_INCREMENTAL=0`, the tree's own `target/`; check `df -h /` first. While
+  implementing, build only the targets you change
   (`cargo test -p <crate> --lib`, `--test <crate> <module>::`); `cargo test -p <crate>` links
   every test binary of the crate and runs once, at the gate.
 - Integration tests: one binary per crate, `tests/<crate>/main.rs` with one `mod` per file
@@ -89,6 +89,8 @@ environment, and executes it. Humans start at [`README.md`](README.md); the desi
 - A change that removes or renames an `adversary_` test names its story (`story:<id>`) in a comment in that hunk; the organisation's release check refuses a release whose diff removes one otherwise.
 - Planning store mutations use `aep plan artifact` only. Scratch bodies go in
   `.engineering/drafts/`, which is git-ignored.
+- Every `aep` write runs with `AEP_ACTOR=human:operator`; no personal login appears as an actor in
+  this public repository.
 - Use managed worktrees for changes; keep the primary checkout clean.
 
 ## Gate
@@ -108,7 +110,9 @@ version and a WebDriver on `PATH`), the Node lane (`check:node_serves_a_specific
 `cargo clippy --workspace --all-targets --locked -- -D warnings`,
 `cargo test --workspace --locked --no-fail-fast`. The ESS pin is the `tag` of `ess-compiler`,
 `ess-domain` and `ess-primitives` in `Cargo.toml`; CI installs the `ess` CLI of the same version
-(`.github/workflows/ci.yml`). Move them together.
+(`.github/workflows/ci.yml`, `ESS_VERSION`), `ess/ess-inputs.yaml` requires it exactly, and
+`ESS_TOOLCHAIN` in `Taskfile.yml` and `.cargo/config.toml` routes every `ess` a task or a test
+starts to it. Move them together; `check:the_ess_pin_is_one_release` fails when they differ.
 
 VM tests, and tests that start a user namespace, are `#[ignore]`d: CI runners refuse
 unprivileged user namespaces. `task check:vm` runs them on a host with `/dev/kvm`,
