@@ -336,3 +336,391 @@ fn a_bad_page_is_answered_400() {
         );
     }
 }
+
+// Adversary cases (story:view-paging): edges the acceptance tests do not reach, each compared with
+// ESS 0.99.1's interpreter on the host's thread and through the reader.
+
+/// A size of 0, a page far past the last, a size larger than the rows and the largest size, each
+/// answered 200 with what ESS's interpreter answers.
+#[test]
+fn adversary_edge_pages_match_the_interpreter() {
+    let mut pad = Pad::open();
+    let listener = Listener::bind_reading(0, pad.surface.clone(), pad.host.reader())
+        .expect("the reading listener binds");
+    let address = listener.local_addr();
+    let cases: [(i64, i64); 6] = [
+        (0, 0),
+        (3, 0),
+        (1_000_000, 3),
+        (0, 1000),
+        (0, i64::MAX),
+        (i64::MAX, 0),
+    ];
+    for (p, n) in cases {
+        let query = format!("page={p}&size={n}");
+        let expected = pad.interpreted(PAGES, &[("page", p), ("size", n)]);
+        let (status, body) = pad.get("/pad/views/NotePages", &query);
+        assert_eq!(status, 200, "{query}: {body}");
+        assert_eq!(body, expected, "{query} on the host's thread");
+        let (status, read) = request(address, &format!("/pad/views/NotePages?{query}"));
+        assert_eq!(status, 200, "{query}: {read}");
+        assert_eq!(read, expected, "{query} through the reader");
+    }
+}
+
+/// A page or size that is not one whole number on the query is refused 400, never 200 or 500.
+#[test]
+fn adversary_malformed_page_values_are_answered_400() {
+    let mut pad = Pad::open();
+    for query in [
+        "page=1.0&size=2",
+        "page=1&size=2.5",
+        "page=abc&size=2",
+        "page=1&page=2&size=2",
+        "page=9223372036854775808&size=1",
+        "page=&size=2",
+        "page=1&size=",
+        "page=1e0&size=2",
+    ] {
+        let (status, body) = pad.get("/pad/views/NotePages", query);
+        assert_eq!(status, 400, "{query}: {body}");
+        assert!(body["refused"].is_string(), "{query}: {body}");
+    }
+}
+
+/// A model of its own: books with `Integer` identities, read by paged views whose page is a newtype
+/// of `Integer` under a wire name, whose size is `Optional<Integer>`, over a descending order with
+/// ties, and beside a filter parameter. (ESS refuses `order_by:` on an aggregate view, and
+/// `paging:` requires it, so no paged aggregation compiles.)
+const SHELF_SYSTEM: &str = "format: ess/34
+system: shelf
+version: v1
+summary: Books paged.
+domains:
+  - shelf.book
+components:
+  - component: shelf
+    summary: Holds books.
+    owns:
+      domains:
+        - shelf.book
+    accepts:
+      commands:
+        - shelf.book.AddBook
+    publishes:
+      events:
+        - shelf.book.BookAdded
+    reached_by: network
+";
+
+const SHELF_DOMAIN: &str = "domain: shelf.book
+summary: Books, paged.
+types:
+  - name: shelf.book.PageNo
+    kind: newtype
+    of: Integer
+entities:
+  - name: shelf.book.Book
+    identity:
+      name: book_id
+      type: Integer
+    fields:
+      - name: title
+        type: String
+      - name: stars
+        type: Integer
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+commands:
+  - name: shelf.book.AddBook
+    input:
+      - name: book_id
+        type: Integer
+      - name: title
+        type: String
+      - name: stars
+        type: Integer
+    outcomes:
+      - name: added
+        creates: shelf.book.Book
+        instance: book_id
+        sets:
+          title: input.title
+          stars: input.stars
+        emits: [shelf.book.BookAdded]
+        payload:
+          shelf.book.BookAdded: {book_id: input.book_id}
+        summary: The book is kept.
+events:
+  - name: shelf.book.BookAdded
+    fields:
+      - name: book_id
+        type: Integer
+views:
+  - name: shelf.book.ByStarsDesc
+    source: shelf.book.Book
+    consistency: read_your_writes
+    params:
+      - {name: page, type: shelf.book.PageNo, wire: pageNumber}
+      - {name: size, type: Optional<Integer>, wire: pageSize}
+    order_by: [stars desc]
+    paging: {page: page, size: size, first_page: 1, total: true}
+    fields:
+      - {name: book_id, type: Integer}
+      - {name: title, type: String}
+      - {name: stars, type: Integer}
+  - name: shelf.book.Starred
+    source: shelf.book.Book
+    consistency: read_your_writes
+    params:
+      - {name: min, type: Integer}
+      - {name: page, type: Integer}
+      - {name: size, type: Integer}
+    filter: stars >= param.min
+    order_by: [title asc]
+    paging: {page: page, size: size, total: true}
+    fields:
+      - {name: book_id, type: Integer}
+      - {name: title, type: String}
+";
+
+/// The books written, `(book_id, title, stars)`: four tied at 3 stars, whose identities order
+/// `1, 2, 10, 20` as numbers and `1, 10, 2, 20` as text.
+const BOOKS: [(i64, &str, i64); 6] = [
+    (1, "x", 3),
+    (2, "y", 3),
+    (10, "x", 3),
+    (9, "z", 5),
+    (100, "y", 1),
+    (20, "x", 3),
+];
+
+/// The shelf model served by a host and read by ESS's interpreter, each with [`BOOKS`] written.
+struct Shelf {
+    surface: Surface,
+    host: Host,
+    interpreter: Interpreted,
+    _spec: tempfile::TempDir,
+    _state: tempfile::TempDir,
+}
+
+impl Shelf {
+    fn open() -> Self {
+        let spec = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a spec directory");
+        std::fs::create_dir(spec.path().join("domains")).expect("the domains directory");
+        std::fs::write(spec.path().join("system.yaml"), SHELF_SYSTEM).expect("the system");
+        std::fs::write(spec.path().join("domains/book.yaml"), SHELF_DOMAIN).expect("the domain");
+        let ir = spindle_spec::load_model(spec.path())
+            .unwrap_or_else(|error| panic!("the shelf compiles: {error:?}"))
+            .ir;
+        let surface = Surface::new(&ir, &["shelf".to_owned()], None)
+            .unwrap_or_else(|refused| panic!("the shelf surface is served: {refused}"));
+        assert!(
+            surface.unserved().is_empty(),
+            "every shelf route is served: {:?}",
+            surface
+                .unserved()
+                .iter()
+                .filter_map(|route| route.not_served())
+                .collect::<Vec<_>>()
+        );
+        let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
+        let mut host = Host::new(
+            ir.clone(),
+            &in_memory(),
+            Arc::new(ManualClock::new()),
+            state.path(),
+        )
+        .unwrap_or_else(|error| panic!("the host admits the shelf: {error}"));
+        let interpreter = Interpreted::for_model(ir);
+        let correlation = CorrelationId::new("view-paging").expect("a correlation");
+        for (id, title, stars) in BOOKS {
+            let input = json!({"book_id": id, "title": title, "stars": stars});
+            let Value::Object(fields) = input.clone() else {
+                unreachable!("an object")
+            };
+            host.submit("shelf.book.AddBook", fields)
+                .unwrap_or_else(|error| panic!("{id} is written on the host: {error}"));
+            interpreter
+                .execute_command(SemanticCommandRequest {
+                    command: "shelf.book.AddBook".parse().expect("a command name"),
+                    actor: None,
+                    caller: None,
+                    input: serde_json::from_value(input).expect("the input as ESS values"),
+                    correlation: correlation.clone(),
+                })
+                .unwrap_or_else(|error| panic!("{id} is written on the interpreter: {error:?}"));
+        }
+        Self {
+            surface,
+            host,
+            interpreter,
+            _spec: spec,
+            _state: state,
+        }
+    }
+
+    fn get(&mut self, path: &str, query: &str) -> (u16, Value) {
+        let routed = spindle_ingress::route(
+            &self.surface,
+            &mut self.host,
+            Request {
+                method: "GET".to_owned(),
+                path: path.to_owned(),
+                query: query.to_owned(),
+                content_type: None,
+                body: Vec::new(),
+            },
+        );
+        let body = serde_json::from_str(&routed.response.body)
+            .unwrap_or_else(|error| panic!("{error}: {}", routed.response.body));
+        (routed.response.status, body)
+    }
+
+    fn interpreted(&self, view: &str, params: &[(&str, i64)]) -> Value {
+        let params: BTreeMap<String, Node> = params
+            .iter()
+            .map(|(name, value)| {
+                (
+                    (*name).to_owned(),
+                    serde_json::from_value(json!(value)).expect("an integer as an ESS value"),
+                )
+            })
+            .collect();
+        let answer = self
+            .interpreter
+            .query_view(SemanticViewRequest {
+                view: view.parse().expect("a view name"),
+                params,
+                consistency: QueryConsistency::Current,
+                correlation: CorrelationId::new("view-paging").expect("a correlation"),
+                deadline: Deadline::at(Timestamp::from_epoch_millis(0)),
+            })
+            .unwrap_or_else(|error| panic!("the interpreter reads {view}: {error:?}"));
+        let mut body = Map::new();
+        body.insert(
+            "rows".to_owned(),
+            integral(serde_json::to_value(answer.rows).expect("rows as JSON")),
+        );
+        if let Some(total) = answer.total {
+            body.insert("total".to_owned(), json!(total));
+        }
+        Value::Object(body)
+    }
+
+    /// Every page of `view` at `path` for sizes 1 to 4, from `first` to one past the last, on the
+    /// host's thread and through the reader, against the interpreter. `fixed` is sent with every
+    /// read, under the same name on the query and to the interpreter.
+    fn compare(
+        &mut self,
+        view: &str,
+        path: &str,
+        wire: (&str, &str),
+        names: (&str, &str),
+        first: i64,
+        fixed: &[(&str, i64)],
+    ) {
+        let short = view.rsplit('.').next().expect("a short name");
+        let routed = self
+            .surface
+            .routes()
+            .iter()
+            .map(|route| route.path.clone())
+            .find(|routed| routed.ends_with(&format!("/{short}")))
+            .unwrap_or_else(|| {
+                panic!(
+                    "{view} is routed: {:?}",
+                    self.surface
+                        .routes()
+                        .iter()
+                        .map(|route| &route.path)
+                        .collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(routed, path, "{view} is routed at {routed}");
+        let listener = Listener::bind_reading(0, self.surface.clone(), self.host.reader())
+            .expect("the reading listener binds");
+        let address = listener.local_addr();
+        let all = self.interpreted(view, fixed);
+        let admitted = all["rows"].as_array().expect("rows").len();
+        assert!(admitted > 1, "{view} admits rows: {all}");
+        let prefix: String = fixed
+            .iter()
+            .map(|(name, value)| format!("{name}={value}&"))
+            .collect();
+        let (status, body) = self.get(path, prefix.trim_end_matches('&'));
+        assert_eq!(status, 200, "{view} unpaged: {body}");
+        assert_eq!(body, all, "{view} unpaged on the host's thread");
+        for n in 1..=4_i64 {
+            let pages = i64::try_from(admitted.div_ceil(usize::try_from(n).expect("a size")))
+                .expect("a count");
+            for p in first..=first + pages {
+                let query = format!("{prefix}{}={p}&{}={n}", wire.0, wire.1);
+                let mut params = fixed.to_vec();
+                params.push((names.0, p));
+                params.push((names.1, n));
+                let expected = self.interpreted(view, &params);
+                let (status, body) = self.get(path, &query);
+                assert_eq!(status, 200, "{view} {query}: {body}");
+                assert_eq!(body, expected, "{view} {query} on the host's thread");
+                let (status, read) = request(address, &format!("{path}?{query}"));
+                assert_eq!(status, 200, "{view} {query}: {read}");
+                assert_eq!(read, expected, "{view} {query} through the reader");
+            }
+        }
+    }
+}
+
+/// `value` with each integral number written as an integer, as an ESS `Integer` is answered on the
+/// wire; ESS's interpreter's rows serialize an `Integer` as a float.
+fn integral(value: Value) -> Value {
+    match value {
+        Value::Number(number) => match number.as_f64() {
+            #[allow(clippy::cast_possible_truncation, clippy::float_cmp)]
+            Some(float) if float.fract() == 0.0 && number.as_i64().is_none() => {
+                json!(float as i64)
+            }
+            _ => Value::Number(number),
+        },
+        Value::Array(items) => Value::Array(items.into_iter().map(integral).collect()),
+        Value::Object(fields) => Value::Object(
+            fields
+                .into_iter()
+                .map(|(name, value)| (name, integral(value)))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+/// Tied rows over `Integer` identities, a page that is a newtype under a wire name and an
+/// `Optional<Integer>` size: every page as ESS's interpreter answers it.
+#[test]
+fn adversary_integer_identity_ties_page_as_the_interpreter_pages_them() {
+    let mut shelf = Shelf::open();
+    shelf.compare(
+        "shelf.book.ByStarsDesc",
+        "/book/views/ByStarsDesc",
+        ("pageNumber", "pageSize"),
+        ("page", "size"),
+        1,
+        &[],
+    );
+}
+
+/// A paged view beside a required filter parameter, ordered by a text field with ties: every page
+/// as ESS's interpreter answers it.
+#[test]
+fn adversary_a_filter_parameter_beside_paging_pages_as_the_interpreter_pages_it() {
+    let mut shelf = Shelf::open();
+    shelf.compare(
+        "shelf.book.Starred",
+        "/book/views/Starred",
+        ("page", "size"),
+        ("page", "size"),
+        0,
+        &[("min", 3)],
+    );
+}

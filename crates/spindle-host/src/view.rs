@@ -452,7 +452,8 @@ impl Slice {
 ///
 /// The two parameters a view's `paging:` reads may both be left out whatever type they are
 /// declared at, as ESS's interpreter reads them (`interpret/views.rs` at ESS 0.99.1, `query`); the
-/// slice they ask for is read by [`slice`].
+/// slice they ask for is read by [`slice`]. Only a key `given` does not hold leaves one out: a
+/// paging parameter given as `null` is given, and refused, as the interpreter refuses it.
 ///
 /// # Errors
 /// Naming the parameter: one `view` does not declare, a required one `given` leaves out (or holds
@@ -471,7 +472,14 @@ pub(crate) fn parameters(
     }
     let mut values = BTreeMap::new();
     for param in &view.params {
-        match given.get(&param.name).filter(|value| !value.is_null()) {
+        let paged = view
+            .paging
+            .as_ref()
+            .is_some_and(|paging| paging.reads(&param.name));
+        match given
+            .get(&param.name)
+            .filter(|value| paged || !value.is_null())
+        {
             Some(value) => {
                 spindle_kernel::admits(ir, &param.type_ref, value)
                     .map_err(|error| format!("`{}`: {error}", param.name))?;
@@ -479,11 +487,7 @@ pub(crate) fn parameters(
                     .map_err(|error| format!("`{}`: {error}", param.name))?;
                 values.insert(param.name.clone(), node);
             }
-            None if param.type_ref.is_optional() => {}
-            None if view
-                .paging
-                .as_ref()
-                .is_some_and(|paging| paging.reads(&param.name)) => {}
+            None if param.type_ref.is_optional() || paged => {}
             None => return Err(format!("the parameter `{}` is required", param.name)),
         }
     }
@@ -506,8 +510,8 @@ fn slice(view: &ResolvedView, given: &Map<String, Value>) -> Result<Option<Slice
     let Some(paging) = &view.paging else {
         return Ok(None);
     };
-    let read = |name: &str| given.get(name).filter(|value| !value.is_null());
-    let (page, size) = match (read(&paging.page), read(&paging.size)) {
+    // Only an absent key leaves a paging parameter out; `null` is a value `whole` refuses.
+    let (page, size) = match (given.get(&paging.page), given.get(&paging.size)) {
         (None, None) => return Ok(None),
         (Some(page), Some(size)) => (page, size),
         (Some(_), None) | (None, Some(_)) => {
