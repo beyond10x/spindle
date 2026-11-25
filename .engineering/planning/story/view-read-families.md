@@ -10,6 +10,7 @@ relations:
 - depends_on: story:observe-label-vocabulary
 - depends_on: story:metric-families-route
 - depends_on: story:store-and-kernel-durations
+- depends_on: story:view-paging
 scope:
 - confidence: cited
   path: crates/spindle-host/src/host.rs

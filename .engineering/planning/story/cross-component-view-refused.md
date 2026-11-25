@@ -9,6 +9,7 @@ relations:
 - decomposes: epic:split-run
 - depends_on: story:run-one-component
 - depends_on: story:front-ingress
+- depends_on: story:view-paging
 scope:
 - confidence: cited
   path: crates/spindle-cli/tests/fixtures
