@@ -1,5 +1,5 @@
 //! Adversary cases for `Surface::resolve` choosing among routes that match one request path
-//! (`story:route-literal-segment-precedence`), held to the rule ESS 0.90.0 defines for its own
+//! (`story:route-literal-segment-precedence`), held to the rule ESS 0.99.0 defines for its own
 //! served applications (`docs/design/http-presentation-binding.md`, "Path templates", in ESS at
 //! the pinned tag): a method's routes are tried in `ess_gen::http::dispatch_order`, a request
 //! segment is compared with a literal after decoding percent-encoded unreserved characters
@@ -224,7 +224,7 @@ const TILDE: &str = "  - command: catalogue.things.AskThing
       modules-asked: {status: 200}
 ";
 
-/// ESS 0.90.0's served applications compare a request segment with a literal after decoding
+/// ESS 0.99.0's served applications compare a request segment with a literal after decoding
 /// percent-encoded unreserved characters: `/things/%7Emodules` is the path `/things/~modules`
 /// (RFC 3986 §6.2.2.2, RFC 9110 §4.2.3), so the literal route answers it, not the by-id route
 /// with the id `~modules`. A client that escapes `~` (Java's `URLEncoder`, Python's `quote`

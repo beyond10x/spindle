@@ -3,7 +3,7 @@
 //! `ends_with`, under `not`, `all`, `any` and `exists` over a list field, answered as ESS's
 //! interpreter answers it on the memory, SQLite and PostgreSQL stores.
 //!
-//! ESS's semantics (`ess-primitives` `TextOp::holds`, `Predicate::evaluate` at ESS 0.98.0): the
+//! ESS's semantics (`ess-primitives` `TextOp::holds`, `Predicate::evaluate` at ESS 0.99.0): the
 //! match is byte for byte and case-sensitive, with no Unicode folding; the empty text is
 //! contained in every text; a field the row holds no value for is unknown, so the read is
 //! refused; an `Optional` parameter left out hides every row (`absent_text_operands`).
