@@ -9,11 +9,41 @@ relations:
 - depends_on: story:node-export-serves-a-specification
 - decomposes: epic:node-export
 scope:
-- confidence: inferred
-  path: crates/spindle-embed
-- confidence: inferred
-  path: crates/spindle-node
-revision: 2
+- confidence: cited
+  path: AGENTS.md
+- confidence: cited
+  path: CHANGELOG.md
+- confidence: cited
+  path: README.md
+- confidence: cited
+  path: crates/spindle-cli/src/serve.rs
+- confidence: cited
+  path: crates/spindle-embed/src/lib.rs
+- confidence: cited
+  path: crates/spindle-ingress/src/lib.rs
+- confidence: cited
+  path: crates/spindle-ingress/src/surface.rs
+- confidence: cited
+  path: crates/spindle-node/Cargo.toml
+- confidence: cited
+  path: crates/spindle-node/src/export.rs
+- confidence: cited
+  path: crates/spindle-node/src/lib.rs
+- confidence: cited
+  path: crates/spindle-node/tests/fixtures/fixed-actor-exchanges.json
+- confidence: cited
+  path: crates/spindle-node/tests/node/fixed-actor.test.mjs
+- confidence: cited
+  path: crates/spindle-node/tests/spindle-node/fixed_actor.rs
+- confidence: cited
+  path: crates/spindle-node/tests/spindle-node/listener.rs
+- confidence: cited
+  path: crates/spindle-node/tests/spindle-node/main.rs
+- confidence: cited
+  path: crates/spindle-wasm/src/worker.rs
+- confidence: cited
+  path: website/docs/concepts/environment-and-admission.md
+revision: 4
 ---
 # The Node export sends commands as fixed actors
 
@@ -37,4 +67,16 @@ declare, or a caller its binding refuses, is refused by `create` with the reason
 
 ## Scope
 
-- `crates/spindle-embed/`, `crates/spindle-node/` (inferred).
+- `crates/spindle-ingress/src/surface.rs`, `src/lib.rs` — `Caller::fixed`, `Caller::repeated` and
+  `Unfixed`: `run`'s check of its fixed callers, moved out of `spindle-cli` so every host calls it.
+- `crates/spindle-cli/src/serve.rs` — `run` calls them; its messages are unchanged.
+- `crates/spindle-embed/src/lib.rs` — `Opening::callers`, `fixed` (the check, each refusal named
+  `the fixed actor <actor>...`), the surface made `Surface::fixing_callers`.
+- `crates/spindle-wasm/src/worker.rs` — the Service Worker opens with no fixed caller.
+- `crates/spindle-node/Cargo.toml`, `src/lib.rs` (`Config::fixed_actors`, `FixedActor`),
+  `src/export.rs`.
+- `crates/spindle-node/tests/node/fixed-actor.test.mjs`,
+  `tests/fixtures/fixed-actor-exchanges.json`, `tests/spindle-node/fixed_actor.rs` (the native
+  recording and the opening's refusals), `tests/spindle-node/listener.rs` (the replay loop shared),
+  `tests/spindle-node/main.rs`.
+- `README.md`, `AGENTS.md`, `CHANGELOG.md`, `website/docs/concepts/environment-and-admission.md`.

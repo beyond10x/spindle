@@ -1,0 +1,56 @@
+[
+  {
+    "method": "POST",
+    "target": "/desk/commands/OpenDesk",
+    "content_type": "application/json",
+    "body": "{\"desk_id\": \"7d1c2b3a-4e5f-4a6b-9c8d-0e1f2a3b4c5d\", \"name\": \"window\"}",
+    "status": 202,
+    "allow": null,
+    "answer": "{\"outcome\":\"opened\",\"published\":[{\"event\":\"bureau.desk.DeskOpened\",\"payload\":{\"desk_id\":\"7d1c2b3a-4e5f-4a6b-9c8d-0e1f2a3b4c5d\",\"opened_by\":\"ada\"}}]}"
+  },
+  {
+    "method": "POST",
+    "target": "/desk/commands/LockDesk",
+    "content_type": "application/json",
+    "body": "{\"desk_id\": \"7d1c2b3a-4e5f-4a6b-9c8d-0e1f2a3b4c5d\", \"with_key\": \"brass\"}",
+    "status": 202,
+    "allow": null,
+    "answer": "{\"outcome\":\"locked\",\"published\":[{\"event\":\"bureau.desk.DeskLocked\",\"payload\":{\"desk_id\":\"7d1c2b3a-4e5f-4a6b-9c8d-0e1f2a3b4c5d\",\"locked_by\":\"brass\"}}]}"
+  },
+  {
+    "method": "POST",
+    "target": "/desk/commands/NoteDesk",
+    "content_type": "application/json",
+    "body": "{\"desk_id\": \"7d1c2b3a-4e5f-4a6b-9c8d-0e1f2a3b4c5d\"}",
+    "status": 202,
+    "allow": null,
+    "answer": "{\"outcome\":\"noted\",\"published\":[{\"event\":\"bureau.desk.DeskNoted\",\"payload\":{\"desk_id\":\"7d1c2b3a-4e5f-4a6b-9c8d-0e1f2a3b4c5d\",\"shift\":\"early\"}}]}"
+  },
+  {
+    "method": "POST",
+    "target": "/desk/commands/ReserveDesk",
+    "content_type": "application/json",
+    "body": "{\"desk_id\": \"8e2d3c4b-5f6a-4b7c-8d9e-1f2a3b4c5d6e\", \"opened_by\": \"nobody\"}",
+    "status": 403,
+    "allow": null,
+    "answer": "{\"actor\":\"bureau.desk.Clerk\",\"refused\":\"not granted\"}"
+  },
+  {
+    "method": "GET",
+    "target": "/desk/views/DeskCard",
+    "content_type": null,
+    "body": "",
+    "status": 200,
+    "allow": null,
+    "answer": "{\"rows\":[{\"desk_id\":\"7d1c2b3a-4e5f-4a6b-9c8d-0e1f2a3b4c5d\",\"locked_by\":\"brass\",\"noted_shift\":\"early\",\"opened_by\":\"ada\"}]}"
+  },
+  {
+    "method": "GET",
+    "target": "/desk/views/DeskLedger",
+    "content_type": null,
+    "body": "",
+    "status": 200,
+    "allow": null,
+    "answer": "{\"rows\":[{\"desk_id\":\"7d1c2b3a-4e5f-4a6b-9c8d-0e1f2a3b4c5d\",\"locked_by\":\"brass\"}]}"
+  }
+]

@@ -13,18 +13,18 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 serde.workspace = true
+serde_json.workspace = true
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 js-sys = "0.3"
-serde_json.workspace = true
 spindle-embed = { path = "../spindle-embed" }
 spindle-host = { path = "../spindle-host", default-features = false }
 spindle-ingress = { path = "../spindle-ingress", default-features = false }
 wasm-bindgen = "0.2"
 
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dev-dependencies]
-serde_json.workspace = true
 spindle-capability = { path = "../spindle-capability" }
+spindle-embed = { path = "../spindle-embed" }
 spindle-host = { path = "../spindle-host" }
 spindle-ingress = { path = "../spindle-ingress" }
 spindle-spec = { path = "../spindle-spec" }

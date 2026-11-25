@@ -12,7 +12,9 @@
 //! component is admitted as on any host, each component's state bound to `memory` and its
 //! `ingress.network`, where it has one, to [`NODE`]; optionally a decisions file and the answer
 //! default, which answer every `external:` outcome as `run --decisions` and `run --answer-default`
-//! answer it; and optionally an `ess-http/1` binding, compiled by ESS. The opening is
+//! answer it; optionally an `ess-http/1` binding, compiled by ESS; and optionally fixed actors,
+//! each with its caller attributes, as `run --fixed-actor` with `--fixed-caller` takes them, each
+//! served operation sent or read as the first whose grant names it. The opening is
 //! `spindle-embed`'s, the one the Service Worker host calls.
 //!
 //! [`Spindle::handle`] answers one request with `spindle_ingress::route_with`, the router the
@@ -47,6 +49,24 @@ pub struct Config {
     /// An `ess-http/1` binding's text, YAML or JSON, if the routes are bound by one.
     #[serde(default)]
     pub binding: Option<String>,
+    /// The fixed actors, in order, as `run --fixed-actor` with `--fixed-caller` takes them: each
+    /// served operation is sent or read as the first whose grant names it, a test-backend switch,
+    /// not authentication; with none, as no caller.
+    #[serde(default)]
+    pub fixed_actors: Vec<FixedActor>,
+}
+
+/// One fixed actor of a [`Config`], `{ actor, caller? }`: the shape a trusted proxy's caller
+/// header carries for `run --trusted-caller-header`.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FixedActor {
+    /// The actor's qualified name (`--fixed-actor`).
+    pub actor: String,
+    /// The caller's attributes by declared attribute name (`--fixed-caller`), none where left
+    /// out.
+    #[serde(default)]
+    pub caller: serde_json::Map<String, serde_json::Value>,
 }
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]

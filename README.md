@@ -175,8 +175,9 @@ const answer = await spindle.handle({ method: "GET", path: "/review/views/Submis
 ```
 
 `create` takes the specification's sources, an environment whose stores are bound to `memory`
-(`examples/environments/node.toml`), and optionally a decisions file, `answerDefault` and an
-`ess-http/1` binding. `handle` answers through the router the loopback listener calls, the console
+(`examples/environments/node.toml`), and optionally a decisions file, `answerDefault`, an
+`ess-http/1` binding and `fixedActors` (`[{ actor, caller }]`, as `run --fixed-actor` with
+`--fixed-caller`). `handle` answers through the router the loopback listener calls, the console
 routes included; `notServed`, `reset(world)` and `dispose` complete it
 ([the Node export](https://beyond10x.github.io/spindle/docs/concepts/environment-and-admission#the-node-export)).
 `task check:node_serves_a_specification` builds it and runs its tests under Node.

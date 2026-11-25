@@ -205,12 +205,107 @@ impl Caller {
     /// Whether `ir` declares this caller's actor and binds its attributes as the kernel binds a
     /// caller ([`spindle_kernel::caller_binds`]).
     pub(crate) fn binds(&self, ir: &EssIr) -> bool {
-        ir.actors()
+        self.fixed(ir).is_ok()
+    }
+
+    /// Refuses this caller, fixed for a whole run ([`Surface::fixing_callers`]), where `ir` would
+    /// refuse it on the first command sent as it: an actor `ir` does not declare
+    /// ([`Unfixed::Undeclared`]), or attributes that are not a caller of that actor's by the
+    /// kernel's own binding ([`Unfixed::Unbound`], [`spindle_kernel::caller_binds`]). `run`
+    /// (`--fixed-actor`, `--fixed-caller`) and every in-process host check their fixed callers
+    /// with it, each naming the caller in its own words.
+    ///
+    /// # Errors
+    /// [`Unfixed::Undeclared`] or [`Unfixed::Unbound`].
+    pub fn fixed(&self, ir: &EssIr) -> Result<(), Unfixed> {
+        if !ir
+            .actors()
             .keys()
             .any(|name| name.to_string() == self.actor)
-            && spindle_kernel::caller_binds(ir, Some(&self.actor), Some(&self.attributes)).is_ok()
+        {
+            return Err(Unfixed::Undeclared {
+                actor: self.actor.clone(),
+            });
+        }
+        spindle_kernel::caller_binds(ir, Some(&self.actor), Some(&self.attributes)).map_err(
+            |error| Unfixed::Unbound {
+                actor: self.actor.clone(),
+                why: error.to_string(),
+            },
+        )
+    }
+
+    /// Refuses `callers`, in the order a run is given them, where one actor is given twice: the
+    /// second would never be sent as, since each operation is sent as the first its grant names
+    /// ([`Surface::fixing_callers`]).
+    ///
+    /// # Errors
+    /// [`Unfixed::Twice`], naming the first actor given a second time.
+    pub fn repeated(callers: &[Caller]) -> Result<(), Unfixed> {
+        for (position, caller) in callers.iter().enumerate() {
+            if callers[..position]
+                .iter()
+                .any(|earlier| earlier.actor == caller.actor)
+            {
+                return Err(Unfixed::Twice {
+                    actor: caller.actor.clone(),
+                });
+            }
+        }
+        Ok(())
     }
 }
+
+/// Why a caller fixed for a whole run is refused before anything is served ([`Caller::fixed`],
+/// [`Caller::repeated`]). Its text is the reason alone; each host names the caller before it in
+/// its own words (`run`: `--fixed-actor <actor>`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unfixed {
+    /// The actor is given twice.
+    Twice {
+        /// The actor.
+        actor: String,
+    },
+    /// The specification declares no such actor.
+    Undeclared {
+        /// The actor.
+        actor: String,
+    },
+    /// The attributes are not a caller of the actor's, by the kernel's binding.
+    Unbound {
+        /// The actor.
+        actor: String,
+        /// The kernel's refusal.
+        why: String,
+    },
+}
+
+impl Unfixed {
+    /// The actor refused.
+    pub fn actor(&self) -> &str {
+        match self {
+            Self::Twice { actor } | Self::Undeclared { actor } | Self::Unbound { actor, .. } => {
+                actor
+            }
+        }
+    }
+}
+
+impl fmt::Display for Unfixed {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Twice { .. } => {
+                formatter.write_str("is given twice; the first would always be sent as")
+            }
+            Self::Undeclared { .. } => {
+                formatter.write_str("the specification declares no such actor")
+            }
+            Self::Unbound { why, .. } => formatter.write_str(why),
+        }
+    }
+}
+
+impl std::error::Error for Unfixed {}
 
 /// Whether every object in `json`, text that parses as JSON, names each member once: each name
 /// is compared once its escapes are decoded, so `"actor"` and `"actor"` are the same member.

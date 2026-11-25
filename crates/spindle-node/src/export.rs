@@ -6,7 +6,7 @@ use std::sync::Arc;
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use spindle_embed::{Opened, Opening};
 use spindle_host::{Stores, SystemClock};
-use spindle_ingress::{Request, Surface};
+use spindle_ingress::{Caller, Request, Surface};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
@@ -28,13 +28,16 @@ pub struct Spindle {
 impl Spindle {
     /// Opens the host `config` ([`Config`], a JSON string or a plain object) describes: compiles
     /// the specification, admits it on the environment, keeps every store in memory, and lays out
-    /// the routes with the console routes.
+    /// the routes with the console routes, each operation sent or read as the first fixed actor
+    /// its grant names.
     ///
     /// # Errors
     /// An `Error` naming the reason: the configuration is not of [`Config`]'s shape; the
     /// specification does not compile; the environment does not parse or does not admit every
     /// component; a component's state is bound to anything but `memory`, or its `ingress.network`
-    /// to anything but [`NODE`]; the decisions file or the binding is refused; the host refuses
+    /// to anything but [`NODE`]; the decisions file or the binding is refused; a fixed actor is
+    /// given twice, is not declared, or has a caller its binding refuses, with `run`'s reason
+    /// ([`spindle_embed::fixed`]); the host refuses
     /// what admission bound (an external outcome nothing answers among them); or the routes serve
     /// no operation, the report's lines then the reason `run` gives.
     pub fn create(config: JsValue) -> Result<Spindle, JsError> {
@@ -154,6 +157,14 @@ fn created(config: &JsValue) -> Result<Spindle, String> {
         decisions: config.decisions,
         answer_default: config.answer_default,
         binding: config.binding,
+        callers: config
+            .fixed_actors
+            .into_iter()
+            .map(|fixed| Caller {
+                actor: fixed.actor,
+                attributes: fixed.caller,
+            })
+            .collect(),
         worlds: true,
         clock: Arc::new(SystemClock),
     })?;

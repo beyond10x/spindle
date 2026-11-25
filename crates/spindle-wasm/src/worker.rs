@@ -207,6 +207,7 @@ async fn opened(config: &str) -> Result<Spindle, String> {
         decisions: config.decisions,
         answer_default: false,
         binding: config.binding,
+        callers: Vec::new(),
         worlds: false,
         clock: Arc::new(SystemClock),
     })?;
