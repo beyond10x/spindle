@@ -1,0 +1,101 @@
+[
+  {
+    "method": "POST",
+    "target": "/review/commands/Submit",
+    "content_type": "application/json",
+    "body": "{\"submission_id\": \"s9\", \"amount\": 9}",
+    "status": 202,
+    "allow": null,
+    "answer": "{\"outcome\":\"submitted\",\"published\":[{\"event\":\"probe.review.Submitted\",\"payload\":{\"submission_id\":\"s9\"}}]}"
+  },
+  {
+    "method": "POST",
+    "target": "/review/commands/Decide",
+    "content_type": "application/json",
+    "body": "{\"decision_id\": \"d1\", \"approve\": true}",
+    "status": 501,
+    "allow": null,
+    "answer": "{\"committed\":false,\"refused\":\"external.probe.review.Decide.vetoed gave no answer: neither the request nor a decisions file answers `external.vetoed` for `external.probe.review.Decide.vetoed`, and `probe.review.Decide` declares no default branch for --answer-default to take: the owner vetoes the decision\"}"
+  },
+  {
+    "method": "POST",
+    "target": "/api/reset",
+    "content_type": "application/json",
+    "body": "{\"rows\": [{\"entity\": \"probe.review.Submission\", \"identity\": \"s1\", \"state\": \"Open\", \"fields\": {\"amount\": 1}}, {\"entity\": \"probe.review.Submission\", \"identity\": \"s2\", \"state\": \"Open\", \"fields\": {\"amount\": 2}}, {\"entity\": \"probe.review.Submission\", \"identity\": \"s3\", \"state\": \"Open\", \"fields\": {\"amount\": 3}}]}",
+    "status": 200,
+    "allow": null,
+    "answer": "{\"emptied\":[\"probe\"]}"
+  },
+  {
+    "method": "GET",
+    "target": "/review/views/Submissions",
+    "content_type": null,
+    "body": "",
+    "status": 200,
+    "allow": null,
+    "answer": "{\"rows\":[{\"amount\":1.0,\"submission_id\":\"s1\"},{\"amount\":2.0,\"submission_id\":\"s2\"},{\"amount\":3.0,\"submission_id\":\"s3\"}]}"
+  },
+  {
+    "method": "POST",
+    "target": "/api/reset",
+    "content_type": "application/json",
+    "body": "{\"rows\": [{\"entity\": \"probe.review.Nope\", \"identity\": \"n1\", \"state\": \"Open\"}]}",
+    "status": 400,
+    "allow": null,
+    "answer": "{\"refused\":\"row 0: undeclared entity `probe.review.Nope`\"}"
+  },
+  {
+    "method": "GET",
+    "target": "/review/views/Submissions",
+    "content_type": null,
+    "body": "",
+    "status": 200,
+    "allow": null,
+    "answer": "{\"rows\":[{\"amount\":1.0,\"submission_id\":\"s1\"},{\"amount\":2.0,\"submission_id\":\"s2\"},{\"amount\":3.0,\"submission_id\":\"s3\"}]}"
+  },
+  {
+    "method": "POST",
+    "target": "/api/reset",
+    "content_type": "application/json",
+    "body": "{\"decisions\": {\"probe.review.Decide\": {\"vetoed\": true}}}",
+    "status": 200,
+    "allow": null,
+    "answer": "{\"emptied\":[\"probe\"]}"
+  },
+  {
+    "method": "POST",
+    "target": "/review/commands/Decide",
+    "content_type": "application/json",
+    "body": "{\"decision_id\": \"d2\", \"approve\": true}",
+    "status": 502,
+    "allow": null,
+    "answer": "{\"error\":\"probe.review.Vetoed\",\"outcome\":\"vetoed\",\"published\":[]}"
+  },
+  {
+    "method": "GET",
+    "target": "/review/views/Submissions",
+    "content_type": null,
+    "body": "",
+    "status": 200,
+    "allow": null,
+    "answer": "{\"rows\":[]}"
+  },
+  {
+    "method": "POST",
+    "target": "/api/reset",
+    "content_type": "application/json",
+    "body": "",
+    "status": 200,
+    "allow": null,
+    "answer": "{\"emptied\":[\"probe\"]}"
+  },
+  {
+    "method": "POST",
+    "target": "/review/commands/Decide",
+    "content_type": "application/json",
+    "body": "{\"decision_id\": \"d3\", \"approve\": true}",
+    "status": 501,
+    "allow": null,
+    "answer": "{\"committed\":false,\"refused\":\"external.probe.review.Decide.vetoed gave no answer: neither the request nor a decisions file answers `external.vetoed` for `external.probe.review.Decide.vetoed`, and `probe.review.Decide` declares no default branch for --answer-default to take: the owner vetoes the decision\"}"
+  }
+]

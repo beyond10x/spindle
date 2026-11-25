@@ -2188,6 +2188,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "spindle-embed"
+version = "0.19.1"
+dependencies = [
+ "ess-compiler",
+ "ess-gen",
+ "ess-http",
+ "serde_json",
+ "spindle-capability",
+ "spindle-host",
+ "spindle-ingress",
+ "spindle-spec",
+]
+
+[[package]]
 name = "spindle-firecracker"
 version = "0.19.1"
 dependencies = [
@@ -2213,6 +2227,7 @@ dependencies = [
  "ess-conformance",
  "ess-domain",
  "ess-primitives",
+ "serde",
  "serde_json",
  "spindle-capability",
  "spindle-channel",
@@ -2274,6 +2289,22 @@ dependencies = [
  "tokio-postgres-rustls",
  "uuid",
  "web-time",
+]
+
+[[package]]
+name = "spindle-node"
+version = "0.19.1"
+dependencies = [
+ "js-sys",
+ "serde",
+ "serde_json",
+ "spindle-capability",
+ "spindle-embed",
+ "spindle-host",
+ "spindle-ingress",
+ "spindle-spec",
+ "tempfile",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -2376,13 +2407,11 @@ dependencies = [
 name = "spindle-wasm"
 version = "0.19.1"
 dependencies = [
- "ess-compiler",
- "ess-gen",
- "ess-http",
  "js-sys",
  "serde",
  "serde_json",
  "spindle-capability",
+ "spindle-embed",
  "spindle-host",
  "spindle-ingress",
  "spindle-kernel",

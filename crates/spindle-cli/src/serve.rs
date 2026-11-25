@@ -12,7 +12,7 @@ use anyhow::{Context, Result, bail};
 use ess_gen::http::Binding;
 use spindle_capability::{Capability, Environment};
 use spindle_host::{Cause, Host, HostError, Retries, SystemClock};
-use spindle_ingress::{Caller, Listener, Surface, Unserved};
+use spindle_ingress::{Caller, Listener, Surface};
 use spindle_spec::EssIr;
 
 use crate::decisions::{self, Run};
@@ -349,32 +349,11 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         (Some(capacity), None) => surface.observing(capacity),
         (None, _) => surface,
     };
-    let unserved = surface.unserved();
-    for line in unserved.iter().filter_map(|route| route.not_served()) {
+    for line in surface.report() {
         eprintln!("b10x-spindle: {line}");
     }
-    for route in surface.routes() {
-        for (outcome, why) in route.refused() {
-            eprintln!(
-                "b10x-spindle: unsupported outcome `{}/{outcome}` at {} {}, answered 501 where a \
-                 request selects it: {why}",
-                route.operation.name(),
-                route.method.as_str().to_uppercase(),
-                route.path
-            );
-        }
-    }
-    if !unserved.is_empty()
-        && unserved.len() == surface.routes().len()
-        && unserved
-            .iter()
-            .any(|route| matches!(route.unserved(), Some(Unserved::Ingress(_))))
-    {
-        bail!(
-            "{} serves no operation: each one above is one this ingress cannot route or the \
-             kernel does not run",
-            serving.components.join(", ")
-        );
+    if surface.serves_nothing() {
+        bail!(Surface::serves_nothing_reason(&serving.components));
     }
     let retried = spindle_host::retried(&ir);
     let retries = if serving.drop_retries {

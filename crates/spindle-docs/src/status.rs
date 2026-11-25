@@ -147,6 +147,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "crates/spindle-wasm/tests/spindle-wasm/service_worker.rs::a_fetch_to_a_bound_route_is_answered_in_the_browser",
     ),
     shipped(
+        "Execution",
+        "Node export",
+        "spindle-node, bound by wasm-bindgen as an ES module, serves a specification in-process in a Node program: created from its sources, an environment whose stores are bound to memory (ingress.network bound to node) and a decisions file or the answer default, it answers one request at a time through the router the loopback listener calls, the console routes and a reset carrying a world included, and reports what it does not serve as run does. Its Node tests (task check:node_serves_a_specification) replay exchanges the loopback listener answers natively.",
+        "/docs/concepts/environment-and-admission#the-node-export",
+        "crates/spindle-node/tests/spindle-node/listener.rs::the_loopback_listener_answers_the_world_exchanges",
+    ),
+    shipped(
         "Bindings",
         "Periodic bindings",
         "spindle-timer yields due ticks for periodic bindings on an injected clock, honouring the ESS periodic profile.",

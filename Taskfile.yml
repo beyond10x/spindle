@@ -22,6 +22,7 @@ tasks:
       - task: check:the_browser_store_keeps_state_in_indexeddb
       - task: check:a_service_worker_serves_a_specification
       - task: check:the_static_bundle_builds
+      - task: check:node_serves_a_specification
       - cargo fmt -- --check
       - cargo clippy --workspace --all-targets --locked -- -D warnings
       - cargo test --workspace --locked --no-fail-fast
@@ -38,8 +39,8 @@ tasks:
     env:
       CLIPPY_CONF_DIR: '{{.ROOT_DIR}}/clippy/wasm32'
     cmds:
-      - cargo build --locked --target wasm32-unknown-unknown --no-default-features -p spindle-spec -p spindle-kernel -p spindle-host -p spindle-ingress
-      - cargo clippy --locked --target wasm32-unknown-unknown --no-default-features -p spindle-spec -p spindle-kernel -p spindle-host -p spindle-ingress -p spindle-timer -p spindle-channel -p spindle-telemetry -p spindle-capability -p spindle-store-browser -p spindle-wasm --lib -- -D warnings
+      - cargo build --locked --target wasm32-unknown-unknown --no-default-features -p spindle-spec -p spindle-kernel -p spindle-host -p spindle-ingress -p spindle-embed
+      - cargo clippy --locked --target wasm32-unknown-unknown --no-default-features -p spindle-spec -p spindle-kernel -p spindle-host -p spindle-ingress -p spindle-timer -p spindle-channel -p spindle-telemetry -p spindle-capability -p spindle-store-browser -p spindle-wasm -p spindle-embed -p spindle-node --lib -- -D warnings
 
   check:a_command_runs_in_wasm_on_the_memory_store:
     desc: The wasm host runs a command on the memory store, under wasm-bindgen-test-runner on Node
@@ -64,6 +65,13 @@ tasks:
       WASM_BINDGEN_TEST_TIMEOUT: '120'
     cmds:
       - cargo test --locked --target wasm32-unknown-unknown -p spindle-wasm --test spindle-wasm
+
+  check:node_serves_a_specification:
+    desc: The Node export, spindle-node bound by wasm-bindgen as an ES module, answers a specification's routes and the console routes in-process as the loopback listener answers them, under node --test
+    cmds:
+      - cargo build --locked --release --target wasm32-unknown-unknown -p spindle-node
+      - wasm-bindgen --target web --out-dir target/spindle-node target/wasm32-unknown-unknown/release/spindle_node.wasm
+      - node --test --test-timeout=60000 'crates/spindle-node/tests/node/*.test.mjs'
 
   check:the_static_bundle_builds:
     desc: The Service Worker site in web/ builds, spindle-wasm compiled to wasm32-unknown-unknown and bound by wasm-bindgen into the Vite bundle

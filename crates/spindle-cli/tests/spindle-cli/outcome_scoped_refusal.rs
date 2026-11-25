@@ -604,3 +604,30 @@ fn an_outcome_with_secondary_effects_refuses_only_the_request_that_selects_it() 
         "run names the outcome, not the command, as unsupported: {stderr}"
     );
 }
+
+/// The not-served report the Node export answers (`notServed()`,
+/// `story:node-export-serves-a-specification`) is recorded from `run`: the lines it prints on
+/// stderr before it listens, serving the fixture with its binding, each without `run`'s prefix.
+#[test]
+fn run_prints_the_recorded_not_served_lines() {
+    let served = serve(&["--http", BINDING]);
+    let printed: Vec<String> = served
+        .stderr
+        .lines()
+        .iter()
+        .filter_map(|line| line.strip_prefix("b10x-spindle: "))
+        .filter(|line| line.starts_with("not served:") || line.starts_with("unsupported outcome"))
+        .map(str::to_owned)
+        .collect();
+    let path = root().join("crates/spindle-node/tests/fixtures/not-served.json");
+    let recorded: Vec<String> = serde_json::from_str(
+        &std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{path:?}: {error}")),
+    )
+    .expect("the record is a list of lines");
+    assert_eq!(
+        printed,
+        recorded,
+        "run prints what crates/spindle-node/tests/fixtures/not-served.json records; it printed:\n{}",
+        serde_json::to_string_pretty(&printed).unwrap_or_default()
+    );
+}
