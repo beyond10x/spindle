@@ -1,7 +1,7 @@
 {
-  "at": "2026-11-25T01:16:51Z",
-  "actor": "human:timo",
-  "artifact": "story:node-export-serves-a-specification",
+  "at": "2026-11-25T02:59:14Z",
+  "actor": "human:operator",
+  "artifact": "story:node-export-release-artifact",
   "kind": "story",
   "revision": 4,
   "change": {

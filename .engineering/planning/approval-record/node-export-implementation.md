@@ -8,9 +8,9 @@ tags:
 - coordinator
 relations:
 - decides: story:node-export-serves-a-specification
-revision: 2
+revision: 3
 transitions:
-- {from: "draft", to: "accepted", at: "2026-11-25T01:20:11Z", actor: "human:timo", revision: 2}
+- {from: "draft", to: "accepted", at: "2026-11-25T02:59:14Z", actor: "human:operator", revision: 3}
 ---
 # The coordinating session's order to implement the Node export story
 

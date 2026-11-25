@@ -42,10 +42,10 @@ scope:
   path: examples/environments/node.toml
 - confidence: inferred
   path: website/docs
-revision: 9
+revision: 11
 transitions:
-- {from: "draft", to: "proposed", at: "2026-11-25T01:20:12Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"review_outcome":7}}}
-- {from: "proposed", to: "active", at: "2026-11-25T01:20:12Z", actor: "human:timo", revision: 8, decided_on: {"recorded":{"review_outcome":7}}}
+- {from: "draft", to: "proposed", at: "2026-11-25T02:59:15Z", actor: "human:operator", revision: 10, decided_on: {"recorded":{"review_outcome":6}}}
+- {from: "proposed", to: "active", at: "2026-11-25T02:59:15Z", actor: "human:operator", revision: 11, decided_on: {"recorded":{"review_outcome":6}}}
 ---
 # Node loads the wasm host and serves a specification
 
