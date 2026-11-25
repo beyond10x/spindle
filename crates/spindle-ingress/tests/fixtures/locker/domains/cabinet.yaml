@@ -1,0 +1,197 @@
+domain: locker.cabinet
+summary: Lockers, each holding one value of every type an ess-http/1 path segment carries.
+types:
+  - name: locker.cabinet.LockerId
+    kind: newtype
+    of: Uuid
+  - name: locker.cabinet.LockerCode
+    kind: newtype
+    of: String
+  - name: locker.cabinet.Badge
+    kind: newtype
+    of: String
+    alphabet: "bcdefgh-"
+    prefix: "b-"
+entities:
+  - name: locker.cabinet.Locker
+    identity:
+      name: locker_id
+      type: locker.cabinet.LockerId
+    fields:
+      - name: code
+        type: locker.cabinet.LockerCode
+      - name: open
+        type: Boolean
+      - name: rent
+        type: Decimal
+      - name: since
+        type: Timestamp
+      - name: term
+        type: Duration
+      - name: serial
+        type: Uuid
+      - name: badge
+        type: locker.cabinet.Badge
+    lifecycle:
+      initial: Rented
+      states: [Rented]
+      terminal: [Rented]
+errors:
+  - name: locker.cabinet.NoSuchLocker
+    summary: No locker carries the id.
+    fields: []
+commands:
+  - name: locker.cabinet.RentLocker
+    input:
+      - name: locker_id
+        type: locker.cabinet.LockerId
+      - name: code
+        type: locker.cabinet.LockerCode
+      - name: open
+        type: Boolean
+      - name: rent
+        type: Decimal
+      - name: since
+        type: Timestamp
+      - name: term
+        type: Duration
+      - name: serial
+        type: Uuid
+      - name: badge
+        type: locker.cabinet.Badge
+    outcomes:
+      - name: rented
+        creates: locker.cabinet.Locker
+        instance: locker_id
+        sets:
+          code: input.code
+          open: input.open
+          rent: input.rent
+          since: input.since
+          term: input.term
+          serial: input.serial
+          badge: input.badge
+        emits: [locker.cabinet.LockerRented]
+        payload:
+          locker.cabinet.LockerRented: {locker_id: input.locker_id}
+        summary: The locker is rented with the values given.
+  - name: locker.cabinet.TouchLocker
+    input:
+      - name: locker_id
+        type: locker.cabinet.LockerId
+      - name: code
+        type: locker.cabinet.LockerCode
+      - name: open
+        type: Boolean
+      - name: rent
+        type: Decimal
+      - name: since
+        type: Timestamp
+      - name: term
+        type: Duration
+      - name: serial
+        type: Uuid
+      - name: badge
+        type: locker.cabinet.Badge
+    outcomes:
+      - name: no-such-locker
+        unknown_instance: true
+        error: locker.cabinet.NoSuchLocker
+        summary: No locker carries the id.
+      - name: touched
+        updates: locker.cabinet.Locker
+        instance: locker_id
+        sets:
+          code: input.code
+          open: input.open
+          rent: input.rent
+          since: input.since
+          term: input.term
+          serial: input.serial
+          badge: input.badge
+        emits: [locker.cabinet.LockerTouched]
+        payload:
+          locker.cabinet.LockerTouched: {locker_id: input.locker_id}
+        summary: The locker holds the values given.
+events:
+  - name: locker.cabinet.LockerRented
+    fields:
+      - name: locker_id
+        type: locker.cabinet.LockerId
+  - name: locker.cabinet.LockerTouched
+    fields:
+      - name: locker_id
+        type: locker.cabinet.LockerId
+views:
+  - name: locker.cabinet.AllLockers
+    source: locker.cabinet.Locker
+    consistency: read_your_writes
+    fields: &fields
+      - name: locker_id
+        type: locker.cabinet.LockerId
+      - name: code
+        type: locker.cabinet.LockerCode
+      - name: open
+        type: Boolean
+      - name: since
+        type: Timestamp
+      - name: term
+        type: Duration
+      - name: serial
+        type: Uuid
+  - name: locker.cabinet.LockerById
+    source: locker.cabinet.Locker
+    consistency: read_your_writes
+    params:
+      - name: id
+        type: locker.cabinet.LockerId
+    filter: locker_id == param.id
+    fields: *fields
+  - name: locker.cabinet.LockersByCode
+    source: locker.cabinet.Locker
+    consistency: read_your_writes
+    params:
+      - name: code
+        type: locker.cabinet.LockerCode
+    filter: code == param.code
+    fields: *fields
+  - name: locker.cabinet.LockersByOpen
+    source: locker.cabinet.Locker
+    consistency: read_your_writes
+    params:
+      - name: open
+        type: Boolean
+    filter: open == param.open
+    fields: *fields
+  - name: locker.cabinet.LockersByRent
+    source: locker.cabinet.Locker
+    consistency: read_your_writes
+    params:
+      - name: rent
+        type: Decimal
+    filter: rent == param.rent
+    fields: *fields
+  - name: locker.cabinet.LockersBySince
+    source: locker.cabinet.Locker
+    consistency: read_your_writes
+    params:
+      - name: since
+        type: Timestamp
+    filter: since == param.since
+    fields: *fields
+  - name: locker.cabinet.LockersByTerm
+    source: locker.cabinet.Locker
+    consistency: read_your_writes
+    params:
+      - name: term
+        type: Duration
+    filter: term == param.term
+    fields: *fields
+  - name: locker.cabinet.LockersBySerial
+    source: locker.cabinet.Locker
+    consistency: read_your_writes
+    params:
+      - name: serial
+        type: Uuid
+    filter: serial == param.serial
+    fields: *fields

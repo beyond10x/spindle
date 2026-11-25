@@ -8,8 +8,8 @@ use std::sync::Arc;
 use ess_compiler::EssIr;
 use ess_gen::http::{Binding, Flat, Shape};
 use ess_http::{
-    Body, Encoding, Header, Method, Operation, ResponseEncoding, Segment, Unknown, ViewAnswer,
-    ViewBody,
+    Body, Empty, Encoding, Header, Method, Operation, ResponseEncoding, Segment, Unknown,
+    ViewAnswer,
 };
 use serde_json::{Map, Value};
 
@@ -56,6 +56,12 @@ pub struct Variable {
     pub field: String,
     /// How its text is read ([`ess_gen::http::scalar`]).
     pub flat: Flat,
+    /// Whether the field is a `Decimal` (through newtypes): its text is read as the exact decimal
+    /// number it spells, as a query value is ([`Queried::decimal`]).
+    pub decimal: bool,
+    /// Whether the field is a `Timestamp` (through newtypes): text that is not an RFC 3339
+    /// `date-time` is refused ([`date_time`]).
+    pub instant: bool,
 }
 
 /// One parameter of a view read from the query string: the parameter, its wire name, how its
@@ -85,14 +91,21 @@ impl Queried {
     /// a decimal literal stays a string, for the host's check to refuse naming the parameter.
     /// `None` for empty text.
     fn value(&self, text: String) -> Option<Value> {
-        if self.decimal
-            && let Some(number) = ess_primitives::facts::Number::decimal_literal(&text)
-                .and_then(|number| serde_json::to_value(number).ok())
-        {
-            return Some(number);
-        }
-        read(self.flat, text)
+        read_scalar(self.flat, self.decimal, text)
     }
+}
+
+/// One scalar read from its decoded `text`: as [`read`] reads it, except that, where `decimal`,
+/// decimal text is the number it spells ([`ess_primitives::facts::Number::decimal_literal`], as the
+/// kernel reads a decimal literal). `None` for empty text.
+fn read_scalar(flat: Flat, decimal: bool, text: String) -> Option<Value> {
+    if decimal
+        && let Some(number) = ess_primitives::facts::Number::decimal_literal(&text)
+            .and_then(|number| serde_json::to_value(number).ok())
+    {
+        return Some(number);
+    }
+    read(flat, text)
 }
 
 /// One input field of a `form` or `query` request: the key it is sent under, the field it fills,
@@ -137,6 +150,11 @@ pub struct Route {
     /// The outcomes the binding answers with response headers, each with them by name, in name
     /// order ([`Route::headers`]).
     headers: BTreeMap<String, BTreeMap<String, Header>>,
+    /// What a view answers its rows as ([`Route::view_answer`]): `rows`, `array` or `single`,
+    /// bare or under one member, with a `single` route's answer for no row.
+    view_answer: ViewAnswer,
+    /// A `single` view route's answer when the view holds no row.
+    empty: Option<Empty>,
     unserved: Option<Unserved>,
     /// The command's outcomes not run, in declaration order, each with why.
     refused: Vec<(String, Unserved)>,
@@ -325,6 +343,13 @@ impl Route {
         self.responding
             .iter()
             .any(|responding| responding == outcome)
+    }
+
+    /// What a view route answers its rows as: `rows` (the default, and on every derived route),
+    /// `array` or `single`, bare or under one member (ESS 0.99.0, beyond10x/ess#755), with a
+    /// `single` route's answer when the view holds no row. ESS's default `rows` on a command.
+    pub(crate) fn view_answer(&self) -> (&ViewAnswer, Option<&Empty>) {
+        (&self.view_answer, self.empty.as_ref())
     }
 
     /// The body the binding answers the command's outcome `outcome` with where it is not the
@@ -593,7 +618,11 @@ impl Route {
     }
 
     /// The input `path`, which matches the route's template, carries in its variables; the
-    /// refusal's text where a variable's text is malformed.
+    /// refusal's text where a variable's text is malformed. Each segment is percent-decoded and
+    /// read as ESS 0.99.0's generated servers read it (`http::path_value`, beyond10x/ess#755): by
+    /// its [`Flat`], a `Decimal`'s decimal text as the number it spells, and a `Timestamp`'s
+    /// text refused unless it is an RFC 3339 `date-time` ([`date_time`]); every other text is left
+    /// to the input or parameter check, which refuses it `400` naming the field.
     pub(crate) fn read_path(&self, path: &str) -> Result<Map<String, Value>, String> {
         let given: Vec<&str> = path.strip_prefix('/').unwrap_or(path).split('/').collect();
         let mut carried = Map::new();
@@ -604,7 +633,13 @@ impl Route {
                     variable.field
                 ));
             };
-            match read(variable.flat, text) {
+            if variable.instant && !text.is_empty() && !date_time(&text) {
+                return Err(format!(
+                    "the path segment for {} is not an RFC 3339 instant: {text:?}",
+                    variable.field
+                ));
+            }
+            match read_scalar(variable.flat, variable.decimal, text) {
                 Some(value) => carried.insert(variable.field.clone(), value),
                 None => return Err(format!("the path carries no {}", variable.field)),
             };
@@ -695,19 +730,98 @@ fn read(flat: Flat, text: String) -> Option<Value> {
     }
 }
 
-/// Whether `type_ref`, under `Optional`, `List` and newtypes, is the primitive `Decimal`; the
-/// newtype chain is walked as [`ess_gen::http::scalar`] walks it.
-fn decimal(ir: &EssIr, type_ref: &ess_compiler::ir::ResolvedTypeRef) -> bool {
+/// Whether `type_ref`, under `Optional`, `List` and newtypes, is the primitive named `primitive`
+/// (`Decimal`, `Timestamp`); the newtype chain is walked as [`ess_gen::http::scalar`] walks it.
+fn is_primitive(ir: &EssIr, type_ref: &ess_compiler::ir::ResolvedTypeRef, primitive: &str) -> bool {
     use ess_compiler::ir::{ResolvedBody, ResolvedTypeRef};
     match type_ref {
-        ResolvedTypeRef::Primitive { name } => name.as_str() == "Decimal",
-        ResolvedTypeRef::Optional { of } | ResolvedTypeRef::List { of } => decimal(ir, of),
+        ResolvedTypeRef::Primitive { name } => name.as_str() == primitive,
+        ResolvedTypeRef::Optional { of } | ResolvedTypeRef::List { of } => {
+            is_primitive(ir, of, primitive)
+        }
         ResolvedTypeRef::Declared { name } => match &ir.named_type(name).body {
-            ResolvedBody::Newtype { of, .. } => decimal(ir, of),
+            ResolvedBody::Newtype { of, .. } => is_primitive(ir, of, primitive),
             _ => false,
         },
         ResolvedTypeRef::Map { .. } => false,
     }
+}
+
+/// Whether `text` is an RFC 3339 `date-time` (§5.6), as ESS 0.99.0's generated servers read a
+/// `Timestamp` (`json::timestamp_at`, `date_time` in the server `ess generate synthesize --http`
+/// emits): a date that exists, `T` and `Z` in either case, a fraction of any number of digits, an
+/// offset `Z` or `±hh:mm`, and a leap second only on the last minute of a UTC day. ESS publishes
+/// it only as emitted source, so it is written here to the same rule.
+pub(crate) fn date_time(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let digits = |from: usize, to: usize| -> Option<u32> {
+        let part = bytes.get(from..to)?;
+        part.iter().all(u8::is_ascii_digit).then(|| {
+            part.iter()
+                .fold(0, |held, digit| held * 10 + u32::from(digit - b'0'))
+        })
+    };
+    if bytes.len() < 20
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || !matches!(bytes[10], b'T' | b't')
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+    {
+        return false;
+    }
+    let (Some(year), Some(month), Some(day)) = (digits(0, 4), digits(5, 7), digits(8, 10)) else {
+        return false;
+    };
+    let (Some(hour), Some(minute), Some(second)) = (digits(11, 13), digits(14, 16), digits(17, 19))
+    else {
+        return false;
+    };
+    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    let days = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    if day == 0 || day > days || hour > 23 || minute > 59 || second > 60 {
+        return false;
+    }
+    let mut at = 19;
+    if bytes[at] == b'.' {
+        at += 1;
+        let fraction = at;
+        while bytes.get(at).is_some_and(u8::is_ascii_digit) {
+            at += 1;
+        }
+        if at == fraction {
+            return false;
+        }
+    }
+    let day_minutes = 24 * 60;
+    let utc = match bytes.get(at) {
+        Some(b'Z' | b'z') if at + 1 == bytes.len() => hour * 60 + minute,
+        Some(sign @ (b'+' | b'-')) if at + 6 == bytes.len() && bytes[at + 3] == b':' => {
+            let (Some(offset_hour), Some(offset_minute)) =
+                (digits(at + 1, at + 3), digits(at + 4, at + 6))
+            else {
+                return false;
+            };
+            if offset_hour > 23 || offset_minute > 59 {
+                return false;
+            }
+            let local = hour * 60 + minute + day_minutes;
+            let offset = offset_hour * 60 + offset_minute;
+            if *sign == b'+' {
+                (local - offset) % day_minutes
+            } else {
+                (local + offset) % day_minutes
+            }
+        }
+        _ => return false,
+    };
+    second < 60 || utc == day_minutes - 1
 }
 
 /// Exact decimal text: an optional `-` and one or more ASCII digits.
@@ -1362,6 +1476,8 @@ fn route(
         responding: Vec::new(),
         bodies: BTreeMap::new(),
         headers: BTreeMap::new(),
+        view_answer: ViewAnswer::default(),
+        empty: None,
         unserved: None,
         refused: Vec::new(),
         caller: caller.cloned(),
@@ -1382,6 +1498,8 @@ fn route(
             route.responding.clear();
             route.bodies.clear();
             route.headers.clear();
+            route.view_answer = ViewAnswer::default();
+            route.empty = None;
             route.refused.clear();
             route.unserved = Some(Unserved::Ingress(what));
         }
@@ -1501,10 +1619,11 @@ fn refuse(ir: &EssIr, command: &ess_compiler::ir::ResolvedCommand, route: &mut R
 }
 
 /// Fills `route`'s variables, input, request, statuses, the bodies its outcomes answer other
-/// than with the envelope and the headers they declare, and lists among its refused outcomes
+/// than with the envelope and the headers they declare, a view's answer form and its `single`
+/// route's answer for no row, and lists among its refused outcomes
 /// each one answered with a redirect or the `text` encoding ([`unwritten`]), or
 /// without a status; `Err` names what it uses that this ingress does not serve: a view answered
-/// other than as `rows` or with another representation its query selects, a standard
+/// with another representation its query selects, a standard
 /// refusal the binding answers its own way, a request body limit other than [`BODY_LIMIT`], a
 /// `multipart` request, input fields read from the query string beside the body
 /// (`request.query`), a command whose outcome answers with its retained result, a path variable
@@ -1524,6 +1643,8 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
             position,
             field: field.name.clone(),
             flat,
+            decimal: is_primitive(ir, &field.type_ref, "Decimal"),
+            instant: is_primitive(ir, &field.type_ref, "Timestamp"),
         });
     }
     if let Some(declared) = bound.declared
@@ -1628,9 +1749,8 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
         }
         ess_gen::http::Served::View(handle) => {
             if let Some(declared) = bound.declared {
-                if declared.body != ViewAnswer::bare(ViewBody::Rows) {
-                    return Err("a view answered other than as rows".to_owned());
-                }
+                route.view_answer = declared.body.clone();
+                route.empty = declared.empty.clone();
                 if !declared.representations.is_empty() {
                     return Err(
                         "a view whose query selects another representation of its rows, such as CSV"
@@ -1664,7 +1784,7 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
                     wire: ess_gen::schema::wire_field_name(param).to_owned(),
                     flat,
                     list,
-                    decimal: decimal(ir, &param.type_ref),
+                    decimal: is_primitive(ir, &param.type_ref, "Decimal"),
                 });
             }
         }
@@ -1713,7 +1833,7 @@ fn unwritten(listed: &ess_http::Outcome) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Caller, Flat, Queried, Surface, same_value, unique_members};
+    use super::{Caller, Flat, Queried, Surface, date_time, same_value, unique_members};
     use serde_json::{Value, json};
 
     #[test]
@@ -1791,6 +1911,32 @@ mod tests {
             flat: Flat::Text,
             list: false,
             decimal,
+        }
+    }
+
+    #[test]
+    fn an_instant_is_read_as_rfc_3339_spells_it() {
+        for admitted in [
+            "2026-11-25T10:00:00Z",
+            "2026-11-25t10:00:00z",
+            "2024-02-29T23:59:59.123456789+01:00",
+            "2026-12-31T23:59:60Z",
+            "2026-12-31T22:59:60-01:00",
+        ] {
+            assert!(date_time(admitted), "{admitted}");
+        }
+        for refused in [
+            "yesterday",
+            "2026-11-25",
+            "2026-11-25T10:00:00",
+            "2025-02-29T10:00:00Z",
+            "2026-11-25T24:00:00Z",
+            "2026-11-25T10:00:00.Z",
+            "2026-11-25T10:00:60Z",
+            "2026-11-25T10:00:00+1:00",
+            "2026-11-25 10:00:00Z",
+        ] {
+            assert!(!date_time(refused), "{refused}");
         }
     }
 

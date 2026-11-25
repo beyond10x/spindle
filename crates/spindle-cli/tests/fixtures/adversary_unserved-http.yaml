@@ -7,4 +7,6 @@ routes:
   - view: notes.pad.AllNotes
     method: get
     path: /notes
-    body: array
+    representations:
+      - query: {format: csv}
+        encoding: {csv: {separator: ","}}

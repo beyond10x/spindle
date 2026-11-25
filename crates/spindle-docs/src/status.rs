@@ -351,6 +351,20 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "Path variables of every scalar type",
+        "A path variable of an ess-http/1 binding whose field is a Boolean, Decimal, Timestamp, Duration or Uuid, or an unconstrained newtype of one such as an id type over Uuid, is read from its percent-decoded segment as ESS's generated servers read it, on a command route and on a view route; a segment the type refuses answers 400, and a binding that puts a constrained newtype in the path is refused by ESS with ESS-HTTP-009.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-ingress/tests/spindle-ingress/binding_shapes.rs::a_path_variable_of_each_admitted_type_is_read_as_the_type",
+    ),
+    shipped(
+        "Execution",
+        "View answer forms",
+        "A view an ess-http/1 binding answers with body: array, body: single or either under one member, {<member>: array} or {<member>: single}, answers its rows bare, its first row bare, or the same as the one member of an object, as ess generate --kind openapi publishes it; a single view holding no row answers its empty status and body, unwrapped.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-ingress/tests/spindle-ingress/binding_shapes.rs::a_wrapped_view_answers_its_rows_or_its_one_row_under_its_member",
+    ),
+    shipped(
+        "Execution",
         "Form and query requests",
         "A command an ess-http/1 binding reads as request: {encoding: form} or {encoding: query} is served: its input is read from an application/x-www-form-urlencoded body or from the query string, each value by its field's type as ESS's served application reads it; an undeclared field, one the path carries, or a form body under another Content-Type is refused 400 and writes nothing.",
         "/docs/concepts/capabilities",
