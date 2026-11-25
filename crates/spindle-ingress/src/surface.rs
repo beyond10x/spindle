@@ -1141,6 +1141,47 @@ impl Surface {
             .collect()
     }
 
+    /// What a served run reports before it listens, one line each: every operation not served
+    /// ([`Route::not_served`], in the order of [`Surface::unserved`]), then every outcome of a
+    /// served command answered `501` where a request selects it ([`Route::refused`]), route by
+    /// route. `run` prints each on stderr; a wasm host hands them to its caller.
+    pub fn report(&self) -> Vec<String> {
+        let unserved = self.unserved().into_iter().filter_map(Route::not_served);
+        let refused = self.routes.iter().flat_map(|route| {
+            route.refused().iter().map(move |(outcome, why)| {
+                format!(
+                    "unsupported outcome `{}/{outcome}` at {} {}, answered 501 where a request \
+                     selects it: {why}",
+                    route.operation.name(),
+                    route.method.as_str().to_uppercase(),
+                    route.path
+                )
+            })
+        });
+        unserved.chain(refused).collect()
+    }
+
+    /// Whether the surface serves no operation, one of them one the ingress cannot route: a run
+    /// that would is refused before it listens, with [`Surface::report`]'s lines and
+    /// [`Surface::serves_nothing_reason`].
+    pub fn serves_nothing(&self) -> bool {
+        let unserved = self.unserved();
+        !unserved.is_empty()
+            && unserved.len() == self.routes.len()
+            && unserved
+                .iter()
+                .any(|route| matches!(route.unserved(), Some(Unserved::Ingress(_))))
+    }
+
+    /// Why a run serving `components` is refused where [`Surface::serves_nothing`].
+    pub fn serves_nothing_reason(components: &[String]) -> String {
+        format!(
+            "{} serves no operation: each one above is one this ingress cannot route or the \
+             kernel does not run",
+            components.join(", ")
+        )
+    }
+
     /// The route a request with `method` (compared exactly, RFC 9110 §9.1) and `path` is for.
     /// Compiling the binding refuses two templates of one method that are the same but for
     /// variable names (`ESS-HTTP-010`) or that cross (`ESS-HTTP-011`); from ESS 0.89.0 it admits a

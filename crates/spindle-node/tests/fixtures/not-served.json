@@ -1,0 +1,4 @@
+[
+  "unsupported outcome `shelf.box.PlaceBox/weighed` at POST /box/commands/PlaceBox, answered 501 where a request selects it: unsupported: `{generated: true}` on `weight` of type `Optional<Decimal>`; the runtime mints a `Uuid`, a `String`, an `Integer`, a `Boolean`, a `Bytes`, a `List` or a `Timestamp`, or a newtype of one without invariants, and builds a record without invariants, a union's first variant or a map of one entry keyed by text from them, in `shelf.box.PlaceBox/weighed`",
+  "unsupported outcome `shelf.box.LabelBox/announced` at PUT /boxes/{box_id}/label, answered 501 where a request selects it: this ingress does not serve announced answered with a redirect"
+]

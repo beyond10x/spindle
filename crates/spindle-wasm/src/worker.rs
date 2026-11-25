@@ -5,13 +5,11 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use ess_compiler::EssIr;
-use ess_gen::http::Binding;
 use js_sys::{Promise, Reflect, Uint8Array};
 use serde_json::Value;
-use spindle_capability::{Capability, Environment};
-use spindle_host::{Answers, Host, Stores, SystemClock};
-use spindle_ingress::{HTTP_LOOPBACK, Resolved, Surface};
+use spindle_embed::{Opened, Opening};
+use spindle_host::{Stores, SystemClock};
+use spindle_ingress::Resolved;
 use spindle_kernel::{Change, Removal, Store, StoreError, Stored};
 use spindle_store_browser::BrowserStore;
 use wasm_bindgen::prelude::*;
@@ -28,11 +26,11 @@ pub struct Spindle {
 }
 
 struct Inner {
-    surface: Surface,
     /// The origin of the global scope the host runs in: the only one it answers.
     origin: String,
     base: String,
-    host: RefCell<Host>,
+    /// The host and the routes it serves (`spindle_embed`).
+    opened: RefCell<Opened>,
     /// Every IndexedDB store the host writes to, flushed before each answer.
     stores: Vec<Kept>,
     /// Settles once the request before the last one is answered.
@@ -64,7 +62,7 @@ impl Spindle {
             return false;
         };
         !matches!(
-            self.inner.surface.resolve(method, &path),
+            self.inner.opened.borrow().surface().resolve(method, &path),
             Resolved::NotFound
         )
     }
@@ -122,17 +120,13 @@ impl Inner {
         };
         let content_type = request.headers().get("content-type")?;
         let body = Uint8Array::new(&JsFuture::from(request.array_buffer()?).await?).to_vec();
-        let routed = spindle_ingress::route(
-            &self.surface,
-            &mut self.host.borrow_mut(),
-            spindle_ingress::Request {
-                method: request.method(),
-                path,
-                query,
-                content_type,
-                body,
-            },
-        );
+        let routed = self.opened.borrow_mut().answer(spindle_ingress::Request {
+            method: request.method(),
+            path,
+            query,
+            content_type,
+            body,
+        });
         for store in &self.stores {
             // The store is taken out of its cell while the flush awaits, so no borrow is held
             // across it; requests are answered one at a time, so the host does not reach for it
@@ -144,44 +138,26 @@ impl Inner {
             store.replace(Some(flushing));
             flushed.map_err(|error| JsError::new(&error.to_string()))?;
         }
-        respond(&routed.response)
+        respond(&routed)
     }
 }
 
-/// The statuses the Fetch standard gives a null body: a `Response` built with one and a body is
-/// refused (`TypeError`), so the fetch it answers would reject.
-const NULL_BODY: [u16; 5] = [101, 103, 204, 205, 304];
-
-/// `response` as a `Response`: its status, its body as [`spindle_ingress::CONTENT_TYPE`] (or the
-/// panel's or the metrics' media type, where the response says it is one of them) where
-/// it has one and the status may carry one ([`NULL_BODY`]), `Allow` where it carries it, and the
-/// headers the binding declares for it.
+/// `response` as a `Response`, with the headers and body `spindle_embed::answered` gives it: its
+/// body as [`spindle_ingress::CONTENT_TYPE`] (or the panel's or the metrics' media type, where the
+/// response says it is one of them) where it has one and the status may carry one
+/// ([`spindle_embed::NULL_BODY`]: a `Response` built with one of those and a body is refused, so
+/// the fetch it answers would reject), `Allow` where it carries it, and the headers the binding
+/// declares for it, none of which replaces one written before it.
 fn respond(response: &spindle_ingress::Response) -> Result<Response, JsValue> {
+    let answered = spindle_embed::answered(response);
     let headers = Headers::new()?;
-    let body = (!response.body.is_empty() && !NULL_BODY.contains(&response.status))
-        .then_some(response.body.as_str());
-    if response.panel {
-        headers.set("content-type", spindle_ingress::PANEL_MEDIA)?;
-        headers.set("content-security-policy", spindle_ingress::PANEL_POLICY)?;
-    } else if response.metrics && body.is_some() {
-        headers.set("content-type", spindle_ingress::METRICS_MEDIA)?;
-    } else if body.is_some() {
-        headers.set("content-type", spindle_ingress::CONTENT_TYPE)?;
-    }
-    if let Some(allow) = &response.allow {
-        headers.set("allow", allow)?;
-    }
-    // The headers the binding declares, after those written above, none of which one of them
-    // replaces.
-    for (name, value) in &response.headers {
-        if !headers.has(name)? {
-            headers.append(name, &byte_string(value))?;
-        }
+    for (name, value) in &answered.headers {
+        headers.append(name, &byte_string(value))?;
     }
     let init = ResponseInit::new();
     init.set_status(response.status);
     init.set_headers(&headers);
-    Response::new_with_opt_str_and_init(body, &init)
+    Response::new_with_opt_str_and_init(answered.body, &init)
 }
 
 /// `value`'s UTF-8 bytes as a ByteString, one code point per byte, so a declared header carries the
@@ -194,26 +170,16 @@ fn byte_string(value: &str) -> String {
 async fn opened(config: &str) -> Result<Spindle, String> {
     let config: Config =
         serde_json::from_str(config).map_err(|error| format!("the configuration: {error}"))?;
-    let (names, texts): (Vec<String>, Vec<String>) = config.sources.into_iter().unzip();
-    let ir = spindle_spec::compile(&names, &texts)
-        .map_err(|error| format!("the specification: {error}"))?;
-    let environment = Environment::parse(&config.environment)
-        .map_err(|error| format!("the environment: {error}"))?;
-    let placements =
-        spindle_host::admit(&ir, &environment).map_err(|refused| refused.to_string())?;
+    let admitted = spindle_embed::admit(config.sources, &config.environment)?;
 
     let mut stores = Stores::new();
     let mut browser = Vec::new();
     let mut reached = Vec::new();
-    for (component, bindings) in &placements {
-        let bound = |capability: &str| {
-            bindings
-                .iter()
-                .find(|binding| binding.capability.as_str() == capability)
-                .map(|binding| binding.implementation.as_str())
-        };
-        let state = bound(Capability::STORE_DURABLE).or_else(|| bound("store.ephemeral"));
-        if state == Some(spindle_store_browser::IMPLEMENTATION) {
+    for placed in admitted.placed() {
+        let component = placed.component;
+        if placed.state.map(|state| state.implementation)
+            == Some(spindle_store_browser::IMPLEMENTATION)
+        {
             let name = format!("{}/{component}", config.database);
             let store = Rc::new(RefCell::new(Some(
                 BrowserStore::open(&name)
@@ -221,11 +187,11 @@ async fn opened(config: &str) -> Result<Spindle, String> {
                     .map_err(|error| format!("opening {name}: {error}"))?,
             )));
             browser.push(store.clone());
-            stores.insert(component.clone(), Box::new(Shared(store)));
+            stores.insert(component.to_owned(), Box::new(Shared(store)));
         }
-        match bound(Capability::INGRESS_NETWORK) {
+        match placed.network {
             None => {}
-            Some(SERVICE_WORKER) => reached.push(component.clone()),
+            Some(SERVICE_WORKER) => reached.push(component.to_owned()),
             Some(other) => {
                 return Err(format!(
                     "{component} has ingress.network bound to `{other}`; a Service Worker serves \
@@ -235,24 +201,21 @@ async fn opened(config: &str) -> Result<Spindle, String> {
         }
     }
 
-    let decider = config
-        .decisions
-        .map(|text| Answers::parse(&ir, &text).map(Answers::served))
-        .transpose()
-        .map_err(|error| format!("the decisions file: {error}"))?;
-    let binding = config.binding.map(|text| binding(&ir, &text)).transpose()?;
-    let surface = Surface::new(&ir, &reached, binding.as_ref())
-        .and_then(|surface| surface.with_console(HTTP_LOOPBACK))
-        .map_err(|refused| format!("the routes: {refused}"))?;
-    let host = Host::supplied(ir, &environment, Arc::new(SystemClock), decider, stores)
-        .map_err(|error| error.to_string())?;
+    let opened = admitted.open(Opening {
+        stores,
+        reached,
+        decisions: config.decisions,
+        answer_default: false,
+        binding: config.binding,
+        worlds: false,
+        clock: Arc::new(SystemClock),
+    })?;
     let origin = origin().ok_or("the global scope has no location.origin")?;
     Ok(Spindle {
         inner: Rc::new(Inner {
-            surface,
             origin,
             base: config.base,
-            host: RefCell::new(host),
+            opened: RefCell::new(opened),
             stores: browser,
             tail: RefCell::new(Promise::resolve(&JsValue::UNDEFINED)),
         }),
@@ -263,19 +226,6 @@ async fn opened(config: &str) -> Result<Spindle, String> {
 fn origin() -> Option<String> {
     let location = Reflect::get(&js_sys::global(), &"location".into()).ok()?;
     Reflect::get(&location, &"origin".into()).ok()?.as_string()
-}
-
-/// An `ess-http/1` binding's text, YAML or JSON, compiled by ESS against `ir`.
-fn binding(ir: &EssIr, text: &str) -> Result<Binding, String> {
-    let spec = if serde_json::from_str::<Value>(text).is_ok() {
-        ess_http::HttpSpec::from_json(text).map_err(|error| error.to_string())
-    } else {
-        ess_http::HttpSpec::from_yaml(text).map_err(|error| error.to_string())
-    }
-    .map_err(|error| format!("the binding: {error}"))?;
-    let compiled = ess_http::compile(&spec, ir, &ess_gen::http::derived(ir))
-        .map_err(|diagnostics| format!("the binding was refused:\n{diagnostics}"))?;
-    Binding::new(compiled).map_err(|open| format!("the binding cannot be served:\n{open}"))
 }
 
 /// A `BrowserStore` both the host and this crate hold: `None` only while a flush awaits.

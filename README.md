@@ -146,12 +146,40 @@ prefix, and an exact key wins over it.
 | `postgres` | the tables `spindle_<component>_*` of the PostgreSQL the settings `database_url`, `database_ca`, `database_schema`, `database_pool` and `database_connections` name; `b10x-spindle store migrate` creates them ([environment and admission](https://beyond10x.github.io/spindle/docs/concepts/environment-and-admission#state-in-postgresql)); `b10x-spindle state move` moves a `run --state` directory into them, versions kept ([moving a state directory](https://beyond10x.github.io/spindle/docs/concepts/environment-and-admission#moving-a-state-directory-into-postgresql)) |
 | `indexeddb` | one IndexedDB database per component, in the Service Worker host |
 
+The Node export keeps every component in `memory` and serves components whose `ingress.network`
+is bound to `node`.
+
 An `external.` key may name an HTTP call the document declares as `[http.<name>]`, which `run`
 asks for each such cause ([an external cause bound to an HTTP call](https://beyond10x.github.io/spindle/docs/concepts/environment-and-admission#an-external-cause-bound-to-an-http-call)).
 The call leaves the host only over verified TLS: an `https://` URL, its certificate verified
 against the platform's trust roots or the PEM file `ca_file` names. A plain `http://` URL is
 accepted only on loopback (`localhost`, `127.0.0.0/8`, `[::1]`). Any other URL is refused when
 the document is read.
+
+## Node export
+
+`spindle-node` serves a specification inside a Node program, as an in-process fake backend:
+
+```console
+cargo build --locked --release --target wasm32-unknown-unknown -p spindle-node
+wasm-bindgen --target web --out-dir target/spindle-node target/wasm32-unknown-unknown/release/spindle_node.wasm
+```
+
+```js
+import { readFileSync } from "node:fs";
+import { initSync, Spindle } from "./target/spindle-node/spindle_node.js";
+
+initSync({ module: readFileSync("./target/spindle-node/spindle_node_bg.wasm") });
+const spindle = Spindle.create({ sources, environment, decisions });
+const answer = await spindle.handle({ method: "GET", path: "/review/views/Submissions" });
+```
+
+`create` takes the specification's sources, an environment whose stores are bound to `memory`
+(`examples/environments/node.toml`), and optionally a decisions file, `answerDefault` and an
+`ess-http/1` binding. `handle` answers through the router the loopback listener calls, the console
+routes included; `notServed`, `reset(world)` and `dispose` complete it
+([the Node export](https://beyond10x.github.io/spindle/docs/concepts/environment-and-admission#the-node-export)).
+`task check:node_serves_a_specification` builds it and runs its tests under Node.
 
 ## Layout
 
@@ -168,6 +196,8 @@ the document is read.
 | `crates/spindle-host` | runs every component of a system in one process |
 | `crates/spindle-store-browser` | the store on the browser's IndexedDB, for a run in a page or a Service Worker |
 | `crates/spindle-wasm` | the wasm-bindgen entry a Service Worker opens: a specification compiled in the browser, its routes and the console routes answered by the same router the loopback listener calls, state in IndexedDB, external outcomes from a decisions file |
+| `crates/spindle-embed` | a host opened in-process from texts and answered one request at a time, which the Service Worker host and the Node export share |
+| `crates/spindle-node` | the Node export: an ES module (`wasm-bindgen --target web`) that serves a specification in-process in a Node program, every store in memory |
 | `crates/spindle-conformance` | runs an ESS conformance suite against every component in one process |
 | `crates/spindle-control` | the control process `deploy` runs: launch, collect, and the observe API and UI on 127.0.0.1 |
 | `crates/spindle-cli` | the `b10x-spindle` binary |

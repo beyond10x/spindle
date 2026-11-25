@@ -6,6 +6,24 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- The Node export, `spindle-node`: the host compiled to WebAssembly and bound by
+  `wasm-bindgen --target web` into an ES module that Node 22 loads from bytes, with no file,
+  socket or thread of its own. `Spindle.create` opens a specification from its sources, an
+  environment whose stores are all bound to `memory` (`ingress.network` bound to `node`,
+  `examples/environments/node.toml`), a decisions file or `answerDefault`, and an optional
+  `ess-http/1` binding, and refuses what `run` refuses before listening. `notServed()` lists the
+  lines `run` prints before it listens; `handle` answers one request at a time through the router
+  the loopback listener calls, console routes included, with plain objects in and out;
+  `reset(world)` loads a world as `POST /api/reset` does; `dispose()` drops the instance.
+  Several instances in one process share nothing. `task check:node_serves_a_specification`
+  replays exchanges the loopback listener answers natively.
+- `spindle-embed`: the opening of a host from texts and the mapping of an answer to its headers
+  and body, shared by the Service Worker host and the Node export. `run`'s world reader is
+  `spindle_host::read_world`, and the lines `run` prints before listening are
+  `Surface::report`, so every host reads a world and reports what it does not serve the same way.
+
 ### Fixed
 
 - A seed entry that repeats the request id of an earlier entry that was refused is submitted

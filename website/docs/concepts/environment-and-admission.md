@@ -62,13 +62,13 @@ admitted on microvm
 
 | Capability | Implementations the runtime runs today |
 |---|---|
-| `store.durable` | `memory`; `sqlite`; `postgres`, served by `run` ([below](#state-in-postgresql)); `indexeddb`, one IndexedDB database per component, in the Service Worker host |
+| `store.durable` | `memory`; `sqlite`; `postgres`, served by `run` ([below](#state-in-postgresql)); `indexeddb`, one IndexedDB database per component, in the Service Worker host; `memory` only, in the Node export ([below](#the-node-export)) |
 | `channel` | `in-process` in the one-process host (`play`, `run`); `tcp` between processes, one component each (`play --component`) |
 | `timer` | `tokio`, the name the shipped environments give `spindle-timer`'s schedule |
 | `clock` | `system` |
 | `identity.mint` | `uuid-v4` |
-| `ingress.network` | `http-loopback`: `run` serves the routes and the console routes over HTTP on 127.0.0.1; `service-worker`: the Service Worker host (`spindle-wasm`, the site in `web/`) answers the specification's routes and the console routes in the browser, through the router the loopback listener calls |
-| `external.*` | any binding: `run` answers from the line, `--decisions` or `--answer-default`, unless the binding is an HTTP call the environment declares ([below](#an-external-cause-bound-to-an-http-call)); `decisions-file`: the Service Worker host answers each external outcome from the decisions file it is opened with, as `run --decisions` answers it |
+| `ingress.network` | `http-loopback`: `run` serves the routes and the console routes over HTTP on 127.0.0.1; `service-worker`: the Service Worker host (`spindle-wasm`, the site in `web/`) answers the specification's routes and the console routes in the browser, through the router the loopback listener calls; `node`: the Node export (`spindle-node`) answers them in-process, each request handed to it by the Node program that loaded it ([below](#the-node-export)) |
+| `external.*` | any binding: `run` answers from the line, `--decisions` or `--answer-default`, unless the binding is an HTTP call the environment declares ([below](#an-external-cause-bound-to-an-http-call)); `decisions-file`: the Service Worker host answers each external outcome from the decisions file it is opened with, as `run --decisions` answers it; the Node export answers from its decisions file and the answer default, as `run --decisions` and `--answer-default` do |
 
 The SQLite store keeps one `<component>.sqlite` file per component in the directory `run --state`
 gives. It keeps each entity's rows
@@ -79,8 +79,8 @@ keeps its mode.
 
 A host refuses, as unsupported, a binding it cannot run: the one-process host refuses a `tcp`
 channel. A host opened with nothing to answer external causes refuses every `external.*` outcome.
-`run` refuses an `ingress.network` binding other than `http-loopback`, and the Service Worker host
-one other than `service-worker`, before anything is served.
+`run` refuses an `ingress.network` binding other than `http-loopback`, the Service Worker host one
+other than `service-worker`, and the Node export one other than `node`, before anything is served.
 
 ## An external cause bound to an HTTP call
 
@@ -236,6 +236,58 @@ the file, for that start. The run submits the whole file on every start, so:
   again, or put the seeded rows into the world.
 - Only a served `run` submits a seed. `play` and `deploy` stop with exit 1 on an environment
   document with a `[seed]` table, as `run` does where nothing requires `ingress.network`.
+
+## The Node export
+
+`spindle-node` serves a specification inside a Node program, as an in-process fake backend: no
+process, port, file or thread of its own. It is the host compiled to WebAssembly and bound by
+`wasm-bindgen --target web`, an ES module whose glue imports nothing; Node 22 loads it from bytes
+the program reads.
+
+```console
+cargo build --locked --release --target wasm32-unknown-unknown -p spindle-node
+wasm-bindgen --target web --out-dir target/spindle-node target/wasm32-unknown-unknown/release/spindle_node.wasm
+```
+
+```js
+import { readFileSync } from "node:fs";
+import { initSync, Spindle } from "./target/spindle-node/spindle_node.js";
+
+initSync({ module: readFileSync("./target/spindle-node/spindle_node_bg.wasm") });
+const spindle = Spindle.create({
+  sources: [["system.yaml", systemYaml], ["domains/review.yaml", reviewYaml]],
+  environment: readFileSync("examples/environments/node.toml", "utf8"),
+  decisions: decisionsToml,
+});
+const answer = await spindle.handle({
+  method: "POST",
+  path: "/review/commands/Submit",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ submission_id: "s1", amount: 12 }),
+});
+// answer.status, answer.headers ([name, value] pairs), answer.body (Uint8Array)
+spindle.dispose();
+```
+
+- `Spindle.create(config)` takes a JSON string or a plain object: `sources` (each
+  `[name, text]`), `environment` (TOML), and optionally `decisions` (TOML), `answerDefault`
+  (`true` answers what the decisions file does not by each command's default branch, as
+  `run --answer-default`) and `binding` (an `ess-http/1` binding, YAML or JSON). Any other key is
+  refused. It throws an `Error` naming the reason for what `run` refuses before listening, and
+  for a component whose state is bound to anything but `memory` or whose `ingress.network` is
+  bound to anything but `node` (`examples/environments/node.toml`).
+- `spindle.notServed()` lists what `run` prints on stderr before it listens: each operation not
+  served and each outcome answered `501` where a request selects it, with why.
+- `spindle.handle({ method, path, query, headers, body })` answers through the router the loopback
+  listener calls, the console routes included. `path` may carry its query; only `content-type` is
+  read from `headers`; `body` is a string or a `Uint8Array`. Each call is answered before it
+  returns, so requests are answered one at a time in the order they arrive.
+- `spindle.reset(world)` answers as `POST /api/reset` with `world` as its body: every store
+  emptied, then the world's rows, decision table and mint seed loaded, as `run` loads them.
+- `spindle.dispose()` drops the host; every later call throws. Instances share nothing.
+
+The clock is the system clock, and periodic bindings do not fire; fixed actors, a clock under the
+program's control, seeds and event delivery are planned (`epic:node-export`).
 
 ## State in PostgreSQL
 

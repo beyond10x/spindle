@@ -42,7 +42,7 @@ scope:
   path: examples/environments/node.toml
 - confidence: inferred
   path: website/docs
-revision: 8
+revision: 9
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-25T01:20:12Z", actor: "human:timo", revision: 7, decided_on: {"recorded":{"review_outcome":7}}}
 - {from: "proposed", to: "active", at: "2026-11-25T01:20:12Z", actor: "human:timo", revision: 8, decided_on: {"recorded":{"review_outcome":7}}}
@@ -94,8 +94,9 @@ tests load the module from the directory `SPINDLE_NODE_MODULE` names, the lane's
      its third exchange, `Decide`, is vetoed (`502`) as the decisions file says.
    - `the answer default answers external outcomes as run --answer-default does` — item 2's
      instance is created with `answerDefault: true` and no decisions file;
-     `world-exchanges.json` holds a `Submit` and a `Decide` answered by their commands' default
-     branches, recorded natively with `--answer-default`'s answers.
+     `world-exchanges.json` opens with a `Submit` its default branch answers (`202`) and a
+     `Decide`, which declares no default branch and is refused `501` naming that, both recorded
+     natively with `--answer-default`'s answers.
 4. `create returns the not-served report` — for
    `crates/spindle-cli/tests/fixtures/outcome-scoped-refusal` with its `ess-http/1` binding,
    `notServed()` equals `crates/spindle-node/tests/fixtures/not-served.json`: the lines
@@ -125,9 +126,9 @@ tests load the module from the directory `SPINDLE_NODE_MODULE` names, the lane's
    - `refuses external outcomes nothing answers` — the review fixture with neither `decisions`
      nor `answerDefault`: the whole refusal `Host::supplied` gives without a decider (R).
    - `refuses a surface that serves no operation` —
-     `crates/spindle-cli/tests/fixtures/unservable`, whole message: `<component> serves no
-     operation: ...`, the text `run` prints (R, one function in `spindle-ingress` that `run`
-     calls).
+     `crates/spindle-cli/tests/fixtures/unservable`, whole message: the report's lines, then
+     `<component> serves no operation: ...`, the lines and the reason `run` prints (R, functions
+     in `spindle-ingress` that `run` calls).
 6. `two instances share nothing` — a write in one instance is not seen by a second in the same
    process.
 7. `a disposed instance refuses every call` — after `dispose()`, `handle`, `reset`, `notServed`
