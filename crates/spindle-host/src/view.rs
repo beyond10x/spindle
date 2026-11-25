@@ -64,7 +64,8 @@ const STATE: &str = "state";
 ///
 /// An aggregation (`group_by:` and fields with `aggregate:`) is answered ([`aggregate`]) where
 /// each measure's `where:` is a filter read here, and no field of the view is read through a
-/// reference. A computed field (`expr:`) is answered ([`project`]).
+/// reference. A computed field (`expr:`) is answered ([`project`]). Paging (`paging:`) is
+/// answered ([`parameters`], [`Slice`], `story:view-paging`).
 pub(crate) fn unsupported(ir: &EssIr, view: &ResolvedView) -> Option<String> {
     if let Some(construct) = view
         .aggregation
@@ -74,8 +75,6 @@ pub(crate) fn unsupported(ir: &EssIr, view: &ResolvedView) -> Option<String> {
         Some(construct)
     } else if view.absent.is_some() {
         Some("a default row for an absent identity".to_owned())
-    } else if view.paging.is_some() {
-        Some("paging".to_owned())
     } else {
         match &view.filter {
             Some(filter) if !reads(ir, view, filter) => Some(format!(
@@ -420,20 +419,50 @@ fn ordered(resolution: &Resolution<ResolvedTypeRef>) -> bool {
     }
 }
 
+/// What a read of a view is given, as [`parameters`] reads it: the facts its filter reads under
+/// `param.`, and, for a paged read, the slice of its ordered rows it answers.
+pub(crate) struct Given {
+    /// The parameter values, as the facts the filter reads.
+    pub(crate) facts: FactStore,
+    /// The rows a read that gives a page and its size answers; `None` for every other read.
+    pub(crate) slice: Option<Slice>,
+}
+
+/// The rows a paged read answers of a view's rows in their order: `size` of them, after the first
+/// `offset`, as ESS's interpreter cuts a page (`ess-conformance` `src/interpret/views.rs` at ESS
+/// 0.99.1, `query`: `skip(offset).take(size)`).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Slice {
+    offset: usize,
+    size: usize,
+}
+
+impl Slice {
+    /// The rows of `rows`, in their order, this slice answers; none past the last row.
+    pub(crate) fn cut<T>(self, rows: Vec<T>) -> Vec<T> {
+        rows.into_iter().skip(self.offset).take(self.size).collect()
+    }
+}
+
 /// The values `given` holds for `view`'s parameters, by declared name, as the facts its filter
 /// reads under `param.`. Each value given is checked as ESS's interpreter checks a view parameter
 /// (`interpret/views.rs:45` `query`, `input::validate_typed_value`) by [`spindle_kernel::admits`],
 /// the check every command input goes through: its type, and a newtype's prefix, alphabet and
 /// invariants. It is then bound by ESS ([`ess_conformance::input::bind`]).
 ///
+/// The two parameters a view's `paging:` reads may both be left out whatever type they are
+/// declared at, as ESS's interpreter reads them (`interpret/views.rs` at ESS 0.99.1, `query`); the
+/// slice they ask for is read by [`slice`].
+///
 /// # Errors
 /// Naming the parameter: one `view` does not declare, a required one `given` leaves out (or holds
-/// as `null`), or one whose value is not of its declared type or breaks its newtype.
+/// as `null`), or one whose value is not of its declared type or breaks its newtype; and a page
+/// or size [`slice`] refuses.
 pub(crate) fn parameters(
     ir: &EssIr,
     view: &ResolvedView,
     given: &Map<String, Value>,
-) -> Result<FactStore, String> {
+) -> Result<Given, String> {
     if let Some(name) = given
         .keys()
         .find(|name| !view.params.iter().any(|param| &param.name == *name))
@@ -451,11 +480,74 @@ pub(crate) fn parameters(
                 values.insert(param.name.clone(), node);
             }
             None if param.type_ref.is_optional() => {}
+            None if view
+                .paging
+                .as_ref()
+                .is_some_and(|paging| paging.reads(&param.name)) => {}
             None => return Err(format!("the parameter `{}` is required", param.name)),
         }
     }
-    ess_conformance::input::bind(ir, &view.params, &values, Completeness::Partial)
-        .map_err(|errors| format!("the parameter {errors}"))
+    let slice = slice(view, given)?;
+    let facts = ess_conformance::input::bind(ir, &view.params, &values, Completeness::Partial)
+        .map_err(|errors| format!("the parameter {errors}"))?;
+    Ok(Given { facts, slice })
+}
+
+/// The slice of `view`'s rows a read given `given` answers, where `view` declares `paging:`, as
+/// ESS's interpreter reads its page and size (`ess-conformance` `src/interpret/views.rs` at ESS
+/// 0.99.1, `query`): with neither given, every row (`None`); with both, `size` rows after the first
+/// `(page - first_page) * size`. There is no default size and no maximum.
+///
+/// # Errors
+/// Naming the parameter, where ESS's interpreter refuses the read: one of the two given without the
+/// other, a value that is no whole number of 0 or more, a page below `first_page`, or an offset
+/// past what a read can count (`checked_mul`).
+fn slice(view: &ResolvedView, given: &Map<String, Value>) -> Result<Option<Slice>, String> {
+    let Some(paging) = &view.paging else {
+        return Ok(None);
+    };
+    let read = |name: &str| given.get(name).filter(|value| !value.is_null());
+    let (page, size) = match (read(&paging.page), read(&paging.size)) {
+        (None, None) => return Ok(None),
+        (Some(page), Some(size)) => (page, size),
+        (Some(_), None) | (None, Some(_)) => {
+            return Err(format!(
+                "`{}` and `{}` page {}: a read gives both or neither",
+                paging.page, paging.size, view.name
+            ));
+        }
+    };
+    // Read as ESS reads it, an ESS number's exact integer (`Number::as_i64`): `1.0`, as a JSON
+    // value of an ESS `Integer` may arrive, is the page 1.
+    let whole = |name: &str, value: &Value| {
+        match serde_json::from_value::<Node>(value.clone()) {
+            Ok(Node::Number(number)) => number
+                .as_i64()
+                .and_then(|value| usize::try_from(value).ok()),
+            _ => None,
+        }
+        .ok_or_else(|| format!("`{name}` is {value}; a page and its size are 0 or more"))
+    };
+    let page = whole(&paging.page, page)?;
+    let size = whole(&paging.size, size)?;
+    let first = usize::try_from(paging.first_page)
+        .map_err(|_| format!("{} numbers its pages from {}", view.name, paging.first_page))?;
+    let offset = page
+        .checked_sub(first)
+        .ok_or_else(|| {
+            format!(
+                "`{}` is {page}; the pages of {} are numbered from {first}",
+                paging.page, view.name
+            )
+        })?
+        .checked_mul(size)
+        .ok_or_else(|| {
+            format!(
+                "`{}` {page} of `{}` {size} starts past the rows a read can count",
+                paging.page, paging.size
+            )
+        })?;
+    Ok(Some(Slice { offset, size }))
 }
 
 /// What a filter reads: the row's facts at their own paths, typed by the source's observable

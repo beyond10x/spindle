@@ -116,6 +116,29 @@ views:
     fields:
       - {name: note_id, type: notes.pad.NoteId}
       - {name: text, type: String}
+  - name: notes.pad.NotePagesByText
+    source: notes.pad.Note
+    consistency: read_your_writes
+    params:
+      - {name: p, type: Integer}
+      - {name: n, type: Integer}
+    order_by: [text asc]
+    paging: {page: p, size: n, first_page: 1}
+    fields:
+      - {name: note_id, type: notes.pad.NoteId}
+      - {name: text, type: String}
+  - name: notes.pad.FilteredNotePages
+    source: notes.pad.Note
+    consistency: read_your_writes
+    params:
+      - {name: page, type: Integer}
+      - {name: size, type: Integer}
+    order_by: [note_id asc]
+    filter: text != "c"
+    paging: {page: page, size: size, total: true}
+    fields:
+      - {name: note_id, type: notes.pad.NoteId}
+      - {name: text, type: String}
   - name: notes.pad.NoteById
     source: notes.pad.Note
     consistency: read_your_writes

@@ -12,7 +12,7 @@ use spindle_telemetry::Counters;
 use spindle_timer::Clock;
 
 use super::rows::Shared;
-use super::{Cursor, HostError, Page, Published, listing, owner_of, readable};
+use super::{Cursor, HostError, Listed, Page, Published, listing, owner_of, readable};
 use crate::admission::Placements;
 
 /// What reads a host's committed state from any thread while the host's own thread runs
@@ -253,6 +253,19 @@ impl Reader {
         view: &str,
         parameters: &Map<String, Value>,
     ) -> Result<Vec<Map<String, Value>>, HostError> {
+        self.listed_with(view, parameters).map(|listed| listed.rows)
+    }
+
+    /// The rows [`Reader::list_with`] answers, and the total a view declaring
+    /// `paging: {total: true}` answers beside them, as [`super::Host::listed_with`] answers both.
+    ///
+    /// # Errors
+    /// As [`Reader::list_with`].
+    pub fn listed_with(
+        &self,
+        view: &str,
+        parameters: &Map<String, Value>,
+    ) -> Result<Listed, HostError> {
         let listing = listing(&self.ir, self.clock.as_ref(), view, parameters)?;
         let read = read_from(&self.ir, listing.declared, listing.owner.clone())?;
         let readings = read

@@ -35,6 +35,14 @@
     },
     {
       "component": "pad",
+      "name": "notes.pad.FilteredNotePages",
+      "kind": "view",
+      "method": "GET",
+      "path": "/pad/views/FilteredNotePages",
+      "served": true
+    },
+    {
+      "component": "pad",
       "name": "notes.pad.KeptNotes",
       "kind": "view",
       "method": "GET",
@@ -61,12 +69,19 @@
     },
     {
       "component": "pad",
+      "name": "notes.pad.NotePagesByText",
+      "kind": "view",
+      "method": "GET",
+      "path": "/pad/views/NotePagesByText",
+      "served": true
+    },
+    {
+      "component": "pad",
       "name": "notes.pad.NotePages",
       "kind": "view",
       "method": "GET",
       "path": "/pad/views/NotePages",
-      "served": false,
-      "reason": "unsupported: view notes.pad.NotePages declares paging"
+      "served": true
     },
     {
       "component": "pad",

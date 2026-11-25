@@ -29,8 +29,9 @@ mod world;
 pub use admission::{Placements, Refusal, admissions, admit};
 pub use decisions::Answers;
 pub use host::{
-    Cause, Cursor, DELIVERY_LIMIT, Failed, Host, HostError, Page, Published, RETRY_ATTEMPTS, Ran,
-    Reader, RefusedCommand, Report, Retries, Seed, Stores, World, reads, retried, uncarried,
+    Cause, Cursor, DELIVERY_LIMIT, Failed, Host, HostError, Listed, Page, Published,
+    RETRY_ATTEMPTS, Ran, Reader, RefusedCommand, Report, Retries, Seed, Stores, World, reads,
+    retried, uncarried,
 };
 pub use spindle_timer::{Clock, ManualClock, SystemClock};
 pub use world::read_world;

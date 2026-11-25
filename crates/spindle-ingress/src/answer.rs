@@ -10,7 +10,7 @@ use ess_http::{
     ViewBody,
 };
 use serde_json::{Map, Value, json};
-use spindle_host::{Failed, Host, HostError, Reader};
+use spindle_host::{Failed, Host, HostError, Listed, Reader};
 use spindle_kernel::{DeclaredError, Event, ExecuteError};
 
 use crate::observe::Answered;
@@ -110,9 +110,11 @@ impl Answer {
 ///
 /// A view answers `200` with the body ESS publishes for it, `{"rows": [...]}`, every row it
 /// holds for its parameters: those `carried` holds from the path, and those `query` holds
-/// ([`Route::parameters`]), read by [`spindle_host::Host::list_with`]. A required parameter left out, one
-/// not of its declared type or breaking its newtype, or a malformed query value is refused `400`,
-/// naming it. A filter the model leaves unknown for a row is refused `501`, as ESS's interpreter
+/// ([`Route::parameters`]), read by [`spindle_host::Host::list_with`]. A paged view answers the
+/// page its page and size ask for, and `total` beside the rows where it declares `total: true`
+/// ([`spindle_host::Host::listed_with`]). A required parameter left out, one
+/// not of its declared type or breaking its newtype, a page without its size or one the view
+/// refuses, or a malformed query value is refused `400`, naming it. A filter the model leaves unknown for a row is refused `501`, as ESS's interpreter
 /// refuses the read.
 ///
 /// A body that is not a JSON object, or input the kernel refuses, is refused `400`. A command the
@@ -229,7 +231,7 @@ pub(crate) fn answering(
         Operation::View(view) => {
             let (answer, answered) = match viewed(route, &carried, query) {
                 Ok(given) => {
-                    let rows = host.list_with(view, &given);
+                    let rows = host.listed_with(view, &given);
                     listed(route, wired(host.ir(), view, rows))
                 }
                 Err(refusal) => (refusal, Answered::ingress()),
@@ -261,7 +263,7 @@ pub(crate) fn reading(
     Some(match viewed(route, &carried, query) {
         Ok(given) => listed(
             route,
-            wired(reader.ir(), view, reader.list_with(view, &given)),
+            wired(reader.ir(), view, reader.listed_with(view, &given)),
         ),
         Err(refusal) => (refusal, Answered::ingress()),
     })
@@ -355,32 +357,32 @@ fn viewed(
 /// field written under its wire name and its value by its type ([`crate::wire::fields`]), as
 /// ESS's projected row schema declares it and its generated servers answer it; the compiled IR
 /// carries the name (`naming.wire`), and ESS's interpreter, which answers semantic rows, never
-/// applies it (`story:view-field-wire-names`). A field without a wire name keeps its name.
-fn wired(
-    ir: &EssIr,
-    view: &str,
-    rows: Result<Vec<Map<String, Value>>, HostError>,
-) -> Result<Vec<Map<String, Value>>, HostError> {
+/// applies it (`story:view-field-wire-names`). A field without a wire name keeps its name. The
+/// total a paged view answers beside its rows is kept.
+fn wired(ir: &EssIr, view: &str, listed: Result<Listed, HostError>) -> Result<Listed, HostError> {
     let Some(declared) = ir
         .views()
         .iter()
         .find_map(|(name, declared)| (name.to_string() == view).then_some(declared))
     else {
-        return rows;
+        return listed;
     };
-    rows.map(|rows| {
-        rows.iter()
+    listed.map(|listed| Listed {
+        rows: listed
+            .rows
+            .iter()
             .map(|row| crate::wire::fields(ir, &declared.fields, row))
-            .collect()
+            .collect(),
+        total: listed.total,
     })
 }
 
-/// The answer to a view read at `route` that listed `rows`, answered by the model, in the form
-/// the route declares ([`shaped`]); `400` for parameter values the view refuses, and `501` for a
-/// view the host cannot read.
-fn listed(route: &Route, rows: Result<Vec<Map<String, Value>>, HostError>) -> (Answer, Answered) {
-    match rows {
-        Ok(rows) => (shaped(route, rows), Answered::model(None, Vec::new())),
+/// The answer to a view read at `route` that listed `listed`, answered by the model, in the form
+/// the route declares ([`shaped`]); `400` for parameter values the view refuses, a page or size
+/// among them, and `501` for a view the host cannot read.
+fn listed(route: &Route, listed: Result<Listed, HostError>) -> (Answer, Answered) {
+    match listed {
+        Ok(listed) => (shaped(route, listed), Answered::model(None, Vec::new())),
         Err(error @ HostError::Parameters { .. }) => {
             (Answer::refusal(400, error.to_string()), Answered::ingress())
         }
@@ -396,7 +398,12 @@ fn listed(route: &Route, rows: Result<Vec<Map<String, Value>>, HostError>) -> (A
 /// value as that one member of an object; the `empty` answer of a wrapped `single` is not wrapped.
 /// A `single` route without `empty`, which ESS does not compile, answers as `rows`, as ESS's
 /// server does.
-fn shaped(route: &Route, rows: Vec<Map<String, Value>>) -> Answer {
+///
+/// A view declaring `paging: {total: true}` answers `{"rows": [...], "total": n}`, the total
+/// beside the rows, as ESS publishes a paged answer (`ess-gen` `src/openapi.rs`, `paged_schema`);
+/// ESS binds such a view to `rows` only (`ESS-HTTP-024`, `ESS-HTTP-035`).
+fn shaped(route: &Route, listed: Listed) -> Answer {
+    let Listed { rows, total } = listed;
     let answer = |body| Answer {
         status: 200,
         body: Some(body),
@@ -419,7 +426,12 @@ fn shaped(route: &Route, rows: Vec<Map<String, Value>>) -> Answer {
                 };
             }
         },
-        _ => return answer(json!({"rows": rows})),
+        _ => {
+            return answer(match total {
+                Some(total) => json!({"rows": rows, "total": total}),
+                None => json!({"rows": rows}),
+            });
+        }
     };
     match &route.view_answer().0.member {
         None => answer(held),

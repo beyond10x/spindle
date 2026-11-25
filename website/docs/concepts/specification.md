@@ -168,8 +168,17 @@ reference. An absent optional operand, or a zero divisor outside
 `coalesce`, answers `null`. An `Integer` is answered as an integer, a `Decimal` as ESS writes it.
 A value ESS determines none of, such as an `Integer` past 64 bits, refuses the read.
 
-A default row for an absent identity, paging and any other filter are refused as unsupported, with
-the construct in the message.
+A paged view, `paging: {page: page, size: size, total: true}`, reads its page and its size from
+the query string under those parameters' names, as integers. A read that sends neither answers
+every row. A read that sends both answers `size` rows in `order_by` order, rows tied on every key
+in identity order, after the first `(page - first_page) * size`. With `total: true` the answer is
+`{"rows": [...], "total": n}`, `n` the rows the filter keeps before the page is cut; without it,
+`total` is left out. A page without its size, a size without its page, a negative value, a page
+below `first_page` and an offset too large to count are refused with `400`. There is no default
+size and no maximum.
+
+A default row for an absent identity and any other filter are refused as unsupported, with the
+construct in the message.
 
 `run` prints each view and command it does not serve at startup, as
 ``not served: view `<name>` at GET <path>: <reason>``. `admit` prints the same line for each view

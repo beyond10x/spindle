@@ -27,5 +27,6 @@ mod refusal_payload;
 mod router;
 mod served;
 mod topology;
+mod view_paging;
 mod view_parameters;
 mod view_wire_names;
