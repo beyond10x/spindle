@@ -5,7 +5,10 @@ use std::borrow::Cow;
 use ess_compiler::EssIr;
 use ess_compiler::ir::{ResolvedCommand, ResolvedError, ResolvedField};
 use ess_gen::http::{FORBIDDEN, NOT_GRANTED};
-use ess_http::{AnswerSource, Body, Challenge, Encoding, Header, Operation, Param, Unknown};
+use ess_http::{
+    AnswerSource, Body, Challenge, Encoding, Header, Operation, Param, RefusalBody, Unknown,
+    ViewBody,
+};
 use serde_json::{Map, Value, json};
 use spindle_host::{Failed, Host, HostError, Reader};
 use spindle_kernel::{DeclaredError, Event, ExecuteError};
@@ -225,7 +228,7 @@ pub(crate) fn answering(
         }
         Operation::View(view) => {
             let (answer, answered) = match viewed(route, &carried, query) {
-                Ok(given) => listed(host.list_with(view, &given)),
+                Ok(given) => listed(route, host.list_with(view, &given)),
                 Err(refusal) => (refusal, Answered::ingress()),
             };
             (answer, Vec::new(), answered)
@@ -253,7 +256,7 @@ pub(crate) fn reading(
         Err(refusal) => return Some((refusal, Answered::ingress())),
     };
     Some(match viewed(route, &carried, query) {
-        Ok(given) => listed(reader.list_with(view, &given)),
+        Ok(given) => listed(route, reader.list_with(view, &given)),
         Err(refusal) => (refusal, Answered::ingress()),
     })
 }
@@ -342,22 +345,55 @@ fn viewed(
     Ok(given)
 }
 
-/// The answer to a view read that listed `rows`: `200` `{"rows": [...]}`, answered by the model;
-/// `400` for parameter values the view refuses, and `501` for a view the host cannot read.
-fn listed(rows: Result<Vec<Map<String, Value>>, HostError>) -> (Answer, Answered) {
+/// The answer to a view read at `route` that listed `rows`, answered by the model, in the form
+/// the route declares ([`shaped`]); `400` for parameter values the view refuses, and `501` for a
+/// view the host cannot read.
+fn listed(route: &Route, rows: Result<Vec<Map<String, Value>>, HostError>) -> (Answer, Answered) {
     match rows {
-        Ok(rows) => (
-            Answer {
-                status: 200,
-                body: Some(json!({"rows": rows})),
-                headers: Vec::new(),
-            },
-            Answered::model(None, Vec::new()),
-        ),
+        Ok(rows) => (shaped(route, rows), Answered::model(None, Vec::new())),
         Err(error @ HostError::Parameters { .. }) => {
             (Answer::refusal(400, error.to_string()), Answered::ingress())
         }
         Err(error) => (Answer::refusal(501, error.to_string()), Answered::ingress()),
+    }
+}
+
+/// `rows`, a view's rows, answered as `route` declares, as ESS 0.99.0's generated server writes
+/// each form (`ess generate synthesize --http`, beyond10x/ess#755): `rows`, the default,
+/// `200` `{"rows": [...]}`; `array` `200` with the rows bare; `single` `200` with the first row
+/// bare, or, where the view holds none, the route's `empty` status with no body or its one literal
+/// member. Under a member, `{<member>: array}` and `{<member>: single}` answer the bare form's
+/// value as that one member of an object; the `empty` answer of a wrapped `single` is not wrapped.
+/// A `single` route without `empty`, which ESS does not compile, answers as `rows`, as ESS's
+/// server does.
+fn shaped(route: &Route, rows: Vec<Map<String, Value>>) -> Answer {
+    let answer = |body| Answer {
+        status: 200,
+        body: Some(body),
+        headers: Vec::new(),
+    };
+    let held = match route.view_answer() {
+        (form, _) if form.form == ViewBody::Array => {
+            Value::Array(rows.into_iter().map(Value::Object).collect())
+        }
+        (form, Some(empty)) if form.form == ViewBody::Single => match rows.into_iter().next() {
+            Some(row) => Value::Object(row),
+            None => {
+                return Answer {
+                    status: empty.status,
+                    body: match &empty.body {
+                        RefusalBody::None => None,
+                        RefusalBody::Literal { member, text } => Some(json!({member: text})),
+                    },
+                    headers: Vec::new(),
+                };
+            }
+        },
+        _ => return answer(json!({"rows": rows})),
+    };
+    match &route.view_answer().0.member {
+        None => answer(held),
+        Some(member) => answer(Value::Object(Map::from_iter([(member.clone(), held)]))),
     }
 }
 

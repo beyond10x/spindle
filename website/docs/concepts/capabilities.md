@@ -113,8 +113,21 @@ A command's request body is its input as ESS publishes it, less any field the pa
 field the command does not declare is refused. Where the binding says `request: {unknown: ignore}`,
 such a member or key is dropped instead, and one the path carries is dropped when it holds the
 path's value and refused `400` when it holds another. A `multipart` request, `request.query`, a
-request body limit other than 1 MiB, a view answered other than as `rows` and a view with
-`representations` are not served; `run` names each such route at startup.
+request body limit other than 1 MiB and a view with `representations` are not served; `run` names
+each such route at startup.
+
+A path variable carries a `String`, `Integer`, `Boolean`, `Decimal`, `Timestamp`, `Duration` or
+`Uuid` field, an enum, or a newtype of one without a prefix, an alphabet or another constraint,
+such as an id type over `Uuid`. The segment is percent-decoded and read as the field's type, as
+ESS's generated servers read it: a segment the type refuses, such as `not-a-uuid` for a `Uuid` or
+text that is not an RFC 3339 instant for a `Timestamp`, is refused `400`. ESS refuses a binding
+that puts a constrained newtype in the path (`ESS-HTTP-009`), and `run --http` prints that
+refusal and exits 1.
+
+A view answers `{"rows": [...]}` unless its route declares another `body`: `array` answers the
+rows bare, `single` the first row bare, or the route's `empty` status and body when the view
+holds none. `{<member>: array}` and `{<member>: single}` answer the same value as the one member
+of an object, `{"<member>": [...]}`; the `empty` answer is not wrapped.
 
 The command answers its outcome's status with the envelope ESS publishes for that outcome:
 

@@ -35,6 +35,7 @@ mod adversary_w17_conform;
 mod adversary_w21_state_lock;
 mod adversary_world;
 mod adversary_world_spec;
+mod binding_shapes;
 mod binding_where;
 mod caller;
 mod concurrent_reads;
