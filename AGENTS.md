@@ -68,8 +68,8 @@ environment, and executes it. Humans start at [`README.md`](README.md); the desi
 - **Confidentiality.** This repository is public. No name of an external company, customer,
   product or host, and no absolute home-directory path, in any file or commit message.
 - No comments in `Cargo.toml`, `Taskfile.yml`, workflow files or environment documents.
-- Builds: `CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_INCREMENTAL=0`, the tree's own
-  `target/`; check `df -h /` first. While implementing, build only the targets you change
+- Builds: `CARGO_INCREMENTAL=0`, the tree's own `target/`; check `df -h /` first. While
+  implementing, build only the targets you change
   (`cargo test -p <crate> --lib`, `--test <crate> <module>::`); `cargo test -p <crate>` links
   every test binary of the crate and runs once, at the gate.
 - Integration tests: one binary per crate, `tests/<crate>/main.rs` with one `mod` per file
