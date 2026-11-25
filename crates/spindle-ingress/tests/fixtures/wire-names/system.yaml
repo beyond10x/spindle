@@ -1,0 +1,19 @@
+format: ess/34
+system: catalog
+version: v1
+summary: Entries kept by a catalog, read by a view whose fields and parameter declare wire names.
+domains:
+  - catalog.entries
+components:
+  - component: entries
+    summary: Adds entries for callers outside the process and answers their view.
+    owns:
+      domains:
+        - catalog.entries
+    accepts:
+      commands:
+        - catalog.entries.AddEntry
+    publishes:
+      events:
+        - catalog.entries.EntryAdded
+    reached_by: network

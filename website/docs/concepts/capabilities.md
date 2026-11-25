@@ -116,6 +116,11 @@ path's value and refused `400` when it holds another. A `multipart` request, `re
 request body limit other than 1 MiB and a view with `representations` are not served; `run` names
 each such route at startup.
 
+A view's parameters are read from the query string under their wire names, and each row it
+answers holds its fields under their wire names, an enum variant in its wire spelling and a
+struct's members under their wire names, as the row schema ESS projects declares: a field
+declared `{name: job_id, wire: jobId}` is answered as `jobId`.
+
 A path variable carries a `String`, `Integer`, `Boolean`, `Decimal`, `Timestamp`, `Duration` or
 `Uuid` field, an enum, or a newtype of one without a prefix, an alphabet or another constraint,
 such as an id type over `Uuid`. The segment is percent-decoded and read as the field's type, as

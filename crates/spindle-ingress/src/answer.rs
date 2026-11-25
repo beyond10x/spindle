@@ -228,7 +228,10 @@ pub(crate) fn answering(
         }
         Operation::View(view) => {
             let (answer, answered) = match viewed(route, &carried, query) {
-                Ok(given) => listed(route, host.list_with(view, &given)),
+                Ok(given) => {
+                    let rows = host.list_with(view, &given);
+                    listed(route, wired(host.ir(), view, rows))
+                }
                 Err(refusal) => (refusal, Answered::ingress()),
             };
             (answer, Vec::new(), answered)
@@ -256,7 +259,10 @@ pub(crate) fn reading(
         Err(refusal) => return Some((refusal, Answered::ingress())),
     };
     Some(match viewed(route, &carried, query) {
-        Ok(given) => listed(route, reader.list_with(view, &given)),
+        Ok(given) => listed(
+            route,
+            wired(reader.ir(), view, reader.list_with(view, &given)),
+        ),
         Err(refusal) => (refusal, Answered::ingress()),
     })
 }
@@ -343,6 +349,30 @@ fn viewed(
             .map_err(|why| Answer::refusal(400, why))?,
     );
     Ok(given)
+}
+
+/// `rows`, rows of the view `view` as the host lists them under its fields' declared names, each
+/// field written under its wire name and its value by its type ([`crate::wire::fields`]), as
+/// ESS's projected row schema declares it and its generated servers answer it; the compiled IR
+/// carries the name (`naming.wire`), and ESS's interpreter, which answers semantic rows, never
+/// applies it (`story:view-field-wire-names`). A field without a wire name keeps its name.
+fn wired(
+    ir: &EssIr,
+    view: &str,
+    rows: Result<Vec<Map<String, Value>>, HostError>,
+) -> Result<Vec<Map<String, Value>>, HostError> {
+    let Some(declared) = ir
+        .views()
+        .iter()
+        .find_map(|(name, declared)| (name.to_string() == view).then_some(declared))
+    else {
+        return rows;
+    };
+    rows.map(|rows| {
+        rows.iter()
+            .map(|row| crate::wire::fields(ir, &declared.fields, row))
+            .collect()
+    })
 }
 
 /// The answer to a view read at `route` that listed `rows`, answered by the model, in the form
