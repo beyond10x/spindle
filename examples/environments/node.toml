@@ -1,0 +1,14 @@
+format = "spindle-environment/1"
+name = "node"
+os = "unknown"
+arch = "wasm32"
+
+[provides]
+"store.durable" = ["memory"]
+"store.ephemeral" = ["memory"]
+"identity.mint" = ["uuid-v4"]
+clock = ["system"]
+channel = ["in-process"]
+projection = ["in-process"]
+"ingress.network" = ["node"]
+"external.*" = ["decisions-file"]

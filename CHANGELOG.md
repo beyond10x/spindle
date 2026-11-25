@@ -6,6 +6,31 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-24
+
+### Added
+
+- The Node export, `spindle-node`: the host compiled to WebAssembly and bound by
+  `wasm-bindgen --target web` into an ES module that Node 22 loads from bytes, with no file,
+  socket or thread of its own. `Spindle.create` opens a specification from its sources, an
+  environment whose stores are all bound to `memory` (`ingress.network` bound to `node`,
+  `examples/environments/node.toml`), a decisions file or `answerDefault`, and an optional
+  `ess-http/1` binding, and refuses what `run` refuses before listening. `notServed()` lists the
+  lines `run` prints before it listens; `handle` answers one request at a time through the router
+  the loopback listener calls, console routes included, with plain objects in and out;
+  `reset(world)` loads a world as `POST /api/reset` does; `dispose()` drops the instance.
+  Several instances in one process share nothing. `task check:node_serves_a_specification`
+  replays exchanges the loopback listener answers natively.
+- `spindle-embed`: the opening of a host from texts and the mapping of an answer to its headers
+  and body, shared by the Service Worker host and the Node export. `run`'s world reader is
+  `spindle_host::read_world`, and the lines `run` prints before listening are
+  `Surface::report`, so every host reads a world and reports what it does not serve the same way.
+- `run --http` serves a view route whose `ess-http/1` body is `array`, `single`, `{<member>:
+  array}` or `{<member>: single}` (ESS 0.99.0, beyond10x/ess#755), as ESS's generated servers
+  answer it: the rows bare, the first row bare, or either as the one member of an object
+  (`{"lockers": [...]}`); a `single` view holding no row answers the route's `empty` status and
+  body, unwrapped. Each was named not served.
+
 ### Fixed
 
 - A seed entry that repeats the request id of an earlier entry that was refused is submitted
@@ -36,6 +61,39 @@ are Spindle's releases.
 
 ### Changed
 
+- A path variable whose field is a `Decimal` or a `Timestamp`, or a newtype of one, is read as
+  ESS 0.99.0's generated servers read it, now that ESS admits such a variable (beyond10x/ess#755):
+  a `Decimal` segment's decimal text is the number it spells, where it was refused `400` as text
+  (`"7.25" is not a Decimal`); a `Timestamp` segment that is not an RFC 3339 instant is refused
+  `400`, where a command stored it and a view answered `501`. A `Uuid`, `Boolean`, `Duration` or
+  `String` segment, and a newtype of one such as an id type over `Uuid`, was already read as the
+  type, on a command route and a view route.
+- ESS is pinned at 0.99.0 (the crates, the `ess` CLI CI installs and its checksum, and
+  `requires: ess 0.99` in `ess/ess-inputs.yaml`); it was 0.98.0. The suite ESS synthesises from
+  `ess/` is byte for byte the one 0.98.0 synthesised: 84 scenarios, all executed and passed,
+  `conformance.toml` unchanged; the observe schema is unchanged and the observe types differ only
+  in their header. What changes for an `ess-http/1` binding passed to `run --http`:
+  - A route with `request: {unknown: ignore}` holds a member or key the path carries to the
+    path's value: one holding another value is refused `400`
+    (`query.<field>: the path carries this field with another value`), where a `query` or `form`
+    route dropped it whatever it held. One holding the path's value is still dropped.
+  - `unknown: ignore` beside a `json` body, which ESS 0.99.0 admits, drops a top-level member no
+    input field names and holds a member the path carries the same way.
+  - An outcome's `body: {<member>: response}` or `{<member>: response.<field>}` is answered as the
+    object whose one member holds what `response` or `response.<field>` answers.
+  - Named not served, each with its reason: a `multipart` request, `request.query`, a route's
+    `limits` other than the 1 MiB Spindle reads, and a view with `representations` (CSV); a view
+    answered under one member is served (Added). A binding-wide `limits` other than 1 MiB refuses the binding, as a
+    binding-wide `refusals` entry does.
+- ESS moves on to 0.99.1 (the crates, and the `ess` CLI CI installs and its checksum). Its fixes
+  are in suite synthesis only, and nothing changes for a Spindle user: the suite ESS synthesises
+  from `ess/` is byte for byte the one 0.99.0 synthesised, 84 scenarios, all executed and passed,
+  and the observe types differ only in their header.
+- For contributors: `ess/ess-inputs.yaml` requires exactly `ess 0.99.1`, and `Taskfile.yml` and
+  `.cargo/config.toml` set `ESS_TOOLCHAIN` to it, so every `ess` a task or a test starts runs
+  that release through the `ess` dispatcher, whatever release is installed. `task check` runs
+  `scripts/check-ess-pin.sh`, which fails naming the file and both values when the requirement,
+  either `ESS_TOOLCHAIN` or the CI workflow's `ESS_VERSION` differ.
 - What a seed does not do: Spindle keeps no record of request ids, across starts or replicas, for
   a seed entry or any request. A restart applies nothing new only when every entry is a create
   guarded by `existing_instance:`; any other entry runs again on every start, so an update writes

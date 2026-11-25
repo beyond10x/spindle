@@ -24,6 +24,7 @@ mod decisions;
 mod host;
 pub mod rally;
 mod view;
+mod world;
 
 pub use admission::{Placements, Refusal, admissions, admit};
 pub use decisions::Answers;
@@ -32,3 +33,4 @@ pub use host::{
     Reader, RefusedCommand, Report, Retries, Seed, Stores, World, reads, retried, uncarried,
 };
 pub use spindle_timer::{Clock, ManualClock, SystemClock};
+pub use world::read_world;

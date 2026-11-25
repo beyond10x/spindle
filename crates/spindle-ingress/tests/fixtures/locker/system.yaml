@@ -1,0 +1,21 @@
+format: ess/34
+system: locker
+version: v1
+summary: Lockers rented and touched over the network, each found by any one of its values carried in a route's path.
+domains:
+  - locker.cabinet
+components:
+  - component: locker
+    summary: Rents, touches and lists lockers for callers outside the process.
+    owns:
+      domains:
+        - locker.cabinet
+    accepts:
+      commands:
+        - locker.cabinet.RentLocker
+        - locker.cabinet.TouchLocker
+    publishes:
+      events:
+        - locker.cabinet.LockerRented
+        - locker.cabinet.LockerTouched
+    reached_by: network

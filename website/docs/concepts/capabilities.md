@@ -110,8 +110,26 @@ What is served is what ESS derives: each command the component accepts and, for 
   list keeps its derived route.
 
 A command's request body is its input as ESS publishes it, less any field the path carries. A
-field the command does not declare is refused. The command answers its outcome's status with the
-envelope ESS publishes for that outcome:
+field the command does not declare is refused. Where the binding says `request: {unknown: ignore}`,
+such a member or key is dropped instead, and one the path carries is dropped when it holds the
+path's value and refused `400` when it holds another. A `multipart` request, `request.query`, a
+request body limit other than 1 MiB and a view with `representations` are not served; `run` names
+each such route at startup.
+
+A path variable carries a `String`, `Integer`, `Boolean`, `Decimal`, `Timestamp`, `Duration` or
+`Uuid` field, an enum, or a newtype of one without a prefix, an alphabet or another constraint,
+such as an id type over `Uuid`. The segment is percent-decoded and read as the field's type, as
+ESS's generated servers read it: a segment the type refuses, such as `not-a-uuid` for a `Uuid` or
+text that is not an RFC 3339 instant for a `Timestamp`, is refused `400`. ESS refuses a binding
+that puts a constrained newtype in the path (`ESS-HTTP-009`), and `run --http` prints that
+refusal and exits 1.
+
+A view answers `{"rows": [...]}` unless its route declares another `body`: `array` answers the
+rows bare, `single` the first row bare, or the route's `empty` status and body when the view
+holds none. `{<member>: array}` and `{<member>: single}` answer the same value as the one member
+of an object, `{"<member>": [...]}`; the `empty` answer is not wrapped.
+
+The command answers its outcome's status with the envelope ESS publishes for that outcome:
 
 ```json
 {
@@ -128,6 +146,7 @@ envelope ESS publishes for that outcome:
 |---|---|
 | `body: response` | the command's response alone, as `application/json` |
 | `body: response.<field>` | the value of that one field alone, as `application/json` |
+| `body: {<member>: response}` or `{<member>: response.<field>}` | an object whose one `<member>` holds what `response` or `response.<field>` answers |
 | `body: none` | no body and no `Content-Type` |
 | an error object, `body: {<member>: error}`, on a refusing outcome | its bound status with an object whose `<member>` is the error's wire name, beside the error's fields under their wire names. Nothing is written. |
 | `headers:` beside any of the above or the envelope | the same answer with each declared header, in name order: a literal as declared, a source as the text of the scalar it reads (left out where that is absent), a `WWW-Authenticate` challenge with each param a quoted string whose `"` and `\` are escaped. A value that holds a control character other than a tab, or a plain header's value that starts or ends with a space or a tab, is never written: the request answers `501` naming the header, without its headers. A declared header never replaces one the listener writes itself. |

@@ -147,6 +147,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "crates/spindle-wasm/tests/spindle-wasm/service_worker.rs::a_fetch_to_a_bound_route_is_answered_in_the_browser",
     ),
     shipped(
+        "Execution",
+        "Node export",
+        "spindle-node, bound by wasm-bindgen as an ES module, serves a specification in-process in a Node program: created from its sources, an environment whose stores are bound to memory (ingress.network bound to node) and a decisions file or the answer default, it answers one request at a time through the router the loopback listener calls, the console routes and a reset carrying a world included, and reports what it does not serve as run does. Its Node tests (task check:node_serves_a_specification) replay exchanges the loopback listener answers natively.",
+        "/docs/concepts/environment-and-admission#the-node-export",
+        "crates/spindle-node/tests/spindle-node/listener.rs::the_loopback_listener_answers_the_world_exchanges",
+    ),
+    shipped(
         "Bindings",
         "Periodic bindings",
         "spindle-timer yields due ticks for periodic bindings on an injected clock, honouring the ESS periodic profile.",
@@ -344,6 +351,20 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "Path variables of every scalar type",
+        "A path variable of an ess-http/1 binding whose field is a Boolean, Decimal, Timestamp, Duration or Uuid, or an unconstrained newtype of one such as an id type over Uuid, is read from its percent-decoded segment as ESS's generated servers read it, on a command route and on a view route; a segment the type refuses answers 400, and a binding that puts a constrained newtype in the path is refused by ESS with ESS-HTTP-009.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-ingress/tests/spindle-ingress/binding_shapes.rs::a_path_variable_of_each_admitted_type_is_read_as_the_type",
+    ),
+    shipped(
+        "Execution",
+        "View answer forms",
+        "A view an ess-http/1 binding answers with body: array, body: single or either under one member, {<member>: array} or {<member>: single}, answers its rows bare, its first row bare, or the same as the one member of an object, as ess generate --kind openapi publishes it; a single view holding no row answers its empty status and body, unwrapped.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-ingress/tests/spindle-ingress/binding_shapes.rs::a_wrapped_view_answers_its_rows_or_its_one_row_under_its_member",
+    ),
+    shipped(
+        "Execution",
         "Form and query requests",
         "A command an ess-http/1 binding reads as request: {encoding: form} or {encoding: query} is served: its input is read from an application/x-www-form-urlencoded body or from the query string, each value by its field's type as ESS's served application reads it; an undeclared field, one the path carries, or a form body under another Content-Type is refused 400 and writes nothing.",
         "/docs/concepts/capabilities",
@@ -352,7 +373,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "Outcome bodies",
-        "A command outcome an ess-http/1 binding answers with body: response, body: response.<field> or body: none answers its bound status with the command's response bare, the one field's value bare, or no body and no Content-Type, as ess generate --kind openapi publishes it, with the response headers the binding declares (a WWW-Authenticate challenge among them); one bound with a redirect or the text encoding answers 501 naming which.",
+        "A command outcome an ess-http/1 binding answers with body: response, body: response.<field> or body: none answers its bound status with the command's response bare, the one field's value bare, or no body and no Content-Type, and one answered with either of the first two under one member, {<member>: response}, with an object whose one member holds it, as ess generate --kind openapi publishes it, with the response headers the binding declares (a WWW-Authenticate challenge among them); one bound with a redirect or the text encoding answers 501 naming which.",
         "/docs/concepts/capabilities",
         "crates/spindle-cli/tests/spindle-cli/outcome_bodies.rs::a_response_body_is_served_bare",
     ),

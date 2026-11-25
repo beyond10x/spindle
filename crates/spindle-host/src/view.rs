@@ -490,7 +490,7 @@ impl Read<'_> {
     /// Whether ESS's interpreter hides the row rather than refusing the read, where the filter is
     /// unknown for it: every path it reads that observes nothing is an `Optional` parameter the
     /// read left out that a string operator compares with (`ess-conformance`
-    /// `src/interpret/views.rs` at ESS 0.98.0, `absent_text_operands`, beyond10x/ess#200).
+    /// `src/interpret/views.rs` at ESS 0.99.0, `absent_text_operands`, beyond10x/ess#200).
     fn absent_text_operands(&self, filter: &Predicate) -> bool {
         let mut unobserved = filter
             .fact_paths()
@@ -604,7 +604,7 @@ pub(crate) fn instant(at: SystemTime) -> Option<Rfc3339Instant> {
 /// row is not held, and the read goes on, where every path the filter reads that observes nothing
 /// reads through a reference that names no row (`absent_navigation`, `views.rs:213`), or is an
 /// `Optional` parameter the read left out that a string operator (`contains`, `starts_with`,
-/// `ends_with`) compares with (`absent_text_operands`, `views.rs:210` at ESS 0.98.0).
+/// `ends_with`) compares with (`absent_text_operands`, `views.rs:210` at ESS 0.99.0).
 ///
 /// # Errors
 /// When the row, or a row a reference names, is not a value of its entity's declared fields,

@@ -1,0 +1,112 @@
+domain: kiosk.ticket
+summary: Tickets issued with a minted code, punched with a note.
+types:
+  - name: kiosk.ticket.TicketId
+    kind: newtype
+    of: String
+entities:
+  - name: kiosk.ticket.Ticket
+    identity:
+      name: ticket_id
+      type: kiosk.ticket.TicketId
+    fields:
+      - name: holder
+        type: String
+      - name: punches
+        type: Integer
+    lifecycle:
+      initial: Issued
+      states: [Issued]
+      terminal: [Issued]
+errors:
+  - name: kiosk.ticket.NoSuchTicket
+    summary: No ticket carries the id.
+    fields: []
+commands:
+  - name: kiosk.ticket.IssueTicket
+    input:
+      - name: ticket_id
+        type: kiosk.ticket.TicketId
+      - name: holder
+        type: String
+    response:
+      - name: code
+        type: String
+      - name: seat
+        type: String
+    outcomes:
+      - name: issued
+        creates: kiosk.ticket.Ticket
+        instance: ticket_id
+        sets:
+          holder: input.holder
+          punches: 0
+        emits: [kiosk.ticket.TicketIssued]
+        payload:
+          kiosk.ticket.TicketIssued: {ticket_id: input.ticket_id}
+        returns: true
+        summary: The ticket is issued; the answer carries its minted code and seat.
+  - name: kiosk.ticket.PunchTicket
+    input:
+      - name: ticket_id
+        type: kiosk.ticket.TicketId
+      - name: punches
+        type: Integer
+    outcomes:
+      - name: no-such-ticket
+        unknown_instance: true
+        error: kiosk.ticket.NoSuchTicket
+        summary: No ticket carries the id.
+      - name: punched
+        updates: kiosk.ticket.Ticket
+        instance: ticket_id
+        sets:
+          punches: input.punches
+        emits: [kiosk.ticket.TicketPunched]
+        payload:
+          kiosk.ticket.TicketPunched: {ticket_id: input.ticket_id}
+        summary: The ticket holds the punches given.
+  - name: kiosk.ticket.StampTicket
+    input:
+      - name: ticket_id
+        type: kiosk.ticket.TicketId
+      - name: holder
+        type: String
+    outcomes:
+      - name: no-such-ticket
+        unknown_instance: true
+        error: kiosk.ticket.NoSuchTicket
+        summary: No ticket carries the id.
+      - name: stamped
+        updates: kiosk.ticket.Ticket
+        instance: ticket_id
+        sets:
+          holder: input.holder
+        emits: [kiosk.ticket.TicketStamped]
+        payload:
+          kiosk.ticket.TicketStamped: {ticket_id: input.ticket_id}
+        summary: The ticket names the holder given.
+events:
+  - name: kiosk.ticket.TicketIssued
+    fields:
+      - name: ticket_id
+        type: kiosk.ticket.TicketId
+  - name: kiosk.ticket.TicketPunched
+    fields:
+      - name: ticket_id
+        type: kiosk.ticket.TicketId
+  - name: kiosk.ticket.TicketStamped
+    fields:
+      - name: ticket_id
+        type: kiosk.ticket.TicketId
+views:
+  - name: kiosk.ticket.AllTickets
+    source: kiosk.ticket.Ticket
+    consistency: read_your_writes
+    fields:
+      - name: ticket_id
+        type: kiosk.ticket.TicketId
+      - name: holder
+        type: String
+      - name: punches
+        type: Integer

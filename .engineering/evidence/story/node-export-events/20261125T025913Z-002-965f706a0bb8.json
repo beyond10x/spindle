@@ -1,0 +1,14 @@
+{
+  "at": "2026-11-25T02:59:13Z",
+  "actor": "human:operator",
+  "artifact": "story:node-export-events",
+  "kind": "story",
+  "revision": 3,
+  "change": {
+    "change": "evidence",
+    "kind": "review_outcome",
+    "source": "review-result:node-export-parallel-r1",
+    "review": "review-result:node-export-parallel-r1",
+    "outcome": "fixed"
+  }
+}
