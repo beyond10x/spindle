@@ -106,7 +106,7 @@ struct Step {
 }
 
 /// Resources an instance may take or asks for, each a value of `Resources`. None is below zero:
-/// ESS 0.98.0's interpreter does not check a struct input's invariants before its input-guarded
+/// ESS 0.99.0's interpreter does not check a struct input's invariants before its input-guarded
 /// refusals, where the kernel refuses the input first, so the two answer such an input apart
 /// (`docs/hardening/2026-11-23.md`). The kernel's refusal is pinned by
 /// `placement::a_resource_below_zero_is_refused`.

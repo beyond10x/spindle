@@ -1,0 +1,23 @@
+format: ess/34
+system: kiosk
+version: v1
+summary: Tickets a kiosk issues over the network and punches, read through a binding of the shapes ESS 0.99 added to ess-http/1.
+domains:
+  - kiosk.ticket
+components:
+  - component: kiosk
+    summary: Issues, punches and lists tickets for callers outside the process.
+    owns:
+      domains:
+        - kiosk.ticket
+    accepts:
+      commands:
+        - kiosk.ticket.IssueTicket
+        - kiosk.ticket.PunchTicket
+        - kiosk.ticket.StampTicket
+    publishes:
+      events:
+        - kiosk.ticket.TicketIssued
+        - kiosk.ticket.TicketPunched
+        - kiosk.ticket.TicketStamped
+    reached_by: network

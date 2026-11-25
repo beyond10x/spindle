@@ -5,13 +5,13 @@ use std::borrow::Cow;
 use ess_compiler::EssIr;
 use ess_compiler::ir::{ResolvedCommand, ResolvedError, ResolvedField};
 use ess_gen::http::{FORBIDDEN, NOT_GRANTED};
-use ess_http::{AnswerSource, Body, Challenge, Encoding, Header, Operation, Param};
+use ess_http::{AnswerSource, Body, Challenge, Encoding, Header, Operation, Param, Unknown};
 use serde_json::{Map, Value, json};
 use spindle_host::{Failed, Host, HostError, Reader};
 use spindle_kernel::{DeclaredError, Event, ExecuteError};
 
 use crate::observe::Answered;
-use crate::surface::{Caller, Route, Unserved, may_read, may_run};
+use crate::surface::{Caller, ECHOED, Route, Unserved, may_read, may_run, same_value};
 
 /// What the refusal of a JSON body's key the command declares no input field for says between
 /// the command and the key: the request log elides the key, which the caller sent
@@ -208,11 +208,15 @@ pub(crate) fn answering(
     match &route.operation {
         Operation::Command(command) => {
             let input = match route.encoding() {
-                Encoding::Json => input(body),
-                Encoding::Form => form(route, content_type, body),
+                Encoding::Json => input(body).and_then(|input| ignoring(route, &carried, input)),
+                Encoding::Form => form(route, &carried, content_type, body),
                 Encoding::Query => route
-                    .flat_input(query, "query")
+                    .flat_input(query, "query", &carried)
                     .map_err(|detail| Answer::refusal(400, detail)),
+                Encoding::Multipart => Err(Answer::refusal(
+                    501,
+                    "a `multipart/form-data` request is not served".to_owned(),
+                )),
             };
             match input {
                 Ok(input) => run(host, route, caller, command, &carried, input),
@@ -503,11 +507,36 @@ fn input(body: &[u8]) -> Result<Map<String, Value>, Answer> {
     }
 }
 
+/// A `json` command input read where the binding says `unknown: ignore`, as ESS 0.99.0's served
+/// application reads it (`http::ignoring`, beyond10x/ess#752): a member the path carries is
+/// dropped when it holds the path's value ([`same_value`]) and refused `400` naming it otherwise,
+/// and a member no input field names is dropped, at the top level only. Every other route's input
+/// is returned as it is, for [`run`] to refuse a member it does not take.
+fn ignoring(
+    route: &Route,
+    carried: &Map<String, Value>,
+    mut input: Map<String, Value>,
+) -> Result<Map<String, Value>, Answer> {
+    if route.unknown() != Unknown::Ignore {
+        return Ok(input);
+    }
+    for (field, held) in carried {
+        if let Some(member) = input.remove(field)
+            && !same_value(&member, held)
+        {
+            return Err(Answer::refusal(400, format!("body.{field}{ECHOED}")));
+        }
+    }
+    input.retain(|field, _| route.input().iter().any(|declared| declared == field));
+    Ok(input)
+}
+
 /// The command's input from a `form` body: refused `400` unless `content_type` is
 /// `application/x-www-form-urlencoded` (its parameters and case ignored) and the body UTF-8, as
 /// ESS's served application refuses it (`ess-synth` `http::content_type_is`, `http::body_text`).
 fn form(
     route: &Route,
+    carried: &Map<String, Value>,
     content_type: Option<&str>,
     body: &[u8],
 ) -> Result<Map<String, Value>, Answer> {
@@ -525,7 +554,7 @@ fn form(
     let text = std::str::from_utf8(body)
         .map_err(|error| Answer::refusal(400, format!("the body is not UTF-8: {error}")))?;
     route
-        .flat_input(text, "body")
+        .flat_input(text, "body", carried)
         .map_err(|detail| Answer::refusal(400, detail))
 }
 
@@ -729,8 +758,10 @@ fn challenge(
 /// The body the binding answers `outcome` with in place of the envelope, where it does
 /// ([`Route::body`]): `Some(None)` for `none`; for `response`, or `response.<field>`, the response,
 /// or the value of the one field the body names (by its declared name), bare and written as ESS
-/// publishes it, `null` where `response` holds none; for `{<member>: error}` the error object
-/// ([`Written::error_object`]). `None` for an outcome answered with the envelope.
+/// publishes it, `null` where `response` holds none; for `{<member>: response}` or
+/// `{<member>: response.<field>}` an object whose one `member` holds that bare value (ESS 0.99.0,
+/// beyond10x/ess#755); for `{<member>: error}` the error object ([`Written::error_object`]).
+/// `None` for an outcome answered with the envelope.
 fn bare(
     route: &Route,
     outcome: &str,
@@ -748,6 +779,19 @@ fn bare(
                 .and_then(|response| response.get(field))
                 .map_or(Value::Null, |held| written.field(field, held)),
         )),
+        Body::Wrapped { member, field } => {
+            let held = match field {
+                None => response.map_or(Value::Null, |response| {
+                    Value::Object(written.response(response))
+                }),
+                Some(field) => response
+                    .and_then(|response| response.get(field))
+                    .map_or(Value::Null, |held| written.field(field, held)),
+            };
+            let mut wrapped = Map::new();
+            wrapped.insert(member.clone(), held);
+            Some(Some(Value::Object(wrapped)))
+        }
         Body::Error { member } => Some(Some(written.error_object(outcome, member, refusal))),
         Body::Envelope => None,
     }

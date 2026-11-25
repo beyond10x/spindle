@@ -110,8 +110,13 @@ What is served is what ESS derives: each command the component accepts and, for 
   list keeps its derived route.
 
 A command's request body is its input as ESS publishes it, less any field the path carries. A
-field the command does not declare is refused. The command answers its outcome's status with the
-envelope ESS publishes for that outcome:
+field the command does not declare is refused. Where the binding says `request: {unknown: ignore}`,
+such a member or key is dropped instead, and one the path carries is dropped when it holds the
+path's value and refused `400` when it holds another. A `multipart` request, `request.query`, a
+request body limit other than 1 MiB, a view answered other than as `rows` and a view with
+`representations` are not served; `run` names each such route at startup.
+
+The command answers its outcome's status with the envelope ESS publishes for that outcome:
 
 ```json
 {
@@ -128,6 +133,7 @@ envelope ESS publishes for that outcome:
 |---|---|
 | `body: response` | the command's response alone, as `application/json` |
 | `body: response.<field>` | the value of that one field alone, as `application/json` |
+| `body: {<member>: response}` or `{<member>: response.<field>}` | an object whose one `<member>` holds what `response` or `response.<field>` answers |
 | `body: none` | no body and no `Content-Type` |
 | an error object, `body: {<member>: error}`, on a refusing outcome | its bound status with an object whose `<member>` is the error's wire name, beside the error's fields under their wire names. Nothing is written. |
 | `headers:` beside any of the above or the envelope | the same answer with each declared header, in name order: a literal as declared, a source as the text of the scalar it reads (left out where that is absent), a `WWW-Authenticate` challenge with each param a quoted string whose `"` and `\` are escaped. A value that holds a control character other than a tab, or a plain header's value that starts or ends with a space or a tab, is never written: the request answers `501` naming the header, without its headers. A declared header never replaces one the listener writes itself. |
