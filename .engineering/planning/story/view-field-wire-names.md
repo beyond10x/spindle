@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:view-field-wire-names
 kind: story
-status: active
+status: implemented
 title: A view row is answered under its fields' wire names
 summary: 'A view field declared with wire: is answered under its wire name, as ESS''s projected row schema and generated servers answer it; 0.20.0 answers the model name.'
 relations:
@@ -21,10 +21,11 @@ scope:
   path: crates/spindle-ingress/tests/spindle-ingress/view_wire_names.rs
 - confidence: cited
   path: website/docs/concepts/capabilities.md
-revision: 9
+revision: 10
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-25T10:58:36Z", actor: "human:operator", revision: 8, decided_on: {"recorded":{"review_outcome":7}}}
 - {from: "proposed", to: "active", at: "2026-11-25T10:58:36Z", actor: "human:operator", revision: 9, decided_on: {"recorded":{"review_outcome":7}}}
+- {from: "active", to: "implemented", at: "2026-11-25T12:11:05Z", actor: "human:operator", revision: 10, decided_on: {"recorded":{"test_result":1,"review_outcome":7}}}
 ---
 # A view row is answered under its fields' wire names
 

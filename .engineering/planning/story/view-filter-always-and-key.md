@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:view-filter-always-and-key
 kind: story
-status: active
+status: implemented
 title: A view filter reads an (always) leaf and a key path
 summary: An (always) leaf inside a quantifier and a key.<field> path in a view filter are read as ESS's interpreter reads them.
 relations:
@@ -23,10 +23,11 @@ scope:
   path: crates/spindle-host/tests/spindle-host/always_and_key_filters.rs
 - confidence: cited
   path: crates/spindle-ingress/tests/spindle-ingress/always_and_key_routes.rs
-revision: 7
+revision: 8
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-25T10:08:45Z", actor: "human:operator", revision: 6, decided_on: {"recorded":{"review_outcome":7}}}
 - {from: "proposed", to: "active", at: "2026-11-25T10:08:45Z", actor: "human:operator", revision: 7, decided_on: {"recorded":{"review_outcome":7}}}
+- {from: "active", to: "implemented", at: "2026-11-25T12:11:04Z", actor: "human:operator", revision: 8, decided_on: {"recorded":{"test_result":1,"review_outcome":7}}}
 ---
 # A view filter reads an (always) leaf and a key path
 
