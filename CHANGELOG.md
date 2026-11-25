@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.20.2] - 2026-11-25
+
 ### Added
 
 - The Node export takes fixed actors: `Spindle.create` reads `fixedActors`, a list of

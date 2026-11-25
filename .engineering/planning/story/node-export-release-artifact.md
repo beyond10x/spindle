@@ -8,6 +8,7 @@ relations:
 - serves: vision:spindle
 - depends_on: story:node-export-serves-a-specification
 - decomposes: epic:node-export
+- depends_on: story:node-export-fixed-actor
 scope:
 - confidence: inferred
   path: .github/workflows/release.yml
