@@ -280,6 +280,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "crates/spindle-host/tests/spindle-host/text_filters.rs::text_filters_agree_with_the_interpreter",
     ),
     shipped(
+        "Execution",
+        "View filters with always, never and struct members",
+        "A view filter that holds always or never, inside a quantifier among them (not (exists t in param.tags: (always))), or reads a member of a struct field of the row, the identity's own members among them (key.integration == param.id), answers the rows ESS's interpreter answers on every store.",
+        "/docs/concepts/specification",
+        "crates/spindle-host/tests/spindle-host/always_and_key_filters.rs::always_and_key_filters_agree_with_the_interpreter",
+    ),
+    shipped(
         "Observe",
         "Counters derived from the specification",
         "spindle-telemetry counts commands by outcome, events, bindings, timer ticks and store writes per component; b10x-spindle metrics prints the catalogue, play prints the table's counters.",

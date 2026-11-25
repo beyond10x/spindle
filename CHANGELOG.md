@@ -6,6 +6,14 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- A view filter may hold `always` and `never` anywhere a leaf is read, inside a quantifier
+  among them (`not (exists t in param.tags: (always))`), and may read a member of a struct field
+  of the row, the identity's own members among them (`key.integration == param.id`). Both are
+  evaluated by ESS and answer the rows ESS's interpreter answers, where the view was refused whole
+  and its route answered 501 (`story:view-filter-always-and-key`).
+
 ## [0.20.0] - 2026-11-24
 
 ### Added

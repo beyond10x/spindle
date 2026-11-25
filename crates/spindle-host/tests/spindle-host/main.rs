@@ -29,6 +29,8 @@ mod adversary_wasm;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod aggregates;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod always_and_key_filters;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod any_filter;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod computed;

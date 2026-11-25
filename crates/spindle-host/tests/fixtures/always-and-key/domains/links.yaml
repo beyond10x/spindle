@@ -1,0 +1,145 @@
+domain: desk.links
+summary: Links keyed by an integration and a name, each with tags.
+types:
+  - name: desk.links.LinkKey
+    kind: struct
+    fields:
+      - name: integration
+        type: String
+      - name: name
+        type: String
+  - name: desk.links.Place
+    kind: struct
+    fields:
+      - name: region
+        type: String
+  - name: desk.links.Origin
+    kind: struct
+    fields:
+      - name: place
+        type: Optional<desk.links.Place>
+entities:
+  - name: desk.links.Link
+    identity:
+      name: key
+      type: desk.links.LinkKey
+    fields:
+      - name: label
+        type: String
+      - name: origin
+        type: desk.links.Origin
+      - name: tags
+        type: List<String>
+    lifecycle:
+      initial: Added
+      states: [Added]
+      terminal: [Added]
+commands:
+  - name: desk.links.AddLink
+    input:
+      - name: key
+        type: desk.links.LinkKey
+      - name: label
+        type: String
+      - name: origin
+        type: desk.links.Origin
+      - name: tags
+        type: List<String>
+    outcomes:
+      - name: added
+        creates: desk.links.Link
+        instance: key
+        sets:
+          label: input.label
+          origin: input.origin
+          tags: input.tags
+        emits: [desk.links.LinkAdded]
+        payload:
+          desk.links.LinkAdded: {key: input.key}
+        summary: The link is added.
+events:
+  - name: desk.links.LinkAdded
+    fields:
+      - name: key
+        type: desk.links.LinkKey
+views:
+  - name: desk.links.Tagged
+    source: desk.links.Link
+    consistency: read_your_writes
+    params:
+      - name: tags
+        type: Optional<List<String>>
+    filter: &tagged
+      any:
+        - {not: "defined(param.tags)"}
+        - {not: {exists: {in: param.tags, as: t, that: always}}}
+        - {exists: {in: param.tags, as: t, that: {exists: {in: tags, as: u, that: u == t}}}}
+    fields: &fields
+      - name: key
+        type: desk.links.LinkKey
+      - name: label
+        type: String
+      - name: origin
+        type: desk.links.Origin
+      - name: tags
+        type: List<String>
+  - name: desk.links.OfIntegration
+    source: desk.links.Link
+    consistency: read_your_writes
+    params:
+      - name: id
+        type: String
+    filter: key.integration == param.id
+    fields: *fields
+  - name: desk.links.OfIntegrationTagged
+    source: desk.links.Link
+    consistency: read_your_writes
+    params:
+      - name: id
+        type: String
+      - name: tags
+        type: Optional<List<String>>
+    filter:
+      all:
+        - key.integration == param.id
+        - *tagged
+    fields: *fields
+  - name: desk.links.Named
+    source: desk.links.Link
+    consistency: read_your_writes
+    filter:
+      any:
+        - never
+        - key.name == "alpha"
+    fields: *fields
+  - name: desk.links.Listed
+    source: desk.links.Link
+    consistency: read_your_writes
+    filter: {key.integration: {in: [chat]}}
+    fields: *fields
+  - name: desk.links.Compared
+    source: desk.links.Link
+    consistency: read_your_writes
+    filter:
+      all:
+        - defined(key.name)
+        - key.name == label
+    fields: *fields
+  - name: desk.links.Counted
+    source: desk.links.Link
+    consistency: read_your_writes
+    filter: tags.count == 0
+    fields: *fields
+  - name: desk.links.Regional
+    source: desk.links.Link
+    consistency: read_your_writes
+    filter: origin.place.region == "eu"
+    fields: *fields
+  - name: desk.links.Folded
+    source: desk.links.Link
+    consistency: read_your_writes
+    filter:
+      all:
+        - always
+        - {label: {equals_ignore_case: one}}
+    fields: *fields
