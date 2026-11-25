@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-25T12:11:04Z",
+  "actor": "human:operator",
+  "artifact": "story:view-field-wire-names",
+  "kind": "story",
+  "revision": 9,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "https://github.com/beyond10x/spindle/actions/runs/45602691774 (PR 83 Gate, macOS, PostgreSQL, Build documentation, Security and privacy green on a6285cdf; merged 38ce5be7; tests spindle-ingress view_wire_names.rs)"
+  }
+}

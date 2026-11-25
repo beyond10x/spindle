@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-11-25
+
 ### Added
 
 - A view filter may hold `always` and `never` anywhere a leaf is read, inside a quantifier

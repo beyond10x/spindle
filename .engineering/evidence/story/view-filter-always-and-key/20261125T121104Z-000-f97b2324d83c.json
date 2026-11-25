@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-25T12:11:04Z",
+  "actor": "human:operator",
+  "artifact": "story:view-filter-always-and-key",
+  "kind": "story",
+  "revision": 7,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "https://github.com/beyond10x/spindle/actions/runs/45596117459 (PR 82 Gate, macOS, PostgreSQL, Build documentation, Security and privacy green on 79c2d16b; merged 08099d7c; tests spindle-host always_and_key_filters.rs, spindle-ingress always_and_key_routes.rs)"
+  }
+}
