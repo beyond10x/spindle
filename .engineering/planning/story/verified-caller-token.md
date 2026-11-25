@@ -6,7 +6,7 @@ status: draft
 title: A served run verifies a signed caller token itself
 summary: Each request's OIDC/JWT token is verified against the issuer's JWKS and its claims mapped to the actor and caller attributes.
 tags:
-- needs-timo-acceptance
+- needs-owner-acceptance
 relations:
 - serves: vision:spindle
 - decomposes: epic:production-service
@@ -49,6 +49,6 @@ as any actor. `architecture-decision-record:http-caller-proof` chose the proxy h
 - How claims map to the actor and attributes (a mapping file or flags), the JWKS refresh period,
   and whether the token source excludes `--trusted-caller-header` or stands beside it.
 
-## Needs Timo's acceptance
+## Needs the owner's acceptance
 
 The JWKS fetch is an outbound connection a run makes on its own.
