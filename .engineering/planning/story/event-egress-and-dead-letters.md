@@ -6,7 +6,7 @@ status: draft
 title: Committed events leave to a broker or webhook, and exhausted commands land as dead letters
 summary: Events bound by the environment are delivered at least once to a broker or webhook; a binding command that exhausts its retries is kept and replayable.
 tags:
-- needs-timo-acceptance
+- needs-owner-acceptance
 relations:
 - serves: vision:spindle
 - decomposes: epic:production-service
@@ -50,6 +50,6 @@ environment names the broker or webhook; a specification names neither (AGENTS.m
 - Which brokers, the capability key the environment binds, and whether egress and dead letters
   are two stories.
 
-## Needs Timo's acceptance
+## Needs the owner's acceptance
 
 The delivery is an outbound connection a run makes on its own.

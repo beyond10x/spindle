@@ -6,7 +6,7 @@ status: draft
 title: Release artifacts are signed and carry a provenance attestation
 summary: Every release archive, the SBOM and the image carry a cosign signature and a SLSA provenance attestation.
 tags:
-- needs-timo-acceptance
+- needs-owner-acceptance
 relations:
 - serves: vision:spindle
 - decomposes: epic:production-service
@@ -40,6 +40,6 @@ who built it. The image (`story:spindle-image-published`) and the glibc floor of
   identity verifies its digest.
 - The release's verification report records the verify commands and their output.
 
-## Needs Timo's acceptance
+## Needs the owner's acceptance
 
 Keyless signing gives the release job `id-token: write`, a change to the workflow's permissions.
