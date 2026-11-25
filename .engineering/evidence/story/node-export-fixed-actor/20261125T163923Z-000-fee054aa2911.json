@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-25T16:39:23Z",
+  "actor": "human:operator",
+  "artifact": "story:node-export-fixed-actor",
+  "kind": "story",
+  "revision": 7,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "https://github.com/beyond10x/spindle/actions/runs/45652995232 (PR 86 Gate, macOS, PostgreSQL, Build documentation, Security and privacy green on 34b7824b; merged b06c4003; tests spindle-node fixed-actor.test.mjs and fixed_actor.rs)"
+  }
+}

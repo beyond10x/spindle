@@ -8,6 +8,7 @@ relations:
 - serves: vision:spindle
 - decomposes: epic:browser-host
 - depends_on: story:node-export-serves-a-specification
+- depends_on: story:node-export-fixed-actor
 revision: 1
 ---
 # The Service Worker host does what a served run does

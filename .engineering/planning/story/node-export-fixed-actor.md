@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:node-export-fixed-actor
 kind: story
-status: draft
+status: implemented
 title: The Node export sends commands as fixed actors
 relations:
 - serves: vision:spindle
@@ -43,7 +43,11 @@ scope:
   path: crates/spindle-wasm/src/worker.rs
 - confidence: cited
   path: website/docs/concepts/environment-and-admission.md
-revision: 4
+revision: 8
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-25T16:39:22Z", actor: "human:operator", revision: 6, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "proposed", to: "active", at: "2026-11-25T16:39:23Z", actor: "human:operator", revision: 7, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "active", to: "implemented", at: "2026-11-25T16:39:23Z", actor: "human:operator", revision: 8, decided_on: {"recorded":{"test_result":1,"review_outcome":8}}}
 ---
 # The Node export sends commands as fixed actors
 
@@ -80,3 +84,11 @@ declare, or a caller its binding refuses, is refused by `create` with the reason
   recording and the opening's refusals), `tests/spindle-node/listener.rs` (the replay loop shared),
   `tests/spindle-node/main.rs`.
 - `README.md`, `AGENTS.md`, `CHANGELOG.md`, `website/docs/concepts/environment-and-admission.md`.
+
+Shared with open stories (this story merged first, in PR 86; each of them starts from it):
+
+- `crates/spindle-wasm/src/worker.rs`, `Opening::callers` and `Surface::fixing_callers`: `story:service-worker-host-matches-run`, which turns fixed actors on in the Service Worker and `depends_on` this story.
+- `crates/spindle-node/tests/node/*.test.mjs`: `story:node-export-release-artifact` runs them and `depends_on` this story.
+- `crates/spindle-ingress/src/surface.rs`: `story:front-ingress`, `story:cross-component-view-refused`.
+- `crates/spindle-cli/src/serve.rs`: `story:front-ingress`, `story:otlp-trace-export`, `story:request-span-tree`.
+- Documentation: `AGENTS.md` (`story:node-export-release-artifact`), `README.md` (`story:spindle-image-published`), `website/docs/concepts/environment-and-admission.md` (`story:reset-reapplies-seed`).
