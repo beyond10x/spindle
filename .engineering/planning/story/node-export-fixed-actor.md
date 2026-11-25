@@ -6,9 +6,14 @@ status: draft
 title: The Node export sends commands as fixed actors
 relations:
 - serves: vision:spindle
-- decomposes: epic:browser-host
 - depends_on: story:node-export-serves-a-specification
-revision: 1
+- decomposes: epic:node-export
+scope:
+- confidence: inferred
+  path: crates/spindle-embed
+- confidence: inferred
+  path: crates/spindle-node
+revision: 2
 ---
 # The Node export sends commands as fixed actors
 

@@ -6,9 +6,14 @@ status: draft
 title: The release builds the Node module as an artifact
 relations:
 - serves: vision:spindle
-- decomposes: epic:browser-host
 - depends_on: story:node-export-serves-a-specification
-revision: 1
+- decomposes: epic:node-export
+scope:
+- confidence: inferred
+  path: .github/workflows/release.yml
+- confidence: inferred
+  path: AGENTS.md
+revision: 4
 ---
 # The release builds the Node module as an artifact
 
@@ -24,9 +29,12 @@ bytes, so a consumer can depend on a released module instead of building one.
 - `release.yml` builds the module once per release and uploads `spindle-node-<version>.tar.gz`;
   a pull request that changes the workflow builds it and publishes nothing (the rule the other
   archives follow).
-- The archive's `.wasm` loads in the Node lane's first test (`check:node_serves_a_specification`)
-  when pointed at the extracted archive.
+- The release workflow runs the Node lane's tests (`crates/spindle-node/tests/node/*.test.mjs`)
+  with `SPINDLE_NODE_MODULE` set to the extracted archive's directory, the input
+  `story:node-export-serves-a-specification` gives the lane, and uploads only when they pass.
 - The release notes carry one line `spindle-node wasm: <bytes> bytes`.
+- `sha256sum --check SHA256SUMS` passes for the downloaded `spindle-node-<version>.tar.gz`, and
+  the archive lists exactly `spindle_node_bg.wasm`, `spindle_node.js` and `spindle_node.d.ts`.
 
 ## Depends on
 

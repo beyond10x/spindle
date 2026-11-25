@@ -1,0 +1,14 @@
+{
+  "at": "2026-11-25T01:19:59Z",
+  "actor": "human:timo",
+  "artifact": "story:node-export-clock-and-seeds",
+  "kind": "story",
+  "revision": 4,
+  "change": {
+    "change": "evidence",
+    "kind": "review_outcome",
+    "source": "review-result:node-export-acceptance-r2",
+    "review": "review-result:node-export-acceptance-r2",
+    "outcome": "fixed"
+  }
+}
