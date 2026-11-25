@@ -213,6 +213,13 @@
       "status": "shipped"
     },
     {
+      "area": "Execution",
+      "detail": "A view filter that holds always or never, inside a quantifier among them (not (exists t in param.tags: (always))), or reads a member of a struct field of the row, the identity's own members among them (key.integration == param.id), answers the rows ESS's interpreter answers on every store.",
+      "href": "/docs/concepts/specification",
+      "label": "View filters with always, never and struct members",
+      "status": "shipped"
+    },
+    {
       "area": "Observe",
       "detail": "spindle-telemetry counts commands by outcome, events, bindings, timer ticks and store writes per component; b10x-spindle metrics prints the catalogue, play prints the table's counters.",
       "href": "/docs/concepts/observe",

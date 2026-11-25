@@ -41,8 +41,9 @@ const STATE: &str = "state";
 ///   `priority >= 3`, `state == Open`; a `Timestamp` field ordered against `now`, `now - 1h` or
 ///   `now + 5m` (`issued_at < now`), the current-time operand ESS reads against the clock of the
 ///   read ([`reads_now`]). A field is an observable field of the source (the state and the
-///   identity among them), or one of the row a reference names, read through it
-///   (`<via>.<field>`, [`ResolvedView::navigated`]);
+///   identity among them), a member of a struct field of it (`key.integration`, the identity's
+///   own members among them, `story:view-filter-always-and-key`), or one of the row a reference
+///   names, read through it (`<via>.<field>`, [`ResolvedView::navigated`]);
 /// - such a field listed `in:` or `none_of:` literals of its type;
 /// - such a field compared with `==` or `!=` to a parameter or another such field
 ///   (`book_id == param.id`, `class_id.holder == person_id`), or ordered against one where ESS
@@ -52,6 +53,8 @@ const STATE: &str = "state";
 ///   `starts_with` or `ends_with` against a text literal or a text parameter
 ///   (`address: {contains: {param: text}}`, `story:view-filter-text-contains`), which ESS
 ///   evaluates byte for byte and case-sensitively (`TextOp::holds`);
+/// - `always` or `never`, which ESS evaluates to true and false for every row
+///   (`exists t in param.tags: (always)`, `story:view-filter-always-and-key`);
 ///
 /// leaves combined by `any`, `all` and `not`, or under `exists` or `forall` over a list parameter
 /// or a list field of the row. A list parameter's element is read as a parameter is; a list
@@ -76,13 +79,13 @@ pub(crate) fn unsupported(ir: &EssIr, view: &ResolvedView) -> Option<String> {
     } else {
         match &view.filter {
             Some(filter) if !reads(ir, view, filter) => Some(format!(
-                "the filter `{filter}`; only a field of the row, or of the row a reference names, \
-                 compared with a literal of its type or ordered against `now`, listed `in:` or \
-                 `none_of:` literals, or compared with a parameter or another field, \
-                 `defined`, and a text field tested by `contains`, `starts_with` or `ends_with` \
-                 against a text literal or parameter, combined by `any`, `all` and `not` or \
-                 quantified over a list \
-                 parameter or a list field by `exists` or `forall`, are read"
+                "the filter `{filter}`; only a field of the row (a member of a struct field \
+                 among them), or of the row a reference names, compared with a literal of its \
+                 type or ordered against `now`, listed `in:` or `none_of:` literals, or compared \
+                 with a parameter or another field, `defined`, a text field tested by \
+                 `contains`, `starts_with` or `ends_with` against a text literal or parameter, \
+                 and `always` and `never`, combined by `any`, `all` and `not` or quantified over \
+                 a list parameter or a list field by `exists` or `forall`, are read"
             )),
             _ => None,
         }
@@ -205,7 +208,9 @@ impl<'a> Scope<'a> {
                 })
             }
             [root, member] if !self.binders.iter().any(|binder| binder.name == root) => {
-                let (reference, _) = self.view.navigated(self.ir, path)?;
+                let Some((reference, _)) = self.view.navigated(self.ir, path) else {
+                    return self.member(path);
+                };
                 let far = self.ir.entity(&reference.entity).observable_fields();
                 Some(Typed {
                     row: true,
@@ -213,6 +218,54 @@ impl<'a> Scope<'a> {
                     resolution: self.resolve(&far, &FactPath::from_segments([member.clone()]))?,
                 })
             }
+            [root, _, _, ..]
+                if root != ViewSpec::PARAM
+                    && !self.binders.iter().any(|binder| binder.name == root)
+                    && self.view.navigated(self.ir, path).is_none() =>
+            {
+                self.member(path)
+            }
+            _ => None,
+        }
+    }
+
+    /// What `path` names where it is a member of a struct field of the source, the identity among
+    /// them (`key.integration`, `story:view-filter-always-and-key`): each segment after the first
+    /// names a member of the struct the one before it holds, through `Optional`. ESS
+    /// reads such a path in the row, never through a reference (`ResolvedView::navigated`), as
+    /// `ess-conformance` binds a source row's struct members (`input::bind`). `None` for any other
+    /// path: a list's element or count, a text's length.
+    fn member(&self, path: &FactPath) -> Option<Typed> {
+        let [root, members @ ..] = path.segments() else {
+            return None;
+        };
+        let mut held = &self
+            .fields
+            .iter()
+            .find(|field| &field.name == root)?
+            .type_ref;
+        for member in members {
+            held = &self
+                .structure(held)?
+                .iter()
+                .find(|field| &field.name == member)?
+                .type_ref;
+        }
+        Some(Typed {
+            row: true,
+            binder: false,
+            resolution: self.resolve(self.fields, path)?,
+        })
+    }
+
+    /// The members of the struct `held` is, through `Optional`; `None` where it is no struct (a
+    /// newtype over one among them, which this story does not read).
+    fn structure(&self, held: &ResolvedTypeRef) -> Option<&'a [ResolvedField]> {
+        let ResolvedTypeRef::Declared { name } = held.required() else {
+            return None;
+        };
+        match &self.ir.named_type(name).body {
+            ResolvedBody::Struct { fields, .. } => Some(fields),
             _ => None,
         }
     }
@@ -325,6 +378,7 @@ impl<'a> Scope<'a> {
                 children.iter().all(|child| self.admits(child))
             }
             Predicate::Not(child) => self.admits(child),
+            Predicate::Always | Predicate::Never => true,
             _ => false,
         }
     }

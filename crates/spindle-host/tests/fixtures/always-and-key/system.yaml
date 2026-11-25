@@ -1,0 +1,19 @@
+format: ess/34
+system: desk
+version: v1
+summary: Links keyed by an integration and a name, each with tags, read by views whose filters hold an always leaf inside a quantifier or read a member of the key.
+domains:
+  - desk.links
+components:
+  - component: links
+    summary: Adds links for callers outside the process and answers their views.
+    owns:
+      domains:
+        - desk.links
+    accepts:
+      commands:
+        - desk.links.AddLink
+    publishes:
+      events:
+        - desk.links.LinkAdded
+    reached_by: network
