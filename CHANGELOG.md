@@ -25,6 +25,11 @@ are Spindle's releases.
   and body, shared by the Service Worker host and the Node export. `run`'s world reader is
   `spindle_host::read_world`, and the lines `run` prints before listening are
   `Surface::report`, so every host reads a world and reports what it does not serve the same way.
+- `run --http` serves a view route whose `ess-http/1` body is `array`, `single`, `{<member>:
+  array}` or `{<member>: single}` (ESS 0.99.0, beyond10x/ess#755), as ESS's generated servers
+  answer it: the rows bare, the first row bare, or either as the one member of an object
+  (`{"lockers": [...]}`); a `single` view holding no row answers the route's `empty` status and
+  body, unwrapped. Each was named not served.
 
 ### Fixed
 
@@ -56,6 +61,13 @@ are Spindle's releases.
 
 ### Changed
 
+- A path variable whose field is a `Decimal` or a `Timestamp`, or a newtype of one, is read as
+  ESS 0.99.0's generated servers read it, now that ESS admits such a variable (beyond10x/ess#755):
+  a `Decimal` segment's decimal text is the number it spells, where it was refused `400` as text
+  (`"7.25" is not a Decimal`); a `Timestamp` segment that is not an RFC 3339 instant is refused
+  `400`, where a command stored it and a view answered `501`. A `Uuid`, `Boolean`, `Duration` or
+  `String` segment, and a newtype of one such as an id type over `Uuid`, was already read as the
+  type, on a command route and a view route.
 - ESS is pinned at 0.99.0 (the crates, the `ess` CLI CI installs and its checksum, and
   `requires: ess 0.99` in `ess/ess-inputs.yaml`); it was 0.98.0. The suite ESS synthesises from
   `ess/` is byte for byte the one 0.98.0 synthesised: 84 scenarios, all executed and passed,
@@ -70,8 +82,8 @@ are Spindle's releases.
   - An outcome's `body: {<member>: response}` or `{<member>: response.<field>}` is answered as the
     object whose one member holds what `response` or `response.<field>` answers.
   - Named not served, each with its reason: a `multipart` request, `request.query`, a route's
-    `limits` other than the 1 MiB Spindle reads, a view answered under one member, and a view with
-    `representations` (CSV). A binding-wide `limits` other than 1 MiB refuses the binding, as a
+    `limits` other than the 1 MiB Spindle reads, and a view with `representations` (CSV); a view
+    answered under one member is served (Added). A binding-wide `limits` other than 1 MiB refuses the binding, as a
     binding-wide `refusals` entry does.
 - ESS moves on to 0.99.1 (the crates, and the `ess` CLI CI installs and its checksum;
   `requires: ess 0.99` is unchanged). Its fixes are in suite synthesis only, and nothing changes

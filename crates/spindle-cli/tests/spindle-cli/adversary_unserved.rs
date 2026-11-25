@@ -3,7 +3,8 @@
 //! `tests/fixtures/adversary_unserved` declares one command, `WriteNote`, which runs, and two
 //! views: `AllNotes`, which the host reads, and `KeptNotes`, whose filter reads a field by
 //! `equals_ignore_case`, which the host does not read. `tests/fixtures/adversary_unserved-http.yaml`
-//! binds `AllNotes` to `GET /notes` with `body: array`, which this ingress does not serve.
+//! binds `AllNotes` to `GET /notes` with a CSV representation, which this ingress does not serve
+//! (it was `body: array` until `story:ess-099-path-types-and-wrapped-views` served that).
 //! `tests/fixtures/adversary_escalate` binds one event to a command twice: `audit-note` with
 //! `on_failure: escalate` and `index-note` with `on_failure: retry`.
 
@@ -28,6 +29,8 @@ const WRITE_NOTE: &str = "notes.pad.WriteNote";
 const ALL_NOTES: &str = "notes.pad.AllNotes";
 const KEPT_NOTES: &str = "notes.pad.KeptNotes";
 const COPY_NOTE: &str = "notes.pad.CopyNote";
+/// What `run` names an `AllNotes` route with a CSV representation by: a construct it does not serve.
+const CSV: &str = "a view whose query selects another representation of its rows, such as CSV";
 
 const STARTUP: Duration = Duration::from_secs(60);
 const ANSWER: Duration = Duration::from_secs(10);
@@ -319,7 +322,7 @@ fn adversary_an_unroutable_view_answers_501_by_name() {
     assert!(
         stderr.iter().any(|line| line.contains("not served:")
             && line.contains(&format!("`{ALL_NOTES}`"))
-            && line.contains("a view answered other than as rows")),
+            && line.contains(CSV)),
         "startup names the view and what it uses: {stderr:#?}"
     );
     let (method, path) = contract.route(WRITE_NOTE);
@@ -335,9 +338,9 @@ fn adversary_an_unroutable_view_answers_501_by_name() {
     assert_eq!(status, 501, "{answer}");
     assert_eq!(answer["committed"], false, "{answer}");
     assert!(
-        answer["refused"].as_str().is_some_and(|refused| {
-            refused.contains(ALL_NOTES) && refused.contains("a view answered other than as rows")
-        }),
+        answer["refused"]
+            .as_str()
+            .is_some_and(|refused| { refused.contains(ALL_NOTES) && refused.contains(CSV) }),
         "the 501 names the view and the construct: {answer}"
     );
 }
