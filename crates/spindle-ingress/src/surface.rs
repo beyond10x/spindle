@@ -8,17 +8,44 @@ use std::sync::Arc;
 use ess_compiler::EssIr;
 use ess_gen::http::{Binding, Flat, Shape};
 use ess_http::{
-    Body, Encoding, Header, Method, Operation, ResponseEncoding, Segment, Unknown, ViewBody,
+    Body, Encoding, Header, Method, Operation, ResponseEncoding, Segment, Unknown, ViewAnswer,
+    ViewBody,
 };
 use serde_json::{Map, Value};
 
 use crate::console::Console;
 use crate::observe::topology::Routed;
 use crate::observe::{Recorder, Reserved};
+use crate::router::BODY_LIMIT;
 
 /// What the refusal of a `form` or `query` key no field of the request declares says after
 /// `{at}.{key}`: the request log elides the key, which the caller sent ([`crate::observe`]).
 pub(crate) const NO_FIELD_NAMED: &str = ": no field of this request is named so";
+
+/// What the refusal of a member or key the path carries with another value says after
+/// `{at}.{key}`, on a route that ignores unknown members, as ESS's served application words it
+/// (`http::echoed`, beyond10x/ess#752).
+pub(crate) const ECHOED: &str = ": the path carries this field with another value";
+
+/// Whether a request's `member` holds what the path's `carried` value does, as ESS's served
+/// application compares them (`http::same_value`, beyond10x/ess#752): the same JSON value, or two
+/// numbers that denote one integer (`2` and `2.0`).
+pub(crate) fn same_value(member: &Value, carried: &Value) -> bool {
+    fn integer(number: &serde_json::Number) -> Option<i64> {
+        number.as_i64().or_else(|| {
+            number
+                .as_f64()
+                .filter(|float| float.fract() == 0.0 && float.abs() < 9_007_199_254_740_992.0)
+                .map(|float| float as i64)
+        })
+    }
+    match (member, carried) {
+        (Value::Number(one), Value::Number(other)) if one != other => {
+            integer(one).is_some_and(|one| Some(one) == integer(other))
+        }
+        _ => member == carried,
+    }
+}
 
 /// One path variable of a route: the input field it carries and how its text is read.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,7 +132,7 @@ pub struct Route {
     /// The outcomes answered with the command's response beside the envelope.
     responding: Vec<String>,
     /// The outcomes the binding answers with a body other than the envelope, each with it:
-    /// `response`, `response.<field>`, `{<member>: error}` or `none`.
+    /// `response`, `response.<field>`, either under one member, `{<member>: error}` or `none`.
     bodies: BTreeMap<String, Body>,
     /// The outcomes the binding answers with response headers, each with them by name, in name
     /// order ([`Route::headers`]).
@@ -301,8 +328,8 @@ impl Route {
     }
 
     /// The body the binding answers the command's outcome `outcome` with where it is not the
-    /// envelope: [`Body::Response`], [`Body::ResponseField`], [`Body::Error`] or [`Body::None`].
-    /// `None` for an outcome answered with the envelope.
+    /// envelope: [`Body::Response`], [`Body::ResponseField`], [`Body::Wrapped`], [`Body::Error`] or
+    /// [`Body::None`]. `None` for an outcome answered with the envelope.
     pub(crate) fn body(&self, outcome: &str) -> Option<&Body> {
         self.bodies.get(outcome)
     }
@@ -409,13 +436,27 @@ impl Route {
         self.encoding
     }
 
+    /// What a command's request does with a member or key no input field names
+    /// ([`ess_gen::http::request`]): refuse it, or ignore it (`unknown: ignore`).
+    pub fn unknown(&self) -> Unknown {
+        self.unknown
+    }
+
     /// A `form` body or a query string, `text`, read as the command's input, as ESS's served
     /// application reads it (`ess-synth` `http::flat_object`): keys and values form-decoded (`+`
     /// and `%XX`, UTF-8), each value read by its field's [`Flat`], a `List` field the array of
     /// its key's values (empty when absent), any other field present once at most. A key no field
     /// declares, the path carries, or that does not decode is refused naming it under `at`, or
-    /// dropped where the binding says `unknown: ignore`.
-    pub(crate) fn flat_input(&self, text: &str, at: &str) -> Result<Map<String, Value>, String> {
+    /// dropped where the binding says `unknown: ignore`: there a key the path carries is dropped
+    /// only when its value, read by its field's [`Flat`], is the one `carried` holds
+    /// ([`same_value`]), and refused naming it otherwise, as ESS 0.99.0's served application
+    /// holds it (`http::echoed_keys`, beyond10x/ess#752).
+    pub(crate) fn flat_input(
+        &self,
+        text: &str,
+        at: &str,
+        carried: &Map<String, Value>,
+    ) -> Result<Map<String, Value>, String> {
         let ignore = self.unknown == Unknown::Ignore;
         let mut found: Vec<Vec<String>> = vec![Vec::new(); self.parameters.len()];
         for pair in text.split('&').filter(|pair| !pair.is_empty()) {
@@ -431,12 +472,24 @@ impl Route {
                 .parameters
                 .iter()
                 .position(|parameter| parameter.wire == key);
-            let carried = index.is_some_and(|index| self.parameters[index].carried);
-            let Some(index) = index.filter(|_| !carried) else {
+            let on_path = index.is_some_and(|index| self.parameters[index].carried);
+            let Some(index) = index.filter(|_| !on_path) else {
                 if ignore {
+                    if let Some(parameter) = index.map(|index| &self.parameters[index]) {
+                        let text = form_decoded(value).ok_or_else(|| {
+                            format!("{place}: expected percent-encoded UTF-8 text, found {value:?}")
+                        })?;
+                        let held = carried.get(&parameter.field);
+                        if !read(parameter.flat, text)
+                            .zip(held)
+                            .is_some_and(|(read, held)| same_value(&read, held))
+                        {
+                            return Err(format!("{place}{ECHOED}"));
+                        }
+                    }
                     continue;
                 }
-                return Err(if carried {
+                return Err(if on_path {
                     format!("{place}: the path carries this field, so it is not a parameter here")
                 } else {
                     format!("{place}{NO_FIELD_NAMED}")
@@ -562,7 +615,7 @@ impl Route {
 
 /// `text` with each `%XX` escape of an RFC 3986 unreserved character (ALPHA / DIGIT / `-` / `.` /
 /// `_` / `~`, §2.3) decoded and every other escape left as written (§6.2.2.2): the spelling ESS
-/// 0.90.0's served application compares a request segment with a literal in
+/// 0.99.0's served application compares a request segment with a literal in
 /// (`literal_spelling` in the server `ess generate synthesize --http` emits,
 /// `docs/design/http-presentation-binding.md`, "Path templates"). ESS publishes it only as
 /// emitted source, not as a function this crate can call, so it is written here to the same rule.
@@ -859,7 +912,8 @@ impl Surface {
     /// [`SurfaceError::Collision`] when two components claim one route,
     /// [`SurfaceError::Reserved`] for a route whose first segment is `__spindle`, and
     /// [`SurfaceError::Unsupported`] for a binding that answers a standard refusal its own way
-    /// for every operation, or a path that is not a template.
+    /// for every operation or declares a request body limit other than [`BODY_LIMIT`], or a path
+    /// that is not a template.
     pub fn new(
         ir: &EssIr,
         components: &[String],
@@ -993,6 +1047,18 @@ impl Surface {
             return Err(SurfaceError::Unsupported {
                 operation: "the binding".to_owned(),
                 what: format!("its own answer to the standard refusal {key}"),
+            });
+        }
+        if let Some(binding) = binding
+            && let Some(limits) = binding.ir().limits()
+            && limits.request_bytes != BODY_LIMIT as u64
+        {
+            return Err(SurfaceError::Unsupported {
+                operation: "the binding".to_owned(),
+                what: format!(
+                    "a request body limit of {} bytes, where this ingress reads {BODY_LIMIT}",
+                    limits.request_bytes
+                ),
             });
         }
         let mut routes: Vec<Route> = Vec::new();
@@ -1438,12 +1504,13 @@ fn refuse(ir: &EssIr, command: &ess_compiler::ir::ResolvedCommand, route: &mut R
 /// than with the envelope and the headers they declare, and lists among its refused outcomes
 /// each one answered with a redirect or the `text` encoding ([`unwritten`]), or
 /// without a status; `Err` names what it uses that this ingress does not serve: a view answered
-/// other than as `rows`, a standard
-/// refusal the binding answers its own way, a command whose outcome answers with its retained
-/// result, a path variable or a view parameter in the query string that is not a scalar, or a
-/// command that reads its caller where the
-/// route neither fixes a caller nor has each request prove one ([`Surface::proving_callers`],
-/// design §11).
+/// other than as `rows` or with another representation its query selects, a standard
+/// refusal the binding answers its own way, a request body limit other than [`BODY_LIMIT`], a
+/// `multipart` request, input fields read from the query string beside the body
+/// (`request.query`), a command whose outcome answers with its retained result, a path variable
+/// or a view parameter in the query string that is not a scalar, or a command that reads its
+/// caller where the route neither fixes a caller nor has each request prove one
+/// ([`Surface::proving_callers`], design §11).
 fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Result<(), String> {
     for (variable, field) in ess_gen::http::path_fields(ir, bound) {
         let position = route
@@ -1483,6 +1550,20 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
                 .map(|field| field.name.clone())
                 .collect();
             let request = ess_gen::http::request(bound);
+            if request.encoding == Encoding::Multipart {
+                return Err("a `multipart/form-data` request".to_owned());
+            }
+            if !request.query.is_empty() {
+                return Err("input fields read from the query string beside the body".to_owned());
+            }
+            if let Some(limits) = bound.declared.and_then(|declared| declared.limits)
+                && limits.request_bytes != BODY_LIMIT as u64
+            {
+                return Err(format!(
+                    "a request body limit of {} bytes, where this ingress reads {BODY_LIMIT}",
+                    limits.request_bytes
+                ));
+            }
             route.encoding = request.encoding;
             route.unknown = request.unknown;
             if request.encoding != Encoding::Json {
@@ -1546,11 +1627,16 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
             }
         }
         ess_gen::http::Served::View(handle) => {
-            if bound
-                .declared
-                .is_some_and(|declared| declared.body != ViewBody::Rows)
-            {
-                return Err("a view answered other than as rows".to_owned());
+            if let Some(declared) = bound.declared {
+                if declared.body != ViewAnswer::bare(ViewBody::Rows) {
+                    return Err("a view answered other than as rows".to_owned());
+                }
+                if !declared.representations.is_empty() {
+                    return Err(
+                        "a view whose query selects another representation of its rows, such as CSV"
+                            .to_owned(),
+                    );
+                }
             }
             for param in &ir.view(handle).params {
                 if route
@@ -1607,6 +1693,7 @@ fn unwritten(listed: &ess_http::Outcome) -> Option<String> {
         Body::Envelope
         | Body::Response
         | Body::ResponseField(_)
+        | Body::Wrapped { .. }
         | Body::None
         | Body::Error { .. } => {}
     }
@@ -1626,8 +1713,30 @@ fn unwritten(listed: &ess_http::Outcome) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Caller, Flat, Queried, Surface, unique_members};
+    use super::{Caller, Flat, Queried, Surface, same_value, unique_members};
     use serde_json::{Value, json};
+
+    #[test]
+    fn a_path_echo_is_the_same_value_or_a_number_denoting_the_same_integer() {
+        for (member, carried) in [
+            (json!("t1"), json!("t1")),
+            (json!(2), json!(2)),
+            (json!(2.0), json!(2)),
+            (json!(-0.0), json!(0)),
+            (json!(true), json!(true)),
+        ] {
+            assert!(same_value(&member, &carried), "{member} and {carried}");
+        }
+        for (member, carried) in [
+            (json!("t2"), json!("t1")),
+            (json!("2"), json!(2)),
+            (json!(2.5), json!(2)),
+            (json!(3), json!(2)),
+            (json!(null), json!("t1")),
+        ] {
+            assert!(!same_value(&member, &carried), "{member} and {carried}");
+        }
+    }
 
     #[test]
     fn a_member_named_twice_at_any_depth_or_spelling_is_found() {

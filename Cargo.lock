@@ -543,8 +543,8 @@ dependencies = [
 
 [[package]]
 name = "ess-compiler"
-version = "0.98.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.98.0#eb2bdd51d9ed229eb527e5bb2747f16ef8bcdcf1"
+version = "0.99.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.99.0#7ddeac8895ce8651fea83419a9997b569091b7c3"
 dependencies = [
  "ess-domain",
  "ess-primitives",
@@ -555,8 +555,8 @@ dependencies = [
 
 [[package]]
 name = "ess-conformance"
-version = "0.98.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.98.0#eb2bdd51d9ed229eb527e5bb2747f16ef8bcdcf1"
+version = "0.99.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.99.0#7ddeac8895ce8651fea83419a9997b569091b7c3"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -570,8 +570,8 @@ dependencies = [
 
 [[package]]
 name = "ess-domain"
-version = "0.98.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.98.0#eb2bdd51d9ed229eb527e5bb2747f16ef8bcdcf1"
+version = "0.99.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.99.0#7ddeac8895ce8651fea83419a9997b569091b7c3"
 dependencies = [
  "ess-primitives",
  "ess-yaml",
@@ -583,8 +583,8 @@ dependencies = [
 
 [[package]]
 name = "ess-gen"
-version = "0.98.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.98.0#eb2bdd51d9ed229eb527e5bb2747f16ef8bcdcf1"
+version = "0.99.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.99.0#7ddeac8895ce8651fea83419a9997b569091b7c3"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -600,8 +600,8 @@ dependencies = [
 
 [[package]]
 name = "ess-http"
-version = "0.98.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.98.0#eb2bdd51d9ed229eb527e5bb2747f16ef8bcdcf1"
+version = "0.99.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.99.0#7ddeac8895ce8651fea83419a9997b569091b7c3"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -614,8 +614,8 @@ dependencies = [
 
 [[package]]
 name = "ess-primitives"
-version = "0.98.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.98.0#eb2bdd51d9ed229eb527e5bb2747f16ef8bcdcf1"
+version = "0.99.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.99.0#7ddeac8895ce8651fea83419a9997b569091b7c3"
 dependencies = [
  "ess-yaml",
  "schemars",
@@ -626,8 +626,8 @@ dependencies = [
 
 [[package]]
 name = "ess-transport"
-version = "0.98.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.98.0#eb2bdd51d9ed229eb527e5bb2747f16ef8bcdcf1"
+version = "0.99.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.99.0#7ddeac8895ce8651fea83419a9997b569091b7c3"
 dependencies = [
  "ess-compiler",
  "ess-domain",
@@ -638,8 +638,8 @@ dependencies = [
 
 [[package]]
 name = "ess-yaml"
-version = "0.98.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.98.0#eb2bdd51d9ed229eb527e5bb2747f16ef8bcdcf1"
+version = "0.99.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.99.0#7ddeac8895ce8651fea83419a9997b569091b7c3"
 dependencies = [
  "serde",
  "serde_norway",
@@ -1844,8 +1844,8 @@ dependencies = [
 
 [[package]]
 name = "schema-contract"
-version = "0.98.0"
-source = "git+https://github.com/beyond10x/ess?tag=0.98.0#eb2bdd51d9ed229eb527e5bb2747f16ef8bcdcf1"
+version = "0.99.0"
+source = "git+https://github.com/beyond10x/ess?tag=0.99.0#7ddeac8895ce8651fea83419a9997b569091b7c3"
 dependencies = [
  "base64 0.22.1",
  "ess-gen",

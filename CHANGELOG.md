@@ -54,6 +54,23 @@ are Spindle's releases.
 
 ### Changed
 
+- ESS is pinned at 0.99.0 (the crates, the `ess` CLI CI installs and its checksum, and
+  `requires: ess 0.99` in `ess/ess-inputs.yaml`); it was 0.98.0. The suite ESS synthesises from
+  `ess/` is byte for byte the one 0.98.0 synthesised: 84 scenarios, all executed and passed,
+  `conformance.toml` unchanged; the observe schema is unchanged and the observe types differ only
+  in their header. What changes for an `ess-http/1` binding passed to `run --http`:
+  - A route with `request: {unknown: ignore}` holds a member or key the path carries to the
+    path's value: one holding another value is refused `400`
+    (`query.<field>: the path carries this field with another value`), where a `query` or `form`
+    route dropped it whatever it held. One holding the path's value is still dropped.
+  - `unknown: ignore` beside a `json` body, which ESS 0.99.0 admits, drops a top-level member no
+    input field names and holds a member the path carries the same way.
+  - An outcome's `body: {<member>: response}` or `{<member>: response.<field>}` is answered as the
+    object whose one member holds what `response` or `response.<field>` answers.
+  - Named not served, each with its reason: a `multipart` request, `request.query`, a route's
+    `limits` other than the 1 MiB Spindle reads, a view answered under one member, and a view with
+    `representations` (CSV). A binding-wide `limits` other than 1 MiB refuses the binding, as a
+    binding-wide `refusals` entry does.
 - What a seed does not do: Spindle keeps no record of request ids, across starts or replicas, for
   a seed entry or any request. A restart applies nothing new only when every entry is a create
   guarded by `existing_instance:`; any other entry runs again on every start, so an update writes

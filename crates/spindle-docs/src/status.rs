@@ -359,7 +359,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "Outcome bodies",
-        "A command outcome an ess-http/1 binding answers with body: response, body: response.<field> or body: none answers its bound status with the command's response bare, the one field's value bare, or no body and no Content-Type, as ess generate --kind openapi publishes it, with the response headers the binding declares (a WWW-Authenticate challenge among them); one bound with a redirect or the text encoding answers 501 naming which.",
+        "A command outcome an ess-http/1 binding answers with body: response, body: response.<field> or body: none answers its bound status with the command's response bare, the one field's value bare, or no body and no Content-Type, and one answered with either of the first two under one member, {<member>: response}, with an object whose one member holds it, as ess generate --kind openapi publishes it, with the response headers the binding declares (a WWW-Authenticate challenge among them); one bound with a redirect or the text encoding answers 501 naming which.",
         "/docs/concepts/capabilities",
         "crates/spindle-cli/tests/spindle-cli/outcome_bodies.rs::a_response_body_is_served_bare",
     ),
