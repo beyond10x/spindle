@@ -110,7 +110,9 @@ version and a WebDriver on `PATH`), the Node lane (`check:node_serves_a_specific
 `cargo clippy --workspace --all-targets --locked -- -D warnings`,
 `cargo test --workspace --locked --no-fail-fast`. The ESS pin is the `tag` of `ess-compiler`,
 `ess-domain` and `ess-primitives` in `Cargo.toml`; CI installs the `ess` CLI of the same version
-(`.github/workflows/ci.yml`). Move them together.
+(`.github/workflows/ci.yml`, `ESS_VERSION`), `ess/ess-inputs.yaml` requires it exactly, and
+`ESS_TOOLCHAIN` in `Taskfile.yml` and `.cargo/config.toml` routes every `ess` a task or a test
+starts to it. Move them together; `check:the_ess_pin_is_one_release` fails when they differ.
 
 VM tests, and tests that start a user namespace, are `#[ignore]`d: CI runners refuse
 unprivileged user namespaces. `task check:vm` runs them on a host with `/dev/kvm`,
