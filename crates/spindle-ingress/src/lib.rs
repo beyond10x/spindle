@@ -87,7 +87,9 @@ pub use observe::{
     REQUESTS_MOST, RESERVED_SEGMENT, Recorder, Reserved, SeedCounts,
 };
 pub use router::{BODY_LIMIT, CONTENT_TYPE, Request, Response, Routed, route, route_with};
-pub use surface::{Caller, Queried, Resolved, Route, Surface, SurfaceError, Unserved, Variable};
+pub use surface::{
+    Caller, Queried, Resolved, Route, Surface, SurfaceError, Unfixed, Unserved, Variable,
+};
 
 /// The `ingress.network` implementation this crate serves: HTTP on the loopback address.
 pub const HTTP_LOOPBACK: &str = "http-loopback";

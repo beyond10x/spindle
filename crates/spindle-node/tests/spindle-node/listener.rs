@@ -36,7 +36,7 @@ const WORLD: &str = include_str!("../fixtures/world-exchanges.json");
 
 /// One request and the answer the loopback listener writes for it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
-struct Exchange {
+pub(crate) struct Exchange {
     method: String,
     /// The path and query.
     target: String,
@@ -55,7 +55,7 @@ fn ir() -> EssIr {
     spindle_spec::compile(&names, &texts).expect("the review fixture compiles")
 }
 
-fn loopback() -> Environment {
+pub(crate) fn loopback() -> Environment {
     Environment::parse(concat!(
         "format = \"spindle-environment/1\"\n",
         "name = \"loopback\"\n",
@@ -116,6 +116,46 @@ fn send(address: SocketAddr, exchange: &Exchange) -> (u16, Option<String>, Strin
     (status, allow, body.to_owned())
 }
 
+/// What `listener` answers each of `recorded`, each request sent on a connection of its own and
+/// handed to `serve` on this thread: the record with each status, `Allow` header and body
+/// replaced by the listener's.
+pub(crate) fn listened(
+    listener: &Listener,
+    recorded: &[Exchange],
+    mut serve: impl FnMut(spindle_ingress::Exchange),
+) -> Vec<Exchange> {
+    let address = listener.local_addr();
+    let mut listened = Vec::new();
+    for exchange in recorded {
+        let client = {
+            let exchange = exchange.clone();
+            thread::spawn(move || send(address, &exchange))
+        };
+        for _ in 0..STEPS {
+            if client.is_finished() {
+                break;
+            }
+            if let Some(served) = listener.next(WAIT) {
+                serve(served);
+            }
+        }
+        assert!(
+            client.is_finished(),
+            "{} {} was not answered in time",
+            exchange.method,
+            exchange.target
+        );
+        let (status, allow, answer) = client.join().expect("the client thread");
+        listened.push(Exchange {
+            status,
+            allow,
+            answer,
+            ..exchange.clone()
+        });
+    }
+    listened
+}
+
 #[test]
 fn the_loopback_listener_answers_the_world_exchanges() {
     let ir = ir();
@@ -133,40 +173,14 @@ fn the_loopback_listener_answers_the_world_exchanges() {
         .and_then(|surface| surface.with_console(HTTP_LOOPBACK))
         .unwrap_or_else(|refused| panic!("the review surface is served: {refused}"));
     let listener = Listener::bind(0, surface).expect("the listener binds");
-    let address = listener.local_addr();
     let worlds = |ir: &EssIr, body: &Value| {
         spindle_host::read_world(ir, body, |table| table.over(answers.clone()))
     };
 
     let recorded: Vec<Exchange> = serde_json::from_str(WORLD).expect("the record reads");
-    let mut listened = Vec::new();
-    for exchange in &recorded {
-        let client = {
-            let exchange = exchange.clone();
-            thread::spawn(move || send(address, &exchange))
-        };
-        for _ in 0..STEPS {
-            if client.is_finished() {
-                break;
-            }
-            if let Some(served) = listener.next(WAIT) {
-                served.serve_with(&mut host, &worlds);
-            }
-        }
-        assert!(
-            client.is_finished(),
-            "{} {} was not answered in time",
-            exchange.method,
-            exchange.target
-        );
-        let (status, allow, answer) = client.join().expect("the client thread");
-        listened.push(Exchange {
-            status,
-            allow,
-            answer,
-            ..exchange.clone()
-        });
-    }
+    let listened = listened(&listener, &recorded, |served| {
+        served.serve_with(&mut host, &worlds);
+    });
     assert_eq!(
         listened,
         recorded,

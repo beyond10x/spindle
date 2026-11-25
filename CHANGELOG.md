@@ -6,6 +6,16 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- The Node export takes fixed actors: `Spindle.create` reads `fixedActors`, a list of
+  `{ actor, caller }`, as `run --fixed-actor` with `--fixed-caller` takes them. Each served
+  operation is sent or read as the first fixed actor its grant names, and one no fixed actor may
+  run answers `403` "not granted", naming the first. `create` refuses an actor given twice, an
+  actor the specification does not declare, and a caller its binding refuses, with `run`'s
+  reason; `run` and the Node export check fixed callers with the same function
+  (`Caller::fixed`) (`story:node-export-fixed-actor`).
+
 ## [0.20.1] - 2026-11-25
 
 ### Added

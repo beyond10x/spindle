@@ -272,10 +272,18 @@ spindle.dispose();
 - `Spindle.create(config)` takes a JSON string or a plain object: `sources` (each
   `[name, text]`), `environment` (TOML), and optionally `decisions` (TOML), `answerDefault`
   (`true` answers what the decisions file does not by each command's default branch, as
-  `run --answer-default`) and `binding` (an `ess-http/1` binding, YAML or JSON). Any other key is
-  refused. It throws an `Error` naming the reason for what `run` refuses before listening, and
-  for a component whose state is bound to anything but `memory` or whose `ingress.network` is
-  bound to anything but `node` (`examples/environments/node.toml`).
+  `run --answer-default`), `binding` (an `ess-http/1` binding, YAML or JSON) and `fixedActors`.
+  Any other key is refused. It throws an `Error` naming the reason for what `run` refuses before
+  listening, and for a component whose state is bound to anything but `memory` or whose
+  `ingress.network` is bound to anything but `node` (`examples/environments/node.toml`).
+- `fixedActors` is a list of `{ actor, caller }`: an actor's qualified name and its caller
+  attributes (`{}` where left out), as `run --fixed-actor` with `--fixed-caller` takes them, in
+  order. Each served command is sent as the first fixed actor whose `may:` names it, and a
+  read-granted view read as the first that may read it; one no fixed actor may run answers `403`
+  "not granted", naming the first. A test-backend switch, not authentication. `create` refuses an
+  actor given twice, an actor the specification does not declare, and a caller its binding
+  refuses, with `run`'s reason:
+  `the fixed actor bureau.desk.Nobody: the specification declares no such actor`.
 - `spindle.notServed()` lists what `run` prints on stderr before it listens: each operation not
   served and each outcome answered `501` where a request selects it, with why.
 - `spindle.handle({ method, path, query, headers, body })` answers through the router the loopback
@@ -286,8 +294,8 @@ spindle.dispose();
   emptied, then the world's rows, decision table and mint seed loaded, as `run` loads them.
 - `spindle.dispose()` drops the host; every later call throws. Instances share nothing.
 
-The clock is the system clock, and periodic bindings do not fire; fixed actors, a clock under the
-program's control, seeds and event delivery are planned (`epic:node-export`).
+The clock is the system clock, and periodic bindings do not fire; a clock under the program's
+control, seeds and event delivery are planned (`epic:node-export`).
 
 ## State in PostgreSQL
 

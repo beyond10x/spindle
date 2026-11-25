@@ -11,8 +11,10 @@
 //!    stores open asynchronously, so this step is its own).
 //! 2. [`Admitted::open`] reads the decisions file and the answer default as `run --decisions` and
 //!    `run --answer-default` read them ([`spindle_host::Answers`]), compiles an `ess-http/1`
-//!    binding with ESS, lays out the routes with the console routes
-//!    ([`spindle_ingress::Surface::with_console`]), and opens the host on the supplied stores
+//!    binding with ESS, checks the fixed callers as `run --fixed-actor` checks them ([`fixed`]),
+//!    lays out the routes with the console routes, each operation sent or read as the first fixed
+//!    actor its grant names ([`spindle_ingress::Surface::fixing_callers`],
+//!    [`spindle_ingress::Surface::with_console`]), and opens the host on the supplied stores
 //!    ([`Host::supplied`]); a component whose state is bound to `memory` keeps it in memory.
 //!
 //! [`Opened::answer`] routes one request with `spindle_ingress::route_with`, the router the
@@ -27,7 +29,7 @@ use ess_gen::http::Binding;
 use serde_json::Value;
 use spindle_capability::{Capability, Environment};
 use spindle_host::{Answers, Clock, Host, Placements, Stores};
-use spindle_ingress::{HTTP_LOOPBACK, Request, Response, Surface};
+use spindle_ingress::{Caller, HTTP_LOOPBACK, Request, Response, Surface, Unfixed};
 
 /// A specification compiled and admitted on an environment: every component placed, nothing
 /// opened yet.
@@ -94,6 +96,11 @@ pub struct Opening {
     pub answer_default: bool,
     /// An `ess-http/1` binding's text, YAML or JSON, if the routes are bound by one.
     pub binding: Option<String>,
+    /// The fixed actors, each with its caller attributes, in order, as `run --fixed-actor` with
+    /// `--fixed-caller` takes them: each served operation is sent or read as the first its grant
+    /// names ([`Surface::fixing_callers`]), a test-backend switch, not authentication; with none,
+    /// as no caller.
+    pub callers: Vec<Caller>,
     /// Whether a `POST /api/reset` may carry a world; without, one that does is refused `400`.
     pub worlds: bool,
     /// The clock the host reads.
@@ -135,10 +142,12 @@ impl Admitted {
     /// (`Answers::served`); with neither, the host answers none, and a specification that
     /// declares one is refused.
     ///
+    /// Each fixed caller is checked as `run` checks it before listening ([`fixed`]).
+    ///
     /// # Errors
     /// The reason, as `the decisions file: ...`, `the binding: ...`,
-    /// `the binding was refused: ...`, `the binding cannot be served: ...`, `the routes: ...`, or
-    /// the host's refusal.
+    /// `the binding was refused: ...`, `the binding cannot be served: ...`, a fixed caller's
+    /// refusal ([`fixed`]), `the routes: ...`, or the host's refusal.
     pub fn open(self, opening: Opening) -> Result<Opened, String> {
         let Admitted {
             ir, environment, ..
@@ -160,9 +169,11 @@ impl Admitted {
             .binding
             .map(|text| binding(&ir, &text))
             .transpose()?;
-        let surface = Surface::new(&ir, &opening.reached, binding.as_ref())
-            .and_then(|surface| surface.with_console(HTTP_LOOPBACK))
-            .map_err(|refused| format!("the routes: {refused}"))?;
+        fixed(&ir, &opening.callers)?;
+        let surface =
+            Surface::fixing_callers(&ir, &opening.reached, binding.as_ref(), &opening.callers)
+                .and_then(|surface| surface.with_console(HTTP_LOOPBACK))
+                .map_err(|refused| format!("the routes: {refused}"))?;
         let decider = decides.then(|| answers.clone().served());
         let host = Host::supplied(ir, &environment, opening.clock, decider, opening.stores)
             .map_err(|error| error.to_string())?;
@@ -220,6 +231,33 @@ pub fn binding(ir: &EssIr, text: &str) -> Result<Binding, String> {
     let compiled = ess_http::compile(&spec, ir, &ess_gen::http::derived(ir))
         .map_err(|diagnostics| format!("the binding was refused:\n{diagnostics}"))?;
     Binding::new(compiled).map_err(|open| format!("the binding cannot be served:\n{open}"))
+}
+
+/// Refuses the fixed callers `callers`, in order, as `run` refuses its `--fixed-actor` and
+/// `--fixed-caller` before listening ([`Caller::repeated`], [`Caller::fixed`]): an actor given
+/// twice, an actor `ir` does not declare, or attributes that are not a caller of that actor's.
+///
+/// # Errors
+/// `run`'s reason after the actor named as this crate's hosts name it:
+/// `the fixed actor <actor> is given twice; ...`,
+/// `the fixed actor <actor>: the specification declares no such actor`, or
+/// `the caller of the fixed actor <actor>: <the kernel's refusal>`.
+pub fn fixed(ir: &EssIr, callers: &[Caller]) -> Result<(), String> {
+    let named = |refused: Unfixed| match refused {
+        Unfixed::Twice { .. } => format!("the fixed actor {} {refused}", refused.actor()),
+        Unfixed::Undeclared { .. } => format!("the fixed actor {}: {refused}", refused.actor()),
+        Unfixed::Unbound { .. } => {
+            format!(
+                "the caller of the fixed actor {}: {refused}",
+                refused.actor()
+            )
+        }
+    };
+    Caller::repeated(callers).map_err(named)?;
+    callers
+        .iter()
+        .try_for_each(|caller| caller.fixed(ir))
+        .map_err(named)
 }
 
 /// The statuses the Fetch standard gives a null body: a browser refuses to build a `Response`

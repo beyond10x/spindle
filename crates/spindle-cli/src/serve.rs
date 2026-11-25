@@ -12,7 +12,7 @@ use anyhow::{Context, Result, bail};
 use ess_gen::http::Binding;
 use spindle_capability::{Capability, Environment};
 use spindle_host::{Cause, Host, HostError, Retries, SystemClock};
-use spindle_ingress::{Caller, Listener, Surface};
+use spindle_ingress::{Caller, Listener, Surface, Unfixed};
 use spindle_spec::EssIr;
 
 use crate::decisions::{self, Run};
@@ -165,35 +165,29 @@ pub(crate) fn callers(
         );
     }
     let mut attributes = attributes.into_iter();
-    let mut callers: Vec<Caller> = Vec::with_capacity(actors.len());
-    for actor in actors {
-        if callers.iter().any(|caller| caller.actor == actor) {
-            bail!("--fixed-actor {actor} is given twice; the first would always be sent as");
-        }
-        callers.push(Caller {
+    let callers: Vec<Caller> = actors
+        .into_iter()
+        .map(|actor| Caller {
             actor,
             attributes: attributes.next().unwrap_or_default(),
-        });
+        })
+        .collect();
+    if let Err(twice) = Caller::repeated(&callers) {
+        bail!("--fixed-actor {} {twice}", twice.actor());
     }
     Ok(callers)
 }
 
-/// Refuses a fixed caller `ir` would refuse on the first command sent as it: an actor it does not
-/// declare, or a caller that is not one of that actor's, by the kernel's own binding
-/// ([`spindle_kernel::caller_binds`]).
+/// Refuses a fixed caller `ir` would refuse on the first command sent as it ([`Caller::fixed`]):
+/// an actor it does not declare, or a caller that is not one of that actor's, by the kernel's own
+/// binding ([`spindle_kernel::caller_binds`]).
 fn fixed(ir: &EssIr, caller: &Caller) -> Result<()> {
-    if !ir
-        .actors()
-        .keys()
-        .any(|name| name.to_string() == caller.actor)
-    {
-        bail!(
-            "--fixed-actor {}: the specification declares no such actor",
-            caller.actor
-        );
+    match caller.fixed(ir) {
+        Ok(()) => Ok(()),
+        Err(unbound @ Unfixed::Unbound { .. }) => Err(anyhow::Error::new(unbound)
+            .context(format!("--fixed-caller for --fixed-actor {}", caller.actor))),
+        Err(refused) => bail!("--fixed-actor {}: {refused}", caller.actor),
     }
-    spindle_kernel::caller_binds(ir, Some(&caller.actor), Some(&caller.attributes))
-        .with_context(|| format!("--fixed-caller for --fixed-actor {}", caller.actor))
 }
 
 /// What the startup line says a fixed caller carries: the names of its attributes, in order, never
