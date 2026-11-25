@@ -14,6 +14,14 @@ are Spindle's releases.
   evaluated by ESS and answer the rows ESS's interpreter answers, where the view was refused whole
   and its route answered 501 (`story:view-filter-always-and-key`).
 
+### Fixed
+
+- A view route answers each row under its fields' wire names (`{name: job_id, wire: jobId}`
+  answers `jobId`), an enum variant in its wire spelling and a struct's members under their wire
+  names, as the row schema ESS projects declares and ESS's generated servers answer; 0.20.0
+  answered the model names (`story:view-field-wire-names`). View parameters were already read
+  under their wire names.
+
 ## [0.20.0] - 2026-11-24
 
 ### Added

@@ -1,0 +1,83 @@
+domain: catalog.entries
+summary: Entries, each with a kind, a group, an optional description, a shade and a size.
+types:
+  - name: catalog.entries.Shade
+    kind: enum
+    variants:
+      - name: pale_blue
+        wire: PALE_BLUE
+      - name: dark
+  - name: catalog.entries.Size
+    kind: struct
+    fields:
+      - name: width_cm
+        type: Integer
+        naming: {wire: widthCm}
+entities:
+  - name: catalog.entries.Entry
+    identity:
+      name: entry_id
+      type: String
+    fields:
+      - name: entry_kind
+        type: String
+      - name: group_label
+        type: String
+      - name: about_text
+        type: Optional<String>
+      - name: shade
+        type: catalog.entries.Shade
+      - name: size
+        type: catalog.entries.Size
+    lifecycle:
+      initial: Added
+      states: [Added]
+      terminal: [Added]
+commands:
+  - name: catalog.entries.AddEntry
+    input:
+      - name: entry_id
+        type: String
+      - name: entry_kind
+        type: String
+      - name: group_label
+        type: String
+      - name: about_text
+        type: Optional<String>
+      - name: shade
+        type: catalog.entries.Shade
+      - name: size
+        type: catalog.entries.Size
+    outcomes:
+      - name: added
+        creates: catalog.entries.Entry
+        instance: entry_id
+        sets:
+          entry_kind: input.entry_kind
+          group_label: input.group_label
+          about_text: input.about_text
+          shade: input.shade
+          size: input.size
+        emits: [catalog.entries.EntryAdded]
+        payload:
+          catalog.entries.EntryAdded: {entry_id: input.entry_id}
+        summary: The entry is added.
+events:
+  - name: catalog.entries.EntryAdded
+    fields:
+      - name: entry_id
+        type: String
+views:
+  - name: catalog.entries.Grouped
+    source: catalog.entries.Entry
+    consistency: read_your_writes
+    params:
+      - {name: group_label, type: String, wire: groupLabel}
+    filter: group_label == param.group_label
+    fields:
+      - {name: entry_id, type: String}
+      - {name: entry_kind, type: String, wire: type}
+      - {name: group_label, type: String, wire: groupLabel}
+      - {name: about_text, type: Optional<String>, wire: aboutText}
+      - {name: shade, type: catalog.entries.Shade}
+      - {name: size, type: catalog.entries.Size}
