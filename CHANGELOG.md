@@ -6,6 +6,16 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- A view that declares `paging:` is served, where it was refused at start. A read that sends
+  neither the page nor the size answers every row; one that sends both answers that page of the
+  rows in `order_by` order, ties in identity order, as ESS 0.99.1's interpreter cuts it, with
+  `total` beside the rows only where the view declares `total: true`. A page without its size or
+  a size without its page, a negative value, a page below `first_page` and an offset that
+  overflows answer `400`, and the conformance target reports them unsupported. `Host::listed_with`
+  and `Reader::listed_with` answer the rows with the total (`story:view-paging`).
+
 ## [0.20.2] - 2026-11-25
 
 ### Added

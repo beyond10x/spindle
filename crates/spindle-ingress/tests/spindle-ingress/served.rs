@@ -4,10 +4,11 @@
 //!
 //! The fixture `tests/fixtures/served-operations` declares one component, `pad`, reached over the
 //! network: `WriteNote`, which runs, and `DiscardNote`, whose `input_absent:` branch the kernel
-//! does not run; `AllNotes`, `NotesWithText`, `NoteCount` (an aggregation) and `DoubledCounts` (a
-//! computed field), which the host reads, and one view of each construct the host does not read:
-//! `KeptNotes` (a filter it does not read), `NotePages` (paging) and `NoteById` (a default row
-//! for an absent identity).
+//! does not run; `AllNotes`, `NotesWithText`, `NoteCount` (an aggregation), `DoubledCounts` (a
+//! computed field) and the paged `NotePages`, `NotePagesByText` and `FilteredNotePages`
+//! (`story:view-paging`), which the host reads, and one view of each construct the host does not
+//! read: `KeptNotes` (a filter it does not read) and `NoteById` (a default row for an absent
+//! identity).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -132,7 +133,10 @@ fn served_answers_one_row_per_route_with_the_reason_the_start_log_prints() {
             "command notes.pad.WriteNote",
             "view notes.pad.AllNotes",
             "view notes.pad.DoubledCounts",
+            "view notes.pad.FilteredNotePages",
             "view notes.pad.NoteCount",
+            "view notes.pad.NotePagesByText",
+            "view notes.pad.NotePages",
             "view notes.pad.NotesWithText",
         ]
     );
@@ -142,14 +146,12 @@ fn served_answers_one_row_per_route_with_the_reason_the_start_log_prints() {
             "command notes.pad.DiscardNote",
             "view notes.pad.KeptNotes",
             "view notes.pad.NoteById",
-            "view notes.pad.NotePages",
         ]
     );
     for construct in [
         "`input_absent:`",
         "the filter",
         "a default row for an absent identity",
-        "paging",
     ] {
         assert!(
             logged.iter().any(|line| line.contains(construct)),

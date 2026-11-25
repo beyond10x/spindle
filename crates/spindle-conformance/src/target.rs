@@ -367,11 +367,12 @@ impl ConformanceTarget for HostTarget {
         let running = running
             .as_mut()
             .ok_or_else(|| TargetError::unavailable(&view, "no scenario is open"))?;
-        let rows = match running.host.list_with(&view, &params) {
-            Ok(rows) => rows,
+        let listed = match running.host.listed_with(&view, &params) {
+            Ok(listed) => listed,
             // ESS's interpreter refuses a read with a parameter the view does not declare, a
             // required one left out or one not of its type as unsupported (`interpret/views.rs`,
-            // `query`).
+            // `query`), and a page or size it refuses (one without the other, a negative one, a
+            // page below `first_page`, an offset that overflows) the same way.
             Err(HostError::Parameters { detail, .. }) => {
                 return Err(TargetError::unsupported(
                     format!("reading `{view}`"),
@@ -391,7 +392,7 @@ impl ConformanceTarget for HostTarget {
                 ));
             }
         };
-        if let Some(field) = self.undetermined(&view, &rows) {
+        if let Some(field) = self.undetermined(&view, &listed.rows) {
             return Err(TargetError::unsupported(
                 format!("reading `{view}`"),
                 format!(
@@ -400,14 +401,21 @@ impl ConformanceTarget for HostTarget {
                 ),
             ));
         }
-        rows.iter()
+        let rows = listed
+            .rows
+            .iter()
             .map(|row| {
                 row.iter()
                     .map(|(field, value)| node(value).map(|value| (field.clone(), value)))
                     .collect::<Result<BTreeMap<_, _>, _>>()
             })
-            .collect::<Result<Vec<_>, _>>()
-            .map(SemanticViewResult::of)
+            .collect::<Result<Vec<_>, _>>()?;
+        // A view declaring `paging: {total: true}` answers how many rows its filter keeps beside
+        // the page, as ESS's interpreter sets `SemanticViewResult::total`.
+        Ok(match listed.total {
+            Some(total) => SemanticViewResult::of(rows).with_total(total),
+            None => SemanticViewResult::of(rows),
+        })
     }
 
     fn observe_events(

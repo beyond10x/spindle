@@ -1576,13 +1576,12 @@ impl Host {
                  none is the row of one identity"
             )));
         }
-        let parameters =
-            crate::view::parameters(&self.ir, declared, &Map::new()).map_err(|detail| {
-                HostError::Parameters {
-                    view: view.to_owned(),
-                    detail,
-                }
-            })?;
+        let parameters = crate::view::parameters(&self.ir, declared, &Map::new())
+            .map_err(|detail| HostError::Parameters {
+                view: view.to_owned(),
+                detail,
+            })?
+            .facts;
         let entity = self.ir.entity(&declared.source).name.to_string();
         let stored = store_of(&mut self.components, &owner)?.load(&entity, identity)?;
         let Some(stored) = stored else {
@@ -1664,13 +1663,21 @@ impl Host {
     /// `null` where an `Optional` operand is absent or a divisor is zero outside `coalesce`, an
     /// `Integer` as a JSON integer, any other value as ESS writes it.
     ///
+    /// A view declaring `paging:` answers the page its two paging parameters ask for, as ESS
+    /// 0.99.1's interpreter cuts it (`story:view-paging`): with neither given, every row; with
+    /// both, `size` rows after the first `(page - first_page) * size` of the rows in their order.
+    /// Both may be left out whatever type they are declared at. [`Host::listed_with`] also answers
+    /// how many rows the filter keeps, where the view declares `total: true`.
+    ///
     /// # Errors
     /// [`HostError::NoView`]; [`HostError::Unsupported`], naming the construct, for a view that
-    /// declares paging, a default row for an absent identity,
+    /// declares a default row for an absent identity,
     /// an aggregation beside a field read through a reference, or any other filter, a measure's
     /// `where:` included; [`HostError::Parameters`], naming the parameter, for a value the view
-    /// does not declare, a required one left out or one not of its declared type or newtype,
-    /// before anything is read; [`HostError::Unsupported`] for a filter unknown for a row, for an
+    /// does not declare, a required one left out or one not of its declared type or newtype, and
+    /// for a page given without its size or a size without its page, a negative one, a page below
+    /// `first_page` or an offset past what a read can count, before anything is read;
+    /// [`HostError::Unsupported`] for a filter unknown for a row, for an
     /// aggregate ESS determines no value of, and for a computed field ESS determines no value of
     /// for a row (one unknown, absent where the field is required, or with no spelling of its
     /// type); and [`HostError::Store`] when the store cannot be read.
@@ -1679,6 +1686,20 @@ impl Host {
         view: &str,
         parameters: &Map<String, Value>,
     ) -> Result<Vec<Map<String, Value>>, HostError> {
+        self.listed_with(view, parameters).map(|listed| listed.rows)
+    }
+
+    /// The rows [`Host::list_with`] answers, and, where the view declares
+    /// `paging: {total: true}`, how many rows its filter keeps, counted before the page is cut, as
+    /// ESS's interpreter counts them ([`Listed`]).
+    ///
+    /// # Errors
+    /// As [`Host::list_with`].
+    pub fn listed_with(
+        &mut self,
+        view: &str,
+        parameters: &Map<String, Value>,
+    ) -> Result<Listed, HostError> {
         let listing = listing(&self.ir, self.clock.as_ref(), view, parameters)?;
         let scan = store_of(&mut self.components, &listing.owner)?.scan(&listing.entity)?;
         listing.rows(
@@ -2248,14 +2269,27 @@ impl Far {
     }
 }
 
+/// The rows one read of a view answers ([`Host::listed_with`], [`Reader::listed_with`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Listed {
+    /// The rows, in the view's order: the page a paged read asks for, or every row the view
+    /// holds.
+    pub rows: Vec<Map<String, Value>>,
+    /// How many rows the view's filter keeps, counted before the page is cut, where the view
+    /// declares `paging: {total: true}`; `None` for every other view.
+    pub total: Option<u64>,
+}
+
 /// A read of a view, checked before any store is read: the view, the component that owns its
-/// source, the source entity, the parameter values read, and the instant its filter holds rows
-/// against. [`Host::list_with`] and [`Reader::list_with`] read through it.
+/// source, the source entity, the parameter values read, the slice of its rows a paged read
+/// answers, and the instant its filter holds rows against. [`Host::list_with`] and
+/// [`Reader::list_with`] read through it.
 struct Listing<'ir> {
     declared: &'ir ResolvedView,
     owner: String,
     entity: String,
     parameters: ess_primitives::FactStore,
+    slice: Option<crate::view::Slice>,
     now: Option<ess_primitives::Rfc3339Instant>,
 }
 
@@ -2268,7 +2302,7 @@ fn listing<'ir>(
     parameters: &Map<String, Value>,
 ) -> Result<Listing<'ir>, HostError> {
     let (declared, owner) = readable(ir, view)?;
-    let parameters = crate::view::parameters(ir, declared, parameters).map_err(|detail| {
+    let given = crate::view::parameters(ir, declared, parameters).map_err(|detail| {
         HostError::Parameters {
             view: view.to_owned(),
             detail,
@@ -2278,16 +2312,50 @@ fn listing<'ir>(
         declared,
         owner,
         entity: ir.entity(&declared.source).name.to_string(),
-        parameters,
+        parameters: given.facts,
+        slice: given.slice,
         now: read_instant(declared, clock),
     })
 }
 
 impl Listing<'_> {
+    /// Every row of `scan`, the source's instances, the view holds, projected, in its order
+    /// ([`Listing::kept`]), and, where the view declares `paging: {total: true}`, how many they are;
+    /// of a paged read, only the page its slice asks for, cut after the rows are counted and
+    /// ordered, as ESS's interpreter cuts it (`ess-conformance` `src/interpret/views.rs` at ESS
+    /// 0.99.1, `query`).
+    ///
+    /// # Errors
+    /// As [`Listing::kept`]; [`HostError::Unsupported`] where the total is past `u64`.
+    fn rows(
+        &self,
+        ir: &EssIr,
+        view: &str,
+        scan: spindle_kernel::Scan,
+        load: &mut Load<'_>,
+    ) -> Result<Listed, HostError> {
+        let rows = self.kept(ir, view, scan, load)?;
+        let total = self
+            .declared
+            .paging
+            .as_ref()
+            .filter(|paging| paging.total)
+            .map(|_| u64::try_from(rows.len()))
+            .transpose()
+            .map_err(|_| {
+                HostError::Unsupported(format!("view {view}: its total is past what is counted"))
+            })?;
+        let rows = match self.slice {
+            Some(slice) => slice.cut(rows),
+            None => rows,
+        };
+        Ok(Listed { rows, total })
+    }
+
     /// Every row of `scan`, the source's instances, the view holds: projected, in its order. The
     /// rows it reads through a reference, by a field or by its filter, are loaded through `load`
     /// ([`Far`]).
-    fn rows(
+    fn kept(
         &self,
         ir: &EssIr,
         view: &str,
