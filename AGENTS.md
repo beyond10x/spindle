@@ -114,6 +114,12 @@ version and a WebDriver on `PATH`), the Node lane (`check:node_serves_a_specific
 `ESS_TOOLCHAIN` in `Taskfile.yml` and `.cargo/config.toml` routes every `ess` a task or a test
 starts to it. Move them together; `check:the_ess_pin_is_one_release` fails when they differ.
 
+The build node that runs the local gate has no WebDriver. The lanes
+`check:the_browser_store_keeps_state_in_indexeddb` and `check:a_service_worker_serves_a_specification`
+run only on the forge, in headless Firefox with geckodriver from the `ubuntu-24.04` runner image.
+Until the node has geckodriver (pinned 0.37.1; the node has Firefox 159, the forge 160), a pull
+request's node gate cites the forge run of the same head for those two lanes.
+
 VM tests, and tests that start a user namespace, are `#[ignore]`d: CI runners refuse
 unprivileged user namespaces. `task check:vm` runs them on a host with `/dev/kvm`,
 `qemu-system-x86_64`, `unshare`, `nsenter`, `ip` and, for the QEMU telemetry case,
