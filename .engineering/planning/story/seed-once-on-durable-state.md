@@ -31,7 +31,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 19
+revision: 20
 ---
 # A seed is applied once to a durable state
 
@@ -58,6 +58,13 @@ Reported 2026-11-26 by a consumer that keeps its state across restarts.
   listening, naming both digests.
 - `a_reset_applies_the_seed_again_after_a_restart`: after the skipped seed, a reset with no world
   applies it from its first entry.
+- `a_restart_after_a_reset_with_a_world_sends_no_seed_entry`: a reset that loads a world, then a
+  restart with the same `--seed`: no seed entry is sent (D1 A).
+- `a_state_with_rows_and_no_marker_is_seeded_then_marked`: a `--state` written before this change
+  (rows, no `seed.json`): the seed is applied as today and `seed.json` then reads every entry done.
+- `a_changed_seed_on_a_state_with_no_row_runs_from_its_first_entry`: a different seed on a state
+  whose marker exists but which holds no row runs the new seed from its first entry, exit 0.
+- `the_seed_marker_is_private`: `seed.json` has mode 0600 (Unix).
 
 ## Scope
 

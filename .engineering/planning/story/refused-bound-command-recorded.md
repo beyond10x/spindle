@@ -52,7 +52,7 @@ scope:
   path: ui/src/api/types.ts
 - confidence: cited
   path: website/docs/concepts/observe.md
-revision: 26
+revision: 27
 ---
 # A refused bound command is recorded where a run can read it
 
@@ -83,6 +83,9 @@ Where the record lives is decided when scoped:
   holds none of the error's field values.
 - `a_refused_bound_command_is_counted_in_the_metrics`: after the refusal,
   `GET /__spindle/metrics` reads `spindle_bound_refusals_total{binding, command, refusal}` 1 (D2 A).
+- `a_rejected_bound_command_is_listed_with_its_kind`: the same binding where the kernel rejects
+  `C` (no declared outcome, `Failed`); the entry names `C`, the binding, the kernel's error kind
+  and the causing command.
 
 ## Origin
 
