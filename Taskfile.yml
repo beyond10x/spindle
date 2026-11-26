@@ -13,6 +13,7 @@ tasks:
     cmds:
       - aep plan artifact validate
       - task: check:the_ess_pin_is_one_release
+      - task: check:changed_paths_are_classified
       - ess specify validate --path ess
       - ess specify validate --path examples/rally/ess
       - task: check:the_observe_domain_validates
@@ -35,6 +36,11 @@ tasks:
     desc: ess/ess-inputs.yaml requires one exact ESS release, and ESS_TOOLCHAIN in Taskfile.yml and .cargo/config.toml and ESS_VERSION in the CI workflow name the same one
     cmds:
       - sh scripts/check-ess-pin.sh
+
+  check:changed_paths_are_classified:
+    desc: scripts/changed-paths.sh, the one path list CI reads, answers planning for .engineering/ and prose only, docs when a website/ file is added and code for any other path
+    cmds:
+      - sh scripts/changed-paths.sh test
 
   check:conformance:
     desc: Spindle runs the suite ESS synthesises from ess/ with the scenarios ess-inputs.yaml lists, every executed scenario passing and its counts held

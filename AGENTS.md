@@ -153,7 +153,12 @@ reference and the status page.
   `npm run typecheck`). Workflows: `.github/workflows/pages.yml` (`Documentation validation`:
   generated-page check, site build, site typecheck, `spindle-docs` tests and provenance, artifact `b10x-project-site` on `main`) and
   `.github/workflows/b10x-docs-site.yml` (`Documentation site`: deploys through the Website's
-  `project-site.yml` after a green bot push to `main`).
+  `project-site.yml` after a green bot push to `main`). Every job of `ci.yml` and `pages.yml`
+  first runs `scripts/changed-paths.sh github`, the one path list (`task
+  check:changed_paths_are_classified` tests it): a pull request that changes only `.engineering/`
+  and Markdown outside `website/` that no test reads skips every later step of
+  every job; one that also changes `website/` runs only `pages.yml`'s steps; any other runs
+  everything.
 
 ## Publishing
 

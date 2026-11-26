@@ -15,6 +15,12 @@ are Spindle's releases.
   a size without its page, a negative value, a page below `first_page` and an offset that
   overflows answer `400`, and the conformance target reports them unsupported. `Host::listed_with`
   and `Reader::listed_with` answer the rows with the total (`story:view-paging`).
+- A pull request that changes only `.engineering/` and Markdown outside `website/` passes `Gate`,
+  `macOS`, `PostgreSQL` and `Build documentation` without building or testing; one that also
+  changes `website/` builds and checks the site and skips the build and test steps of the code
+  jobs. `scripts/changed-paths.sh` holds the one path list every job reads, and the design pages
+  under `docs/design/`, which tests read, count as code
+  (`story:planning-only-prs-skip-tests`).
 
 ### Fixed
 
