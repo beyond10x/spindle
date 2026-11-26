@@ -36,6 +36,7 @@ mod adversary_w17_conform;
 mod adversary_w21_state_lock;
 mod adversary_w25_mint;
 mod adversary_w25_mint_r2;
+mod adversary_w26_u4;
 mod adversary_world;
 mod adversary_world_spec;
 mod binding_shapes;
