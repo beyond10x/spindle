@@ -11,7 +11,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use ess_gen::http::Binding;
 use spindle_capability::{Capability, Environment};
-use spindle_host::{Cause, Host, HostError, Retries, SystemClock};
+use spindle_host::{Cause, Clock, Host, HostError, ManualClock, Retries, SystemClock};
 use spindle_ingress::console::{self, Worlds};
 use spindle_ingress::{Caller, Console, Exchange, Listener, Recorder, Surface, Unfixed};
 use spindle_spec::EssIr;
@@ -116,6 +116,12 @@ pub(crate) struct Serving<'a> {
     /// submitted once listening, one between each two exchanges ([`crate::seed::Seeding`]), and
     /// again, all before the answer, after each reset with no world ([`reset_seeded`]).
     pub seed: Option<crate::seed::Seed>,
+    /// `--clock`: the host runs on a manual clock standing at this instant, never moved; the
+    /// system clock without it.
+    pub clock: Option<std::time::SystemTime>,
+    /// `--mint-seed`: the host mints from this seed from its first command, and again after each
+    /// reset whose world carries no mint ([`Host::seeded`]).
+    pub mint_seed: Option<u64>,
 }
 
 /// The secret in the file `path` (`--trusted-caller-secret`), one trailing newline (`\n` or
@@ -366,17 +372,16 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     let decider = serving
         .decides
         .then(|| decisions::deciding(&answers, None, recorder.as_ref()).boxed());
-    let opened = Host::with_stores(
-        ir,
-        environment,
-        Arc::new(SystemClock),
-        directory,
-        decider,
-        retries,
-        stores,
-    );
+    let clock: Arc<dyn Clock> = match serving.clock {
+        Some(at) => Arc::new(ManualClock::at(at)),
+        None => Arc::new(SystemClock),
+    };
+    let opened = Host::with_stores(ir, environment, clock, directory, decider, retries, stores);
     let mut host = match opened {
-        Ok(host) => host,
+        Ok(host) => match serving.mint_seed {
+            Some(seed) => host.seeded(seed),
+            None => host,
+        },
         Err(HostError::Refused(refusal)) => {
             println!("{refusal}");
             return Ok(ExitCode::from(REFUSED));

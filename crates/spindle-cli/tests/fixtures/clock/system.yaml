@@ -1,0 +1,20 @@
+format: ess/34
+system: ledger
+version: v1
+summary: Slots booked in this process, early or late by the current time.
+domains:
+  - ledger.slot
+components:
+  - component: desk
+    summary: Books slots.
+    owns:
+      domains:
+        - ledger.slot
+    accepts:
+      commands:
+        - ledger.slot.Book
+    publishes:
+      events:
+        - ledger.slot.BookedEarly
+        - ledger.slot.BookedLate
+    reached_by: in_process

@@ -1,6 +1,7 @@
 //! The clap definitions of `b10x-spindle`.
 
 use std::path::PathBuf;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand};
 use serde_json::{Map, Value};
@@ -81,8 +82,10 @@ pub enum Command {
     /// `"external": {"<outcome>": true | false}` answering the command's external causes, and an
     /// optional `"actor": "<qualified name>"` with `"caller": {"<attribute>": ...}`: the actor the
     /// command is sent as and its caller's attributes, every required one of that actor's, which
-    /// the command reads as `{caller: <attribute>}` and `caller.<attribute>`. Each line prints
-    /// one JSON result: the outcome with its events and declared error, or a failure.
+    /// the command reads as `{caller: <attribute>}` and `caller.<attribute>`, and an optional
+    /// `"at": "<RFC 3339>"` that moves the clock `--clock` starts forward to that instant before
+    /// the command runs. Each line prints one JSON result: the outcome with its events and
+    /// declared error, or a failure.
     /// Exits 3, running nothing, when admission is refused. At startup it prints on stderr the
     /// same lines `admit` prints for outcomes and commands the kernel does not run.
     ///
@@ -181,7 +184,8 @@ pub enum Command {
     /// store is emptied, then each row, checked by ESS as a scenario's setup is, written where its
     /// entity rests. `decisions`, in the decisions file's shape, answers external causes before
     /// `--decisions` and `--answer-default` do, and `mint` seeds every identity and generated value
-    /// minted, so the same requests mint the same identities; both hold until the next reset. A
+    /// minted, so the same requests mint the same identities; both hold until the next reset, and
+    /// a world without `mint` mints from `--mint-seed` again, from its first draw. A
     /// world that does not validate is refused `400` and changes nothing.
     ///
     /// An event binding with `on_failure: retry` runs its command again at once after each
@@ -328,6 +332,24 @@ pub enum Command {
         /// alone, and with a world it loads that world alone.
         #[arg(long, value_name = "FILE", conflicts_with = "scenario")]
         seed: Option<PathBuf>,
+        /// Start the run on a manual clock standing at this RFC 3339 instant
+        /// (`2026-02-01T00:00:00Z`) instead of the system clock: every guard and view that reads
+        /// `now`, and every generated `Timestamp`, reads it. Reading stdin, a line's `"at":
+        /// "<RFC 3339>"` moves the clock forward to that instant before its command runs; an
+        /// instant before the clock's, or `"at"` on a run without `--clock`, rejects that line.
+        /// Served over HTTP, and with `--scenario` (each replay's host; ESS's runner keeps its own
+        /// clock for the document), the clock stands at the instant for the whole run. No run
+        /// fires a periodic binding.
+        #[arg(long, value_name = "RFC3339", value_parser = instant)]
+        clock: Option<SystemTime>,
+        /// Mint every identity and generated value from this seed, from the first command on:
+        /// two runs given one seed and the same commands mint the same identities. Served over
+        /// HTTP, a `POST /api/reset` whose world carries `mint` mints from that until the next
+        /// reset, and one whose world has none mints from this seed again, from its first draw.
+        /// Reading stdin on an environment that binds `identity.mint` to `seeded`, the seed is 0
+        /// without this flag. With `--scenario`, each replay's host mints from it.
+        #[arg(long, value_name = "N")]
+        mint_seed: Option<u64>,
         /// The `ess-scenario` document to replay.
         #[arg(long, conflicts_with_all = ["state", "decisions", "answer_default"])]
         scenario: Option<PathBuf>,
@@ -576,6 +598,31 @@ pub enum StoreCommand {
 }
 
 /// A JSON object, as `--fixed-caller` reads it.
+/// The civil time an RFC 3339 `date-time` names (`2026-02-01T00:00:00Z`, `2026-02-01T01:00:00+01:00`),
+/// read by ESS's own reader ([`ess_primitives::Rfc3339Instant`]): `--clock`, and a stdin line's
+/// `"at"`.
+///
+/// # Errors
+/// A text that is no RFC 3339 `date-time`.
+pub fn instant(text: &str) -> Result<SystemTime, String> {
+    let parsed = ess_primitives::Rfc3339Instant::parse_rfc3339(text)
+        .ok_or_else(|| format!("not an RFC 3339 instant such as 2026-02-01T00:00:00Z: {text}"))?;
+    let seconds = parsed.epoch_seconds();
+    // The fraction is the one part the instant answers only in its spelling: `.<9 digits>Z`.
+    let nanos = parsed
+        .to_rfc3339()
+        .split_once('.')
+        .and_then(|(_, fraction)| fraction.trim_end_matches('Z').parse::<u64>().ok())
+        .unwrap_or(0);
+    let whole = Duration::from_secs(seconds.unsigned_abs());
+    let second = if seconds >= 0 {
+        UNIX_EPOCH + whole
+    } else {
+        UNIX_EPOCH - whole
+    };
+    Ok(second + Duration::from_nanos(nanos))
+}
+
 fn json_object(text: &str) -> Result<Map<String, Value>, String> {
     match serde_json::from_str::<Value>(text) {
         Ok(Value::Object(object)) => Ok(object),

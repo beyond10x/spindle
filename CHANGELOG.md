@@ -6,6 +6,20 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- `run --clock <RFC 3339>` starts a run reading stdin, serving HTTP or replaying `--scenario` on
+  a manual clock at that instant, where every mode read the system clock; reading stdin, a line's
+  `"at": "<RFC 3339>"` moves the clock forward before its command runs, and an instant before the
+  clock's, or `"at"` without `--clock`, rejects the line. `run --mint-seed <n>` mints every
+  identity and generated value from that seed from the first command on, reading stdin, serving
+  HTTP or replaying, so the same commands mint the same identities; a served reset whose world
+  carries `mint` mints from that until the next reset, and one whose world has none mints from the
+  run's seed again, from its first draw. An environment that binds `identity.mint` to `seeded`
+  runs on stdin with seed 0 without the flag, where it was refused. `Host::seeded` holds the run's
+  seed, and `HostTarget::clocked` opens every host on a given clock and seed. No `run` fires a
+  periodic binding (`story:clock-and-mint-in-every-mode`).
+
 ### Fixed
 
 - `run` reading JSON lines on stdin exits 1 when a line was rejected (not JSON, naming no

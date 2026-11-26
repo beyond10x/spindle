@@ -20,7 +20,9 @@ use ess_primitives::consistency::ConsistencyToken;
 use ess_primitives::node::Node;
 use serde_json::{Map, Value};
 use spindle_capability::Environment;
-use spindle_host::{Cause, Host, HostError, Placements, RETRY_ATTEMPTS, Refusal, SystemClock};
+use spindle_host::{
+    Cause, Clock, Host, HostError, Placements, RETRY_ATTEMPTS, Refusal, SystemClock,
+};
 use spindle_kernel::{Decider, ExecuteError, External};
 
 /// The outcome a scenario forced for the next invocation of its command: `(command, outcome)`.
@@ -58,6 +60,10 @@ pub struct HostTarget {
     commands: Cell<usize>,
     /// Whether the runner asked for state the target does not arrange.
     unarranged: Cell<bool>,
+    /// The clock every host it opens decides `now` by.
+    clock: Arc<dyn Clock>,
+    /// The seed every host it opens mints from ([`Host::seeded`]); `None` for random UUIDs.
+    mint: Option<u64>,
 }
 
 /// The host of the scenario in progress, and every event its commands published.
@@ -87,8 +93,22 @@ impl Decider for Forced {
 }
 
 impl HostTarget {
-    /// A target running `ir` on `environment`.
+    /// A target running `ir` on `environment`, each host on the system clock, minting random
+    /// UUIDs.
     pub fn new(ir: EssIr, environment: Environment) -> Self {
+        Self::clocked(ir, environment, Arc::new(SystemClock), None)
+    }
+
+    /// A target running `ir` on `environment` whose every host decides `now` by `clock` and,
+    /// where `mint` is given, mints every identity and generated value from that seed, each host
+    /// from its first draw ([`Host::seeded`]). The runner keeps its own clock and identities for
+    /// the scenario document.
+    pub fn clocked(
+        ir: EssIr,
+        environment: Environment,
+        clock: Arc<dyn Clock>,
+        mint: Option<u64>,
+    ) -> Self {
         let admission = spindle_host::admit(&ir, &environment).map(Arc::new);
         Self {
             ir: Arc::new(ir),
@@ -97,6 +117,8 @@ impl HostTarget {
             forced: Arc::default(),
             commands: Cell::new(0),
             unarranged: Cell::new(false),
+            clock,
+            mint,
         }
     }
 
@@ -120,13 +142,17 @@ impl HostTarget {
 
     fn host(&self) -> Result<Host, HostError> {
         let placements = self.admission.clone().map_err(HostError::Refused)?;
-        Host::admitted(
+        let host = Host::admitted(
             Arc::clone(&self.ir),
             placements,
-            Arc::new(SystemClock),
+            Arc::clone(&self.clock),
             Path::new(""),
             Box::new(Forced(self.forced.clone())),
-        )
+        )?;
+        Ok(match self.mint {
+            Some(seed) => host.seeded(seed),
+            None => host,
+        })
     }
 
     /// The first field `view` declares, not as `Optional`, that a row of `rows` lacks: one no

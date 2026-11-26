@@ -576,6 +576,9 @@ pub struct Host {
     answers: Option<Box<dyn Decider + Send>>,
     /// Mints the identities and generated values of every command any component runs.
     mint: Box<dyn Mint + Send>,
+    /// The run's seed ([`Host::seeded`]): the mint a reset whose world has no mint of its own
+    /// installs again from its first draw; `None` for random version 4 UUIDs.
+    seed: Option<u64>,
     /// The routes of the event bindings this host may retry, by binding name: read from its own
     /// routes, never from an envelope, so a peer's frame does not decide the policy.
     retrying: BTreeMap<String, Arc<Route>>,
@@ -982,8 +985,21 @@ impl Host {
             decider: decider.unwrap_or_else(|| Box::new(NoExternals)),
             answers: None,
             mint: Box::new(UuidV4),
+            seed: None,
             retrying,
         })
+    }
+
+    /// This host, minting every identity and generated value from `seed` ([`Seeded`]) from its
+    /// first command on, where it minted random version 4 UUIDs: the same commands mint the same
+    /// identities. The seed is the run's: a reset whose world carries a mint of its own mints from
+    /// that until the next reset, and one whose world has none installs this seed again, from its
+    /// first draw ([`Host::reset_to`]).
+    #[must_use]
+    pub fn seeded(mut self, seed: u64) -> Self {
+        self.seed = Some(seed);
+        self.mint = Box::new(Seeded::new(seed));
+        self
     }
 
     /// The compiled specification the host runs.
@@ -1161,7 +1177,8 @@ impl Host {
     /// emptied in place and records that its events so far are forgotten
     /// ([`Store::forget_events`]), so a host opened on it later does not read them either.
     /// Periodic bindings keep running, and the counters keep their counts. The answers and
-    /// the mint of the world an earlier [`Host::reset_to`] loaded are dropped.
+    /// the mint of the world an earlier [`Host::reset_to`] loaded are dropped; the run's seed
+    /// ([`Host::seeded`]) mints again from its first draw.
     ///
     /// # Errors
     /// [`HostError::Reset`] when a component's files cannot be moved aside or the empty store
@@ -1179,7 +1196,8 @@ impl Host {
     /// [`Host::establish`] writes it, every external cause answered by its answers until the next
     /// reset, and every identity and generated value minted by its mint until then. A world
     /// without answers leaves causes to the decider the host was opened with, and one without a
-    /// mint mints random version 4 UUIDs. A seeded mint never answers a UUID a row's identity
+    /// mint mints from the run's seed again, from its first draw ([`Host::seeded`]), or random
+    /// version 4 UUIDs on a host given no seed. A seeded mint never answers a UUID a row's identity
     /// holds or ends in, nor one whose low 53 bits are a row's `Integer` identity
     /// ([`Seeded::avoiding_identities`]).
     ///
@@ -1215,7 +1233,7 @@ impl Host {
                 })?;
             owners.push(owner);
         }
-        let held = world.mint.map(|seed| {
+        let held = world.mint.or(self.seed).map(|seed| {
             Seeded::new(seed).avoiding_identities(world.rows.iter().map(|seed| &seed.identity))
         });
         for component in self.components.values_mut() {

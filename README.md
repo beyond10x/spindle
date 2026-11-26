@@ -53,6 +53,14 @@ binary built without `ui/dist` answers `GET /` with 503. `b10x-spindle deploy ex
 examples/placements/rally-processes.toml` launches the three rally components as processes and
 prints the URL of the observe UI, `http://127.0.0.1:7341/?t=<token>`.
 
+`run --clock <RFC 3339>` starts a run on a manual clock at that instant instead of the system
+clock, reading stdin, serving HTTP or replaying `--scenario`; reading stdin, a line's
+`"at": "<RFC 3339>"` moves it forward before its command runs, and an earlier instant rejects the
+line. `run --mint-seed <n>` mints every identity and generated value from that seed, so two runs
+of the same commands mint the same identities; a served run's reset without a world mints from it
+again, and an environment that binds `identity.mint` to `seeded` runs on stdin with seed 0 unless
+the flag names another. No `run` fires a periodic binding.
+
 Where `run` serves HTTP, `--seed <file>` (or `[seed] file` in the environment document) submits a
 JSON array of commands, each with its input, actor, caller and request id, on every start: checked
 before listening, then one at a time in order beside the listener. An outcome declared

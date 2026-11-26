@@ -38,6 +38,10 @@ const REFUSED: u8 = 3;
 /// cannot parse.
 const USAGE: u8 = 2;
 
+/// The implementation an environment binds `identity.mint` to for a mint drawn from a seed
+/// (`--mint-seed`, 0 without it), which `run` reading stdin mints with.
+const SEEDED_MINT: &str = "seeded";
+
 /// One command line read by `run`.
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -51,6 +55,9 @@ struct Request {
     actor: Option<String>,
     #[serde(default)]
     caller: Option<serde_json::Map<String, serde_json::Value>>,
+    /// The instant the clock moves forward to before the command runs (`run --clock`).
+    #[serde(default)]
+    at: Option<String>,
 }
 
 fn main() -> ExitCode {
@@ -184,8 +191,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
             spec,
             environment,
             scenario: Some(scenario),
+            clock,
+            mint_seed,
             ..
-        } => replay::replay(&spec, &environment, &scenario),
+        } => replay::replay(&spec, &environment, &scenario, clock, mint_seed),
         Command::Run {
             spec,
             environment,
@@ -203,6 +212,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
             observe,
             observe_requests,
             seed,
+            clock,
+            mint_seed,
             scenario: None,
         } => execute(&Execute {
             spec: &spec,
@@ -219,6 +230,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
             caller_header: trusted_caller_header.as_deref(),
             caller_secret: trusted_caller_secret.as_deref(),
             seed: seed.as_deref(),
+            clock,
+            mint_seed,
         }),
         Command::Play {
             spec,
@@ -461,6 +474,10 @@ struct Execute<'a> {
     caller_secret: Option<&'a Path>,
     /// `--seed`: the seed file to submit at every start, in place of the environment's.
     seed: Option<&'a Path>,
+    /// `--clock`: the instant the run's manual clock starts at, the system clock without it.
+    clock: Option<std::time::SystemTime>,
+    /// `--mint-seed`: the seed every identity and generated value is minted from.
+    mint_seed: Option<u64>,
 }
 
 fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
@@ -479,6 +496,8 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         caller_header,
         caller_secret,
         seed,
+        clock,
+        mint_seed,
     } = *arguments;
     if let Some(address) = address.filter(|address| spindle_ingress::exposed(*address))
         && (caller_header.is_none() || caller_secret.is_none())
@@ -523,13 +542,16 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         println!("{}", serde_json::to_value(&admission)?);
         return Ok(ExitCode::from(REFUSED));
     };
-    if let Some(mint) = bindings.iter().find(|binding| {
-        binding.capability.as_str() == spindle_capability::Capability::IDENTITY_MINT
-            && binding.implementation != spindle_kernel::UuidV4::IMPLEMENTATION
-    }) {
+    let minting = bindings
+        .iter()
+        .find(|binding| binding.capability.as_str() == Capability::IDENTITY_MINT)
+        .map(|binding| binding.implementation.as_str());
+    if let Some(other) = minting
+        .filter(|bound| ![spindle_kernel::UuidV4::IMPLEMENTATION, SEEDED_MINT].contains(bound))
+    {
         bail!(
-            "identity.mint is bound to {} on {}; this build mints identities as {} only",
-            mint.implementation,
+            "identity.mint is bound to {other} on {}; this build mints identities as {} or, \
+             reading stdin, {SEEDED_MINT} only",
             parsed.name,
             spindle_kernel::UuidV4::IMPLEMENTATION
         );
@@ -556,6 +578,14 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 ingress.implementation,
                 parsed.name,
                 spindle_ingress::HTTP_LOOPBACK
+            );
+        }
+        if minting == Some(SEEDED_MINT) {
+            bail!(
+                "identity.mint is bound to {SEEDED_MINT} on {}; a run serving HTTP mints \
+                 identities as {}: give --mint-seed <N> to mint them from a seed",
+                parsed.name,
+                spindle_kernel::UuidV4::IMPLEMENTATION
             );
         }
         let decides = decisions.is_some() || answer_default || calls.answer_every(bindings);
@@ -589,6 +619,8 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 caller_header,
                 proxy_secret,
                 seed,
+                clock,
+                mint_seed,
             },
         );
     }
@@ -691,6 +723,12 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
     for line in unsupported_outcomes(&loaded.ir, None) {
         eprintln!("b10x-spindle: {line}");
     }
+    let mut mint: Box<dyn spindle_kernel::Mint> = match (mint_seed, minting) {
+        (Some(seed), _) => Box::new(spindle_kernel::Seeded::new(seed)),
+        (None, Some(SEEDED_MINT)) => Box::new(spindle_kernel::Seeded::new(0)),
+        (None, _) => Box::new(spindle_kernel::UuidV4),
+    };
+    let mut clock = clock;
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     let mut read = 0_usize;
@@ -705,13 +743,25 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
             Err(error) => serde_json::json!({
                 "failure": {"kind": "invalid_request", "message": error.to_string()},
             }),
-            Ok(request) => answer(
-                &loaded.ir,
-                store.as_mut(),
-                answers.answers(),
-                &calls,
-                &request,
-            ),
+            Ok(request) => match moved(clock, request.at.as_deref()) {
+                Err(message) => serde_json::json!({
+                    "command": request.command,
+                    "failure": {"kind": "invalid_request", "message": message},
+                }),
+                Ok(now) => {
+                    clock = now;
+                    let now = move || now.unwrap_or_else(std::time::SystemTime::now);
+                    answer(
+                        &loaded.ir,
+                        store.as_mut(),
+                        answers.answers(),
+                        &calls,
+                        &request,
+                        mint.as_mut(),
+                        &now,
+                    )
+                }
+            },
         };
         if let Some(failure) = result.get("failure") {
             let kind = failure["kind"].as_str().unwrap_or_default().to_owned();
@@ -752,14 +802,44 @@ fn removed_on_signal(directory: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The instant the run's manual clock stands at once a line's `at` moved it: `clock` where the line
+/// gives none, `None` (the system clock) on a run without `--clock`.
+///
+/// # Errors
+/// The message of a line whose `at` is no RFC 3339 instant, is earlier than the clock, or is given
+/// on a run without `--clock`.
+fn moved(
+    clock: Option<std::time::SystemTime>,
+    at: Option<&str>,
+) -> Result<Option<std::time::SystemTime>, String> {
+    let Some(at) = at else {
+        return Ok(clock);
+    };
+    let Some(standing) = clock else {
+        return Err(format!(
+            "`at` {at} moves the clock --clock starts the run on; this run reads the system clock"
+        ));
+    };
+    let instant = spindle_cli::cli::instant(at).map_err(|error| format!("`at`: {error}"))?;
+    if instant < standing {
+        return Err(format!(
+            "`at` {at} is before the clock's current instant: the clock only moves forward"
+        ));
+    }
+    Ok(Some(instant))
+}
+
 /// The result line for one request: a cause bound to an HTTP call is answered by it, any other by
-/// the line's own `external` object, then as `answers` answer it.
+/// the line's own `external` object, then as `answers` answer it. Every identity and generated
+/// value is minted by `mint`, and `now` is the instant every guard and generated `Timestamp` reads.
 fn answer(
     ir: &spindle_spec::EssIr,
     store: &mut dyn Store,
     answers: &Answers,
     calls: &calls::Calls,
     request: &Request,
+    mint: &mut dyn spindle_kernel::Mint,
+    now: &dyn Fn() -> std::time::SystemTime,
 ) -> serde_json::Value {
     let mut decider = |question: &External<'_>| {
         calls
@@ -772,14 +852,7 @@ fn answer(
         actor: request.actor.as_deref(),
         caller: request.caller.as_ref(),
     };
-    match spindle_kernel::execute_as(
-        ir,
-        store,
-        &mut decider,
-        &mut spindle_kernel::UuidV4,
-        &std::time::SystemTime::now,
-        &invocation,
-    ) {
+    match spindle_kernel::execute_as(ir, store, &mut decider, mint, now, &invocation) {
         Ok(executed) => {
             let mut result = serde_json::json!({"command": request.command});
             if let (Some(object), Ok(serde_json::Value::Object(fields))) =

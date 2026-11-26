@@ -1,0 +1,14 @@
+type: ess-scenario/1
+domain: ledger.slot
+scenario: a-slot-booked-before-its-deadline-is-early
+summary: On September 30th 2026 a slot whose deadline is October 1st 2026 is booked early.
+timeline:
+  - at: 2026-09-30T00:00:00Z
+    command: ledger.slot.Book
+    input:
+      booking_id: b1
+      deadline: 2026-10-01T00:00:00Z
+    outcome: early
+    events:
+      - event: ledger.slot.BookedEarly
+        payload: {booking_id: b1}

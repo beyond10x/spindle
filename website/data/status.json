@@ -375,6 +375,13 @@
     },
     {
       "area": "Execution",
+      "detail": "run --clock starts a run reading stdin, serving HTTP or replaying --scenario on a manual clock at an RFC 3339 instant; on stdin a line's at moves it forward before its command runs, and an earlier instant rejects the line. run --mint-seed mints every identity and generated value from a seed on stdin and over HTTP, so two runs of the same commands mint the same identities; a served reset without a world mints from it again. An environment binding identity.mint to seeded runs on stdin with seed 0. No run fires a periodic binding.",
+      "href": "/docs/reference/cli",
+      "label": "Simulated clock and seeded mint",
+      "status": "shipped"
+    },
+    {
+      "area": "Execution",
       "detail": "An HTTP run answers every read while a command runs: a view, GET /api/model, GET /api/events and every GET /__spindle/ route are each answered on a thread of their own, from the state the last finished command left, never part of a command, on the memory and SQLite stores. Commands and the reset still run one at a time in arrival order; a slow external call holds the next command, never a read.",
       "href": "/docs/concepts/environment-and-admission",
       "label": "Reads beside commands",

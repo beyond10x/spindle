@@ -200,3 +200,41 @@ fn replay_starts_on_a_specification_with_converted_mappings() {
     }
     assert!(!printed.contains("diverges"), "{printed}");
 }
+
+/// `--scenario` with `--clock` opens the host on a clock standing at that instant
+/// (`story:clock-and-mint-in-every-mode`): the act states the outcome a guard over `now` selects
+/// on September 30th 2026 (`deadline > now`, the deadline October 1st 2026), which holds there, and
+/// the same document without `--clock` exits 1, the system clock being past the deadline. ESS
+/// refuses an act whose `now` guard reads alike at every run from 2026-09-27 on, so the instants
+/// lie after that day.
+#[test]
+fn a_scenario_runs_on_the_clock_flag() {
+    let replayed = |clock: Option<&str>| {
+        let mut arguments = vec![
+            "run",
+            "crates/spindle-cli/tests/fixtures/clock",
+            "--environment",
+            LAPTOP,
+            "--scenario",
+            "crates/spindle-cli/tests/fixtures/clock-scenarios/early.yaml",
+        ];
+        if let Some(clock) = clock {
+            arguments.extend(["--clock", clock]);
+        }
+        Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+            .current_dir(root())
+            .args(&arguments)
+            .stdin(Stdio::null())
+            .output()
+            .expect("b10x-spindle runs")
+    };
+    let clocked = replayed(Some("2026-09-30T00:00:00Z"));
+    assert_eq!(clocked.status.code(), Some(0), "{clocked:?}");
+    assert!(
+        stdout(&clocked).contains("timeline[0] ledger.slot.Book: holds"),
+        "{}",
+        stdout(&clocked)
+    );
+    let unclocked = replayed(None);
+    assert_eq!(unclocked.status.code(), Some(1), "{unclocked:?}");
+}

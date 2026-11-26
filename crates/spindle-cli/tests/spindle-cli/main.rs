@@ -41,6 +41,7 @@ mod adversary_world_spec;
 mod binding_shapes;
 mod binding_where;
 mod caller;
+mod clock_and_mint;
 mod concurrent_reads;
 mod conform;
 mod console;
