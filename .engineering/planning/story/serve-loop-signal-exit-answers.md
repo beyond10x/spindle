@@ -31,7 +31,7 @@ scope:
   path: crates/spindle-ingress/tests/spindle-ingress/main.rs
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 19
+revision: 21
 ---
 # The serve loop's signal exit takes no exchange and drops no answer
 
@@ -60,9 +60,10 @@ pre-existing.
 - `a_closed_listener_writes_every_answer_it_was_handed`: in `spindle-ingress`, closing the listener
   writes every answer handed to it before the thread ends.
 
-- `a_signal_before_a_resets_first_entry_seeds_again_on_restart`: SIGTERM while a reset's first
-  seed entry is held; a restart on the same `--state` with the same `--seed` applies the seed from
-  its first entry (the marker reads count 0, story:seed-once-on-durable-state).
+- `a_reset_cut_at_its_first_entry_resumes_from_the_second`: on a `--state` whose seed ran to the
+  end, a reset whose first seed entry is held, then SIGTERM: the first entry finishes, and a restart
+  with the same `--seed` applies the seed from its second entry, so the reset wrote the marker at
+  count 0 before its first entry and the old full count is gone.
 
 ## Scope
 
@@ -93,3 +94,7 @@ Taken 2026-11-26 on the scoper's recommended option, each reversible, unless not
 - A seeded reset cut by the signal leaves `seed.json` (story:seed-once-on-durable-state) at
   the count of entries done, written after each; a restart on that state resumes after the last
   entry done. Hence `depends_on story:seed-once-on-durable-state`.
+- `adversary_w26_u3::the_answers_in_hand_are_written_before_a_rejecting_seed_stops_the_run` is
+  ignored since wave 26 (it raced on the forge: a grant still queued at the stop read no answer).
+  This story removes its `ignore` and rewrites it to the decided outcome: the request taken reads
+  2xx, the one still queued reads 503.

@@ -21,9 +21,9 @@ scope:
   path: crates/spindle-ingress/src/surface.rs
 - confidence: inferred
   path: docs/design/spindle.md
-revision: 14
+revision: 15
 ---
-# A loopback served run serves a command that reads its caller
+# A loopback run names the settings that serve a command reading its caller
 
 ## Outcome
 

@@ -35,7 +35,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 21
+revision: 22
 ---
 # A stdin run arranges rows and names what earlier lines minted
 
@@ -107,3 +107,4 @@ Taken 2026-11-26 on the scoper's recommended option, each reversible, unless not
   earlier line's printed answer.
 - D2 A: `{"arrange": [rows in the reset world's shape]}`.
 - D3 A: a seeded mint avoids identities an arrange line wrote.
+- The test names in the Acceptance section replace the list the Scope section gives.

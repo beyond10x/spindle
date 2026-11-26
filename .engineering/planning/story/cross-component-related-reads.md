@@ -42,7 +42,7 @@ scope:
   path: docs/design/spindle.md
 - confidence: cited
   path: website/docs/concepts/specification.md
-revision: 27
+revision: 29
 ---
 # A guard or an effect over another component's entity is refused or read from its owner
 
@@ -93,6 +93,10 @@ Found by a review of `0.19.0..0.19.1`, beside the value refusal.
   run and in a split run, writing no row (D2 A; today nothing refuses it).
 - `a_guard_over_the_running_components_entity_is_served`: a guard over the running component's own
   entity answers as before.
+
+- `a_stdin_run_reads_another_components_entity`: the value-read and guard commands above, sent as
+  stdin lines on the same fixture, answer what ESS's interpreter answers and are not refused at
+  start.
 
 ## Not covered
 
@@ -213,3 +217,5 @@ Taken 2026-11-26 on the scoper's recommended option, each reversible, unless not
   kernel and CLI test files, `main.rs:882`) stay unchanged.
 - `crates/spindle-kernel/src/lib.rs`: the new re-exports sit beside `runs` (`:95`); U5 adds its
   export beside `admits` (`:104`); U5 merges first.
+- A stdin run passes every component as reached: its one store holds every component's rows
+  (`main.rs:722`, `unsupported_outcomes` with `None`).
