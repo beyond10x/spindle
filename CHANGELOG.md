@@ -19,6 +19,16 @@ are Spindle's releases.
   out is unknown and refuses the read unless a guard such as `not defined(param.x)` decides it.
   Any other leaf still refuses the view whole, naming its filter
   (`story:view-filter-parameter-literal`).
+- A value (`{related: …}`), a `when_related:` guard or a row set over an entity another component
+  owns is read from the owner's store where both components run in one process (`run` reading
+  stdin, a served `run`), and answers what ESS 0.99.1's interpreter answers, where it was refused
+  as unsupported and `admit` listed it as not served. `admit --component` and `play --component`,
+  where the owner runs in another process, still refuse it by name, naming the entity, its owner
+  and the running component. An `affects:` entry over another component's entity is refused by
+  name in every run, where nothing refused it and it changed none of the owner's rows. The
+  kernel's `takes_reaching`, `runs_reaching` and `execute_reaching` and the ingress's
+  `Surface::reaching` take the components the store reaches
+  (`story:cross-component-related-reads`).
 
 ### Fixed
 

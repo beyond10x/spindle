@@ -879,7 +879,16 @@ fn answer(
         actor: request.actor.as_deref(),
         caller: request.caller.as_ref(),
     };
-    match spindle_kernel::execute_as(ir, store, &mut decider, mint, now, &invocation) {
+    match spindle_kernel::execute_reaching(
+        ir,
+        store,
+        &mut decider,
+        mint,
+        now,
+        &invocation,
+        &BTreeMap::new(),
+        &every_component(ir),
+    ) {
         Ok(executed) => {
             let mut result = serde_json::json!({"command": request.command});
             if let (Some(object), Ok(serde_json::Value::Object(fields))) =
@@ -896,14 +905,31 @@ fn answer(
     }
 }
 
+/// The name of every component of `ir`: what `run` reading stdin reaches, whose one store holds
+/// every component's rows (`story:cross-component-related-reads`).
+fn every_component(ir: &spindle_spec::EssIr) -> std::collections::BTreeSet<String> {
+    ir.components()
+        .values()
+        .map(|declared| declared.name.as_str().to_owned())
+        .collect()
+}
+
 /// One line per command the kernel refuses whole and per other outcome it does not take, of each
 /// command `component` accepts or, without one, of every command, by command name. A command the
 /// kernel cannot select among the outcomes of ([`spindle_kernel::selects`]), or none of whose
 /// outcomes it takes ([`spindle_kernel::takes`]), is named once as not served, with the first
 /// refusal: every request of it is refused, as `run` refuses it. Each outcome the kernel does not
 /// take of any other command is named with what it lacks: a request that selects it is refused,
-/// and every other outcome of its command runs.
+/// and every other outcome of its command runs. The commands run on a store reaching the stores
+/// of every component, as `run` runs them in one process, or of `component` alone, as
+/// `play --component` runs it ([`spindle_kernel::takes_reaching`]): a read of an entity a
+/// reached component owns is read from its owner's store, and one whose owner is not reached is
+/// named.
 fn unsupported_outcomes(ir: &spindle_spec::EssIr, component: Option<&str>) -> Vec<String> {
+    let reached: std::collections::BTreeSet<String> = every_component(ir)
+        .into_iter()
+        .filter(|name| component.is_none_or(|component| component == name))
+        .collect();
     let accepted = |command: &str| {
         component.is_none_or(|component| {
             ir.components().values().any(|declared| {
@@ -931,7 +957,7 @@ fn unsupported_outcomes(ir: &spindle_spec::EssIr, component: Option<&str>) -> Ve
             .outcomes
             .iter()
             .filter_map(|outcome| {
-                spindle_kernel::takes(ir, command, outcome)
+                spindle_kernel::takes_reaching(ir, command, outcome, &reached)
                     .err()
                     .map(|refused| (outcome.name.as_str(), refused))
             })

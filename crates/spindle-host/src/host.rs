@@ -469,6 +469,193 @@ impl Store for Tallied<'_> {
     }
 }
 
+/// The store a command runs on in a host: the running component's ([`Tallied`]), where every
+/// write goes, with each read of an entity another component of this host owns (a row, a scan,
+/// a count) answered from that component's store, as ESS's interpreter reads every entity from its
+/// one store (`story:cross-component-related-reads`). The kernel reaches the stores of the
+/// components this host runs ([`spindle_kernel::execute_reaching`]).
+///
+/// A write the kernel conditions on an entity it scanned ([`spindle_kernel::Write::scanned`]) is
+/// conditioned on the version of the store that answered the scan: each entity another
+/// component owns is checked against its owner's version, then left out of what the running
+/// component's store checks, which holds no row of it. The check and the commit are two steps,
+/// which no other write comes between while this host is the one writer of the owner's store, as
+/// a state directory has one Spindle process.
+struct Routed<'a> {
+    ir: &'a EssIr,
+    running: Tallied<'a>,
+    /// The store of every other component this host runs, by name.
+    others: BTreeMap<&'a str, &'a mut dyn Store>,
+}
+
+impl Routed<'_> {
+    /// The other component of this host that owns `entity`, where one does.
+    fn owner(&self, entity: &str) -> Option<&str> {
+        let declared = self.ir.entities().get(&entity.parse().ok()?)?;
+        let owner = self
+            .ir
+            .components()
+            .values()
+            .find(|component| component.owns.contains(&declared.domain))?;
+        self.others
+            .get_key_value(owner.name.as_str())
+            .map(|(name, _)| *name)
+    }
+
+    /// The store `entity` is read from: its owner's, where another component of this host owns
+    /// it, else the running component's.
+    fn source(&mut self, entity: &str) -> &mut dyn Store {
+        match self.owner(entity).map(str::to_owned) {
+            Some(owner) => match self.others.get_mut(owner.as_str()) {
+                Some(store) => &mut **store,
+                None => &mut self.running,
+            },
+            None => &mut self.running,
+        }
+    }
+
+    /// Checks each of `scanned` another component owns against its owner's version, and answers
+    /// the rest, which the running component's store checks; `None` where every one is the running
+    /// component's.
+    ///
+    /// # Errors
+    /// [`StoreError::Conflict`] where another component's entity moved since its scan, as a store
+    /// refuses a write whose scanned entity moved.
+    fn unmoved(&mut self, scanned: &[Scanned]) -> Result<Option<Vec<Scanned>>, StoreError> {
+        if scanned
+            .iter()
+            .all(|entity| self.owner(&entity.entity).is_none())
+        {
+            return Ok(None);
+        }
+        let mut own = Vec::new();
+        for entity in scanned {
+            match self.owner(&entity.entity).map(str::to_owned) {
+                Some(owner) => {
+                    let store = self
+                        .others
+                        .get_mut(owner.as_str())
+                        .ok_or_else(|| StoreError::Backend(format!("{owner} is not running")))?;
+                    let actual = store.scan(&entity.entity)?.version;
+                    if actual != entity.version {
+                        return Err(StoreError::Conflict {
+                            entity: entity.entity.clone(),
+                            identity: spindle_kernel::EVERY_INSTANCE.to_owned(),
+                            expected: Some(entity.version),
+                            actual: Some(actual),
+                        });
+                    }
+                }
+                None => own.push(entity.clone()),
+            }
+        }
+        Ok(Some(own))
+    }
+
+    /// `write`, conditioned only on the running component's entities, once the others are
+    /// checked ([`Self::unmoved`]).
+    fn checked(
+        &mut self,
+        write: &spindle_kernel::Write,
+    ) -> Result<spindle_kernel::Write, StoreError> {
+        let mut write = write.clone();
+        let scanned = match &mut write {
+            spindle_kernel::Write::Commit(change) => &mut change.scanned,
+            spindle_kernel::Write::Remove(removal) => &mut removal.scanned,
+        };
+        if let Some(own) = self.unmoved(scanned)? {
+            *scanned = own;
+        }
+        Ok(write)
+    }
+}
+
+impl Store for Routed<'_> {
+    fn load(
+        &mut self,
+        entity: &str,
+        identity: &Value,
+    ) -> Result<Option<spindle_kernel::Stored>, StoreError> {
+        self.source(entity).load(entity, identity)
+    }
+
+    fn scan(&mut self, entity: &str) -> Result<spindle_kernel::Scan, StoreError> {
+        self.source(entity).scan(entity)
+    }
+
+    /// Counts each entity in the store it is read from, the running component's in one read.
+    fn counts(&mut self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
+        let (foreign, own): (Vec<String>, Vec<String>) = entities
+            .iter()
+            .cloned()
+            .partition(|entity| self.owner(entity).is_some());
+        let mut counts = self.running.counts(&own)?;
+        for entity in foreign {
+            let count = self.source(&entity).counts(std::slice::from_ref(&entity))?;
+            counts.extend(count);
+        }
+        Ok(counts)
+    }
+
+    fn reading(&mut self) -> Option<Arc<dyn Reading>> {
+        self.running.reading()
+    }
+
+    fn attribute(&mut self, origin: Option<Origin>) {
+        self.running.attribute(origin);
+    }
+
+    fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
+        self.running.events_after(position, limit)
+    }
+
+    fn events_head(&mut self) -> Result<u64, StoreError> {
+        self.running.events_head()
+    }
+
+    fn commit_events(&mut self, events: &[Event], scanned: &[Scanned]) -> Result<(), StoreError> {
+        if events.is_empty() {
+            return self.running.commit_events(events, scanned);
+        }
+        match self.unmoved(scanned)? {
+            Some(own) => self.running.commit_events(events, &own),
+            None => self.running.commit_events(events, scanned),
+        }
+    }
+
+    fn forget_events(&mut self) -> Result<(), StoreError> {
+        self.running.forget_events()
+    }
+
+    fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
+        match self.unmoved(&change.scanned)? {
+            Some(scanned) => self.running.commit(&Change {
+                scanned,
+                ..change.clone()
+            }),
+            None => self.running.commit(change),
+        }
+    }
+
+    fn remove(&mut self, removal: &spindle_kernel::Removal) -> Result<(), StoreError> {
+        match self.unmoved(&removal.scanned)? {
+            Some(scanned) => self.running.remove(&spindle_kernel::Removal {
+                scanned,
+                ..removal.clone()
+            }),
+            None => self.running.remove(removal),
+        }
+    }
+
+    fn commit_all(&mut self, writes: &[spindle_kernel::Write]) -> Result<(), StoreError> {
+        let writes = writes
+            .iter()
+            .map(|write| self.checked(write))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.running.commit_all(&writes)
+    }
+}
+
 impl Store for Supplied {
     fn load(
         &mut self,
@@ -1758,7 +1945,9 @@ impl Host {
     }
 
     /// Executes one command on `component` and sends the events it emitted, refusing each outcome
-    /// `refused` names ([`spindle_kernel::execute_refusing`]).
+    /// `refused` names ([`spindle_kernel::execute_refusing`]). The command reads each entity
+    /// another component of this host owns from that component's store ([`Routed`],
+    /// [`spindle_kernel::execute_reaching`]).
     ///
     /// The outer error is the host's own; the inner one is the command's.
     fn execute(
@@ -1770,10 +1959,17 @@ impl Host {
         caller: Option<&Map<String, Value>>,
         refused: &BTreeMap<String, String>,
     ) -> Result<Result<Executed, ExecuteError>, HostError> {
-        let held = self
-            .components
-            .get_mut(component)
-            .ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
+        let reached: BTreeSet<String> = self.components.keys().cloned().collect();
+        let mut held = None;
+        let mut others: BTreeMap<&str, &mut dyn Store> = BTreeMap::new();
+        for (name, running) in &mut self.components {
+            if name == component {
+                held = Some(running);
+            } else {
+                others.insert(name.as_str(), &mut running.store);
+            }
+        }
+        let held = held.ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
         let started = Instant::now();
         let clock = &self.clock;
         let sequence = following(self.sequence.load(Ordering::SeqCst), clock.wall());
@@ -1782,13 +1978,17 @@ impl Host {
             command: command.to_owned(),
             sequence,
         }));
-        let mut tallied = Tallied {
-            store: &mut held.store,
-            appended: Vec::new(),
+        let mut routed = Routed {
+            ir: &self.ir,
+            running: Tallied {
+                store: &mut held.store,
+                appended: Vec::new(),
+            },
+            others,
         };
-        let result = spindle_kernel::execute_refusing(
+        let result = spindle_kernel::execute_reaching(
             &self.ir,
-            &mut tallied,
+            &mut routed,
             match &mut self.answers {
                 Some(answers) => answers.as_mut(),
                 None => self.decider.as_mut(),
@@ -1802,8 +2002,9 @@ impl Host {
                 caller,
             },
             refused,
+            &reached,
         );
-        let appended = tallied.appended;
+        let appended = routed.running.appended;
         held.store.attribute(None);
         held.sink.executed(command, &result, started.elapsed());
         let mut emitted = self.emitted.lock().unwrap_or_else(PoisonError::into_inner);
@@ -2542,4 +2743,94 @@ fn store_of<'a>(
         .get_mut(owner)
         .map(|component| &mut component.store as &mut dyn Store)
         .ok_or_else(|| HostError::Unsupported(format!("{owner} is not running")))
+}
+
+#[cfg(test)]
+mod tests {
+    //! [`Routed`], the store a command runs on in a host
+    //! (`story:cross-component-related-reads`), on `spindle-kernel`'s `metering-split` fixture:
+    //! `meter` owns charges, `holds` owns holds.
+
+    use super::*;
+    use serde_json::json;
+
+    const HOLD: &str = "metering.holds.Hold";
+    const CHARGE: &str = "metering.usage.Charge";
+
+    fn ir() -> EssIr {
+        spindle_spec::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../spindle-kernel/tests/fixtures/metering-split"),
+        )
+        .expect("the fixture compiles")
+        .ir
+    }
+
+    fn create(entity: &str, identity: &str, state: &str, scanned: Vec<Scanned>) -> Change {
+        Change {
+            entity: entity.to_owned(),
+            identity: json!(identity),
+            expected: None,
+            row: Row {
+                state: state.to_owned(),
+                fields: BTreeMap::new(),
+            },
+            events: Vec::new(),
+            scanned,
+        }
+    }
+
+    /// `meter`'s store, routed beside `holds`'s.
+    fn routed<'a>(
+        ir: &'a EssIr,
+        meter: &'a mut MemoryStore,
+        holds: &'a mut MemoryStore,
+    ) -> Routed<'a> {
+        Routed {
+            ir,
+            running: Tallied {
+                store: meter,
+                appended: Vec::new(),
+            },
+            others: BTreeMap::from([("holds", holds as &mut dyn Store)]),
+        }
+    }
+
+    /// A hold is read from the holds' store, a charge decided on that scan lands in the meter's
+    /// store, and once another write of the holds lands after the scan the next such charge is
+    /// refused as a conflict naming the holds' entity, writing nothing.
+    #[test]
+    fn a_write_decided_on_another_components_scan_is_conditioned_on_its_owner() {
+        let ir = ir();
+        let mut meter = MemoryStore::default();
+        let mut holds = MemoryStore::default();
+        holds
+            .commit(&create(HOLD, "h1", "Active", Vec::new()))
+            .expect("the hold is placed");
+
+        let scan = routed(&ir, &mut meter, &mut holds)
+            .scan(HOLD)
+            .expect("the holds are read");
+        assert_eq!(scan.rows.len(), 1, "read from the holds' store");
+        assert!(meter.scan(HOLD).expect("read").rows.is_empty());
+        let scanned = vec![Scanned {
+            entity: HOLD.to_owned(),
+            version: scan.version,
+        }];
+        routed(&ir, &mut meter, &mut holds)
+            .commit(&create(CHARGE, "c1", "Billed", scanned.clone()))
+            .expect("a charge decided on the holds as they stand lands");
+        assert!(meter.load(CHARGE, &json!("c1")).expect("read").is_some());
+
+        holds
+            .commit(&create(HOLD, "h2", "Active", Vec::new()))
+            .expect("another hold is placed");
+        let moved =
+            routed(&ir, &mut meter, &mut holds).commit(&create(CHARGE, "c2", "Billed", scanned));
+        assert!(
+            matches!(&moved, Err(StoreError::Conflict { entity, .. }) if entity == HOLD),
+            "{moved:?}"
+        );
+        assert!(meter.load(CHARGE, &json!("c2")).expect("read").is_none());
+    }
 }

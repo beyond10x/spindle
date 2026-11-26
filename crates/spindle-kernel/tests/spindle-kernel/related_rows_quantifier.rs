@@ -165,13 +165,18 @@ fn command<'ir>(
         .unwrap_or_else(|| panic!("the fixture declares {name}"))
 }
 
-/// A guard over the rows of an entity another component owns would be decided over the running
-/// component's store, which keeps none of them, where ESS's interpreter reads them: a rows
-/// quantifier walking it, a row set selecting it, and a row an input names. Every outcome of the
-/// command is refused by name at admission ([`spindle_kernel::takes`]), so `admit` and the route
-/// name it, and `execute` writes nothing.
+/// A guard over the rows of an entity another component owns, on a store that reaches only the
+/// running component's (a split run, `play --component`), would be decided over a store that
+/// keeps none of them, where ESS's interpreter reads them: a rows quantifier walking it, a row set
+/// selecting it, and a row an input names. Every outcome of the command is refused by name at
+/// admission ([`spindle_kernel::takes`], and [`spindle_kernel::takes_reaching`] reaching the
+/// running component alone), so `admit --component` and the route name it, and `execute` writes
+/// nothing. Reaching the owner's store too, as a host running both does, every outcome runs
+/// (`story:cross-component-related-reads`).
 #[test]
 fn a_guard_over_another_components_rows_is_refused_by_name() {
+    let split_run = std::collections::BTreeSet::from(["meter".to_owned()]);
+    let one_host = std::collections::BTreeSet::from(["meter".to_owned(), "holds".to_owned()]);
     let ir = split();
     let mut store = MemoryStore::default();
     send(
@@ -213,7 +218,16 @@ fn a_guard_over_another_components_rows_is_refused_by_name() {
                 refused.to_string(),
                 format!("unsupported: {why}, in `{name}/{}`", outcome.name.as_str()),
             );
+            let split = spindle_kernel::takes_reaching(&ir, spec, outcome, &split_run)
+                .expect_err("a split run refuses every outcome");
+            assert_eq!(split.to_string(), refused.to_string());
         }
+        spindle_kernel::runs_reaching(&ir, spec, &one_host)
+            .unwrap_or_else(|error| panic!("`{name}` runs reaching the holds' store: {error}"));
+        assert!(
+            spindle_kernel::runs_reaching(&ir, spec, &split_run).is_err(),
+            "`{name}` is refused reaching the meter's store alone"
+        );
         let charge_id = input["charge_id"].clone();
         match send(&mut store, &ir, (name, input)) {
             Err(ExecuteError::Unsupported { construct }) => assert!(

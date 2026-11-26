@@ -1,7 +1,7 @@
 //! The routes one listener serves, read from ESS: the routes `ess generate --kind openapi`
 //! publishes, with an `ess-http/1` binding's in place of those it names.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -1082,6 +1082,46 @@ impl fmt::Debug for Secret {
     }
 }
 
+/// The constructors of a [`Surface`] whose commands run on a store reaching the stores of a set of
+/// components ([`Surface::reaching`]).
+#[derive(Debug, Clone, Copy)]
+pub struct Reaching<'r> {
+    reached: &'r BTreeSet<String>,
+}
+
+impl Reaching<'_> {
+    /// [`Surface::fixing_callers`], reaching the stores of the components
+    /// [`Surface::reaching`] names.
+    ///
+    /// # Errors
+    /// As [`Surface::new`].
+    pub fn fixing_callers(
+        self,
+        ir: &EssIr,
+        components: &[String],
+        binding: Option<&Binding>,
+        callers: &[Caller],
+    ) -> Result<Surface, SurfaceError> {
+        Surface::routed(ir, components, binding, callers, false, Some(self.reached))
+    }
+
+    /// [`Surface::proving_callers`], reaching the stores of the components
+    /// [`Surface::reaching`] names.
+    ///
+    /// # Errors
+    /// As [`Surface::proving_callers`].
+    pub fn proving_callers(
+        self,
+        ir: &EssIr,
+        components: &[String],
+        binding: Option<&Binding>,
+        header: &str,
+        secret: &str,
+    ) -> Result<Surface, SurfaceError> {
+        Surface::proving(ir, components, binding, header, secret, Some(self.reached))
+    }
+}
+
 impl Surface {
     /// The header a proxy presents the secret in on each request to a surface made
     /// [`Surface::proving_callers`]; a request without it, or with another value, proves no
@@ -1128,7 +1168,7 @@ impl Surface {
         components: &[String],
         binding: Option<&Binding>,
     ) -> Result<Self, SurfaceError> {
-        Self::routed(ir, components, binding, &[], false)
+        Self::routed(ir, components, binding, &[], false, None)
     }
 
     /// [`Surface::new`], every command sent as `caller`: a command that reads its caller is
@@ -1143,7 +1183,14 @@ impl Surface {
         binding: Option<&Binding>,
         caller: &Caller,
     ) -> Result<Self, SurfaceError> {
-        Self::routed(ir, components, binding, std::slice::from_ref(caller), false)
+        Self::routed(
+            ir,
+            components,
+            binding,
+            std::slice::from_ref(caller),
+            false,
+            None,
+        )
     }
 
     /// [`Surface::new`], each command sent as the first of `callers` whose actor's `may:` names
@@ -1161,7 +1208,7 @@ impl Surface {
         binding: Option<&Binding>,
         callers: &[Caller],
     ) -> Result<Self, SurfaceError> {
-        Self::routed(ir, components, binding, callers, false)
+        Self::routed(ir, components, binding, callers, false, None)
     }
 
     /// [`Surface::new`], each request for a command or view proving its own caller in the header
@@ -1196,6 +1243,31 @@ impl Surface {
         header: &str,
         secret: &str,
     ) -> Result<Self, SurfaceError> {
+        Self::proving(ir, components, binding, header, secret, None)
+    }
+
+    /// The surfaces whose commands run on a store reaching the stores of the components `reached`
+    /// names, as a host running them in one process hands the kernel
+    /// ([`spindle_kernel::execute_reaching`]): a command reading an entity one of them owns (a
+    /// value, a `when_related:` guard, a row set) is served, where a surface made otherwise
+    /// reaches the store of the component running it alone and marks it [`Unserved::Kernel`]
+    /// ([`spindle_kernel::takes_reaching`]). Each constructor of [`Reaching`] is the one of
+    /// [`Surface`] of its name.
+    #[must_use]
+    pub fn reaching(reached: &BTreeSet<String>) -> Reaching<'_> {
+        Reaching { reached }
+    }
+
+    /// [`Surface::proving_callers`], reaching the stores `reached` names, or the running
+    /// component's alone.
+    fn proving(
+        ir: &EssIr,
+        components: &[String],
+        binding: Option<&Binding>,
+        header: &str,
+        secret: &str,
+        reached: Option<&BTreeSet<String>>,
+    ) -> Result<Self, SurfaceError> {
         if header.is_empty()
             || !header.bytes().all(token)
             || header.eq_ignore_ascii_case(Self::SECRET_HEADER)
@@ -1205,7 +1277,7 @@ impl Surface {
         if secret.is_empty() || !secret.bytes().all(|byte| byte.is_ascii_graphic()) {
             return Err(SurfaceError::Secret);
         }
-        let mut surface = Self::routed(ir, components, binding, &[], true)?;
+        let mut surface = Self::routed(ir, components, binding, &[], true, reached)?;
         surface.caller_header = Some(header.to_ascii_lowercase());
         surface.caller_secret = Some(Secret(secret.to_owned()));
         Ok(surface)
@@ -1249,6 +1321,7 @@ impl Surface {
         binding: Option<&Binding>,
         callers: &[Caller],
         proves: bool,
+        reached: Option<&BTreeSet<String>>,
     ) -> Result<Self, SurfaceError> {
         if let Some(binding) = binding
             && let Some(key) = binding.ir().refusals().keys().next()
@@ -1278,7 +1351,7 @@ impl Surface {
                 .find(|component| component.name.as_str() == name)
                 .ok_or_else(|| SurfaceError::NoComponent(name.clone()))?;
             for bound in ess_gen::http::bound_routes(ir, component, binding) {
-                let route = route(ir, name, &bound, callers, proves)?;
+                let route = route(ir, name, &bound, callers, proves, reached)?;
                 if Reserved::of(&route.path).is_some() {
                     return Err(SurfaceError::Reserved {
                         operation: route.operation.to_string(),
@@ -1535,7 +1608,8 @@ fn token(byte: u8) -> bool {
 
 /// One route of `component`, owned: served, or kept and marked [`Unserved`] with what it uses
 /// that this ingress, the kernel or the host does not run. Where `proves`, each request proves its
-/// own caller ([`Route::proves`]).
+/// own caller ([`Route::proves`]). A command runs on a store reaching the stores `reached` names,
+/// or the running component's alone ([`refuse`]).
 ///
 /// # Errors
 /// [`SurfaceError::Unsupported`] when the route's path is not a template ESS reads, so that no
@@ -1546,6 +1620,7 @@ fn route(
     bound: &ess_gen::http::Route<'_>,
     callers: &[Caller],
     proves: bool,
+    reached: Option<&BTreeSet<String>>,
 ) -> Result<Route, SurfaceError> {
     let operation = bound.serves.operation();
     let path = bound.path.clone();
@@ -1600,7 +1675,7 @@ fn route(
         }
         (Ok(()), Operation::Command(_)) => {
             if let ess_gen::http::Served::Command(handle) = bound.serves {
-                refuse(ir, ir.command(handle), &mut route);
+                refuse(ir, ir.command(handle), &mut route, reached);
             }
         }
         (Ok(()), Operation::View(view)) => {
@@ -1674,18 +1749,29 @@ pub(crate) fn may_read(ir: &EssIr, actor: &str, view: &str) -> bool {
 }
 
 /// Marks what the route of `command`, once [`served`] filled it, does not run. Each outcome the
-/// kernel does not take ([`spindle_kernel::takes`]) is refused beside those this ingress does not
+/// kernel does not take on a store reaching the stores `reached` names
+/// ([`spindle_kernel::takes_reaching`]), or the running component's alone
+/// ([`spindle_kernel::takes`]), is refused beside those this ingress does not
 /// answer, in declaration order. Where the kernel cannot select among the outcomes
 /// ([`spindle_kernel::selects`]) or none is left to serve, the whole route is marked instead: by
 /// what this ingress does not serve, first, which is answered before the request is read, else
 /// by what the kernel does not run.
-fn refuse(ir: &EssIr, command: &ess_compiler::ir::ResolvedCommand, route: &mut Route) {
+fn refuse(
+    ir: &EssIr,
+    command: &ess_compiler::ir::ResolvedCommand,
+    route: &mut Route,
+    reached: Option<&BTreeSet<String>>,
+) {
     let mut refused = Vec::new();
     for outcome in &command.outcomes {
         let name = outcome.name.to_string();
+        let taken = match reached {
+            Some(reached) => spindle_kernel::takes_reaching(ir, command, outcome, reached),
+            None => spindle_kernel::takes(ir, command, outcome),
+        };
         if let Some(at) = route.refused.iter().position(|(listed, _)| *listed == name) {
             refused.push(route.refused.remove(at));
-        } else if let Err(why) = spindle_kernel::takes(ir, command, outcome) {
+        } else if let Err(why) = taken {
             refused.push((name, Unserved::Kernel(why.to_string())));
         }
     }

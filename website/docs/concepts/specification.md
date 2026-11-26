@@ -90,12 +90,15 @@ reads `payload.`, a predicate that walks the rows of an entity, and this value i
 fields stay refused. The predicate is read only for the branch that reads the value, once that
 branch is selected: a refusal reads no row for it.
 
-The kernel reads only the store of the component that runs the command. A value over an entity
-another component owns, `{related: {entity, where, field}}` or `{related: {via: input.<field>,
-field}}`, is refused as unsupported, naming the entity, its owner and the running component, and
-`admit` and `run` list the outcome as not served. ESS's interpreter, which holds every entity in
-one store, would read the row. A `when_related:` guard or an `affects:` entry over such an entity
-has the same limit and is not refused yet.
+A value, a `when_related:` guard or a row set over an entity another component owns is read from
+the owner's store where both components run in one process: `run` reading stdin, a served `run`,
+and `admit` without `--component`. It answers what ESS's interpreter answers, which holds every
+entity in one store. Where the owner runs in another process (`play --component`, and
+`admit --component`, which checks that run), the command reads only the store of the component
+that runs it: such a guard refuses the whole command, and such a value refuses its outcome, as
+unsupported, naming the entity, its owner and the running component, and `admit` lists it as not
+served. An `affects:` entry over another component's entity is refused the same way in every
+run: the kernel writes only the store of the component that runs the command.
 
 A `creates:` outcome whose identity is neither an input nor a payload source (`generated: true`,
 or no source) leaves the identity to the runtime, which mints it with the `identity.mint`
