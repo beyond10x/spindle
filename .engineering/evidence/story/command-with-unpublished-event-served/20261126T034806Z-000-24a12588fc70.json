@@ -1,0 +1,14 @@
+{
+  "at": "2026-11-26T03:48:06Z",
+  "actor": "human:operator",
+  "artifact": "story:command-with-unpublished-event-served",
+  "kind": "story",
+  "revision": 12,
+  "change": {
+    "change": "evidence",
+    "kind": "review_outcome",
+    "source": "review-result:unpublished-event-acceptance-r2",
+    "review": "review-result:unpublished-event-acceptance-r2",
+    "outcome": "fixed"
+  }
+}
