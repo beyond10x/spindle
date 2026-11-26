@@ -1,5 +1,6 @@
 //! Answers to `external:` outcomes that a `run` request line does not carry: the request line's
-//! own `external` object, then the decisions file (`--decisions`), then `--answer-default`, as
+//! own `external` object, then the decisions file (`--decisions`: its first `[[rules]]` entry the
+//! request's input matches, then its command and top-level answers), then `--answer-default`, as
 //! [`spindle_host::Answers`] reads them.
 //!
 //! A served run's decider is [`Answers::served`], or [`Answers::over`] once a reset's world

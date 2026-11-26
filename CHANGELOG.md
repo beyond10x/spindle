@@ -15,6 +15,15 @@ are Spindle's releases.
   a size without its page, a negative value, a page below `first_page` and an offset that
   overflows answer `400`, and the conformance target reports them unsupported. `Host::listed_with`
   and `Reader::listed_with` answer the rows with the total (`story:view-paging`).
+- A decisions file holds `[[rules]]`, each naming a command, one of its external outcomes, the
+  answer and, in `when`, values the command's input must hold (`"input.<field>"`, dots for a
+  struct's members; a string, an integer or a boolean). The first rule in file order whose every
+  entry holds answers the request, before the command's table and the top-level answers; an
+  input the request leaves out holds no entry. A reset's world carries the same array under
+  `decisions.rules`. A rule over a command, outcome or input the specification does not declare,
+  or a value not of the input's type, is refused at load, naming `rules[<index>]` and the entry.
+  `run`, the Node export and the Service Worker read rules alike, and a reset keeps the
+  decisions file a Node instance was created with (`story:decisions-rules-on-input-predicates`).
 
 ### Fixed
 
