@@ -33,6 +33,16 @@ const SOURCES: [(&str, &str); 2] = [
 ];
 
 const WORLD: &str = include_str!("../fixtures/world-exchanges.json");
+/// The record [`WORLD`] reads, which a run with [`RECORD`] set writes again.
+const WORLD_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/world-exchanges.json"
+);
+/// Set, `the_loopback_listener_answers_the_world_exchanges` records what the listener answers
+/// into [`WORLD_PATH`] in place of comparing it: `slot --fetch
+/// crates/spindle-node/tests/fixtures/world-exchanges.json cargo test -p spindle-node --
+/// listener::the_loopback_listener_answers_the_world_exchanges` with `SPINDLE_RECORD=1`.
+const RECORD: &str = "SPINDLE_RECORD";
 
 /// One request and the answer the loopback listener writes for it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
@@ -156,8 +166,8 @@ pub(crate) fn listened(
     listened
 }
 
-#[test]
-fn the_loopback_listener_answers_the_world_exchanges() {
+/// What the loopback listener answers each of `recorded`, served as the module's header says.
+fn served(recorded: &[Exchange]) -> Vec<Exchange> {
     let ir = ir();
     let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
     let answers = Answers::default().taking_defaults(&ir);
@@ -177,14 +187,58 @@ fn the_loopback_listener_answers_the_world_exchanges() {
         spindle_host::read_world(ir, body, |table| table.over(answers.clone()))
     };
 
-    let recorded: Vec<Exchange> = serde_json::from_str(WORLD).expect("the record reads");
-    let listened = listened(&listener, &recorded, |served| {
+    listened(&listener, recorded, |served| {
         served.serve_with(&mut host, &worlds);
-    });
+    })
+}
+
+#[test]
+fn the_loopback_listener_answers_the_world_exchanges() {
+    let recorded: Vec<Exchange> = serde_json::from_str(WORLD).expect("the record reads");
+    let listened = served(&recorded);
+    if std::env::var_os(RECORD).is_some() {
+        let pretty = serde_json::to_string_pretty(&listened).expect("the record writes");
+        std::fs::write(WORLD_PATH, format!("{pretty}\n")).expect("the record is written");
+        return;
+    }
     assert_eq!(
         listened,
         recorded,
         "the listener answers what tests/fixtures/world-exchanges.json records; it wrote:\n{}",
         serde_json::to_string_pretty(&listened).unwrap_or_default()
+    );
+}
+
+fn exchange(method: &str, target: &str, body: &str) -> Exchange {
+    Exchange {
+        method: method.to_owned(),
+        target: target.to_owned(),
+        content_type: (!body.is_empty()).then(|| "application/json".to_owned()),
+        body: body.to_owned(),
+        status: 0,
+        allow: None,
+        answer: String::new(),
+    }
+}
+
+/// story:world-row-integer-fields: a row a reset's world loads answers its `Integer` field as an
+/// integer, as a row `Submit` created does.
+#[test]
+fn a_world_row_keeps_its_integer_fields() {
+    let world = r#"{"rows": [{"entity": "probe.review.Submission", "identity": "s1", "state": "Open", "fields": {"amount": 1}}]}"#;
+    let answered = served(&[
+        exchange("POST", "/api/reset", world),
+        exchange(
+            "POST",
+            "/review/commands/Submit",
+            r#"{"submission_id": "s9", "amount": 12}"#,
+        ),
+        exchange("GET", "/review/views/Submissions", ""),
+    ]);
+    let statuses: Vec<u16> = answered.iter().map(|exchange| exchange.status).collect();
+    assert_eq!(statuses, [200, 202, 200], "{answered:#?}");
+    assert_eq!(
+        answered[2].answer,
+        r#"{"rows":[{"amount":1,"submission_id":"s1"},{"amount":12,"submission_id":"s9"}]}"#
     );
 }

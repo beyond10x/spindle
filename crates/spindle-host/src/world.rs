@@ -36,14 +36,17 @@ struct Body {
     mint: Option<u64>,
 }
 
+/// A row as the body spells it. Its identity and fields are held as written, as a command's input
+/// is, and ESS checks them as the [`Node`]s it reads them as; a `Node` is not written back, since
+/// ESS writes an integral number as a float (`1` as `1.0`).
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SeedRow {
     entity: String,
-    identity: Node,
+    identity: Value,
     state: StateName,
     #[serde(default)]
-    fields: BTreeMap<String, Node>,
+    fields: BTreeMap<String, Value>,
 }
 
 /// Reads the world `body` carries against `ir`, its decision table made the decider `over` makes
@@ -88,24 +91,29 @@ fn seed(ir: &EssIr, row: &SeedRow) -> Result<Seed, String> {
         .keys()
         .find(|name| name.to_string() == row.entity)
         .ok_or_else(|| format!("undeclared entity `{}`", row.entity))?;
-    let identity = json(&row.identity)?;
+    let identity = &row.identity;
+    let nodes = row
+        .fields
+        .iter()
+        .map(|(field, value)| node(value).map(|value| (field.clone(), value)))
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
     ess_conformance::input::validate_entity_setup(
         ir,
         &EntityRef::new(name.clone()),
-        &row.identity,
-        &row.fields,
+        &node(identity)?,
+        &nodes,
         &row.state,
     )
     .map_err(|detail| format!("{} {identity}: {detail}", row.entity))?;
     let fields = row
         .fields
         .iter()
-        .filter(|(_, value)| !matches!(value, Node::Null))
-        .map(|(field, value)| json(value).map(|value| (field.clone(), value)))
-        .collect::<Result<BTreeMap<_, _>, _>>()?;
+        .filter(|(_, value)| !value.is_null())
+        .map(|(field, value)| (field.clone(), value.clone()))
+        .collect();
     Ok(Seed {
         entity: row.entity.clone(),
-        identity,
+        identity: identity.clone(),
         row: Row {
             state: row.state.as_str().to_owned(),
             fields,
@@ -113,6 +121,7 @@ fn seed(ir: &EssIr, row: &SeedRow) -> Result<Seed, String> {
     })
 }
 
-fn json(node: &Node) -> Result<Value, String> {
-    serde_json::to_value(node).map_err(|error| error.to_string())
+/// `value` as ESS reads it.
+fn node(value: &Value) -> Result<Node, String> {
+    <Node as serde::Deserialize>::deserialize(value).map_err(|error| error.to_string())
 }
