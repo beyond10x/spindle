@@ -6,8 +6,11 @@ status: draft
 title: run --scenario replays a specification that declares no component
 relations:
 - serves: vision:spindle
-revision: 4
+- depends_on: story:scenario-act-without-outcome
+revision: 6
 ---
+# run --scenario replays a specification that declares no component
+
 ## Outcome
 
 `run --scenario` replays a specification that declares no component, the way stdin mode runs one:
@@ -130,8 +133,10 @@ publishes both events) is the manual workaround that choice A would generate.
 
 ## Shared files
 
-- `crates/spindle-cli/src/replay.rs` and its tests: shared with `story:scenario-act-without-outcome`
-  in the same unit (U4), built after it on one branch.
+- `crates/spindle-cli/src/replay.rs` (`replay`, `:44-89`, the admission at `:77-82`) and its tests:
+  shared with `story:scenario-act-without-outcome` in the same unit (U4), built after it on one
+  branch (`depends_on`), and with U3, which edits `Replays::run` at `:187`; separate hunks, merged by
+  the coordinator after U3.
 - `crates/spindle-spec/src/lib.rs`: this story's alone in wave 26.
 - The `--scenario` help in `cli.rs`, the generated `cli.md` and `status.rs:450-455`: shared with U3;
   separate hunks.

@@ -6,18 +6,18 @@ status: draft
 title: Every run mode takes a simulated clock and a seeded mint
 relations:
 - serves: vision:spindle
-revision: 5
+- depends_on: story:run-fails-on-rejected-line
+revision: 11
 ---
 # Every run mode takes a simulated clock and a seeded mint
 
 ## Outcome
 
-`run` in each mode (stdin lines, HTTP, `--scenario`) takes `--mint-seed <n>`, so identities and
-generated values are minted from that seed from the first command, and `--clock <RFC 3339>`, so the
-run starts on a manual clock at that instant. On stdin a line may carry `"at": "<RFC 3339>"`, which
-moves the clock to that instant before the command runs; an instant before the current one is
-refused for that line. Periodic bindings fire as the clock passes their times, as `ManualClock`
-drives them natively (`Host::advance`).
+`run` in each mode (stdin lines, HTTP, `--scenario`) takes `--clock <RFC 3339>`, so the run starts on
+a manual clock at that instant. Stdin and HTTP runs also take `--mint-seed <n>`, so identities and
+generated values are minted from that seed from the first command. On stdin a line may carry
+`"at": "<RFC 3339>"`, which moves the clock to that instant before the command runs; an instant
+before the current one rejects that line.
 
 Today a seeded mint exists only behind `POST /api/reset` (`"mint": <seed>`), stdin mode mints random
 UUIDs, and every mode reads the system clock. Reported 2026-11-26 by two consumers that simulate a
@@ -29,15 +29,24 @@ need repeatable identities.
 - `a_seeded_stdin_run_mints_the_same_identities_twice`: two stdin runs with one `--mint-seed` print
   byte-identical results, minted identities included; a different seed mints different ones.
 - `a_line_moves_the_clock`: with `--clock 2026-01-01T00:00:00Z`, a line with `"at":
-  "2026-02-01T00:00:00Z"` runs a command whose guard orders against `now` at February 1st, and a
-  later line with an earlier `at` is rejected.
-- `the_served_run_and_the_scenario_take_both_flags`: HTTP and `--scenario` runs honour
-  `--mint-seed` and `--clock`; a reset world's `mint` still overrides the seed until the next reset.
-- `a_plain_reset_mints_from_the_run_seed_again`: on a served run with `--mint-seed`, a reset whose
-  world has no `mint` mints the same identities as the run's first commands did.
-
-Moved to Not covered when scoped: `a_periodic_binding_fires_as_the_clock_passes`. No `run` mode
-fires periodic bindings today (only `play` does), and this story does not add it.
+  "2026-02-01T00:00:00Z"` runs a command whose guard orders against `now`, and the answer is the
+  outcome that guard selects on February 1st.
+- `a_line_with_an_earlier_at_is_rejected`: after that line, a line with `"at":
+  "2026-01-15T00:00:00Z"` is rejected and the run exits 1 (story:run-fails-on-rejected-line).
+- `a_served_run_mints_from_the_seed`: two served runs with one `--mint-seed` answer the same
+  identity to the same first create request.
+- `a_served_run_starts_on_the_clock_flag`: a served run with `--clock 2026-02-01T00:00:00Z` answers
+  a command whose guard orders against `now` with the outcome selected on February 1st.
+- `a_scenario_runs_on_the_clock_flag`: `--scenario` with `--clock 2026-02-01T00:00:00Z` replays an
+  act that states the outcome selected on February 1st by a guard over `now`; the act prints
+  `holds` and the run exits 0, and the same document without `--clock` diverges.
+- `a_reset_world_mint_overrides_the_seed_until_the_next_reset`: on a served run with
+  `--mint-seed`, a reset whose world carries `mint: <m>` mints as seed `<m>` does.
+- `a_plain_reset_mints_from_the_run_seed_again`: a following reset whose world has no `mint` mints
+  the same identities as the run's first commands did.
+- `a_seeded_mint_binding_is_served`: a stdin run on an environment that binds `identity.mint` to
+  `seeded`, which `admit` already accepts, runs instead of being refused, and mints from
+  `--mint-seed` (seed 0 when the flag is absent); two such runs print byte-identical results.
 
 ## Scope
 
@@ -73,11 +82,31 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
 
 ## Shared files
 
-- `crates/spindle-cli/src/main.rs`, `serve.rs`: shared with `story:run-fails-on-rejected-line` in
-  the same unit (U3), built after it on one branch.
-- `crates/spindle-conformance/src/target.rs` (`HostTarget::new` takes a clock and a mint): shared
-  with U4 (`story:scenario-act-without-outcome` records the outcome taken in `execute_command`);
-  separate functions, merged by the coordinator.
-- `crates/spindle-host/src/host.rs` (`reset_to`, the run seed): this story's alone in wave 26.
-- The `run` help in `cli.rs` and the generated `cli.md`: shared with U4, as above.
+- `crates/spindle-cli/src/main.rs`, `seed.rs`, `serve.rs`: shared with
+  `story:run-fails-on-rejected-line` in the same unit (U3), built after it on one branch
+  (`depends_on`).
+- `crates/spindle-conformance/src/target.rs`: `HostTarget::new` keeps its signature; this story adds
+  a separate constructor that takes a clock and a mint, so the about 30 callers of `new` do not
+  change. U4 adds a field to `HostTarget` (the outcomes taken); the coordinator merges U3 first and
+  U4's field joins the new constructor at merge.
+- `crates/spindle-cli/src/replay.rs`: this story changes only the host it opens in `Replays::run`
+  (`:187`) to the new constructor. U4 edits `replay.rs:44-153` and the line printing in
+  `Replays::run`; shared file, separate hunks, merged by the coordinator after U3.
+- `crates/spindle-cli/tests/spindle-cli/replay.rs`: this story adds one test module function for
+  `--scenario` with both flags; U4 adds its own. Shared file, separate functions.
+- `crates/spindle-host/src/host.rs` (`Opening`, `:984`, `reset_to` `:1195-1236`): shared with U2,
+  which edits only the leaf-list doc at `:1625-1645`. Separate hunks, merged by the coordinator.
+- The `run` help in `cli.rs` and the generated `cli.md`: shared with U4; separate hunks, the page
+  generated again after both.
 - `CHANGELOG.md` `[Unreleased]`: one bullet per story, merged by the coordinator.
+
+## Not covered
+
+- Periodic bindings: no `run` mode fires them today (only `play` does), and this story does not add
+  it (`a_periodic_binding_fires_as_the_clock_passes`, moved here when scoped).
+- `--mint-seed` on `--scenario`: ESS's runner captures identities itself and no output of the
+  replay shows a minted identity, so no test could observe it.
+- Stepping the clock in HTTP and `--scenario` runs: they take a start instant from `--clock` only.
+  A scenario act's `at:` stays with ESS's runner.
+- The environment's `clock` binding: it is not checked today and this story does not check it;
+  `--clock` sets the time.

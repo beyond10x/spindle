@@ -6,8 +6,10 @@ status: draft
 title: A stdin run arranges rows and names what earlier lines minted
 relations:
 - serves: vision:spindle
-revision: 1
+revision: 2
 ---
+# A stdin run arranges rows and names what earlier lines minted
+
 ## Outcome
 
 A stdin run takes two more kinds of line beside a command:

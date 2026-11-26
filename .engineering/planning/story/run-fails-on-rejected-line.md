@@ -6,7 +6,7 @@ status: draft
 title: A run that rejects an input line or a seed entry exits non-zero
 relations:
 - serves: vision:spindle
-revision: 5
+revision: 6
 ---
 # A run that rejects an input line or a seed entry exits non-zero
 
@@ -22,7 +22,9 @@ is not admitted, its external cause is unanswered, or the kernel refused it befo
 line answered by a declared outcome, a refusing one included, is not rejected. A seed entry counted
 `already-there` is not rejected.
 
-Reported 2026-11-26 by two consumers driving Spindle 0.21.0 from scripts.
+Named 2026-11-26 in the operator's order for this wave and in a consumer's first list of gaps on
+Spindle 0.21.0. The consumer's final report counts printed lines instead of trusting the exit code
+(its gap 10g).
 
 ## Acceptance
 

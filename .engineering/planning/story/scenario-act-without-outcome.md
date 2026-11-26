@@ -6,28 +6,35 @@ status: draft
 title: A scenario act that states no outcome is reported as ESS's runner reports it
 relations:
 - serves: vision:spindle
-revision: 4
+revision: 10
 ---
 # A scenario act that states no outcome is reported as ESS's runner reports it
 
 ## Outcome
 
-`run --scenario` reports a timeline act that states no expected outcome the way ESS 0.99.1's
-conformance runner judges it: where the runner fails a refused or failed act, Spindle prints it as
-not holding, with the outcome observed, and exits 1. Today such an act prints as holding even when
-the command was refused, so a scenario reads green over a step that did nothing.
+`run --scenario` prints, on each timeline act's line, the outcome observed (or the refusal), whether
+or not the act states an expected outcome. Today an act that states no outcome prints `holds` even
+when its command was refused, so a scenario reads green over a step that did nothing.
 
-Reported 2026-11-26 by a consumer replaying business scenarios. Inferred, not traced: what ESS's
-runner asserts for an act without an expected outcome; the story first establishes it from
-`ess-conformance` at the pin and states it here.
+The verdict and the exit code stay ESS 0.99.1's runner's: an act without `outcome:` compiles to no
+outcome check (`authored.rs:4455-4458`), so a refused act of that kind passes in the runner and the
+run exits 0; an act whose command fails at the target diverges and exits 1, as today.
+
+Reported 2026-11-26 by a consumer replaying business scenarios.
 
 ## Acceptance
 
-- `an_act_without_an_outcome_that_is_refused_is_reported_as_ess_reports_it`: a scenario whose act
-  states no outcome and whose command is refused prints the act with the observed outcome and exits
-  as ESS's runner exits for the same document.
-- `an_act_without_an_outcome_that_runs_holds`: the same act on a command that records still holds.
-- Every act's line prints the outcome observed, whether or not the act states one.
+- `a_refused_act_without_an_outcome_prints_the_refusal`: a scenario whose act states no outcome and
+  whose command is refused by a declared refusing outcome prints that act's line with the refusing
+  outcome's name and exits 0, as ESS's runner passes the same document.
+- `an_undeclared_refusal_without_an_outcome_prints_it`: the same with an undeclared refusal prints
+  `undeclared` on the line and exits 0.
+- `an_act_without_an_outcome_that_runs_holds`: the same act on a command that records prints
+  `holds` with the outcome taken, and exits 0.
+- `an_act_with_an_outcome_prints_the_observed_one`: an act that states its outcome prints the
+  outcome observed beside `holds` or `diverges`; the exit code is unchanged.
+- `a_refused_act_prints_its_error`: a line whose observed outcome carries a declared error prints
+  the error's name after the outcome.
 
 ## Scope
 
@@ -91,9 +98,19 @@ Components-only replay: inferred (medium-low). `--scenario` does not refuse a do
 ## Shared files
 
 - `crates/spindle-cli/src/replay.rs` and its tests and fixtures: shared with
-  `story:scenario-without-components` in the same unit (U4), built before it on one branch.
-- `crates/spindle-conformance/src/target.rs`: shared with U3 (`story:clock-and-mint-in-every-mode`
-  changes `HostTarget::new`); separate functions, merged by the coordinator.
+  `story:scenario-without-components` in the same unit (U4), built before it on one branch. Also
+  shared with U3 (`story:clock-and-mint-in-every-mode` changes the host opened in `Replays::run`
+  at `:187`); this story edits the printing at `:100-153` and the outcome lines; separate hunks,
+  merged by the coordinator after U3.
+- `crates/spindle-conformance/src/target.rs`: this story adds a field to `HostTarget` (the outcomes
+  taken, beside the command count) and records it in `execute_command`; the returned
+  `SemanticCommandResult` does not change. U3 adds a separate constructor; the coordinator merges
+  U3 first and adds this field to that constructor.
 - The `--scenario` help in `cli.rs`, the generated `cli.md` and `status.rs:450-455`: shared with U3;
   separate hunks.
 - `CHANGELOG.md` `[Unreleased]`: one bullet per story, merged by the coordinator.
+
+## Not covered
+
+- The events an act published, on its line.
+- A flag that continues the replay after a divergence; the replay stops at the first one, as today.

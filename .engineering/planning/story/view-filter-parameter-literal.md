@@ -7,7 +7,7 @@ title: A view filter reads every parameter form a consumer's model declares
 relations:
 - serves: vision:spindle
 - informed_by: story:view-filter-text-contains
-revision: 7
+revision: 10
 ---
 # A view filter reads every parameter form a consumer's model declares
 
@@ -29,19 +29,28 @@ same rows instead of being refused whole (`crates/spindle-host/src/view.rs`, `un
   `exists g in groups: (g.id == param.id)`.
 
 Reported 2026-11-26 by a consumer on Spindle 0.21.0: 205 of its journeys stop at a list route
-answering `501` with `unsupported: view … declares the filter …`, on nine routes, and seven more
+answering `501` with `unsupported: view … declares the filter …`, on nine routes, and nine more
 routes answer the same with no journey reaching them first. Each filter there is built of the forms
 above and of leaves Spindle already reads.
 
 ## Acceptance
 
-- One test per form above: a view whose filter holds that form answers the interpreter's rows for
-  the parameter left out and given, compared with `ess_conformance::interpret` row by row. For
-  `param.<x> as timestamp`, admitted today, the test is a regression test.
-- One test each, compared the same way, for three forms the consumer's filters also declare: a row
-  field under a case fold (`<field> equals_ignore_case "…"`), `defined(<binder>.<member>)` for an
-  element of a list field, and a member of a list-field element compared with an outer
-  list-parameter binder (`r.m == g`).
+One test per form, each comparing the view's rows with `ess_conformance::interpret` row by row,
+with the parameter left out and given:
+
+- F1a `param.<text> == ""`; F1b `param.<boolean> == false`; F1c `param.<enum> == <word>`.
+- F2a `param.<text> in_ignore_case [...]`; F2b `param.<text> equals_ignore_case "…"`;
+  F2c `p equals_ignore_case "…"` and `p in_ignore_case [...]` for an element `p` of a list
+  parameter; F2d `trimmed(...)` around F2a and around F2c.
+- F3 `<timestamp field> >= param.<x> as timestamp`: admitted today, a regression test.
+- F4 `param.<list>.count == 0`.
+- F5a `exists g in <list field>: (g.<member> == param.<x>)`; F5b the same compared with an outer
+  list-parameter binder (`r.m == g`); F5c `defined(<binder>.<member>)` for an element of a list
+  field.
+- F6 a row field under a case fold, `<field> equals_ignore_case "…"`.
+
+And:
+
 - `the_consumer_filter_shapes_are_served`: three views built of the forms together, in the shape of
   the consumer's filters (optional-parameter guards `not defined(param.x) or …`, an `in_ignore_case`
   switch over a state, a time window cast `as timestamp`, a list-parameter `count == 0` escape),
@@ -104,6 +113,11 @@ Missing forms:
 
 ## Shared files
 
-- `crates/spindle-host/src/view.rs` and `host.rs:1625-1645`: this story's alone in wave 26.
+- `crates/spindle-host/src/view.rs`: this story's alone in wave 26.
+- `crates/spindle-host/src/host.rs:1625-1645` (the leaf-list doc): shared with U3
+  (`story:clock-and-mint-in-every-mode` edits `Opening`, `:984` and `reset_to` `:1195-1236`).
+  Separate hunks, merged by the coordinator.
+- `crates/spindle-host/tests/spindle-host/main.rs`: this story adds a `mod` line; U3 adds one only
+  if it tests the reset in that crate. Merged by the coordinator.
 - Fixtures under spindle-cli and spindle-ingress named in "Decided when scoped": this story's alone.
 - `CHANGELOG.md` `[Unreleased]`: one bullet per story, merged by the coordinator.

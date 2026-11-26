@@ -6,7 +6,7 @@ status: draft
 title: A guard over an absent optional field of a held row is decided as ESS decides it
 relations:
 - serves: vision:spindle
-revision: 4
+revision: 5
 ---
 # A guard over an absent optional field of a held row is decided as ESS decides it
 
@@ -39,7 +39,7 @@ in each comparison form.
 
 Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the story or the tree) or **inferred** (a reading that could be wrong).
 
-ESS paths below are relative to the ESS 0.99.1 source (`d7833ee`)crates/` (tag 0.99.1, `Cargo.lock` rev `d7833ee4`). Spindle paths are relative to the worktree root.
+ESS paths below are relative to `crates/` of the ESS 0.99.1 source (tag 0.99.1, `Cargo.lock` rev `d7833ee4`). Spindle paths are relative to the worktree root.
 
 - **Primary surface:** `crates/spindle-kernel` — cited (the story names `facts.rs`, and the refusal is built in `execute.rs`).
 - **Files:**
