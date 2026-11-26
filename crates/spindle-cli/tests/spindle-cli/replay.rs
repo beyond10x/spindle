@@ -443,7 +443,8 @@ fn stdin_and_scenario_agree_on_a_specification_without_components() {
         "\n",
     );
     let stdin = stdin_run(WITHOUT_COMPONENTS, LAPTOP, lines);
-    assert_eq!(stdin.status.code(), Some(0), "{stdin:?}");
+    // The second line is undeclared, so the run exits 1 (`story:run-fails-on-rejected-line`).
+    assert_eq!(stdin.status.code(), Some(1), "{stdin:?}");
     let answers = stdout(&stdin)
         .lines()
         .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("one JSON line"))
