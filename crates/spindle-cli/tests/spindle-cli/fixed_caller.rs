@@ -227,8 +227,11 @@ fn without_the_flag_nothing_changes() {
     assert_eq!(status, 403, "{body}");
     assert_eq!(body, json!({"refused": "not granted", "actor": null}));
     let stderr = served.stop();
+    // The line naming a fixed caller ends `(--fixed-actor, --fixed-caller): a test backend, not
+    // authentication`; the line naming how to serve a command that reads its caller names the
+    // options too, and is printed here (`story:caller-attributes-on-loopback`).
     assert!(
-        !stderr.contains("--fixed-actor"),
+        !stderr.contains("(--fixed-actor, --fixed-caller)"),
         "no caller is fixed by default: {stderr}"
     );
 }
