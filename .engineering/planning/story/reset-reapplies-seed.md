@@ -2,22 +2,48 @@
 format: aep.planning-md/3
 id: story:reset-reapplies-seed
 kind: story
-status: draft
+status: active
 title: A reset of a seeded run applies the seed again
 summary: After POST /api/reset on a run started with a seed, the seed runs again before the reset answers.
 relations:
 - serves: vision:spindle
 - informed_by: story:seed-at-start
 - informed_by: story:seed-readiness
-revision: 1
+scope:
+- confidence: cited
+  path: README.md
+- confidence: cited
+  path: crates/spindle-cli/src/cli.rs
+- confidence: cited
+  path: crates/spindle-cli/src/seed.rs
+- confidence: inferred
+  path: crates/spindle-cli/src/serve.rs
+- confidence: inferred
+  path: crates/spindle-cli/tests/spindle-cli/seed.rs
+- confidence: inferred
+  path: crates/spindle-docs/src/status.rs
+- confidence: cited
+  path: crates/spindle-ingress/src/console.rs
+- confidence: cited
+  path: crates/spindle-ingress/src/observe.rs
+- confidence: cited
+  path: website/docs/concepts/environment-and-admission.md
+- confidence: inferred
+  path: website/docs/reference/cli.md
+- confidence: inferred
+  path: website/docs/status.md
+revision: 27
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-26T04:51:42Z", actor: "human:operator", revision: 26, decided_on: {"recorded":{"review_outcome":19}}}
+- {from: "proposed", to: "active", at: "2026-11-26T04:51:43Z", actor: "human:operator", revision: 27, decided_on: {"recorded":{"review_outcome":19}}}
 ---
 # A reset of a seeded run applies the seed again
 
 ## Outcome
 
-After `POST /api/reset` on a run started with a seed (`run --seed <file>` or the environment's
-`[seed] file`), the seed runs again before the reset answers, and the readiness signal of
-`story:seed-readiness` reports it running until it ends.
+After `POST /api/reset` with no world on a run started with a seed (`run --seed <file>` or the
+environment's `[seed] file`), the seed runs again before the reset answers. A reset whose body
+gives a world loads that world and does not run the seed.
 
 ## Why
 
@@ -38,12 +64,50 @@ the seed is `crates/spindle-cli/src/seed.rs`.
   rows after it, as it held them after the start.
 - `the_seed_counts_after_a_reset_are_those_of_the_new_run`: the end line and the counts after a
   reset are the counts of the seed run the reset started, not a sum with the start's.
-- `the_readiness_signal_reports_the_seed_running_during_a_reset`: while the seed a reset started
-  has entries left, the readiness signal of `story:seed-readiness` reports it running, and ended
-  once it ends.
+- `a_reset_with_a_world_does_not_seed`: on a run with a seed, a reset whose body gives a world
+  answers with that world's rows and none of the seed's.
 - `a_run_without_a_seed_resets_as_before`: a reset on a run without a seed answers as today.
 
 ## Decided when scoped
 
-- How a world given in the reset's body and the seed combine: the world's rows first, then the
-  seed, or the seed only for a reset with no world.
+- How a world given in the reset's body and the seed combine: the seed runs only for a reset with no
+  world; a reset with a world loads that world alone (decided 2026-11-26 when scoped for wave 25).
+- Where the reset waits for the seed: in the CLI's serve loop. It takes a reset exchange through
+  `Exchange::console()`, `body()` and `respond()` (`crates/spindle-ingress/src/listener.rs:61`,
+  `:94`, `:99`, already public), runs `console::reset`, builds `Seeding` again and steps it to its
+  end, then answers. `Recorder::count_reset` (`crates/spindle-ingress/src/observe.rs:711`) becomes
+  public so the CLI keeps counting resets.
+
+## Not covered
+
+- The readiness signal during a reset's seed run: `story:seed-readiness`, a draft, provides the
+  signal; this story makes no readiness claim.
+- A reset that arrives while the start's seed or an earlier reset's seed is still running.
+
+## Scope
+
+Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the story or the tree) or
+**inferred** (a reading that could be wrong).
+
+- **Primary surface:** `crates/spindle-cli` (seed and serve loop) — cited
+- **Files:** `crates/spindle-cli/src/seed.rs` (`Seeding`, :196-290) — cited
+- **Files:** `crates/spindle-cli/src/serve.rs:396-424` (the seed is built once at start and stepped in the serve loop; nothing builds it again after a reset) — inferred
+- **Files:** `crates/spindle-ingress/src/console.rs:318` (`reset`) — cited
+- **Files:** `crates/spindle-cli/src/cli.rs:311` (`--seed` help: "does not submit it again") — cited
+- **Symbols:** `console::reset`, `Seeding::new`, `Seeding::step`, `Seeding::pending` — cited
+- **Files:** `crates/spindle-ingress/src/observe.rs:711` (`Recorder::count_reset` becomes public so the CLI keeps counting resets); `crates/spindle-ingress/src/listener.rs` and `router.rs` are read, not changed — cited
+- **Also likely:** `crates/spindle-cli/tests/spindle-cli/seed.rs` (acceptance tests next to the existing seed tests) — inferred
+- **Documents:** `README.md:64`, `website/docs/concepts/environment-and-admission.md:234-236` — cited; `crates/spindle-docs/src/status.rs:432` ("a reset drops what the seed wrote") and its generated `website/data/status.json`, `website/docs/status.md`, plus `website/docs/reference/cli.md:134` generated from `cli.rs` — inferred; `CHANGELOG.md` — inferred
+- **Not touched:** `crates/spindle-host` (`Host::reset_to` stays as it is when the seed is re-run from the CLI) — inferred; `crates/spindle-node` (it has no seed) — cited
+- **Confidence:** medium — the reset waits for the seed in the CLI serve loop (§ Decided when scoped)
+- **Would collide with:** any unit touching `spindle-cli`'s serve loop or seed module, `spindle-ingress`'s `console.rs` reset or `observe.rs` `Recorder`, the `--seed` help in `cli.rs`, or the status row "Seed at start"
+
+## Shared files
+
+- `crates/spindle-cli/src/cli.rs` (the `--seed` help at `:311`) and the generated
+  `website/docs/reference/cli.md`: shared with `story:decisions-rules-on-input-predicates`;
+  separate hunks, merged by the coordinator, the page generated again after both.
+- `crates/spindle-docs/src/status.rs:432` and its generated `website/data/status.json` and
+  `website/docs/status.md`: this story's alone; `story:test-step-within-budget` renames no test
+  they name.
+- `CHANGELOG.md` `[Unreleased]`: one bullet per story of wave 25, merged by the coordinator.
