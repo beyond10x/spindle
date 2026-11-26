@@ -65,7 +65,8 @@ fn exited(served: &mut Served, within: Duration) -> Option<ExitStatus> {
 }
 
 /// SIGINT during a reset's seed, as SIGTERM in round 1: the run exits 130 once the entry under
-/// way is done, and the desk is not asked for the next one.
+/// way is done, and the desk is not asked for the next one. The reset is answered `200` before the
+/// run exits (`story:serve-loop-signal-exit-answers`, D2).
 #[test]
 fn sigint_during_a_resets_seed_exits_130_between_entries() {
     let directory = scratch();
@@ -88,8 +89,9 @@ fn sigint_during_a_resets_seed_exits_130_between_entries() {
     }
     served.ended();
     let address = served.address;
+    let (answered, answer) = mpsc::channel();
     std::thread::spawn(move || {
-        let _ = reset_status(address, "");
+        let _ = answered.send(reset_status(address, ""));
     });
     asked
         .recv_timeout(ANSWER)
@@ -103,6 +105,11 @@ fn sigint_during_a_resets_seed_exits_130_between_entries() {
         "the desk was asked for the next entry after SIGINT"
     );
     assert_eq!(status.and_then(|status| status.code()), Some(130));
+    assert_eq!(
+        answer.recv_timeout(ANSWER).expect("the client reads"),
+        Some(200),
+        "the reset cut by the signal is answered once the entry under way is done"
+    );
 }
 
 /// A reset with no world while the start's seed is held at its second entry: the start's run is

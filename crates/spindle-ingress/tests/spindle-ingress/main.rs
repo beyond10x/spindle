@@ -14,6 +14,7 @@ mod adversary_w21_security;
 mod adversary_w22_exposed;
 mod always_and_key_routes;
 mod binding_shapes;
+mod close;
 mod concurrent_reads;
 mod ess_http_shapes;
 mod events_from_store;

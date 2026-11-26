@@ -66,6 +66,27 @@ are Spindle's releases.
   not run under `scripts/within.sh 120` or holds no wasm `cargo` command the script reads, or when
   `.cargo/config.toml` names no wasm runner (`story:wasm-lanes-within-budget`).
 
+- `run --seed` on a `--state` directory applies the seed once, where every start sent every entry
+  again and an entry that updates, moves or removes a row changed it a second time. `seed.json` in
+  the state (`0600`, replaced whole on each write) records the seed file's `sha256:` digest, the
+  entries sent and those rejected, after each entry: a restart with the same file sends the
+  rejected entries again, exiting 1 again where one still is, then the entries not yet sent,
+  remembering the request ids of those sent before; it prints that the seed already ran once every
+  one is done. One with another file exits 1 before listening, naming both digests, unless the
+  state holds no row. A state without `seed.json` gets the whole seed, then the record. A reset
+  with no world records 0 entries done before it sends the seed again; one with a world records
+  every entry done; one by a run without `--seed` removes the record
+  (`story:seed-once-on-durable-state`).
+
+- A served `run` that receives SIGINT or SIGTERM, or whose seed ends having rejected an entry, takes
+  no further request and answers every client before it exits, where it took one more exchange
+  after a seed entry, a reset taken there emptied a `--state` and was never answered, and an
+  answer handed over just before the exit could reach its client as a closed connection. A
+  request still waiting is answered `503`; a reset whose seed the signal cuts answers `200` once
+  the entry under way is done, `seed.json` counting the entries done. `Listener::close` in
+  `spindle-ingress` answers each queued request `503` and writes every answer handed back before
+  its thread ends (`story:serve-loop-signal-exit-answers`).
+
 ### Fixed
 
 - A command whose `when_related:` guard reads the rows of an entity another component owns (a row

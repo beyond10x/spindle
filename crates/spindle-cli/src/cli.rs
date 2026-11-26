@@ -117,7 +117,9 @@ pub enum Command {
     /// stdin; only `http-loopback` is served, and any other binding exits 1 before listening. Prints
     /// `{"listening": "<address>", "components": [...]}` once listening and serves until SIGINT
     /// or SIGTERM (exit 130 or 143), or until a seed that rejected an entry ends (exit 1,
-    /// `--seed`). Routes are where `ess generate --kind openapi` publishes them:
+    /// `--seed`); then it takes no further request, writes every answer it has given, answers
+    /// each request still waiting `503`, and exits. Routes are where `ess generate --kind
+    /// openapi` publishes them:
     /// ESS's derived routes, or with `--http` the `ess-http/1` binding's, read and checked by ESS
     /// (methods, paths, path variables and per-outcome statuses), an operation it does not name
     /// keeping its derived route. A command's body is its input; it answers its outcome's status
@@ -329,12 +331,18 @@ pub enum Command {
         /// stderr gives the counts when the seed ends; with `--observe`, `GET /__spindle/metrics`
         /// has them as `spindle_seed_commands_total`, a rejected entry counted `refused` there.
         /// A seed that ends having rejected an entry stops the run: it serves until then, and
-        /// exits 1 once the end line is printed. Only where `run` serves HTTP. Request ids are
-        /// not kept across starts: a restart applies nothing new only where every entry is a
-        /// create its command answers `existing_instance:`, and every other entry runs again.
-        /// `POST /api/reset` drops the entries not yet sent; with no world it then submits the
-        /// seed again, from its first entry, before it answers, its end line counting that run
-        /// alone, and with a world it loads that world alone.
+        /// exits 1 once the end line is printed. Only where `run` serves HTTP. With `--state`,
+        /// `seed.json` there records the seed file's digest, how many entries were sent and which
+        /// of them were rejected, written after each: a restart with the same file sends the
+        /// rejected entries again, then those after the ones sent, remembering the request ids
+        /// of the entries sent before it, and prints that the seed already ran once every one is
+        /// done; one with another file exits 1 before listening, naming both digests, unless the
+        /// state holds no row. A state without `seed.json` gets the whole seed, then the record,
+        /// and a reset by a run without `--seed` removes it. Without `--state` nothing is
+        /// recorded and every start sends the whole seed. `POST /api/reset` drops the entries
+        /// not yet sent; with no world it then records 0 entries done and submits the seed
+        /// again, from its first entry, before it answers, its end line counting that run alone,
+        /// and with a world it loads that world alone and records every entry done.
         #[arg(long, value_name = "FILE", conflicts_with = "scenario")]
         seed: Option<PathBuf>,
         /// Start the run on a manual clock standing at this RFC 3339 instant

@@ -66,16 +66,18 @@ periodic binding.
 Where `run` serves HTTP, `--seed <file>` (or `[seed] file` in the environment document) submits a
 JSON array of commands, each with its input, actor, caller and request id, on every start: checked
 before listening, then one at a time in order beside the listener. An outcome declared
-`existing_instance:` counts as already there. A restart on the same state applies nothing new only
-when every entry is a create guarded by `existing_instance:`; any other entry runs again on every
-start, so an update writes over later changes and a move is refused. Spindle keeps no record of
-request ids: within one start, an entry whose request id an earlier applied or already-there entry
-carried is not submitted again. A declared refusal is logged and the rest still run; one line on
+`existing_instance:` counts as already there. On a `--state` directory the run records the seed
+file's digest, the entries sent and those rejected in `seed.json`, so a restart with the same file
+sends only the entries not yet done (a rejected entry is sent again), and none once all are; one
+with another file exits 1 before listening, naming both digests, unless the state holds no row. A
+reset by a run without `--seed` removes `seed.json`. A store kept elsewhere records nothing, and
+every start sends the whole seed. Within one start, an entry whose request id an earlier applied
+or already-there entry carried is not submitted again. A declared refusal is logged and the rest still run; one line on
 stderr gives the counts when the seed ends. An entry that did not run (the host or the kernel
 refused it before an outcome, such as `not_granted`) is counted `rejected`, and once the seed ends
 the run exits 1. `POST /api/reset` drops the entries not yet sent; with no
 world it then submits the seed again, from its first entry, before it answers, and with a world it
-loads that world alone. `play` and `deploy` refuse an environment with a `[seed]` table.
+loads that world alone and records every entry done. `play` and `deploy` refuse an environment with a `[seed]` table.
 
 Where `run` serves HTTP, `--observe` records every request it answers. `GET /__spindle/requests`
 lists the last 256 (`--observe-requests <N>`, 1 to 10000), newest first, with totals per class
