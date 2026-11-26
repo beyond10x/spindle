@@ -24,6 +24,7 @@ mod metrics_read;
 mod observe;
 mod outcome_headers;
 mod private_record;
+mod query_beside_body;
 mod refusal_payload;
 mod router;
 mod served;

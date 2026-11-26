@@ -213,16 +213,24 @@ pub(crate) fn answering(
     match &route.operation {
         Operation::Command(command) => {
             let input = match route.encoding() {
-                Encoding::Json => input(body).and_then(|input| ignoring(route, &carried, input)),
-                Encoding::Form => form(route, &carried, content_type, body),
+                Encoding::Json => input(body).and_then(|input| {
+                    let named = route.queried_member(&input).map(str::to_owned);
+                    ignoring(route, &carried, input).map(|input| (input, named))
+                }),
+                Encoding::Form => form(route, &carried, content_type, body).map(|input| {
+                    let named = route.queried_member(&input).map(str::to_owned);
+                    (input, named)
+                }),
                 Encoding::Query => route
                     .flat_input(query, "query", &carried)
+                    .map(|input| (input, None))
                     .map_err(|detail| Answer::refusal(400, detail)),
                 Encoding::Multipart => Err(Answer::refusal(
                     501,
                     "a `multipart/form-data` request is not served".to_owned(),
                 )),
-            };
+            }
+            .and_then(|(input, named)| beside(route, query, input, named.as_deref()));
             match input {
                 Ok(input) => run(host, route, caller, command, &carried, input),
                 Err(refusal) => (refusal, Vec::new(), Answered::ingress()),
@@ -634,6 +642,34 @@ fn form(
     route
         .flat_input(text, "body", carried)
         .map_err(|detail| Answer::refusal(400, detail))
+}
+
+/// `input`, a command's input read from its `json` or `form` body, joined with the fields the
+/// binding lists under `request.query`, read from `query` ([`Route::query_input`]), as ESS 0.99.1's
+/// served application joins them (`http::with_query`, beyond10x/ess#754): the query string is read
+/// after the body, and `named`, a listed field the body names ([`Route::queried_member`]), is
+/// then refused `400` `body.<name>`, whether the query carries the field or not. A route that
+/// lists none keeps `input` as it is and reads nothing from the query string.
+fn beside(
+    route: &Route,
+    query: &str,
+    mut input: Map<String, Value>,
+    named: Option<&str>,
+) -> Result<Map<String, Value>, Answer> {
+    if !route.reads_query_beside_body() {
+        return Ok(input);
+    }
+    let read = route
+        .query_input(query)
+        .map_err(|detail| Answer::refusal(400, detail))?;
+    if let Some(name) = named {
+        return Err(Answer::refusal(
+            400,
+            format!("body.{name}: the query carries this field, so the body does not"),
+        ));
+    }
+    input.extend(read);
+    Ok(input)
 }
 
 /// The media type of a `form` request body.

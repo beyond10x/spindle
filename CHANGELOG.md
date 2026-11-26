@@ -19,6 +19,14 @@ are Spindle's releases.
   out is unknown and refuses the read unless a guard such as `not defined(param.x)` decides it.
   Any other leaf still refuses the view whole, naming its filter
   (`story:view-filter-parameter-literal`).
+- A command whose `ess-http/1` binding reads some input fields from the query string beside its
+  `json` or `form` body (`request: {query: [input.<field>, ...]}`) is served, where its route
+  answered `501`. Each listed field is read from the query string under its wire name as ESS
+  0.99.1's served application reads it, a `List<T>` field from its key repeated
+  (`tags=a&tags=b`), and joined with the body's fields; the command runs on the joined input. A
+  body member or key naming a listed field is refused `400`, whether the query carries the field
+  or not, and so is a query key no listed field names under `unknown: refuse`, or one given twice
+  (`story:query-input-beside-body`).
 
 ### Fixed
 
