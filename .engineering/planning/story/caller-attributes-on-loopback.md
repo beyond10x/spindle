@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:caller-attributes-on-loopback
 kind: story
-status: draft
+status: active
 title: A loopback run names the settings that serve a command reading its caller
 relations:
 - serves: vision:spindle
@@ -21,7 +21,10 @@ scope:
   path: crates/spindle-ingress/src/surface.rs
 - confidence: inferred
   path: docs/design/spindle.md
-revision: 15
+revision: 17
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-26T21:00:28Z", actor: "human:operator", revision: 16, decided_on: {"recorded":{"review_outcome":20}}}
+- {from: "proposed", to: "active", at: "2026-11-26T21:00:28Z", actor: "human:operator", revision: 17, decided_on: {"recorded":{"review_outcome":20}}}
 ---
 # A loopback run names the settings that serve a command reading its caller
 

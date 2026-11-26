@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:refused-bound-command-recorded
 kind: story
-status: draft
+status: active
 title: A refused bound command is recorded where a run can read it
 relations:
 - informed_by: story:stdin-run-fires-bindings
@@ -52,7 +52,10 @@ scope:
   path: ui/src/api/types.ts
 - confidence: cited
   path: website/docs/concepts/observe.md
-revision: 30
+revision: 32
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-26T21:00:29Z", actor: "human:operator", revision: 31, decided_on: {"recorded":{"review_outcome":20}}}
+- {from: "proposed", to: "active", at: "2026-11-26T21:00:29Z", actor: "human:operator", revision: 32, decided_on: {"recorded":{"review_outcome":20}}}
 ---
 # A refused bound command is recorded where a run can read it
 

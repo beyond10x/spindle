@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:serve-loop-signal-exit-answers
 kind: story
-status: draft
+status: active
 title: The serve loop's signal exit takes no exchange and drops no answer
 relations:
 - serves: vision:spindle
@@ -31,7 +31,10 @@ scope:
   path: crates/spindle-ingress/tests/spindle-ingress/main.rs
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 25
+revision: 27
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-26T21:00:27Z", actor: "human:operator", revision: 26, decided_on: {"recorded":{"review_outcome":20}}}
+- {from: "proposed", to: "active", at: "2026-11-26T21:00:27Z", actor: "human:operator", revision: 27, decided_on: {"recorded":{"review_outcome":20}}}
 ---
 # The serve loop's signal exit takes no exchange and drops no answer
 

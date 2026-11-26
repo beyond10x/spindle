@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:seed-once-on-durable-state
 kind: story
-status: draft
+status: active
 title: A seed is applied once to a durable state
 relations:
 - serves: vision:spindle
@@ -31,7 +31,10 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 22
+revision: 24
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-26T21:00:27Z", actor: "human:operator", revision: 23, decided_on: {"recorded":{"review_outcome":20}}}
+- {from: "proposed", to: "active", at: "2026-11-26T21:00:27Z", actor: "human:operator", revision: 24, decided_on: {"recorded":{"review_outcome":20}}}
 ---
 # A seed is applied once to a durable state
 

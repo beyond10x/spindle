@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:map-input-guard-facts
 kind: story
-status: draft
+status: active
 title: A guard over a present Map input is decided as ESS decides it
 relations:
 - serves: vision:spindle
@@ -24,7 +24,10 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/main.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/spindle-kernel/map_input_guard.rs
-revision: 13
+revision: 15
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-26T21:00:28Z", actor: "human:operator", revision: 14, decided_on: {"recorded":{"review_outcome":20}}}
+- {from: "proposed", to: "active", at: "2026-11-26T21:00:28Z", actor: "human:operator", revision: 15, decided_on: {"recorded":{"review_outcome":20}}}
 ---
 # A guard over a present Map input is decided as ESS decides it
 

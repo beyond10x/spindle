@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:query-input-beside-body
 kind: story
-status: draft
+status: active
 title: A command route reads input fields from the query string beside its body
 relations:
 - serves: vision:spindle
@@ -27,7 +27,10 @@ scope:
   path: website/docs/concepts/capabilities.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 7
+revision: 9
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-26T21:00:28Z", actor: "human:operator", revision: 8, decided_on: {"recorded":{"review_outcome":20}}}
+- {from: "proposed", to: "active", at: "2026-11-26T21:00:28Z", actor: "human:operator", revision: 9, decided_on: {"recorded":{"review_outcome":20}}}
 ---
 # A command route reads input fields from the query string beside its body
 

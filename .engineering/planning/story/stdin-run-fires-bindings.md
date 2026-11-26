@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:stdin-run-fires-bindings
 kind: story
-status: draft
+status: active
 title: A stdin run fires the bindings its commands' events match
 relations:
 - serves: vision:spindle
@@ -35,7 +35,10 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: cited
   path: website/docs/status.md
-revision: 24
+revision: 26
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-26T21:00:26Z", actor: "human:operator", revision: 25, decided_on: {"recorded":{"review_outcome":20}}}
+- {from: "proposed", to: "active", at: "2026-11-26T21:00:27Z", actor: "human:operator", revision: 26, decided_on: {"recorded":{"review_outcome":20}}}
 ---
 # A stdin run fires the bindings its commands' events match
 
