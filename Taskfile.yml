@@ -24,6 +24,7 @@ tasks:
       - task: check:ui
       - task: docs-check
       - task: check:conformance
+      - task: check:the_wasm_lanes_share_one_cache_key
       - sh scripts/within.sh 120 {{.TASK_EXE}} check:the_wasm_build_of_the_host_succeeds
       - sh scripts/within.sh 120 {{.TASK_EXE}} check:a_command_runs_in_wasm_on_the_memory_store
       - sh scripts/within.sh 120 {{.TASK_EXE}} check:the_browser_store_keeps_state_in_indexeddb
@@ -76,6 +77,12 @@ tasks:
       - ess conform synthesize --path ess --scenarios ess --out target/conformance/suite.json
       - cargo run -q --locked -p spindle-cli -- conform ess --environment examples/environments/laptop.toml --suite target/conformance/suite.json --counts conformance.toml --report target/conformance/report.json --results target/conformance/results.json
 
+  check:the_wasm_lanes_share_one_cache_key:
+    desc: scripts/wasm-cache-key.sh, on its stub cases and on this tree, fails when the Taskfile sets a CARGO_* variable, when a wasm lane builds in a profile other than wasm-gate (lint wasm-lint) and when .cargo/config.toml names no wasm runner, so the wasm lanes share one compile-cache key
+    cmds:
+      - sh scripts/wasm-cache-key.sh test
+      - sh scripts/wasm-cache-key.sh check
+
   check:the_wasm_build_of_the_host_succeeds:
     desc: spindle-spec, spindle-kernel, spindle-host and the spindle-ingress router build for wasm32-unknown-unknown without SQLite or the listener, and nothing they compile there reads std's clock; the build and the lint run side by side, each in a profile directory of its own
     deps:
@@ -97,7 +104,6 @@ tasks:
   check:a_command_runs_in_wasm_on_the_memory_store:
     desc: The wasm host runs a command on the memory store, under wasm-bindgen-test-runner on Node
     env:
-      CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
       WASM_BINDGEN_TEST_TIMEOUT: '60'
     cmds:
       - cargo test --locked --profile wasm-gate --target wasm32-unknown-unknown --no-default-features -p spindle-host --test spindle-host
@@ -105,7 +111,6 @@ tasks:
   check:the_browser_store_keeps_state_in_indexeddb:
     desc: The IndexedDB store passes the store contract and keeps its state across a reopen, in a headless browser under wasm-bindgen-test-runner
     env:
-      CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
       WASM_BINDGEN_TEST_TIMEOUT: '60'
     cmds:
       - cargo test --locked --profile wasm-gate --target wasm32-unknown-unknown -p spindle-store-browser --test spindle-store-browser
@@ -113,7 +118,6 @@ tasks:
   check:a_service_worker_serves_a_specification:
     desc: The wasm host answers a specification's routes and the console routes inside a Service Worker of a headless browser, as the loopback listener answers them, under wasm-bindgen-test-runner
     env:
-      CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
       WASM_BINDGEN_TEST_TIMEOUT: '60'
     cmds:
       - cargo test --locked --profile wasm-gate --target wasm32-unknown-unknown -p spindle-wasm --test spindle-wasm
@@ -128,7 +132,8 @@ tasks:
   check:the_static_bundle_builds:
     desc: The Service Worker site in web/ builds, spindle-wasm compiled to wasm32-unknown-unknown and bound by wasm-bindgen into the Vite bundle
     cmds:
-      - task: web
+      - cargo build --locked --profile wasm-gate --target wasm32-unknown-unknown -p spindle-wasm
+      - task: web:bind
         vars:
           PROFILE: wasm-gate
 
@@ -138,6 +143,15 @@ tasks:
       PROFILE: '{{.PROFILE | default "release"}}'
     cmds:
       - cargo build --locked --profile {{.PROFILE}} --target wasm32-unknown-unknown -p spindle-wasm
+      - task: web:bind
+        vars:
+          PROFILE: '{{.PROFILE}}'
+
+  web:bind:
+    desc: Bind spindle-wasm of the profile PROFILE into web/src/wasm with wasm-bindgen, then typecheck and bundle web/
+    requires:
+      vars: [PROFILE]
+    cmds:
       - wasm-bindgen --target web --out-dir web/src/wasm target/wasm32-unknown-unknown/{{.PROFILE}}/spindle_wasm.wasm
       - task: web:bundle
 

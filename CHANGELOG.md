@@ -37,6 +37,17 @@ are Spindle's releases.
   conflict, as a write to the guard's own entity does. A rows quantifier in an `affects:` or
   `instances:` filter stays refused, as ESS refuses it (`story:related-selector-rows-quantifier`).
 
+- The six wasm lanes of `task check` share one compile-cache key and each ends within 120 s on an
+  emptied `target/`, where the Node lane ran 626 s: the `wasm-bindgen-test-runner` runner moves
+  from the three test lanes' environment to `.cargo/config.toml`
+  (`[target.wasm32-unknown-unknown]`), the workspace `serde_json` takes the `alloc` feature that
+  `wasm-bindgen-test` asks for, so `cargo test` and `cargo build` compile the ESS crates once, and
+  `check:the_static_bundle_builds` builds `spindle-wasm` in `wasm-gate` itself (`task web` still
+  builds the release profile). A new step, `check:the_wasm_lanes_share_one_cache_key`
+  (`scripts/wasm-cache-key.sh`), fails when the Taskfile sets a `CARGO_*` variable, when a lane
+  builds in a profile other than `wasm-gate` (the lint: `wasm-lint`) or when `.cargo/config.toml`
+  names no wasm runner (`story:wasm-lanes-within-budget`).
+
 ### Fixed
 
 - A command whose `when_related:` guard reads the rows of an entity another component owns (a row
