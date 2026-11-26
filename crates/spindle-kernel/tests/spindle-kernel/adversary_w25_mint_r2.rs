@@ -353,7 +353,7 @@ fn adv_r2_an_integer_held_by_another_entity_is_not_drawn_again() {
 
 /// With eight tallies held under the first eight integers the mint draws, the interpreter draws a
 /// ninth (`creation_identity`: one candidate beyond the held population) and opens the tally.
-/// The kernel's bound is eight draws in all, whatever the population.
+/// The kernel bounds its draws the same way: the held population plus one.
 #[test]
 fn adv_r2_eight_held_draws_with_eight_instances_held_open_on_the_ninth_as_the_interpreter() {
     let ir = ir();
