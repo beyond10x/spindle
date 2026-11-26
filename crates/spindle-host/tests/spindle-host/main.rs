@@ -27,6 +27,8 @@ mod adversary_view_filters;
 mod adversary_views;
 mod adversary_wasm;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod adversary_world_integers;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod aggregates;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod always_and_key_filters;

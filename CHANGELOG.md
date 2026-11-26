@@ -26,6 +26,15 @@ are Spindle's releases.
   outbox for a later one. An event its component does not publish but another component does is
   still refused by `Sender::publish` and not delivered
   (`story:command-with-unpublished-event-served`).
+- A row a reset's world loads answers its `Integer` fields as integers, where `"amount": 1` was
+  listed as `"amount":1.0`. `spindle_host::read_world` writes every value the model types `Integer`
+  in a row's identity and fields as the integer, through `Optional`, newtypes, lists, maps, struct
+  members and union payloads, so `1` and `1.0` name one row and a reference spelled either way
+  finds it; every other value is held as the world spells it. An `Integer` that is not an integral
+  number within 64 bits is refused, naming the row and the field, as before. `run`, the Node export
+  and every host that loads a world answer alike. A command's input is still held as its caller
+  spells it: a row `Submit` created from `"amount": 1.0` lists `"amount":1.0`
+  (`story:world-row-integer-fields`).
 
 ## [0.20.2] - 2026-11-25
 
