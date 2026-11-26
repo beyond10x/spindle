@@ -35,6 +35,14 @@ are Spindle's releases.
   and every host that loads a world answer alike. A command's input is still held as its caller
   spells it: a row `Submit` created from `"amount": 1.0` lists `"amount":1.0`
   (`story:world-row-integer-fields`).
+- `POST /api/reset` with no world on a run started with a seed (`run --seed`, or the environment's
+  `[seed] file`) submits the seed again, from its first entry to its end, before it answers, where
+  it emptied the store and left the seeded rows gone. The end line then gives the counts of that
+  seed run alone; `spindle_seed_commands_total` goes on counting across resets and never falls,
+  and the reset is still counted in `spindle_resets_total`. A reset drops the entries of a seed
+  run not yet sent, so a reset whose body gives a world loads that world alone and does not submit
+  the seed. SIGINT or SIGTERM during a reset's seed stops the run between two entries
+  (`story:reset-reapplies-seed`).
 
 ## [0.20.2] - 2026-11-25
 
