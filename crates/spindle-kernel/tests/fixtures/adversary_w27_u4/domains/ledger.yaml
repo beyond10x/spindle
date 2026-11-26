@@ -1,0 +1,219 @@
+domain: probe.ledger
+summary: Sheets, each opened behind a guard that reads a map in another position.
+types:
+  - name: probe.ledger.Card
+    kind: struct
+    fields:
+      - name: label
+        type: String
+      - name: scores
+        type: Map<String, Integer>
+  - name: probe.ledger.Tally
+    kind: newtype
+    of: Map<String, Integer>
+errors:
+  - name: probe.ledger.Early
+    summary: A stamp before the cut-off.
+    fields: []
+  - name: probe.ledger.Crowded
+    summary: More than one entry.
+    fields: []
+  - name: probe.ledger.High
+    summary: A score over five.
+    fields: []
+  - name: probe.ledger.NoSuchSheet
+    summary: No sheet carries the id.
+    fields: []
+entities:
+  - name: probe.ledger.Sheet
+    identity:
+      name: id
+      type: Uuid
+    fields:
+      - name: tallies
+        type: Optional<Map<String, Integer>>
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+commands:
+  - name: probe.ledger.StampMap
+    input:
+      - name: id
+        type: Uuid
+      - name: stamps
+        type: Map<String, Timestamp>
+    outcomes:
+      - name: early
+        when:
+          exists: {in: stamps, as: s, that: s < "2020-01-01T00:00:00Z"}
+        error: probe.ledger.Early
+        summary: A stamp before the cut-off is refused.
+      - name: opened
+        creates: probe.ledger.Sheet
+        instance: id
+        emits: [probe.ledger.SheetOpened]
+        payload:
+          probe.ledger.SheetOpened:
+            id: input.id
+        summary: The sheet is opened.
+  - name: probe.ledger.StampList
+    input:
+      - name: id
+        type: Uuid
+      - name: stamps
+        type: List<Timestamp>
+    outcomes:
+      - name: early
+        when:
+          exists: {in: stamps, as: s, that: s < "2020-01-01T00:00:00Z"}
+        error: probe.ledger.Early
+        summary: A stamp before the cut-off is refused.
+      - name: opened
+        creates: probe.ledger.Sheet
+        instance: id
+        emits: [probe.ledger.SheetOpened]
+        payload:
+          probe.ledger.SheetOpened:
+            id: input.id
+        summary: The sheet is opened.
+  - name: probe.ledger.Nested
+    input:
+      - name: id
+        type: Uuid
+      - name: card
+        type: probe.ledger.Card
+    outcomes:
+      - name: crowded
+        when: card.scores.count > 1
+        error: probe.ledger.Crowded
+        summary: A card with more than one score is refused.
+      - name: high
+        when:
+          exists: {in: card.scores, as: s, that: s > 5}
+        error: probe.ledger.High
+        summary: A card with a score over five is refused.
+      - name: opened
+        creates: probe.ledger.Sheet
+        instance: id
+        emits: [probe.ledger.SheetOpened]
+        payload:
+          probe.ledger.SheetOpened:
+            id: input.id
+        summary: The sheet is opened.
+  - name: probe.ledger.Rounds
+    input:
+      - name: id
+        type: Uuid
+      - name: rounds
+        type: List<Map<String, Integer>>
+    outcomes:
+      - name: crowded
+        when:
+          exists: {in: rounds, as: r, that: r.count > 1}
+        error: probe.ledger.Crowded
+        summary: A round with more than one score is refused.
+      - name: opened
+        creates: probe.ledger.Sheet
+        instance: id
+        emits: [probe.ledger.SheetOpened]
+        payload:
+          probe.ledger.SheetOpened:
+            id: input.id
+        summary: The sheet is opened.
+  - name: probe.ledger.Groups
+    input:
+      - name: id
+        type: Uuid
+      - name: groups
+        type: Map<String, Map<String, Integer>>
+    outcomes:
+      - name: crowded
+        when:
+          exists: {in: groups, as: g, that: g.count > 1}
+        error: probe.ledger.Crowded
+        summary: A group with more than one score is refused.
+      - name: high
+        when:
+          exists: {in: groups, as: g, that: {exists: {in: g, as: v, that: v > 5}}}
+        error: probe.ledger.High
+        summary: A group with a score over five is refused.
+      - name: opened
+        creates: probe.ledger.Sheet
+        instance: id
+        emits: [probe.ledger.SheetOpened]
+        payload:
+          probe.ledger.SheetOpened:
+            id: input.id
+        summary: The sheet is opened.
+  - name: probe.ledger.Wrapped
+    input:
+      - name: id
+        type: Uuid
+      - name: tally
+        type: Optional<probe.ledger.Tally>
+    outcomes:
+      - name: crowded
+        when: tally.count > 1
+        error: probe.ledger.Crowded
+        summary: A tally with more than one score is refused.
+      - name: opened
+        creates: probe.ledger.Sheet
+        instance: id
+        emits: [probe.ledger.SheetOpened]
+        payload:
+          probe.ledger.SheetOpened:
+            id: input.id
+        summary: The sheet is opened.
+  - name: probe.ledger.OpenSheet
+    input:
+      - name: id
+        type: Uuid
+      - name: tallies
+        type: Optional<Map<String, Integer>>
+    outcomes:
+      - name: opened
+        creates: probe.ledger.Sheet
+        instance: id
+        sets:
+          tallies: input.tallies
+        emits: [probe.ledger.SheetOpened]
+        payload:
+          probe.ledger.SheetOpened:
+            id: input.id
+        summary: The sheet is opened with its tallies.
+  - name: probe.ledger.CloseSheet
+    input:
+      - name: id
+        type: Uuid
+      - name: extra
+        type: Map<String, Integer>
+    outcomes:
+      - name: no-such-sheet
+        unknown_instance: true
+        error: probe.ledger.NoSuchSheet
+        summary: No sheet carries the id.
+      - name: crowded
+        when_subject:
+          predicate: tallies.count > 1
+        error: probe.ledger.Crowded
+        summary: A sheet with more than one stored tally is refused.
+      - name: high
+        when_subject:
+          predicate:
+            exists: {in: input.extra, as: v, that: v > 5}
+        error: probe.ledger.High
+        summary: A close with an extra score over five is refused.
+      - name: closed
+        updates: probe.ledger.Sheet
+        instance: id
+        emits: [probe.ledger.SheetOpened]
+        payload:
+          probe.ledger.SheetOpened:
+            id: input.id
+        summary: The sheet is closed.
+events:
+  - name: probe.ledger.SheetOpened
+    fields:
+      - name: id
+        type: Uuid

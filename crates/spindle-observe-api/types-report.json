@@ -1,12 +1,12 @@
 {
   "format": "ess-types-report/3",
-  "source_digest": "6f8b057c5f2c5585c513b2df6e227a2c516c5efa4135820f706a67e960e7fa38",
+  "source_digest": "768b49d0ee4e413744f98b60ca5d08125d3a9410aba380e215477e8525748e44",
   "input": {
     "kind": "model",
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:1c49170d136bfa13e593adf5f6004998ec4cb204ac613fa9c1398324cf7c59c7",
-    "projection_digest": "d0de74e74a168b7f90fc286de3458c294b10e0c47a85aec04bc8f4373b2f314a"
+    "contract_digest": "slice-sha256/2:8febbdf432c4e043f26574b762a66814a51585243cfc38e08ced8b3b318a4584",
+    "projection_digest": "6c9d2e8fdf153886199a7705dca31e33124be8ca857c0ea3e56a0d7116c1cec8"
   },
   "generator_version": "0.99.1",
   "target": "rust",
@@ -49,6 +49,7 @@
     "spindle.observe.OperationKind": "OperationKind",
     "spindle.observe.Payload": "Payload",
     "spindle.observe.RecentAnswer": "RecentAnswer",
+    "spindle.observe.RefusedBound": "RefusedBound",
     "spindle.observe.RequestClass": "RequestClass",
     "spindle.observe.RequestLog": "RequestLog",
     "spindle.observe.RequestLogFormat": "RequestLogFormat",
@@ -686,6 +687,66 @@
       "detail": "model identity and wire mapping retained in source.schema.json"
     },
     {
+      "pointer": "/$defs/spindle.observe.RefusedBound/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.RefusedBound/properties/attempts/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.RefusedBound/properties/binding/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.RefusedBound/properties/caused_by/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.RefusedBound/properties/command/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.RefusedBound/properties/component/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.RefusedBound/properties/error/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.RefusedBound/properties/kind/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.RefusedBound/properties/outcome/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.RefusedBound/title",
+      "rule": "title",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.RefusedBound/x-ess-kind",
+      "rule": "x-ess-kind",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.RefusedBound/x-ess-name",
+      "rule": "x-ess-name",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
       "pointer": "/$defs/spindle.observe.RequestClass/description",
       "rule": "description",
       "detail": "retained in source.schema.json; no decoder behavior inferred"
@@ -812,6 +873,11 @@
     },
     {
       "pointer": "/$defs/spindle.observe.RequestRecord/properties/reason/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.RequestRecord/properties/refused_bound/description",
       "rule": "description",
       "detail": "retained in source.schema.json; no decoder behavior inferred"
     },
@@ -1454,6 +1520,21 @@
     },
     {
       "pointer": "/$defs/spindle.observe.Payload/x-ess-invariants",
+      "rule": "model_invariants",
+      "detail": "enforce the retained model invariant statements; structural codecs do not evaluate predicates"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.RefusedBound/properties/attempts/maximum",
+      "rule": "maximum",
+      "detail": "validate this constraint against the source schema at runtime"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.RefusedBound/properties/attempts/minimum",
+      "rule": "minimum",
+      "detail": "validate this constraint against the source schema at runtime"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.RefusedBound/x-ess-invariants",
       "rule": "model_invariants",
       "detail": "enforce the retained model invariant statements; structural codecs do not evaluate predicates"
     },

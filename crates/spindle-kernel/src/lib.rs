@@ -74,6 +74,7 @@ use serde_json::{Map, Value};
 
 pub use caller::{binds as caller_binds, reads as caller_reads};
 pub use decider::{Decider, External, NoExternals};
+pub use execute::execute_reaching;
 pub use execute::{
     Invocation, at_rest, execute, execute_as, execute_at, execute_minting, execute_refusing,
 };
@@ -93,6 +94,7 @@ pub use store::{
     Scanned, Store, StoreError, Stored, Write, whole_writes,
 };
 pub use supported::{check as runs, selects, takes};
+pub use supported::{check_reaching as runs_reaching, takes_reaching};
 pub use values::{Undetermined, compute};
 
 /// Refuses `value` unless it is a value of `kind`, naming what it is not: the check every command
@@ -107,6 +109,21 @@ pub fn admits(
     value: &Value,
 ) -> Result<(), String> {
     typed::validate(ir, kind, value)
+}
+
+/// `value`, of `kind`, with every value the model types `Integer` written as the JSON integer
+/// (`1.0` as `1`), through `Optional`, newtypes, `List` elements, `Map` values, struct members and
+/// a union's payload; everything else held as written. The kernel writes a command's input so
+/// once [`admits`] took it, so `1` and `1.0` name one instance, as ESS reads them.
+///
+/// # Errors
+/// An `Integer` that is not an integral number within `i64`, naming where it sits.
+pub fn integers(
+    ir: &ess_compiler::EssIr,
+    kind: &ess_compiler::ir::ResolvedTypeRef,
+    value: &Value,
+) -> Result<Value, String> {
+    typed::integers(ir, kind, value)
 }
 
 /// One event a command emitted.

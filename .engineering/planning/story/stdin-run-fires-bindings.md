@@ -2,11 +2,43 @@
 format: aep.planning-md/3
 id: story:stdin-run-fires-bindings
 kind: story
-status: draft
+status: active
 title: A stdin run fires the bindings its commands' events match
 relations:
 - serves: vision:spindle
-revision: 2
+scope:
+- confidence: cited
+  path: AGENTS.md
+- confidence: cited
+  path: CHANGELOG.md
+- confidence: cited
+  path: crates/spindle-cli/Cargo.toml
+- confidence: cited
+  path: crates/spindle-cli/src/cli.rs
+- confidence: cited
+  path: crates/spindle-cli/src/main.rs
+- confidence: inferred
+  path: crates/spindle-cli/tests/fixtures/stdin-bindings
+- confidence: cited
+  path: crates/spindle-cli/tests/spindle-cli/binding_where.rs
+- confidence: inferred
+  path: crates/spindle-cli/tests/spindle-cli/main.rs
+- confidence: inferred
+  path: crates/spindle-cli/tests/spindle-cli/stdin_bindings.rs
+- confidence: cited
+  path: crates/spindle-docs/src/status.rs
+- confidence: cited
+  path: website/data/status.json
+- confidence: cited
+  path: website/docs/examples/rally.md
+- confidence: cited
+  path: website/docs/reference/cli.md
+- confidence: cited
+  path: website/docs/status.md
+revision: 26
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-26T21:00:26Z", actor: "human:operator", revision: 25, decided_on: {"recorded":{"review_outcome":20}}}
+- {from: "proposed", to: "active", at: "2026-11-26T21:00:27Z", actor: "human:operator", revision: 26, decided_on: {"recorded":{"review_outcome":20}}}
 ---
 # A stdin run fires the bindings its commands' events match
 
@@ -23,13 +55,24 @@ only when Spindle serves HTTP, which needs a component `reached_by: network`.
 
 - `a_stdin_line_fires_the_binding_its_event_matches`: a specification with one binding from event
   `E` to a system command `C`; a stdin line whose command emits `E` prints its answer, then `C`'s
-  answer, marked as caused by that line, and `C`'s write is visible to the next line.
-- `a_bound_command_refused_is_printed_and_does_not_fail_the_line`: `C` answering a declared
-  refusing outcome prints that outcome; the run exits 0 (story:run-fails-on-rejected-line counts a
-  rejected bound command as a rejection).
+  answer on its own line with `"caused_by": {"line": <n>, "binding": "<id>"}`, and `C`'s write is
+  visible to the next line.
+- `a_refused_bound_command_is_printed_and_fails_the_run`: `C` answering a declared refusing outcome
+  prints that outcome on its `caused_by` line; the run reads every line and exits 1, counting `C` as
+  rejected (D4 A, story:run-fails-on-rejected-line).
+- `a_rejected_bound_command_is_printed_and_fails_the_run`: `C` rejected by the kernel (no declared
+  outcome, a `failure` answer) prints that failure on its `caused_by` line; the run reads every line
+  and exits 1, counting `C` as rejected (D4 A).
+- `a_binding_the_router_refuses_stops_the_run_before_stdin`: a binding the served run's router
+  refuses exits 1 before any line is read, naming the binding, as a served run refuses it (D2 A).
+- `drop_retries_is_accepted_on_stdin`: `--drop-retries` with stdin starts, and a bound command that
+  fails runs once and is not retried (D6 A).
 - `a_stdin_run_and_a_served_run_fire_the_same_bindings`: one sequence of commands sent on stdin and
-  over HTTP leaves the same rows and the same event log.
+  over HTTP leaves the same rows and the same events.
 - `a_specification_without_bindings_prints_as_today`: no extra line.
+- `a_specification_without_components_fires_its_bindings_on_stdin`: a specification that declares
+  no component and one binding from `E` to `C`; a stdin line emitting `E` prints `C`'s answer on
+  its `caused_by` line, routed through the one implied component (D3 A).
 
 ## Not covered
 
@@ -40,3 +83,37 @@ only when Spindle serves HTTP, which needs a component `reached_by: network`.
 
 A consumer, 2026-11-26, on Spindle 0.21.0: its gate and a simulation drive Spindle on stdin and
 wire reactions as bindings.
+
+## Scope
+
+Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the story or the tree) or
+**inferred** (a reading that could be wrong).
+
+- **Primary surface:** `crates/spindle-cli`, the stdin path of `run` in `src/main.rs` — cited
+- **Files:** `crates/spindle-cli/src/main.rs:678-684` (`--drop-retries` refused because "run reading stdin carries no binding"; the story's `:649` has moved to `:680`) — cited
+- **Files:** `crates/spindle-cli/src/main.rs:738-782` (stdin loop: one `answer` per line, one result line, `rejected` counted from `failure`), `:862-897` (`answer`: one `spindle_kernel::execute_as` on the one store, nothing reads `executed.events`) — cited
+- **Files:** `crates/spindle-cli/src/main.rs:532` (`spindle_spec::load`; the stdin path may need `load_with_implied_component`, D3) — inferred
+- **Symbols:** `execute` (main.rs), `answer`, `Request`, `spindle_channel::Router::from_ir` / `Router::map` / `Route::invoke` / `Route::answer`, `spindle_host::RETRY_ATTEMPTS`, `spindle_host::DELIVERY_LIMIT` — inferred (reuse the served run's routing over the stdin run's one store)
+- **Files:** `crates/spindle-cli/Cargo.toml:52` (`spindle-channel` is a dev-dependency only; D1 A moves it into `[dependencies]`) — cited
+- **Files:** `crates/spindle-cli/src/cli.rs:79-99` (stdin `Run` doc: "Each line prints one JSON result"), `:196-198` and `:211-215` (`--drop-retries` "Only where run serves HTTP") — cited
+- **Tests:** new module `crates/spindle-cli/tests/spindle-cli/stdin_bindings.rs` (the tests of the Acceptance section), its `mod` line in `crates/spindle-cli/tests/spindle-cli/main.rs`, a new fixture `crates/spindle-cli/tests/fixtures/stdin-bindings/` (one binding `E` → `C`, `C` with a declared refusing outcome, no `reached_by: network`) — inferred
+- **Also likely:** `crates/spindle-cli/tests/spindle-cli/binding_where.rs:5` (module doc says stdin carries no binding; the fixture `binding-where` has no network component and could feed test 1) — cited
+- **Not touched:** `crates/spindle-host`, `crates/spindle-channel` (read, not changed, under D1 A), `crates/spindle-cli/src/serve.rs` — inferred
+- **Documents:** `crates/spindle-docs/src/status.rs:163-169` (row "Event bindings in process and over TCP") with generated `website/data/status.json` and `website/docs/status.md`; generated `website/docs/reference/cli.md`; `website/docs/examples/rally.md:57-58` ("bindings do not fire"); `AGENTS.md:40` (spindle-cli row); `CHANGELOG.md` `[Unreleased]` — cited (lines read), inferred (that each changes)
+- **Confidence:** high for the surface (the story names the site and the stdin loop is one function); medium for where the dispatch lives (D1)
+- **Would collide with:** the stdin loop, `Request` and `answer` in `crates/spindle-cli/src/main.rs:44-60,738-897`; the `Run` doc in `crates/spindle-cli/src/cli.rs` and its generated page; `crates/spindle-cli/Cargo.toml`; the CLI test module list `tests/spindle-cli/main.rs`; `status.rs` and its generated pages; `CHANGELOG.md`
+- **Safety fact:** a stdin run today executes exactly the line's command (`main.rs:882`, one `execute_as`) and no code reads the events it returns, so dispatch added after `answer` changes output and state only where a binding matches an emitted event; a specification without bindings prints as today — cited, level 2, unproven
+
+## Decided when scoped
+
+Taken 2026-11-26 on the scoper's recommended option, each reversible, unless noted.
+
+- D1 A: dispatch in the stdin loop with the served run's router, on the one store.
+- D2 A: a binding the router refuses stops the run before stdin, as served
+  (changelog line).
+- D3 A: a spec without components routes as one implied component.
+- D4 A: a failed bound command counts as rejected; the run exits 1.
+- D5 A: its own line with `"caused_by": {"line": n, "binding": "<id>"}`.
+- D6 A: `--drop-retries` is accepted on stdin.
+- `a_stdin_run_and_a_served_run_fire_the_same_bindings` runs two fixtures that differ only in
+  one component's `reached_by: network`; the stdin run reads one, the served run the other.

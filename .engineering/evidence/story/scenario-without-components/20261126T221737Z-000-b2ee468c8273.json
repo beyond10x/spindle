@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-26T22:17:37Z",
+  "actor": "human:operator",
+  "artifact": "story:scenario-without-components",
+  "kind": "story",
+  "revision": 9,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "https://github.com/beyond10x/spindle/actions/runs/45899550960 (PR 91 Gate, PostgreSQL, macOS green on 5acd67f7e; merged a1e29744d)"
+  }
+}

@@ -1,6 +1,6 @@
 # Wave 26
 
-**In progress.** Run by the coordinator under `approval-record:wave26-approval`, on the host operator's
+**Delivered.** Run by the coordinator under `approval-record:wave26-approval`, on the host operator's
 order of 2026-11-26, relaying the operator's words "resolve all missing spindle features". Skill
 `aep:implementing` 0.26.0, wave mode. All stories serve `vision:spindle`.
 

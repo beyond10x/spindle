@@ -1,7 +1,7 @@
 //! One command, from input to committed change.
 
 use std::cell::Cell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::SystemTime;
 
 use ess_compiler::EssIr;
@@ -232,6 +232,53 @@ pub fn execute_refusing(
     invocation: &Invocation<'_>,
     refused: &BTreeMap<String, String>,
 ) -> Result<Executed, ExecuteError> {
+    reaching(ir, store, decider, mint, now, invocation, refused, None)
+}
+
+/// [`execute_refusing`], on a `store` that reaches the stores of the components `reached` names:
+/// each read of an entity one of them owns is answered from its owner's store, as a host running
+/// them in one process routes it, so a value, a `when_related:` guard or a row set over such an
+/// entity runs where [`execute_refusing`] refuses it ([`crate::takes_reaching`]). Every write goes
+/// to the running component's store; a subject, `instances:` or `affects:` entry over another
+/// component's entity stays refused.
+///
+/// # Errors
+/// As [`execute`].
+#[allow(clippy::too_many_arguments)]
+pub fn execute_reaching(
+    ir: &EssIr,
+    store: &mut dyn Store,
+    decider: &mut dyn Decider,
+    mint: &mut dyn Mint,
+    now: &dyn Fn() -> SystemTime,
+    invocation: &Invocation<'_>,
+    refused: &BTreeMap<String, String>,
+    reached: &BTreeSet<String>,
+) -> Result<Executed, ExecuteError> {
+    reaching(
+        ir,
+        store,
+        decider,
+        mint,
+        now,
+        invocation,
+        refused,
+        Some(reached),
+    )
+}
+
+/// [`execute_refusing`], reaching the stores `reached` names, or the running component's alone.
+#[allow(clippy::too_many_arguments)]
+fn reaching(
+    ir: &EssIr,
+    store: &mut dyn Store,
+    decider: &mut dyn Decider,
+    mint: &mut dyn Mint,
+    now: &dyn Fn() -> SystemTime,
+    invocation: &Invocation<'_>,
+    refused: &BTreeMap<String, String>,
+    reached: Option<&BTreeSet<String>>,
+) -> Result<Executed, ExecuteError> {
     let Invocation {
         command,
         input,
@@ -245,11 +292,24 @@ pub fn execute_refusing(
         .find_map(|(name, spec)| (name.to_string() == command).then_some(spec))
         .ok_or_else(|| ExecuteError::UnknownCommand(command.to_owned()))?;
     crate::supported::selects(spec)?;
-    if let Some(first) = none_runs(ir, spec, refused) {
+    if let Some(first) = none_runs(ir, spec, refused, reached) {
         return Err(first);
     }
     let attributes = crate::caller::bind(ir, actor, caller)?;
     check_input(ir, spec, input)?;
+    // Every `Integer` of the input as the integer, so `1.0` and `1` address, hold and publish one
+    // value, as ESS reads both as one (`crate::typed::integers`).
+    let input = &input
+        .iter()
+        .map(|(name, value)| {
+            let held = match spec.input_field(name) {
+                Some(field) => crate::typed::integers(ir, &field.type_ref, value)
+                    .map_err(|error| ExecuteError::InvalidInput(format!("`{name}`: {error}")))?,
+                None => value.clone(),
+            };
+            Ok((name.clone(), held))
+        })
+        .collect::<Result<Map<String, Value>, ExecuteError>>()?;
     let address = match addressed(ir, spec)? {
         Some((entity, field)) => {
             let identity = input
@@ -282,6 +342,7 @@ pub fn execute_refusing(
         scanned: Vec::new(),
         answer: None,
         refused,
+        reached,
         open: None,
     };
     if let Some(executed) = run.before_row()? {
@@ -307,19 +368,21 @@ pub fn execute_refusing(
 }
 
 /// Refuses `outcome` of `spec` where `refused` names it, with what the caller does not serve of
-/// it, or where the kernel does not take it ([`crate::takes`]).
+/// it, or where the kernel does not take it on a store reaching `reached`
+/// ([`crate::takes_reaching`]), or the running component's alone ([`crate::takes`]).
 fn outcome_runs(
     ir: &EssIr,
     spec: &ResolvedCommand,
     outcome: &ResolvedOutcome,
     refused: &BTreeMap<String, String>,
+    reached: Option<&BTreeSet<String>>,
 ) -> Result<(), ExecuteError> {
     if let Some(what) = refused.get(outcome.name.as_str()) {
         return Err(ExecuteError::Unsupported {
             construct: format!("{what}, in `{}/{}`", spec.name, outcome.name.as_str()),
         });
     }
-    crate::supported::takes(ir, spec, outcome)
+    crate::supported::taking(ir, spec, outcome, reached)
 }
 
 /// The refusal of the first outcome of `spec`, where none of its outcomes runs
@@ -328,10 +391,11 @@ fn none_runs(
     ir: &EssIr,
     spec: &ResolvedCommand,
     refused: &BTreeMap<String, String>,
+    reached: Option<&BTreeSet<String>>,
 ) -> Option<ExecuteError> {
     let mut first = None;
     for outcome in &spec.outcomes {
-        match outcome_runs(ir, spec, outcome, refused) {
+        match outcome_runs(ir, spec, outcome, refused, reached) {
             Ok(()) => return None,
             Err(refusal) => {
                 first.get_or_insert(refusal);
@@ -607,6 +671,9 @@ struct Run<'a, 'ir> {
     answer: Option<Map<String, Value>>,
     /// The outcomes the caller does not serve, by name, each with why ([`execute_refusing`]).
     refused: &'a BTreeMap<String, String>,
+    /// The components whose stores the store reaches ([`execute_reaching`]); `None` for the
+    /// running component's alone.
+    reached: Option<&'a BTreeSet<String>>,
     /// What left the last row-set guard read `Unknown` open, with its outcome's qualified name
     /// ([`Self::row_set`]): the refusal that guard answers names it ([`Self::why`]).
     open: Option<(String, String)>,
@@ -1797,7 +1864,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
     /// Refuses the selected `outcome` where it does not run ([`outcome_runs`]), before anything is
     /// minted or written.
     fn runs(&self, outcome: &ResolvedOutcome) -> Result<(), ExecuteError> {
-        outcome_runs(self.ir, self.spec, outcome, self.refused)
+        outcome_runs(self.ir, self.spec, outcome, self.refused, self.reached)
     }
 
     /// Refuses the selected `outcome` where it does not run ([`Self::runs`]), and otherwise reads

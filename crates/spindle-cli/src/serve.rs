@@ -1,6 +1,7 @@
 //! `run` where a component is reached over the network: every component in one host, the
 //! components that require `ingress.network` served over HTTP on 127.0.0.1.
 
+use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::Path;
 use std::process::ExitCode;
@@ -13,7 +14,7 @@ use ess_gen::http::Binding;
 use spindle_capability::{Capability, Environment};
 use spindle_host::{Cause, Clock, Host, HostError, ManualClock, Retries, SystemClock};
 use spindle_ingress::console::{self, Worlds};
-use spindle_ingress::{Caller, Console, Exchange, Listener, Recorder, Surface, Unfixed};
+use spindle_ingress::{Answer, Caller, Console, Exchange, Listener, Recorder, Surface, Unfixed};
 use spindle_spec::EssIr;
 
 use crate::decisions::{self, Run};
@@ -257,9 +258,14 @@ fn carried(caller: &Caller) -> String {
 /// wait for the next exchange, so a request never waits for the whole seed; while one is left the
 /// wait does not block ([`Seeding`]). A reset drops the entries not yet sent; one with no world
 /// then submits them again, all of them, before it answers, and one that gives a world does not
-/// ([`reset_seeded`]). A signal stops a reset's seed between two entries. Once a seed run ends
-/// having rejected an entry ([`Seeding::failed`]), the run stops listening, the answers already
-/// handed back given a moment to be written, and exits 1 (`story:run-fails-on-rejected-line`).
+/// ([`reset_seeded`]). A signal stops a reset's seed between two entries, and the reset still
+/// answers. Once a seed run ends having rejected an entry ([`Seeding::failed`]), the run exits 1
+/// (`story:run-fails-on-rejected-line`).
+///
+/// Once a signal arrives, or a seed that rejected an entry ends, the loop takes no further
+/// exchange: the one it is answering is answered, every answer handed back is written, each
+/// request still queued is answered `503`, and only then does the run exit ([`Listener::close`],
+/// `story:serve-loop-signal-exit-answers`).
 pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     for caller in &serving.callers {
         fixed(&ir, caller)?;
@@ -320,8 +326,16 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             }
         }
     }
+    // Every component runs in the one host below, so a command reads each entity from its
+    // owner's store (`story:cross-component-related-reads`).
+    let reached: BTreeSet<String> = ir
+        .components()
+        .values()
+        .map(|component| component.name.as_str().to_owned())
+        .collect();
+    let reaching = Surface::reaching(&reached);
     let surface = match (serving.caller_header, &serving.proxy_secret) {
-        (Some(header), Some((_, secret))) => Surface::proving_callers(
+        (Some(header), Some((_, secret))) => reaching.proving_callers(
             &ir,
             &serving.components,
             serving.binding.as_ref(),
@@ -331,7 +345,7 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         (Some(header), None) => {
             bail!("--trusted-caller-header {header} needs --trusted-caller-secret <FILE>")
         }
-        (None, _) => Surface::fixing_callers(
+        (None, _) => reaching.fixing_callers(
             &ir,
             &serving.components,
             serving.binding.as_ref(),
@@ -357,6 +371,18 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     };
     for line in surface.report() {
         eprintln!("b10x-spindle: {line}");
+    }
+    if surface
+        .unserved()
+        .iter()
+        .any(|route| !route.reads_caller().is_empty())
+    {
+        eprintln!(
+            "b10x-spindle: a command that reads caller attributes is served where the run fixes \
+             its caller (--fixed-actor with --fixed-caller), a test backend, or where each \
+             request proves its caller through a trusted proxy (--trusted-caller-header with \
+             --trusted-caller-secret)"
+        );
     }
     if surface.serves_nothing() {
         bail!(Surface::serves_nothing_reason(&serving.components));
@@ -397,6 +423,17 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             );
         }
     }
+    // Where a `--state` records the seed applied to it (`seed.json`), a seed it does not record
+    // stops the run here, before listening.
+    let mut seeding = match serving.seed {
+        Some(seed) => Some(crate::seed::begin(
+            seed,
+            serving.state,
+            &mut host,
+            recorder.clone(),
+        )?),
+        None => None,
+    };
     let listener = Listener::bind_reading_on(serving.address, serving.port, surface, host.reader())
         .context("binding the HTTP listener")?;
     let worlds = |ir: &EssIr, body: &serde_json::Value| {
@@ -405,14 +442,6 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         })
         .map_err(|error| format!("{error:#}"))
     };
-    let mut seeding = serving.seed.map(|seed| {
-        eprintln!(
-            "b10x-spindle: seed {}: {} entries, submitted one at a time once listening",
-            seed.path().display(),
-            seed.len()
-        );
-        Seeding::new(seed, recorder.clone())
-    });
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     writeln!(
@@ -424,11 +453,19 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         })
     )?;
     out.flush()?;
-    loop {
+    // The exit status a signal asks for, once one arrived.
+    let signal_exit = || {
         let signal = signalled.load(Ordering::SeqCst);
-        if signal != 0 {
+        (signal != 0).then(|| {
             let signal = u8::try_from(signal).unwrap_or(u8::MAX - SIGNALLED);
-            return Ok(ExitCode::from(SIGNALLED.saturating_add(signal)));
+            ExitCode::from(SIGNALLED.saturating_add(signal))
+        })
+    };
+    // The signal is checked wherever the loop would otherwise take more work: before a seed
+    // entry, before the wait for an exchange, and on an exchange that arrived with the signal.
+    let code = loop {
+        if let Some(code) = signal_exit() {
+            break code;
         }
         if let Some(seeding) = seeding.as_mut() {
             seeding.step(&mut host);
@@ -437,9 +474,10 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
                     "b10x-spindle: seed {} rejected an entry, so the run exits 1",
                     seeding.path().display()
                 );
-                drop(listener);
-                std::thread::sleep(SIGNAL_POLL);
-                return Ok(ExitCode::FAILURE);
+                break ExitCode::FAILURE;
+            }
+            if let Some(code) = signal_exit() {
+                break code;
             }
         }
         let wait = if seeding.as_ref().is_some_and(Seeding::pending) {
@@ -447,50 +485,80 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         } else {
             SIGNAL_POLL
         };
-        if let Some(exchange) = listener.next(wait) {
-            if exchange.console() == Some(Console::Reset)
-                && let Some(seeding) = seeding.as_mut()
-            {
-                let stopped = || signalled.load(Ordering::SeqCst) != 0;
-                reset_seeded(
-                    exchange,
-                    &mut host,
-                    &worlds,
-                    seeding,
-                    recorder.as_ref(),
-                    stopped,
-                );
-                continue;
-            }
-            for failed in exchange.serve_with(&mut host, &worlds) {
-                let binding = match &failed.cause {
-                    Cause::Delivered { binding } | Cause::Tick { binding } => binding.as_str(),
-                    Cause::Submitted => "the request",
-                };
-                let attempts = if failed.attempts > 1 {
-                    format!(" after {} attempts", failed.attempts)
-                } else {
-                    String::new()
-                };
-                eprintln!(
-                    "b10x-spindle: {} did not run {} ({binding}), dropped{attempts}: {}",
-                    failed.component, failed.command, failed.error
-                );
-            }
+        let Some(exchange) = listener.next(wait) else {
+            continue;
+        };
+        if let Some(code) = signal_exit() {
+            exchange.respond(Answer::refusal(503, "the run is stopping on a signal"));
+            break code;
         }
-    }
+        if exchange.console() == Some(Console::Reset)
+            && let Some(seeding) = seeding.as_mut()
+        {
+            let stopped = || signalled.load(Ordering::SeqCst) != 0;
+            reset_seeded(
+                exchange,
+                &mut host,
+                &worlds,
+                seeding,
+                recorder.as_ref(),
+                stopped,
+            );
+            continue;
+        }
+        if exchange.console() == Some(Console::Reset)
+            && let Some(state) = serving.state
+        {
+            // A run without a seed on a `--state`: a reset that empties the state or loads a world
+            // leaves no seed's entries done, so the marker goes (story:seed-once-on-durable-state).
+            let answer = console::reset(&mut host, exchange.body(), Some(&worlds));
+            if answer.status == 200 {
+                if let Some(recorder) = recorder.as_ref() {
+                    recorder.count_reset();
+                }
+                crate::seed::forget(state);
+            }
+            exchange.respond(answer);
+            continue;
+        }
+        for failed in exchange.serve_with(&mut host, &worlds) {
+            let binding = match &failed.cause {
+                Cause::Delivered { binding } | Cause::Tick { binding } => binding.as_str(),
+                Cause::Submitted => "the request",
+            };
+            let attempts = if failed.attempts > 1 {
+                format!(" after {} attempts", failed.attempts)
+            } else {
+                String::new()
+            };
+            eprintln!(
+                "b10x-spindle: {} did not run {} ({binding}), dropped{attempts}: {}",
+                failed.component, failed.command, failed.error
+            );
+        }
+    };
+    // Every answer handed back is written, and each request still queued is answered 503, before
+    // the run exits.
+    listener.close(CLOSE_GRACE);
+    Ok(code)
 }
+
+/// How long the run waits, once it stops, for the answers it handed back to be written.
+const CLOSE_GRACE: Duration = Duration::from_secs(2);
 
 /// Answers `exchange`, a `POST /api/reset` on a run with a seed: every store emptied and the world
 /// its body carries loaded, as [`console::reset`] answers it, and the reset counted on `recorder`
 /// where it succeeded. A reset that succeeded drops the entries of the seed run under way not yet
-/// sent ([`Seeding::cut`]), so a world is loaded alone. Where the body gives no world
+/// sent ([`Seeding::cut`]), so a world is loaded alone, and on a `--state` records every entry done
+/// ([`Seeding::loaded`]), so a restart sends none. Where the body gives no world
 /// ([`console::carries_world`]), `seeding` is then submitted again from its first entry to its
 /// end ([`Seeding::restart`], [`Seeding::finish`]) before the answer is sent, so the reset answers
 /// with the seed's effects in place (`story:reset-reapplies-seed`).
 ///
 /// Where `stopped` answers `true` between two entries, a signal arrived: nothing more is
-/// submitted and the reset is not answered, and the serve loop exits as the signal asks.
+/// submitted, the reset is answered all the same, with the entries done in place and the marker
+/// counting them, and the serve loop then exits as the signal asks
+/// (`story:serve-loop-signal-exit-answers`).
 fn reset_seeded(
     exchange: Exchange,
     host: &mut Host,
@@ -504,12 +572,12 @@ fn reset_seeded(
         if let Some(recorder) = recorder {
             recorder.count_reset();
         }
-        seeding.cut();
-        if !console::carries_world(exchange.body()) {
+        if console::carries_world(exchange.body()) {
+            seeding.loaded();
+        } else {
+            seeding.cut();
             seeding.restart();
-            if !seeding.finish(host, stopped) {
-                return;
-            }
+            seeding.finish(host, stopped);
         }
     }
     exchange.respond(answer);

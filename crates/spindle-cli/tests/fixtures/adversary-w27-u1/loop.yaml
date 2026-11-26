@@ -1,0 +1,34 @@
+format: ess/34
+system: echo
+version: v1
+summary: A ping whose event pings again, without end, in a system that declares no component.
+domains:
+  - echo.ping
+bindings:
+  - id: ping-again
+    when:
+      event: echo.ping.Pinged
+    invoke:
+      command: echo.ping.Ping
+    mapping:
+      n: event.n
+    delivery: at_most_once
+    on_failure: drop
+domain: echo.ping
+errors: []
+commands:
+  - name: echo.ping.Ping
+    input:
+      - name: n
+        type: Integer
+    outcomes:
+      - name: pinged
+        emits: [echo.ping.Pinged]
+        payload:
+          echo.ping.Pinged: {n: input.n}
+        summary: The ping is answered by another ping.
+events:
+  - name: echo.ping.Pinged
+    fields:
+      - name: n
+        type: Integer

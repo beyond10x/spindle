@@ -1,0 +1,23 @@
+format: ess/34
+system: stoop
+version: v1
+summary: Visits and notes recorded over the network for the person each request proves, and waves from anyone.
+domains:
+  - stoop.visit
+components:
+  - component: front
+    summary: Records visits and notes for callers outside the process.
+    owns:
+      domains:
+        - stoop.visit
+    accepts:
+      commands:
+        - stoop.visit.RecordVisit
+        - stoop.visit.NoteVisit
+        - stoop.visit.WaveVisit
+    publishes:
+      events:
+        - stoop.visit.VisitRecorded
+        - stoop.visit.VisitNoted
+        - stoop.visit.VisitWaved
+    reached_by: network

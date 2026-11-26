@@ -1,0 +1,14 @@
+{
+  "at": "2026-11-26T20:43:36Z",
+  "actor": "human:operator",
+  "artifact": "story:stdin-arrange-and-line-references",
+  "kind": "story",
+  "revision": 22,
+  "change": {
+    "change": "evidence",
+    "kind": "review_outcome",
+    "source": "review-result:wave27-acc-r10",
+    "review": "review-result:wave27-acc-r10",
+    "outcome": "fixed"
+  }
+}

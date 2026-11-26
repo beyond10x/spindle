@@ -1,0 +1,26 @@
+format: ess/35
+system: probe
+version: v1
+summary: Sheets opened over the network, each behind a guard that reads a map in another position.
+domains:
+  - probe.ledger
+components:
+  - component: clerk
+    summary: Opens and closes sheets for callers outside the process.
+    owns:
+      domains:
+        - probe.ledger
+    accepts:
+      commands:
+        - probe.ledger.StampMap
+        - probe.ledger.StampList
+        - probe.ledger.Nested
+        - probe.ledger.Rounds
+        - probe.ledger.Groups
+        - probe.ledger.Wrapped
+        - probe.ledger.OpenSheet
+        - probe.ledger.CloseSheet
+    publishes:
+      events:
+        - probe.ledger.SheetOpened
+    reached_by: network

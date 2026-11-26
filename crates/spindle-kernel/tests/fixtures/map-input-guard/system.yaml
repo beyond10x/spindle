@@ -1,0 +1,21 @@
+format: ess/35
+system: tally
+version: v1
+summary: Boards opened over the network, each behind an input guard that reads a map of scores.
+domains:
+  - tally.board
+components:
+  - component: scorer
+    summary: Opens boards for callers outside the process.
+    owns:
+      domains:
+        - tally.board
+    accepts:
+      commands:
+        - tally.board.OpenBoard
+        - tally.board.OpenLowBoard
+        - tally.board.OpenMixedBoard
+    publishes:
+      events:
+        - tally.board.BoardOpened
+    reached_by: network

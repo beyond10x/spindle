@@ -29,6 +29,8 @@ mod adversary_views;
 mod adversary_w26_u1;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_w26_u2;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod adversary_w27_u8;
 mod adversary_wasm;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_world_integers;

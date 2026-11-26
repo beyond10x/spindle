@@ -1,0 +1,14 @@
+{
+  "at": "2026-11-26T20:33:29Z",
+  "actor": "human:operator",
+  "artifact": "story:integer-identity-any-spelling",
+  "kind": "story",
+  "revision": 7,
+  "change": {
+    "change": "evidence",
+    "kind": "review_outcome",
+    "source": "review-result:wave27-acc-r6",
+    "review": "review-result:wave27-acc-r6",
+    "outcome": "fixed"
+  }
+}

@@ -1,7 +1,7 @@
 //! The routes one listener serves, read from ESS: the routes `ess generate --kind openapi`
 //! publishes, with an `ess-http/1` binding's in place of those it names.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -142,6 +142,12 @@ pub struct Route {
     encoding: Encoding,
     unknown: Unknown,
     parameters: Vec<Parameter>,
+    /// The input fields a command's binding reads from the query string beside its body
+    /// (`request.query`, beyond10x/ess#754), in the order listed ([`Route::query_input`]).
+    beside: Vec<Parameter>,
+    /// The input field a `json` request's bare body is the value of (`request.body:
+    /// input.<field>`), and whether the body is required ([`Route::bare_body`]).
+    bare: Option<(String, bool)>,
     /// The outcomes answered with the command's response beside the envelope.
     responding: Vec<String>,
     /// The outcomes the binding answers with a body other than the envelope, each with it:
@@ -162,6 +168,9 @@ pub struct Route {
     not_granted: bool,
     /// Whether each request proves its own caller ([`Surface::proving_callers`]).
     proves: bool,
+    /// The caller attributes the command reads where the route neither fixes a caller nor has
+    /// each request prove one, for which it is not served ([`Route::reads_caller`]).
+    unproven: Vec<String>,
 }
 
 /// An actor and caller a surface sends commands as: fixed for the whole run
@@ -577,8 +586,67 @@ impl Route {
         at: &str,
         carried: &Map<String, Value>,
     ) -> Result<Map<String, Value>, String> {
+        self.flat_read(&self.parameters, text, at, carried)
+    }
+
+    /// Whether the command's binding reads input fields from the query string beside its `json`
+    /// or `form` body (`request.query`, beyond10x/ess#754).
+    pub(crate) fn reads_query_beside_body(&self) -> bool {
+        !self.beside.is_empty()
+    }
+
+    /// The input field a `json` request's bare body is the value of (`request.body:
+    /// input.<field>`, [`ess_gen::http::bare_body`]), by name, and whether the body is required
+    /// ([`ess_gen::http::body_required_without`] the fields the path and the query string carry);
+    /// `None` where the body is an object of input fields.
+    pub(crate) fn bare_body(&self) -> Option<(&str, bool)> {
+        self.bare
+            .as_ref()
+            .map(|(field, required)| (field.as_str(), *required))
+    }
+
+    /// The input fields the binding lists under `request.query`, read from `query`, a request's
+    /// query string, as ESS 0.99.1's served application reads them (`http::flat_object` with the
+    /// listed fields alone, under `query`, the path not consulted): as [`Route::flat_input`] reads
+    /// a query string, so a key no listed field names is refused, or dropped under
+    /// `unknown: ignore`, a field other than a `List` given twice is refused, and a `List` field
+    /// is the array of its repeated key's values, empty when absent. A listed field the query
+    /// leaves out is left out, for the kernel to refuse where it is required.
+    pub(crate) fn query_input(&self, query: &str) -> Result<Map<String, Value>, String> {
+        self.flat_read(&self.beside, query, "query", &Map::new())
+    }
+
+    /// The first field the binding lists under `request.query`, in the order listed, that
+    /// `input`, the command's input read from its body, holds: under its wire name, or under its
+    /// own name, which is how this ingress reads a `json` member. Named as the body named it; a
+    /// `form` body's input holds each key under its field's name, so it is named by its wire name.
+    /// ESS's served application refuses a body naming such a field (`http::with_query`).
+    pub(crate) fn queried_member(&self, input: &Map<String, Value>) -> Option<&str> {
+        self.beside.iter().find_map(|parameter| {
+            if input.contains_key(&parameter.wire) {
+                Some(parameter.wire.as_str())
+            } else if input.contains_key(&parameter.field) {
+                Some(if self.encoding == Encoding::Form {
+                    parameter.wire.as_str()
+                } else {
+                    parameter.field.as_str()
+                })
+            } else {
+                None
+            }
+        })
+    }
+
+    /// [`Route::flat_input`] over `parameters`.
+    fn flat_read(
+        &self,
+        parameters: &[Parameter],
+        text: &str,
+        at: &str,
+        carried: &Map<String, Value>,
+    ) -> Result<Map<String, Value>, String> {
         let ignore = self.unknown == Unknown::Ignore;
-        let mut found: Vec<Vec<String>> = vec![Vec::new(); self.parameters.len()];
+        let mut found: Vec<Vec<String>> = vec![Vec::new(); parameters.len()];
         for pair in text.split('&').filter(|pair| !pair.is_empty()) {
             let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
             let Some(key) = form_decoded(key) else {
@@ -588,14 +656,13 @@ impl Route {
                 return Err(format!("{at}: a key is not percent-encoded UTF-8: {key:?}"));
             };
             let place = format!("{at}.{key}");
-            let index = self
-                .parameters
+            let index = parameters
                 .iter()
                 .position(|parameter| parameter.wire == key);
-            let on_path = index.is_some_and(|index| self.parameters[index].carried);
+            let on_path = index.is_some_and(|index| parameters[index].carried);
             let Some(index) = index.filter(|_| !on_path) else {
                 if ignore {
-                    if let Some(parameter) = index.map(|index| &self.parameters[index]) {
+                    if let Some(parameter) = index.map(|index| &parameters[index]) {
                         let text = form_decoded(value).ok_or_else(|| {
                             format!("{place}: expected percent-encoded UTF-8 text, found {value:?}")
                         })?;
@@ -621,7 +688,7 @@ impl Route {
             found[index].push(value);
         }
         let mut input = Map::new();
-        for (parameter, values) in self.parameters.iter().zip(found) {
+        for (parameter, values) in parameters.iter().zip(found) {
             if parameter.carried {
                 continue;
             }
@@ -674,6 +741,15 @@ impl Route {
     /// one that proves none is refused, and the route fixes no caller.
     pub fn proves(&self) -> bool {
         self.proves
+    }
+
+    /// The caller attributes the command reads, for which the route is not served because it
+    /// neither fixes a caller ([`Surface::fixing_callers`]) nor has each request prove one
+    /// ([`Surface::proving_callers`]); empty for every other route. The reason
+    /// ([`Route::unserved`]) names the attributes and no setting of a host; `run` names its own
+    /// settings beside it.
+    pub fn reads_caller(&self) -> &[String] {
+        &self.unproven
     }
 
     /// The input `path` carries in its variables, read as [`ess_gen::http::Flat`] says; `None`
@@ -1082,6 +1158,46 @@ impl fmt::Debug for Secret {
     }
 }
 
+/// The constructors of a [`Surface`] whose commands run on a store reaching the stores of a set of
+/// components ([`Surface::reaching`]).
+#[derive(Debug, Clone, Copy)]
+pub struct Reaching<'r> {
+    reached: &'r BTreeSet<String>,
+}
+
+impl Reaching<'_> {
+    /// [`Surface::fixing_callers`], reaching the stores of the components
+    /// [`Surface::reaching`] names.
+    ///
+    /// # Errors
+    /// As [`Surface::new`].
+    pub fn fixing_callers(
+        self,
+        ir: &EssIr,
+        components: &[String],
+        binding: Option<&Binding>,
+        callers: &[Caller],
+    ) -> Result<Surface, SurfaceError> {
+        Surface::routed(ir, components, binding, callers, false, Some(self.reached))
+    }
+
+    /// [`Surface::proving_callers`], reaching the stores of the components
+    /// [`Surface::reaching`] names.
+    ///
+    /// # Errors
+    /// As [`Surface::proving_callers`].
+    pub fn proving_callers(
+        self,
+        ir: &EssIr,
+        components: &[String],
+        binding: Option<&Binding>,
+        header: &str,
+        secret: &str,
+    ) -> Result<Surface, SurfaceError> {
+        Surface::proving(ir, components, binding, header, secret, Some(self.reached))
+    }
+}
+
 impl Surface {
     /// The header a proxy presents the secret in on each request to a surface made
     /// [`Surface::proving_callers`]; a request without it, or with another value, proves no
@@ -1128,7 +1244,7 @@ impl Surface {
         components: &[String],
         binding: Option<&Binding>,
     ) -> Result<Self, SurfaceError> {
-        Self::routed(ir, components, binding, &[], false)
+        Self::routed(ir, components, binding, &[], false, None)
     }
 
     /// [`Surface::new`], every command sent as `caller`: a command that reads its caller is
@@ -1143,7 +1259,14 @@ impl Surface {
         binding: Option<&Binding>,
         caller: &Caller,
     ) -> Result<Self, SurfaceError> {
-        Self::routed(ir, components, binding, std::slice::from_ref(caller), false)
+        Self::routed(
+            ir,
+            components,
+            binding,
+            std::slice::from_ref(caller),
+            false,
+            None,
+        )
     }
 
     /// [`Surface::new`], each command sent as the first of `callers` whose actor's `may:` names
@@ -1161,7 +1284,7 @@ impl Surface {
         binding: Option<&Binding>,
         callers: &[Caller],
     ) -> Result<Self, SurfaceError> {
-        Self::routed(ir, components, binding, callers, false)
+        Self::routed(ir, components, binding, callers, false, None)
     }
 
     /// [`Surface::new`], each request for a command or view proving its own caller in the header
@@ -1196,6 +1319,31 @@ impl Surface {
         header: &str,
         secret: &str,
     ) -> Result<Self, SurfaceError> {
+        Self::proving(ir, components, binding, header, secret, None)
+    }
+
+    /// The surfaces whose commands run on a store reaching the stores of the components `reached`
+    /// names, as a host running them in one process hands the kernel
+    /// ([`spindle_kernel::execute_reaching`]): a command reading an entity one of them owns (a
+    /// value, a `when_related:` guard, a row set) is served, where a surface made otherwise
+    /// reaches the store of the component running it alone and marks it [`Unserved::Kernel`]
+    /// ([`spindle_kernel::takes_reaching`]). Each constructor of [`Reaching`] is the one of
+    /// [`Surface`] of its name.
+    #[must_use]
+    pub fn reaching(reached: &BTreeSet<String>) -> Reaching<'_> {
+        Reaching { reached }
+    }
+
+    /// [`Surface::proving_callers`], reaching the stores `reached` names, or the running
+    /// component's alone.
+    fn proving(
+        ir: &EssIr,
+        components: &[String],
+        binding: Option<&Binding>,
+        header: &str,
+        secret: &str,
+        reached: Option<&BTreeSet<String>>,
+    ) -> Result<Self, SurfaceError> {
         if header.is_empty()
             || !header.bytes().all(token)
             || header.eq_ignore_ascii_case(Self::SECRET_HEADER)
@@ -1205,7 +1353,7 @@ impl Surface {
         if secret.is_empty() || !secret.bytes().all(|byte| byte.is_ascii_graphic()) {
             return Err(SurfaceError::Secret);
         }
-        let mut surface = Self::routed(ir, components, binding, &[], true)?;
+        let mut surface = Self::routed(ir, components, binding, &[], true, reached)?;
         surface.caller_header = Some(header.to_ascii_lowercase());
         surface.caller_secret = Some(Secret(secret.to_owned()));
         Ok(surface)
@@ -1249,6 +1397,7 @@ impl Surface {
         binding: Option<&Binding>,
         callers: &[Caller],
         proves: bool,
+        reached: Option<&BTreeSet<String>>,
     ) -> Result<Self, SurfaceError> {
         if let Some(binding) = binding
             && let Some(key) = binding.ir().refusals().keys().next()
@@ -1278,7 +1427,7 @@ impl Surface {
                 .find(|component| component.name.as_str() == name)
                 .ok_or_else(|| SurfaceError::NoComponent(name.clone()))?;
             for bound in ess_gen::http::bound_routes(ir, component, binding) {
-                let route = route(ir, name, &bound, callers, proves)?;
+                let route = route(ir, name, &bound, callers, proves, reached)?;
                 if Reserved::of(&route.path).is_some() {
                     return Err(SurfaceError::Reserved {
                         operation: route.operation.to_string(),
@@ -1535,7 +1684,8 @@ fn token(byte: u8) -> bool {
 
 /// One route of `component`, owned: served, or kept and marked [`Unserved`] with what it uses
 /// that this ingress, the kernel or the host does not run. Where `proves`, each request proves its
-/// own caller ([`Route::proves`]).
+/// own caller ([`Route::proves`]). A command runs on a store reaching the stores `reached` names,
+/// or the running component's alone ([`refuse`]).
 ///
 /// # Errors
 /// [`SurfaceError::Unsupported`] when the route's path is not a template ESS reads, so that no
@@ -1546,6 +1696,7 @@ fn route(
     bound: &ess_gen::http::Route<'_>,
     callers: &[Caller],
     proves: bool,
+    reached: Option<&BTreeSet<String>>,
 ) -> Result<Route, SurfaceError> {
     let operation = bound.serves.operation();
     let path = bound.path.clone();
@@ -1568,6 +1719,8 @@ fn route(
         encoding: Encoding::Json,
         unknown: Unknown::Refuse,
         parameters: Vec::new(),
+        beside: Vec::new(),
+        bare: None,
         responding: Vec::new(),
         bodies: BTreeMap::new(),
         headers: BTreeMap::new(),
@@ -1578,6 +1731,7 @@ fn route(
         caller: caller.cloned(),
         not_granted: false,
         proves,
+        unproven: Vec::new(),
     };
     route.not_granted = match (&route.operation, caller) {
         (Operation::Command(command), Some(caller)) => !may_run(ir, &caller.actor, command),
@@ -1600,7 +1754,7 @@ fn route(
         }
         (Ok(()), Operation::Command(_)) => {
             if let ess_gen::http::Served::Command(handle) = bound.serves {
-                refuse(ir, ir.command(handle), &mut route);
+                refuse(ir, ir.command(handle), &mut route, reached);
             }
         }
         (Ok(()), Operation::View(view)) => {
@@ -1674,18 +1828,29 @@ pub(crate) fn may_read(ir: &EssIr, actor: &str, view: &str) -> bool {
 }
 
 /// Marks what the route of `command`, once [`served`] filled it, does not run. Each outcome the
-/// kernel does not take ([`spindle_kernel::takes`]) is refused beside those this ingress does not
+/// kernel does not take on a store reaching the stores `reached` names
+/// ([`spindle_kernel::takes_reaching`]), or the running component's alone
+/// ([`spindle_kernel::takes`]), is refused beside those this ingress does not
 /// answer, in declaration order. Where the kernel cannot select among the outcomes
 /// ([`spindle_kernel::selects`]) or none is left to serve, the whole route is marked instead: by
 /// what this ingress does not serve, first, which is answered before the request is read, else
 /// by what the kernel does not run.
-fn refuse(ir: &EssIr, command: &ess_compiler::ir::ResolvedCommand, route: &mut Route) {
+fn refuse(
+    ir: &EssIr,
+    command: &ess_compiler::ir::ResolvedCommand,
+    route: &mut Route,
+    reached: Option<&BTreeSet<String>>,
+) {
     let mut refused = Vec::new();
     for outcome in &command.outcomes {
         let name = outcome.name.to_string();
+        let taken = match reached {
+            Some(reached) => spindle_kernel::takes_reaching(ir, command, outcome, reached),
+            None => spindle_kernel::takes(ir, command, outcome),
+        };
         if let Some(at) = route.refused.iter().position(|(listed, _)| *listed == name) {
             refused.push(route.refused.remove(at));
-        } else if let Err(why) = spindle_kernel::takes(ir, command, outcome) {
+        } else if let Err(why) = taken {
             refused.push((name, Unserved::Kernel(why.to_string())));
         }
     }
@@ -1713,18 +1878,20 @@ fn refuse(ir: &EssIr, command: &ess_compiler::ir::ResolvedCommand, route: &mut R
     }
 }
 
-/// Fills `route`'s variables, input, request, statuses, the bodies its outcomes answer other
-/// than with the envelope and the headers they declare, a view's answer form and its `single`
+/// Fills `route`'s variables, input, request (with the fields a `json` or `form` request reads
+/// from the query string beside its body, `request.query`: [`Route::query_input`]), statuses, the
+/// bodies its outcomes answer other than with the envelope and the headers they declare, a view's
+/// answer form and its `single`
 /// route's answer for no row, and lists among its refused outcomes
 /// each one answered with a redirect or the `text` encoding ([`unwritten`]), or
 /// without a status; `Err` names what it uses that this ingress does not serve: a view answered
 /// with another representation its query selects, a standard
 /// refusal the binding answers its own way, a request body limit other than [`BODY_LIMIT`], a
-/// `multipart` request, input fields read from the query string beside the body
-/// (`request.query`), a command whose outcome answers with its retained result, a path variable
+/// `multipart` request, a command whose outcome answers with its retained result, a path variable
 /// or a view parameter in the query string that is not a scalar, or a command that reads its
 /// caller where the route neither fixes a caller nor has each request prove one
-/// ([`Surface::proving_callers`], design §11).
+/// ([`Surface::proving_callers`], design §11), whose attributes it keeps for
+/// [`Route::reads_caller`].
 fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Result<(), String> {
     for (variable, field) in ess_gen::http::path_fields(ir, bound) {
         let position = route
@@ -1751,6 +1918,7 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
         ess_gen::http::Served::Command(handle) => {
             let read = spindle_kernel::caller_reads(ir, ir.command(handle));
             if !read.is_empty() && route.caller.is_none() && !route.proves {
+                route.unproven = read.iter().map(ToString::to_string).collect();
                 return Err(format!(
                     "the caller attributes it reads ({}), which no HTTP caller proves here",
                     read.iter()
@@ -1769,9 +1937,35 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
             if request.encoding == Encoding::Multipart {
                 return Err("a `multipart/form-data` request".to_owned());
             }
-            if !request.query.is_empty() {
-                return Err("input fields read from the query string beside the body".to_owned());
-            }
+            let mut outside = ess_gen::http::carried(ir, bound);
+            outside.extend(ess_gen::http::queried(bound.declared));
+            route.bare =
+                ess_gen::http::bare_body(ir.command(handle), bound.declared).map(|field| {
+                    (
+                        field.name.clone(),
+                        ess_gen::http::body_required_without(ir.command(handle), &outside),
+                    )
+                });
+            route.beside = request
+                .query_fields()
+                .filter_map(|name| {
+                    ir.command(handle)
+                        .input
+                        .iter()
+                        .find(|field| field.name == name)
+                })
+                .map(|field| {
+                    let (shape, flat) = ess_gen::http::flat(ir, &field.type_ref)
+                        .unwrap_or((Shape::One, Flat::Text));
+                    Parameter {
+                        wire: ess_gen::schema::wire_field_name(field).to_owned(),
+                        field: field.name.clone(),
+                        flat,
+                        shape,
+                        carried: false,
+                    }
+                })
+                .collect();
             if let Some(limits) = bound.declared.and_then(|declared| declared.limits)
                 && limits.request_bytes != BODY_LIMIT as u64
             {

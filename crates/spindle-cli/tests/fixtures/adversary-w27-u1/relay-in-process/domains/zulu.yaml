@@ -1,0 +1,43 @@
+domain: relay.zulu
+summary: Copies of opened cases.
+types:
+  - name: relay.zulu.CopyId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: relay.zulu.Copy
+    identity:
+      name: copy_id
+      type: relay.zulu.CopyId
+    fields:
+      - name: case_id
+        type: String
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+errors: []
+commands:
+  - name: relay.zulu.AddCopy
+    input:
+      - name: case_id
+        type: String
+    outcomes:
+      - name: added
+        creates: relay.zulu.Copy
+        instance: copy_id
+        sets:
+          case_id: input.case_id
+        emits: [relay.zulu.CopyAdded]
+        payload:
+          relay.zulu.CopyAdded:
+            copy_id: {generated: true}
+            case_id: input.case_id
+        summary: A copy is kept under an identity the runtime mints.
+events:
+  - name: relay.zulu.CopyAdded
+    fields:
+      - name: copy_id
+        type: relay.zulu.CopyId
+      - name: case_id
+        type: String

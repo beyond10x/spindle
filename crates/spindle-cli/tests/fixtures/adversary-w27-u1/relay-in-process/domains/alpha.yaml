@@ -1,0 +1,57 @@
+domain: relay.alpha
+summary: Cases opened, and the memos kept on them.
+types:
+  - name: relay.alpha.MemoId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: relay.alpha.Memo
+    identity:
+      name: memo_id
+      type: relay.alpha.MemoId
+    fields:
+      - name: case_id
+        type: String
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+errors: []
+commands:
+  - name: relay.alpha.Open
+    input:
+      - name: case_id
+        type: String
+    outcomes:
+      - name: opened
+        emits: [relay.alpha.Opened]
+        payload:
+          relay.alpha.Opened: {case_id: input.case_id}
+        summary: The case is opened.
+  - name: relay.alpha.AddMemo
+    input:
+      - name: case_id
+        type: String
+    outcomes:
+      - name: added
+        creates: relay.alpha.Memo
+        instance: memo_id
+        sets:
+          case_id: input.case_id
+        emits: [relay.alpha.MemoAdded]
+        payload:
+          relay.alpha.MemoAdded:
+            memo_id: {generated: true}
+            case_id: input.case_id
+        summary: A memo is kept under an identity the runtime mints.
+events:
+  - name: relay.alpha.Opened
+    fields:
+      - name: case_id
+        type: String
+  - name: relay.alpha.MemoAdded
+    fields:
+      - name: memo_id
+        type: relay.alpha.MemoId
+      - name: case_id
+        type: String

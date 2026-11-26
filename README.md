@@ -61,21 +61,29 @@ identity and generated value from that seed, so two runs of the same commands mi
 identities, never one an instance of the kept state already holds; a served run's reset without a
 world mints from it again, and an environment that binds `identity.mint` to `seeded` runs on stdin
 with seed 0 unless the flag names another, and serves HTTP given the flag. No `run` fires a
-periodic binding.
+periodic binding. Reading stdin, `run` fires the event bindings as a served run does: each command
+a binding invokes prints its result on its own line after the line that caused it, with
+`"caused_by": {"line": <n>, "binding": "<id>"}`, and one that is refused or does not run makes the
+run exit 1 after the last line. A stdin line `{"arrange": [<row>]}` writes rows in the shape
+`POST /api/reset` takes them, `{"entity", "identity", "state", "fields"}`, before the next line,
+and a command's input may name what an earlier line answered, such as the identity line 1 minted,
+with `{"$line": 1, "pointer": "/events/0/payload/<field>"}`.
 
 Where `run` serves HTTP, `--seed <file>` (or `[seed] file` in the environment document) submits a
 JSON array of commands, each with its input, actor, caller and request id, on every start: checked
 before listening, then one at a time in order beside the listener. An outcome declared
-`existing_instance:` counts as already there. A restart on the same state applies nothing new only
-when every entry is a create guarded by `existing_instance:`; any other entry runs again on every
-start, so an update writes over later changes and a move is refused. Spindle keeps no record of
-request ids: within one start, an entry whose request id an earlier applied or already-there entry
-carried is not submitted again. A declared refusal is logged and the rest still run; one line on
+`existing_instance:` counts as already there. On a `--state` directory the run records the seed
+file's digest, the entries sent and those rejected in `seed.json`, so a restart with the same file
+sends only the entries not yet done (a rejected entry is sent again), and none once all are; one
+with another file exits 1 before listening, naming both digests, unless the state holds no row. A
+reset by a run without `--seed` removes `seed.json`. A store kept elsewhere records nothing, and
+every start sends the whole seed. Within one start, an entry whose request id an earlier applied
+or already-there entry carried is not submitted again. A declared refusal is logged and the rest still run; one line on
 stderr gives the counts when the seed ends. An entry that did not run (the host or the kernel
 refused it before an outcome, such as `not_granted`) is counted `rejected`, and once the seed ends
 the run exits 1. `POST /api/reset` drops the entries not yet sent; with no
 world it then submits the seed again, from its first entry, before it answers, and with a world it
-loads that world alone. `play` and `deploy` refuse an environment with a `[seed]` table.
+loads that world alone and records every entry done. `play` and `deploy` refuse an environment with a `[seed]` table.
 
 Where `run` serves HTTP, `--observe` records every request it answers. `GET /__spindle/requests`
 lists the last 256 (`--observe-requests <N>`, 1 to 10000), newest first, with totals per class
@@ -92,12 +100,18 @@ Under `unmet`, a record lists each event binding whose input an event published 
 not fill, so its command was not invoked. The entry gives the binding, the component, the command and
 why.
 
+Under `refused_bound`, a record lists each command an event binding invoked on the way that was
+refused. The entry gives the binding, the component, the command, the command whose event the
+binding carried (`caused_by`), the refusing outcome and its error or the kernel's error kind, and
+the attempts, never a value of the error's fields.
+
 `GET /__spindle/metrics` answers the run's metrics in the Prometheus text format
 (`text/plain; version=0.0.4`). The families are those of `ess/fixtures/observe/metrics/families.json`:
 requests by method, route template, operation, kind, class and status class, their durations,
 commands by outcome and failure, events appended, bindings, timer ticks, store writes, the rows
-each entity holds, the resets, the external causes answered, by command, outcome and source, and,
-in a run given a seed, its entries sent, applied, already there and refused.
+each entity holds, the resets, the external causes answered, by command, outcome and source, the
+refused bound commands, by binding, command and refusal, and, in a run given a seed, its entries
+sent, applied, already there and refused.
 
 `GET /__spindle/topology` answers the graph of what the run serves (`spindle-topology/1`), derived
 from the specification. It holds the ingress, the specification, its domains, their commands,

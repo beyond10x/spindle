@@ -169,6 +169,13 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Bindings",
+        "Event bindings on stdin",
+        "run reading JSON lines on stdin fires the event bindings a served run routes, on its one store: each command a binding maps a line's events to runs in the same step and prints its result on its own line with caused_by (the line and the binding), retried as a served run retries it unless --drop-retries is given. A bound command that is refused or does not run fails the run after the last line; a binding the router refuses stops the run before stdin is read; a specification without components routes as one implied component.",
+        "/docs/concepts/components-and-bindings",
+        "crates/spindle-cli/tests/spindle-cli/stdin_bindings.rs::a_stdin_line_fires_the_binding_its_event_matches",
+    ),
+    shipped(
+        "Bindings",
         "Retry on failure",
         "An on_failure: retry binding runs its command again at once after each refused or failed attempt, up to 5 attempts, before the next envelope runs; each attempt and each given-up invocation is counted. A per-refusal policy (on_failure with named refusals) retries or drops by refusal, with the same limit. --drop-retries runs every retrying binding as a drop binding.",
         "/docs/concepts/components-and-bindings",
@@ -380,7 +387,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "Form and query requests",
-        "A command an ess-http/1 binding reads as request: {encoding: form} or {encoding: query} is served: its input is read from an application/x-www-form-urlencoded body or from the query string, each value by its field's type as ESS's served application reads it; an undeclared field, one the path carries, or a form body under another Content-Type is refused 400 and writes nothing.",
+        "A command an ess-http/1 binding reads as request: {encoding: form} or {encoding: query} is served: its input is read from an application/x-www-form-urlencoded body or from the query string, each value by its field's type as ESS's served application reads it; an undeclared field, one the path carries, or a form body under another Content-Type is refused 400 and writes nothing. A json or form command whose binding lists request: {query: [input.<field>, ...]} reads those fields from the query string beside its body, a List field from its key repeated, and runs on the joined input; a body naming a listed field is refused 400.",
         "/docs/concepts/capabilities",
         "crates/spindle-cli/tests/spindle-cli/form_query.rs::a_form_encoded_command_runs",
     ),
@@ -436,7 +443,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "Seed at start",
-        "run --seed, or the environment's [seed] file, names a JSON array of commands, each with its input, actor, caller and request id, that a served run submits on every start after its stores open: checked against the specification before listening, then one at a time in the file's order beside the listener. Each counts as applied, already there (an existing_instance: outcome, or a request id an earlier applied or already-there entry carried), refused (a declared refusing outcome) or rejected (the host or the kernel refused it before an outcome); each is logged and the rest still run, the counts are in one log line and in /__spindle/metrics, and a seed that ends with a rejected entry stops the run with exit 1. Request ids are not kept across starts: a restart applies nothing new only where every entry is an existing_instance:-guarded create. A reset drops the entries not yet sent; with no world it submits the seed again before it answers, and with a world it loads that world alone.",
+        "run --seed, or the environment's [seed] file, names a JSON array of commands, each with its input, actor, caller and request id, that a served run submits on every start after its stores open: checked against the specification before listening, then one at a time in the file's order beside the listener. Each counts as applied, already there (an existing_instance: outcome, or a request id an earlier applied or already-there entry carried), refused (a declared refusing outcome) or rejected (the host or the kernel refused it before an outcome); each is logged and the rest still run, the counts are in one log line and in /__spindle/metrics, and a seed that ends with a rejected entry stops the run with exit 1. On a --state directory, seed.json records the seed file's digest and how many entries are done: a restart with the same file sends only the entries not yet done, and one with another file exits 1 before listening unless the state holds no row; a store kept elsewhere records nothing, and every start sends the whole seed. A reset drops the entries not yet sent; with no world it submits the seed again before it answers, and with a world it loads that world alone and records every entry done.",
         "/docs/concepts/environment-and-admission#a-seed-submitted-at-start",
         "crates/spindle-cli/tests/spindle-cli/seed.rs::a_second_run_on_one_state_applies_nothing_new",
     ),
@@ -446,6 +453,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "run reading JSON lines on stdin answers every line, then exits 1 when a line was rejected (not JSON, no declared command, input not admitted, an external cause unanswered, or refused by the kernel before an outcome), naming each such line on stderr by its place in the input. A line answered by a declared outcome, a refusing one included, leaves the exit status 0.",
         "/docs/concepts/capabilities",
         "crates/spindle-cli/tests/spindle-cli/rejected_line.rs::a_stdin_run_with_a_rejected_line_exits_1",
+    ),
+    shipped(
+        "Execution",
+        "Arrange lines and line references on stdin",
+        "run reading JSON lines on stdin takes {\"arrange\": [rows]} in the shape a reset's world gives them, checked by ESS and against each entity's invariants and written all or none, before the next line; a seeded mint never mints an identity one wrote. A command's input may name a value an earlier line answered with {\"$line\": n, \"pointer\": \"/events/0/payload/<field>\"}; a reference to a line not yet answered, or to a pointer its answer lacks, rejects the line.",
+        "/docs/reference/cli#run",
+        "crates/spindle-cli/tests/spindle-cli/stdin_lines.rs::an_arrange_line_writes_rows_a_later_command_reads",
     ),
     shipped(
         "Execution",

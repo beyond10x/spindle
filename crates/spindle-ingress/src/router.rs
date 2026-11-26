@@ -11,7 +11,7 @@ use spindle_host::{Failed, Host, Reader};
 
 use crate::answer::{Answer, Carried};
 use crate::console::{Console, Worlds};
-use crate::observe::{Answered, By, Recorder, Reserved, UnmetInput};
+use crate::observe::{Answered, By, Recorder, RefusedBound, Reserved, UnmetInput};
 use crate::surface::{Caller, Resolved, Route, Surface};
 
 /// The largest request body read, in bytes: [`route`] refuses a larger one `413`, and the
@@ -356,7 +356,10 @@ impl Pending {
     /// counted and listed in no record.
     ///
     /// Every event binding whose input was unmet on the way is answered with it too
-    /// ([`UnmetInput::of`]), in the order the host reported them.
+    /// ([`UnmetInput::of`]), in the order the host reported them; and every command a binding
+    /// invoked on the way that was refused: those an outcome refused, as the route's answer listed
+    /// them, then those the kernel rejected ([`RefusedBound::rejected`]), each in the order the
+    /// host reported them.
     pub(crate) fn serve(
         self,
         host: &mut Host,
@@ -370,6 +373,9 @@ impl Pending {
             answered.externals = recorder.served();
         }
         answered.unmet = failed.iter().filter_map(UnmetInput::of).collect();
+        answered
+            .refused_bound
+            .extend(failed.iter().filter_map(RefusedBound::rejected));
         (response, failed, answered)
     }
 

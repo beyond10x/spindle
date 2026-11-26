@@ -2,11 +2,39 @@
 format: aep.planning-md/3
 id: story:seed-once-on-durable-state
 kind: story
-status: draft
+status: active
 title: A seed is applied once to a durable state
 relations:
 - serves: vision:spindle
-revision: 3
+scope:
+- confidence: cited
+  path: CHANGELOG.md
+- confidence: cited
+  path: README.md
+- confidence: cited
+  path: crates/spindle-cli/src/cli.rs
+- confidence: cited
+  path: crates/spindle-cli/src/seed.rs
+- confidence: cited
+  path: crates/spindle-cli/src/serve.rs
+- confidence: cited
+  path: crates/spindle-cli/tests/spindle-cli/seed.rs
+- confidence: inferred
+  path: crates/spindle-cli/tests/spindle-cli/seed/durable.rs
+- confidence: cited
+  path: crates/spindle-docs/src/status.rs
+- confidence: inferred
+  path: website/data/status.json
+- confidence: cited
+  path: website/docs/concepts/environment-and-admission.md
+- confidence: inferred
+  path: website/docs/reference/cli.md
+- confidence: inferred
+  path: website/docs/status.md
+revision: 24
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-26T21:00:27Z", actor: "human:operator", revision: 23, decided_on: {"recorded":{"review_outcome":20}}}
+- {from: "proposed", to: "active", at: "2026-11-26T21:00:27Z", actor: "human:operator", revision: 24, decided_on: {"recorded":{"review_outcome":20}}}
 ---
 # A seed is applied once to a durable state
 
@@ -33,36 +61,51 @@ Reported 2026-11-26 by a consumer that keeps its state across restarts.
   listening, naming both digests.
 - `a_reset_applies_the_seed_again_after_a_restart`: after the skipped seed, a reset with no world
   applies it from its first entry.
+- `a_restart_after_a_reset_with_a_world_sends_no_seed_entry`: a reset that loads a world, then a
+  restart with the same `--seed`: no seed entry is sent (D1 A).
+- `a_state_with_rows_and_no_marker_is_seeded_then_marked`: a `--state` written before this change
+  (rows, no `seed.json`): the seed is applied as today and `seed.json` then reads every entry done.
+- `a_changed_seed_on_a_state_with_no_row_runs_from_its_first_entry`: a different seed on a state
+  whose marker exists but which holds no row runs the new seed from its first entry, exit 0.
+- `the_seed_marker_is_private`: `seed.json` has mode 0600 (Unix).
+- `a_run_stopped_mid_seed_resumes_after_the_last_entry_done`: a seed of three entries, the second
+  held, then SIGTERM; a restart with the same `--seed` sends only the third entry and `seed.json`
+  reads every entry done.
+- `a_kill_during_a_resets_first_entry_restarts_the_seed`: on a `--state` whose seed ran to the end,
+  a reset whose first entry is held, then SIGKILL; a restart with the same `--seed` applies the seed
+  from its first entry, because the reset wrote `seed.json` at count 0 before sending it.
 
 ## Scope
 
-Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the story or the tree) or
-**inferred** (a reading that could be wrong).
+Derived 2026-11-26 by `story-scoper`, against `plan/wave-27` (wave 26 merged). Every line is
+**cited** (read from the story or the tree) or **inferred** (a reading that could be wrong).
 
-- **Primary surface:** `crates/spindle-cli`, the seed module and the start of the serve loop — cited
-- **Files:** `crates/spindle-cli/src/serve.rs:263-269` (`--state` directory created and locked by `spindle.lock`), `:367-383` (host opened), `:392` (listener bound), `:400-407` (`Seeding::new` on every start, no state consulted), `:425-427` (one entry stepped per loop turn) — cited
-- **Files:** `crates/spindle-cli/src/seed.rs:203-235` (`Seeding`, `submitted` starts empty), `:319-329` (request-id already-there, this start only), `:191-199` + `:366-397` (`existing`/`submitted`: already-there only for an `existing_instance:` outcome), `:290-306` (`end`, where a "seed ran" marker would be written) — cited
-- **Files:** `crates/spindle-cli/src/cli.rs:300-318` (`--seed` help: "Request ids are not kept across starts … every other entry runs again", :312-314) — cited
-- **Symbols:** `Seeding::new`, `Seeding::step`, `Seeding::end`, `Seeding::pending`, `serve::serve`, `Serving::state`, `Host::rows` (`crates/spindle-host/src/host.rs:1344`, for "the state holds no row") — cited
-- **Files:** `crates/spindle-cli/tests/spindle-cli/seed.rs:398` `a_second_run_on_one_state_applies_nothing_new` asserts the second start sends 3 entries ("3 sent, 0 applied, 3 already there") and has to be rewritten; `crates/spindle-docs/src/status.rs:432-434` names that test and states the old rule — cited
-- **Also likely:** new acceptance tests in `crates/spindle-cli/tests/spindle-cli/seed.rs` — inferred; `crates/spindle-cli/Cargo.toml` + `Cargo.lock` for a digest crate (no workspace crate depends on `sha2`/`blake3` directly; `sha2` is only transitive, `Cargo.lock:1991`, `:2002`) — inferred
-- **Documents:** `README.md:59-61`, `website/docs/concepts/environment-and-admission.md:223-233` ("What a seed does not do"), `crates/spindle-docs/src/status.rs:432` — cited; generated `website/docs/reference/cli.md:134`, `website/docs/status.md`, `website/data/status.json`, `CHANGELOG.md` `[Unreleased]` — inferred
-- **Not touched:** `crates/spindle-kernel` and `crates/spindle-host` if the marker is a file in the state directory (uses only the existing `Host::rows`); `crates/spindle-ingress` (`console::reset` stays as it is) — inferred
-- **Must keep (wave 25, story:reset-reapplies-seed):** `serve.rs:434-446` sends a reset to `reset_seeded` only `if let Some(seeding)`, so a start that skips the seed must still build a `Seeding` with nothing pending, or a later reset with no world will not seed again (acceptance 3). Also keep `Seeding::cut` `:246`, `restart` `:262` (`next = 0`, `submitted.clear()`), `finish` `:278`, `reset_seeded` `serve.rs:477-499`, the tests `seed.rs:1015`, `:1093`, `:1140`, `:1182` and `tests/spindle-cli/seed/adversary_w25_reseed.rs`, `adversary_w25_reseed_r2.rs`. None of these tests use `--state` or a restart — cited
-- **Confidence:** medium. The gap and the surfaces are read from the tree. Where the marker lives and when it is written are my recommendation; the story does not decide them.
-- **Would collide with:** any unit touching `spindle-cli`'s `serve.rs` (`Serving` struct `:71-119`, start sequence `:367-427`), `seed.rs` (`Seeding`), `main.rs:569-593` (building `Serving`) or the `run` arguments and `--seed` help in `cli.rs`. That covers story:run-fails-on-rejected-line: a rejected seed entry exits 1 before listening, which moves the seed ahead of `serve.rs:392` and changes `Seeding::step`/`end`. It also covers story:clock-and-mint-in-every-mode: `SystemClock` at `serve.rs:370`, new `run` flags in `cli.rs`, new `Serving` fields. Also the generated `cli.md` and the status row "Seed at start".
-- **Safety fact:** a marker file in the state directory survives a reset and is ignored by `state move`. A reset moves aside only each `<component>.sqlite` (`host.rs:865`, `Host::empty` `:1254-1280`), and `state move` opens only `<component>.sqlite` by name (`state.rs:48`, `:65`). Reached by step 2 (`file:line`); unproven.
+- **Primary surface:** `crates/spindle-cli`: the seed module, and the serve start sequence and reset path — cited
+- **Files:** `crates/spindle-cli/src/seed.rs`: `Seed` `:61-76` (gains the file digest, from the text `load` already reads at `:87`); `Seeding` `:206-220`; `new` `:234`; `cut` `:259`; `restart` `:275`; `finish` `:292`; `end` `:304`; `step` `:340-382` (the marker is written after each entry); module doc `:17-20` ("Spindle keeps no record of request ids across starts") — cited
+- **Files:** `crates/spindle-cli/src/serve.rs`: the `--state` directory and lock `:271-277`; host opened `:379-391`; listener bound `:400`; `Seeding::new` on every start `:408-415`, where the marker is read, the seed skipped or resumed, or a changed digest refused before `:400`; reset with a seed `:451-464`; `reset_seeded` `:494-516`; `Serving.seed` doc `:115-118` — cited
+- **Files:** `crates/spindle-cli/src/cli.rs:316-337`: the `--seed` help, which says at `:333-334` "Request ids are not kept across starts … every other entry runs again" — cited
+- **Symbols:** `Seed`, `Seeding::{new, step, end, cut, restart, finish, pending}`, `serve::serve`, `Serving::state`, `Host::rows` (`crates/spindle-host/src/host.rs:1390`, for "the state holds no row"), `spindle_kernel::private::open_or_create` (`crates/spindle-kernel/src/private.rs:43`, never truncates, so a rewrite does `set_len(0)` and rewind as `state_lock.rs:120-123` does), `ess_conformance::known_failures::sha256` (the ESS 0.99.1 checkout, `crates/verify/ess-conformance/src/known_failures.rs:44`, `&[u8] -> "sha256:<hex>"`) — cited
+- **Files (tests):** `crates/spindle-cli/tests/spindle-cli/seed.rs:394-450` `a_second_run_on_one_state_applies_nothing_new` asserts that the second start sends 3 entries; it is rewritten to expect the skip line and `counted == [0,0,0,0]`. The same file gets one `mod` line at `:1224-1226` — cited
+- **Also likely:** a new test module `crates/spindle-cli/tests/spindle-cli/seed/durable.rs`, so that this story's tests stay out of `seed.rs`'s body. It reuses `serve`, `scratch`, `write`, `environment`, `grant`, `counted`, `reset` and `holding_desk` from `seed.rs` — inferred
+- **Not needed:** a new dependency. `spindle-cli` already depends on `ess-conformance` (`crates/spindle-cli/Cargo.toml:19`), which exports `sha256`, so `Cargo.toml` and `Cargo.lock` stay as they are — cited
+- **Documents:** `README.md:66-72`; `website/docs/concepts/environment-and-admission.md:231-245` ("What a seed does not do"); `crates/spindle-docs/src/status.rs:436-441` (the "Seed at start" row: its text, and its test path `:441` if the test is renamed); `CHANGELOG.md` `[Unreleased]` — cited. Regenerated from those: `website/docs/reference/cli.md:136`, `website/docs/status.md:70`, `website/data/status.json:373` — inferred, by the generator that produces them
+- **Not touched:** `crates/spindle-host`, `crates/spindle-kernel`, `crates/spindle-ingress` (only `Host::rows`, `private::open_or_create` and `console::reset` are called, as they are); `crates/spindle-cli/src/main.rs` (`seed::load` at `:600` keeps its signature and the digest lives inside `Seed`); `state.rs` and `state_lock.rs` — inferred
+- **Must keep (story:reset-reapplies-seed):** `serve.rs:451-453` runs `reset_seeded` only `if let Some(seeding)`. A start that skips the seed must still build a `Seeding` with nothing pending, or acceptance 3 fails. Keep the tests `seed.rs:1016`, `:1094`, `:1141`, `:1183`, `seed/adversary_w25_reseed.rs`, `seed/adversary_w25_reseed_r2.rs` and `seed/rejected.rs` green. None of them pass `--state`, so with the marker written only under `--state` they write none — cited
+- **Confidence:** high for the files, because the story's own scope names them and each line was checked against this tree. Medium for the marker's behaviour around a reset that carries a world and around a crash; see D1 and D2.
+- **Would collide with:** any unit that touches `crates/spindle-cli/src/serve.rs` between the start sequence and the serve loop (`:400-481`) or `reset_seeded` `:494-516`. In this wave that is story:serve-loop-signal-exit-answers: it edits the loop's signal check, `seeding.step` and `listener.next` (`:427-450`), 12 lines below this story's `:408-415`, and probably adds reset-and-seed tests to `tests/spindle-cli/seed.rs`. Any unit on `seed.rs` (`Seeding`), on the `run --seed` help in `cli.rs`, on the "Seed at start" status row, or on regenerated `cli.md` / `status.md` / `status.json`.
+- **Safety fact:** `seed.json` beside `spindle.lock` survives a reset and is ignored by `state move`. A reset moves aside or removes only each `<component>.sqlite` (`host.rs:871`, `:2166-2197`), and `state move` checks and opens only `<component>.sqlite` by name (`state.rs:48`, `:65`). Proven to step 2 (`file:line`), unproven.
 
-Gap confirmed: yes, cited. Every start builds a fresh `Seeding` (`serve.rs:400-407`) with no request ids remembered (`seed.rs:223-235`, module doc `:14-17`). An entry counts as already-there only when its command answers an `existing_instance:` outcome (`seed.rs:381-392`) or repeats a request id from this start (`:319-320`). So an update, move or remove entry is submitted again and applied again on every restart. `cli.rs:312-314` and `README.md:59-61` say this in so many words. No marker exists anywhere: `serve.rs` reads nothing from the state directory except the lock.
+Decided when scoped (unchanged): `seed.json` in `--state`, `0600`, holding the digest and the number of entries done, written after each entry. Same digest: resume from the count, or print one line and send nothing when every entry is done. Different digest: exit 1 before listening, naming both digests, unless `Host::rows` sums to 0. Rows and no marker (0.21.0 or earlier): seed as today, then write the marker. Not covered: PostgreSQL (no `--state`).
 
-Where the marker lives: a file in the `--state` directory, next to `spindle.lock` (`state_lock.rs:17`), for example `seed.json` holding `{"file", "digest"}`. Create it `0600` through `spindle_kernel::private` (`private.rs:43`) and write it from the CLI when the seed's end line prints (`Seeding::end`, `seed.rs:290`). On start, read it after the host opens and before `Listener::bind_reading_on` (`serve.rs:383-392`):
-- Same digest: print one line and build a `Seeding` with nothing pending.
-- Different digest: exit 1 naming both digests, unless `Host::rows` sums to 0.
-
-Do not put it in the store. A marker stream like `RESET` (`sqlite.rs:82-85`) would mean a new `Store` method (`store.rs:207`) in the sqlite, postgres and memory stores and in the host wrappers (`host.rs:440`, `:510`, `host/rows.rs:375`). It would sit in one component's file among several, and a reset would wipe it with that file (`host.rs:1275`). Open (inferred):
-- A run stopped mid-seed writes no marker, so its restart replays the whole seed. Write the marker at the start, or keep progress per entry?
-- A state that holds rows but has no marker (from 0.21.0) gets the seed applied as today, then the marker.
-- On postgres there is no `--state` (`serve.rs:278-282`) and the state outlives the run, so a restart there still replays. The story does not cover this.
+Tests to add (each starts the binary at most twice on one sqlite state, with no network and no model call; none timed yet, so name any test over 5 s; 60 s per test, 120 s for the step):
+- `a_restart_does_not_apply_the_seed_again` (acceptance 1)
+- `a_changed_seed_on_a_seeded_state_stops_the_run` (acceptance 2: exit 1, both `sha256:` digests on stderr, no listening line)
+- `a_reset_applies_the_seed_again_after_a_restart` (acceptance 3)
+- `a_run_stopped_mid_seed_resumes_after_the_last_entry_done` (decided: resume; holds an entry with `holding_desk`, then SIGTERM)
+- `a_changed_seed_on_a_state_with_no_row_runs_from_its_first_entry` (decided: the empty-state exception)
+- `a_state_with_rows_and_no_marker_is_seeded_then_marked` (decided: an older state)
+- `the_seed_marker_is_private` (mode `0600`, Unix)
+- `a_restart_after_a_reset_with_a_world_sends_no_seed_entry` (D1, under the default)
 
 ## Decided when scoped
 
@@ -77,3 +120,11 @@ Do not put it in the store. A marker stream like `RESET` (`sqlite.rs:82-85`) wou
 - A start that skips the seed still builds a `Seeding` with nothing pending, so a later reset with no
   world seeds again (story:reset-reapplies-seed).
 - Not covered: a PostgreSQL store (no `--state` directory); a restart there replays as today.
+
+Taken 2026-11-26 on the scoper's recommended option, each reversible, unless noted.
+
+- D1 A: a reset that loads a world marks every seed entry done; a restart sends nothing.
+- D2 A: the marker is written after each entry; a SIGKILL between commit and marker applies
+  that one entry twice.
+- A reset with no world empties the state and writes `seed.json` at count 0 before it sends its
+  first entry, so a run stopped before that entry completes restarts the seed from its first entry.

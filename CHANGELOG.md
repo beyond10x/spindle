@@ -19,9 +19,67 @@ are Spindle's releases.
   out is unknown and refuses the read unless a guard such as `not defined(param.x)` decides it.
   Any other leaf still refuses the view whole, naming its filter
   (`story:view-filter-parameter-literal`).
+- `run` reading stdin fires the specification's event bindings, routed as a served run routes
+  them, on its one store: each command a binding maps a line's events to runs in the same step and
+  prints its result after the line's own, with `"caused_by": {"line": <n>, "binding": "<id>"}` and
+  `"attempts"`, and its events fire bindings in turn. A bound command that is refused or does not
+  run fails the run after the last line. `--drop-retries` is accepted on stdin, where it was
+  refused. A binding a served run refuses (such as `on_failure: escalate`) now stops a stdin run
+  with exit 1 before any line is read, where it was ignored; a specification that declares no
+  component routes its bindings as the one implied component (`story:stdin-run-fires-bindings`).
+- `run` reading stdin takes an arrange line, `{"arrange": [{"entity", "identity", "state",
+  "fields"}]}`, that writes those rows before the next line, read as a reset's world reads them
+  and checked against each entity's invariants, all or none; a seeded mint never mints an
+  identity one wrote. A command's input may name a value an earlier line answered with
+  `{"$line": <n>, "pointer": "<JSON pointer>"}`, such as the identity line `n` minted; a reference
+  to a line not answered before it, or to a pointer its answer lacks, rejects the line
+  (`story:stdin-arrange-and-line-references`).
+- A command whose `ess-http/1` binding reads some input fields from the query string beside its
+  `json` or `form` body (`request: {query: [input.<field>, ...]}`) is served, where its route
+  answered `501`. Each listed field is read from the query string under its wire name as ESS
+  0.99.1's served application reads it, a `List<T>` field from its key repeated
+  (`tags=a&tags=b`), and joined with the body's fields; the command runs on the joined input. A
+  body member or key naming a listed field is refused `400`, whether the query carries the field
+  or not, and so is a query key no listed field names under `unknown: refuse`, or one given twice
+  (`story:query-input-beside-body`).
+- A served `run` that names a command reading caller attributes not served, because the run
+  neither fixes a caller nor has each request prove one, prints one more stderr line naming both
+  ways to serve it: `--fixed-actor` with `--fixed-caller`, or `--trusted-caller-header` with
+  `--trusted-caller-secret`. The route's reason, its answer and `GET /api/served` are unchanged
+  (`story:caller-attributes-on-loopback`).
+- A command an event binding invokes that is refused, by an outcome that declares an error or by
+  the kernel, is listed in the record of the request that led to it, under `refused_bound`
+  (`spindle.observe.RefusedBound`): the binding, the component, the command, the command whose
+  event the binding carried (`caused_by`), the refusing outcome and its error, or the kernel's
+  error kind, and the attempts, never a value of the error's fields; and counted as
+  `spindle_bound_refusals_total{binding, command, refusal}` in `GET /__spindle/metrics`. The log
+  stays `spindle-requests/1`, and `GET /api/events` still lists only the events the run committed.
+  `spindle_host::Failed` and `RefusedCommand` carry `caused_by`, and `Failed` the kernel's error
+  `kind`; `spindle_channel::Sender::next_delivery` reads the id the next envelope carries
+  (`story:refused-bound-command-recorded`).
+- A value (`{related: …}`), a `when_related:` guard or a row set over an entity another component
+  owns is read from the owner's store where both components run in one process (`run` reading
+  stdin, a served `run`), and answers what ESS 0.99.1's interpreter answers, where it was refused
+  as unsupported and `admit` listed it as not served. `admit --component` and `play --component`,
+  where the owner runs in another process, still refuse it by name, naming the entity, its owner
+  and the running component. A write of another component's entity, an `affects:` entry, a
+  subject or the rows of `instances:`, is refused by name in every run, where nothing refused
+  it and it wrote the running component's store, where no read of that entity looks. The
+  kernel's `takes_reaching`, `runs_reaching` and `execute_reaching` and the ingress's
+  `Surface::reaching` take the components the store reaches
+  (`story:cross-component-related-reads`).
 
 ### Fixed
 
+- A command names an `Integer` identity whatever its spelling: one sent as `1.0` finds the row
+  created as `1`, and the reverse, as ESS 0.99.1's interpreter reads both as one value, where it
+  answered that no row has the identity. The kernel writes every `Integer` of a command's input as
+  the integer once ESS admitted it (through `Optional`, newtypes, lists, maps, struct members and
+  union payloads), so the row, its identity and the event payload hold `1`, and writes a caller's
+  `Integer` attribute read by `{caller: …}` the same way; the walk a reset's world uses is the
+  kernel's, `spindle_kernel::integers`. A durable row a command created with `1.0` before this
+  change is keyed `1.0` and is no longer found; it is not migrated
+  (`story:integer-identity-any-spelling`).
 - The `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` archives run on glibc 2.17 and
   newer, where 0.21.0's needed `GLIBC_2.39`: `release.yml` links them through `cargo auditable
   zigbuild` against glibc 2.17, fails the row on any newer `GLIBC_` symbol version (`objdump -T`)
@@ -30,12 +88,52 @@ are Spindle's releases.
   no `INTERP` and no `NEEDED` and run in Alpine; the SBOM covers the five targets and
   `SHA256SUMS` the five archives (`story:release-linux-glibc-floor-and-musl`).
 
+- A guard that reads a present `Map` input, stored field or caller attribute with `.count` or a
+  quantifier (`scores.count > 0`, `exists: {in: scores, as: s, that: s > 5}`, `forall:`) is
+  decided as ESS 0.99.1's interpreter decides it, where the kernel refused the command as
+  undecidable and the served route answered `501`: a value whose declared type is a `Map` binds
+  `<path>.count` and its values at `<path>.<index>` in key order, as a list does, and no key at
+  any path (`story:map-input-guard-facts`).
+
 - A `when_related:` row-set guard whose `where:` or `forall:` walks the rows of another entity,
   `exists: {in: {entity: …}, as: …, that: …}`, is decided as ESS 0.99.1's interpreter decides it,
   where it was refused at start: every stored row of the walked entity is read with the
   candidates, and a write to it between that read and the commit refuses the command as a
   conflict, as a write to the guard's own entity does. A rows quantifier in an `affects:` or
   `instances:` filter stays refused, as ESS refuses it (`story:related-selector-rows-quantifier`).
+
+- The six wasm lanes of `task check` share one compile-cache key and each ends within 120 s on an
+  emptied `target/`, where the Node lane ran 626 s: the `wasm-bindgen-test-runner` runner moves
+  from the three test lanes' environment to `.cargo/config.toml`
+  (`[target.wasm32-unknown-unknown]`), the workspace `serde_json` takes the `alloc` feature that
+  `wasm-bindgen-test` asks for, so `cargo test` and `cargo build` compile the ESS crates once, and
+  `check:the_static_bundle_builds` builds `spindle-wasm` in `wasm-gate` itself (`task web` still
+  builds the release profile). A new step, `check:the_wasm_lanes_share_one_cache_key`
+  (`scripts/wasm-cache-key.sh`), fails when the Taskfile sets a `CARGO_*` variable, when a lane
+  builds in a profile other than `wasm-gate` (the lint: `wasm-lint`), when one of the six lanes is
+  not run under `scripts/within.sh 120` or holds no wasm `cargo` command the script reads, or when
+  `.cargo/config.toml` names no wasm runner (`story:wasm-lanes-within-budget`).
+
+- `run --seed` on a `--state` directory applies the seed once, where every start sent every entry
+  again and an entry that updates, moves or removes a row changed it a second time. `seed.json` in
+  the state (`0600`, replaced whole on each write) records the seed file's `sha256:` digest, the
+  entries sent and those rejected, after each entry: a restart with the same file sends the
+  rejected entries again, exiting 1 again where one still is, then the entries not yet sent,
+  remembering the request ids of those sent before; it prints that the seed already ran once every
+  one is done. One with another file exits 1 before listening, naming both digests, unless the
+  state holds no row. A state without `seed.json` gets the whole seed, then the record. A reset
+  with no world records 0 entries done before it sends the seed again; one with a world records
+  every entry done; one by a run without `--seed` removes the record
+  (`story:seed-once-on-durable-state`).
+
+- A served `run` that receives SIGINT or SIGTERM, or whose seed ends having rejected an entry, takes
+  no further request and answers every client before it exits, where it took one more exchange
+  after a seed entry, a reset taken there emptied a `--state` and was never answered, and an
+  answer handed over just before the exit could reach its client as a closed connection. A
+  request still waiting is answered `503`; a reset whose seed the signal cuts answers `200` once
+  the entry under way is done, `seed.json` counting the entries done. `Listener::close` in
+  `spindle-ingress` answers each queued request `503` and writes every answer handed back before
+  its thread ends (`story:serve-loop-signal-exit-answers`).
 
 ### Fixed
 

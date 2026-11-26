@@ -1,0 +1,84 @@
+domain: metering.holds
+summary: Holds placed on organizations, each at a level.
+types:
+  - name: metering.holds.HoldId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: metering.holds.Hold
+    identity:
+      name: hold_id
+      type: metering.holds.HoldId
+    fields:
+      - name: org
+        type: String
+      - name: level
+        type: Integer
+    lifecycle:
+      initial: Active
+      states: [Active]
+      terminal: [Active]
+commands:
+  - name: metering.holds.PlaceHold
+    input:
+      - name: hold_id
+        type: metering.holds.HoldId
+      - name: org
+        type: String
+      - name: level
+        type: Integer
+    outcomes:
+      - name: placed
+        creates: metering.holds.Hold
+        instance: hold_id
+        sets:
+          org: input.org
+          level: input.level
+        emits: [metering.holds.HoldPlaced]
+        payload:
+          metering.holds.HoldPlaced:
+            hold_id: input.hold_id
+        summary: The organization is put on hold.
+  - name: metering.holds.LevelHold
+    input:
+      - name: hold_id
+        type: metering.holds.HoldId
+      - name: level
+        type: Integer
+    outcomes:
+      - name: levelled
+        updates: metering.holds.Hold
+        instance: hold_id
+        sets:
+          level: input.level
+        emits: [metering.holds.HoldLevelled]
+        payload:
+          metering.holds.HoldLevelled:
+            hold_id: input.hold_id
+        summary: The hold carries the new level.
+  - name: metering.holds.ReleaseHold
+    input:
+      - name: hold_id
+        type: metering.holds.HoldId
+    outcomes:
+      - name: released
+        deletes: metering.holds.Hold
+        instance: hold_id
+        emits: [metering.holds.HoldReleased]
+        payload:
+          metering.holds.HoldReleased:
+            hold_id: input.hold_id
+        summary: The hold is gone.
+events:
+  - name: metering.holds.HoldPlaced
+    fields:
+      - name: hold_id
+        type: metering.holds.HoldId
+  - name: metering.holds.HoldLevelled
+    fields:
+      - name: hold_id
+        type: metering.holds.HoldId
+  - name: metering.holds.HoldReleased
+    fields:
+      - name: hold_id
+        type: metering.holds.HoldId

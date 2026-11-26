@@ -5,7 +5,7 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:2bc88af4244eece443dff501da17251c041dc720d5129107130874462d6569dc",
+    "contract_digest": "slice-sha256/2:473b9bb19e23f47b4c9188a0444d45a1591bb177709037d9fde1bfc5090ad670",
     "regenerate": "ess generate"
   },
   "$defs": {
@@ -63,6 +63,60 @@
         "command",
         "view",
         "console"
+      ]
+    },
+    "spindle.observe.RefusedBound": {
+      "title": "RefusedBound",
+      "description": "One command an event binding invoked that was refused on its last attempt, so nothing it would have written was written: refused by an outcome that declares an error, or rejected by the kernel, which selected no outcome (an input, guard or invariant it could not satisfy). The command that published the event stays committed, and the event log (`GET /api/events`) lists only the events the run committed. ESS defines no observable result for a refused bound command; this entry is Spindle's (`docs/design/spindle.md` § 11, refused bound command). It names the error and never a value of its fields.",
+      "x-ess-name": "spindle.observe.RefusedBound",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "binding": {
+          "description": "The binding id.",
+          "type": "string"
+        },
+        "component": {
+          "description": "The component that accepts the command.",
+          "type": "string"
+        },
+        "command": {
+          "description": "The qualified name of the refused command.",
+          "type": "string"
+        },
+        "caused_by": {
+          "description": "The qualified command whose run published the event the binding carried: the routed command, or one an event binding invoked on the way. Absent where the event was published in another process of a run split over processes.",
+          "type": "string"
+        },
+        "outcome": {
+          "description": "The refusing outcome the model selected; absent where the kernel rejected it.",
+          "type": "string"
+        },
+        "error": {
+          "description": "The qualified name of the error that outcome declares; absent where the kernel rejected it.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "Where the kernel rejected it, the kind of its error, as `spindle_command_failures_total` labels it (`invalid_input`, `undecidable`, `undecided`, `no_value`, `invalid_value`, `broken_invariant`, `undeclared`, `unsupported`, `store`, `not_granted`, `unknown_command`); absent where an outcome refused it.",
+          "type": "string"
+        },
+        "attempts": {
+          "description": "How many times it was run, the last included: more than 1 only where the binding retries.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        }
+      },
+      "required": [
+        "binding",
+        "component",
+        "command",
+        "attempts"
+      ],
+      "additionalProperties": false,
+      "x-ess-invariants": [
+        "attempts >= 1",
+        "attempts <= 5"
       ]
     },
     "spindle.observe.RequestClass": {
@@ -217,6 +271,13 @@
           "items": {
             "$ref": "#/$defs/spindle.observe.UnmetInput"
           }
+        },
+        "refused_bound": {
+          "description": "Every command an event binding invoked while the request was answered that was refused on its last attempt: first those a refusing outcome refused, then those the kernel rejected, each in the order the runtime reported them. Empty when every one ran. Each is counted in `spindle_bound_refusals_total`. The list is complete when everything the request led to has run. When it stopped because bindings kept triggering each other, only the kernel's rejections before that are listed; when it failed as `unmet` says, none is. A command a timer fired, and one refused in another process of a run split over processes, is in no record.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/spindle.observe.RefusedBound"
+          }
         }
       },
       "required": [
@@ -229,7 +290,8 @@
         "duration_us",
         "events",
         "externals",
-        "unmet"
+        "unmet",
+        "refused_bound"
       ],
       "additionalProperties": false,
       "x-ess-invariants": [

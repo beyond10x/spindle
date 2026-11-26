@@ -14,7 +14,7 @@ use ess_domain::binding::Failure;
 use serde_json::{Map, Value};
 use spindle_capability::{Capability, Environment};
 use spindle_channel::{
-    ChannelError, Envelope, Receiver, Route, RouteError, Router, Sender, in_process,
+    ChannelError, DeliveryId, Envelope, Receiver, Route, RouteError, Router, Sender, in_process,
 };
 use spindle_kernel::{
     Change, Committed, Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, Mint,
@@ -81,8 +81,16 @@ pub struct Failed {
     pub command: String,
     /// Why it was invoked.
     pub cause: Cause,
+    /// The qualified command whose run published the event a binding carried here, for a
+    /// command an event binding invoked, or whose input was unmet, in this host; `None` for a
+    /// tick's command, and for an envelope delivered from another process (a run split over
+    /// processes, [`Host::component`]), whose publishing command this host never ran.
+    pub caused_by: Option<String>,
     /// The kernel's error on the last attempt, as text.
     pub error: String,
+    /// The kind of the kernel's error on the last attempt ([`ExecuteError::kind`]); `None` for a
+    /// binding whose input was unmet, which no attempt ran.
+    pub kind: Option<&'static str>,
     /// How many times it was run: 0 for a binding whose input was unmet, so its command was
     /// never sent.
     pub attempts: u32,
@@ -98,6 +106,9 @@ pub struct RefusedCommand {
     pub command: String,
     /// Why it was invoked.
     pub cause: Cause,
+    /// The qualified command whose run published the event a binding carried here, as
+    /// [`Failed::caused_by`].
+    pub caused_by: Option<String>,
     /// The refusing outcome of the last attempt.
     pub outcome: String,
     /// The error that outcome declares.
@@ -469,6 +480,194 @@ impl Store for Tallied<'_> {
     }
 }
 
+/// The store a command runs on in a host: the running component's ([`Tallied`]), where every
+/// write goes, with each read of an entity another component of this host owns (a row, a scan,
+/// a count) answered from that component's store, as ESS's interpreter reads every entity from its
+/// one store (`story:cross-component-related-reads`). The kernel reaches the stores of the
+/// components this host runs ([`spindle_kernel::execute_reaching`]).
+///
+/// A write the kernel conditions on an entity it scanned ([`spindle_kernel::Write::scanned`]) is
+/// conditioned on the version of the store that answered the scan: each entity another
+/// component owns is checked against its owner's version, then left out of what the running
+/// component's store checks, which holds no row of it. The check and the commit are two steps,
+/// which no other write comes between while this host is the one writer of the owner's store: a
+/// memory store, or a SQLite state directory, which `run` locks. Two processes writing one
+/// PostgreSQL owner store can keep a stale decision (`docs/design/spindle.md` § 11).
+struct Routed<'a> {
+    ir: &'a EssIr,
+    running: Tallied<'a>,
+    /// The store of every other component this host runs, by name.
+    others: BTreeMap<&'a str, &'a mut dyn Store>,
+}
+
+impl Routed<'_> {
+    /// The other component of this host that owns `entity`, where one does.
+    fn owner(&self, entity: &str) -> Option<&str> {
+        let declared = self.ir.entities().get(&entity.parse().ok()?)?;
+        let owner = self
+            .ir
+            .components()
+            .values()
+            .find(|component| component.owns.contains(&declared.domain))?;
+        self.others
+            .get_key_value(owner.name.as_str())
+            .map(|(name, _)| *name)
+    }
+
+    /// The store `entity` is read from: its owner's, where another component of this host owns
+    /// it, else the running component's.
+    fn source(&mut self, entity: &str) -> &mut dyn Store {
+        match self.owner(entity).map(str::to_owned) {
+            Some(owner) => match self.others.get_mut(owner.as_str()) {
+                Some(store) => &mut **store,
+                None => &mut self.running,
+            },
+            None => &mut self.running,
+        }
+    }
+
+    /// Checks each of `scanned` another component owns against its owner's version, and answers
+    /// the rest, which the running component's store checks; `None` where every one is the running
+    /// component's.
+    ///
+    /// # Errors
+    /// [`StoreError::Conflict`] where another component's entity moved since its scan, as a store
+    /// refuses a write whose scanned entity moved.
+    fn unmoved(&mut self, scanned: &[Scanned]) -> Result<Option<Vec<Scanned>>, StoreError> {
+        if scanned
+            .iter()
+            .all(|entity| self.owner(&entity.entity).is_none())
+        {
+            return Ok(None);
+        }
+        let mut own = Vec::new();
+        for entity in scanned {
+            match self.owner(&entity.entity).map(str::to_owned) {
+                Some(owner) => {
+                    let store = self
+                        .others
+                        .get_mut(owner.as_str())
+                        .ok_or_else(|| StoreError::Backend(format!("{owner} is not running")))?;
+                    let actual = store.scan(&entity.entity)?.version;
+                    if actual != entity.version {
+                        return Err(StoreError::Conflict {
+                            entity: entity.entity.clone(),
+                            identity: spindle_kernel::EVERY_INSTANCE.to_owned(),
+                            expected: Some(entity.version),
+                            actual: Some(actual),
+                        });
+                    }
+                }
+                None => own.push(entity.clone()),
+            }
+        }
+        Ok(Some(own))
+    }
+
+    /// `write`, conditioned only on the running component's entities, once the others are
+    /// checked ([`Self::unmoved`]).
+    fn checked(
+        &mut self,
+        write: &spindle_kernel::Write,
+    ) -> Result<spindle_kernel::Write, StoreError> {
+        let mut write = write.clone();
+        let scanned = match &mut write {
+            spindle_kernel::Write::Commit(change) => &mut change.scanned,
+            spindle_kernel::Write::Remove(removal) => &mut removal.scanned,
+        };
+        if let Some(own) = self.unmoved(scanned)? {
+            *scanned = own;
+        }
+        Ok(write)
+    }
+}
+
+impl Store for Routed<'_> {
+    fn load(
+        &mut self,
+        entity: &str,
+        identity: &Value,
+    ) -> Result<Option<spindle_kernel::Stored>, StoreError> {
+        self.source(entity).load(entity, identity)
+    }
+
+    fn scan(&mut self, entity: &str) -> Result<spindle_kernel::Scan, StoreError> {
+        self.source(entity).scan(entity)
+    }
+
+    /// Counts each entity in the store it is read from, the running component's in one read.
+    fn counts(&mut self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
+        let (foreign, own): (Vec<String>, Vec<String>) = entities
+            .iter()
+            .cloned()
+            .partition(|entity| self.owner(entity).is_some());
+        let mut counts = self.running.counts(&own)?;
+        for entity in foreign {
+            let count = self.source(&entity).counts(std::slice::from_ref(&entity))?;
+            counts.extend(count);
+        }
+        Ok(counts)
+    }
+
+    fn reading(&mut self) -> Option<Arc<dyn Reading>> {
+        self.running.reading()
+    }
+
+    fn attribute(&mut self, origin: Option<Origin>) {
+        self.running.attribute(origin);
+    }
+
+    fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
+        self.running.events_after(position, limit)
+    }
+
+    fn events_head(&mut self) -> Result<u64, StoreError> {
+        self.running.events_head()
+    }
+
+    fn commit_events(&mut self, events: &[Event], scanned: &[Scanned]) -> Result<(), StoreError> {
+        if events.is_empty() {
+            return self.running.commit_events(events, scanned);
+        }
+        match self.unmoved(scanned)? {
+            Some(own) => self.running.commit_events(events, &own),
+            None => self.running.commit_events(events, scanned),
+        }
+    }
+
+    fn forget_events(&mut self) -> Result<(), StoreError> {
+        self.running.forget_events()
+    }
+
+    fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
+        match self.unmoved(&change.scanned)? {
+            Some(scanned) => self.running.commit(&Change {
+                scanned,
+                ..change.clone()
+            }),
+            None => self.running.commit(change),
+        }
+    }
+
+    fn remove(&mut self, removal: &spindle_kernel::Removal) -> Result<(), StoreError> {
+        match self.unmoved(&removal.scanned)? {
+            Some(scanned) => self.running.remove(&spindle_kernel::Removal {
+                scanned,
+                ..removal.clone()
+            }),
+            None => self.running.remove(removal),
+        }
+    }
+
+    fn commit_all(&mut self, writes: &[spindle_kernel::Write]) -> Result<(), StoreError> {
+        let writes = writes
+            .iter()
+            .map(|write| self.checked(write))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.running.commit_all(&writes)
+    }
+}
+
 impl Store for Supplied {
     fn load(
         &mut self,
@@ -585,6 +784,10 @@ pub struct Host {
     /// The routes of the event bindings this host may retry, by binding name: read from its own
     /// routes, never from an envelope, so a peer's frame does not decide the policy.
     retrying: BTreeMap<String, Arc<Route>>,
+    /// The qualified command whose run staged each envelope in flight between this host's own
+    /// components, by the publishing component and the envelope's id; taken when the envelope is
+    /// invoked ([`Failed::caused_by`]). Empty in a run split over processes.
+    staged_by: BTreeMap<(String, DeliveryId), String>,
 }
 
 impl std::fmt::Debug for Host {
@@ -996,6 +1199,7 @@ impl Host {
             mint: Box::new(UuidV4),
             seed: None,
             retrying,
+            staged_by: BTreeMap::new(),
         };
         if seeded { host.seeded(0) } else { Ok(host) }
     }
@@ -1493,7 +1697,7 @@ impl Host {
                 });
             }
         }
-        self.unmet(&component, &mut report);
+        self.unmet(&component, command, &mut report);
         self.settle(&mut report, &mut Deliveries::default())?;
         Ok(report)
     }
@@ -1758,7 +1962,9 @@ impl Host {
     }
 
     /// Executes one command on `component` and sends the events it emitted, refusing each outcome
-    /// `refused` names ([`spindle_kernel::execute_refusing`]).
+    /// `refused` names ([`spindle_kernel::execute_refusing`]). The command reads each entity
+    /// another component of this host owns from that component's store ([`Routed`],
+    /// [`spindle_kernel::execute_reaching`]).
     ///
     /// The outer error is the host's own; the inner one is the command's.
     fn execute(
@@ -1770,10 +1976,17 @@ impl Host {
         caller: Option<&Map<String, Value>>,
         refused: &BTreeMap<String, String>,
     ) -> Result<Result<Executed, ExecuteError>, HostError> {
-        let held = self
-            .components
-            .get_mut(component)
-            .ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
+        let reached: BTreeSet<String> = self.components.keys().cloned().collect();
+        let mut held = None;
+        let mut others: BTreeMap<&str, &mut dyn Store> = BTreeMap::new();
+        for (name, running) in &mut self.components {
+            if name == component {
+                held = Some(running);
+            } else {
+                others.insert(name.as_str(), &mut running.store);
+            }
+        }
+        let held = held.ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
         let started = Instant::now();
         let clock = &self.clock;
         let sequence = following(self.sequence.load(Ordering::SeqCst), clock.wall());
@@ -1782,13 +1995,17 @@ impl Host {
             command: command.to_owned(),
             sequence,
         }));
-        let mut tallied = Tallied {
-            store: &mut held.store,
-            appended: Vec::new(),
+        let mut routed = Routed {
+            ir: &self.ir,
+            running: Tallied {
+                store: &mut held.store,
+                appended: Vec::new(),
+            },
+            others,
         };
-        let result = spindle_kernel::execute_refusing(
+        let result = spindle_kernel::execute_reaching(
             &self.ir,
-            &mut tallied,
+            &mut routed,
             match &mut self.answers {
                 Some(answers) => answers.as_mut(),
                 None => self.decider.as_mut(),
@@ -1802,8 +2019,9 @@ impl Host {
                 caller,
             },
             refused,
+            &reached,
         );
-        let appended = tallied.appended;
+        let appended = routed.running.appended;
         held.store.attribute(None);
         held.sink.executed(command, &result, started.elapsed());
         let mut emitted = self.emitted.lock().unwrap_or_else(PoisonError::into_inner);
@@ -1823,6 +2041,7 @@ impl Host {
             .collect();
         if !sent.is_empty() {
             held.position += 1;
+            let first = held.sender.next_delivery();
             for event in sent {
                 held.sender.publish(
                     held.position,
@@ -1831,6 +2050,13 @@ impl Host {
                         fields: event.payload.clone(),
                     },
                 )?;
+            }
+            if self.remote.is_none() {
+                let DeliveryId(after) = held.sender.next_delivery();
+                for id in first.0..after {
+                    self.staged_by
+                        .insert((component.to_owned(), DeliveryId(id)), command.to_owned());
+                }
             }
             held.sender.mark_durable(held.position);
             held.sender.flush()?;
@@ -1847,7 +2073,7 @@ impl Host {
         cause: Cause,
         report: &mut Report,
     ) -> Result<(), HostError> {
-        self.attempt(component, command, input, cause, None, report)
+        self.attempt(component, command, input, cause, None, None, report)
     }
 
     /// Runs the command `envelope` carries; where this host's own route of `envelope.binding`
@@ -1855,9 +2081,12 @@ impl Host {
     /// attempt that is refused or does not execute and that the route answers with
     /// [`Failure::Retry`] ([`Route::answer`]: `on_failure: retry`, or the refusal's policy under
     /// `on_refusal`), until one takes effect, the route drops one, or [`RETRY_ATTEMPTS`] were
-    /// made, each attempt counted on the receiving component.
+    /// made, each attempt counted on the receiving component. A command it reports as refused or
+    /// not executed names the command whose run in this host staged `envelope`; one delivered
+    /// from another process names none.
     fn invoke(&mut self, envelope: &Envelope, report: &mut Report) -> Result<(), HostError> {
         let retried = self.retrying.get(&envelope.binding).cloned();
+        let caused_by = self.staged_by.remove(&(envelope.from.clone(), envelope.id));
         self.attempt(
             &envelope.to,
             &envelope.command.name,
@@ -1865,6 +2094,7 @@ impl Host {
             Cause::Delivered {
                 binding: envelope.binding.clone(),
             },
+            caused_by,
             retried.as_deref(),
             report,
         )
@@ -1872,13 +2102,15 @@ impl Host {
 
     /// Runs `command` once, or, when `retried` is the binding's route, again after each attempt
     /// the route answers with [`Failure::Retry`], up to [`RETRY_ATTEMPTS`] in all; reports the
-    /// attempt that took effect, or the last one.
+    /// attempt that took effect, or the last one, a refused or failed one as `caused_by`.
+    #[allow(clippy::too_many_arguments)]
     fn attempt(
         &mut self,
         component: &str,
         command: &str,
         input: &Map<String, Value>,
         cause: Cause,
+        caused_by: Option<String>,
         retried: Option<&Route>,
         report: &mut Report,
     ) -> Result<(), HostError> {
@@ -1917,6 +2149,7 @@ impl Host {
                     component: component.to_owned(),
                     command: command.to_owned(),
                     cause,
+                    caused_by,
                     outcome,
                     error,
                     attempts,
@@ -1932,18 +2165,21 @@ impl Host {
                     component: component.to_owned(),
                     command: command.to_owned(),
                     cause,
+                    caused_by,
                     error: error.to_string(),
+                    kind: Some(error.kind()),
                     attempts,
                 }),
             }
-            self.unmet(component, report);
+            self.unmet(component, command, report);
             return Ok(());
         }
     }
 
-    /// Reports every binding the events `component` just published triggered whose input was unmet
-    /// as a command that did not execute: its command was never sent ([`spindle_channel::Unmet`]).
-    fn unmet(&mut self, component: &str, report: &mut Report) {
+    /// Reports every binding the events `component` just published, running `command`, triggered
+    /// whose input was unmet as a command that did not execute: its command was never sent
+    /// ([`spindle_channel::Unmet`]), and `command` caused it.
+    fn unmet(&mut self, component: &str, command: &str, report: &mut Report) {
         let Some(held) = self.components.get_mut(component) else {
             return;
         };
@@ -1955,7 +2191,9 @@ impl Host {
                 cause: Cause::Delivered {
                     binding: unmet.binding,
                 },
+                caused_by: Some(command.to_owned()),
                 error: unmet.error.to_string(),
+                kind: None,
                 attempts: 0,
             }));
     }
@@ -2000,11 +2238,19 @@ impl Host {
         Ok(())
     }
 
+    /// How many envelopes this host holds the staging command of, for [`Failed::caused_by`]:
+    /// those staged between its own components and not yet invoked. Read by tests only.
+    #[doc(hidden)]
+    pub fn staged_envelopes(&self) -> usize {
+        self.staged_by.len()
+    }
+
     /// Takes every envelope still in flight off its channel without running it.
     fn discard(&mut self) -> Result<(), HostError> {
         for receiver in &mut self.receivers {
             receiver.discard()?;
         }
+        self.staged_by.clear();
         Ok(())
     }
 }
@@ -2542,4 +2788,94 @@ fn store_of<'a>(
         .get_mut(owner)
         .map(|component| &mut component.store as &mut dyn Store)
         .ok_or_else(|| HostError::Unsupported(format!("{owner} is not running")))
+}
+
+#[cfg(test)]
+mod tests {
+    //! [`Routed`], the store a command runs on in a host
+    //! (`story:cross-component-related-reads`), on `spindle-kernel`'s `metering-split` fixture:
+    //! `meter` owns charges, `holds` owns holds.
+
+    use super::*;
+    use serde_json::json;
+
+    const HOLD: &str = "metering.holds.Hold";
+    const CHARGE: &str = "metering.usage.Charge";
+
+    fn ir() -> EssIr {
+        spindle_spec::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../spindle-kernel/tests/fixtures/metering-split"),
+        )
+        .expect("the fixture compiles")
+        .ir
+    }
+
+    fn create(entity: &str, identity: &str, state: &str, scanned: Vec<Scanned>) -> Change {
+        Change {
+            entity: entity.to_owned(),
+            identity: json!(identity),
+            expected: None,
+            row: Row {
+                state: state.to_owned(),
+                fields: BTreeMap::new(),
+            },
+            events: Vec::new(),
+            scanned,
+        }
+    }
+
+    /// `meter`'s store, routed beside `holds`'s.
+    fn routed<'a>(
+        ir: &'a EssIr,
+        meter: &'a mut MemoryStore,
+        holds: &'a mut MemoryStore,
+    ) -> Routed<'a> {
+        Routed {
+            ir,
+            running: Tallied {
+                store: meter,
+                appended: Vec::new(),
+            },
+            others: BTreeMap::from([("holds", holds as &mut dyn Store)]),
+        }
+    }
+
+    /// A hold is read from the holds' store, a charge decided on that scan lands in the meter's
+    /// store, and once another write of the holds lands after the scan the next such charge is
+    /// refused as a conflict naming the holds' entity, writing nothing.
+    #[test]
+    fn a_write_decided_on_another_components_scan_is_conditioned_on_its_owner() {
+        let ir = ir();
+        let mut meter = MemoryStore::default();
+        let mut holds = MemoryStore::default();
+        holds
+            .commit(&create(HOLD, "h1", "Active", Vec::new()))
+            .expect("the hold is placed");
+
+        let scan = routed(&ir, &mut meter, &mut holds)
+            .scan(HOLD)
+            .expect("the holds are read");
+        assert_eq!(scan.rows.len(), 1, "read from the holds' store");
+        assert!(meter.scan(HOLD).expect("read").rows.is_empty());
+        let scanned = vec![Scanned {
+            entity: HOLD.to_owned(),
+            version: scan.version,
+        }];
+        routed(&ir, &mut meter, &mut holds)
+            .commit(&create(CHARGE, "c1", "Billed", scanned.clone()))
+            .expect("a charge decided on the holds as they stand lands");
+        assert!(meter.load(CHARGE, &json!("c1")).expect("read").is_some());
+
+        holds
+            .commit(&create(HOLD, "h2", "Active", Vec::new()))
+            .expect("another hold is placed");
+        let moved =
+            routed(&ir, &mut meter, &mut holds).commit(&create(CHARGE, "c2", "Billed", scanned));
+        assert!(
+            matches!(&moved, Err(StoreError::Conflict { entity, .. }) if entity == HOLD),
+            "{moved:?}"
+        );
+        assert!(meter.load(CHARGE, &json!("c2")).expect("read").is_none());
+    }
 }

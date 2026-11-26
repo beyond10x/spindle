@@ -220,6 +220,22 @@ export const requestLogShape: Shape<RequestLog> = {
             fields: { binding: text, component: text, command: text, reason: text },
           },
         },
+        refused_bound: {
+          type: 'array',
+          of: {
+            type: 'object',
+            fields: {
+              binding: text,
+              component: text,
+              command: text,
+              caused_by: { ...text, optional: true },
+              outcome: { ...text, optional: true },
+              error: { ...text, optional: true },
+              kind: { ...text, optional: true },
+              attempts: number,
+            },
+          },
+        },
       },
     },
   },

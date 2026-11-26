@@ -1,0 +1,43 @@
+format: ess/34
+system: ledger
+version: v1
+summary: A till posts entries; a binding applies each to the balance, which refuses an entry that leaves it unchanged.
+domains:
+  - ledger.till
+  - ledger.balance
+components:
+  - component: till
+    summary: Posts entries.
+    owns:
+      domains:
+        - ledger.till
+    accepts:
+      commands:
+        - ledger.till.Post
+    publishes:
+      events:
+        - ledger.till.Posted
+    reached_by: network
+  - component: balance
+    summary: Applies posted entries; only a binding reaches it.
+    owns:
+      domains:
+        - ledger.balance
+    accepts:
+      commands:
+        - ledger.balance.Apply
+    publishes:
+      events:
+        - ledger.balance.Applied
+    reached_by: in_process
+bindings:
+  - id: apply-posted
+    when:
+      event: ledger.till.Posted
+    invoke:
+      command: ledger.balance.Apply
+    mapping:
+      entry_id: event.entry_id
+      amount: event.amount
+    delivery: at_most_once
+    on_failure: drop

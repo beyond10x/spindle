@@ -7,11 +7,12 @@
 //! names and holds a member the path carries to the path's value (beyond10x/ess#752); and, under
 //! `unknown: ignore` on a `query` route, a key the path carries held to the path's value, where
 //! 0.98.0 dropped it whatever it held (beyond10x/ess#752). A view answered under one member
-//! (beyond10x/ess#755) is served too: `binding_shapes`.
+//! (beyond10x/ess#755) is served too: `binding_shapes`; and input fields read from the query
+//! string beside the body (`request.query`, beyond10x/ess#754): `query_beside_body`.
 //!
-//! Not served, each route named with why: a `multipart/form-data` request and `request.query`
-//! (beyond10x/ess#754), a request body limit other than the 1 MiB this ingress reads and a view
-//! with a CSV representation (beyond10x/ess#753). A
+//! Not served, each route named with why: a `multipart/form-data` request (beyond10x/ess#754), a
+//! request body limit other than the 1 MiB this ingress reads and a view with a CSV
+//! representation (beyond10x/ess#753). A
 //! binding-wide limit other than 1 MiB refuses the whole binding, as a binding-wide refusal does.
 //!
 //! The fixture `tests/fixtures/kiosk` declares one component, `kiosk`, reached over the network:
@@ -318,17 +319,6 @@ fn each_shape_this_ingress_does_not_read_is_named_not_served() {
 ",
             "kiosk.ticket.StampTicket",
             "a `multipart/form-data` request",
-        ),
-        (
-            "  - command: kiosk.ticket.IssueTicket
-    method: post
-    path: /tickets
-    request: {query: [input.holder]}
-    outcomes:
-      issued: {status: 201}
-",
-            "kiosk.ticket.IssueTicket",
-            "input fields read from the query string beside the body",
         ),
         (
             "  - command: kiosk.ticket.IssueTicket

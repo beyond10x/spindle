@@ -1,0 +1,14 @@
+{
+  "at": "2026-11-26T20:41:53Z",
+  "actor": "human:operator",
+  "artifact": "story:refused-bound-command-recorded",
+  "kind": "story",
+  "revision": 30,
+  "change": {
+    "change": "evidence",
+    "kind": "review_outcome",
+    "source": "review-result:wave27-acc-r9",
+    "review": "review-result:wave27-acc-r9",
+    "outcome": "fixed"
+  }
+}

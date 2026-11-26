@@ -459,10 +459,12 @@ impl<'a> Sources<'a, '_> {
             .filter(|value| !value.is_null())
         {
             Some(value) => {
-                crate::typed::validate(self.ir, type_ref, value).map_err(|error| {
+                let refused = |error: String| {
                     ExecuteError::InvalidInput(format!("the caller's `{attribute}`: {error}"))
-                })?;
-                Ok(Some(value.clone()))
+                };
+                crate::typed::validate(self.ir, type_ref, value).map_err(refused)?;
+                let held = crate::typed::integers(self.ir, type_ref, value).map_err(refused)?;
+                Ok(Some(held))
             }
             None if type_ref.is_optional() => Ok(None),
             None => Err(ExecuteError::InvalidInput(format!(

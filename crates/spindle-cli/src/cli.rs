@@ -86,14 +86,35 @@ pub enum Command {
     /// `"at": "<RFC 3339>"` that moves the clock `--clock` starts forward to that instant before
     /// the command runs. Each line prints one JSON result: the outcome with its events and
     /// declared error, or a failure.
+    ///
+    /// A line `{"arrange": [{"entity", "identity", "state", "fields"}]}` writes those rows, in the
+    /// shape a reset's world gives them, before the next line: each checked by ESS as a scenario's
+    /// setup is and against its entity's invariants, then all written or, where one is refused,
+    /// already stored or named twice, none. It prints `{"arranged": [{"entity", "identity"}]}`; a
+    /// seeded mint never mints an identity it wrote. A command's input may name a value an
+    /// earlier line answered with `{"$line": <n>, "pointer": "<JSON pointer>"}`, such as
+    /// `"/events/0/payload/<field>"` for an identity line `n` minted; lines are counted from 1,
+    /// blank ones included. A reference to a line not answered before it, or to a pointer its
+    /// answer lacks, rejects the line (`unresolved_reference`).
+    ///
     /// Exits 3, running nothing, when admission is refused. At startup it prints on stderr the
     /// same lines `admit` prints for outcomes and commands the kernel does not run.
     ///
+    /// The event bindings fire as a served run fires them, on the run's one store: each command a
+    /// binding maps an emitted event to runs in the same step, sent as no actor, and prints its
+    /// result on a line of its own after the line's, with `"caused_by": {"line": <n>, "binding":
+    /// "<id>"}` and `"attempts"`; the events it emits fire bindings in turn. A specification that
+    /// declares no component routes them as one implied component. A binding a served run would
+    /// refuse (such as `on_failure: escalate`) exits 1 before any line is read.
+    ///
     /// A line whose result is a failure was rejected: it is not JSON, names no declared command,
     /// its input is not admitted, its external cause is unanswered, or the kernel refused it
-    /// before an outcome. The run answers every line, then names each rejected line on stderr by
-    /// its place in the input, counted from 1, and exits 1; with none rejected it exits 0. A line
-    /// answered by a declared outcome, a refusing one included, is not rejected.
+    /// before an outcome; so is an arrange line whose rows were not written and a line whose
+    /// reference does not resolve. A command a binding invoked is rejected where it is refused or
+    /// does not run. The run answers every line, then names each rejected line on stderr by its place in
+    /// the input, counted from 1, with the binding of each rejected command it caused, and exits
+    /// 1; with none rejected it exits 0. A line answered by a declared outcome, a refusing one
+    /// included, is not rejected.
     ///
     /// An external cause the line does not answer is answered by `--decisions`, then by
     /// `--answer-default`; one nothing answers fails that line, naming the outcome, and the run
@@ -117,7 +138,9 @@ pub enum Command {
     /// stdin; only `http-loopback` is served, and any other binding exits 1 before listening. Prints
     /// `{"listening": "<address>", "components": [...]}` once listening and serves until SIGINT
     /// or SIGTERM (exit 130 or 143), or until a seed that rejected an entry ends (exit 1,
-    /// `--seed`). Routes are where `ess generate --kind openapi` publishes them:
+    /// `--seed`); then it takes no further request, writes every answer it has given, answers
+    /// each request still waiting `503`, and exits. Routes are where `ess generate --kind
+    /// openapi` publishes them:
     /// ESS's derived routes, or with `--http` the `ess-http/1` binding's, read and checked by ESS
     /// (methods, paths, path variables and per-outcome statuses), an operation it does not name
     /// keeping its derived route. A command's body is its input; it answers its outcome's status
@@ -194,8 +217,8 @@ pub enum Command {
     /// world that does not validate is refused `400` and changes nothing.
     ///
     /// An event binding with `on_failure: retry` runs its command again at once after each
-    /// attempt that fails, up to 5 attempts, unless `--drop-retries` is given; one with
-    /// `on_failure: escalate` exits 1 before listening.
+    /// attempt that fails, up to 5 attempts, unless `--drop-retries` is given, served or on stdin;
+    /// one with `on_failure: escalate` exits 1 before listening or reading stdin.
     Run {
         /// The specification directory.
         spec: PathBuf,
@@ -210,8 +233,8 @@ pub enum Command {
         state: Option<PathBuf>,
         /// Run each event binding that retries on failure (`on_failure: retry`, or a per-refusal
         /// policy that retries some refusal) as a `drop` binding: a failed invocation is dropped,
-        /// not retried. Prints one line per such binding on stderr before listening. Only where `run`
-        /// serves HTTP.
+        /// not retried. Prints one line per such binding on stderr before listening or reading
+        /// stdin.
         #[arg(long, conflicts_with = "scenario")]
         drop_retries: bool,
         /// An `ess-http/1` binding of the specification's commands and views to methods and paths,
@@ -329,12 +352,18 @@ pub enum Command {
         /// stderr gives the counts when the seed ends; with `--observe`, `GET /__spindle/metrics`
         /// has them as `spindle_seed_commands_total`, a rejected entry counted `refused` there.
         /// A seed that ends having rejected an entry stops the run: it serves until then, and
-        /// exits 1 once the end line is printed. Only where `run` serves HTTP. Request ids are
-        /// not kept across starts: a restart applies nothing new only where every entry is a
-        /// create its command answers `existing_instance:`, and every other entry runs again.
-        /// `POST /api/reset` drops the entries not yet sent; with no world it then submits the
-        /// seed again, from its first entry, before it answers, its end line counting that run
-        /// alone, and with a world it loads that world alone.
+        /// exits 1 once the end line is printed. Only where `run` serves HTTP. With `--state`,
+        /// `seed.json` there records the seed file's digest, how many entries were sent and which
+        /// of them were rejected, written after each: a restart with the same file sends the
+        /// rejected entries again, then those after the ones sent, remembering the request ids
+        /// of the entries sent before it, and prints that the seed already ran once every one is
+        /// done; one with another file exits 1 before listening, naming both digests, unless the
+        /// state holds no row. A state without `seed.json` gets the whole seed, then the record,
+        /// and a reset by a run without `--seed` removes it. Without `--state` nothing is
+        /// recorded and every start sends the whole seed. `POST /api/reset` drops the entries
+        /// not yet sent; with no world it then records 0 entries done and submits the seed
+        /// again, from its first entry, before it answers, its end line counting that run alone,
+        /// and with a world it loads that world alone and records every entry done.
         #[arg(long, value_name = "FILE", conflicts_with = "scenario")]
         seed: Option<PathBuf>,
         /// Start the run on a manual clock standing at this RFC 3339 instant
