@@ -35,7 +35,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 17
+revision: 18
 ---
 # A stdin run arranges rows and names what earlier lines minted
 
@@ -95,3 +95,11 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
 - **Confidence:** high for the landing site (a single stdin loop, a single answer builder, and the row reader already exists); medium for the kernel and host lines, which depend on D1 and D3
 - **Would collide with:** any unit that changes `run`'s stdin loop or `answer` in `crates/spindle-cli/src/main.rs:725-897`, the `run` help in `cli.rs:79-100`, the `tests/spindle-cli/main.rs` module list, `spindle-docs/src/status.rs` and the generated status/CLI pages; with D3 = A, any unit changing `Seeded` in `spindle-kernel/src/mint.rs`; with a host row reader, any unit changing `spindle-host/src/world.rs` (`integers`)
 - **Safety fact:** an arrange line can write nothing the reset world could not: rows pass ESS's `validate_entity_setup` (`spindle-host/src/world.rs:107`) and `at_rest` invariants before one `commit_all` with `expected: None`, so a bad or already-held row writes no row of the line, and a command line without a reference parses as today because `Request` is unchanged. Level 2 (pointed at `file:line`), unproven
+
+## Decided when scoped
+
+Taken 2026-11-26 on the scoper's recommended option, each reversible, unless noted.
+
+- D1 B: a reference is `{"$line": n, "pointer": "/events/0/payload/<f>"}` into the
+- D2 A: `{"arrange": [rows in the reset world's shape]}`.
+- D3 A: a seeded mint avoids identities an arrange line wrote.

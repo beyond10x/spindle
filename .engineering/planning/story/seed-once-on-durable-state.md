@@ -31,7 +31,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 16
+revision: 17
 ---
 # A seed is applied once to a durable state
 
@@ -104,3 +104,8 @@ Tests to add (each starts the binary at most twice on one sqlite state, with no 
 - A start that skips the seed still builds a `Seeding` with nothing pending, so a later reset with no
   world seeds again (story:reset-reapplies-seed).
 - Not covered: a PostgreSQL store (no `--state` directory); a restart there replays as today.
+
+Taken 2026-11-26 on the scoper's recommended option, each reversible, unless noted.
+
+- D1 A: a reset that loads a world marks every seed entry done; a restart sends nothing.
+- D2 A: the marker is written after each entry; a SIGKILL between commit and marker applies

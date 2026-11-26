@@ -35,7 +35,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: cited
   path: website/docs/status.md
-revision: 17
+revision: 18
 ---
 # A stdin run fires the bindings its commands' events match
 
@@ -89,3 +89,14 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
 - **Confidence:** high for the surface (the story names the site and the stdin loop is one function); medium for where the dispatch lives (D1)
 - **Would collide with:** the stdin loop, `Request` and `answer` in `crates/spindle-cli/src/main.rs:44-60,738-897`; the `Run` doc in `crates/spindle-cli/src/cli.rs` and its generated page; `crates/spindle-cli/Cargo.toml`; the CLI test module list `tests/spindle-cli/main.rs`; `status.rs` and its generated pages; `CHANGELOG.md`
 - **Safety fact:** a stdin run today executes exactly the line's command (`main.rs:882`, one `execute_as`) and no code reads the events it returns, so dispatch added after `answer` changes output and state only where a binding matches an emitted event; a specification without bindings prints as today — cited, level 2, unproven
+
+## Decided when scoped
+
+Taken 2026-11-26 on the scoper's recommended option, each reversible, unless noted.
+
+- D1 A: dispatch in the stdin loop with the served run's router, on the one store.
+- D2 A: a binding the router refuses stops the run before stdin, as served
+- D3 A: a spec without components routes as one implied component.
+- D4 A: a failed bound command counts as rejected; the run exits 1.
+- D5 A: its own line with `"caused_by": {"line": n, "binding": "<id>"}`.
+- D6 A: `--drop-retries` is accepted on stdin.

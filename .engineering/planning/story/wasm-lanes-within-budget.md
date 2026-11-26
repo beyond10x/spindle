@@ -18,7 +18,7 @@ scope:
   path: Taskfile.yml
 - confidence: inferred
   path: scripts/wasm-cache-key.sh
-revision: 17
+revision: 18
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-26T04:51:42Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"review_outcome":19}}}
 - {from: "proposed", to: "active", at: "2026-11-26T04:51:42Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"review_outcome":19}}}
@@ -110,3 +110,10 @@ repository, untested here:
 
 With these, measured order 105 s, then 18 s, 17 s, 16 s. The first ESS compile in each new worktree
 stays until slot's own story lands.
+
+## Decided when scoped
+
+Taken 2026-11-26 on the scoper's recommended option, each reversible, unless noted.
+
+- D1 A: the bound is held on an emptied `target/` in a tree the shared cache has built; a
+- D2 A: the workspace `serde_json` gets the `alloc` feature.

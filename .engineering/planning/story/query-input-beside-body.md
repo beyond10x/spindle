@@ -25,7 +25,7 @@ scope:
   path: website/docs/concepts/capabilities.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 4
+revision: 5
 ---
 # A command route reads input fields from the query string beside its body
 
@@ -69,3 +69,10 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
 - **Confidence:** high — the story names the refusal site, and the ESS 0.99.1 sources give the exact read and join
 - **Would collide with:** any unit editing `served` in `crates/spindle-ingress/src/surface.rs`; the caller-attribute check at `:1752-1761` sits right next to this hunk and shares the doc comment at `:1716-1727`. Also any unit editing `answering` or the input readers in `crates/spindle-ingress/src/answer.rs`, the `ess_http_shapes.rs` not-served table, and `spindle-ingress`'s test `main.rs`
 - **Safety fact:** today every route whose `request.query` is non-empty is marked `Unserved::Ingress` and answers 501 before its body is read (`surface.rs:1772`, `answer.rs` `answered_as`). Routes without `request.query` therefore keep their bytes if the new branch runs only where `request.query` is non-empty. `multipart` keeps its refusal, which `served` checks first (`:1769`) — step 2, unproven
+
+## Decided when scoped
+
+Taken 2026-11-26 on the scoper's recommended option, each reversible, unless noted.
+
+- D1 A: `List<T>` query fields are read as repeated keys.
+- D2 A: a missing query field answers 400 with Spindle's `{"refused": ...}` body.

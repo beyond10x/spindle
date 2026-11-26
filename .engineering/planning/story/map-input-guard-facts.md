@@ -24,7 +24,7 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/main.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/spindle-kernel/map_input_guard.rs
-revision: 10
+revision: 11
 ---
 # A guard over a present Map input is decided as ESS decides it
 
@@ -68,3 +68,9 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
 - **Confidence:** high — the story and the adversary finding name `facts.rs:160`, and the ESS rule it must match was read at the pinned rev
 - **Would collide with:** any unit that changes `spindle-kernel`'s fact binding (`facts.rs`, in particular `bind`, `values`, `row` and `with_caller`); the module lists of the `spindle-kernel` and `spindle-cli` integration-test binaries; and `CHANGELOG.md` `[Unreleased]`
 - **Safety fact:** the change only adds facts for a path whose declared type is `Map`. A Struct, List, scalar or undeclared path binds exactly as today. Every guard, selector, `when_subject:` row and struct invariant reads facts only through `Facts::{values,row,with_caller}` (`execute.rs:69,887,970,981,1001,1008,1071,1078,1091,1362,1661`, `execute/affects.rs:198-213`, `execute/set.rs:129,148`, `typed.rs:188`). So the effect is limited to Map-typed values, and there it moves toward ESS. Proven to step 2 (`git grep -n 'Facts::values\|Facts::row\|\.with_caller('`), unproven
+
+## Decided when scoped
+
+Taken 2026-11-26 on the scoper's recommended option, each reversible, unless noted.
+
+- D1 A: `Facts::bind` follows the declared type; a Map binds `count` and its values by

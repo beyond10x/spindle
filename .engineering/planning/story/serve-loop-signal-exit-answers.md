@@ -30,7 +30,7 @@ scope:
   path: crates/spindle-ingress/tests/spindle-ingress/main.rs
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 13
+revision: 14
 ---
 # The serve loop's signal exit takes no exchange and drops no answer
 
@@ -70,3 +70,10 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
 - **Confidence:** high for `serve.rs`/`seed.rs` (story names the site, tree read); medium for `listener.rs` (drain mechanism is a design reading)
 - **Would collide with:** any unit touching `spindle-cli`'s `serve.rs` serve loop or `reset_seeded`, `seed.rs` (`Seeding::finish`/`step`), the `mod` list of `tests/spindle-cli/seed.rs`, `run` help in `cli.rs` and generated `cli.md`; and any unit touching `spindle-ingress`'s `listener.rs` (`Listener`, `Exchange`, server thread)
 - **Safety fact:** `Listener` is also used by `crates/spindle-cli/src/component.rs:261` and `crates/spindle-control/src/bin/spindle-control-fixture.rs:102`, which rely on `Drop` alone; a new consuming method beside an unchanged `Drop` changes neither — step 2 (`git grep -n 'Listener::bind'`), unproven
+
+## Decided when scoped
+
+Taken 2026-11-26 on the scoper's recommended option, each reversible, unless noted.
+
+- D1 A: a request still queued at the signal is answered 503 before exit; acceptance 2
+- D2 A: a seeded reset cut by the signal answers 200 after the entry under way.

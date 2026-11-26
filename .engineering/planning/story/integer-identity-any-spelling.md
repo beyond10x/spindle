@@ -24,7 +24,7 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/integer_identity.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/spindle-kernel/main.rs
-revision: 4
+revision: 5
 ---
 # A command names an Integer identity whatever its spelling
 
@@ -65,3 +65,11 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
 - **Parity fact:** ESS 0.99.1 keys instances by `Node` (`ess-conformance/src/interpret/execute.rs:89`), and `Number` equality compares the exact value (`ess-primitives/src/facts.rs:941-955`), so `1` and `1.0` are one instance — cited
 - **Safety fact:** every row write and load a command makes takes its identity from the input after `check_input`, so writing `Integer`-typed values as integers there reaches every store backend and every `Related` key (`values.rs:95`, `:493`). Pointed at `file:line` (step 2), unproven
 - **Depends on:** none; story:world-row-integer-fields (implemented) supplied the world half and the `integers` walk — cited
+
+## Decided when scoped
+
+Taken 2026-11-26 on the scoper's recommended option, each reversible, unless noted.
+
+- D1 A: the kernel writes Integer input as integers after `check_input`; the
+- D2 A: no migration of durable rows keyed `1.0`; the changelog says so.
+- D3 A: an integral Integer past 64 bits stays as written, as ESS admits it.

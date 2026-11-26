@@ -42,7 +42,7 @@ scope:
   path: docs/design/spindle.md
 - confidence: cited
   path: website/docs/concepts/specification.md
-revision: 20
+revision: 21
 ---
 # A guard or an effect over another component's entity is refused or read from its owner
 
@@ -183,3 +183,15 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
   The router must take foreign `Scanned` out and check them against the owner. That is safe only
   while no other writer touches the owner's store between the scan and the commit; `Host` is
   `&mut self`, but another process on the same durable store is not ruled out. Level 2, unproven.
+
+## Decided when scoped
+
+Taken 2026-11-26 on the scoper's recommended option, each reversible, unless noted.
+
+- D2 A: an `affects:` entry over another component's entity is refused by name in
+- D1 A, answered by the operator through the host operator, 2026-11-26 about 21:15 CET: the
+  kernel's admission checks (`takes`, `check`, `execute_refusing`) take the set of components the
+  store reaches, and a routing store in `Host::execute` reads each entity from its owner's store;
+  `admit` passes all components, or the one `--component`; `component` passes one. A row in
+  `docs/design/spindle.md` § 11 records it.
+- The one-host branch of the Outcome is the one delivered; a split run keeps the refusal by name.

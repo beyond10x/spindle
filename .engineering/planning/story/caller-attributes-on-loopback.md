@@ -19,7 +19,7 @@ scope:
   path: crates/spindle-ingress/src/surface.rs
 - confidence: inferred
   path: docs/design/spindle.md
-revision: 9
+revision: 10
 ---
 # A loopback served run serves a command that reads its caller
 
@@ -95,3 +95,9 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
 - **Safety fact:** an exposed run is unchanged because `main.rs:502-511` exits 2 before listening
   for an address off loopback without the header and the secret, a check this story does not touch
   under A or B — step 2 (`crates/spindle-cli/src/main.rs:502`), unproven
+
+## Decided when scoped
+
+Taken 2026-11-26 on the scoper's recommended option, each reversible, unless noted.
+
+- D1 A: the ingress text stays flag-free; `run` prints one stderr line naming
