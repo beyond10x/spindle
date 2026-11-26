@@ -609,6 +609,60 @@
       "x-ess-kind": "struct",
       "x-ess-name": "spindle.observe.RecentAnswer"
     },
+    "spindle.observe.RefusedBound": {
+      "additionalProperties": false,
+      "description": "One command an event binding invoked that was refused on its last attempt, so nothing it would have written was written: refused by an outcome that declares an error, or rejected by the kernel, which selected no outcome (an input, guard or invariant it could not satisfy). The command that published the event stays committed, and the event log (`GET /api/events`) lists only the events the run committed. ESS defines no observable result for a refused bound command; this entry is Spindle's (`docs/design/spindle.md` § 11, refused bound command). It names the error and never a value of its fields.",
+      "properties": {
+        "attempts": {
+          "description": "How many times it was run, the last included: more than 1 only where the binding retries.",
+          "maximum": 5,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "binding": {
+          "description": "The binding id.",
+          "type": "string"
+        },
+        "caused_by": {
+          "description": "The qualified command whose run published the event the binding carried: the routed command, or one an event binding invoked on the way. Absent where the event was published in another process of a run split over processes.",
+          "type": "string"
+        },
+        "command": {
+          "description": "The qualified name of the refused command.",
+          "type": "string"
+        },
+        "component": {
+          "description": "The component that accepts the command.",
+          "type": "string"
+        },
+        "error": {
+          "description": "The qualified name of the error that outcome declares; absent where the kernel rejected it.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "Where the kernel rejected it, the kind of its error, as `spindle_command_failures_total` labels it (`invalid_input`, `undecidable`, `undecided`, `no_value`, `invalid_value`, `broken_invariant`, `undeclared`, `unsupported`, `store`, `not_granted`, `unknown_command`); absent where an outcome refused it.",
+          "type": "string"
+        },
+        "outcome": {
+          "description": "The refusing outcome the model selected; absent where the kernel rejected it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding",
+        "component",
+        "command",
+        "attempts"
+      ],
+      "title": "RefusedBound",
+      "type": "object",
+      "x-ess-invariants": [
+        "attempts >= 1",
+        "attempts <= 5"
+      ],
+      "x-ess-kind": "struct",
+      "x-ess-name": "spindle.observe.RefusedBound"
+    },
     "spindle.observe.RequestClass": {
       "description": "How a served run answered one request; the class follows who answered, not the status. `served`: the model answered it, with an outcome the command declares or the view's rows, whatever status the binding gives that outcome, `501` and `503` included. `refused`: the ingress or ESS's standard refusal answered it `4xx` before the model did, other than `not-granted`. `not-granted`: `403` \"not granted\", no grant admits the actor. `not-served`: spindle's own `501`, for an operation this ingress cannot route, the kernel does not run or the host does not read, or for an external cause nothing answered. `failed`: a `5xx` spindle itself answered, other than that `501`. `unrouted`: no route has the path, or not under that method.",
       "enum": [
@@ -737,6 +791,13 @@
           "description": "Why the request was not served, for every class but `served`: the `refused` text of the answer, its words and the names it gives (a field, a type, a route) kept. A value the caller sent is never recorded: every value in the text (a quoted string, a list, an object, a number, `true`, `false` or `null`), and every map key, struct member or input field name the caller sent, is written `…`. At most 512 bytes, cut with `…` where longer. So the record of a refused request holds its method, its path (at most 2,048 bytes) and the names of its route, and under 1 KiB besides, whatever its body held.",
           "type": "string"
         },
+        "refused_bound": {
+          "description": "Every command an event binding invoked while the request was answered that was refused on its last attempt: first those a refusing outcome refused, then those the kernel rejected, each in the order the runtime reported them. Empty when every one ran. Each is counted in `spindle_bound_refusals_total`. The list is complete when everything the request led to has run. When it stopped because bindings kept triggering each other, only the kernel's rejections before that are listed; when it failed as `unmet` says, none is. A command a timer fired, and one refused in another process of a run split over processes, is in no record.",
+          "items": {
+            "$ref": "#/$defs/spindle.observe.RefusedBound"
+          },
+          "type": "array"
+        },
         "route": {
           "description": "The route template the path resolved to; absent for an unrouted request.",
           "type": "string"
@@ -770,7 +831,8 @@
         "duration_us",
         "events",
         "externals",
-        "unmet"
+        "unmet",
+        "refused_bound"
       ],
       "title": "RequestRecord",
       "type": "object",
@@ -1323,8 +1385,8 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-ess-provenance": {
-    "contract_digest": "slice-sha256/2:1c49170d136bfa13e593adf5f6004998ec4cb204ac613fa9c1398324cf7c59c7",
-    "source_digest": "6f8b057c5f2c5585c513b2df6e227a2c516c5efa4135820f706a67e960e7fa38",
+    "contract_digest": "slice-sha256/2:8febbdf432c4e043f26574b762a66814a51585243cfc38e08ced8b3b318a4584",
+    "source_digest": "768b49d0ee4e413744f98b60ca5d08125d3a9410aba380e215477e8525748e44",
     "specification_version": "v1",
     "system": "spindle"
   }

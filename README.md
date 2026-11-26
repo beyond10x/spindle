@@ -92,12 +92,18 @@ Under `unmet`, a record lists each event binding whose input an event published 
 not fill, so its command was not invoked. The entry gives the binding, the component, the command and
 why.
 
+Under `refused_bound`, a record lists each command an event binding invoked on the way that was
+refused. The entry gives the binding, the component, the command, the command whose event the
+binding carried (`caused_by`), the refusing outcome and its error or the kernel's error kind, and
+the attempts, never a value of the error's fields.
+
 `GET /__spindle/metrics` answers the run's metrics in the Prometheus text format
 (`text/plain; version=0.0.4`). The families are those of `ess/fixtures/observe/metrics/families.json`:
 requests by method, route template, operation, kind, class and status class, their durations,
 commands by outcome and failure, events appended, bindings, timer ticks, store writes, the rows
-each entity holds, the resets, the external causes answered, by command, outcome and source, and,
-in a run given a seed, its entries sent, applied, already there and refused.
+each entity holds, the resets, the external causes answered, by command, outcome and source, the
+refused bound commands, by binding, command and refusal, and, in a run given a seed, its entries
+sent, applied, already there and refused.
 
 `GET /__spindle/topology` answers the graph of what the run serves (`spindle-topology/1`), derived
 from the specification. It holds the ingress, the specification, its domains, their commands,

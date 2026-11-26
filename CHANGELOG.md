@@ -19,6 +19,16 @@ are Spindle's releases.
   out is unknown and refuses the read unless a guard such as `not defined(param.x)` decides it.
   Any other leaf still refuses the view whole, naming its filter
   (`story:view-filter-parameter-literal`).
+- A command an event binding invokes that is refused, by an outcome that declares an error or by
+  the kernel, is listed in the record of the request that led to it, under `refused_bound`
+  (`spindle.observe.RefusedBound`): the binding, the component, the command, the command whose
+  event the binding carried (`caused_by`), the refusing outcome and its error, or the kernel's
+  error kind, and the attempts, never a value of the error's fields; and counted as
+  `spindle_bound_refusals_total{binding, command, refusal}` in `GET /__spindle/metrics`. The log
+  stays `spindle-requests/1`, and `GET /api/events` still lists only the events the run committed.
+  `spindle_host::Failed` and `RefusedCommand` carry `caused_by`, and `Failed` the kernel's error
+  `kind`; `spindle_channel::Sender::next_delivery` reads the id the next envelope carries
+  (`story:refused-bound-command-recorded`).
 
 ### Fixed
 

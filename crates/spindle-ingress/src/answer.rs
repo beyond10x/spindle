@@ -13,7 +13,7 @@ use serde_json::{Map, Value, json};
 use spindle_host::{Failed, Host, HostError, Listed, Reader};
 use spindle_kernel::{DeclaredError, Event, ExecuteError};
 
-use crate::observe::Answered;
+use crate::observe::{Answered, RefusedBound};
 use crate::surface::{Caller, ECHOED, Route, Unserved, may_read, may_run, same_value};
 
 /// What the refusal of a JSON body's key the command declares no input field for says between
@@ -483,7 +483,7 @@ fn run(
         &route.refusing(),
     ) {
         Ok(report) => {
-            let (answer, answered) = match report.ran.first() {
+            let (answer, mut answered) = match report.ran.first() {
                 Some(ran) => match envelope(
                     host.ir(),
                     route,
@@ -505,6 +505,13 @@ fn run(
                     Answered::ingress(),
                 ),
             };
+            // Every command an event binding invoked on the way whose outcome refused it is the
+            // request's; the kernel's rejections are among `failed`, which `Pending::serve` reads.
+            answered.refused_bound = report
+                .refused
+                .iter()
+                .filter_map(RefusedBound::refused)
+                .collect();
             return (answer, report.failed, answered);
         }
         Err(HostError::CommandRefused { outcome, error, .. }) => {

@@ -218,3 +218,91 @@ fn refusal_attempts_are_counted() {
     );
     assert_eq!(counters.uncatalogued(), 0);
 }
+
+/// One length-prefixed link message, as a peer writes it.
+fn send_linked(stream: &mut std::net::TcpStream, message: &Value) {
+    use std::io::Write as _;
+    let body = serde_json::to_vec(message).expect("encodes");
+    let mut bytes = u32::try_from(body.len())
+        .expect("small")
+        .to_be_bytes()
+        .to_vec();
+    bytes.extend_from_slice(&body);
+    stream.write_all(&bytes).expect("the write");
+}
+
+/// `story:refused-bound-command-recorded`: a refused command whose envelope another process
+/// published names no command that caused it, since no command of this host published its
+/// event. The sink of the notice fixture runs on its own (`Host::component`); a stand-in source
+/// sends one `pin-post` envelope over its link, and `Pin`, with no board yet, is refused
+/// `no-board` on every attempt.
+#[test]
+fn a_refusal_from_another_process_has_no_cause() {
+    use std::net::{TcpListener, TcpStream};
+    use std::time::Duration;
+
+    const SOURCE: &str = "notice-source";
+    const SINK: &str = "notice-sink";
+    const PIN: &str = "notice.sink.Pin";
+
+    let loaded =
+        spindle_spec::load(&root().join("crates/spindle-host/tests/fixtures/adversary/notice"))
+            .expect("notice compiles");
+    let text = std::fs::read_to_string(root().join("examples/environments/laptop-processes.toml"))
+        .expect("laptop-processes.toml reads");
+    let environment = Environment::parse(&text).expect("an environment");
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
+    let mut sink = Host::component(
+        loaded.ir,
+        &environment,
+        Arc::new(ManualClock::new()),
+        state.path(),
+        SINK,
+    )
+    .expect("the sink is admitted");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let mut stream =
+        TcpStream::connect(listener.local_addr().expect("bound")).expect("the source connects");
+    send_linked(&mut stream, &json!({"hello": {"from": SOURCE, "to": SINK}}));
+    for _ in 0..400 {
+        sink.accept(&listener).expect("the listener works");
+        if sink.unlinked().is_empty() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(sink.unlinked(), Vec::<String>::new(), "the link opens");
+
+    let frame = json!({"deliver": {
+        "id": 1,
+        "binding": "pin-post",
+        "from": SOURCE,
+        "to": SINK,
+        "delivery": "at_least_once",
+        "on_failure": "retry",
+        "attempt": 1,
+        "command": {"name": PIN, "fields": {"board_id": "b1", "beat": "first"}},
+    }});
+    send_linked(&mut stream, &json!({ "frame": frame }));
+    let mut refused = Vec::new();
+    for _ in 0..200 {
+        let report = sink.deliver().expect("the sink delivers");
+        refused.extend(report.refused);
+        if refused.iter().any(|refused| refused.command == PIN) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let pinned = refused
+        .iter()
+        .find(|refused| refused.command == PIN)
+        .unwrap_or_else(|| panic!("the refused Pin is reported: {refused:?}"));
+    assert_eq!(pinned.outcome, "no-board", "{pinned:?}");
+    assert_eq!(
+        pinned.cause,
+        Cause::Delivered {
+            binding: "pin-post".to_owned()
+        }
+    );
+    assert_eq!(pinned.caused_by, None, "{pinned:?}");
+}

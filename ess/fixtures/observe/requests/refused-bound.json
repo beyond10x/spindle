@@ -1,0 +1,85 @@
+{
+  "format": "spindle-requests/1",
+  "capacity": 256,
+  "recorded": 3,
+  "totals": {
+    "served": 3,
+    "refused": 0,
+    "not_granted": 0,
+    "not_served": 0,
+    "failed": 0,
+    "unrouted": 0
+  },
+  "requests": [
+    {
+      "sequence": 2,
+      "at": "2026-11-26T21:04:12.318Z",
+      "method": "POST",
+      "path": "/till/commands/Post",
+      "route": "/till/commands/Post",
+      "operation": "ledger.till.Post",
+      "kind": "command",
+      "status": 202,
+      "class": "served",
+      "outcome": "posted",
+      "duration_us": 2114,
+      "events": ["ledger.till.Posted"],
+      "externals": [],
+      "unmet": [],
+      "refused_bound": [
+        {
+          "binding": "apply-posted",
+          "component": "balance",
+          "command": "ledger.balance.Apply",
+          "caused_by": "ledger.till.Post",
+          "kind": "broken_invariant",
+          "attempts": 1
+        }
+      ]
+    },
+    {
+      "sequence": 1,
+      "at": "2026-11-26T21:04:11.902Z",
+      "method": "POST",
+      "path": "/till/commands/Post",
+      "route": "/till/commands/Post",
+      "operation": "ledger.till.Post",
+      "kind": "command",
+      "status": 202,
+      "class": "served",
+      "outcome": "posted",
+      "duration_us": 1987,
+      "events": ["ledger.till.Posted"],
+      "externals": [],
+      "unmet": [],
+      "refused_bound": [
+        {
+          "binding": "apply-posted",
+          "component": "balance",
+          "command": "ledger.balance.Apply",
+          "caused_by": "ledger.till.Post",
+          "outcome": "unchanged",
+          "error": "ledger.balance.Unchanged",
+          "attempts": 1
+        }
+      ]
+    },
+    {
+      "sequence": 0,
+      "at": "2026-11-26T21:04:11.470Z",
+      "method": "POST",
+      "path": "/till/commands/Post",
+      "route": "/till/commands/Post",
+      "operation": "ledger.till.Post",
+      "kind": "command",
+      "status": 202,
+      "class": "served",
+      "outcome": "posted",
+      "duration_us": 2301,
+      "events": ["ledger.till.Posted"],
+      "externals": [],
+      "unmet": [],
+      "refused_bound": []
+    }
+  ]
+}
