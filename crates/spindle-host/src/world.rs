@@ -24,14 +24,11 @@
 use std::collections::BTreeMap;
 
 use ess_compiler::EssIr;
-use ess_compiler::ir::{ResolvedBody, ResolvedTypeRef};
 use ess_compiler::refs::EntityRef;
 use ess_domain::entity::StateName;
-use ess_domain::types::{MAX_TYPE_DEPTH, Primitive};
-use ess_primitives::facts::Number;
 use ess_primitives::node::Node;
 use serde_json::Value;
-use spindle_kernel::{Decider, Row};
+use spindle_kernel::{Decider, Row, integers};
 
 use crate::{Answers, Seed, World};
 
@@ -46,7 +43,8 @@ struct Body {
 
 /// A row as the body spells it. ESS checks its identity and fields as the [`Node`]s it reads them
 /// as; a `Node` is not written back, since ESS writes an integral number as a float (`1` as
-/// `1.0`). The row is held as written with its `Integer` values as integers ([`integers`]).
+/// `1.0`). The row is held as written with its `Integer` values as integers
+/// ([`spindle_kernel::integers`]).
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SeedRow {
@@ -114,7 +112,7 @@ fn seed(ir: &EssIr, row: &SeedRow) -> Result<Seed, String> {
     )
     .map_err(|detail| format!("{} {identity}: {detail}", row.entity))?;
     let refused = |what: &str, why: String| format!("{} {identity}: {what}: {why}", row.entity);
-    let held = integers(ir, &entity.identity.type_ref, identity, 0)
+    let held = integers(ir, &entity.identity.type_ref, identity)
         .map_err(|why| refused("the identity", why))?;
     let fields = row
         .fields
@@ -126,7 +124,7 @@ fn seed(ir: &EssIr, row: &SeedRow) -> Result<Seed, String> {
                 .iter()
                 .find(|declared| declared.name == *field)
             {
-                Some(declared) => integers(ir, &declared.type_ref, value, 0)
+                Some(declared) => integers(ir, &declared.type_ref, value)
                     .map_err(|why| refused(&format!("`{field}`"), why))?,
                 None => value.clone(),
             };
@@ -141,91 +139,6 @@ fn seed(ir: &EssIr, row: &SeedRow) -> Result<Seed, String> {
             fields,
         },
     })
-}
-
-/// `value`, of `kind`, with every value the model types `Integer` written as the JSON integer
-/// (`1.0` as `1`), as the kernel writes one (`spindle_kernel::compute`): through `Optional`,
-/// newtypes, `List` elements, `Map` values, struct members and a union's payload. Everything else
-/// is held as written. ESS has checked `value` against `kind` before.
-///
-/// # Errors
-/// An `Integer` that is not an integral number within `i64`.
-fn integers(
-    ir: &EssIr,
-    kind: &ResolvedTypeRef,
-    value: &Value,
-    depth: usize,
-) -> Result<Value, String> {
-    if depth > MAX_TYPE_DEPTH {
-        return Err(format!("the type nests deeper than {MAX_TYPE_DEPTH}"));
-    }
-    if value.is_null() {
-        return Ok(Value::Null);
-    }
-    if ir.literal_primitive(kind) == Some(Primitive::Integer) {
-        return serde_json::from_value::<Number>(value.clone())
-            .ok()
-            .and_then(Number::as_i64)
-            .map(Value::from)
-            .ok_or_else(|| format!("{value} is not an Integer within 64 bits"));
-    }
-    let nested = |of: &ResolvedTypeRef, value: &Value| integers(ir, of, value, depth + 1);
-    match (kind.required(), value) {
-        (ResolvedTypeRef::List { of }, Value::Array(elements)) => elements
-            .iter()
-            .enumerate()
-            .map(|(index, element)| nested(of, element).map_err(|why| format!("[{index}]: {why}")))
-            .collect(),
-        (ResolvedTypeRef::Map { value: of, .. }, Value::Object(entries)) => entries
-            .iter()
-            .map(|(key, entry)| {
-                nested(of, entry)
-                    .map(|entry| (key.clone(), entry))
-                    .map_err(|why| format!("{key:?}: {why}"))
-            })
-            .collect(),
-        (ResolvedTypeRef::Declared { name }, _) => match &ir.named_type(name).body {
-            ResolvedBody::Newtype { of, .. } => nested(of, value),
-            ResolvedBody::Struct { fields, .. } => match value {
-                Value::Object(members) => members
-                    .iter()
-                    .map(|(member, held)| {
-                        let held = match fields.iter().find(|field| field.name == *member) {
-                            Some(field) => nested(&field.type_ref, held)
-                                .map_err(|why| format!("`{member}`: {why}"))?,
-                            None => held.clone(),
-                        };
-                        Ok((member.clone(), held))
-                    })
-                    .collect(),
-                _ => Ok(value.clone()),
-            },
-            ResolvedBody::Union { tag, variants } => {
-                let content = if tag == "value" { "content" } else { "value" };
-                let selected = value
-                    .get(tag)
-                    .and_then(Value::as_str)
-                    .and_then(|label| variants.get(label))
-                    .and_then(Option::as_ref);
-                match (selected, value) {
-                    (Some(selected), Value::Object(members)) => members
-                        .iter()
-                        .map(|(member, held)| {
-                            let held = if member == content {
-                                nested(selected, held)?
-                            } else {
-                                held.clone()
-                            };
-                            Ok((member.clone(), held))
-                        })
-                        .collect(),
-                    _ => Ok(value.clone()),
-                }
-            }
-            ResolvedBody::Enum { .. } => Ok(value.clone()),
-        },
-        _ => Ok(value.clone()),
-    }
 }
 
 /// `value` as ESS reads it.
