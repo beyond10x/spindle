@@ -46,6 +46,15 @@ are Spindle's releases.
   record. A reset with no world records 0 entries done before it sends the seed again; one with a
   world records every entry done (`story:seed-once-on-durable-state`).
 
+- A served `run` that receives SIGINT or SIGTERM, or whose seed ends having rejected an entry, takes
+  no further request and answers every client before it exits, where it took one more exchange
+  after a seed entry, a reset taken there emptied a `--state` and was never answered, and an
+  answer handed over just before the exit could reach its client as a closed connection. A
+  request still waiting is answered `503`; a reset whose seed the signal cuts answers `200` once
+  the entry under way is done, `seed.json` counting the entries done. `Listener::close` in
+  `spindle-ingress` answers each queued request `503` and writes every answer handed back before
+  its thread ends (`story:serve-loop-signal-exit-answers`).
+
 ### Fixed
 
 - A command whose `when_related:` guard reads the rows of an entity another component owns (a row

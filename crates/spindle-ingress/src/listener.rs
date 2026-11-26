@@ -20,7 +20,8 @@ use hyper::header::{
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use serde_json::{Map, Value};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
+use tokio::task::JoinSet;
 
 use spindle_host::{Failed, Host, Reader};
 
@@ -212,12 +213,24 @@ fn same(left: &str, right: &str) -> bool {
 /// An HTTP/1.1 listener serving one [`Surface`], on 127.0.0.1 unless bound with
 /// [`Listener::bind_reading_on`].
 ///
-/// Dropping it stops accepting: requests not yet answered are answered `503`.
+/// Dropping it stops accepting and ends the server thread at once: an answer not yet written is
+/// not written. [`Listener::close`] answers every request it holds before the thread ends.
 #[derive(Debug)]
 pub struct Listener {
     address: SocketAddr,
     exchanges: Option<mpsc::Receiver<Exchange>>,
-    shutdown: Option<oneshot::Sender<()>>,
+    shutdown: Option<oneshot::Sender<Stop>>,
+    server: Option<std::thread::JoinHandle<io::Result<()>>>,
+}
+
+/// How the server thread stops.
+#[derive(Debug)]
+enum Stop {
+    /// At once, every connection dropped ([`Drop`]).
+    Now,
+    /// Once every connection has written the answer it holds and closed, waiting at most this
+    /// long ([`Listener::close`]).
+    Draining(Duration),
 }
 
 impl Listener {
@@ -322,35 +335,55 @@ impl Listener {
             .enable_time()
             .build()?;
         let (sender, exchanges) = mpsc::channel();
-        let (shutdown, mut stopped) = oneshot::channel::<()>();
+        let (shutdown, mut stopped) = oneshot::channel::<Stop>();
         let served = Arc::new(Served {
             surface,
             exchanges: sender,
             guard,
             reader,
         });
-        std::thread::Builder::new()
+        let server = std::thread::Builder::new()
             .name("spindle-ingress".to_owned())
             .spawn(move || {
                 runtime.block_on(async move {
                     let listener = tokio::net::TcpListener::from_std(socket)?;
-                    loop {
+                    let (closing, closed) = watch::channel(false);
+                    let mut connections = JoinSet::new();
+                    let grace = loop {
                         tokio::select! {
-                            _ = &mut stopped => return Ok::<(), io::Error>(()),
+                            stop = &mut stopped => match stop {
+                                Ok(Stop::Draining(grace)) => break grace,
+                                Ok(Stop::Now) | Err(_) => return Ok::<(), io::Error>(()),
+                            },
                             accepted = listener.accept() => match accepted {
                                 Ok((stream, _)) => {
-                                    tokio::spawn(connection(Arc::clone(&served), stream));
+                                    connections.spawn(connection(
+                                        Arc::clone(&served),
+                                        stream,
+                                        closed.clone(),
+                                    ));
                                 }
                                 Err(_) => tokio::time::sleep(ACCEPT_BACKOFF).await,
                             },
+                            Some(_) = connections.join_next(), if !connections.is_empty() => {}
                         }
-                    }
+                    };
+                    // No connection is accepted from here on; each one open writes the answer it
+                    // holds, then closes.
+                    drop(listener);
+                    let _ = closing.send(true);
+                    let _ = tokio::time::timeout(grace, async {
+                        while connections.join_next().await.is_some() {}
+                    })
+                    .await;
+                    Ok(())
                 })
             })?;
         Ok(Self {
             address,
             exchanges: Some(exchanges),
             shutdown: Some(shutdown),
+            server: Some(server),
         })
     }
 
@@ -363,25 +396,59 @@ impl Listener {
     pub fn next(&self, timeout: Duration) -> Option<Exchange> {
         self.exchanges.as_ref()?.recv_timeout(timeout).ok()
     }
+
+    /// Stops the listener so that no client reads a closed connection where an answer was due:
+    /// each request handed over and not yet taken with [`Listener::next`] is answered `503`, and
+    /// so is each one that reaches the listener from now on; no connection is accepted; every
+    /// answer already given to an [`Exchange`] is written, and each connection closed once its
+    /// answer is. Returns once the server thread has ended, waiting at most `grace` for the
+    /// connections; one still open then, such as a client still sending its body, is dropped.
+    pub fn close(mut self, grace: Duration) {
+        if let Some(exchanges) = self.exchanges.take() {
+            while let Ok(exchange) = exchanges.try_recv() {
+                exchange.respond(Answer::refusal(503, "the listener is closing"));
+            }
+        }
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(Stop::Draining(grace));
+        }
+        if let Some(server) = self.server.take() {
+            let _ = server.join();
+        }
+    }
 }
 
 impl Drop for Listener {
     fn drop(&mut self) {
         self.exchanges.take();
         if let Some(shutdown) = self.shutdown.take() {
-            let _ = shutdown.send(());
+            let _ = shutdown.send(Stop::Now);
         }
     }
 }
 
-/// Serves one connection, HTTP/1.1, its heads bounded by [`HEADER_READ`].
-async fn connection(served: Arc<Served>, stream: tokio::net::TcpStream) {
+/// Serves one connection, HTTP/1.1, its heads bounded by [`HEADER_READ`]. Once `closing` reads
+/// `true`, the connection writes the answer it holds, if any, and closes.
+async fn connection(
+    served: Arc<Served>,
+    stream: tokio::net::TcpStream,
+    mut closing: watch::Receiver<bool>,
+) {
     let service = hyper::service::service_fn(move |request| handle(Arc::clone(&served), request));
-    let _ = hyper::server::conn::http1::Builder::new()
+    let serving = hyper::server::conn::http1::Builder::new()
         .timer(TokioTimer::new())
         .header_read_timeout(HEADER_READ)
-        .serve_connection(TokioIo::new(stream), service)
-        .await;
+        .serve_connection(TokioIo::new(stream), service);
+    tokio::pin!(serving);
+    tokio::select! {
+        _ = serving.as_mut() => {}
+        () = async {
+            let _ = closing.wait_for(|closing| *closing).await;
+        } => {
+            serving.as_mut().graceful_shutdown();
+            let _ = serving.await;
+        }
+    }
 }
 
 async fn handle(

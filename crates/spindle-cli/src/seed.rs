@@ -493,18 +493,17 @@ impl Seeding {
         self.ended = false;
     }
 
-    /// Submits every entry left to `host`, one after another, then prints the end line; `true`
-    /// once it ended. Before each entry it asks `stopped`, and where that answers `true` it
-    /// submits nothing more and answers `false`, so a signal stops the run between two entries.
-    pub(crate) fn finish(&mut self, host: &mut Host, stopped: impl Fn() -> bool) -> bool {
+    /// Submits every entry left to `host`, one after another, then prints the end line. Before
+    /// each entry it asks `stopped`, and where that answers `true` it submits nothing more, so a
+    /// signal stops the run between two entries, the entries left [pending](Seeding::pending).
+    pub(crate) fn finish(&mut self, host: &mut Host, stopped: impl Fn() -> bool) {
         while self.pending() {
             if stopped() {
-                return false;
+                return;
             }
             self.step(host);
         }
         self.end();
-        true
     }
 
     /// Prints the end line of the run under way once: the counts of this run alone.
@@ -541,7 +540,9 @@ impl Seeding {
         self.seed.path()
     }
 
-    /// Submits the next entry to `host`, or, once none is left, prints the end line once. A
+    /// Submits the next entry to `host`, and once none is left prints the end line once: right
+    /// after the last entry, so a seed that rejected one stops the run before the loop takes
+    /// another exchange ([`Seeding::failed`]). A
     /// refusal is printed with the entry's place, command, request id and error name; a command an
     /// entry's events led to that did not run is printed as `run` prints one a request led to.
     /// Once the entry is done the marker counts it ([`MARKER`]), whatever became of it.
@@ -588,6 +589,9 @@ impl Seeding {
         }
         self.marked();
         self.note();
+        if !self.pending() {
+            self.end();
+        }
     }
 
     /// The counts of the seed run under way as the metrics count them: `refused` is every entry

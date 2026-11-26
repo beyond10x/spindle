@@ -1226,3 +1226,4 @@ mod adversary_w25_reseed;
 mod adversary_w25_reseed_r2;
 mod durable;
 mod rejected;
+mod signal_exit;

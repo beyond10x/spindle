@@ -534,11 +534,11 @@ fn held_desk() -> (SocketAddr, mpsc::Receiver<()>, mpsc::Sender<()>) {
 }
 
 /// The seed's first entry is held at a desk while two grants arrive over HTTP; once released, the
-/// loop serves one grant between the two entries and the other after the last (rejected) one,
-/// then sees the seed end and stops. Both grants ran, so both are answers in hand: each is
-/// written before the run exits 1.
+/// loop takes one grant between the two entries, then sends the last entry, which is rejected, and
+/// the seed ends there and stops the run. The grant the loop took is an answer in hand and reads
+/// 2xx; the grant still queued at the stop is not taken and reads 503, never a closed connection
+/// (`story:serve-loop-signal-exit-answers`, which removed the `ignore` this case carried).
 #[test]
-#[ignore = "racy: the second grant may still be queued when the run stops and reads no answer; story:serve-loop-signal-exit-answers answers it 503 before exit"]
 fn the_answers_in_hand_are_written_before_a_rejecting_seed_stops_the_run() {
     let directory = scratch();
     let (desk, asked, release) = held_desk();
@@ -603,10 +603,17 @@ fn the_answers_in_hand_are_written_before_a_rejecting_seed_stops_the_run() {
         .map(|grant| grant.join().expect("the grant's thread ends"))
         .collect();
     assert_eq!(served.exited(), Some(1), "the rejecting seed stops the run");
-    for answer in &answers {
-        assert!(
-            answer.starts_with("HTTP/1.1 2"),
-            "a grant the run served was answered before it exited: {answers:#?}"
-        );
-    }
+    let taken = answers
+        .iter()
+        .filter(|answer| answer.starts_with("HTTP/1.1 2"))
+        .count();
+    let queued = answers
+        .iter()
+        .filter(|answer| answer.starts_with("HTTP/1.1 503"))
+        .count();
+    assert_eq!(
+        (taken, queued),
+        (1, 1),
+        "the grant the loop took reads 2xx, the one still queued at the stop 503: {answers:#?}"
+    );
 }

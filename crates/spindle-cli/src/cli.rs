@@ -117,7 +117,9 @@ pub enum Command {
     /// stdin; only `http-loopback` is served, and any other binding exits 1 before listening. Prints
     /// `{"listening": "<address>", "components": [...]}` once listening and serves until SIGINT
     /// or SIGTERM (exit 130 or 143), or until a seed that rejected an entry ends (exit 1,
-    /// `--seed`). Routes are where `ess generate --kind openapi` publishes them:
+    /// `--seed`); then it takes no further request, writes every answer it has given, answers
+    /// each request still waiting `503`, and exits. Routes are where `ess generate --kind
+    /// openapi` publishes them:
     /// ESS's derived routes, or with `--http` the `ess-http/1` binding's, read and checked by ESS
     /// (methods, paths, path variables and per-outcome statuses), an operation it does not name
     /// keeping its derived route. A command's body is its input; it answers its outcome's status
