@@ -27,10 +27,11 @@ use spindle_ingress::{Exchange, Listener, Surface};
 use spindle_kernel::{Change, MemoryStore, Removal, Store, StoreError, Stored};
 
 /// How long a metrics read, and a command sent while one is read, may take in a debug build: the
-/// median of [`READS`].
-const BUDGET: Duration = Duration::from_millis(200);
+/// median of [`READS`]. A second, not 200 ms, so that a loaded build pool does not decide it
+/// (`story:test-step-within-budget`); one scan of every entity's store took 42 s or more.
+const BUDGET: Duration = Duration::from_secs(1);
 /// How long any one of them may take.
-const CEILING: Duration = Duration::from_secs(1);
+const CEILING: Duration = Duration::from_secs(5);
 /// How many domains the generated model declares, each with one entity and [`COMMANDS`].
 const DOMAINS: usize = 100;
 /// The commands of each domain.

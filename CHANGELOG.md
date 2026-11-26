@@ -24,6 +24,27 @@ are Spindle's releases.
   or a value not of the input's type, is refused at load, naming `rules[<index>]` and the entry.
   `run`, the Node export and the Service Worker read rules alike, and a reset keeps the
   decisions file a Node instance was created with (`story:decisions-rules-on-input-predicates`).
+- A pull request that changes only `.engineering/` and Markdown outside `website/` passes `Gate`,
+  `macOS`, `PostgreSQL` and `Build documentation` without building or testing; one that also
+  changes `website/` builds and checks the site and skips the build and test steps of the code
+  jobs. `scripts/changed-paths.sh` holds the one path list every job reads, and the design pages
+  under `docs/design/`, which tests read, count as code
+  (`story:planning-only-prs-skip-tests`).
+- The test step of `task check` and of CI's `Gate` runs under cargo-nextest: a test is killed at
+  60 s (`.config/nextest.toml`), the step after its build fails over 120 s (`scripts/within.sh`)
+  and prints its ten slowest tests. Dependencies build at `opt-level = 1` in the dev profile,
+  which cut the summed test time of the conformance, kernel and CLI binaries from about 935 s to
+  about 240 s; a kernel case compiles its fixture once rather than per command, the
+  stuck-collector case sends 20,000 frames rather than 200,000, and the transport, metrics-read
+  and concurrent-reads cases bound a second or more, not milliseconds
+  (`story:test-step-within-budget`).
+- The six wasm lanes of `task check` build in the `wasm-gate` profile (the dev profile without
+  debug info or incremental compilation, dependencies at `opt-level = 0`) in place of the release
+  profile and the dev profile, and each runs under `scripts/within.sh 120`. On an empty profile
+  directory the Node lane took 212 s in the release profile and takes about 100 s; the build and
+  the lint of `check:the_wasm_build_of_the_host_succeeds` run side by side, the lint in the
+  `wasm-lint` profile. The `wasm-bindgen-test-runner` lanes time a test out at 60 s, not 120 s.
+  `task web` still builds the release profile (`story:wasm-lanes-within-budget`).
 
 ### Fixed
 

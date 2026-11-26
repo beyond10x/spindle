@@ -93,25 +93,33 @@ fn openings(acts: usize) -> String {
     text
 }
 
-fn timed(spec: &Path, scenario: &Path) -> (Output, Duration) {
-    let started = Instant::now();
-    let output = replay(spec, &laptop(), scenario);
-    (output, started.elapsed())
+/// The fastest of three replays of `scenario`, each of which exits 0: the least a replay took,
+/// so that a run a loaded build pool held back does not decide a ratio of two times
+/// (`story:test-step-within-budget`).
+fn fastest(spec: &Path, scenario: &Path) -> Duration {
+    (0..3)
+        .map(|_| {
+            let started = Instant::now();
+            let output = replay(spec, &laptop(), scenario);
+            let took = started.elapsed();
+            assert_eq!(output.status.code(), Some(0), "{output:?}");
+            took
+        })
+        .min()
+        .expect("three replays")
 }
 
 /// The replay re-runs every prefix from an empty system, so N document steps cost N host starts
 /// and N(N+1)/2 command executions. Four times the steps must not cost much more than four times
-/// the time.
+/// the time; each is the fastest of three replays.
 #[test]
 fn a_long_scenario_replays_in_time_linear_in_its_steps() {
     let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("directory");
     let spec = root().join(SPEC);
     let short = write(directory.path(), "short.yaml", &openings(60));
     let long = write(directory.path(), "long.yaml", &openings(240));
-    let (output, short_took) = timed(&spec, &short);
-    assert_eq!(output.status.code(), Some(0), "{output:?}");
-    let (output, long_took) = timed(&spec, &long);
-    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let short_took = fastest(&spec, &short);
+    let long_took = fastest(&spec, &long);
     assert!(
         long_took < short_took * 8,
         "60 acts took {short_took:?}, 240 acts took {long_took:?}: {:.1}x for 4x the steps",

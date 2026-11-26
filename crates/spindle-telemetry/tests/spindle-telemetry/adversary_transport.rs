@@ -117,6 +117,12 @@ fn stopping_a_sender_whose_collector_does_not_accept_returns() {
     );
 }
 
+/// How many sends the stuck-collector case makes. Measured on Linux, every send drops from about
+/// the 1,000th on, once the accepted connection and the backlog are full: 20,000 sends spend
+/// most of the run in that state, where 200,000 ran over 60 s on a loaded build pool
+/// (`story:test-step-within-budget`).
+const SENDS: u64 = 20_000;
+
 /// A collector that accepts once and then never reads: the sender drops, reconnects into the
 /// backlog, and once that is full `Transmitter::send` must still return.
 #[test]
@@ -131,7 +137,7 @@ fn a_collector_that_accepts_once_and_never_reads_does_not_block_a_send() {
     let (progress, sends) = mpsc::channel::<(u64, Delivery)>();
     std::thread::spawn(move || {
         let mut transmitter = Transmitter::new(counters(), options);
-        for step in 0..200_000u64 {
+        for step in 0..SENDS {
             let delivery = transmitter.send();
             if progress.send((step, delivery)).is_err() {
                 return;
@@ -159,7 +165,7 @@ fn a_collector_that_accepts_once_and_never_reads_does_not_block_a_send() {
             Ok((step, delivery)) => {
                 last = step;
                 dropped += u64::from(delivery == Delivery::Dropped);
-                if step == 199_999 {
+                if step == SENDS - 1 {
                     break;
                 }
             }
@@ -171,6 +177,11 @@ fn a_collector_that_accepts_once_and_never_reads_does_not_block_a_send() {
             ),
         }
     }
+    assert_eq!(last, SENDS - 1, "every send returned");
+    assert!(
+        dropped >= SENDS / 2,
+        "{dropped} of {SENDS} sends dropped: the run did not reach a full backlog"
+    );
 }
 
 /// `sun_path` holds 108 bytes. A launcher can hand out a longer path, and the instance then
