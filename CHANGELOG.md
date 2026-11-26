@@ -26,9 +26,10 @@ are Spindle's releases.
   created as `1`, and the reverse, as ESS 0.99.1's interpreter reads both as one value, where it
   answered that no row has the identity. The kernel writes every `Integer` of a command's input as
   the integer once ESS admitted it (through `Optional`, newtypes, lists, maps, struct members and
-  union payloads), so the row, its identity and the event payload hold `1`; the walk a reset's
-  world uses is the kernel's, `spindle_kernel::integers`. A durable row a command created with
-  `1.0` before this change is keyed `1.0` and is no longer found; it is not migrated
+  union payloads), so the row, its identity and the event payload hold `1`, and writes a caller's
+  `Integer` attribute read by `{caller: …}` the same way; the walk a reset's world uses is the
+  kernel's, `spindle_kernel::integers`. A durable row a command created with `1.0` before this
+  change is keyed `1.0` and is no longer found; it is not migrated
   (`story:integer-identity-any-spelling`).
 
 - The `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` archives run on glibc 2.17 and
