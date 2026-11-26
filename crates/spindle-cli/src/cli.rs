@@ -329,12 +329,17 @@ pub enum Command {
         /// stderr gives the counts when the seed ends; with `--observe`, `GET /__spindle/metrics`
         /// has them as `spindle_seed_commands_total`, a rejected entry counted `refused` there.
         /// A seed that ends having rejected an entry stops the run: it serves until then, and
-        /// exits 1 once the end line is printed. Only where `run` serves HTTP. Request ids are
-        /// not kept across starts: a restart applies nothing new only where every entry is a
-        /// create its command answers `existing_instance:`, and every other entry runs again.
-        /// `POST /api/reset` drops the entries not yet sent; with no world it then submits the
-        /// seed again, from its first entry, before it answers, its end line counting that run
-        /// alone, and with a world it loads that world alone.
+        /// exits 1 once the end line is printed. Only where `run` serves HTTP. With `--state`,
+        /// `seed.json` there records the seed file's digest and how many entries are done,
+        /// written after each: a restart with the same file sends only the entries after those
+        /// done, and prints that the seed already ran once every one is; one with another file
+        /// exits 1 before listening, naming both digests, unless the state holds no row. A state
+        /// without `seed.json` gets the whole seed, then the record. Without `--state` nothing
+        /// is recorded and every start sends the whole seed; request ids are not kept across
+        /// starts. `POST /api/reset` drops the entries not yet sent; with no world it then
+        /// records 0 entries done and submits the seed again, from its first entry, before it
+        /// answers, its end line counting that run alone, and with a world it loads that world
+        /// alone and records every entry done.
         #[arg(long, value_name = "FILE", conflicts_with = "scenario")]
         seed: Option<PathBuf>,
         /// Start the run on a manual clock standing at this RFC 3339 instant

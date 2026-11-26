@@ -391,9 +391,10 @@ fn counted(address: SocketAddr) -> [u64; 4] {
     })
 }
 
-/// Run twice on one state: the second run applies nothing new, and every entry counts as already
-/// there, the `existing_instance:` duplicate as much as a request id an earlier entry carried;
-/// none counts as refused. The counts are in `/__spindle/metrics` and the end line.
+/// Run twice on one state: the first run counts the `existing_instance:` duplicate and the repeated
+/// request id as already there, none as refused, in `/__spindle/metrics` and the end line. The
+/// second run applies nothing new: the state records that the seed ran, so it sends no entry and
+/// says so (`story:seed-once-on-durable-state`; it sent every entry again before).
 #[test]
 fn a_second_run_on_one_state_applies_nothing_new() {
     let directory = scratch();
@@ -436,16 +437,16 @@ fn a_second_run_on_one_state_applies_nothing_new() {
     first.stop();
 
     let mut second = serve(&arguments);
-    let ended = second.ended();
-    assert!(
-        ended.contains("3 sent, 0 applied, 3 already there, 0 refused"),
-        "{ended}"
-    );
-    assert_eq!(counted(second.address), [3, 0, 3, 0]);
+    let skipped = second.line("already ran");
+    assert!(skipped.contains(&seed), "{skipped}");
+    assert_eq!(counted(second.address), [0, 0, 0, 0]);
+    assert_eq!(second.events(&[]).len(), 2);
     let stderr = second.stop();
     assert!(
-        stderr.iter().all(|line| !line.contains("refused:")),
-        "an entry already there is no refusal: {stderr:#?}"
+        stderr
+            .iter()
+            .all(|line| !line.contains("refused:") && !line.contains(" ended: ")),
+        "no entry is sent: {stderr:#?}"
     );
 }
 
@@ -1223,4 +1224,5 @@ fn a_run_without_a_seed_resets_as_before() {
 
 mod adversary_w25_reseed;
 mod adversary_w25_reseed_r2;
+mod durable;
 mod rejected;

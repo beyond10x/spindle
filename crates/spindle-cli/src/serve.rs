@@ -397,6 +397,17 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             );
         }
     }
+    // Where a `--state` records the seed applied to it (`seed.json`), a seed it does not record
+    // stops the run here, before listening.
+    let mut seeding = match serving.seed {
+        Some(seed) => Some(crate::seed::begin(
+            seed,
+            serving.state,
+            &mut host,
+            recorder.clone(),
+        )?),
+        None => None,
+    };
     let listener = Listener::bind_reading_on(serving.address, serving.port, surface, host.reader())
         .context("binding the HTTP listener")?;
     let worlds = |ir: &EssIr, body: &serde_json::Value| {
@@ -405,14 +416,6 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         })
         .map_err(|error| format!("{error:#}"))
     };
-    let mut seeding = serving.seed.map(|seed| {
-        eprintln!(
-            "b10x-spindle: seed {}: {} entries, submitted one at a time once listening",
-            seed.path().display(),
-            seed.len()
-        );
-        Seeding::new(seed, recorder.clone())
-    });
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     writeln!(
@@ -484,7 +487,8 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
 /// Answers `exchange`, a `POST /api/reset` on a run with a seed: every store emptied and the world
 /// its body carries loaded, as [`console::reset`] answers it, and the reset counted on `recorder`
 /// where it succeeded. A reset that succeeded drops the entries of the seed run under way not yet
-/// sent ([`Seeding::cut`]), so a world is loaded alone. Where the body gives no world
+/// sent ([`Seeding::cut`]), so a world is loaded alone, and on a `--state` records every entry done
+/// ([`Seeding::loaded`]), so a restart sends none. Where the body gives no world
 /// ([`console::carries_world`]), `seeding` is then submitted again from its first entry to its
 /// end ([`Seeding::restart`], [`Seeding::finish`]) before the answer is sent, so the reset answers
 /// with the seed's effects in place (`story:reset-reapplies-seed`).
@@ -504,8 +508,10 @@ fn reset_seeded(
         if let Some(recorder) = recorder {
             recorder.count_reset();
         }
-        seeding.cut();
-        if !console::carries_world(exchange.body()) {
+        if console::carries_world(exchange.body()) {
+            seeding.loaded();
+        } else {
+            seeding.cut();
             seeding.restart();
             if !seeding.finish(host, stopped) {
                 return;

@@ -37,6 +37,15 @@ are Spindle's releases.
   conflict, as a write to the guard's own entity does. A rows quantifier in an `affects:` or
   `instances:` filter stays refused, as ESS refuses it (`story:related-selector-rows-quantifier`).
 
+- `run --seed` on a `--state` directory applies the seed once, where every start sent every entry
+  again and an entry that updates, moves or removes a row changed it a second time. `seed.json` in
+  the state (`0600`) records the seed file's `sha256:` digest and the entries done, after each
+  entry: a restart with the same file sends only the entries not yet done, and prints that the
+  seed already ran once every one is; one with another file exits 1 before listening, naming both
+  digests, unless the state holds no row. A state without `seed.json` gets the whole seed, then the
+  record. A reset with no world records 0 entries done before it sends the seed again; one with a
+  world records every entry done (`story:seed-once-on-durable-state`).
+
 ### Fixed
 
 - A command whose `when_related:` guard reads the rows of an entity another component owns (a row

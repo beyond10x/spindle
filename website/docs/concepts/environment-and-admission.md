@@ -226,23 +226,38 @@ With `--observe`, `GET /__spindle/metrics` has the same counts as
 `spindle_seed_commands_total{counted="sent"}` and so on, from the first scrape. The metric counts a
 rejected entry under `refused`.
 
+### A seed on a kept state
+
+On a `--state` directory the run records the seed in `seed.json` beside the state's files, readable
+by its owner alone: the digest of the seed file, `sha256:` and its hexadecimal SHA-256, and how
+many of its entries are done, written after each entry whatever became of it. On the next start:
+
+- With the same seed file and every entry done, `run` prints that the seed already ran and sends no
+  entry, so an update or a move in the seed is applied once.
+- With the same seed file and some entries done, as after a run stopped mid-seed, it sends the
+  entries after those done. An entry the run was stopped in may have been applied without being
+  counted, and is then sent again.
+- With another seed file, `run` exits 1 before listening, naming both digests, unless the state
+  holds no row; then the new file runs from its first entry.
+- On a state written without `seed.json`, the whole seed is sent, as before, and `seed.json` is
+  written.
+
+A request id is remembered only by the start that sends its entry. A store kept elsewhere, in
+PostgreSQL or in memory, records nothing: every start sends the whole seed, so a second start
+applies nothing new only where every entry is a create whose command declares
+`existing_instance:`.
+
 ### What a seed does not do
 
-Spindle keeps no record of request ids: a request id is remembered only by the run that submits
-the file, for that start. The run submits the whole file on every start, so:
-
-- A second start on the same state applies nothing new only when every entry is a create whose
-  command declares `existing_instance:` for an instance already held.
-- Any other entry runs again on every start: an update writes its values over any change made since
-  the last start, and a move from a state the row has left is refused and counted `refused`.
-- Two replicas starting at once each submit the whole file; only `existing_instance:` outcomes keep
-  that from writing twice.
+- Two replicas starting at once on a store kept in PostgreSQL each submit the whole file; only
+  `existing_instance:` outcomes keep that from writing twice.
 - `POST /api/reset` drops the seed's entries not yet sent, so a reset that arrives while the seed
-  runs ends that run with the counts it reached. With no world it then empties every store and
-  submits the seed again, from its first entry to its end, before it answers: the request ids the
-  run remembered are forgotten, and the end line printed again counts that run alone.
-  `spindle_seed_commands_total` is a counter and goes on across resets. A reset whose body gives a
-  world loads that world alone and does not submit the seed; put the seeded rows into the world to
+  runs ends that run with the counts it reached. With no world it then empties every store,
+  records 0 entries done in `seed.json`, and submits the seed again, from its first entry to its
+  end, before it answers: the request ids the run remembered are forgotten, and the end line
+  printed again counts that run alone. `spindle_seed_commands_total` is a counter and goes on
+  across resets. A reset whose body gives a world loads that world alone, does not submit the seed
+  and records every entry done, so a restart sends none; put the seeded rows into the world to
   keep them. SIGINT or SIGTERM during a reset's seed stops the run between two entries, unanswered.
 - Only a served `run` submits a seed. `play` and `deploy` stop with exit 1 on an environment
   document with a `[seed]` table, as `run` does where nothing requires `ingress.network`.
