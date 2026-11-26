@@ -57,6 +57,7 @@ mod form_query;
 mod format_range;
 mod http_cause;
 mod ingress;
+mod map_input_guard;
 mod metrics;
 mod mint;
 mod observe;

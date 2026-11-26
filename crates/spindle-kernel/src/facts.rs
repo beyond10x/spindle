@@ -9,8 +9,10 @@
 //!
 //! A JSON value binds its leaves the way every ESS fact source does: a scalar at its own path, an
 //! object member at `<path>.<member>`, and a list as `<path>.count` with its elements at
-//! `<path>.<index>`. `null` binds nothing, so a guard over an absent value is `Unknown`, never
-//! `false`.
+//! `<path>.<index>`. A value whose declared type is a `Map` binds as a list does: `<path>.count`
+//! and its values at `<path>.<index>` in key order, no key at any path, as ESS 0.99.1 projects one
+//! (`input::project_value`). `null` binds nothing, so a guard over an absent value is `Unknown`,
+//! never `false`.
 //!
 //! The declared types answer how text is ordered, as ESS's typed fact sources answer it: a
 //! `Timestamp` by the instant it names, a `Duration` not at all, any other text by its UTF-8
@@ -21,7 +23,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use ess_compiler::EssIr;
-use ess_compiler::ir::{ResolvedEntity, ResolvedField, ResolvedTypeRef};
+use ess_compiler::ir::{ResolvedBody, ResolvedEntity, ResolvedField, ResolvedTypeRef};
 use ess_domain::types::Primitive;
 use ess_primitives::facts::{FactPath, FactSource, FactStore, FactValue, Scales};
 use ess_primitives::time::Rfc3339Instant;
@@ -98,7 +100,7 @@ impl<'a> Facts<'a> {
         self.caller = Some(attributes);
         for (name, value) in caller.into_iter().flatten() {
             if let Ok(path) = FactPath::new(format!("{CALLER}.{name}")) {
-                self.bind(&path, value);
+                self.bind(&path, value, declared_by(attributes, name));
             }
         }
         self
@@ -123,18 +125,18 @@ impl<'a> Facts<'a> {
             facts.store.set(path, FactValue::text(row.state.clone()));
         }
         if let Ok(path) = FactPath::new(&entity.identity.name) {
-            facts.bind(&path, identity);
+            facts.bind(&path, identity, Some(&entity.identity.type_ref));
         }
         for (name, value) in &row.fields {
             if let Ok(path) = FactPath::new(name) {
-                facts.bind(&path, value);
+                facts.bind(&path, value, declared_by(&entity.fields, name));
             }
         }
         if let Some((declared, values)) = input {
             facts.input = Some(declared);
             for (name, value) in values {
                 if let Ok(path) = FactPath::new(format!("{INPUT}.{name}")) {
-                    facts.bind(&path, value);
+                    facts.bind(&path, value, declared_by(declared, name));
                 }
             }
         }
@@ -151,13 +153,19 @@ impl<'a> Facts<'a> {
         let mut facts = Self::empty(ir, fields.to_vec());
         for (name, value) in values {
             if let Ok(path) = FactPath::new(name) {
-                facts.bind(&path, value);
+                facts.bind(&path, value, declared_by(fields, name));
             }
         }
         facts
     }
 
-    fn bind(&mut self, path: &FactPath, value: &Value) {
+    /// Binds `value` at `path` as the type `declared` shapes it, as ESS's
+    /// `input::project_value` binds a typed value: a list and a map as `<path>.count` with their
+    /// elements at `<path>.<index>`, a map's values in key order and no key at any path, a struct's
+    /// members at `<path>.<member>`. A value no type declares binds as its JSON shape reads.
+    fn bind(&mut self, path: &FactPath, value: &Value, declared: Option<&ResolvedTypeRef>) {
+        let ir = self.ir;
+        let shape = declared.and_then(|declared| Shape::of(ir, declared));
         match value {
             Value::Null => {}
             Value::Bool(_) | Value::Number(_) | Value::String(_) => {
@@ -166,19 +174,45 @@ impl<'a> Facts<'a> {
                 }
             }
             Value::Array(elements) => {
-                self.present.insert(path.clone());
-                self.store
-                    .set(path.child("count"), FactValue::count(elements.len()));
-                for (index, element) in elements.iter().enumerate() {
-                    self.bind(&path.child(&index.to_string()), element);
-                }
+                let of = match shape {
+                    Some(Shape::List(of)) => Some(of),
+                    _ => None,
+                };
+                self.bind_list(path, elements.iter(), of);
             }
-            Value::Object(members) => {
-                self.present.insert(path.clone());
-                for (member, element) in members {
-                    self.bind(&path.child(member), element);
+            Value::Object(members) => match shape {
+                Some(Shape::Map(of)) => {
+                    let mut entries = members.iter().collect::<Vec<_>>();
+                    entries.sort_by_key(|(key, _)| *key);
+                    self.bind_list(path, entries.into_iter().map(|(_, value)| value), Some(of));
                 }
-            }
+                shape => {
+                    let fields = match shape {
+                        Some(Shape::Struct(fields)) => fields,
+                        _ => &[],
+                    };
+                    self.present.insert(path.clone());
+                    for (member, element) in members {
+                        self.bind(&path.child(member), element, declared_by(fields, member));
+                    }
+                }
+            },
+        }
+    }
+
+    /// Binds `<path>.count` and each of `elements` at `<path>.<index>`, as ESS's
+    /// `input::project_list` binds a list or a map's values.
+    fn bind_list<'v>(
+        &mut self,
+        path: &FactPath,
+        elements: impl ExactSizeIterator<Item = &'v Value>,
+        of: Option<&ResolvedTypeRef>,
+    ) {
+        self.present.insert(path.clone());
+        self.store
+            .set(path.child("count"), FactValue::count(elements.len()));
+        for (index, element) in elements.enumerate() {
+            self.bind(&path.child(&index.to_string()), element, of);
         }
     }
 
@@ -207,6 +241,42 @@ impl<'a> Facts<'a> {
             Err(_) => None,
         }
     }
+}
+
+/// What a declared type makes of the JSON value it binds, through any `Optional` or newtype: the
+/// shapes whose facts differ from the value's own JSON shape, as ESS's `input::project_value`
+/// reads them.
+enum Shape<'t> {
+    /// A list of this element type.
+    List(&'t ResolvedTypeRef),
+    /// A map with values of this type, bound as a list of its values in key order.
+    Map(&'t ResolvedTypeRef),
+    /// A struct with these members.
+    Struct(&'t [ResolvedField]),
+}
+
+impl<'t> Shape<'t> {
+    fn of(ir: &'t EssIr, declared: &'t ResolvedTypeRef) -> Option<Self> {
+        match declared {
+            ResolvedTypeRef::Optional { of } => Self::of(ir, of),
+            ResolvedTypeRef::List { of } => Some(Self::List(of)),
+            ResolvedTypeRef::Map { value, .. } => Some(Self::Map(value)),
+            ResolvedTypeRef::Declared { name } => match &ir.named_type(name).body {
+                ResolvedBody::Newtype { of, .. } => Self::of(ir, of),
+                ResolvedBody::Struct { fields, .. } => Some(Self::Struct(fields)),
+                _ => None,
+            },
+            ResolvedTypeRef::Primitive { .. } => None,
+        }
+    }
+}
+
+/// The type the field `name` of `fields` declares.
+fn declared_by<'t>(fields: &'t [ResolvedField], name: &str) -> Option<&'t ResolvedTypeRef> {
+    fields
+        .iter()
+        .find(|field| field.name == name)
+        .map(|field| &field.type_ref)
 }
 
 /// The facts a row-set selector reads of one candidate row, routed as ESS's interpreter routes

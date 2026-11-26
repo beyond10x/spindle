@@ -1,0 +1,101 @@
+domain: tally.board
+summary: Boards, each opened with a map of scores that an input guard reads.
+errors:
+  - name: tally.board.PreScored
+    summary: The board is opened with scores already on it.
+    fields: []
+  - name: tally.board.HighScore
+    summary: The board is opened with a score over five.
+    fields: []
+  - name: tally.board.AllHigh
+    summary: The board is opened with every score over five.
+    fields: []
+entities:
+  - name: tally.board.Board
+    identity:
+      name: id
+      type: Uuid
+    fields:
+      - name: label
+        type: String
+    lifecycle:
+      initial: Opened
+      states: [Opened]
+      terminal: [Opened]
+commands:
+  - name: tally.board.OpenBoard
+    input:
+      - name: id
+        type: Uuid
+      - name: label
+        type: String
+      - name: scores
+        type: Optional<Map<String, Integer>>
+    outcomes:
+      - name: pre-scored
+        when: scores.count > 0
+        error: tally.board.PreScored
+        summary: A board opened with scores on it is refused.
+      - name: opened
+        creates: tally.board.Board
+        instance: id
+        sets:
+          label: input.label
+        emits: [tally.board.BoardOpened]
+        payload:
+          tally.board.BoardOpened:
+            id: input.id
+        summary: The board is opened.
+  - name: tally.board.OpenLowBoard
+    input:
+      - name: id
+        type: Uuid
+      - name: label
+        type: String
+      - name: scores
+        type: Map<String, Integer>
+    outcomes:
+      - name: high-score
+        when:
+          exists: {in: scores, as: s, that: s > 5}
+        error: tally.board.HighScore
+        summary: A board with any score over five is refused.
+      - name: opened
+        creates: tally.board.Board
+        instance: id
+        sets:
+          label: input.label
+        emits: [tally.board.BoardOpened]
+        payload:
+          tally.board.BoardOpened:
+            id: input.id
+        summary: The board is opened.
+  - name: tally.board.OpenMixedBoard
+    input:
+      - name: id
+        type: Uuid
+      - name: label
+        type: String
+      - name: scores
+        type: Map<String, Integer>
+    outcomes:
+      - name: all-high
+        when:
+          forall: {in: scores, as: s, that: s > 5}
+        error: tally.board.AllHigh
+        summary: A board whose every score is over five is refused.
+      - name: opened
+        creates: tally.board.Board
+        instance: id
+        sets:
+          label: input.label
+        emits: [tally.board.BoardOpened]
+        payload:
+          tally.board.BoardOpened:
+            id: input.id
+        summary: The board is opened.
+events:
+  - name: tally.board.BoardOpened
+    fields:
+      - name: id
+        type: Uuid

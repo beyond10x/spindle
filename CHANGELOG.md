@@ -30,6 +30,13 @@ are Spindle's releases.
   no `INTERP` and no `NEEDED` and run in Alpine; the SBOM covers the five targets and
   `SHA256SUMS` the five archives (`story:release-linux-glibc-floor-and-musl`).
 
+- A guard that reads a present `Map` input, stored field or caller attribute with `.count` or a
+  quantifier (`scores.count > 0`, `exists: {in: scores, as: s, that: s > 5}`, `forall:`) is
+  decided as ESS 0.99.1's interpreter decides it, where the kernel refused the command as
+  undecidable and the served route answered `501`: a value whose declared type is a `Map` binds
+  `<path>.count` and its values at `<path>.<index>` in key order, as a list does, and no key at
+  any path (`story:map-input-guard-facts`).
+
 - A `when_related:` row-set guard whose `where:` or `forall:` walks the rows of another entity,
   `exists: {in: {entity: …}, as: …, that: …}`, is decided as ESS 0.99.1's interpreter decides it,
   where it was refused at start: every stored row of the walked entity is read with the
