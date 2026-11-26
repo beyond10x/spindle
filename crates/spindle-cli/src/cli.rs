@@ -333,21 +333,25 @@ pub enum Command {
         #[arg(long, value_name = "FILE", conflicts_with = "scenario")]
         seed: Option<PathBuf>,
         /// Start the run on a manual clock standing at this RFC 3339 instant
-        /// (`2026-02-01T00:00:00Z`) instead of the system clock: every guard and view that reads
-        /// `now`, and every generated `Timestamp`, reads it. Reading stdin, a line's `"at":
-        /// "<RFC 3339>"` moves the clock forward to that instant before its command runs; an
-        /// instant before the clock's, or `"at"` on a run without `--clock`, rejects that line.
+        /// (`2026-02-01T00:00:00Z`, a fraction of a second and an offset read as given) instead of
+        /// the system clock: every guard and view that reads `now`, and every generated
+        /// `Timestamp`, reads it. Reading stdin, a line's `"at": "<RFC 3339>"` moves the clock
+        /// forward to that instant before its command runs; an instant before the clock's, or
+        /// `"at"` on a run without `--clock`, rejects that line, and a rejected line leaves the
+        /// clock where it stood.
         /// Served over HTTP, and with `--scenario` (each replay's host; ESS's runner keeps its own
         /// clock for the document), the clock stands at the instant for the whole run. No run
         /// fires a periodic binding.
         #[arg(long, value_name = "RFC3339", value_parser = instant)]
         clock: Option<SystemTime>,
         /// Mint every identity and generated value from this seed, from the first command on:
-        /// two runs given one seed and the same commands mint the same identities. Served over
+        /// two runs given one seed and the same commands mint the same identities, and an
+        /// identity an instance of `--state` already holds is never minted again. Served over
         /// HTTP, a `POST /api/reset` whose world carries `mint` mints from that until the next
         /// reset, and one whose world has none mints from this seed again, from its first draw.
-        /// Reading stdin on an environment that binds `identity.mint` to `seeded`, the seed is 0
-        /// without this flag. With `--scenario`, each replay's host mints from it.
+        /// On an environment that binds `identity.mint` to `seeded`, the seed is 0 without this
+        /// flag reading stdin, and a run serving HTTP requires it. With `--scenario`, each
+        /// replay's host mints from it.
         #[arg(long, value_name = "N")]
         mint_seed: Option<u64>,
         /// The `ess-scenario` document to replay.
@@ -597,10 +601,9 @@ pub enum StoreCommand {
     },
 }
 
-/// A JSON object, as `--fixed-caller` reads it.
-/// The civil time an RFC 3339 `date-time` names (`2026-02-01T00:00:00Z`, `2026-02-01T01:00:00+01:00`),
-/// read by ESS's own reader ([`ess_primitives::Rfc3339Instant`]): `--clock`, and a stdin line's
-/// `"at"`.
+/// The instant an RFC 3339 `date-time` names (`2026-02-01T00:00:00Z`, `2026-02-01T01:00:00+01:00`,
+/// `2026-02-01T00:00:00.5Z`), its offset and its fraction of a second included, read by ESS's own
+/// reader ([`ess_primitives::Rfc3339Instant`]): `--clock`, and a stdin line's `"at"`.
 ///
 /// # Errors
 /// A text that is no RFC 3339 `date-time`.
@@ -608,12 +611,7 @@ pub fn instant(text: &str) -> Result<SystemTime, String> {
     let parsed = ess_primitives::Rfc3339Instant::parse_rfc3339(text)
         .ok_or_else(|| format!("not an RFC 3339 instant such as 2026-02-01T00:00:00Z: {text}"))?;
     let seconds = parsed.epoch_seconds();
-    // The fraction is the one part the instant answers only in its spelling: `.<9 digits>Z`.
-    let nanos = parsed
-        .to_rfc3339()
-        .split_once('.')
-        .and_then(|(_, fraction)| fraction.trim_end_matches('Z').parse::<u64>().ok())
-        .unwrap_or(0);
+    let nanos = nanos(&parsed.to_rfc3339());
     let whole = Duration::from_secs(seconds.unsigned_abs());
     let second = if seconds >= 0 {
         UNIX_EPOCH + whole
@@ -623,6 +621,22 @@ pub fn instant(text: &str) -> Result<SystemTime, String> {
     Ok(second + Duration::from_nanos(nanos))
 }
 
+/// The nanoseconds of the fraction of a second `spelled` names, an instant as
+/// [`ess_primitives::Rfc3339Instant::to_rfc3339`] spells it: in UTC, its fraction's trailing zeros
+/// trimmed (`.5Z` is 500 000 000), 0 without a fraction. The fraction is the one part the instant
+/// answers only in its spelling.
+fn nanos(spelled: &str) -> u64 {
+    let Some((_, fraction)) = spelled.split_once('.') else {
+        return 0;
+    };
+    let digits = fraction.trim_end_matches('Z');
+    if digits.is_empty() || digits.len() > 9 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return 0;
+    }
+    format!("{digits:0<9}").parse().unwrap_or(0)
+}
+
+/// A JSON object, as `--fixed-caller` reads it.
 fn json_object(text: &str) -> Result<Map<String, Value>, String> {
     match serde_json::from_str::<Value>(text) {
         Ok(Value::Object(object)) => Ok(object),

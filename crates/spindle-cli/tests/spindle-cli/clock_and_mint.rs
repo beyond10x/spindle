@@ -177,6 +177,44 @@ fn a_line_with_an_earlier_at_is_rejected() {
     );
 }
 
+/// A line rejected before it ran (here, a command the specification does not declare) does not
+/// move the clock to its `"at"`: the next line, without one, books on the clock as it stood, and an
+/// `"at"` between the two instants runs.
+#[test]
+fn a_rejected_line_leaves_the_clock_where_it_was() {
+    let rejected = json!({"command": "ledger.slot.Undeclared", "input": {},
+                          "at": "2026-03-01T00:00:00Z"});
+    let unmoved = json!({"command": BOOK,
+                         "input": {"booking_id": "b1", "deadline": "2026-02-15T00:00:00Z"}});
+    let lines = format!(
+        "{rejected}\n{unmoved}\n{}",
+        book("b2", Some("2026-02-10T00:00:00Z"))
+    );
+    let output = run(
+        &[
+            "run",
+            CLOCK,
+            "--environment",
+            MEMORY,
+            "--clock",
+            "2026-02-01T00:00:00Z",
+        ],
+        &lines,
+    );
+    let printed = results(&output);
+    assert_eq!(printed.len(), 3, "{output:?}");
+    assert!(printed[0]["failure"].is_object(), "{printed:?}");
+    assert_eq!(
+        printed[1]["outcome"], "early",
+        "the clock stands at February 1st, not at the rejected line's March 1st: {printed:?}"
+    );
+    assert_eq!(
+        printed[2]["outcome"], "early",
+        "February 10th is after the clock: {printed:?}"
+    );
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+}
+
 #[test]
 fn a_seeded_mint_binding_is_served() {
     let directory = scratch();

@@ -550,8 +550,8 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         .filter(|bound| ![spindle_kernel::UuidV4::IMPLEMENTATION, SEEDED_MINT].contains(bound))
     {
         bail!(
-            "identity.mint is bound to {other} on {}; this build mints identities as {} or, \
-             reading stdin, {SEEDED_MINT} only",
+            "identity.mint is bound to {other} on {}; this build mints identities as {} or \
+             {SEEDED_MINT} only",
             parsed.name,
             spindle_kernel::UuidV4::IMPLEMENTATION
         );
@@ -580,12 +580,11 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 spindle_ingress::HTTP_LOOPBACK
             );
         }
-        if minting == Some(SEEDED_MINT) {
+        if minting == Some(SEEDED_MINT) && mint_seed.is_none() {
             bail!(
-                "identity.mint is bound to {SEEDED_MINT} on {}; a run serving HTTP mints \
-                 identities as {}: give --mint-seed <N> to mint them from a seed",
-                parsed.name,
-                spindle_kernel::UuidV4::IMPLEMENTATION
+                "identity.mint is bound to {SEEDED_MINT} on {}; a run serving HTTP mints from \
+                 the seed --mint-seed <N> names: give it",
+                parsed.name
             );
         }
         let decides = decisions.is_some() || answer_default || calls.answer_every(bindings);
@@ -723,10 +722,17 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
     for line in unsupported_outcomes(&loaded.ir, None) {
         eprintln!("b10x-spindle: {line}");
     }
-    let mut mint: Box<dyn spindle_kernel::Mint> = match (mint_seed, minting) {
-        (Some(seed), _) => Box::new(spindle_kernel::Seeded::new(seed)),
-        (None, Some(SEEDED_MINT)) => Box::new(spindle_kernel::Seeded::new(0)),
-        (None, _) => Box::new(spindle_kernel::UuidV4),
+    let seed = match (mint_seed, minting) {
+        (Some(seed), _) => Some(seed),
+        (None, Some(SEEDED_MINT)) => Some(0),
+        (None, _) => None,
+    };
+    let mut mint: Box<dyn spindle_kernel::Mint> = match seed {
+        Some(seed) => Box::new(
+            spindle_kernel::Seeded::new(seed)
+                .avoiding_identities(held_identities(&loaded.ir, store.as_mut())?.iter()),
+        ),
+        None => Box::new(spindle_kernel::UuidV4),
     };
     let mut clock = clock;
     let stdout = std::io::stdout();
@@ -748,10 +754,9 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                     "command": request.command,
                     "failure": {"kind": "invalid_request", "message": message},
                 }),
-                Ok(now) => {
-                    clock = now;
-                    let now = move || now.unwrap_or_else(std::time::SystemTime::now);
-                    answer(
+                Ok(moved) => {
+                    let now = move || moved.unwrap_or_else(std::time::SystemTime::now);
+                    let result = answer(
                         &loaded.ir,
                         store.as_mut(),
                         answers.answers(),
@@ -759,7 +764,12 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                         &request,
                         mint.as_mut(),
                         &now,
-                    )
+                    );
+                    // A rejected line did not run, so the clock stays where it stood.
+                    if result.get("failure").is_none() {
+                        clock = moved;
+                    }
+                    result
                 }
             },
         };
@@ -781,6 +791,23 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         rejected.len()
     );
     Ok(ExitCode::FAILURE)
+}
+
+/// Every identity an instance in `store` holds, of every entity `ir` declares: what a seeded mint
+/// on state an earlier run kept never mints again.
+fn held_identities(
+    ir: &spindle_spec::EssIr,
+    store: &mut dyn Store,
+) -> Result<Vec<serde_json::Value>> {
+    let mut held = Vec::new();
+    for entity in ir.entities().keys() {
+        let entity = entity.to_string();
+        let scan = store
+            .scan(&entity)
+            .with_context(|| format!("reading the identities {entity} holds"))?;
+        held.extend(scan.rows.into_iter().map(|(identity, _)| identity));
+    }
+    Ok(held)
 }
 
 /// Removes `directory` and exits 130 or 143 on SIGINT or SIGTERM: `run` reading stdin blocks in a

@@ -149,10 +149,10 @@ impl HostTarget {
             Path::new(""),
             Box::new(Forced(self.forced.clone())),
         )?;
-        Ok(match self.mint {
+        match self.mint {
             Some(seed) => host.seeded(seed),
-            None => host,
-        })
+            None => Ok(host),
+        }
     }
 
     /// The first field `view` declares, not as `Optional`, that a row of `rows` lacks: one no

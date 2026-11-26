@@ -181,6 +181,9 @@ const TIMERS: &[&str] = &["tokio"];
 /// The clock implementations this host runs. A test injects its own clock through
 /// [`Host::new`].
 const CLOCKS: &[&str] = &["system"];
+/// The `identity.mint` implementation that mints from a seed ([`Seeded`]): a host whose
+/// environment binds it mints from seed 0 until [`Host::seeded`] names another.
+const SEEDED_MINT: &str = "seeded";
 
 /// Why the host did not start or could not go on.
 #[derive(Debug, thiserror::Error)]
@@ -833,9 +836,9 @@ impl Host {
                 } else if capability == Capability::CLOCK && !runs(CLOCKS) {
                     Some("this host runs no such clock")
                 } else if capability == Capability::IDENTITY_MINT
-                    && !runs(&[spindle_kernel::UuidV4::IMPLEMENTATION])
+                    && !runs(&[spindle_kernel::UuidV4::IMPLEMENTATION, SEEDED_MINT])
                 {
-                    Some("this host mints identities as uuid-v4 only")
+                    Some("this host mints identities as uuid-v4 or seeded only")
                 } else {
                     None
                 };
@@ -970,7 +973,13 @@ impl Host {
                 timer.bind_telemetry(&periodic.name, component.sink.clone())?;
             }
         }
-        Ok(Self {
+        let seeded = placements.iter().any(|(_, bindings)| {
+            bindings.iter().any(|binding| {
+                binding.capability.as_str() == Capability::IDENTITY_MINT
+                    && binding.implementation.as_str() == SEEDED_MINT
+            })
+        });
+        let host = Self {
             ir,
             clock,
             placements,
@@ -987,19 +996,38 @@ impl Host {
             mint: Box::new(UuidV4),
             seed: None,
             retrying,
-        })
+        };
+        if seeded { host.seeded(0) } else { Ok(host) }
     }
 
     /// This host, minting every identity and generated value from `seed` ([`Seeded`]) from its
-    /// first command on, where it minted random version 4 UUIDs: the same commands mint the same
-    /// identities. The seed is the run's: a reset whose world carries a mint of its own mints from
-    /// that until the next reset, and one whose world has none installs this seed again, from its
-    /// first draw ([`Host::reset_to`]).
-    #[must_use]
-    pub fn seeded(mut self, seed: u64) -> Self {
+    /// first command on, where it minted random version 4 UUIDs or, on an environment binding
+    /// `identity.mint` to `seeded`, from seed 0: the same commands mint the same identities. It
+    /// never mints an identity an instance in a store of the host already holds, as a store kept
+    /// by an earlier run holds them ([`Seeded::avoiding_identities`]). The seed is the run's: a
+    /// reset whose world carries a mint of its own mints from that until the next reset, and one
+    /// whose world has none installs this seed again, from its first draw ([`Host::reset_to`]).
+    ///
+    /// # Errors
+    /// [`HostError::Store`] when a store cannot be read for the identities it holds.
+    pub fn seeded(mut self, seed: u64) -> Result<Self, HostError> {
+        let held = self.held_identities()?;
         self.seed = Some(seed);
-        self.mint = Box::new(Seeded::new(seed));
-        self
+        self.mint = Box::new(Seeded::new(seed).avoiding_identities(held.iter()));
+        Ok(self)
+    }
+
+    /// Every identity an instance in the store of a running component holds, each entity read
+    /// from the store of the component that owns it.
+    fn held_identities(&mut self) -> Result<Vec<Value>, HostError> {
+        let mut held = Vec::new();
+        for (name, component) in &mut self.components {
+            for entity in owned(&self.ir, name) {
+                let scan = component.store.scan(&entity)?;
+                held.extend(scan.rows.into_iter().map(|(identity, _)| identity));
+            }
+        }
+        Ok(held)
     }
 
     /// The compiled specification the host runs.

@@ -376,12 +376,13 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         Some(at) => Arc::new(ManualClock::at(at)),
         None => Arc::new(SystemClock),
     };
-    let opened = Host::with_stores(ir, environment, clock, directory, decider, retries, stores);
-    let mut host = match opened {
-        Ok(host) => match serving.mint_seed {
+    let opened = Host::with_stores(ir, environment, clock, directory, decider, retries, stores)
+        .and_then(|host| match serving.mint_seed {
             Some(seed) => host.seeded(seed),
-            None => host,
-        },
+            None => Ok(host),
+        });
+    let mut host = match opened {
+        Ok(host) => host,
         Err(HostError::Refused(refusal)) => {
             println!("{refusal}");
             return Ok(ExitCode::from(REFUSED));
