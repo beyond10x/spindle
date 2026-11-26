@@ -1,0 +1,29 @@
+format: ess/34
+system: ledger
+version: v1
+summary: Accounts of organizations, holds on organizations, and charges guarded by row-set conditions that walk the rows of an entity.
+domains:
+  - ledger.usage
+components:
+  - component: meter
+    summary: Opens accounts, places and lifts holds, and charges usage.
+    owns:
+      domains:
+        - ledger.usage
+    accepts:
+      commands:
+        - ledger.usage.OpenAccount
+        - ledger.usage.PlaceHold
+        - ledger.usage.LiftHold
+        - ledger.usage.ChargeSibling
+        - ledger.usage.ChargeFree
+        - ledger.usage.ChargeNote
+        - ledger.usage.ChargeRef
+        - ledger.usage.ChargeCount
+    publishes:
+      events:
+        - ledger.usage.AccountOpened
+        - ledger.usage.HoldPlaced
+        - ledger.usage.HoldLifted
+        - ledger.usage.UsageCharged
+    reached_by: in_process

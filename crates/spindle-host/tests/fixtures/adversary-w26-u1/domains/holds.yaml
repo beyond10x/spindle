@@ -1,0 +1,41 @@
+domain: ledger.holds
+summary: Holds placed on organizations.
+types:
+  - name: ledger.holds.HoldId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: ledger.holds.Hold
+    identity:
+      name: hold_id
+      type: ledger.holds.HoldId
+    fields:
+      - name: org
+        type: String
+    lifecycle:
+      initial: Active
+      states: [Active]
+      terminal: [Active]
+commands:
+  - name: ledger.holds.PlaceHold
+    input:
+      - name: hold_id
+        type: ledger.holds.HoldId
+      - name: org
+        type: String
+    outcomes:
+      - name: placed
+        creates: ledger.holds.Hold
+        instance: hold_id
+        sets:
+          org: input.org
+        emits: [ledger.holds.HoldPlaced]
+        payload:
+          ledger.holds.HoldPlaced:
+            hold_id: input.hold_id
+        summary: The organization is put on hold.
+events:
+  - name: ledger.holds.HoldPlaced
+    fields:
+      - name: hold_id
+        type: ledger.holds.HoldId

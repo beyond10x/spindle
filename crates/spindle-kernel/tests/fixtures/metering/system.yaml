@@ -1,0 +1,26 @@
+format: ess/34
+system: metering
+version: v1
+summary: Usage charged to accounts, each account of an organization, and holds that stop an organization's usage from being charged.
+domains:
+  - metering.usage
+components:
+  - component: meter
+    summary: Opens accounts, places and lifts holds, and charges usage.
+    owns:
+      domains:
+        - metering.usage
+    accepts:
+      commands:
+        - metering.usage.OpenAccount
+        - metering.usage.PlaceHold
+        - metering.usage.LiftHold
+        - metering.usage.ChargeUsage
+        - metering.usage.Bill
+    publishes:
+      events:
+        - metering.usage.AccountOpened
+        - metering.usage.HoldPlaced
+        - metering.usage.HoldLifted
+        - metering.usage.UsageCharged
+    reached_by: in_process

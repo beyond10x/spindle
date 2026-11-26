@@ -1,0 +1,115 @@
+domain: ledger.usage
+summary: Accounts of organizations, charged unless the organization is on hold.
+types:
+  - name: ledger.usage.AccountId
+    kind: newtype
+    of: Uuid
+  - name: ledger.usage.ChargeId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: ledger.usage.Account
+    identity:
+      name: account_id
+      type: ledger.usage.AccountId
+    fields:
+      - name: org
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+  - name: ledger.usage.Charge
+    identity:
+      name: charge_id
+      type: ledger.usage.ChargeId
+    fields:
+      - name: account_id
+        type: ledger.usage.AccountId
+    lifecycle:
+      initial: Billed
+      states: [Billed]
+      terminal: [Billed]
+errors:
+  - name: ledger.usage.OnHold
+    summary: The account's organization is on hold.
+    fields: []
+commands:
+  - name: ledger.usage.OpenAccount
+    input:
+      - name: account_id
+        type: ledger.usage.AccountId
+      - name: org
+        type: String
+    outcomes:
+      - name: opened
+        creates: ledger.usage.Account
+        instance: account_id
+        sets:
+          org: input.org
+        emits: [ledger.usage.AccountOpened]
+        payload:
+          ledger.usage.AccountOpened:
+            account_id: input.account_id
+        summary: The account is opened.
+  - name: ledger.usage.ChargeUsage
+    input:
+      - name: charge_id
+        type: ledger.usage.ChargeId
+      - name: account_id
+        type: ledger.usage.AccountId
+    outcomes:
+      - name: on-hold
+        when_related:
+          entity: ledger.usage.Account
+          where:
+            all:
+              - account_id == input.account_id
+              - exists:
+                  in: {entity: ledger.holds.Hold}
+                  as: hold
+                  that: hold.org == org
+          exists: true
+        error: ledger.usage.OnHold
+        summary: The account's organization holds a hold.
+      - name: charged
+        creates: ledger.usage.Charge
+        instance: charge_id
+        sets:
+          account_id: input.account_id
+        emits: [ledger.usage.UsageCharged]
+        payload:
+          ledger.usage.UsageCharged:
+            charge_id: input.charge_id
+        summary: The usage is charged.
+  - name: ledger.usage.ChargeDirect
+    input:
+      - name: charge_id
+        type: ledger.usage.ChargeId
+      - name: org
+        type: String
+    outcomes:
+      - name: on-hold
+        when_related:
+          entity: ledger.holds.Hold
+          where: org == input.org
+          exists: true
+        error: ledger.usage.OnHold
+        summary: The organization holds a hold.
+      - name: charged
+        creates: ledger.usage.Charge
+        instance: charge_id
+        emits: [ledger.usage.UsageCharged]
+        payload:
+          ledger.usage.UsageCharged:
+            charge_id: input.charge_id
+        summary: The usage is charged.
+events:
+  - name: ledger.usage.AccountOpened
+    fields:
+      - name: account_id
+        type: ledger.usage.AccountId
+  - name: ledger.usage.UsageCharged
+    fields:
+      - name: charge_id
+        type: ledger.usage.ChargeId

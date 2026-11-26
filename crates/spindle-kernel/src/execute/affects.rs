@@ -216,6 +216,7 @@ impl<'ir> Run<'_, 'ir> {
                 input: &input,
                 subject: Some(&held),
                 now: None,
+                walked: None,
             };
             match filter.evaluate(&facts) {
                 Truth::True => selected.push((key.clone(), stored.clone())),

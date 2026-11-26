@@ -151,6 +151,7 @@ impl Run<'_, '_> {
                 input: &input,
                 subject: None,
                 now: None,
+                walked: None,
             };
             match set.filter.evaluate(&facts) {
                 Truth::True => selected.push((identity, stored)),

@@ -30,6 +30,27 @@ are Spindle's releases.
   no `INTERP` and no `NEEDED` and run in Alpine; the SBOM covers the five targets and
   `SHA256SUMS` the five archives (`story:release-linux-glibc-floor-and-musl`).
 
+- A `when_related:` row-set guard whose `where:` or `forall:` walks the rows of another entity,
+  `exists: {in: {entity: …}, as: …, that: …}`, is decided as ESS 0.99.1's interpreter decides it,
+  where it was refused at start: every stored row of the walked entity is read with the
+  candidates, and a write to it between that read and the commit refuses the command as a
+  conflict, as a write to the guard's own entity does. A rows quantifier in an `affects:` or
+  `instances:` filter stays refused, as ESS refuses it (`story:related-selector-rows-quantifier`).
+
+### Fixed
+
+- A command whose `when_related:` guard reads the rows of an entity another component owns (a row
+  set selecting it, a rows quantifier walking it, or a row an input names) is refused by name at
+  start, naming the entity, its owner and the running component, as a value read from such an
+  entity is. It was decided over the running component's store, which keeps none of those rows,
+  where ESS's interpreter reads them (`story:related-selector-rows-quantifier`).
+- A guard over an `Optional` field the held instance, a `when_related:` row or the input never
+  wrote is still `undecidable` where ESS 0.99.1's interpreter selects no outcome, and its refusal
+  now names the guard, the absent field and the way out, such as "`label == mine` is unknown on a
+  `desk.ticket.Ticket` row where `label` is absent; write `defined(label)` in the guard to rule
+  such a row out", where it read "…is undecidable over the held instance and the input". The
+  error code and `run`'s status are unchanged (`story:guard-over-absent-row-field`).
+
 ## [0.21.0] - 2026-11-26
 
 ### Added

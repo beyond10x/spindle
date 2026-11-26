@@ -1,0 +1,25 @@
+format: ess/34
+system: desk
+version: v1
+summary: Tickets reviewed and assigned to agents under guards over optional fields that may never have been written.
+domains:
+  - desk.ticket
+components:
+  - component: desk
+    summary: Opens agents and tickets, reviews tickets and assigns them.
+    owns:
+      domains:
+        - desk.ticket
+    accepts:
+      commands:
+        - desk.ticket.OpenAgent
+        - desk.ticket.OpenTicket
+        - desk.ticket.Review
+        - desk.ticket.Assign
+    publishes:
+      events:
+        - desk.ticket.AgentOpened
+        - desk.ticket.TicketOpened
+        - desk.ticket.Reviewed
+        - desk.ticket.Assigned
+    reached_by: in_process

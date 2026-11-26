@@ -372,53 +372,6 @@ fn row_set_guards_agree_with_the_interpreter() {
     );
 }
 
-/// The `unknown-shelfmark` selector over the input list.
-const OVER_THE_LIST: &str = "exists: {in: input.shelfmarks, as: mark, that: code == mark}";
-
-#[test]
-fn a_rows_quantifier_in_a_selector_is_refused() {
-    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library");
-    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a scratch directory");
-    std::fs::create_dir(dir.path().join("domains")).expect("the domains directory");
-    for file in ["system.yaml", "domains/library.yaml"] {
-        let text = std::fs::read_to_string(fixture.join(file)).expect("the fixture reads");
-        assert!(
-            file == "system.yaml" || text.contains(OVER_THE_LIST),
-            "the fixture selects entries over the input list"
-        );
-        let text = text.replace(
-            OVER_THE_LIST,
-            "exists: {in: {entity: stacks.library.Entry}, as: other, that: other.code == code}",
-        );
-        std::fs::write(dir.path().join(file), text).expect("the copy writes");
-    }
-    let ir = spindle_spec::load(dir.path())
-        .unwrap_or_else(|error| panic!("the library with a rows quantifier compiles: {error}"))
-        .ir;
-    let mut store = MemoryStore::default();
-    list(&ir, &mut store, SHELF_ONE, "QA-76");
-    let events = store.events().len();
-    let refused = execute_at(
-        &ir,
-        &mut store,
-        &mut NoExternals,
-        &mut UuidV4,
-        &now,
-        RESERVE,
-        &object(reserve(FIRST, ADA, ATLAS, LATER, &["QA-76"])),
-    );
-    match refused {
-        Err(spindle_kernel::ExecuteError::Unsupported { construct }) => assert_eq!(
-            construct,
-            "a rows quantifier in a `when_related:` row-set selector, in \
-             `stacks.library.Reserve/unknown-shelfmark`"
-        ),
-        other => panic!("a rows quantifier is refused by name, not {other:?}"),
-    }
-    assert_eq!(row(&mut store, RESERVATION, FIRST), None);
-    assert_eq!(store.events().len(), events, "nothing is written");
-}
-
 /// ESS's upsert fixture (`tests/fixtures/shelf`) as ESS's own adversary pass varies it
 /// (`adversary_row_set_upsert_462.rs`, `input_guarded_creation`): `Shelve` declares
 /// `unknown_instance:` and creates a book only where the input asks for a new one.
