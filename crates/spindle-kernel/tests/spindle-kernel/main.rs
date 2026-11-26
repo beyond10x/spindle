@@ -5,6 +5,7 @@
 mod rally_cases;
 
 mod absent_optional;
+mod absent_optional_guard;
 mod adversary;
 mod adversary_admission;
 mod adversary_admission_checked;
