@@ -7,7 +7,7 @@ title: Every run mode takes a simulated clock and a seeded mint
 relations:
 - serves: vision:spindle
 - depends_on: story:run-fails-on-rejected-line
-revision: 13
+revision: 14
 ---
 # Every run mode takes a simulated clock and a seeded mint
 
@@ -31,14 +31,15 @@ need repeatable identities.
 - `a_line_moves_the_clock`: with `--clock 2026-01-01T00:00:00Z`, a line with `"at":
   "2026-02-01T00:00:00Z"` runs a command whose guard orders against `now` and answers the outcome
   selected on February 1st; the same command on a run without `--clock` answers the other outcome
-  (the guard compares with an instant after the day the test runs on).
+  (the guard is `now < 2026-06-01T00:00:00Z`: true on February 1st, false on the system clock
+  of any day the test runs on, which is after 2026-06-01).
 - `a_line_with_an_earlier_at_is_rejected`: after that line, a line with `"at":
   "2026-01-15T00:00:00Z"` is rejected and the run exits 1 (story:run-fails-on-rejected-line).
 - `a_served_run_mints_from_the_seed`: two served runs with one `--mint-seed` answer the same
   identity to the same first create request.
 - `a_served_run_starts_on_the_clock_flag`: a served run with `--clock 2026-02-01T00:00:00Z` answers
   a command whose guard orders against `now` with the outcome selected on February 1st, and a served
-  run without `--clock` answers the other outcome.
+  run without `--clock` answers the other outcome (the same guard).
 - `a_scenario_runs_on_the_clock_flag`: `--scenario` with `--clock 2026-02-01T00:00:00Z` replays an
   act that states the outcome selected on February 1st by a guard over `now`; the act's line
   contains `holds` and the run exits 0, and the same document without `--clock` exits 1; the test
