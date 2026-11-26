@@ -149,8 +149,17 @@ A filter is read where each leaf does one of these:
 - tests a text field with `contains`, `starts_with` or `ends_with` against a text parameter or
   literal: `address: {contains: {param: text}}`. The match is byte for byte and case-sensitive,
   and the empty text matches every row. An optional parameter the read leaves out holds no row.
+- compares a parameter with a literal of its type: `param.label == ""`,
+  `param.assigned == false`, `param.direction == all`. The count of a list parameter is such a
+  parameter: `param.kinds.count == 0`.
+- tests a text field, a text parameter or an element of a list parameter with
+  `equals_ignore_case` or `in_ignore_case` against text literals, alone or under `trimmed`:
+  `param.open: {in_ignore_case: ["on", "true"]}`. The fold is ASCII only, and `trimmed` trims
+  only the tested text.
 
-A field here is a field of the row, or of the row a reference names.
+A field here is a field of the row, or of the row a reference names. Inside `exists` or `forall`
+over a list field, a member of the element is a field too: `g.id == param.group`,
+`defined(g.name)`.
 
 The leaves are combined by `any`, `all` and `not`, or quantified by `exists` or `forall` over a
 list parameter or a list field of the row. Each filter is evaluated as ESS evaluates it. A filter

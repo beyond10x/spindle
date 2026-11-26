@@ -192,16 +192,14 @@ fn an_unread_filter_stays_unsupported_and_named() {
         open(host, "t1", "Chores", "2026-01-01T00:00:00Z");
         match host.list("tasks.board.ChoreTasks") {
             Err(HostError::Unsupported(text)) => assert!(
-                text.contains("tasks.board.ChoreTasks") && text.contains("equals_ignore_case"),
+                text.contains("tasks.board.ChoreTasks") && text.contains("title.count > 3"),
                 "{store}: the refusal names the view and its filter: {text}"
             ),
-            other => panic!(
-                "{store}: `title equals_ignore_case chores` is not refused as unsupported: {other:?}"
-            ),
+            other => panic!("{store}: `title.count > 3` is not refused as unsupported: {other:?}"),
         }
         match host.view("tasks.board.ChoreTasks", &json!("t1")) {
             Err(HostError::Unsupported(text)) => assert!(
-                text.contains("equals_ignore_case"),
+                text.contains("title.count > 3"),
                 "{store}: a one-row read of it is refused the same way: {text}"
             ),
             other => panic!("{store}: a one-row read is not refused as unsupported: {other:?}"),

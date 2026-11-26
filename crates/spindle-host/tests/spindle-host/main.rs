@@ -59,6 +59,8 @@ mod mint;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod native;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod parameter_literal_filters;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod postgres;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod rally;

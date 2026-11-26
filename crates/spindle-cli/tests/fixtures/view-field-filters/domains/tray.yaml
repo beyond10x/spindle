@@ -163,4 +163,5 @@ views:
       all:
         - archived == false
         - {kind: {equals_ignore_case: draft}}
+        - kind.count > 3
     fields: *fields

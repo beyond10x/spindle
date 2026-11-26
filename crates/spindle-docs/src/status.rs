@@ -287,6 +287,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "crates/spindle-host/tests/spindle-host/always_and_key_filters.rs::always_and_key_filters_agree_with_the_interpreter",
     ),
     shipped(
+        "Execution",
+        "View filters reading parameters and case folds",
+        "A view filter that compares a parameter with a literal of its type (param.label == \"\", param.direction == all), reads the count of a list parameter (param.kinds.count == 0), tests a text field, a text parameter or an element of a list parameter with equals_ignore_case or in_ignore_case, alone or under trimmed, or reads a member of an element of a list field (exists g in groups: (g.id == param.group)) answers the rows ESS's interpreter answers, with each parameter left out and given.",
+        "/docs/concepts/specification",
+        "crates/spindle-host/tests/spindle-host/parameter_literal_filters.rs::the_consumer_filter_shapes_are_served",
+    ),
+    shipped(
         "Observe",
         "Counters derived from the specification",
         "spindle-telemetry counts commands by outcome, events, bindings, timer ticks and store writes per component; b10x-spindle metrics prints the catalogue, play prints the table's counters.",

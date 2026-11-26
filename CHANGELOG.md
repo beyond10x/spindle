@@ -6,6 +6,20 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- A view filter that compares a parameter with a literal of its type (`param.label == ""`,
+  `param.assigned == false`, `param.direction == all`), reads the count of a list parameter
+  (`param.kinds.count == 0`), tests a text field, a text parameter or an element of a list
+  parameter with `equals_ignore_case` or `in_ignore_case`, alone or under `trimmed`, or reads a
+  member of an element of a list field (`exists g in groups: (g.id == param.group)`,
+  `defined(g.name)`, `g.id == w` for an outer list-parameter binder `w`) is served, where the view
+  was refused whole and its route answered `501`. Each answers the rows ESS 0.99.1's interpreter
+  answers, with each parameter left out and given; a comparison with a parameter the read left
+  out is unknown and refuses the read unless a guard such as `not defined(param.x)` decides it.
+  Any other leaf still refuses the view whole, naming its filter
+  (`story:view-filter-parameter-literal`).
+
 ## [0.21.0] - 2026-11-26
 
 ### Added

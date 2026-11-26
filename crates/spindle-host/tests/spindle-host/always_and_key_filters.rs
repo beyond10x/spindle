@@ -39,8 +39,8 @@ const COMPARED: &str = "desk.links.Compared";
 /// navigates no reference: still refused whole.
 const COUNTED: &str = "desk.links.Counted";
 const REGIONAL: &str = "desk.links.Regional";
-/// The view whose filter holds `always` beside a leaf still unread (`equals_ignore_case`): still
-/// refused whole.
+/// The view whose filter holds `always` beside a leaf still unread (`label.count`, a text's
+/// length): still refused whole.
 const FOLDED: &str = "desk.links.Folded";
 
 fn fixture() -> PathBuf {
@@ -351,15 +351,15 @@ fn a_path_no_struct_holds_is_still_refused() {
     );
 }
 
-/// `always` beside a leaf still unread (`equals_ignore_case`) does not make the filter read: it is
+/// `always` beside a leaf still unread (`label.count`) does not make the filter read: it is
 /// still refused whole, naming the unread leaf.
 #[test]
 fn an_unread_leaf_beside_always_is_still_refused() {
     let refused = spindle_host::reads(&ir(), FOLDED)
-        .expect_err("equals_ignore_case is not read")
+        .expect_err("a text's length is not read")
         .to_string();
     assert!(
-        refused.contains(FOLDED) && refused.contains("equals_ignore_case"),
+        refused.contains(FOLDED) && refused.contains("label.count > 2"),
         "the refusal names the view and its whole filter: {refused}"
     );
 }
