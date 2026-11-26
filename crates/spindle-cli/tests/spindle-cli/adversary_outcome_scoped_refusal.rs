@@ -554,7 +554,11 @@ fn run_reading_stdin_names_each_unsupported_outcome_at_startup() {
         r#"{"command": "yard.crate.PackCrate", "input": {"label": "light", "weigh": false}}"#,
         "\n",
     ));
-    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a rejected line exits 1 once every line is answered (story:run-fails-on-rejected-line): {output:?}"
+    );
     let results = String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).expect("one JSON line per request"))

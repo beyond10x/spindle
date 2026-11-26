@@ -63,9 +63,13 @@ row each element names. It holds where any element names no row, and an empty li
 order, as ESS's interpreter answers it.
 
 A `when_related:` guard over a row set, `{entity, where: [...], count: {gte: 1}}` or `exists:` or
-`forall:`, reads every stored row of the entity, as ESS's interpreter does. A comparison with an
-`Optional` field a row does not hold, such as `box_id == input.id` on an item in no box, is
-*unknown* for that row. It does not evaluate to false.
+`forall:`, reads every stored row of the entity, as ESS's interpreter does. Its `where:` and its
+`forall:` may walk the rows of another entity, `exists: {in: {entity: <E>}, as: r, that: ...}`:
+every stored row of `<E>` is read with the candidates, and a write to `<E>` between that read and
+the commit refuses the command as a conflict, as a write to the guard's own entity does.
+
+A comparison with an `Optional` field a row does not hold, such as `box_id == input.id` on an
+item in no box, is *unknown* for that row. It does not evaluate to false.
 
 The row may or may not be in the set, so a count it could change refuses the command as
 undecidable. The message gives the filter, the entity and the absent field, and no stored row. To
@@ -149,8 +153,17 @@ A filter is read where each leaf does one of these:
 - tests a text field with `contains`, `starts_with` or `ends_with` against a text parameter or
   literal: `address: {contains: {param: text}}`. The match is byte for byte and case-sensitive,
   and the empty text matches every row. An optional parameter the read leaves out holds no row.
+- compares a parameter with a literal of its type: `param.label == ""`,
+  `param.assigned == false`, `param.direction == all`. The count of a list parameter is such a
+  parameter: `param.kinds.count == 0`.
+- tests a text field, a text parameter or an element of a list parameter with
+  `equals_ignore_case` or `in_ignore_case` against text literals, alone or under `trimmed`:
+  `param.open: {in_ignore_case: ["on", "true"]}`. The fold is ASCII only, and `trimmed` trims
+  only the tested text.
 
-A field here is a field of the row, or of the row a reference names.
+A field here is a field of the row, or of the row a reference names. Inside `exists` or `forall`
+over a list field, a member of the element is a field too: `g.id == param.group`,
+`defined(g.name)`.
 
 The leaves are combined by `any`, `all` and `not`, or quantified by `exists` or `forall` over a
 list parameter or a list field of the row. Each filter is evaluated as ESS evaluates it. A filter
@@ -200,8 +213,18 @@ empty in-memory stores whatever `store.durable` is bound to. It compares what ha
 each step expects: the outcome, the error, the events, an identity captured as `$instance` for a
 later step, and each view assertion.
 
-Spindle prints what the document arranges, each timeline act and each assertion that holds. At the
-first that does not, it prints what was expected and what was observed and exits 1.
+A specification that declares no component replays as one implied component that owns every
+domain, accepts every command and publishes every event, as `run` without `--scenario` executes it.
+Admission then requires what that component needs, so an environment that lacks a capability
+refuses the replay with exit 3 and prints what `run` prints: the capabilities it lacks, naming no
+component. A specification that declares components replays unchanged, and a
+command no component accepts diverges with `no component accepts <command>`.
+
+Spindle prints what the document arranges, each timeline act and each assertion that holds. Each
+act's line ends with what its command answered: `outcome <name>`, with `error <name>` where the
+outcome carries a declared error, `undeclared` or `not granted`. An act that states no `outcome:`
+compiles to no outcome check, so it holds when its command is refused, as ESS's runner passes it.
+At the first step that does not hold, it prints what was expected and what was observed and exits 1.
 
 That step is found by replaying ever shorter prefixes of the document from an empty system, halving each time.
 The replay it prints ran no step after it. A document ESS refuses, such as one with an unknown

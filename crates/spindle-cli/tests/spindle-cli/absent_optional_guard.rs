@@ -358,8 +358,9 @@ fn a_guard_over_an_absent_optional_input_answers_as_the_interpreter() {
         (
             501,
             &json!({
-                "refused": "the guard of `tally.entry.RecordEntry/too-heavy` is undecidable over \
-                            the held instance and the input",
+                "refused": "the guard of `tally.entry.RecordEntry/too-heavy` is undecidable: \
+                            `weight > 10` is unknown on the input where `weight` is absent; \
+                            write `defined(weight)` in the guard to rule such a request out",
                 "committed": false,
             })
         ),

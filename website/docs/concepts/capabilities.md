@@ -67,7 +67,8 @@ answers it per command, from these sources in order:
    level for every command
 3. with `--answer-default`, "does not hold" on a command that declares a default branch
 
-A line that nothing answers fails with the outcome in its message, and the run goes on.
+A line that nothing answers fails with the outcome in its message, and the run goes on to the
+next line; once every line is answered it names that line on stderr and exits 1.
 
 A rule answers one outcome of one command for the requests whose input holds every value in its
 `when`:

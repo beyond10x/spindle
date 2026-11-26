@@ -548,11 +548,14 @@ fn run_reading(spec: &str, requests: &[Value]) -> (Vec<Value>, String) {
         .expect("the requests are written");
     let output = child.wait_with_output().expect("b10x-spindle runs");
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    assert_eq!(output.status.code(), Some(0), "{stderr}");
-    let results = String::from_utf8_lossy(&output.stdout)
+    let results: Vec<Value> = String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(|line| serde_json::from_str(line).expect("one JSON line per request"))
         .collect();
+    // A request the run refuses whole is a rejected line: the run exits 1 once every line is
+    // answered (`story:run-fails-on-rejected-line`), and 0 only where none was.
+    let rejected = results.iter().any(|result| result.get("failure").is_some());
+    assert_eq!(output.status.code(), Some(i32::from(rejected)), "{stderr}");
     (results, stderr)
 }
 

@@ -1,0 +1,19 @@
+format: ess/34
+system: org
+version: v1
+summary: Cards a bench keeps, read by views whose filters order parameters against literals, fold non-ASCII text, trim and read members of list elements.
+domains:
+  - org.bench
+components:
+  - component: bench
+    summary: Adds cards.
+    owns:
+      domains:
+        - org.bench
+    accepts:
+      commands:
+        - org.bench.AddCard
+    publishes:
+      events:
+        - org.bench.CardAdded
+    reached_by: in_process

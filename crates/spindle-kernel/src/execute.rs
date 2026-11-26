@@ -19,9 +19,9 @@ use serde_json::{Map, Value};
 use spindle_capability::mint::Unsourced;
 
 use crate::decider::{Decider, External};
-use crate::facts::{Facts, Selector};
+use crate::facts::{Facts, Selector, Walked};
 use crate::mint::{Generator, IDENTITY_MINT, Identity, Mint, UuidV4};
-use crate::store::{Change, Row, Scanned, Store, Stored, Write};
+use crate::store::{Change, Row, Scan, Scanned, Store, Stored, Write};
 use crate::values::Sources;
 use crate::{DeclaredError, Event, ExecuteError, Executed};
 
@@ -489,11 +489,49 @@ impl Unknowns {
         }
     }
 
+    /// Reads the `Optional` input fields `predicate` reads that `input` holds nothing in: at
+    /// their own names, as an input guard reads them, or under `prefix.` where one is given, as a
+    /// guard over a row reads the input (`input.<field>`).
+    fn read_input(
+        &mut self,
+        predicate: &Predicate,
+        prefix: Option<&str>,
+        declared: &[ResolvedField],
+        input: &Map<String, Value>,
+    ) {
+        for path in predicate.fact_paths() {
+            let field = match (prefix, path.segments()) {
+                (None, [field]) => field,
+                (Some(prefix), [first, field]) if first.as_str() == prefix => field,
+                _ => continue,
+            };
+            let optional = declared
+                .iter()
+                .any(|declared| declared.name == *field && declared.type_ref.is_optional());
+            let written = path.to_string();
+            if optional
+                && input.get(field).is_none_or(Value::is_null)
+                && !self.absent.contains(&written)
+            {
+                self.absent.push(written);
+            }
+        }
+    }
+
     /// What `predicate`, the guard's `place`, leaves open on these rows of `entity`, and the way
     /// out where an absent `Optional` field is why: `defined(<field>)` beside it reads such a row
     /// `false` (ESS `docs/design/cross-record-and-stored-field-guards.md`, "Optional fields").
     fn why(&self, entity: &ResolvedEntity, predicate: &Predicate, place: &str) -> String {
-        let mut why = format!("`{predicate}` is unknown on a `{}` row", entity.name);
+        self.told(
+            format!("`{predicate}` is unknown on a `{}` row", entity.name),
+            place,
+            "such a row",
+        )
+    }
+
+    /// `why`, followed by the absent fields and the way out, where there are any:
+    /// `defined(<field>)` in the guard's `place` rules `what` out.
+    fn told(&self, mut why: String, place: &str, what: &str) -> String {
         if !self.absent.is_empty() {
             let quoted = |format: fn(&String) -> String, separator: &str| {
                 self.absent
@@ -503,7 +541,7 @@ impl Unknowns {
                     .join(separator)
             };
             why.push_str(&format!(
-                " where {} is absent; write {} in the {place} to rule such a row out",
+                " where {} is absent; write {} in the {place} to rule {what} out",
                 quoted(|field| format!("`{field}`"), " or "),
                 quoted(|field| format!("`defined({field})`"), " and "),
             ));
@@ -907,11 +945,14 @@ impl<'a, 'ir> Run<'a, 'ir> {
     ///
     /// Every stored row is a candidate. The selector reads the row's fields, identity and held
     /// state, the input under `input.`, the addressed subject under `subject.` and the decision's
-    /// instant as `now` ([`crate::facts::Selector`]). A row it leaves `Unknown` stays a possible
-    /// member, and ESS decides the test over the members ([`ResolvedRowSetTest::decide`]): a test
-    /// those possible members leave open is `Unknown`, and what left it open is kept for the
-    /// refusal ([`Open`]). A selector reading `subject.` on a command that addresses no held row
-    /// decides nothing.
+    /// instant as `now` ([`crate::facts::Selector`]). A rows quantifier in the selector or the
+    /// test (`exists: {in: {entity: …}, …}`, ess/27) walks every stored row of its entity, read
+    /// from the same store once per decision (ESS `Reader::members`); each entity read so is
+    /// scanned, so the commit is conditioned on its version too. A row the selector leaves
+    /// `Unknown` stays a possible member, and ESS decides the test over the members
+    /// ([`ResolvedRowSetTest::decide`]): a test those possible members leave open is `Unknown`,
+    /// and what left it open is kept for the refusal ([`Open`]). A selector reading `subject.` on
+    /// a command that addresses no held row decides nothing.
     fn row_set(
         &mut self,
         outcome: &ResolvedOutcome,
@@ -941,14 +982,28 @@ impl<'a, 'ir> Run<'a, 'ir> {
         let now = self.now();
         let mut members = Vec::new();
         let mut open = Open::default();
-        let name = entity.name.to_string();
-        let scan = self.store.scan(&name)?;
-        if !self.scanned.iter().any(|scanned| scanned.entity == name) {
-            self.scanned.push(Scanned {
-                entity: name,
-                version: scan.version,
-            });
+        let names: std::collections::BTreeSet<&str> = std::iter::once(&selection.filter)
+            .chain(test.predicate())
+            .flat_map(ess_domain::command::related_rows::walked)
+            .collect();
+        let mut walked = Walked::new();
+        for name in names {
+            let Some(other) = name
+                .parse()
+                .ok()
+                .and_then(|parsed| ir.entities().get(&parsed))
+            else {
+                continue;
+            };
+            let rows = self
+                .scan(&other.name.to_string())?
+                .into_iter()
+                .map(|(identity, stored)| Facts::row(ir, other, &identity, &stored.row, None))
+                .collect();
+            walked.insert(name.to_owned(), rows);
         }
+        let walked = (!walked.is_empty()).then_some(&walked);
+        let scan = self.scan(&entity.name.to_string())?;
         for (identity, stored) in scan {
             let row = Facts::row(ir, entity, &identity, &stored.row, None);
             let facts = Selector {
@@ -956,6 +1011,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 input: &input,
                 subject: subject.as_ref(),
                 now,
+                walked,
             };
             let selected = selection.filter.evaluate(&facts);
             let satisfies = match (test.predicate(), selected) {
@@ -1038,6 +1094,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     input: &input,
                     subject: subject.as_ref(),
                     now,
+                    walked: None,
                 };
                 members.push(RowMember {
                     selected: selection.filter.evaluate(&facts),
@@ -1059,20 +1116,122 @@ impl<'a, 'ir> Run<'a, 'ir> {
         Ok(selected)
     }
 
+    /// Every stored row of `entity`, read from the store as it was before selection, its version
+    /// kept where this run had not scanned the entity yet, so the commit is conditioned on it
+    /// (`Run::scanned`).
+    fn scan(&mut self, entity: &str) -> Result<Scan, ExecuteError> {
+        let scan = self.store.scan(entity)?;
+        if !self.scanned.iter().any(|scanned| scanned.entity == entity) {
+            self.scanned.push(Scanned {
+                entity: entity.to_owned(),
+                version: scan.version,
+            });
+        }
+        Ok(scan)
+    }
+
     /// `outcome`'s name qualified by the command's, as a refusal names it.
     fn qualified(&self, outcome: &ResolvedOutcome) -> String {
         format!("{}/{}", self.command, outcome.name.as_str())
     }
 
     /// The refusal of `outcome`, whose guard read `Unknown`: it names what left a row-set guard
-    /// open where the last one read was this outcome's ([`Self::row_set`]).
+    /// open where the last one read was this outcome's ([`Self::row_set`]), and otherwise each part
+    /// of the guard an absent `Optional` field left open ([`Self::absent`]).
     fn undecidable(&mut self, outcome: &ResolvedOutcome) -> ExecuteError {
-        let outcome = self.qualified(outcome);
-        let why = self
-            .open
-            .take_if(|(open, _)| *open == outcome)
-            .map(|(_, why)| why);
-        ExecuteError::Undecidable { outcome, why }
+        let qualified = self.qualified(outcome);
+        let why = match self.open.take_if(|(open, _)| *open == qualified) {
+            Some((_, why)) => Some(why),
+            None => self.absent(outcome),
+        };
+        ExecuteError::Undecidable {
+            outcome: qualified,
+            why,
+        }
+    }
+
+    /// Each part of `outcome`'s guard that reads `Unknown` because an `Optional` field it reads
+    /// holds nothing, with that field and the way out, `defined(<field>)` ([`Unknowns::told`]):
+    /// the predicate over the held instance or over the related row, and the input guard. ESS
+    /// reads a comparison, an ordering, `in`, `none_of` or a bare boolean over an absent field as
+    /// `Unknown`, and selects no outcome (ESS
+    /// `docs/design/cross-record-and-stored-field-guards.md`, "Optional fields"). `None` where no
+    /// absent field is why, such as a guard over `now` with no instant.
+    fn absent(&mut self, outcome: &ResolvedOutcome) -> Option<String> {
+        let ir = self.ir;
+        let mut parts = Vec::new();
+        let input = match &outcome.condition {
+            ResolvedCondition::When { predicate }
+            | ResolvedCondition::ExternalWhen { predicate, .. } => Some(predicate),
+            ResolvedCondition::SubjectPredicate { predicate, input }
+            | ResolvedCondition::ExternalSubject {
+                predicate, input, ..
+            } => {
+                if let (Some(held), Some(row)) = (&self.held, self.before())
+                    && let Ok(facts) = self.subject_facts(outcome)
+                    && predicate.evaluate(&facts) == Truth::Unknown
+                {
+                    parts.extend(self.row_part(predicate, held.entity, row));
+                }
+                input.as_ref()
+            }
+            // ESS admits `when_subject: {field, equals}` over a required enum field alone, which a
+            // held row always holds.
+            ResolvedCondition::SubjectField { predicate, .. }
+            | ResolvedCondition::SubjectState { predicate, .. }
+            | ResolvedCondition::StateChange { predicate, .. } => predicate.as_ref(),
+            ResolvedCondition::RelatedSet { input, .. } => input.as_ref(),
+            ResolvedCondition::Related {
+                via,
+                entity,
+                test: ResolvedRelatedTest::Holds { predicate },
+                input,
+                ..
+            } => {
+                let entity = ir.entity(entity);
+                if let Ok(Reference::Row(identity, row)) = self.reference(via, entity)
+                    && predicate.evaluate(&self.related_facts(entity, &identity, &row))
+                        == Truth::Unknown
+                {
+                    parts.extend(self.row_part(predicate, entity, &row));
+                }
+                input.as_ref()
+            }
+            _ => None,
+        };
+        if let Some(guard) = input
+            && self.guard(Some(guard)) == Truth::Unknown
+        {
+            let mut unknowns = Unknowns::default();
+            unknowns.read_input(guard, None, &self.spec.input, self.input);
+            if !unknowns.absent.is_empty() {
+                parts.push(unknowns.told(
+                    format!("`{guard}` is unknown on the input"),
+                    "guard",
+                    "such a request",
+                ));
+            }
+        }
+        (!parts.is_empty()).then(|| parts.join("; and "))
+    }
+
+    /// What `predicate`, a guard over `row` of `entity`, leaves open where an `Optional` field of
+    /// the row, or of the input it reads under `input.`, holds nothing; `None` where none is why.
+    fn row_part(
+        &self,
+        predicate: &Predicate,
+        entity: &ResolvedEntity,
+        row: &Row,
+    ) -> Option<String> {
+        let mut unknowns = Unknowns::default();
+        unknowns.read(predicate, entity, row);
+        unknowns.read_input(
+            predicate,
+            Some(crate::facts::INPUT),
+            &self.spec.input,
+            self.input,
+        );
+        (!unknowns.absent.is_empty()).then(|| unknowns.why(entity, predicate, "guard"))
     }
 
     /// The `existing_instance:` answer where the plan places that branch in `phase`, step 1 on a

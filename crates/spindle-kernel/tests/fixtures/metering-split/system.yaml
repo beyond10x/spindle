@@ -1,0 +1,37 @@
+format: ess/34
+system: metering
+version: v1
+summary: Accounts and charges kept by a meter, and holds a second component places on organizations.
+domains:
+  - metering.usage
+  - metering.holds
+components:
+  - component: meter
+    summary: Opens accounts and charges usage.
+    owns:
+      domains:
+        - metering.usage
+    accepts:
+      commands:
+        - metering.usage.OpenAccount
+        - metering.usage.ChargeUsage
+        - metering.usage.ChargeDirect
+        - metering.usage.ChargeHeld
+        - metering.usage.ChargeOnce
+    publishes:
+      events:
+        - metering.usage.AccountOpened
+        - metering.usage.UsageCharged
+    reached_by: in_process
+  - component: holds
+    summary: Places holds on organizations.
+    owns:
+      domains:
+        - metering.holds
+    accepts:
+      commands:
+        - metering.holds.PlaceHold
+    publishes:
+      events:
+        - metering.holds.HoldPlaced
+    reached_by: in_process

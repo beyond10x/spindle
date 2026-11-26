@@ -101,7 +101,11 @@ fn a_decisions_file_answers_every_external_outcome() {
 #[test]
 fn answer_default_takes_the_default_branch() {
     let unanswered = run(&[], &submit("s1", None));
-    assert_eq!(unanswered.status.code(), Some(0), "{unanswered:?}");
+    assert_eq!(
+        unanswered.status.code(),
+        Some(1),
+        "a rejected line exits 1 once every line is answered (story:run-fails-on-rejected-line): {unanswered:?}"
+    );
     let unanswered = results(&unanswered);
     assert_eq!(
         unanswered[0]["failure"]["kind"], "undecided",
@@ -123,7 +127,11 @@ fn answer_default_takes_the_default_branch() {
 fn an_unanswered_external_without_a_default_fails_the_line() {
     let lines = decide("d1", true) + &decide("d2", false) + &submit("s1", None);
     let output = run(&["--answer-default"], &lines);
-    assert_eq!(output.status.code(), Some(0), "the run goes on: {output:?}");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "the run goes on, then exits 1 for the rejected line (story:run-fails-on-rejected-line): {output:?}"
+    );
     let results = results(&output);
     assert_eq!(results.len(), 3, "{results:?}");
     assert_eq!(results[0]["command"], "probe.review.Decide", "{results:?}");

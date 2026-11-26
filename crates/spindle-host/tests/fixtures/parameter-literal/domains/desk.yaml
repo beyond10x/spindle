@@ -1,0 +1,377 @@
+domain: org.desk
+summary: Items, each with a label, a direction, an optional agent, the time it came in and the groups it is in, which close.
+types:
+  - name: org.desk.ItemId
+    kind: newtype
+    of: String
+  - name: org.desk.Direction
+    kind: enum
+    variants: [all, inbound, outbound]
+  - name: org.desk.Group
+    kind: struct
+    fields:
+      - name: id
+        type: String
+      - name: name
+        type: Optional<String>
+entities:
+  - name: org.desk.Item
+    identity:
+      name: item_id
+      type: org.desk.ItemId
+    fields:
+      - name: label
+        type: String
+      - name: direction
+        type: org.desk.Direction
+      - name: agent
+        type: Optional<String>
+      - name: created
+        type: Timestamp
+      - name: groups
+        type: List<org.desk.Group>
+    lifecycle:
+      initial: Open
+      states: [Open, Closed]
+      terminal: [Closed]
+      transitions:
+        - {name: close, from: [Open], to: Closed}
+errors:
+  - name: org.desk.WrongState
+    summary: The item is closed.
+    fields: []
+commands:
+  - name: org.desk.AddItem
+    input:
+      - name: item_id
+        type: org.desk.ItemId
+      - name: label
+        type: String
+      - name: direction
+        type: org.desk.Direction
+      - name: agent
+        type: Optional<String>
+      - name: created
+        type: Timestamp
+      - name: groups
+        type: List<org.desk.Group>
+    outcomes:
+      - name: added
+        creates: org.desk.Item
+        instance: item_id
+        sets:
+          label: input.label
+          direction: input.direction
+          agent: input.agent
+          created: input.created
+          groups: input.groups
+        emits: [org.desk.ItemAdded]
+        payload:
+          org.desk.ItemAdded: {item_id: input.item_id}
+        summary: The item is kept.
+  - name: org.desk.CloseItem
+    input:
+      - name: item_id
+        type: org.desk.ItemId
+    outcomes:
+      - name: closed
+        moves: org.desk.Item.close
+        instance: item_id
+        emits: [org.desk.ItemClosed]
+        payload:
+          org.desk.ItemClosed: {item_id: input.item_id}
+        summary: The item is closed.
+      - {name: wrong-state, wrong_state: true, error: org.desk.WrongState}
+events:
+  - name: org.desk.ItemAdded
+    fields:
+      - name: item_id
+        type: org.desk.ItemId
+  - name: org.desk.ItemClosed
+    fields:
+      - name: item_id
+        type: org.desk.ItemId
+views:
+  - name: org.desk.LabelOrEmpty
+    source: org.desk.Item
+    consistency: read_your_writes
+    params:
+      - {name: label, type: Optional<String>}
+    filter:
+      any:
+        - param.label == ""
+        - label == param.label
+    fields: &fields
+      - name: item_id
+        type: org.desk.ItemId
+      - name: label
+        type: String
+  - name: org.desk.ByAssignment
+    source: org.desk.Item
+    consistency: read_your_writes
+    params:
+      - {name: assigned, type: Optional<Boolean>}
+    filter:
+      any:
+        - {not: defined(param.assigned)}
+        - all:
+            - param.assigned == false
+            - {not: defined(agent)}
+        - all:
+            - param.assigned == true
+            - defined(agent)
+    fields: *fields
+  - name: org.desk.ByDirection
+    source: org.desk.Item
+    consistency: read_your_writes
+    params:
+      - {name: direction, type: Optional<org.desk.Direction>}
+    filter:
+      any:
+        - param.direction == all
+        - direction == param.direction
+    fields: *fields
+  - name: org.desk.OpenSwitch
+    source: org.desk.Item
+    consistency: read_your_writes
+    params:
+      - {name: open, type: Optional<String>}
+    filter:
+      any:
+        - all:
+            - {param.open: {in_ignore_case: ["on", "true"]}}
+            - state == Open
+        - all:
+            - {not: {param.open: {in_ignore_case: ["on", "true"]}}}
+            - state == Closed
+    fields: *fields
+  - name: org.desk.LabelFolded
+    source: org.desk.Item
+    consistency: read_your_writes
+    params:
+      - {name: wanted, type: Optional<String>}
+    filter:
+      any:
+        - {param.wanted: {equals_ignore_case: every}}
+        - label == param.wanted
+    fields: *fields
+  - name: org.desk.OfKinds
+    source: org.desk.Item
+    consistency: read_your_writes
+    params:
+      - {name: kinds, type: Optional<List<String>>}
+    filter:
+      exists:
+        in: param.kinds
+        as: p
+        that:
+          any:
+            - all:
+                - {p: {equals_ignore_case: inbound}}
+                - direction == inbound
+            - all:
+                - {p: {in_ignore_case: [out, outbound]}}
+                - direction == outbound
+    fields: *fields
+  - name: org.desk.TrimmedOpen
+    source: org.desk.Item
+    consistency: read_your_writes
+    params:
+      - {name: open, type: Optional<String>}
+    filter:
+      any:
+        - {not: defined(param.open)}
+        - all:
+            - {param.open: {trimmed: {in_ignore_case: ["on", "true"]}}}
+            - state == Open
+    fields: *fields
+  - name: org.desk.TrimmedKinds
+    source: org.desk.Item
+    consistency: read_your_writes
+    params:
+      - {name: kinds, type: Optional<List<String>>}
+    filter:
+      exists:
+        in: param.kinds
+        as: p
+        that:
+          any:
+            - all:
+                - {p: {trimmed: {equals_ignore_case: inbound}}}
+                - direction == inbound
+            - all:
+                - {p: {trimmed: {in_ignore_case: [out, outbound]}}}
+                - direction == outbound
+    fields: *fields
+  - name: org.desk.Since
+    source: org.desk.Item
+    consistency: read_your_writes
+    params:
+      - {name: since, type: Optional<Timestamp>}
+    filter:
+      any:
+        - {not: defined(param.since)}
+        - {compare: {as: timestamp, left: created, op: ge, right: {fact: param.since}}}
+    fields: *fields
+  - name: org.desk.KindsOrEvery
+    source: org.desk.Item
+    consistency: read_your_writes
+    params:
+      - {name: kinds, type: Optional<List<String>>}
+    filter:
+      any:
+        - param.kinds.count == 0
+        - {exists: {in: param.kinds, as: p, that: label == p}}
+    fields: *fields
+  - name: org.desk.InGroup
+    source: org.desk.Item
+    consistency: read_your_writes
+    params:
+      - {name: group, type: Optional<String>}
+    filter: {exists: {in: groups, as: g, that: g.id == param.group}}
+    fields: *fields
+  - name: org.desk.InAnyGroup
+    source: org.desk.Item
+    consistency: read_your_writes
+    params:
+      - {name: groups, type: Optional<List<String>>}
+    filter:
+      exists:
+        in: param.groups
+        as: w
+        that: {exists: {in: groups, as: g, that: g.id == w}}
+    fields: *fields
+  - name: org.desk.NamedGroup
+    source: org.desk.Item
+    consistency: read_your_writes
+    params:
+      - {name: group, type: Optional<String>}
+    filter:
+      any:
+        - all:
+            - {not: defined(param.group)}
+            - {exists: {in: groups, as: g, that: defined(g.name)}}
+        - exists:
+            in: groups
+            as: g
+            that:
+              all:
+                - defined(g.name)
+                - g.id == param.group
+    fields: *fields
+  - name: org.desk.FoldedLabel
+    source: org.desk.Item
+    consistency: read_your_writes
+    filter: {label: {equals_ignore_case: alpha}}
+    fields: *fields
+  - name: org.desk.FoldedLabels
+    source: org.desk.Item
+    consistency: read_your_writes
+    filter: {label: {in_ignore_case: [alpha, BETA, ""]}}
+    fields: *fields
+  - name: org.desk.Inbox
+    source: org.desk.Item
+    consistency: read_your_writes
+    params:
+      - {name: label, type: Optional<String>}
+      - {name: open, type: Optional<String>}
+      - {name: since, type: Optional<Timestamp>}
+      - {name: until, type: Optional<Timestamp>}
+      - {name: kinds, type: Optional<List<String>>}
+    filter:
+      all:
+        - any:
+            - {not: defined(param.label)}
+            - param.label == ""
+            - label == param.label
+        - any:
+            - {not: defined(param.open)}
+            - all:
+                - {param.open: {in_ignore_case: ["on", "true"]}}
+                - state == Open
+            - all:
+                - {not: {param.open: {in_ignore_case: ["on", "true"]}}}
+                - state == Closed
+        - any:
+            - {not: defined(param.since)}
+            - created >= param.since
+        - any:
+            - {not: defined(param.until)}
+            - created < param.until
+        - any:
+            - {not: defined(param.kinds)}
+            - param.kinds.count == 0
+            - exists:
+                in: param.kinds
+                as: p
+                that:
+                  any:
+                    - all:
+                        - {p: {trimmed: {equals_ignore_case: inbound}}}
+                        - direction == inbound
+                    - all:
+                        - {p: {trimmed: {in_ignore_case: [out, outbound]}}}
+                        - direction == outbound
+    fields: *fields
+  - name: org.desk.Queue
+    source: org.desk.Item
+    consistency: read_your_writes
+    params:
+      - {name: assigned, type: Optional<Boolean>}
+      - {name: direction, type: Optional<org.desk.Direction>}
+      - {name: group, type: Optional<String>}
+    filter:
+      all:
+        - any:
+            - {not: defined(param.assigned)}
+            - all:
+                - param.assigned == false
+                - {not: defined(agent)}
+            - all:
+                - param.assigned == true
+                - defined(agent)
+        - any:
+            - {not: defined(param.direction)}
+            - param.direction == all
+            - direction == param.direction
+        - any:
+            - {not: defined(param.group)}
+            - {exists: {in: groups, as: g, that: g.id == param.group}}
+    fields: *fields
+  - name: org.desk.Teams
+    source: org.desk.Item
+    consistency: read_your_writes
+    params:
+      - {name: groups, type: Optional<List<String>>}
+      - {name: wanted, type: Optional<String>}
+    filter:
+      all:
+        - any:
+            - {not: defined(param.groups)}
+            - param.groups.count == 0
+            - exists:
+                in: param.groups
+                as: w
+                that:
+                  exists:
+                    in: groups
+                    as: g
+                    that:
+                      all:
+                        - defined(g.name)
+                        - g.id == w
+        - any:
+            - {not: defined(param.wanted)}
+            - {param.wanted: {trimmed: {equals_ignore_case: every}}}
+            - label == param.wanted
+    fields: *fields
+  - name: org.desk.LabelLonger
+    source: org.desk.Item
+    consistency: read_your_writes
+    params:
+      - {name: label, type: Optional<String>}
+    filter:
+      any:
+        - {not: defined(param.label)}
+        - param.label.count > 3
+    fields: *fields

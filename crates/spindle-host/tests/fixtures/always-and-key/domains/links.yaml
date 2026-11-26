@@ -142,4 +142,5 @@ views:
       all:
         - always
         - {label: {equals_ignore_case: one}}
+        - label.count > 2
     fields: *fields

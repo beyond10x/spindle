@@ -433,7 +433,11 @@ fn an_untrusted_certificate_fails_the_call() {
     );
 
     let output = run(&environment, &ask("r1"));
-    assert_eq!(output.status.code(), Some(0), "the run goes on: {output:?}");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "the run goes on, then exits 1 for the rejected line (story:run-fails-on-rejected-line): {output:?}"
+    );
     let results = results(&output);
     assert_eq!(results.len(), 1, "{results:?}");
     assert_eq!(results[0]["failure"]["kind"], "undecided", "{results:?}");

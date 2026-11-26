@@ -1,0 +1,9 @@
+type: ess-scenario/1
+domain: hatch.door
+scenario: a-door-opens-by-an-act-that-states-no-outcome
+summary: A door opens by an act that states no outcome.
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: hatch.door.OpenDoor
+    input:
+      label: front

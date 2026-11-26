@@ -1,6 +1,7 @@
 //! The clap definitions of `b10x-spindle`.
 
 use std::path::PathBuf;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand};
 use serde_json::{Map, Value};
@@ -81,20 +82,33 @@ pub enum Command {
     /// `"external": {"<outcome>": true | false}` answering the command's external causes, and an
     /// optional `"actor": "<qualified name>"` with `"caller": {"<attribute>": ...}`: the actor the
     /// command is sent as and its caller's attributes, every required one of that actor's, which
-    /// the command reads as `{caller: <attribute>}` and `caller.<attribute>`. Each line prints
-    /// one JSON result: the outcome with its events and declared error, or a failure.
+    /// the command reads as `{caller: <attribute>}` and `caller.<attribute>`, and an optional
+    /// `"at": "<RFC 3339>"` that moves the clock `--clock` starts forward to that instant before
+    /// the command runs. Each line prints one JSON result: the outcome with its events and
+    /// declared error, or a failure.
     /// Exits 3, running nothing, when admission is refused. At startup it prints on stderr the
     /// same lines `admit` prints for outcomes and commands the kernel does not run.
     ///
+    /// A line whose result is a failure was rejected: it is not JSON, names no declared command,
+    /// its input is not admitted, its external cause is unanswered, or the kernel refused it
+    /// before an outcome. The run answers every line, then names each rejected line on stderr by
+    /// its place in the input, counted from 1, and exits 1; with none rejected it exits 0. A line
+    /// answered by a declared outcome, a refusing one included, is not rejected.
+    ///
     /// An external cause the line does not answer is answered by `--decisions`, then by
     /// `--answer-default`; one nothing answers fails that line, naming the outcome, and the run
-    /// goes on.
+    /// goes on to the next line.
     ///
     /// With `--scenario`, replays an `ess-scenario` document instead of reading stdin: every
     /// component in one process on empty in-memory stores, the document read and checked by ESS,
-    /// its steps run and compared by ESS's conformance runner. Prints what it arranges, each
-    /// timeline act and each assertion that holds; exits 0 when all hold. At the first that does
-    /// not, prints it with what was expected and what was observed and exits 1; that replay runs
+    /// its steps run and compared by ESS's conformance runner. A specification that declares no
+    /// component runs as one implied component that owns every domain, accepts every command and
+    /// publishes every event, and is admitted as that component. Prints what it arranges, each
+    /// timeline act and each assertion that holds; exits 0 when all hold. Each act's line ends with
+    /// what its command answered: `outcome <name>`, with `error <name>` where the outcome carries a
+    /// declared error, `undeclared` or `not granted`; an act that states no outcome holds when its
+    /// command is refused, as ESS's runner passes it. At the first step that does not hold,
+    /// prints it with what was expected and what was observed and exits 1; that replay runs
     /// nothing after it. A document ESS refuses, or one of more than 1000 steps, exits 1 before any
     /// step runs.
     ///
@@ -102,7 +116,8 @@ pub enum Command {
     /// in one process and serves those over HTTP on 127.0.0.1, or `--address`, instead of reading
     /// stdin; only `http-loopback` is served, and any other binding exits 1 before listening. Prints
     /// `{"listening": "<address>", "components": [...]}` once listening and serves until SIGINT
-    /// or SIGTERM (exit 130 or 143). Routes are where `ess generate --kind openapi` publishes them:
+    /// or SIGTERM (exit 130 or 143), or until a seed that rejected an entry ends (exit 1,
+    /// `--seed`). Routes are where `ess generate --kind openapi` publishes them:
     /// ESS's derived routes, or with `--http` the `ess-http/1` binding's, read and checked by ESS
     /// (methods, paths, path variables and per-outcome statuses), an operation it does not name
     /// keeping its derived route. A command's body is its input; it answers its outcome's status
@@ -174,7 +189,8 @@ pub enum Command {
     /// store is emptied, then each row, checked by ESS as a scenario's setup is, written where its
     /// entity rests. `decisions`, in the decisions file's shape, answers external causes before
     /// `--decisions` and `--answer-default` do, and `mint` seeds every identity and generated value
-    /// minted, so the same requests mint the same identities; both hold until the next reset. A
+    /// minted, so the same requests mint the same identities; both hold until the next reset, and
+    /// a world without `mint` mints from `--mint-seed` again, from its first draw. A
     /// world that does not validate is refused `400` and changes nothing.
     ///
     /// An event binding with `on_failure: retry` runs its command again at once after each
@@ -306,10 +322,14 @@ pub enum Command {
         /// between the requests the listener hands over, never through the listener. Each counts
         /// as applied, already there (an outcome the specification declares
         /// `existing_instance:`, or a request id an earlier applied or already-there entry of this
-        /// start carried, not submitted again) or refused; a refusal is printed on stderr with the
-        /// entry, command, request id and error name, and the next entry is submitted. One line on
+        /// start carried, not submitted again), refused (a declared refusing outcome) or rejected
+        /// (it did not run: the host or the kernel refused it before an outcome, such as
+        /// `not_granted`); each refusal and rejection is printed on stderr with the entry,
+        /// command, request id and error name, and the next entry is submitted. One line on
         /// stderr gives the counts when the seed ends; with `--observe`, `GET /__spindle/metrics`
-        /// has them as `spindle_seed_commands_total`. Only where `run` serves HTTP. Request ids are
+        /// has them as `spindle_seed_commands_total`, a rejected entry counted `refused` there.
+        /// A seed that ends having rejected an entry stops the run: it serves until then, and
+        /// exits 1 once the end line is printed. Only where `run` serves HTTP. Request ids are
         /// not kept across starts: a restart applies nothing new only where every entry is a
         /// create its command answers `existing_instance:`, and every other entry runs again.
         /// `POST /api/reset` drops the entries not yet sent; with no world it then submits the
@@ -317,6 +337,28 @@ pub enum Command {
         /// alone, and with a world it loads that world alone.
         #[arg(long, value_name = "FILE", conflicts_with = "scenario")]
         seed: Option<PathBuf>,
+        /// Start the run on a manual clock standing at this RFC 3339 instant
+        /// (`2026-02-01T00:00:00Z`, a fraction of a second and an offset read as given) instead of
+        /// the system clock: every guard and view that reads `now`, and every generated
+        /// `Timestamp`, reads it. Reading stdin, a line's `"at": "<RFC 3339>"` moves the clock
+        /// forward to that instant before its command runs; an instant before the clock's, or
+        /// `"at"` on a run without `--clock`, rejects that line, and a rejected line leaves the
+        /// clock where it stood.
+        /// Served over HTTP, and with `--scenario` (each replay's host; ESS's runner keeps its own
+        /// clock for the document), the clock stands at the instant for the whole run. No run
+        /// fires a periodic binding.
+        #[arg(long, value_name = "RFC3339", value_parser = instant)]
+        clock: Option<SystemTime>,
+        /// Mint every identity and generated value from this seed, from the first command on:
+        /// two runs given one seed and the same commands mint the same identities, and an
+        /// identity an instance of `--state` already holds is never minted again. Served over
+        /// HTTP, a `POST /api/reset` whose world carries `mint` mints from that until the next
+        /// reset, and one whose world has none mints from this seed again, from its first draw.
+        /// On an environment that binds `identity.mint` to `seeded`, the seed is 0 without this
+        /// flag reading stdin, and a run serving HTTP requires it. With `--scenario`, each
+        /// replay's host mints from it.
+        #[arg(long, value_name = "N")]
+        mint_seed: Option<u64>,
         /// The `ess-scenario` document to replay.
         #[arg(long, conflicts_with_all = ["state", "decisions", "answer_default"])]
         scenario: Option<PathBuf>,
@@ -562,6 +604,41 @@ pub enum StoreCommand {
         #[arg(long)]
         environment: PathBuf,
     },
+}
+
+/// The instant an RFC 3339 `date-time` names (`2026-02-01T00:00:00Z`, `2026-02-01T01:00:00+01:00`,
+/// `2026-02-01T00:00:00.5Z`), its offset and its fraction of a second included, read by ESS's own
+/// reader ([`ess_primitives::Rfc3339Instant`]): `--clock`, and a stdin line's `"at"`.
+///
+/// # Errors
+/// A text that is no RFC 3339 `date-time`.
+pub fn instant(text: &str) -> Result<SystemTime, String> {
+    let parsed = ess_primitives::Rfc3339Instant::parse_rfc3339(text)
+        .ok_or_else(|| format!("not an RFC 3339 instant such as 2026-02-01T00:00:00Z: {text}"))?;
+    let seconds = parsed.epoch_seconds();
+    let nanos = nanos(&parsed.to_rfc3339());
+    let whole = Duration::from_secs(seconds.unsigned_abs());
+    let second = if seconds >= 0 {
+        UNIX_EPOCH + whole
+    } else {
+        UNIX_EPOCH - whole
+    };
+    Ok(second + Duration::from_nanos(nanos))
+}
+
+/// The nanoseconds of the fraction of a second `spelled` names, an instant as
+/// [`ess_primitives::Rfc3339Instant::to_rfc3339`] spells it: in UTC, its fraction's trailing zeros
+/// trimmed (`.5Z` is 500 000 000), 0 without a fraction. The fraction is the one part the instant
+/// answers only in its spelling.
+fn nanos(spelled: &str) -> u64 {
+    let Some((_, fraction)) = spelled.split_once('.') else {
+        return 0;
+    };
+    let digits = fraction.trim_end_matches('Z');
+    if digits.is_empty() || digits.len() > 9 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return 0;
+    }
+    format!("{digits:0<9}").parse().unwrap_or(0)
 }
 
 /// A JSON object, as `--fixed-caller` reads it.

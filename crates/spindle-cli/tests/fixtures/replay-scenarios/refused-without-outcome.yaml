@@ -1,0 +1,22 @@
+type: ess-scenario/1
+domain: hatch.door
+scenario: a-door-shut-twice-states-no-outcome
+summary: A door opens and is shut twice by acts that state no outcome; the second is refused.
+arrange:
+  - instance: front
+    entity: hatch.door.Door
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: hatch.door.OpenDoor
+    input:
+      label: front
+    outcome: opened
+    capture: {instance: front, event: hatch.door.DoorOpened, field: door_id}
+  - at: 2026-01-05T09:01:00Z
+    command: hatch.door.ShutDoor
+    input:
+      door_id: {$instance: front}
+  - at: 2026-01-05T09:02:00Z
+    command: hatch.door.ShutDoor
+    input:
+      door_id: {$instance: front}

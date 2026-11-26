@@ -1,7 +1,15 @@
 //! `run --scenario`: replaying an `ess-scenario/1` timeline, read by ESS's own reader.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+
+use ess_conformance::authored::{self, Source};
+use ess_conformance::interpret::Interpreted;
+use ess_conformance::{
+    AdmittedSuite, AdvancingClock, ConformanceSuite, Ids, Runner, RunnerConfig, Status,
+    SuiteProvenance,
+};
 
 const SPEC: &str = "crates/spindle-cli/tests/fixtures/replay";
 const SCENARIOS: &str = "crates/spindle-cli/tests/fixtures/replay-scenarios";
@@ -199,4 +207,290 @@ fn replay_starts_on_a_specification_with_converted_mappings() {
         assert!(printed.contains(step), "{step:?} in {printed}");
     }
     assert!(!printed.contains("diverges"), "{printed}");
+}
+
+/// `--scenario` with `--clock` opens the host on a clock standing at that instant
+/// (`story:clock-and-mint-in-every-mode`): the act states the outcome a guard over `now` selects
+/// on September 30th 2026 (`deadline > now`, the deadline October 1st 2026), which holds there, and
+/// the same document without `--clock` exits 1, the system clock being past the deadline. ESS
+/// refuses an act whose `now` guard reads alike at every run from 2026-09-27 on, so the instants
+/// lie after that day.
+#[test]
+fn a_scenario_runs_on_the_clock_flag() {
+    let replayed = |clock: Option<&str>| {
+        let mut arguments = vec![
+            "run",
+            "crates/spindle-cli/tests/fixtures/clock",
+            "--environment",
+            LAPTOP,
+            "--scenario",
+            "crates/spindle-cli/tests/fixtures/clock-scenarios/early.yaml",
+        ];
+        if let Some(clock) = clock {
+            arguments.extend(["--clock", clock]);
+        }
+        Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+            .current_dir(root())
+            .args(&arguments)
+            .stdin(Stdio::null())
+            .output()
+            .expect("b10x-spindle runs")
+    };
+    let clocked = replayed(Some("2026-09-30T00:00:00Z"));
+    assert_eq!(clocked.status.code(), Some(0), "{clocked:?}");
+    assert!(
+        stdout(&clocked).contains("timeline[0] ledger.slot.Book: holds"),
+        "{}",
+        stdout(&clocked)
+    );
+    let unclocked = replayed(None);
+    assert_eq!(unclocked.status.code(), Some(1), "{unclocked:?}");
+}
+
+/// The specification whose door is refused when shut again, and by no declared outcome when no
+/// one opened it (`story:scenario-act-without-outcome`).
+const REFUSALS: &str = "crates/spindle-cli/tests/fixtures/replay-refusals";
+
+/// The status ESS 0.99.1's own runner gives `scenario` against ESS's interpreter of `spec`.
+fn ess_runner_status(spec: &str, scenario: &str) -> Status {
+    let ir = spindle_spec::load(&root().join(spec))
+        .expect("the specification compiles")
+        .ir;
+    let document =
+        std::fs::read_to_string(root().join(SCENARIOS).join(scenario)).expect("the scenario reads");
+    let authoring = authored::compile(&ir, &[Source::new(scenario.to_owned(), document)]);
+    assert!(authoring.is_complete(), "{:?}", authoring.refusals);
+    let mut suite = ConformanceSuite::new(SuiteProvenance::of(&ir));
+    for (id, compiled) in authoring.scenarios {
+        suite.insert(id, compiled).expect("one scenario");
+    }
+    suite.select_fresh_format_for(&ir);
+    let admitted = AdmittedSuite::from_suite(&suite).expect("the suite is admitted");
+    let target = Interpreted::for_model(ir.clone());
+    let report = Runner::new(
+        RunnerConfig::default(),
+        AdvancingClock::default(),
+        Ids::for_suite(&suite),
+    )
+    .run_admitted(&admitted, &target)
+    .into_report();
+    report.scenarios[0].status
+}
+
+#[test]
+fn a_refused_act_without_an_outcome_prints_the_refusal() {
+    let scenario = "refused-without-outcome.yaml";
+    assert_eq!(ess_runner_status(REFUSALS, scenario), Status::Passed);
+    let output = replay_of(REFUSALS, scenario);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let printed = stdout(&output);
+    for line in [
+        "timeline[0] hatch.door.OpenDoor: holds, outcome opened\n",
+        "timeline[1] hatch.door.ShutDoor: holds, outcome shut\n",
+        "timeline[2] hatch.door.ShutDoor: holds, outcome already-shut, error hatch.door.AlreadyShut\n",
+    ] {
+        assert!(printed.contains(line), "{line:?} in {printed}");
+    }
+}
+
+#[test]
+fn an_undeclared_refusal_without_an_outcome_prints_it() {
+    let scenario = "undeclared-without-outcome.yaml";
+    assert_eq!(ess_runner_status(REFUSALS, scenario), Status::Passed);
+    let output = replay_of(REFUSALS, scenario);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let printed = stdout(&output);
+    assert!(
+        printed.contains("timeline[0] hatch.door.ShutDoor: holds, undeclared\n"),
+        "{printed}"
+    );
+}
+
+#[test]
+fn an_act_without_an_outcome_that_runs_holds() {
+    let scenario = "runs-without-outcome.yaml";
+    assert_eq!(ess_runner_status(REFUSALS, scenario), Status::Passed);
+    let output = replay_of(REFUSALS, scenario);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let printed = stdout(&output);
+    assert!(
+        printed.contains("timeline[0] hatch.door.OpenDoor: holds, outcome opened\n"),
+        "{printed}"
+    );
+}
+
+#[test]
+fn an_act_with_an_outcome_prints_the_observed_one() {
+    let holding = replay("holds.yaml");
+    assert_eq!(holding.status.code(), Some(0), "{holding:?}");
+    let printed = stdout(&holding);
+    for line in [
+        "timeline[0] desk.ticket.OpenTicket: holds, outcome opened\n",
+        "timeline[1] desk.ticket.OpenTicket: holds, outcome opened\n",
+        "assert[0] desk.ticket.OpenTickets: holds\n",
+    ] {
+        assert!(printed.contains(line), "{line:?} in {printed}");
+    }
+
+    let diverging = replay("wrong-outcome.yaml");
+    assert_eq!(diverging.status.code(), Some(1), "{diverging:?}");
+    let printed = stdout(&diverging);
+    for line in [
+        "timeline[0] desk.ticket.OpenTicket: holds, outcome opened\n",
+        "timeline[1] desk.ticket.CloseTicket: diverges, outcome closed\n",
+    ] {
+        assert!(printed.contains(line), "{line:?} in {printed}");
+    }
+}
+
+#[test]
+fn a_refused_act_prints_its_error() {
+    let output = replay_of(REFUSALS, "refused-with-error.yaml");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let printed = stdout(&output);
+    assert!(
+        printed.contains(
+            "timeline[2] hatch.door.ShutDoor: holds, outcome already-shut, error hatch.door.AlreadyShut\n"
+        ),
+        "{printed}"
+    );
+}
+
+/// A specification of one domain that declares no component
+/// (`story:scenario-without-components`).
+const WITHOUT_COMPONENTS: &str = "crates/spindle-cli/tests/fixtures/replay-without-components.yaml";
+
+/// The same domain, whose one component accepts `hatch.door.OpenDoor` and no component
+/// `hatch.door.ShutDoor`.
+const UNACCEPTED: &str = "crates/spindle-cli/tests/fixtures/replay-unaccepted.yaml";
+
+/// An environment that binds no `store.durable`.
+const NO_DURABLE_STORE: &str = "crates/spindle-cli/tests/fixtures/no-durable-store.toml";
+
+/// `run` of `spec` on `environment` reading `lines` on stdin.
+fn stdin_run(spec: &str, environment: &str, lines: &str) -> Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+        .current_dir(root())
+        .args(["run", spec, "--environment", environment])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("b10x-spindle starts");
+    let written = child
+        .stdin
+        .take()
+        .expect("stdin is piped")
+        .write_all(lines.as_bytes());
+    // `run` may refuse at start and exit before it reads a line, which closes the pipe.
+    if let Err(error) = written {
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe, "{error}");
+    }
+    child.wait_with_output().expect("b10x-spindle runs")
+}
+
+/// `run --scenario` of `scenario` against `spec` on `environment`.
+fn replay_on(spec: &str, environment: &str, scenario: &str) -> Output {
+    let scenario = format!("{SCENARIOS}/{scenario}");
+    Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+        .current_dir(root())
+        .args([
+            "run",
+            spec,
+            "--environment",
+            environment,
+            "--scenario",
+            &scenario,
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .expect("b10x-spindle runs")
+}
+
+#[test]
+fn a_scenario_replays_a_specification_without_components() {
+    let output = replay_of(WITHOUT_COMPONENTS, "runs-without-outcome.yaml");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let printed = stdout(&output);
+    assert!(
+        printed.contains("timeline[0] hatch.door.OpenDoor: holds"),
+        "{printed}"
+    );
+    assert!(!printed.contains("diverges"), "{printed}");
+}
+
+#[test]
+fn a_scenario_on_declared_components_still_routes_by_accepts() {
+    let output = replay_of(UNACCEPTED, "undeclared-without-outcome.yaml");
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let printed = stdout(&output);
+    assert!(
+        printed.contains("timeline[0] hatch.door.ShutDoor: diverges"),
+        "{printed}"
+    );
+    assert!(
+        printed.contains("no component accepts hatch.door.ShutDoor"),
+        "{printed}"
+    );
+}
+
+#[test]
+fn stdin_and_scenario_agree_on_a_specification_without_components() {
+    let lines = concat!(
+        r#"{"command": "hatch.door.OpenDoor", "input": {"label": "front"}}"#,
+        "\n",
+        r#"{"command": "hatch.door.ShutDoor", "input": {"door_id": "0b5e0000-0000-4000-8000-000000000001"}}"#,
+        "\n",
+    );
+    let stdin = stdin_run(WITHOUT_COMPONENTS, LAPTOP, lines);
+    // The second line is undeclared, so the run exits 1 (`story:run-fails-on-rejected-line`).
+    assert_eq!(stdin.status.code(), Some(1), "{stdin:?}");
+    let answers = stdout(&stdin)
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("one JSON line"))
+        .collect::<Vec<_>>();
+    assert_eq!(answers.len(), 2, "{answers:?}");
+    assert_eq!(answers[0]["outcome"], "opened", "{answers:?}");
+    assert_eq!(answers[1]["failure"]["kind"], "undeclared", "{answers:?}");
+
+    let opened = replay_of(WITHOUT_COMPONENTS, "runs-without-outcome.yaml");
+    assert_eq!(opened.status.code(), Some(0), "{opened:?}");
+    assert!(
+        stdout(&opened).contains("timeline[0] hatch.door.OpenDoor: holds, outcome opened\n"),
+        "{opened:?}"
+    );
+    let refused = replay_of(WITHOUT_COMPONENTS, "undeclared-without-outcome.yaml");
+    assert_eq!(refused.status.code(), Some(0), "{refused:?}");
+    assert!(
+        stdout(&refused).contains("timeline[0] hatch.door.ShutDoor: holds, undeclared\n"),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn a_specification_without_components_is_refused_on_a_lacking_environment() {
+    let stdin = stdin_run(WITHOUT_COMPONENTS, NO_DURABLE_STORE, "");
+    assert_eq!(stdin.status.code(), Some(3), "{stdin:?}");
+    assert!(stdout(&stdin).contains("store.durable"), "{stdin:?}");
+
+    let output = replay_on(
+        WITHOUT_COMPONENTS,
+        NO_DURABLE_STORE,
+        "runs-without-outcome.yaml",
+    );
+    assert_eq!(output.status.code(), Some(3), "{output:?}");
+    let printed = stdout(&output);
+    assert!(
+        printed.contains("store.durable"),
+        "the capability missing: {printed}"
+    );
+    assert!(
+        !printed.contains("timeline["),
+        "no step runs on a refused admission: {printed}"
+    );
+    assert_eq!(
+        printed,
+        stdout(&stdin),
+        "the refusal in the words stdin mode uses, naming no component"
+    );
 }

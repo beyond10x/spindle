@@ -6,6 +6,93 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- A view filter that compares a parameter with a literal of its type (`param.label == ""`,
+  `param.assigned == false`, `param.direction == all`), reads the count of a list parameter
+  (`param.kinds.count == 0`), tests a text field, a text parameter or an element of a list
+  parameter with `equals_ignore_case` or `in_ignore_case`, alone or under `trimmed`, or reads a
+  member of an element of a list field (`exists g in groups: (g.id == param.group)`,
+  `defined(g.name)`, `g.id == w` for an outer list-parameter binder `w`) is served, where the view
+  was refused whole and its route answered `501`. Each answers the rows ESS 0.99.1's interpreter
+  answers, with each parameter left out and given; a comparison with a parameter the read left
+  out is unknown and refuses the read unless a guard such as `not defined(param.x)` decides it.
+  Any other leaf still refuses the view whole, naming its filter
+  (`story:view-filter-parameter-literal`).
+
+### Fixed
+
+- The `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` archives run on glibc 2.17 and
+  newer, where 0.21.0's needed `GLIBC_2.39`: `release.yml` links them through `cargo auditable
+  zigbuild` against glibc 2.17, fails the row on any newer `GLIBC_` symbol version (`objdump -T`)
+  and runs `--version` in `debian:bookworm`. A new archive,
+  `b10x-spindle-<version>-x86_64-unknown-linux-musl.tar.gz`, carries a static binary, checked for
+  no `INTERP` and no `NEEDED` and run in Alpine; the SBOM covers the five targets and
+  `SHA256SUMS` the five archives (`story:release-linux-glibc-floor-and-musl`).
+
+- A `when_related:` row-set guard whose `where:` or `forall:` walks the rows of another entity,
+  `exists: {in: {entity: …}, as: …, that: …}`, is decided as ESS 0.99.1's interpreter decides it,
+  where it was refused at start: every stored row of the walked entity is read with the
+  candidates, and a write to it between that read and the commit refuses the command as a
+  conflict, as a write to the guard's own entity does. A rows quantifier in an `affects:` or
+  `instances:` filter stays refused, as ESS refuses it (`story:related-selector-rows-quantifier`).
+
+### Fixed
+
+- A command whose `when_related:` guard reads the rows of an entity another component owns (a row
+  set selecting it, a rows quantifier walking it, or a row an input names) is refused by name at
+  start, naming the entity, its owner and the running component, as a value read from such an
+  entity is. It was decided over the running component's store, which keeps none of those rows,
+  where ESS's interpreter reads them (`story:related-selector-rows-quantifier`).
+- A guard over an `Optional` field the held instance, a `when_related:` row or the input never
+  wrote is still `undecidable` where ESS 0.99.1's interpreter selects no outcome, and its refusal
+  now names the guard, the absent field and the way out, such as "`label == mine` is unknown on a
+  `desk.ticket.Ticket` row where `label` is absent; write `defined(label)` in the guard to rule
+  such a row out", where it read "…is undecidable over the held instance and the input". The
+  error code and `run`'s status are unchanged (`story:guard-over-absent-row-field`).
+
+- `run --clock <RFC 3339>` starts a run reading stdin, serving HTTP or replaying `--scenario` on
+  a manual clock at that instant, where every mode read the system clock; reading stdin, a line's
+  `"at": "<RFC 3339>"` moves the clock forward before its command runs, and an instant before the
+  clock's, or `"at"` without `--clock`, rejects the line and leaves the clock where it stood.
+  `run --mint-seed <n>` mints every identity and generated value from that seed from the first
+  command on, reading stdin, serving HTTP or replaying, so the same commands mint the same
+  identities, never one an instance of the kept state already holds; a served reset whose world
+  carries `mint` mints from that until the next reset, and one whose world has none mints from the
+  run's seed again, from its first draw. An environment that binds `identity.mint` to `seeded`
+  runs on stdin with seed 0 without the flag, and serves HTTP given the flag, where it was
+  refused. `Host::seeded` holds the run's seed, and `HostTarget::clocked` opens every host on a
+  given clock and seed. No `run` fires a periodic binding (`story:clock-and-mint-in-every-mode`).
+
+### Fixed
+
+- `run` reading JSON lines on stdin exits 1 when a line was rejected (not JSON, naming no
+  declared command, its input not admitted, its external cause unanswered, or refused by the
+  kernel before an outcome), after it answered every line, and names each rejected line on stderr
+  by its place in the input; it exited 0 whatever the lines did. A line answered by a declared
+  outcome, a refusing one included, is not rejected. A seed entry the host or the kernel refuses
+  before an outcome, such as `not_granted`, is counted `rejected` in the seed's end line, apart
+  from the declared refusals still counted `refused`, and a seed that ends with one stops the
+  served run with exit 1; `spindle_seed_commands_total` counts it under `refused`
+  (`story:run-fails-on-rejected-line`).
+
+### Fixed
+
+- `run --scenario` prints on each timeline act's line what its command answered: `outcome
+  <name>`, with `error <name>` where the outcome carries a declared error, `undeclared` or `not
+  granted`, beside `holds` or `diverges`. An act that states no `outcome:` and is refused printed
+  `holds` alone; it still holds and exits 0, as ESS 0.99.1's runner passes it, and now names the
+  refusal. `HostTarget::answered` lists what each command of the scenario answered
+  (`story:scenario-act-without-outcome`).
+- `run --scenario` replays a specification that declares no component, the way `run` executes it
+  from stdin, where every act diverged with `no component accepts <command>` and the run exited 1.
+  It runs as one implied component, `implied`, that owns every domain, accepts every command and
+  publishes every event, compiled by ESS beside the specification's files
+  (`spindle_spec::load_with_implied_component`). Admission now derives that component's
+  requirements, so an environment that lacks one refuses the replay with exit 3, printed as `run`
+  prints it: the capabilities it lacks, naming no component. A specification that declares components replays on its unchanged model and still routes by
+  `accepts:` (`story:scenario-without-components`).
+
 ## [0.21.0] - 2026-11-26
 
 ### Added

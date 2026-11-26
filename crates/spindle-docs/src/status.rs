@@ -287,6 +287,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "crates/spindle-host/tests/spindle-host/always_and_key_filters.rs::always_and_key_filters_agree_with_the_interpreter",
     ),
     shipped(
+        "Execution",
+        "View filters reading parameters and case folds",
+        "A view filter that compares a parameter with a literal of its type (param.label == \"\", param.direction == all), reads the count of a list parameter (param.kinds.count == 0), tests a text field, a text parameter or an element of a list parameter with equals_ignore_case or in_ignore_case, alone or under trimmed, or reads a member of an element of a list field (exists g in groups: (g.id == param.group)) answers the rows ESS's interpreter answers, with each parameter left out and given.",
+        "/docs/concepts/specification",
+        "crates/spindle-host/tests/spindle-host/parameter_literal_filters.rs::the_consumer_filter_shapes_are_served",
+    ),
+    shipped(
         "Observe",
         "Counters derived from the specification",
         "spindle-telemetry counts commands by outcome, events, bindings, timer ticks and store writes per component; b10x-spindle metrics prints the catalogue, play prints the table's counters.",
@@ -429,9 +436,23 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "Seed at start",
-        "run --seed, or the environment's [seed] file, names a JSON array of commands, each with its input, actor, caller and request id, that a served run submits on every start after its stores open: checked against the specification before listening, then one at a time in the file's order beside the listener. Each counts as applied, already there (an existing_instance: outcome, or a request id an earlier applied or already-there entry carried) or refused; a refusal is logged and the rest still run, and the counts are in one log line and in /__spindle/metrics. Request ids are not kept across starts: a restart applies nothing new only where every entry is an existing_instance:-guarded create. A reset drops the entries not yet sent; with no world it submits the seed again before it answers, and with a world it loads that world alone.",
+        "run --seed, or the environment's [seed] file, names a JSON array of commands, each with its input, actor, caller and request id, that a served run submits on every start after its stores open: checked against the specification before listening, then one at a time in the file's order beside the listener. Each counts as applied, already there (an existing_instance: outcome, or a request id an earlier applied or already-there entry carried), refused (a declared refusing outcome) or rejected (the host or the kernel refused it before an outcome); each is logged and the rest still run, the counts are in one log line and in /__spindle/metrics, and a seed that ends with a rejected entry stops the run with exit 1. Request ids are not kept across starts: a restart applies nothing new only where every entry is an existing_instance:-guarded create. A reset drops the entries not yet sent; with no world it submits the seed again before it answers, and with a world it loads that world alone.",
         "/docs/concepts/environment-and-admission#a-seed-submitted-at-start",
         "crates/spindle-cli/tests/spindle-cli/seed.rs::a_second_run_on_one_state_applies_nothing_new",
+    ),
+    shipped(
+        "Execution",
+        "A rejected line fails the run",
+        "run reading JSON lines on stdin answers every line, then exits 1 when a line was rejected (not JSON, no declared command, input not admitted, an external cause unanswered, or refused by the kernel before an outcome), naming each such line on stderr by its place in the input. A line answered by a declared outcome, a refusing one included, leaves the exit status 0.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-cli/tests/spindle-cli/rejected_line.rs::a_stdin_run_with_a_rejected_line_exits_1",
+    ),
+    shipped(
+        "Execution",
+        "Simulated clock and seeded mint",
+        "run --clock starts a run reading stdin, serving HTTP or replaying --scenario on a manual clock at an RFC 3339 instant; on stdin a line's at moves it forward before its command runs, an earlier instant rejects the line, and a rejected line leaves the clock where it stood. run --mint-seed mints every identity and generated value from a seed on stdin and over HTTP, so two runs of the same commands mint the same identities, never one the kept state already holds; a served reset without a world mints from it again. An environment binding identity.mint to seeded runs on stdin with seed 0, and serves HTTP given --mint-seed. No run fires a periodic binding.",
+        "/docs/reference/cli",
+        "crates/spindle-cli/tests/spindle-cli/clock_and_mint.rs::a_line_moves_the_clock",
     ),
     shipped(
         "Execution",
@@ -450,7 +471,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Conformance",
         "Scenario replay",
-        "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: an entity it arranges with setup is written into the store of the component that owns it, captures feed later steps, view asserts are checked, and the first divergent step is named and ends the run.",
+        "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: an entity it arranges with setup is written into the store of the component that owns it, captures feed later steps, view asserts are checked, each act's line names the outcome its command took with its declared error, or its refusal, the first divergent step is named and ends the run, and a specification that declares no component replays as one implied component that owns every domain.",
         "/docs/concepts/specification",
         "crates/spindle-conformance/tests/spindle-conformance/establish.rs::an_established_row_is_read_by_the_next_command",
     ),

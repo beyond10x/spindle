@@ -1,0 +1,21 @@
+format: ess/34
+system: org
+version: v1
+summary: Items a desk keeps, read by views whose filters compare parameters with literals, fold text, count a list parameter and read members of list elements.
+domains:
+  - org.desk
+components:
+  - component: desk
+    summary: Adds items and closes them.
+    owns:
+      domains:
+        - org.desk
+    accepts:
+      commands:
+        - org.desk.AddItem
+        - org.desk.CloseItem
+    publishes:
+      events:
+        - org.desk.ItemAdded
+        - org.desk.ItemClosed
+    reached_by: in_process

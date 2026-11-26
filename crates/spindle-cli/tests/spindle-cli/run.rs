@@ -65,7 +65,11 @@ fn run_admits_then_answers_each_command_line() {
         ],
         lines,
     );
-    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a rejected line exits 1 once every line is answered (story:run-fails-on-rejected-line): {output:?}"
+    );
     let results = results(&output);
     assert_eq!(results.len(), 5, "{results:?}");
     assert_eq!(results[0]["outcome"], "declared");
