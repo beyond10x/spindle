@@ -214,7 +214,9 @@ Agents start at [`AGENTS.md`](AGENTS.md).
 ## Releases
 
 Binaries for Linux and macOS (x86_64 and aarch64 each) are attached to each
-[GitHub release](https://github.com/beyond10x/spindle/releases) with a `SHA256SUMS` file. Changes
+[GitHub release](https://github.com/beyond10x/spindle/releases) with a `SHA256SUMS` file. The Linux
+binaries need glibc 2.17 or newer; `x86_64-unknown-linux-musl` is a static build for hosts without
+glibc. Changes
 are in [`CHANGELOG.md`](CHANGELOG.md), and the release steps in
 [`AGENTS.md`](AGENTS.md#cutting-a-release).
 

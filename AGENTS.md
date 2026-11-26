@@ -197,14 +197,21 @@ cut from `main`:
    annotated, on `main`, equal to the workspace version and named by a dated `CHANGELOG.md`
    heading; waits for CI's `Gate` and `macOS` checks to be green on the tagged commit; builds the
    observe UI once and `b10x-spindle` with it embedded for `x86_64-unknown-linux-gnu`,
-   `aarch64-unknown-linux-gnu`, `aarch64-apple-darwin` (`macos-15`) and `x86_64-apple-darwin`
-   (`macos-15-intel`); and uploads `b10x-spindle-<version>-<target>.tar.gz` and `SHA256SUMS` to
-   the page once it exists. On macOS the in-process commands run as on Linux; the microVM
-   launchers, vsock, `/proc` resource readings and the parent-death signal are Linux-only and
-   compile to a declared refusal there. CI's `macOS` job checks and lints the workspace for both
-   macOS targets and runs the in-process test lanes and the off-Linux refusals of the microVM
-   crates. A target is added as a matrix row in the `build` job and a name in the `publish` job's `targets`. It never
-   creates or edits the page and never replaces an asset. A pull request that changes the workflow
+   `aarch64-unknown-linux-gnu`, `x86_64-unknown-linux-musl`, `aarch64-apple-darwin` (`macos-15`)
+   and `x86_64-apple-darwin` (`macos-15-intel`); and uploads
+   `b10x-spindle-<version>-<target>.tar.gz` and `SHA256SUMS` to the page once it exists. The two
+   gnu binaries link against glibc 2.17 through `cargo auditable zigbuild --target
+   <target>.2.17`; `scripts/release-linux-binary.sh` fails the row on any `GLIBC_` symbol version
+   above 2.17 (`objdump -T`) and runs `--version` in `debian:bookworm`. The musl binary is built
+   by `cargo auditable zigbuild` too; the script fails the row unless it is static (`file`, no
+   `INTERP`, no `NEEDED` in `readelf`) and answers `--version` in Alpine. Both images and zig,
+   cargo-zigbuild and cargo-auditable are pinned by digest or checksum in the workflow. On macOS
+   the in-process commands run as on Linux; the microVM launchers, vsock, `/proc` resource
+   readings and the parent-death signal are Linux-only and compile to a declared refusal there.
+   CI's `macOS` job checks and lints the workspace for both macOS targets and runs the in-process
+   test lanes and the off-Linux refusals of the microVM crates. A target is added as a matrix row
+   in the `build` job and a name in the `sbom` and `publish` jobs' `targets`, with the `sbom`
+   job's count of targets. It never creates or edits the page and never replaces an asset. A pull request that changes the workflow
    runs the builds and publishes nothing; `workflow_dispatch` with `tag` backfills an existing tag.
 7. Verify: the `Release` run for the tag succeeded; the page is authored by `b10x-bot[bot]`, is
    Latest and resolves to the tag's commit; it carries one archive per target and `SHA256SUMS`, and
