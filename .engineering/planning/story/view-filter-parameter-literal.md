@@ -7,7 +7,7 @@ title: A view filter reads every parameter form a consumer's model declares
 relations:
 - serves: vision:spindle
 - informed_by: story:view-filter-text-contains
-revision: 10
+revision: 11
 ---
 # A view filter reads every parameter form a consumer's model declares
 
@@ -117,6 +117,12 @@ Missing forms:
 - `crates/spindle-host/src/host.rs:1625-1645` (the leaf-list doc): shared with U3
   (`story:clock-and-mint-in-every-mode` edits `Opening`, `:984` and `reset_to` `:1195-1236`).
   Separate hunks, merged by the coordinator.
+- `website/docs/concepts/specification.md`: this story extends the view-filter leaf list
+  (`:139-155`); U1 (`story:related-selector-rows-quantifier`) edits `:65-68`. Separate hunks,
+  merged by the coordinator.
+- `crates/spindle-docs/src/status.rs` and its generated `website/docs/status.md` and
+  `website/data/status.json`: this story adds or updates the view-filter row; U1, U3 and U4 edit
+  other rows. Separate rows; the coordinator regenerates the pages after the merges.
 - `crates/spindle-host/tests/spindle-host/main.rs`: this story adds a `mod` line; U3 adds one only
   if it tests the reset in that crate. Merged by the coordinator.
 - Fixtures under spindle-cli and spindle-ingress named in "Decided when scoped": this story's alone.

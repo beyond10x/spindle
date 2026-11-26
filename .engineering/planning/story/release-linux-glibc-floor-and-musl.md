@@ -6,9 +6,10 @@ status: draft
 title: The Linux release runs on an old glibc and as a static binary
 relations:
 - serves: vision:spindle
-revision: 12
+revision: 14
 ---
 # The Linux release runs on an old glibc and as a static binary
+
 
 
 ## Outcome
@@ -26,16 +27,23 @@ as the static fallback.
 
 ## Acceptance
 
-- The release workflow uploads `b10x-spindle-<v>-x86_64-unknown-linux-gnu.tar.gz` built on the
-  glibc 2.17 floor, and a CI check reads its symbol versions with `objdump -T` and fails on any
-  `GLIBC_` above 2.17.
-- The same for `b10x-spindle-<v>-aarch64-unknown-linux-gnu.tar.gz`.
-- It uploads `b10x-spindle-<v>-x86_64-unknown-linux-musl.tar.gz`; a CI check confirms the binary is
+Read on the pull request's run of `release.yml` (the `build` and `sbom` jobs; `publish` is skipped
+on a pull request):
+
+- The `build` row `x86_64-unknown-linux-gnu` builds on the glibc 2.17 floor, and a check in that row
+  reads the binary's symbol versions with `objdump -T` and fails on any `GLIBC_` above 2.17.
+- The same for the `aarch64-unknown-linux-gnu` row.
+- A new `build` row `x86_64-unknown-linux-musl` builds; a check in that row confirms the binary is
   static (`file`, `readelf` shows no `INTERP` and no `NEEDED`) and runs `--version` in a pinned
   Alpine image.
-- A CI check runs `--version` of each Linux gnu archive in a `debian:bookworm` image (glibc 2.36).
-- `SHA256SUMS`, the SBOM target list and its count check cover the five archives.
-- The release workflow runs on a pull request that changes it, so the PR's CI run shows each check.
+- A check runs `--version` of each Linux gnu binary in a `debian:bookworm` image (glibc 2.36).
+- Each row's archive is the job artifact named as the release asset will be
+  (`b10x-spindle-<v>-<target>.tar.gz`), and the `sbom` job's target list and count check cover the
+  five targets.
+
+Read at the next tagged release (the `publish` job):
+
+- The release carries the five archives under those names, and `SHA256SUMS` lists each.
 
 ## Joined 2026-11-26
 
@@ -114,7 +122,7 @@ Pattern to copy:
   - `:1619-1643`: `--version` in that image.
   - `:114-115` and `:1564-1570`: a glibc floor image smoke run, the pattern for the bookworm check.
 - **A third sibling repository** (`origin/main`) `.github/workflows/binaries.yml:56-90` uses zigbuild against glibc 2.27 with `an xtask glibc-floor`. Its floor is not 2.17 and it has no musl, so it is the weaker model.
-- The release-gates repository has no shared release composite action on `origin/main`.
+- No sibling repository holds a shared release composite action on its `main`.
 
 Native blockers:
 - **libsqlite3-sys 0.39.1, `bundled`.** Chain: rusqlite 0.41.0 ← eventlog-sqlite 0.10.0 ← spindle-kernel default feature `sqlite`. It compiles SQLite C through `cc`. That needs a musl C compiler (`musl-gcc` as ESS does, or zig) and is not a blocker. Cited from `cargo tree -i`.

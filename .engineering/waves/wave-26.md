@@ -38,9 +38,12 @@ coordinator at merge, each on separate hunks:
   U3 merges first);
 - `crates/spindle-host/src/host.rs` (U2 the leaf-list doc, U3 `Opening` and `reset_to`);
 - `README.md` (U3 the run and seed paragraphs, U5 § Releases);
+- `website/docs/concepts/specification.md` (U1 `:65-68`, U2 the view-filter leaf list `:139-155`);
+- `crates/spindle-cli/tests/spindle-cli/absent_optional_guard.rs:361` (U1 alone, named because it
+  sits in another crate);
 - the `run` help in `crates/spindle-cli/src/cli.rs` (U3, U4) with the generated
   `website/docs/reference/cli.md`, and `crates/spindle-docs/src/status.rs` with its generated pages
-  (U3, U4);
+  (U1, U2, U3, U4, separate rows; regenerated after the merges);
 - the `mod` lines of the test `main.rs` files and `CHANGELOG.md` `[Unreleased]`.
 
 ## Exit

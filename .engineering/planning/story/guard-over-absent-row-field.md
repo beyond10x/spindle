@@ -6,7 +6,7 @@ status: draft
 title: A guard over an absent optional field of a held row is decided as ESS decides it
 relations:
 - serves: vision:spindle
-revision: 7
+revision: 9
 ---
 # A guard over an absent optional field of a held row is decided as ESS decides it
 
@@ -30,8 +30,10 @@ to an assigned resource), answered `undecidable` with no hint of the field.
   field of the held instance that was never written, the kernel selects the outcome
   `ess_conformance::interpret` selects, compared request by request.
 - The same over a related row's absent `Optional` field read through `when_related:`.
-- Where the interpreter determines no outcome, the kernel's refusal names the field and the guard,
-  and `run` answers it as today.
+- `an_undecidable_guard_names_its_absent_field`: where the interpreter determines no outcome, the
+  kernel's `undecidable` refusal names the guard and the absent field and suggests
+  `defined(<field>)`, for a held-row guard and for a `when_related:` guard; `run` answers it with the
+  same status as today. At the base the message names neither, so this test is red first.
 
 ## Scope
 
@@ -112,4 +114,6 @@ Not established: whether the consumers' guards actually use a bare comparison ra
 
 - `crates/spindle-kernel/src/execute.rs` (`Run::undecidable`) and `lib.rs`: shared with
   `story:related-selector-rows-quantifier` in the same unit (U1), built after it on one branch.
+- `crates/spindle-cli/tests/spindle-cli/absent_optional_guard.rs:361` asserts the old refusal text;
+  this story updates that assertion. No other wave-26 unit edits that file.
 - `CHANGELOG.md` `[Unreleased]`: one bullet per story, merged by the coordinator.

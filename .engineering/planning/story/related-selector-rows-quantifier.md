@@ -6,7 +6,7 @@ status: draft
 title: A when_related row-set selector that walks an entity's rows is decided
 relations:
 - serves: vision:spindle
-revision: 5
+revision: 6
 ---
 # A when_related row-set selector that walks an entity's rows is decided
 
@@ -69,4 +69,8 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
 - `crates/spindle-kernel/src/execute.rs`, `facts.rs`, `supported.rs` and the kernel test `main.rs`:
   shared with `story:guard-over-absent-row-field` in the same unit (U1), built after this story on
   one branch. No other wave-26 unit edits `spindle-kernel`.
+- `website/docs/concepts/specification.md:65-68`: shared with U2, which extends the view-filter
+  leaf list at `:139-155`. Separate hunks, merged by the coordinator.
+- `crates/spindle-docs/src/status.rs` and its generated pages, if a row changes: shared with U2, U3
+  and U4 on separate rows; the coordinator regenerates the pages after the merges.
 - `CHANGELOG.md` `[Unreleased]`: one bullet per story, merged by the coordinator.
