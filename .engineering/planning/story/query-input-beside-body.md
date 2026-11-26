@@ -4,6 +4,8 @@ id: story:query-input-beside-body
 kind: story
 status: draft
 title: A command route reads input fields from the query string beside its body
+relations:
+- serves: vision:spindle
 scope:
 - confidence: inferred
   path: CHANGELOG.md
@@ -25,7 +27,7 @@ scope:
   path: website/docs/concepts/capabilities.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 6
+revision: 7
 ---
 # A command route reads input fields from the query string beside its body
 
@@ -64,7 +66,7 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
 - **Files:** `crates/spindle-ingress/src/surface.rs:139-144` (`Route` fields beside `queried`/`parameters`), and a new reader beside `Route::flat_input` (`:565`) for only the fields `request.query` lists. ESS reads them with `http::flat_object(query, <listed rows>, &[], unknown, "query")`: under `refuse` a key no listed field names is refused `query.<key>: no field of this request is named so`, under `ignore` it is dropped; a key given twice is `expected one value, found 2`. The path is not consulted — inferred, from ESS 0.99.1 `ess-synth/src/rust/http/bound.rs` `queried` and `with_query`
 - **Files:** `crates/spindle-ingress/src/answer.rs:215-225` (`answering`, the encoding match). After the `Json` or `Form` body is read, the query fields are joined into it. A body member or key under a listed field's wire name is refused `400` `body.<wire>: the query carries this field, so the body does not`, even when the query string leaves the field out. This runs before `ignoring` (`:589`) drops members and before `run`'s checks (`:449`) — inferred, ESS `with_query`
 - **Symbols:** `served`, `Route`, `Route::flat_input`, `Parameter`, `answering`, `ignoring`, `form`; ESS `ess_gen::http::request(..).query`, `ess_http::Request::query_fields`, `ess_gen::http::queried`, `ess_gen::http::flat` — cited
-- **Tests:** a new module `crates/spindle-ingress/tests/spindle-ingress/query_beside_body.rs`, registered in `crates/spindle-ingress/tests/spindle-ingress/main.rs`, on the `kiosk` fixture with a routes string. It holds the story's three tests (the third per D1), each under 60 s, the crate's test step under 120 s — inferred
+- **Tests:** a new module `crates/spindle-ingress/tests/spindle-ingress/query_beside_body.rs`, registered in `crates/spindle-ingress/tests/spindle-ingress/main.rs`, on the `kiosk` fixture with a routes string. It holds the tests of the Acceptance section, each under 60 s, the crate's test step under 120 s — inferred
 - **Tests:** `crates/spindle-ingress/tests/spindle-ingress/ess_http_shapes.rs:322-332` names `request: {query: [input.holder]}` not served; that entry and the module doc at `:12` have to change — cited
 - **Also likely:** tests for a body naming a listed field (JSON and form, with the query silent), an unlisted query key under `refuse` and `ignore`, and a listed key given twice, matching ESS's `query_beside_body.rs` cases — inferred
 - **Documents:** `crates/spindle-docs/src/status.rs:381-385` (the "Form and query requests" entry, or a new one beside it), `website/docs/concepts/capabilities.md:143` (lists `request.query` as not served), `CHANGELOG.md` `[Unreleased]`; generated from `status.rs`: `website/docs/status.md`, `website/data/status.json` — cited for the first two, inferred for the rest

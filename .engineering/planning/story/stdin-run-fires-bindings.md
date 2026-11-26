@@ -35,7 +35,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: cited
   path: website/docs/status.md
-revision: 20
+revision: 22
 ---
 # A stdin run fires the bindings its commands' events match
 
@@ -87,7 +87,7 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
 - **Symbols:** `execute` (main.rs), `answer`, `Request`, `spindle_channel::Router::from_ir` / `Router::map` / `Route::invoke` / `Route::answer`, `spindle_host::RETRY_ATTEMPTS`, `spindle_host::DELIVERY_LIMIT` — inferred (reuse the served run's routing over the stdin run's one store)
 - **Files:** `crates/spindle-cli/Cargo.toml:52` (`spindle-channel` is a dev-dependency only; D1 A moves it into `[dependencies]`) — cited
 - **Files:** `crates/spindle-cli/src/cli.rs:79-99` (stdin `Run` doc: "Each line prints one JSON result"), `:196-198` and `:211-215` (`--drop-retries` "Only where run serves HTTP") — cited
-- **Tests:** new module `crates/spindle-cli/tests/spindle-cli/stdin_bindings.rs` (the four named acceptance tests), its `mod` line in `crates/spindle-cli/tests/spindle-cli/main.rs`, a new fixture `crates/spindle-cli/tests/fixtures/stdin-bindings/` (one binding `E` → `C`, `C` with a declared refusing outcome, no `reached_by: network`) — inferred
+- **Tests:** new module `crates/spindle-cli/tests/spindle-cli/stdin_bindings.rs` (the tests of the Acceptance section), its `mod` line in `crates/spindle-cli/tests/spindle-cli/main.rs`, a new fixture `crates/spindle-cli/tests/fixtures/stdin-bindings/` (one binding `E` → `C`, `C` with a declared refusing outcome, no `reached_by: network`) — inferred
 - **Also likely:** `crates/spindle-cli/tests/spindle-cli/binding_where.rs:5` (module doc says stdin carries no binding; the fixture `binding-where` has no network component and could feed test 1) — cited
 - **Not touched:** `crates/spindle-host`, `crates/spindle-channel` (read, not changed, under D1 A), `crates/spindle-cli/src/serve.rs` — inferred
 - **Documents:** `crates/spindle-docs/src/status.rs:163-169` (row "Event bindings in process and over TCP") with generated `website/data/status.json` and `website/docs/status.md`; generated `website/docs/reference/cli.md`; `website/docs/examples/rally.md:57-58` ("bindings do not fire"); `AGENTS.md:40` (spindle-cli row); `CHANGELOG.md` `[Unreleased]` — cited (lines read), inferred (that each changes)
@@ -106,3 +106,5 @@ Taken 2026-11-26 on the scoper's recommended option, each reversible, unless not
 - D4 A: a failed bound command counts as rejected; the run exits 1.
 - D5 A: its own line with `"caused_by": {"line": n, "binding": "<id>"}`.
 - D6 A: `--drop-retries` is accepted on stdin.
+- `a_stdin_run_and_a_served_run_fire_the_same_bindings` runs two fixtures that differ only in
+  one component's `reached_by: network`; the stdin run reads one, the served run the other.

@@ -6,6 +6,7 @@ status: draft
 title: A refused bound command is recorded where a run can read it
 relations:
 - informed_by: story:stdin-run-fires-bindings
+- serves: vision:spindle
 scope:
 - confidence: cited
   path: AGENTS.md

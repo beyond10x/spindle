@@ -31,7 +31,7 @@ scope:
   path: crates/spindle-ingress/tests/spindle-ingress/main.rs
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 17
+revision: 19
 ---
 # The serve loop's signal exit takes no exchange and drops no answer
 
@@ -60,6 +60,10 @@ pre-existing.
 - `a_closed_listener_writes_every_answer_it_was_handed`: in `spindle-ingress`, closing the listener
   writes every answer handed to it before the thread ends.
 
+- `a_signal_before_a_resets_first_entry_seeds_again_on_restart`: SIGTERM while a reset's first
+  seed entry is held; a restart on the same `--state` with the same `--seed` applies the seed from
+  its first entry (the marker reads count 0, story:seed-once-on-durable-state).
+
 ## Scope
 
 Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the story or the tree) or
@@ -81,8 +85,10 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
 
 Taken 2026-11-26 on the scoper's recommended option, each reversible, unless noted.
 
-- D1 A: a request still queued at the signal is answered 503 before exit; acceptance 2
-  reads "400 or 503, never EOF".
+- D1 A: a request still queued at the signal is answered 503 before exit (its own acceptance,
+  `a_request_queued_at_the_signal_reads_503`); a reset taken before the signal and refused reads
+  its 400 (acceptance 2). No client reads a closed connection.
+- The test names in the Acceptance section replace the names the Scope section lists.
 - D2 A: a seeded reset cut by the signal answers 200 after the entry under way.
 - A seeded reset cut by the signal leaves `seed.json` (story:seed-once-on-durable-state) at
   the count of entries done, written after each; a restart on that state resumes after the last

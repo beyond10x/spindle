@@ -42,15 +42,17 @@ scope:
   path: docs/design/spindle.md
 - confidence: cited
   path: website/docs/concepts/specification.md
-revision: 25
+revision: 27
 ---
 # A guard or an effect over another component's entity is refused or read from its owner
 
 ## Outcome
 
-A command whose guard or secondary effect reads rows of an entity another component owns is
-either answered from the owner's store, as ESS's interpreter answers it, or refused by name before
-anything is read, as a value over such an entity is refused since this story was filed.
+A command whose value source (`{related: ...}` in an outcome), guard or row set reads an entity
+another component owns is answered from the owner's store when both components run in one host, as
+ESS's interpreter answers it. In a split run, where the owner is another process, it is refused by
+name before anything is read. An `affects:` entry over another component's entity is refused by name
+in every run.
 
 ## Why
 
@@ -74,6 +76,10 @@ Found by a review of `0.19.0..0.19.1`, beside the value refusal.
 
 ## Acceptance
 
+- `a_value_over_another_components_entity_is_read_from_its_owner`: on the same fixture in one
+  host, an outcome whose value source is `{related: ...}` over the other component's entity
+  answers the value ESS's interpreter answers, read from the owner's store; this is the read a
+  consumer was refused at admission.
 - `a_guard_over_another_components_row_is_read_from_its_owner`: on a two-component fixture served in
   one host, a command with a `when_related:` guard over the other component's entity selects the
   outcome ESS's interpreter selects, the row read from the owner's store; `admit` without

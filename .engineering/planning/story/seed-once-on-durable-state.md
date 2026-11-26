@@ -31,7 +31,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 18
+revision: 19
 ---
 # A seed is applied once to a durable state
 
@@ -110,3 +110,5 @@ Taken 2026-11-26 on the scoper's recommended option, each reversible, unless not
 - D1 A: a reset that loads a world marks every seed entry done; a restart sends nothing.
 - D2 A: the marker is written after each entry; a SIGKILL between commit and marker applies
   that one entry twice.
+- A reset with no world empties the state and writes `seed.json` at count 0 before it sends its
+  first entry, so a run stopped before that entry completes restarts the seed from its first entry.

@@ -35,7 +35,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 20
+revision: 21
 ---
 # A stdin run arranges rows and names what earlier lines minted
 
@@ -91,7 +91,7 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
 - **Also likely:** a new `crates/spindle-cli/src/lines.rs` (line enum, reference resolution, arrange write) so that the loop in main.rs changes in few lines — inferred
 - **Also likely:** `crates/spindle-kernel/src/mint.rs:523-570` (`Seeded`): only if D3 = A, a `&mut` way to avoid identities an arrange line wrote, as `Host::reset_to` avoids a world's rows (`crates/spindle-host/src/host.rs:1265`) — inferred
 - **Also likely:** `crates/spindle-host/src/world.rs`: only if the implementor exposes a per-row reader instead of calling `read_world` with `{"rows": [...]}` (whose errors say "reading the reset's world") — inferred
-- **Tests:** new module `crates/spindle-cli/tests/spindle-cli/stdin_lines.rs` with the five acceptance tests (`an_arrange_line_writes_rows_a_later_command_reads`, `a_line_names_an_identity_an_earlier_line_minted`, `a_reference_to_a_line_not_yet_answered_is_rejected`, `an_arrange_line_refused_by_the_schema_is_rejected`, `a_system_actor_command_on_stdin_still_answers`), each spawning `b10x-spindle run` once on `fixtures/memory.toml` as `rejected_line.rs` does (well under 1 s each, the 60 s per-test bound and the 120 s step budget hold); registered in `tests/spindle-cli/main.rs` — cited (pattern), inferred (module name)
+- **Tests:** new module `crates/spindle-cli/tests/spindle-cli/stdin_lines.rs` with the tests of the Acceptance section (`an_arrange_line_writes_rows_a_later_command_reads`, `a_line_names_an_identity_an_earlier_line_minted`, `a_reference_to_a_line_not_yet_answered_is_rejected`, `an_arrange_line_refused_by_the_schema_is_rejected`, `a_system_actor_command_on_stdin_still_answers`), each spawning `b10x-spindle run` once on `fixtures/memory.toml` as `rejected_line.rs` does (well under 1 s each, the 60 s per-test bound and the 120 s step budget hold); registered in `tests/spindle-cli/main.rs` — cited (pattern), inferred (module name)
 - **Tests:** new fixture `crates/spindle-cli/tests/fixtures/stdin-lines/{system.yaml,domains/<one>.yaml}`: an entity with a guarded command, a create whose event (or response) carries the minted identity, and an actor with `system: true` granted one command. No fixture in the tree declares a system actor today — inferred
 - **Documents:** `crates/spindle-docs/src/status.rs` (a new `shipped` row next to `:446` "A rejected line fails the run"), `README.md:55-64` (stdin paragraph), generated `website/docs/reference/cli.md` (from cli.rs via `crates/spindle-docs/src/cli.rs`), `website/docs/status.md`, `website/data/status.json`, `CHANGELOG.md` — cited (files), inferred (that each changes)
 - **Not touched:** `crates/spindle-ingress`, `serve.rs`, `seed.rs`, the `--scenario` replay (`replay.rs`, `spindle-conformance`) — inferred

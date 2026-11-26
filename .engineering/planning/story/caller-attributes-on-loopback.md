@@ -3,7 +3,9 @@ format: aep.planning-md/3
 id: story:caller-attributes-on-loopback
 kind: story
 status: draft
-title: A loopback served run serves a command that reads its caller
+title: A loopback run names the settings that serve a command reading its caller
+relations:
+- serves: vision:spindle
 scope:
 - confidence: inferred
   path: CHANGELOG.md
@@ -19,7 +21,7 @@ scope:
   path: crates/spindle-ingress/src/surface.rs
 - confidence: inferred
   path: docs/design/spindle.md
-revision: 13
+revision: 14
 ---
 # A loopback served run serves a command that reads its caller
 
