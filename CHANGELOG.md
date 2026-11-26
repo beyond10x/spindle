@@ -29,6 +29,13 @@ are Spindle's releases.
   stuck-collector case sends 20,000 frames rather than 200,000, and the transport, metrics-read
   and concurrent-reads cases bound a second or more, not milliseconds
   (`story:test-step-within-budget`).
+- The six wasm lanes of `task check` build in the `wasm-gate` profile (the dev profile without
+  debug info or incremental compilation, dependencies at `opt-level = 0`) in place of the release
+  profile and the dev profile, and each runs under `scripts/within.sh 120`. On an empty profile
+  directory the Node lane took 212 s in the release profile and takes about 100 s; the build and
+  the lint of `check:the_wasm_build_of_the_host_succeeds` run side by side, the lint in the
+  `wasm-lint` profile. The `wasm-bindgen-test-runner` lanes time a test out at 60 s, not 120 s.
+  `task web` still builds the release profile (`story:wasm-lanes-within-budget`).
 
 ### Fixed
 

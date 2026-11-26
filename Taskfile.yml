@@ -23,12 +23,12 @@ tasks:
       - task: check:ui
       - task: docs-check
       - task: check:conformance
-      - task: check:the_wasm_build_of_the_host_succeeds
-      - task: check:a_command_runs_in_wasm_on_the_memory_store
-      - task: check:the_browser_store_keeps_state_in_indexeddb
-      - task: check:a_service_worker_serves_a_specification
-      - task: check:the_static_bundle_builds
-      - task: check:node_serves_a_specification
+      - sh scripts/within.sh 120 {{.TASK_EXE}} check:the_wasm_build_of_the_host_succeeds
+      - sh scripts/within.sh 120 {{.TASK_EXE}} check:a_command_runs_in_wasm_on_the_memory_store
+      - sh scripts/within.sh 120 {{.TASK_EXE}} check:the_browser_store_keeps_state_in_indexeddb
+      - sh scripts/within.sh 120 {{.TASK_EXE}} check:a_service_worker_serves_a_specification
+      - sh scripts/within.sh 120 {{.TASK_EXE}} check:the_static_bundle_builds
+      - sh scripts/within.sh 120 {{.TASK_EXE}} check:node_serves_a_specification
       - cargo fmt -- --check
       - cargo clippy --workspace --all-targets --locked -- -D warnings
       - task: check:the_tests_pass_within_the_budget
@@ -69,54 +69,68 @@ tasks:
       - cargo run -q --locked -p spindle-cli -- conform ess --environment examples/environments/laptop.toml --suite target/conformance/suite.json --counts conformance.toml --report target/conformance/report.json --results target/conformance/results.json
 
   check:the_wasm_build_of_the_host_succeeds:
-    desc: spindle-spec, spindle-kernel, spindle-host and the spindle-ingress router build for wasm32-unknown-unknown without SQLite or the listener, and nothing they compile there reads std's clock
+    desc: spindle-spec, spindle-kernel, spindle-host and the spindle-ingress router build for wasm32-unknown-unknown without SQLite or the listener, and nothing they compile there reads std's clock; the build and the lint run side by side, each in a profile directory of its own
+    deps:
+      - task: wasm:host:build
+      - task: wasm:host:lint
+
+  wasm:host:build:
+    desc: The build of check:the_wasm_build_of_the_host_succeeds
+    cmds:
+      - cargo build --locked --profile wasm-gate --target wasm32-unknown-unknown --no-default-features -p spindle-spec -p spindle-kernel -p spindle-host -p spindle-ingress -p spindle-embed
+
+  wasm:host:lint:
+    desc: The lint of check:the_wasm_build_of_the_host_succeeds, std's clock refused by clippy/wasm32
     env:
       CLIPPY_CONF_DIR: '{{.ROOT_DIR}}/clippy/wasm32'
     cmds:
-      - cargo build --locked --target wasm32-unknown-unknown --no-default-features -p spindle-spec -p spindle-kernel -p spindle-host -p spindle-ingress -p spindle-embed
-      - cargo clippy --locked --target wasm32-unknown-unknown --no-default-features -p spindle-spec -p spindle-kernel -p spindle-host -p spindle-ingress -p spindle-timer -p spindle-channel -p spindle-telemetry -p spindle-capability -p spindle-store-browser -p spindle-wasm -p spindle-embed -p spindle-node --lib -- -D warnings
+      - cargo clippy --locked --profile wasm-lint --target wasm32-unknown-unknown --no-default-features -p spindle-spec -p spindle-kernel -p spindle-host -p spindle-ingress -p spindle-timer -p spindle-channel -p spindle-telemetry -p spindle-capability -p spindle-store-browser -p spindle-wasm -p spindle-embed -p spindle-node --lib -- -D warnings
 
   check:a_command_runs_in_wasm_on_the_memory_store:
     desc: The wasm host runs a command on the memory store, under wasm-bindgen-test-runner on Node
     env:
       CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
-      WASM_BINDGEN_TEST_TIMEOUT: '120'
+      WASM_BINDGEN_TEST_TIMEOUT: '60'
     cmds:
-      - cargo test --locked --target wasm32-unknown-unknown --no-default-features -p spindle-host --test spindle-host
+      - cargo test --locked --profile wasm-gate --target wasm32-unknown-unknown --no-default-features -p spindle-host --test spindle-host
 
   check:the_browser_store_keeps_state_in_indexeddb:
     desc: The IndexedDB store passes the store contract and keeps its state across a reopen, in a headless browser under wasm-bindgen-test-runner
     env:
       CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
-      WASM_BINDGEN_TEST_TIMEOUT: '120'
+      WASM_BINDGEN_TEST_TIMEOUT: '60'
     cmds:
-      - cargo test --locked --target wasm32-unknown-unknown -p spindle-store-browser --test spindle-store-browser
+      - cargo test --locked --profile wasm-gate --target wasm32-unknown-unknown -p spindle-store-browser --test spindle-store-browser
 
   check:a_service_worker_serves_a_specification:
     desc: The wasm host answers a specification's routes and the console routes inside a Service Worker of a headless browser, as the loopback listener answers them, under wasm-bindgen-test-runner
     env:
       CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
-      WASM_BINDGEN_TEST_TIMEOUT: '120'
+      WASM_BINDGEN_TEST_TIMEOUT: '60'
     cmds:
-      - cargo test --locked --target wasm32-unknown-unknown -p spindle-wasm --test spindle-wasm
+      - cargo test --locked --profile wasm-gate --target wasm32-unknown-unknown -p spindle-wasm --test spindle-wasm
 
   check:node_serves_a_specification:
     desc: The Node export, spindle-node bound by wasm-bindgen as an ES module, answers a specification's routes and the console routes in-process as the loopback listener answers them, under node --test
     cmds:
-      - cargo build --locked --release --target wasm32-unknown-unknown -p spindle-node
-      - wasm-bindgen --target web --out-dir target/spindle-node target/wasm32-unknown-unknown/release/spindle_node.wasm
+      - cargo build --locked --profile wasm-gate --target wasm32-unknown-unknown -p spindle-node
+      - wasm-bindgen --target web --out-dir target/spindle-node target/wasm32-unknown-unknown/wasm-gate/spindle_node.wasm
       - node --test --test-timeout=60000 'crates/spindle-node/tests/node/*.test.mjs'
 
   check:the_static_bundle_builds:
     desc: The Service Worker site in web/ builds, spindle-wasm compiled to wasm32-unknown-unknown and bound by wasm-bindgen into the Vite bundle
     cmds:
       - task: web
+        vars:
+          PROFILE: wasm-gate
 
   web:
-    desc: Build the Service Worker site into web/dist
+    desc: Build the Service Worker site into web/dist, spindle-wasm built in the release profile, or in PROFILE
+    vars:
+      PROFILE: '{{.PROFILE | default "release"}}'
     cmds:
-      - cargo build --locked --release --target wasm32-unknown-unknown -p spindle-wasm
-      - wasm-bindgen --target web --out-dir web/src/wasm target/wasm32-unknown-unknown/release/spindle_wasm.wasm
+      - cargo build --locked --profile {{.PROFILE}} --target wasm32-unknown-unknown -p spindle-wasm
+      - wasm-bindgen --target web --out-dir web/src/wasm target/wasm32-unknown-unknown/{{.PROFILE}}/spindle_wasm.wasm
       - task: web:bundle
 
   web:bundle:
