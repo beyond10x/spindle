@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::{ResolvedBody, ResolvedEntity, ResolvedField, ResolvedTypeRef};
-use ess_domain::types::Primitive;
+use ess_domain::types::{MAX_TYPE_DEPTH, Primitive};
 use ess_primitives::facts::{FactPath, FactSource, FactStore, FactValue, Scales};
 use ess_primitives::time::Rfc3339Instant;
 use serde_json::{Map, Value};
@@ -233,13 +233,69 @@ impl<'a> Facts<'a> {
             }
             _ => (self.fields.as_slice(), path.clone()),
         };
-        match ess_compiler::expression::resolve_path(self.ir, fields, &path, "spindle facts") {
-            Ok(resolved) => match resolved.terminal {
-                ResolvedTypeRef::Primitive { name } => Some(name),
-                _ => None,
-            },
-            Err(_) => None,
+        declared_primitive(self.ir, fields, &path, 0)
+    }
+}
+
+/// The primitive `path` resolves to against `fields`, through any newtype or `Optional`, and
+/// through a map's value at an ordinal: where [`Facts::bind`] binds a map's values and a quantifier
+/// over the map reads them, though no authored path names one. As ESS 0.99.1's conformance facts
+/// resolve one (`input::declared_primitive`), bounded at [`MAX_TYPE_DEPTH`].
+fn declared_primitive(
+    ir: &EssIr,
+    fields: &[ResolvedField],
+    path: &FactPath,
+    depth: usize,
+) -> Option<Primitive> {
+    match ess_compiler::expression::resolve_path(ir, fields, path, "spindle facts") {
+        Ok(resolved) => match resolved.terminal {
+            ResolvedTypeRef::Primitive { name } => Some(name),
+            _ => None,
+        },
+        Err(_) if depth < MAX_TYPE_DEPTH => {
+            let segments = path.segments();
+            (1..segments.len()).find_map(|at| {
+                let ordinal = &segments[at];
+                if ordinal.parse::<usize>().ok()?.to_string() != *ordinal {
+                    return None;
+                }
+                let prefix = FactPath::from_segments(&segments[..at]);
+                let resolved =
+                    ess_compiler::expression::resolve_path(ir, fields, &prefix, "spindle facts")
+                        .ok()?;
+                let value = map_value(ir, &resolved.terminal, 0)?;
+                let element = [ResolvedField {
+                    name: "value".to_owned(),
+                    type_ref: value.clone(),
+                    naming: ess_domain::name::Naming::default(),
+                }];
+                let mut rest = vec!["value".to_owned()];
+                rest.extend(segments[at + 1..].iter().cloned());
+                declared_primitive(ir, &element, &FactPath::from_segments(rest), depth + 1)
+            })
         }
+        Err(_) => None,
+    }
+}
+
+/// The value type of a map, through any newtype or `Optional` over one, as ESS's
+/// `input::map_value` reads it.
+fn map_value<'t>(
+    ir: &'t EssIr,
+    type_ref: &'t ResolvedTypeRef,
+    depth: usize,
+) -> Option<&'t ResolvedTypeRef> {
+    if depth > MAX_TYPE_DEPTH {
+        return None;
+    }
+    match type_ref {
+        ResolvedTypeRef::Map { value, .. } => Some(value),
+        ResolvedTypeRef::Optional { of } => map_value(ir, of, depth + 1),
+        ResolvedTypeRef::Declared { name } => match &ir.named_type(name).body {
+            ResolvedBody::Newtype { of, .. } => map_value(ir, of, depth + 1),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
