@@ -31,7 +31,7 @@ scope:
   path: crates/spindle-ingress/tests/spindle-ingress/main.rs
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 22
+revision: 24
 ---
 # The serve loop's signal exit takes no exchange and drops no answer
 
@@ -49,14 +49,16 @@ pre-existing.
 
 ## Acceptance
 
-- `a_reset_taken_after_a_signal_is_answered_200`: a seeded reset taken while a seed entry is held,
-  then SIGTERM: the client reads 200 once the entry under way is done, the run exits 143, and a
-  restart on the same `--state` without `--seed` holds the rows the seed applied before the signal
-  (D2 A).
+- `a_reset_taken_after_a_signal_is_answered_200`: the start-up seed ran to the end; the loop takes a
+  seeded reset exchange, the reset's own first seed entry is held, then SIGTERM: the client reads
+  200 once that entry is done, the run exits 143, and a restart on the same `--state` without
+  `--seed` holds the rows the reset's seed applied before the signal (D2 A).
 - `a_refused_reset_taken_after_a_signal_is_answered`: the same with a reset refused 400: the client
   reads the 400.
-- `a_request_queued_at_the_signal_reads_503`: a request still queued when SIGTERM arrives is not
-  taken; the client reads 503, never a closed connection (D1 A).
+- `a_request_queued_at_the_signal_reads_503`: a start-up seed entry is held, a seeded reset is sent
+  and still queued when SIGTERM arrives: it is not taken, the client reads 503, never a closed
+  connection, and a restart on the same `--state` without `--seed` holds the rows the start-up seed
+  applied before the signal, so the queued reset did not empty the state (D1 A).
 - `a_closed_listener_writes_every_answer_it_was_handed`: in `spindle-ingress`, closing the listener
   writes every answer handed to it before the thread ends.
 
