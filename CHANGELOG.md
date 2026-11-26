@@ -15,6 +15,16 @@ are Spindle's releases.
   a size without its page, a negative value, a page below `first_page` and an offset that
   overflows answer `400`, and the conformance target reports them unsupported. `Host::listed_with`
   and `Reader::listed_with` answer the rows with the total (`story:view-paging`).
+- A creation whose identity is a bare `String`, an `Integer` or an `Integer` newtype without
+  invariants mints it, where it was refused at start: a bare `String` as a UUID's text with no
+  prefix, an `Integer` drawn from a UUID as a generated `Integer` is, drawn again where an
+  instance already holds it (at most one draw more than the entity's instances, as ESS's
+  interpreter draws), and never one a reset world's row holds when the world seeds the mint. A
+  `Bytes`, `Timestamp`,
+  `Decimal`, `Duration`, enum, struct, `Boolean` or `List` identity is still refused. A value
+  source with a fallback, `{input: f, else: <literal>}` or `{input: f, else: input.g}`, answers
+  the input, else the literal or the other input, as ESS 0.99.1's interpreter does, where it was
+  refused (`story:identity-mint-types-and-fallback`).
 - A decisions file holds `[[rules]]`, each naming a command, one of its external outcomes, the
   answer and, in `when`, values the command's input must hold (`"input.<field>"`, dots for a
   struct's members; a string, an integer or a boolean). The first rule in file order whose every

@@ -1,0 +1,42 @@
+domain: bins.store
+summary: Bins opened under an integer the runtime mints, or under the integer a request sends.
+entities:
+  - name: bins.store.Bin
+    identity: {name: bin_id, type: Integer}
+    fields:
+      - {name: name, type: String}
+    lifecycle: {initial: Open, states: [Open], terminal: [Open]}
+events:
+  - name: bins.store.BinOpened
+    fields:
+      - {name: bin_id, type: Integer}
+commands:
+  - name: bins.store.OpenBin
+    input:
+      - {name: name, type: String}
+    outcomes:
+      - name: opened
+        creates: bins.store.Bin
+        instance: bin_id
+        sets:
+          name: input.name
+        emits: [bins.store.BinOpened]
+        payload:
+          bins.store.BinOpened:
+            bin_id: {generated: true}
+        summary: The bin opens under an integer the runtime mints.
+  - name: bins.store.OpenBinAs
+    input:
+      - {name: bin_id, type: Optional<Integer>}
+      - {name: name, type: String}
+    outcomes:
+      - name: opened
+        creates: bins.store.Bin
+        instance: bin_id
+        sets:
+          name: input.name
+        emits: [bins.store.BinOpened]
+        payload:
+          bins.store.BinOpened:
+            bin_id: {input: bin_id, else: {generated: true}}
+        summary: The bin opens under the integer the request sends, else one the runtime mints.

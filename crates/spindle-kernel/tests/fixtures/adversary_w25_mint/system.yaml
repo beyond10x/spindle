@@ -1,0 +1,29 @@
+format: ess/34
+system: advw25
+version: v1
+summary: Crates under minted integer identities, tags under a constrained integer, and slips whose fields fall back.
+domains:
+  - advw25.box
+components:
+  - component: yard
+    summary: Opens crates, tags and slips.
+    owns:
+      domains:
+        - advw25.box
+    accepts:
+      commands:
+        - advw25.box.OpenCrate
+        - advw25.box.RenameCrate
+        - advw25.box.OpenTagged
+        - advw25.box.FileSlip
+        - advw25.box.FileBacked
+        - advw25.box.Grumble
+    publishes:
+      events:
+        - advw25.box.CrateOpened
+        - advw25.box.CrateRenamed
+        - advw25.box.TaggedOpened
+        - advw25.box.SlipFiled
+        - advw25.box.BackedFiled
+        - advw25.box.Noted
+    reached_by: in_process

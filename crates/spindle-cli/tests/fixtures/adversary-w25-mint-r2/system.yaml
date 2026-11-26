@@ -1,0 +1,20 @@
+format: ess/34
+system: bins
+version: v1
+summary: Bins under minted integer identities, opened under the identity a request sends else a minted one, served over the network.
+domains:
+  - bins.store
+components:
+  - component: shelf
+    summary: Opens bins for callers outside the process.
+    owns:
+      domains:
+        - bins.store
+    accepts:
+      commands:
+        - bins.store.OpenBin
+        - bins.store.OpenBinAs
+    publishes:
+      events:
+        - bins.store.BinOpened
+    reached_by: network

@@ -1,0 +1,48 @@
+domain: mintredraw.tally
+summary: A tally under an Integer identity, minted by the runtime or taken from the request.
+entities:
+  - name: mintredraw.tally.Tally
+    identity:
+      name: tally_id
+      type: Integer
+    fields:
+      - name: name
+        type: String
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+commands:
+  - name: mintredraw.tally.OpenTally
+    input:
+      - {name: name, type: String}
+    outcomes:
+      - name: opened
+        creates: mintredraw.tally.Tally
+        instance: tally_id
+        sets:
+          name: input.name
+        emits: [mintredraw.tally.TallyOpened]
+        payload:
+          mintredraw.tally.TallyOpened:
+            tally_id: {generated: true}
+        summary: The tally opens under an integer identity the runtime mints.
+  - name: mintredraw.tally.OpenTallyAs
+    input:
+      - {name: tally_id, type: Optional<Integer>}
+      - {name: name, type: String}
+    outcomes:
+      - name: opened
+        creates: mintredraw.tally.Tally
+        instance: tally_id
+        sets:
+          name: input.name
+        emits: [mintredraw.tally.TallyOpened]
+        payload:
+          mintredraw.tally.TallyOpened:
+            tally_id: {input: tally_id, else: {generated: true}}
+        summary: The tally opens under the identity the request sends, else one the runtime mints.
+events:
+  - name: mintredraw.tally.TallyOpened
+    fields:
+      - {name: tally_id, type: Integer}

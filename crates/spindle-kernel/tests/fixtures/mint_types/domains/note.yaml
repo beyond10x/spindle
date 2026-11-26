@@ -1,0 +1,35 @@
+domain: minttypes.note
+summary: A note opened without an id, whose identity is bare text the runtime mints.
+entities:
+  - name: minttypes.note.Note
+    identity:
+      name: note_id
+      type: String
+    fields:
+      - name: body
+        type: String
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+commands:
+  - name: minttypes.note.OpenNote
+    input:
+      - name: body
+        type: String
+    outcomes:
+      - name: opened
+        creates: minttypes.note.Note
+        instance: note_id
+        sets:
+          body: input.body
+        emits: [minttypes.note.NoteOpened]
+        payload:
+          minttypes.note.NoteOpened:
+            note_id: {generated: true}
+        summary: The note opens under a text identity the runtime mints.
+events:
+  - name: minttypes.note.NoteOpened
+    fields:
+      - name: note_id
+        type: String

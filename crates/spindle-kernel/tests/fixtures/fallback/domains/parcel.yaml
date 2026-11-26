@@ -1,0 +1,77 @@
+domain: fallback.parcel
+summary: A parcel registered under the caller's id, each field the input or its fallback.
+types:
+  - name: fallback.parcel.ParcelId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: fallback.parcel.Parcel
+    identity:
+      name: parcel_id
+      type: fallback.parcel.ParcelId
+    fields:
+      - name: label
+        type: String
+      - name: priority
+        type: Integer
+      - name: route
+        type: String
+      - name: sequence
+        type: Integer
+      - name: memo
+        type: Optional<String>
+    lifecycle:
+      initial: Registered
+      states: [Registered]
+      terminal: [Registered]
+commands:
+  - name: fallback.parcel.RegisterParcel
+    input:
+      - {name: parcel_id, type: fallback.parcel.ParcelId}
+      - {name: label, type: Optional<String>}
+      - {name: priority, type: Optional<Integer>}
+      - {name: route, type: Optional<String>}
+      - {name: depot, type: String}
+      - {name: sequence, type: Optional<Integer>}
+      - {name: memo, type: Optional<String>}
+    outcomes:
+      - name: registered
+        creates: fallback.parcel.Parcel
+        instance: parcel_id
+        sets:
+          label: {input: label, else: unlabelled}
+          priority: {input: priority, else: 3}
+          route: {input: route, else: input.depot}
+          sequence: {input: sequence, else: {generated: true}}
+          memo: {input: memo, else: {generated: true}}
+        emits: [fallback.parcel.ParcelRegistered]
+        payload:
+          fallback.parcel.ParcelRegistered:
+            parcel_id: input.parcel_id
+            label: {input: label, else: unlabelled}
+            priority: {input: priority, else: 3}
+            route: {input: route, else: input.depot}
+            sequence: {input: sequence, else: {generated: true}}
+            memo: {input: memo, else: {generated: true}}
+        summary: The parcel is registered; each field is the input, or its fallback where the request sends none.
+events:
+  - name: fallback.parcel.ParcelRegistered
+    fields:
+      - {name: parcel_id, type: fallback.parcel.ParcelId}
+      - {name: label, type: String}
+      - {name: priority, type: Integer}
+      - {name: route, type: String}
+      - {name: sequence, type: Integer}
+      - {name: memo, type: Optional<String>}
+views:
+  - name: fallback.parcel.ParcelCard
+    source: fallback.parcel.Parcel
+    consistency: read_your_writes
+    fields:
+      - {name: parcel_id, type: fallback.parcel.ParcelId}
+      - {name: label, type: String}
+      - {name: priority, type: Integer}
+      - {name: route, type: String}
+      - {name: sequence, type: Integer}
+      - {name: memo, type: Optional<String>}
+      - {name: state, type: fallback.parcel.Parcel.State}

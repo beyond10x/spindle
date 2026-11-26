@@ -1,0 +1,33 @@
+format: ess/34
+system: minttypes
+version: v1
+summary: Notes, counters and seats whose identity the runtime mints, one identity type each, and chips and marks whose identity it does not.
+domains:
+  - minttypes.note
+  - minttypes.counter
+  - minttypes.seat
+  - minttypes.repeat
+components:
+  - component: desk
+    summary: Opens notes, counters, seats, chips and marks.
+    owns:
+      domains:
+        - minttypes.note
+        - minttypes.counter
+        - minttypes.seat
+        - minttypes.repeat
+    accepts:
+      commands:
+        - minttypes.note.OpenNote
+        - minttypes.counter.OpenCounter
+        - minttypes.seat.OpenSeat
+        - minttypes.repeat.OpenChip
+        - minttypes.repeat.OpenMark
+    publishes:
+      events:
+        - minttypes.note.NoteOpened
+        - minttypes.counter.CounterOpened
+        - minttypes.seat.SeatOpened
+        - minttypes.repeat.ChipOpened
+        - minttypes.repeat.MarkOpened
+    reached_by: in_process
