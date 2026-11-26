@@ -490,3 +490,218 @@ fn a_rule_over_an_undeclared_input_or_a_value_of_another_type_is_refused_at_load
         }
     }
 }
+
+// Adversary, wave 25 U2: `when` entries the load-time check lets through.
+
+fn submit_raw(id: &str, amount: &str) -> String {
+    format!(
+        r#"{{"command": "probe.review.Submit", "input": {{"submission_id": "{id}", "amount": {amount}}}}}"#
+    ) + "\n"
+}
+
+/// A `when` entry whose value is an empty table is a value of no type a rule compares; it must be
+/// refused like `1.5` or `"five"`, not dropped so that the rule matches every request.
+#[test]
+fn adversary_a_when_entry_holding_an_empty_table_is_refused_at_load() {
+    let (_directory, file) = decisions(concat!(
+        "flagged = false\n",
+        "escalated = false\n",
+        "\n",
+        "[[rules]]\n",
+        "command = \"probe.review.Submit\"\n",
+        "outcome = \"escalated\"\n",
+        "answer = true\n",
+        "when = { \"input.amount\" = {} }\n",
+    ));
+    let lines = submit_amount("s1", 500) + &submit_amount("s2", 5);
+    let output = run(&["--decisions", &file], &lines);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "the rule loaded and decided {:?}: {stderr}",
+        outcomes(&output)
+    );
+    assert!(
+        stderr.contains("rules[0]") && stderr.contains("input.amount"),
+        "{stderr}"
+    );
+}
+
+/// One input path written twice, once as a quoted dotted key and once as a nested table, with two
+/// values: both spellings are read as the same path, so the rule can never match; a map of paths
+/// holds a path once, and the file is refused as TOML refuses a duplicate key.
+#[test]
+fn adversary_a_when_holding_one_path_twice_is_refused_at_load() {
+    let (_directory, file) = decisions(concat!(
+        "flagged = false\n",
+        "escalated = false\n",
+        "\n",
+        "[[rules]]\n",
+        "command = \"probe.review.Submit\"\n",
+        "outcome = \"escalated\"\n",
+        "answer = true\n",
+        "when = { \"input.amount\" = 5, input = { amount = 6 } }\n",
+    ));
+    let lines = submit_amount("s1", 5) + &submit_amount("s2", 6);
+    let output = run(&["--decisions", &file], &lines);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "the rule loaded and decided {:?}: {stderr}",
+        outcomes(&output)
+    );
+    assert!(stderr.contains("input.amount"), "{stderr}");
+}
+
+/// `13.0` matches a rule's `13` by comparing both as f64, which also makes a request's
+/// `9007199254740992.0` match a rule's `9007199254740993`: two different integers.
+#[test]
+fn adversary_an_integral_float_request_matches_only_its_own_integer() {
+    let (_directory, file) = decisions(concat!(
+        "flagged = false\n",
+        "escalated = false\n",
+        "\n",
+        "[[rules]]\n",
+        "command = \"probe.review.Submit\"\n",
+        "outcome = \"escalated\"\n",
+        "answer = true\n",
+        "when = { \"input.amount\" = 9007199254740993 }\n",
+    ));
+    let lines = submit_raw("s1", "9007199254740992.0") + &submit_raw("s2", "9007199254740992");
+    let output = run(&["--decisions", &file], &lines);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(
+        outcomes(&output),
+        vec!["submitted", "submitted"],
+        "9007199254740992 is not 9007199254740993, written either way: {output:?}"
+    );
+}
+
+// story:decisions-rules-on-input-predicates, adversary round 1: each finding's class.
+
+/// A rule over `probe.review.Submit`'s `escalated`, answering true where `when` holds.
+fn escalate_when(when: &str) -> String {
+    format!(
+        "flagged = false\nescalated = false\n\n[[rules]]\ncommand = \"probe.review.Submit\"\n\
+         outcome = \"escalated\"\nanswer = true\nwhen = {when}\n"
+    )
+}
+
+/// A request's `13.0` is the integer 13, as the kernel admits it for an `Integer`: it matches a
+/// rule's `13`, and `14.0` and `-13.0` do not.
+#[test]
+fn an_integral_float_request_matches_the_rule_of_its_integer() {
+    let (_directory, file) = decisions(&escalate_when("{ \"input.amount\" = 13 }"));
+    let lines = submit_raw("s1", "13.0")
+        + &submit_raw("s2", "13")
+        + &submit_raw("s3", "14.0")
+        + &submit_raw("s4", "-13.0");
+    let output = run(&["--decisions", &file], &lines);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(
+        outcomes(&output),
+        vec!["escalated", "escalated", "submitted", "submitted"],
+        "{output:?}"
+    );
+}
+
+/// `when` written as nested tables, as dotted keys or quoted dotted keys, or mixed, decides as its
+/// dotted form.
+#[test]
+fn a_nested_when_table_decides_as_its_dotted_form() {
+    for when in [
+        "{ input = { amount = 500 } }",
+        "{ input.amount = 500 }",
+        "{ \"input.amount\" = 500 }",
+    ] {
+        let (_directory, file) = decisions(&escalate_when(when));
+        let lines = submit_amount("s1", 500) + &submit_amount("s2", 5);
+        let output = run(&["--decisions", &file], &lines);
+        assert_eq!(output.status.code(), Some(0), "{when}: {output:?}");
+        assert_eq!(
+            outcomes(&output),
+            vec!["escalated", "submitted"],
+            "{when}: {output:?}"
+        );
+    }
+    for when in [
+        "{ input = { topic = { urgent = true } } }",
+        "{ \"input.topic\" = { urgent = true } }",
+        "{ input = { \"topic.urgent\" = true } }",
+    ] {
+        let (directory, file) = decisions(&format!(
+            "[\"probe.desk.Ask\"]\nrefused = false\n\n[[rules]]\ncommand = \"probe.desk.Ask\"\n\
+             outcome = \"refused\"\nanswer = true\nwhen = {when}\n"
+        ));
+        let spec = desk(directory.path());
+        let lines = ask("q1", r#", "topic": {"area": "a", "urgent": true}"#)
+            + &ask("q2", r#", "topic": {"area": "a", "urgent": false}"#);
+        let output = run_spec(&spec, &["--decisions", &file], &lines);
+        assert_eq!(output.status.code(), Some(0), "{when}: {output:?}");
+        assert_eq!(
+            outcomes(&output),
+            vec!["refused", "asked"],
+            "{when}: {output:?}"
+        );
+    }
+}
+
+/// Every spelling of a `when` that holds no value at a path, or one path twice, is refused at
+/// load, naming the rule and the path.
+#[test]
+fn a_when_holding_an_empty_table_or_one_path_twice_is_refused_at_load() {
+    for (when, path) in [
+        ("{ input = {} }", "`input`"),
+        ("{ \"input.topic\" = {} }", "`input.topic`"),
+        ("{ input = { topic = {} } }", "`input.topic`"),
+        ("{ input.topic = {} }", "`input.topic`"),
+        ("{ \"input.note\" = [] }", "`input.note`"),
+        (
+            "{ \"input.topic.urgent\" = true, input = { \"topic.urgent\" = false } }",
+            "`input.topic.urgent`",
+        ),
+        (
+            "{ \"input.topic\" = { urgent = true }, input.topic.urgent = true }",
+            "`input.topic.urgent`",
+        ),
+        (
+            "{ \"input.note\" = \"a\", input = { note = \"a\" } }",
+            "`input.note`",
+        ),
+    ] {
+        let (directory, file) = decisions(&format!(
+            "[\"probe.desk.Ask\"]\nrefused = false\n\n[[rules]]\ncommand = \"probe.desk.Ask\"\n\
+             outcome = \"refused\"\nanswer = true\nwhen = {when}\n"
+        ));
+        let spec = desk(directory.path());
+        let output = run_spec(&spec, &["--decisions", &file], &ask("q1", ""));
+        assert_eq!(output.status.code(), Some(1), "{when}: {output:?}");
+        assert!(output.stdout.is_empty(), "{when}: nothing runs: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        for named in ["rules[0]", path] {
+            assert!(stderr.contains(named), "{when}: names {named}: {stderr}");
+        }
+    }
+}
+
+/// One answer written twice, under a quoted command table and under its dotted form, is refused
+/// at load as a duplicate key, naming the command and the outcome.
+#[test]
+fn one_answer_written_twice_in_two_spellings_is_refused_at_load() {
+    for text in [
+        "[\"probe.review.Submit\"]\nescalated = true\n\n[probe.review.Submit]\nescalated = false\n",
+        "[\"probe.review.Submit\"]\nescalated = true\n\n[probe.review.Submit]\nescalated = true\n",
+        "flagged = false\n\n[probe]\n\"review.Submit\".escalated = true\n\n[probe.review]\nSubmit.escalated = false\n",
+    ] {
+        let (_directory, file) = decisions(text);
+        let output = run(&["--decisions", &file], &submit("s1", None));
+        assert_eq!(output.status.code(), Some(1), "{text}: {output:?}");
+        assert!(output.stdout.is_empty(), "{text}: nothing runs: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        for named in ["probe.review.Submit", "escalated"] {
+            assert!(stderr.contains(named), "{text}: names `{named}`: {stderr}");
+        }
+    }
+}

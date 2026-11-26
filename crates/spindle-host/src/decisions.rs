@@ -85,11 +85,22 @@ fn held<'v>(input: &'v Map<String, Value>, path: &[String]) -> Option<&'v Value>
 }
 
 /// Whether `held`, a request's value, is `expected`, a rule's: an integral number written as
-/// `13.0` is the integer 13, as the kernel admits it for an `Integer`.
+/// `13.0` is the integer 13, as the kernel admits it for an `Integer`. The float is converted to
+/// the integer, never the integer to a float, so `9007199254740992.0` is not `9007199254740993`;
+/// a float with a fraction is no integer.
 fn equal(held: &Value, expected: &Value) -> bool {
     match (held, expected) {
         (Value::Number(held), Value::Number(expected)) if held.is_f64() => {
-            held.as_f64() == expected.as_f64()
+            let integer = expected
+                .as_i64()
+                .map(i128::from)
+                .or_else(|| expected.as_u64().map(i128::from));
+            match (held.as_f64(), integer) {
+                // An integral f64 within i128's range converts exactly; one beyond it saturates
+                // to a bound no rule's integer reaches.
+                (Some(held), Some(integer)) if held.fract() == 0.0 => held as i128 == integer,
+                _ => false,
+            }
         }
         _ => held == expected,
     }
@@ -102,10 +113,11 @@ impl Answers {
     ///
     /// # Errors
     /// The text is not TOML; an answer is not a boolean; a key names a command the specification
-    /// does not declare or an outcome that is not external; or a rule is not of the shape above,
-    /// or an entry of its `when` names an input its command does not declare or holds a value
-    /// that is not of that input's type. A rule's refusal names it, `rules[<index>]`, and the
-    /// entry.
+    /// does not declare or an outcome that is not external; one answer is written twice, as
+    /// `["a.b.C"]` and `[a.b.C]`; or a rule is not of the shape above, or an entry of its `when`
+    /// names an input its command does not declare, holds a value that is not of that input's
+    /// type or an empty table, or names a path another entry names in another spelling. A rule's
+    /// refusal names it, `rules[<index>]`, and the entry.
     pub fn parse(ir: &EssIr, text: &str) -> Result<Self, String> {
         let table = toml::from_str(text).map_err(|error| error.to_string())?;
         Self::from_table(ir, &table)
@@ -119,6 +131,13 @@ impl Answers {
     /// # Errors
     /// The table is not a JSON object, and as [`Self::parse`].
     pub fn from_json(ir: &EssIr, table: &serde_json::Value) -> Result<Self, String> {
+        if table.is_object()
+            && let Some(at) = null_at(table)
+        {
+            return Err(format!(
+                "`{at}` is null, which holds no value: leave the key out or write a value"
+            ));
+        }
         let toml::Value::Table(table) = toml::Value::try_from(table)
             .map_err(|error| format!("the decision table is not a table: {error}"))?
         else {
@@ -257,6 +276,29 @@ impl Answers {
     }
 }
 
+/// The path of the first `null` in `value`, as `rules[0].when.input.amount`; TOML has no null, so
+/// a decision table sent as JSON is refused there, naming it.
+fn null_at(value: &Value) -> Option<String> {
+    let under = |head: String, rest: String| {
+        if rest.is_empty() || rest.starts_with('[') {
+            head + &rest
+        } else {
+            format!("{head}.{rest}")
+        }
+    };
+    match value {
+        Value::Null => Some(String::new()),
+        Value::Object(members) => members
+            .iter()
+            .find_map(|(key, member)| null_at(member).map(|rest| under(key.clone(), rest))),
+        Value::Array(items) => items
+            .iter()
+            .enumerate()
+            .find_map(|(index, item)| null_at(item).map(|rest| under(format!("[{index}]"), rest))),
+        _ => None,
+    }
+}
+
 /// Whether `command` declares the branch taken when no conditional outcome matched.
 fn has_default(command: &ResolvedCommand) -> bool {
     command
@@ -292,8 +334,8 @@ fn externals(ir: &EssIr) -> BTreeMap<String, BTreeSet<String>> {
 type Answer = (Option<String>, String, bool);
 
 /// Reads every boolean leaf of `table`; the tables above a leaf, joined by `.`, name its command,
-/// so `["a.b.C"]` and `[a.b.C]` say the same. The top-level array `rules` is read apart, into
-/// `rules`, in its order.
+/// so `["a.b.C"]` and `[a.b.C]` say the same, and one answer written under both is refused as a
+/// duplicate key is. The top-level array `rules` is read apart, into `rules`, in its order.
 fn flatten<'t>(
     path: &mut Vec<String>,
     table: &'t toml::Table,
@@ -304,6 +346,16 @@ fn flatten<'t>(
         match value {
             toml::Value::Boolean(answer) => {
                 let command = (!path.is_empty()).then(|| path.join("."));
+                if answers
+                    .iter()
+                    .any(|(seen, outcome, _)| *seen == command && outcome == key)
+                {
+                    return Err(format!(
+                        "`[{}]` answers `{key}` twice, in two spellings of one table: write it \
+                         once",
+                        command.unwrap_or_default()
+                    ));
+                }
                 answers.push((command, key.clone(), *answer));
             }
             toml::Value::Array(items) if path.is_empty() && key == RULES => rules.extend(items),
@@ -411,7 +463,8 @@ fn read_rule(
 }
 
 /// Every leaf of a rule's `when`, under its whole path: `{"input.a.b" = 1}` and
-/// `{input = {a = {b = 1}}}` say the same.
+/// `{input = {a = {b = 1}}}` say the same, so one path written in both spellings is refused as a
+/// duplicate key is. An empty table holds no value, and is refused rather than dropped.
 fn flatten_when<'t>(
     path: &mut Vec<String>,
     when: &'t toml::Table,
@@ -420,8 +473,23 @@ fn flatten_when<'t>(
     for (key, value) in when {
         path.push(key.clone());
         match value {
+            toml::Value::Table(inner) if inner.is_empty() => {
+                return Err(format!(
+                    "`when` entry `{}` is an empty table, which holds no value to compare: write \
+                     a string, an integer or a boolean",
+                    path.join(".")
+                ));
+            }
             toml::Value::Table(inner) => flatten_when(path, inner, entries)?,
-            leaf => entries.push((path.join("."), leaf)),
+            leaf => {
+                let joined = path.join(".");
+                if entries.iter().any(|(seen, _)| *seen == joined) {
+                    return Err(format!(
+                        "`when` holds the path `{joined}` twice, in two spellings: write it once"
+                    ));
+                }
+                entries.push((joined, leaf));
+            }
         }
         path.pop();
     }

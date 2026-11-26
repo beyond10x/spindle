@@ -391,6 +391,76 @@ fn a_reset_world_with_a_rule_over_an_undeclared_input_is_refused() {
     );
 }
 
+/// Adversary, wave 25 U2: a reset world's rule whose `when` entry holds an empty object is a value
+/// of no type a rule compares; the reset must be refused, not load a rule that matches every
+/// request.
+#[test]
+fn adversary_a_reset_world_rule_entry_holding_an_empty_object_is_refused() {
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+    let file = decisions(&state, "flagged = false\nescalated = false\n");
+    let served = serve(REVIEW, &state, &["--decisions", &file]);
+    let world = json!({"decisions": {"rules": [{
+        "command": "probe.review.Submit",
+        "outcome": "flagged",
+        "answer": true,
+        "when": {"input.amount": {}},
+    }]}});
+    let (status, answer) = exchange(&served, "POST", "/api/reset", &world);
+    let (_, submitted) = call(
+        &served,
+        REVIEW,
+        "probe",
+        "probe.review.Submit",
+        &json!({"submission_id": "s1", "amount": 5}),
+    );
+    assert_eq!(
+        status, 400,
+        "the reset answered {answer}, and a request of amount 5 then got {submitted}"
+    );
+}
+
+/// story:decisions-rules-on-input-predicates, adversary round 1: every spelling of a world's
+/// `when` that holds no value at a path, or one path twice, is refused, naming the rule and the
+/// path, and the run's file still answers.
+#[test]
+fn a_reset_world_rule_holding_no_value_or_one_path_twice_is_refused() {
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+    let file = decisions(&state, "flagged = false\nescalated = false\n");
+    let served = serve(REVIEW, &state, &["--decisions", &file]);
+    for (when, path) in [
+        (json!({"input": {}}), "input"),
+        (json!({"input": {"amount": {}}}), "input.amount"),
+        (json!({"input.amount": null}), "input.amount"),
+        (json!({"input": {"amount": null}}), "input.amount"),
+        (
+            json!({"input.amount": 5, "input": {"amount": 6}}),
+            "input.amount",
+        ),
+    ] {
+        let world = json!({"decisions": {"rules": [{
+            "command": "probe.review.Submit",
+            "outcome": "flagged",
+            "answer": true,
+            "when": when,
+        }]}});
+        let (status, answer) = exchange(&served, "POST", "/api/reset", &world);
+        assert_eq!(status, 400, "{when}: {answer}");
+        let text = answer.to_string();
+        assert!(
+            text.contains("rules[0]") && text.contains(path),
+            "{when}: {answer}"
+        );
+    }
+    let (_, submitted) = call(
+        &served,
+        REVIEW,
+        "probe",
+        "probe.review.Submit",
+        &json!({"submission_id": "s1", "amount": 5}),
+    );
+    assert_eq!(submitted["outcome"], "submitted", "{submitted}");
+}
+
 #[test]
 fn served_decisions_file_naming_an_unknown_command_exits_before_listening() {
     let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");

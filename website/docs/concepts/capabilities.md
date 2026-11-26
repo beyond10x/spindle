@@ -81,13 +81,18 @@ when = { "input.target" = "R" }
 ```
 
 - `when` maps an input path, `input.<field>` with dots for the members of a struct, to a string,
-  an integer or a boolean. A rule matches when every entry equals the request's value.
+  an integer or a boolean. A rule matches when every entry equals the request's value. A request's
+  `13.0` equals the integer `13`, and a number with a fraction equals no integer.
+- `{ input = { target = "R" } }` says the same as `{ "input.target" = "R" }`. One path written
+  twice, in both forms, is refused at load like a duplicate key, and so is one answer written under
+  both `["a.b.C"]` and `[a.b.C]`.
 - An optional input that the request leaves out, or sends as `null`, matches no entry.
 - Rules are read in file order. The first rule that matches answers.
 - A request that no rule matches is answered by the command's table, then the top-level answer.
 - At load, `run` refuses a rule that names an undeclared command, an outcome that is not external,
-  an input that the command does not declare, or a value of another type. The message names the
-  rule as `rules[<index>]`, counted from 0, and names the entry.
+  an input that the command does not declare, or a value of another type, an empty table or a JSON
+  `null` in a reset's table. The message names the rule as `rules[<index>]`, counted from 0, and
+  names the entry.
 
 A `run` serving `ingress.network` answers a request's external causes from the decisions file and
 then `--answer-default`. A request carries no `"external"` object. A request
