@@ -18,6 +18,8 @@
 use std::io::Write;
 use std::path::Path;
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::time::SystemTime;
 
 use anyhow::{Context, Result, bail};
 use ess_compiler::EssIr;
@@ -28,7 +30,7 @@ use ess_conformance::{
 };
 use spindle_capability::Environment;
 use spindle_conformance::{HostTarget, in_memory};
-use spindle_host::HostError;
+use spindle_host::{Clock, HostError, ManualClock, SystemClock};
 
 /// Exit status of a replay the environment refused.
 const REFUSED: u8 = 3;
@@ -41,7 +43,13 @@ pub(crate) const MOST_STEPS: usize = 1000;
 /// Exits 0 when every step holds, 1 at the first step that does not, when ESS refuses the
 /// document or when it has more than [`MOST_STEPS`] steps, and 3, running nothing, when admission
 /// is refused.
-pub(crate) fn replay(spec: &Path, environment: &Path, scenario: &Path) -> Result<ExitCode> {
+pub(crate) fn replay(
+    spec: &Path,
+    environment: &Path,
+    scenario: &Path,
+    clock: Option<SystemTime>,
+    mint: Option<u64>,
+) -> Result<ExitCode> {
     let loaded = spindle_spec::load(spec)?;
     let text = std::fs::read_to_string(environment)
         .with_context(|| format!("reading {}", environment.display()))?;
@@ -94,6 +102,8 @@ pub(crate) fn replay(spec: &Path, environment: &Path, scenario: &Path) -> Result
         id: &id,
         scenario: &compiled,
         origin: scenario,
+        clock,
+        mint,
     };
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
@@ -160,6 +170,10 @@ struct Replays<'a> {
     id: &'a ScenarioId,
     scenario: &'a ConformanceScenario,
     origin: &'a Path,
+    /// `--clock`: each replay's host decides `now` on a manual clock standing at this instant.
+    clock: Option<SystemTime>,
+    /// `--mint-seed`: each replay's host mints from this seed.
+    mint: Option<u64>,
 }
 
 /// One replay: the runner's answer and how many commands it sent to the host.
@@ -184,7 +198,12 @@ impl Replays<'_> {
         suite.select_fresh_format_for(self.ir);
         let admitted = AdmittedSuite::from_suite(&suite)
             .with_context(|| format!("admitting {}", self.origin.display()))?;
-        let target = HostTarget::new(self.ir.clone(), self.environment.clone());
+        let clock: Arc<dyn Clock> = match self.clock {
+            Some(at) => Arc::new(ManualClock::at(at)),
+            None => Arc::new(SystemClock),
+        };
+        let target =
+            HostTarget::clocked(self.ir.clone(), self.environment.clone(), clock, self.mint);
         let report = Runner::new(
             RunnerConfig::default(),
             AdvancingClock::default(),

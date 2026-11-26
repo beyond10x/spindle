@@ -51,6 +51,31 @@ are Spindle's releases.
   such a row out", where it read "…is undecidable over the held instance and the input". The
   error code and `run`'s status are unchanged (`story:guard-over-absent-row-field`).
 
+- `run --clock <RFC 3339>` starts a run reading stdin, serving HTTP or replaying `--scenario` on
+  a manual clock at that instant, where every mode read the system clock; reading stdin, a line's
+  `"at": "<RFC 3339>"` moves the clock forward before its command runs, and an instant before the
+  clock's, or `"at"` without `--clock`, rejects the line and leaves the clock where it stood.
+  `run --mint-seed <n>` mints every identity and generated value from that seed from the first
+  command on, reading stdin, serving HTTP or replaying, so the same commands mint the same
+  identities, never one an instance of the kept state already holds; a served reset whose world
+  carries `mint` mints from that until the next reset, and one whose world has none mints from the
+  run's seed again, from its first draw. An environment that binds `identity.mint` to `seeded`
+  runs on stdin with seed 0 without the flag, and serves HTTP given the flag, where it was
+  refused. `Host::seeded` holds the run's seed, and `HostTarget::clocked` opens every host on a
+  given clock and seed. No `run` fires a periodic binding (`story:clock-and-mint-in-every-mode`).
+
+### Fixed
+
+- `run` reading JSON lines on stdin exits 1 when a line was rejected (not JSON, naming no
+  declared command, its input not admitted, its external cause unanswered, or refused by the
+  kernel before an outcome), after it answered every line, and names each rejected line on stderr
+  by its place in the input; it exited 0 whatever the lines did. A line answered by a declared
+  outcome, a refusing one included, is not rejected. A seed entry the host or the kernel refuses
+  before an outcome, such as `not_granted`, is counted `rejected` in the seed's end line, apart
+  from the declared refusals still counted `refused`, and a seed that ends with one stops the
+  served run with exit 1; `spindle_seed_commands_total` counts it under `refused`
+  (`story:run-fails-on-rejected-line`).
+
 ## [0.21.0] - 2026-11-26
 
 ### Added

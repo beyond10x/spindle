@@ -82,7 +82,11 @@ fn run_reads_a_line_s_caller_beside_its_input() {
         "\n",
     );
     let output = spindle(&["run", SPEC, "--environment", LAPTOP], lines);
-    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a rejected line exits 1 once every line is answered (story:run-fails-on-rejected-line): {output:?}"
+    );
     let results: Vec<serde_json::Value> = String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(|line| serde_json::from_str(line).expect("each result is one JSON line"))

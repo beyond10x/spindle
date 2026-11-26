@@ -1,0 +1,61 @@
+domain: ledger.slot
+summary: A slot booked before or after a deadline the request names, the outcome chosen by the current time.
+entities:
+  - name: ledger.slot.Booking
+    identity:
+      name: booking_id
+      type: String
+    fields:
+      - name: deadline
+        type: Timestamp
+    lifecycle:
+      initial: Booked
+      states: [Booked]
+      terminal: [Booked]
+commands:
+  - name: ledger.slot.Book
+    input:
+      - name: booking_id
+        type: String
+      - name: deadline
+        type: Timestamp
+    outcomes:
+      - name: early
+        when: deadline > now
+        creates: ledger.slot.Booking
+        instance: booking_id
+        sets:
+          deadline: input.deadline
+        emits: [ledger.slot.BookedEarly]
+        payload:
+          ledger.slot.BookedEarly:
+            booking_id: input.booking_id
+        summary: A slot booked before its deadline.
+      - name: late
+        creates: ledger.slot.Booking
+        instance: booking_id
+        sets:
+          deadline: input.deadline
+        emits: [ledger.slot.BookedLate]
+        payload:
+          ledger.slot.BookedLate:
+            booking_id: input.booking_id
+        summary: A slot booked once its deadline has passed.
+events:
+  - name: ledger.slot.BookedEarly
+    fields:
+      - name: booking_id
+        type: String
+  - name: ledger.slot.BookedLate
+    fields:
+      - name: booking_id
+        type: String
+views:
+  - name: ledger.slot.AllBookings
+    source: ledger.slot.Booking
+    consistency: read_your_writes
+    fields:
+      - name: booking_id
+        type: String
+      - name: deadline
+        type: Timestamp

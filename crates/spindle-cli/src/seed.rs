@@ -9,7 +9,10 @@
 //! command, between the requests the listener hands over ([`Seeding::step`]). Each counts once as
 //! applied, already there (an outcome the specification declares `existing_instance:`, or a
 //! request id an earlier entry of the file carried that was applied or already there, which is not
-//! submitted again) or refused; a refusal is logged and the next entry is submitted.
+//! submitted again), refused (a declared refusing outcome) or rejected (a host or execute error:
+//! it did not run); either is logged and the next entry is submitted. A seed run that ends having
+//! rejected an entry marks the seed [failed](Seeding::failed), and the served run exits 1
+//! (`story:run-fails-on-rejected-line`).
 //!
 //! A request id is remembered in memory, by this start alone: Spindle keeps no record of request
 //! ids across starts or replicas (`story:request-id-idempotency`). An entry whose id only a
@@ -209,13 +212,21 @@ pub(crate) struct Seeding {
     earlier: SeedCounts,
     recorder: Option<Recorder>,
     ended: bool,
+    /// How many entries of the seed run under way did not run: a host or execute error, never a
+    /// declared outcome (`story:run-fails-on-rejected-line`).
+    rejected: u64,
+    /// Whether a seed run of this start ended having rejected an entry: the run then exits 1.
+    failed: bool,
 }
 
 /// What became of one entry.
 enum Became {
     Applied,
     AlreadyThere,
+    /// A declared refusing outcome answered it.
     Refused(String),
+    /// It did not run: the host or the kernel refused it before an outcome.
+    Rejected(String),
 }
 
 impl Seeding {
@@ -229,6 +240,8 @@ impl Seeding {
             earlier: SeedCounts::default(),
             recorder,
             ended: false,
+            rejected: 0,
+            failed: false,
         };
         seeding.note();
         seeding
@@ -265,8 +278,9 @@ impl Seeding {
             self.seed.path.display(),
             self.seed.len()
         );
-        self.earlier = summed(self.earlier, self.counts);
+        self.earlier = summed(self.earlier, self.noted());
         self.counts = SeedCounts::default();
+        self.rejected = 0;
         self.next = 0;
         self.submitted.clear();
         self.ended = false;
@@ -298,11 +312,26 @@ impl Seeding {
             already_there,
             refused,
         } = self.counts;
+        let rejected = self.rejected;
         eprintln!(
             "b10x-spindle: seed {} ended: {sent} sent, {applied} applied, \
-             {already_there} already there, {refused} refused",
+             {already_there} already there, {refused} refused, {rejected} rejected",
             self.seed.path.display()
         );
+        if rejected > 0 {
+            self.failed = true;
+        }
+    }
+
+    /// Whether a seed run of this start ended having rejected an entry, so the run exits 1
+    /// (`story:run-fails-on-rejected-line`).
+    pub(crate) fn failed(&self) -> bool {
+        self.failed
+    }
+
+    /// The seed's file.
+    pub(crate) fn path(&self) -> &Path {
+        self.seed.path()
     }
 
     /// Submits the next entry to `host`, or, once none is left, prints the end line once. A
@@ -321,8 +350,8 @@ impl Seeding {
         } else {
             let became = submitted(host, entry);
             // Only an entry that left its effect in place answers for a later one with its id: a
-            // refused entry left nothing, so a repeat of it is submitted again.
-            if !matches!(became, Became::Refused(_)) {
+            // refused or rejected entry left nothing, so a repeat of it is submitted again.
+            if !matches!(became, Became::Refused(_) | Became::Rejected(_)) {
                 self.submitted.insert(entry.request_id.clone());
             }
             became
@@ -339,15 +368,33 @@ impl Seeding {
                     entry.request_id
                 );
             }
+            Became::Rejected(error) => {
+                self.rejected += 1;
+                eprintln!(
+                    "b10x-spindle: seed {} entry {place}: {} (request id {}) rejected: {error}",
+                    self.seed.path.display(),
+                    entry.command,
+                    entry.request_id
+                );
+            }
         }
         self.note();
+    }
+
+    /// The counts of the seed run under way as the metrics count them: `refused` is every entry
+    /// that did not apply, a rejected one included, so the metric families keep their series.
+    fn noted(&self) -> SeedCounts {
+        SeedCounts {
+            refused: self.counts.refused + self.rejected,
+            ..self.counts
+        }
     }
 
     /// Notes the counts of every seed run of this start on the recorder, where the run observes:
     /// a counter, so a reset never makes one fall.
     fn note(&self) {
         if let Some(recorder) = &self.recorder {
-            recorder.seeded(summed(self.earlier, self.counts));
+            recorder.seeded(summed(self.earlier, self.noted()));
         }
     }
 }
@@ -391,8 +438,8 @@ fn submitted(host: &mut Host, entry: &Entry) -> Became {
                 Became::Refused(error.name.clone())
             }
         }
-        Err(HostError::Execute { error, .. }) => Became::Refused(error.kind().to_owned()),
-        Err(other) => Became::Refused(other.to_string()),
+        Err(HostError::Execute { error, .. }) => Became::Rejected(error.kind().to_owned()),
+        Err(other) => Became::Rejected(other.to_string()),
     }
 }
 
