@@ -13,7 +13,7 @@ relations:
 - reviews: story:scenario-act-without-outcome
 - reviews: story:scenario-without-components
 - reviews: story:release-linux-glibc-floor-and-musl
-revision: 1
+revision: 2
 ---
 needs-revision
 
@@ -23,7 +23,7 @@ Round 1 acceptance findings, all resolved:
 - **story:clock-and-mint-in-every-mode:** the one "honour" bullet is now eight single-outcome tests, each with an observable result. These cover the stdin and served mint, the line `at`, the served clock and the scenario clock. The scenario clock test passes with `holds` and exit 0 where the same document without `--clock` diverges. The two reset cases and the `seeded` binding are tests of their own, and the last one has a before and an after.
 - **story:view-filter-parameter-literal:** the single "One test per form" bullet is now an enumerated list, F1a through F6. It adds the `the_consumer_filter_shapes_are_served` test and the rule that a form outside the list stays refused.
 - **story:release-linux-glibc-floor-and-musl, acceptance part:** the Acceptance now has bullets for the aarch64 gnu archive on the 2.17 floor and for the `debian:bookworm` `--version` run of each gnu archive. It also covers the five-archive SHA256SUMS and SBOM count. The aarch64 row runs on `ubuntu-24.04-arm` (`release.yml:166`), so the bookworm run is possible there.
-- **story:release-linux-glibc-floor-and-musl, privacy part:** a grep of all eight bodies for `/home`, `timo`, `.local`, `@`, `.internal` and URLs finds none. "the worktree root" in `guard-over-absent-row-field` is a generic phrase, not a path. This one sits in the privacy lane and does not set my verdict.
+- **story:release-linux-glibc-floor-and-musl, privacy part:** a grep of all eight bodies for `/home`, the owner's name, `.local`, `@`, `.internal` and URLs finds none. "the worktree root" in `guard-over-absent-row-field` is a generic phrase, not a path. This one sits in the privacy lane and does not set my verdict.
 
 What I read: 8 stories in full with `aep plan artifact show` (a loop over each id). I also read `review-result:wave26-acc-r1` and the wave 26 branch head `09a9dbf45`. I ran `git grep`-style checks of `.github/workflows/release.yml` (matrix, SBOM count) and `crates/spindle-conformance/src/target.rs` (clock use), plus a line lookup in the story file. I did not open the other three round-1 results; that is outside my lane.
 

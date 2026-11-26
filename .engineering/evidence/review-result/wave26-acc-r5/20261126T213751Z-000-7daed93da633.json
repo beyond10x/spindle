@@ -1,0 +1,15 @@
+{
+  "at": "2026-11-26T21:37:51Z",
+  "actor": "human:operator",
+  "artifact": "review-result:wave26-acc-r5",
+  "kind": "review-result",
+  "revision": 2,
+  "change": {
+    "change": "redaction",
+    "literal_sha256": "9a247db280f9e8e78d9673b9132220d92289470fe249aae051c39bfe3ad23637",
+    "literal_chars": 6,
+    "replacement": "the owner's name",
+    "count": 1,
+    "reason": "a person's name in a public repository"
+  }
+}
