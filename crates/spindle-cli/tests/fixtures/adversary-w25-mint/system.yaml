@@ -1,0 +1,23 @@
+format: ess/34
+system: yard
+version: v1
+summary: Crates under minted integer identities and notes under minted text identities, served over the network.
+domains:
+  - yard.crates
+components:
+  - component: yard
+    summary: Opens and renames crates and notes for callers outside the process.
+    owns:
+      domains:
+        - yard.crates
+    accepts:
+      commands:
+        - yard.crates.OpenCrate
+        - yard.crates.RenameCrate
+        - yard.crates.OpenNote
+    publishes:
+      events:
+        - yard.crates.CrateOpened
+        - yard.crates.CrateRenamed
+        - yard.crates.NoteOpened
+    reached_by: network

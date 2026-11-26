@@ -1,0 +1,221 @@
+domain: advw25.box
+summary: Crates under minted integer identities, tags under a constrained integer, and slips whose fields fall back.
+types:
+  - name: advw25.box.Tag
+    kind: newtype
+    of: Integer
+    invariants:
+      - 'value >= 1'
+  - name: advw25.box.Size
+    kind: enum
+    variants: [small, large]
+  - name: advw25.box.Address
+    kind: struct
+    fields:
+      - {name: city, type: Optional<String>}
+entities:
+  - name: advw25.box.Crate
+    identity: {name: crate_id, type: Integer}
+    fields:
+      - {name: name, type: String}
+    lifecycle: {initial: Open, states: [Open], terminal: [Open]}
+  - name: advw25.box.Tagged
+    identity: {name: tag, type: advw25.box.Tag}
+    fields:
+      - {name: name, type: String}
+    lifecycle: {initial: Open, states: [Open], terminal: [Open]}
+  - name: advw25.box.Slip
+    identity: {name: slip_id, type: Uuid}
+    fields:
+      - {name: city, type: String}
+      - {name: size, type: advw25.box.Size}
+      - {name: weight, type: Decimal}
+      - {name: fragile, type: Boolean}
+    lifecycle: {initial: Open, states: [Open], terminal: [Open]}
+  - name: advw25.box.Backed
+    identity: {name: backed_id, type: Uuid}
+    fields:
+      - {name: name, type: String}
+    lifecycle: {initial: Open, states: [Open], terminal: [Open]}
+errors:
+  - name: advw25.box.Rejected
+    summary: The slip is rejected.
+    fields:
+      - {name: reason, type: String}
+      - {name: city, type: String}
+  - name: advw25.box.Grumbled
+    summary: A grumble.
+    fields:
+      - {name: note, type: String}
+events:
+  - name: advw25.box.CrateOpened
+    fields:
+      - {name: crate_id, type: Integer}
+  - name: advw25.box.CrateRenamed
+    fields:
+      - {name: crate_id, type: Integer}
+      - {name: name, type: String}
+  - name: advw25.box.TaggedOpened
+    fields:
+      - {name: tag, type: advw25.box.Tag}
+  - name: advw25.box.SlipFiled
+    fields:
+      - {name: slip_id, type: Uuid}
+      - {name: city, type: String}
+      - {name: size, type: advw25.box.Size}
+      - {name: weight, type: Decimal}
+      - {name: fragile, type: Boolean}
+  - name: advw25.box.Noted
+    fields:
+      - {name: note, type: Optional<String>}
+  - name: advw25.box.BackedFiled
+    fields:
+      - {name: backed_id, type: Uuid}
+      - {name: name, type: String}
+commands:
+  - name: advw25.box.OpenCrate
+    input:
+      - {name: name, type: String}
+    outcomes:
+      - name: opened
+        creates: advw25.box.Crate
+        instance: crate_id
+        sets:
+          name: input.name
+        emits: [advw25.box.CrateOpened]
+        payload:
+          advw25.box.CrateOpened:
+            crate_id: {generated: true}
+        summary: The crate opens under an integer the runtime mints.
+  - name: advw25.box.RenameCrate
+    input:
+      - {name: crate_id, type: Integer}
+      - {name: name, type: String}
+    outcomes:
+      - name: no-crate
+        unknown_instance: true
+        error: advw25.box.Grumbled
+        payload:
+          advw25.box.Grumbled:
+            note: no crate
+        summary: No crate carries the id.
+      - name: renamed
+        updates: advw25.box.Crate
+        instance: crate_id
+        sets:
+          name: input.name
+        emits: [advw25.box.CrateRenamed]
+        payload:
+          advw25.box.CrateRenamed:
+            crate_id: input.crate_id
+            name: input.name
+        summary: The crate is renamed.
+  - name: advw25.box.OpenTagged
+    input:
+      - {name: name, type: String}
+    outcomes:
+      - name: opened
+        creates: advw25.box.Tagged
+        instance: tag
+        sets:
+          name: input.name
+        emits: [advw25.box.TaggedOpened]
+        payload:
+          advw25.box.TaggedOpened:
+            tag: {generated: true}
+        summary: The tag would open under a constrained integer.
+  - name: advw25.box.FileSlip
+    input:
+      - {name: slip_id, type: Uuid}
+      - {name: address, type: Optional<advw25.box.Address>}
+      - {name: size, type: Optional<advw25.box.Size>}
+      - {name: weight, type: Optional<Decimal>}
+      - {name: fragile, type: Optional<Boolean>}
+      - {name: reject, type: Boolean}
+      - {name: reason, type: Optional<String>}
+      - {name: fallback_reason, type: String}
+    outcomes:
+      - name: rejected
+        when: reject == true
+        error: advw25.box.Rejected
+        payload:
+          advw25.box.Rejected:
+            reason: {input: reason, else: input.fallback_reason}
+            city: {input: address.city, else: nowhere}
+        summary: The slip is rejected.
+      - name: filed
+        creates: advw25.box.Slip
+        instance: slip_id
+        sets:
+          city: {input: address.city, else: nowhere}
+          size: {input: size, else: large}
+          weight: {input: weight, else: 2.50}
+          fragile: {input: fragile, else: true}
+        emits: [advw25.box.SlipFiled]
+        payload:
+          advw25.box.SlipFiled:
+            slip_id: input.slip_id
+            city: {input: address.city, else: nowhere}
+            size: {input: size, else: large}
+            weight: {input: weight, else: 2.50}
+            fragile: {input: fragile, else: true}
+        summary: The slip is filed; each field is the input or its fallback.
+  - name: advw25.box.FileBacked
+    input:
+      - {name: backed_id, type: Optional<Uuid>}
+      - {name: backup_id, type: Uuid}
+      - {name: name, type: String}
+    outcomes:
+      - name: filed
+        creates: advw25.box.Backed
+        instance: backed_id
+        sets:
+          name: input.name
+        emits: [advw25.box.BackedFiled]
+        payload:
+          advw25.box.BackedFiled:
+            backed_id: {input: backed_id, else: input.backup_id}
+            name: input.name
+        summary: The backed slip is filed under its id, else the backup id.
+  - name: advw25.box.Grumble
+    input:
+      - {name: note, type: Optional<String>}
+    outcomes:
+      - name: grumbled
+        when: note == "x"
+        error: advw25.box.Grumbled
+        payload:
+          advw25.box.Grumbled:
+            note: {input: note, else: quiet}
+        summary: A grumble whose note falls back to a literal.
+      - name: fine
+        emits: [advw25.box.Noted]
+        payload:
+          advw25.box.Noted:
+            note: input.note
+        summary: No grumble.
+views:
+  - name: advw25.box.SlipCard
+    source: advw25.box.Slip
+    consistency: read_your_writes
+    fields:
+      - {name: slip_id, type: Uuid}
+      - {name: city, type: String}
+      - {name: size, type: advw25.box.Size}
+      - {name: weight, type: Decimal}
+      - {name: fragile, type: Boolean}
+      - {name: state, type: advw25.box.Slip.State}
+  - name: advw25.box.BackedCard
+    source: advw25.box.Backed
+    consistency: read_your_writes
+    fields:
+      - {name: backed_id, type: Uuid}
+      - {name: name, type: String}
+      - {name: state, type: advw25.box.Backed.State}
+  - name: advw25.box.CrateCard
+    source: advw25.box.Crate
+    consistency: read_your_writes
+    fields:
+      - {name: crate_id, type: Integer}
+      - {name: name, type: String}
+      - {name: state, type: advw25.box.Crate.State}
