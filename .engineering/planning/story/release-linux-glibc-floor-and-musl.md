@@ -6,7 +6,7 @@ status: draft
 title: The Linux release runs on an old glibc and as a static binary
 relations:
 - serves: vision:spindle
-revision: 1
+revision: 2
 ---
 # The Linux release runs on an old glibc and as a static binary
 
@@ -34,3 +34,11 @@ fallback; the shared composite action takes the 2.17 floor as an option.
   the musl binary side by side, with and without mimalloc; mimalloc is kept only where it is not
   slower, and the measurement is written in this story before musl is named a default anywhere.
 - `SHA256SUMS` covers the new archives.
+
+## Joined 2026-11-26
+
+This story takes over story:release-binary-portable-libc, which asked the same for both Linux
+targets: the `aarch64-unknown-linux-gnu` archive is built on the same glibc 2.17 floor and checked
+the same way, and each Linux archive's `--version` also runs in a `debian:bookworm` container (glibc
+2.36). A consumer found 0.21.0 needs `GLIBC_2.39`; the binary installed on this host was still 0.1.0,
+which cannot read the specification format consumers write today.

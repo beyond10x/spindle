@@ -2,12 +2,14 @@
 format: aep.planning-md/3
 id: story:release-binary-portable-libc
 kind: story
-status: draft
+status: archived
 title: The Linux release binary runs on an older glibc
 summary: The Linux release archives run on Debian bookworm (glibc 2.36), or are static musl builds, checked in CI.
 relations:
 - serves: vision:spindle
-revision: 1
+revision: 2
+transitions:
+- {from: "draft", to: "archived", at: "2026-11-26T18:31:24Z", actor: "human:operator", revision: 2}
 ---
 # The Linux release binary runs on an older glibc
 
