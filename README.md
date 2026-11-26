@@ -67,9 +67,10 @@ Where `run` serves HTTP, `--seed <file>` (or `[seed] file` in the environment do
 JSON array of commands, each with its input, actor, caller and request id, on every start: checked
 before listening, then one at a time in order beside the listener. An outcome declared
 `existing_instance:` counts as already there. On a `--state` directory the run records the seed
-file's digest and the entries done in `seed.json`, so a restart with the same file sends only the
-entries not yet done, and none once all are; one with another file exits 1 before listening,
-naming both digests, unless the state holds no row. A store kept elsewhere records nothing, and
+file's digest, the entries sent and those rejected in `seed.json`, so a restart with the same file
+sends only the entries not yet done (a rejected entry is sent again), and none once all are; one
+with another file exits 1 before listening, naming both digests, unless the state holds no row. A
+reset by a run without `--seed` removes `seed.json`. A store kept elsewhere records nothing, and
 every start sends the whole seed. Within one start, an entry whose request id an earlier applied
 or already-there entry carried is not submitted again. A declared refusal is logged and the rest still run; one line on
 stderr gives the counts when the seed ends. An entry that did not run (the host or the kernel

@@ -229,23 +229,28 @@ rejected entry under `refused`.
 ### A seed on a kept state
 
 On a `--state` directory the run records the seed in `seed.json` beside the state's files, readable
-by its owner alone: the digest of the seed file, `sha256:` and its hexadecimal SHA-256, and how
-many of its entries are done, written after each entry whatever became of it. On the next start:
+by its owner alone: the digest of the seed file, `sha256:` and its hexadecimal SHA-256, how many of
+its entries were sent, and which of those were rejected, each by its place in the file. It is
+written after each entry, into a file beside it that then replaces it, so a write cut short leaves
+the record as it was. On the next start:
 
 - With the same seed file and every entry done, `run` prints that the seed already ran and sends no
   entry, so an update or a move in the seed is applied once.
-- With the same seed file and some entries done, as after a run stopped mid-seed, it sends the
-  entries after those done. An entry the run was stopped in may have been applied without being
-  counted, and is then sent again.
+- With the same seed file and some entries not done, as after a run stopped mid-seed, it sends the
+  entries rejected before again, then the entries after those sent. An entry rejected again stops
+  the run with exit 1 once the seed ends, as on the first start. An entry the run was stopped in
+  may have been applied without being counted, and is then sent again.
 - With another seed file, `run` exits 1 before listening, naming both digests, unless the state
   holds no row; then the new file runs from its first entry.
 - On a state written without `seed.json`, the whole seed is sent, as before, and `seed.json` is
   written.
 
-A request id is remembered only by the start that sends its entry. A store kept elsewhere, in
-PostgreSQL or in memory, records nothing: every start sends the whole seed, so a second start
-applies nothing new only where every entry is a create whose command declares
-`existing_instance:`.
+A request id is remembered by the start that sends its entry; a start that resumes the seed also
+remembers those of the entries sent before it that were not rejected, so a repeat of one is
+already there. `POST /api/reset` on a run without `--seed` removes `seed.json`: the next start with
+a seed treats the state as one written without it. A store kept elsewhere, in PostgreSQL or in
+memory, records nothing: every start sends the whole seed, so a second start applies nothing new
+only where every entry is a create whose command declares `existing_instance:`.
 
 ### What a seed does not do
 

@@ -39,12 +39,15 @@ are Spindle's releases.
 
 - `run --seed` on a `--state` directory applies the seed once, where every start sent every entry
   again and an entry that updates, moves or removes a row changed it a second time. `seed.json` in
-  the state (`0600`) records the seed file's `sha256:` digest and the entries done, after each
-  entry: a restart with the same file sends only the entries not yet done, and prints that the
-  seed already ran once every one is; one with another file exits 1 before listening, naming both
-  digests, unless the state holds no row. A state without `seed.json` gets the whole seed, then the
-  record. A reset with no world records 0 entries done before it sends the seed again; one with a
-  world records every entry done (`story:seed-once-on-durable-state`).
+  the state (`0600`, replaced whole on each write) records the seed file's `sha256:` digest, the
+  entries sent and those rejected, after each entry: a restart with the same file sends the
+  rejected entries again, exiting 1 again where one still is, then the entries not yet sent,
+  remembering the request ids of those sent before; it prints that the seed already ran once every
+  one is done. One with another file exits 1 before listening, naming both digests, unless the
+  state holds no row. A state without `seed.json` gets the whole seed, then the record. A reset
+  with no world records 0 entries done before it sends the seed again; one with a world records
+  every entry done; one by a run without `--seed` removes the record
+  (`story:seed-once-on-durable-state`).
 
 - A served `run` that receives SIGINT or SIGTERM, or whose seed ends having rejected an entry, takes
   no further request and answers every client before it exits, where it took one more exchange

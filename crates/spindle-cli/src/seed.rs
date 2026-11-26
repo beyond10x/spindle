@@ -14,18 +14,22 @@
 //! rejected an entry marks the seed [failed](Seeding::failed), and the served run exits 1
 //! (`story:run-fails-on-rejected-line`).
 //!
-//! A request id is remembered in memory, by this start alone: Spindle keeps no record of request
-//! ids across starts or replicas (`story:request-id-idempotency`). An entry whose id only a
+//! A request id is remembered in memory, by this start: Spindle keeps no record of request ids
+//! across starts or replicas (`story:request-id-idempotency`), and a start that resumes a seed on a
+//! `--state` takes those of the entries sent before it from the file itself. An entry whose id only a
 //! refused entry carried is submitted again, and counts as what it becomes: the refusal left
 //! nothing there, and what refused it may since have changed.
 //!
 //! On a `--state` directory the run records the seed in [`MARKER`] beside the state's files, `0600`
-//! ([`spindle_kernel::private`]): the digest of the seed file and how many of its entries are done,
-//! written after each entry (`story:seed-once-on-durable-state`). A start with the same file sends
-//! the entries after those done, and none once every one is ([`begin`]); one with another file
-//! stops before listening, naming both digests, unless the state holds no row, when the file runs
-//! from its first entry. A state with no marker gets the whole seed, then the marker. A store kept
-//! elsewhere (PostgreSQL, memory) records nothing, and every start sends the whole seed.
+//! ([`spindle_kernel::private`]): the digest of the seed file, how many of its entries were sent
+//! and which of those were rejected, written after each entry through a file renamed over the
+//! marker (`story:seed-once-on-durable-state`). A start with the same file sends the rejected
+//! entries again, then the entries after those sent, and none once every one is done
+//! ([`begin`]); it remembers the request ids of the entries sent before it that were not rejected.
+//! One with another file stops before listening, naming both digests, unless the state holds no
+//! row, when the file runs from its first entry. A state with no marker gets the whole seed, then
+//! the marker. A store kept elsewhere (PostgreSQL, memory) records nothing, and every start sends
+//! the whole seed. A reset by a run without a seed removes the marker ([`forget`]).
 //!
 //! A `POST /api/reset` drops the entries of the seed run under way that are not yet sent
 //! ([`Seeding::cut`]). One with no world then submits the seed again from its first entry, once
@@ -145,20 +149,22 @@ pub(crate) fn load(path: &Path, ir: &EssIr) -> Result<Seed> {
 /// The file in a `--state` directory that records the seed applied to that state.
 pub(crate) const MARKER: &str = "seed.json";
 
-/// What [`MARKER`] holds: the digest of the seed file applied, and how many of its entries, from
-/// the first, are done.
+/// What [`MARKER`] holds: the digest of the seed file applied, how many of its entries, from the
+/// first, were sent, and which of those were rejected when last sent, each by its place in the
+/// file counted from 1. A rejected entry did not run, so it is not done: a restart sends it again.
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Recorded {
     digest: String,
     done: usize,
+    #[serde(default)]
+    rejected: BTreeSet<usize>,
 }
 
-/// What the marker at `path` records; `None` where there is none, or it is empty (a write cut
-/// between its truncation and its text).
+/// What the marker at `path` records; `None` where there is none.
 ///
 /// # Errors
-/// A marker that cannot be read, or does not hold `{"digest", "done"}`.
+/// A marker that cannot be read, or does not hold `{"digest", "done", "rejected"}`.
 fn recorded(path: &Path) -> Result<Option<Recorded>> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
@@ -168,25 +174,45 @@ fn recorded(path: &Path) -> Result<Option<Recorded>> {
                 .with_context(|| format!("reading the seed marker {}", path.display()));
         }
     };
-    if text.trim().is_empty() {
-        return Ok(None);
-    }
     serde_json::from_str(&text).map(Some).with_context(|| {
         format!(
-            "the seed marker {} does not hold {{\"digest\", \"done\"}}",
+            "the seed marker {} does not hold {{\"digest\", \"done\", \"rejected\"}}",
             path.display()
         )
     })
 }
 
-/// Writes `recorded` to the marker at `path`, created `0600` where absent, its text replaced.
+/// Writes `recorded` to the marker at `path`: into a file beside it, created `0600` where absent,
+/// then renamed over it, so a write cut short leaves the marker as it was.
 fn record(path: &Path, recorded: &Recorded) -> std::io::Result<()> {
-    let mut file = spindle_kernel::private::open_or_create(path)?;
+    let mut beside = path.as_os_str().to_owned();
+    beside.push(".tmp");
+    let beside = PathBuf::from(beside);
+    let mut file = spindle_kernel::private::open_or_create(&beside)?;
+    // A file left by a write cut short holds old text.
     file.set_len(0)?;
     file.rewind()?;
     serde_json::to_writer(&mut file, recorded)?;
     file.write_all(b"\n")?;
-    file.flush()
+    file.flush()?;
+    drop(file);
+    std::fs::rename(&beside, path)
+}
+
+/// Removes the marker of the `--state` directory `state`, where a run without a seed emptied the
+/// state or loaded a world: a later start with a seed treats the state as one with no marker.
+/// A failure is printed on stderr.
+pub(crate) fn forget(state: &Path) {
+    let marker = state.join(MARKER);
+    match std::fs::remove_file(&marker) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => eprintln!(
+            "b10x-spindle: the seed marker {} could not be removed after the reset, so a start \
+             with that seed may skip the entries it records done: {error}",
+            marker.display()
+        ),
+    }
 }
 
 /// The seeding of a start: `seed`, its counts noted on `recorder`. With `state`, the `--state`
@@ -210,10 +236,17 @@ pub(crate) fn begin(
             seed.path.display(),
             seed.len()
         );
-        return Ok(Seeding::new(seed, recorder, None, 0, false));
+        return Ok(Seeding::new(
+            seed,
+            recorder,
+            None,
+            0,
+            BTreeSet::new(),
+            false,
+        ));
     };
     let marker = state.join(MARKER);
-    let (from, ran) = match recorded(&marker)? {
+    let (from, rejected, ran) = match recorded(&marker)? {
         None => {
             eprintln!(
                 "b10x-spindle: seed {} ({}): {} entries, submitted one at a time once listening; \
@@ -223,11 +256,18 @@ pub(crate) fn begin(
                 seed.len(),
                 marker.display()
             );
-            (0, false)
+            (0, BTreeSet::new(), false)
         }
         Some(recorded) if recorded.digest == seed.digest => {
             let done = recorded.done.min(seed.len());
-            if done == seed.len() {
+            // Places counted from 1, as recorded, to indices into the entries.
+            let rejected: BTreeSet<usize> = recorded
+                .rejected
+                .iter()
+                .filter(|place| (1..=done).contains(*place))
+                .map(|place| place - 1)
+                .collect();
+            if done == seed.len() && rejected.is_empty() {
                 eprintln!(
                     "b10x-spindle: seed {} ({}) already ran on the state {}, as {} records: no \
                      entry is sent",
@@ -237,9 +277,22 @@ pub(crate) fn begin(
                     marker.display()
                 );
             } else {
+                let places: Vec<String> = rejected
+                    .iter()
+                    .map(|index| (index + 1).to_string())
+                    .collect();
+                let again = if places.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        ", but entries {} were rejected there and are sent again first",
+                        places.join(", ")
+                    )
+                };
                 eprintln!(
-                    "b10x-spindle: seed {} ({}): {} entries, the first {done} done on the state \
-                     {}, as {} records; the {} after them submitted one at a time once listening",
+                    "b10x-spindle: seed {} ({}): {} entries, the first {done} sent on the state \
+                     {}, as {} records{again}; the {} after them are submitted one at a time once \
+                     listening",
                     seed.path.display(),
                     seed.digest,
                     seed.len(),
@@ -248,7 +301,8 @@ pub(crate) fn begin(
                     seed.len() - done
                 );
             }
-            (done, done == seed.len())
+            let ran = done == seed.len() && rejected.is_empty();
+            (done, rejected, ran)
         }
         Some(recorded) => {
             let rows: usize = host
@@ -278,10 +332,10 @@ pub(crate) fn begin(
                 state.display(),
                 recorded.digest
             );
-            (0, false)
+            (0, BTreeSet::new(), false)
         }
     };
-    let seeding = Seeding::new(seed, recorder, Some(marker), from, ran);
+    let seeding = Seeding::new(seed, recorder, Some(marker), from, rejected, ran);
     seeding
         .mark()
         .with_context(|| format!("writing the seed marker in {}", state.display()))?;
@@ -378,6 +432,11 @@ pub(crate) struct Seeding {
     failed: bool,
     /// The marker of the `--state` directory, where the run has one ([`MARKER`]).
     marker: Option<PathBuf>,
+    /// The entries before `next` that a start sends again before `next`, in the file's order:
+    /// those the marker recorded rejected.
+    retry: Vec<usize>,
+    /// The entries before `next` whose last sending was rejected, which the marker records.
+    rejected_at: BTreeSet<usize>,
 }
 
 /// What became of one entry.
@@ -391,35 +450,46 @@ enum Became {
 }
 
 impl Seeding {
-    /// `seed` about to be submitted from its entry `from` (counted from 0), its counts noted on
-    /// `recorder` from now on and the entries done written to `marker`. With `ran`, every entry was
-    /// done before this start: the run has ended and prints no end line.
+    /// `seed` about to be submitted from its entry `from` (counted from 0), the entries `rejected`
+    /// before it sent again first, its counts noted on `recorder` from now on and the entries done
+    /// written to `marker`. The request ids of the entries before `from` that were not rejected
+    /// are remembered, as if this start had sent them. With `ran`, every entry was done before
+    /// this start: the run has ended and prints no end line.
     fn new(
         seed: Seed,
         recorder: Option<Recorder>,
         marker: Option<PathBuf>,
         from: usize,
+        rejected: BTreeSet<usize>,
         ran: bool,
     ) -> Self {
         let next = from.min(seed.len());
+        let submitted = seed.entries[..next]
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !rejected.contains(index))
+            .map(|(_, entry)| entry.request_id.clone())
+            .collect();
         let seeding = Self {
             ended: ran,
             seed,
             next,
-            submitted: BTreeSet::new(),
+            submitted,
             counts: SeedCounts::default(),
             earlier: SeedCounts::default(),
             recorder,
             rejected: 0,
             failed: false,
             marker,
+            retry: rejected.iter().copied().collect(),
+            rejected_at: rejected,
         };
         seeding.note();
         seeding
     }
 
     /// Writes to the marker, where the run has one, the entries done: every entry before the
-    /// next.
+    /// next, but those whose last sending was rejected.
     fn mark(&self) -> std::io::Result<()> {
         let Some(marker) = &self.marker else {
             return Ok(());
@@ -427,6 +497,7 @@ impl Seeding {
         let recorded = Recorded {
             digest: self.seed.digest.clone(),
             done: self.next,
+            rejected: self.rejected_at.iter().map(|index| index + 1).collect(),
         };
         record(marker, &recorded)
     }
@@ -445,15 +516,17 @@ impl Seeding {
     }
 
     /// Where a reset loaded a world in place of the seed: the run under way is cut
-    /// ([`Seeding::cut`]) and the marker reads every entry done, so a restart sends none.
+    /// ([`Seeding::cut`]) and the marker reads every entry done, none rejected, so a restart sends
+    /// none.
     pub(crate) fn loaded(&mut self) {
         self.cut();
+        self.rejected_at.clear();
         self.marked();
     }
 
     /// Whether an entry is left to submit.
     pub(crate) fn pending(&self) -> bool {
-        self.next < self.seed.entries.len()
+        !self.retry.is_empty() || self.next < self.seed.entries.len()
     }
 
     /// Ends the seed run under way where a reset emptied the stores it wrote: its entries not yet
@@ -461,12 +534,13 @@ impl Seeding {
     /// what it counted so far. A run that already ended is left as it is
     /// (`story:reset-reapplies-seed`).
     pub(crate) fn cut(&mut self) {
-        let left = self.seed.entries.len().saturating_sub(self.next);
+        let left = self.retry.len() + self.seed.entries.len().saturating_sub(self.next);
         if left > 0 {
             eprintln!(
                 "b10x-spindle: seed {}: a reset dropped the {left} entries not yet sent",
                 self.seed.path.display()
             );
+            self.retry.clear();
             self.next = self.seed.entries.len();
         }
         self.end();
@@ -488,6 +562,8 @@ impl Seeding {
         self.counts = SeedCounts::default();
         self.rejected = 0;
         self.next = 0;
+        self.retry.clear();
+        self.rejected_at.clear();
         self.marked();
         self.submitted.clear();
         self.ended = false;
@@ -545,14 +621,22 @@ impl Seeding {
     /// another exchange ([`Seeding::failed`]). A
     /// refusal is printed with the entry's place, command, request id and error name; a command an
     /// entry's events led to that did not run is printed as `run` prints one a request led to.
-    /// Once the entry is done the marker counts it ([`MARKER`]), whatever became of it.
+    /// An entry the marker recorded rejected is sent again before the next one. Once the entry is
+    /// sent the marker counts it ([`MARKER`]), and records it rejected where it was.
     pub(crate) fn step(&mut self, host: &mut Host) {
-        let Some(entry) = self.seed.entries.get(self.next) else {
+        let index = if self.retry.is_empty() {
+            self.next
+        } else {
+            self.retry.remove(0)
+        };
+        let Some(entry) = self.seed.entries.get(index) else {
             self.end();
             return;
         };
-        let place = self.next + 1;
-        self.next += 1;
+        let place = index + 1;
+        if index == self.next {
+            self.next += 1;
+        }
         self.counts.sent += 1;
         let became = if self.submitted.contains(&entry.request_id) {
             Became::AlreadyThere
@@ -565,6 +649,11 @@ impl Seeding {
             }
             became
         };
+        if matches!(became, Became::Rejected(_)) {
+            self.rejected_at.insert(index);
+        } else {
+            self.rejected_at.remove(&index);
+        }
         match became {
             Became::Applied => self.counts.applied += 1,
             Became::AlreadyThere => self.counts.already_there += 1,

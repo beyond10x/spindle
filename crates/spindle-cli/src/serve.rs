@@ -485,6 +485,21 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             );
             continue;
         }
+        if exchange.console() == Some(Console::Reset)
+            && let Some(state) = serving.state
+        {
+            // A run without a seed on a `--state`: a reset that empties the state or loads a world
+            // leaves no seed's entries done, so the marker goes (story:seed-once-on-durable-state).
+            let answer = console::reset(&mut host, exchange.body(), Some(&worlds));
+            if answer.status == 200 {
+                if let Some(recorder) = recorder.as_ref() {
+                    recorder.count_reset();
+                }
+                crate::seed::forget(state);
+            }
+            exchange.respond(answer);
+            continue;
+        }
         for failed in exchange.serve_with(&mut host, &worlds) {
             let binding = match &failed.cause {
                 Cause::Delivered { binding } | Cause::Tick { binding } => binding.as_str(),
