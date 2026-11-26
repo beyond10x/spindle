@@ -31,7 +31,7 @@ scope:
   path: crates/spindle-ingress/tests/spindle-ingress/main.rs
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 24
+revision: 25
 ---
 # The serve loop's signal exit takes no exchange and drops no answer
 
@@ -53,8 +53,8 @@ pre-existing.
   seeded reset exchange, the reset's own first seed entry is held, then SIGTERM: the client reads
   200 once that entry is done, the run exits 143, and a restart on the same `--state` without
   `--seed` holds the rows the reset's seed applied before the signal (D2 A).
-- `a_refused_reset_taken_after_a_signal_is_answered`: the same with a reset refused 400: the client
-  reads the 400.
+- `a_refused_answer_handed_before_close_is_written`: in `spindle-ingress`, a 400 answer to a reset
+  handed to the listener, then the listener closed: the client reads the 400, never EOF.
 - `a_request_queued_at_the_signal_reads_503`: a start-up seed entry is held, a seeded reset is sent
   and still queued when SIGTERM arrives: it is not taken, the client reads 503, never a closed
   connection, and a restart on the same `--state` without `--seed` holds the rows the start-up seed
