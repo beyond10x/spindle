@@ -3,7 +3,9 @@
 //! ```json
 //! {"rows": [{"entity": "<entity>", "identity": <identity>, "state": "<State>",
 //!            "fields": {"<field>": <value>}}],
-//!  "decisions": {"<outcome>": true, "<command>": {"<outcome>": false}},
+//!  "decisions": {"<outcome>": true, "<command>": {"<outcome>": false},
+//!                "rules": [{"command": "<command>", "outcome": "<outcome>", "answer": true,
+//!                           "when": {"input.<field>": <value>}}]},
 //!  "mint": 7}
 //! ```
 //!
