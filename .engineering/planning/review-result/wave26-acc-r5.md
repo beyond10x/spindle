@@ -13,7 +13,7 @@ relations:
 - reviews: story:scenario-act-without-outcome
 - reviews: story:scenario-without-components
 - reviews: story:release-linux-glibc-floor-and-musl
-revision: 1
+revision: 2
 ---
 approve
 
@@ -21,7 +21,7 @@ Round 4's one finding is resolved, and nothing new in the acceptance lane would 
 
 - **`story:clock-and-mint-in-every-mode`, `a_line_moves_the_clock`:** the guard is now fixed as `now < 2026-06-01T00:00:00Z`. It is true on February 1st and false on any system clock after 2026-06-01, so a run that ignores `--clock` cannot pass. The same contrast holds for `a_served_run_starts_on_the_clock_flag` and for the scenario bullet (`holds` and exit 0, against exit 1 without `--clock`). Citation: `.engineering/planning/story/clock-and-mint-in-every-mode.md:28-44`.
 - **Rounds 1 to 3:** all still resolved. The bullets now name observable results, F1a to F6 are enumerated, and the aarch64 and `debian:bookworm` checks are present. The exit-3 refusal bullet is in `story:scenario-without-components`, `defined(<field>)` is required in `story:guard-over-absent-row-field`, and the release acceptance is split into what is read on the PR and what is read at the next tag.
-- **Privacy:** a grep of all eight bodies for `/home`, `timo`, `.local`, `@`, URLs and `worktree` found nothing identifying. The one hit is the generic phrase "worktree root" in `story:guard-over-absent-row-field`.
+- **Privacy:** a grep of all eight bodies for `/home`, the owner's name, `.local`, `@`, URLs and `worktree` found nothing identifying. The one hit is the generic phrase "worktree root" in `story:guard-over-absent-row-field`.
 
 What I read: 8 stories in full with `aep plan artifact show story:<id>`, namely related-selector-rows-quantifier, guard-over-absent-row-field, view-filter-parameter-literal, run-fails-on-rejected-line, clock-and-mint-in-every-mode, scenario-act-without-outcome, scenario-without-components and release-linux-glibc-floor-and-musl. I also read `.engineering/waves/wave-26.md` and `review-result:wave26-acc-r1` to `-r4`. The branch head is `364ab3fac`.
 
