@@ -163,15 +163,15 @@ fn an_at_is_read_as_an_instant_whatever_its_offset() {
     assert_eq!(printed[3]["outcome"], "early", "{printed:?}");
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let named: Vec<&str> = stderr.lines().filter(|line| line.contains("line ")).collect();
+    let named: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.contains("line "))
+        .collect();
+    assert!(named.iter().any(|line| line.contains("line 3")), "{stderr}");
     assert!(
-        named.iter().any(|line| line.contains("line 3")),
-        "{stderr}"
-    );
-    assert!(
-        named
-            .iter()
-            .all(|line| !line.contains("line 1") && !line.contains("line 2") && !line.contains("line 4")),
+        named.iter().all(|line| !line.contains("line 1")
+            && !line.contains("line 2")
+            && !line.contains("line 4")),
         "{stderr}"
     );
 }
@@ -399,7 +399,12 @@ fn sent(address: SocketAddr, method: &str, path: &str, body: &str) -> (u16, Valu
 /// Adds a book titled `title` on the served-world run at `address`: the identity it minted.
 fn add(address: SocketAddr, title: &str) -> String {
     let (method, path) = route(SERVED_WORLD, "library", ADD_BOOK);
-    let (status, answer) = sent(address, &method, &path, &json!({"title": title}).to_string());
+    let (status, answer) = sent(
+        address,
+        &method,
+        &path,
+        &json!({"title": title}).to_string(),
+    );
     assert!((200..300).contains(&status), "{status} {answer}");
     answer["published"][0]["payload"]["book_id"]
         .as_str()
@@ -469,7 +474,13 @@ fn a_served_seeded_mint_binding_given_a_mint_seed_listens() {
     let laptop = add(
         serve(
             SERVED_WORLD,
-            &["--environment", LAPTOP, "--answer-default", "--mint-seed", "7"],
+            &[
+                "--environment",
+                LAPTOP,
+                "--answer-default",
+                "--mint-seed",
+                "7",
+            ],
         )
         .address,
         "One",
