@@ -19,6 +19,14 @@ are Spindle's releases.
   out is unknown and refuses the read unless a guard such as `not defined(param.x)` decides it.
   Any other leaf still refuses the view whole, naming its filter
   (`story:view-filter-parameter-literal`).
+- `run` reading stdin fires the specification's event bindings, routed as a served run routes
+  them, on its one store: each command a binding maps a line's events to runs in the same step and
+  prints its result after the line's own, with `"caused_by": {"line": <n>, "binding": "<id>"}` and
+  `"attempts"`, and its events fire bindings in turn. A bound command that is refused or does not
+  run fails the run after the last line. `--drop-retries` is accepted on stdin, where it was
+  refused. A binding a served run refuses (such as `on_failure: escalate`) now stops a stdin run
+  with exit 1 before any line is read, where it was ignored; a specification that declares no
+  component routes its bindings as the one implied component (`story:stdin-run-fires-bindings`).
 
 ### Fixed
 

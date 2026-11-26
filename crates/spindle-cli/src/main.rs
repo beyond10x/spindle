@@ -6,6 +6,7 @@ mod conform;
 mod database;
 mod decisions;
 mod deploy;
+mod lines;
 mod replay;
 mod scaled;
 mod seed;
@@ -24,12 +25,11 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use decisions::Answers;
 use signal_hook::consts::{SIGINT, SIGTERM};
 use spindle_capability::{Admission, Capability, Environment, Requirements};
 use spindle_cli::cli::{Cli, Command, StateCommand, StoreCommand};
 use spindle_host::{Host, HostError, rally};
-use spindle_kernel::{External, MemoryStore, SqliteStore, Store};
+use spindle_kernel::{MemoryStore, SqliteStore, Store};
 
 /// Exit status of an `admit` the environment refused.
 const REFUSED: u8 = 3;
@@ -675,13 +675,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
             spec.display()
         );
     }
-    if drop_retries {
-        bail!(
-            "nothing in {} requires ingress.network, and run reading stdin carries no binding, so \
-             --drop-retries would be ignored",
-            spec.display()
-        );
-    }
+    let bindings = lines::Bindings::new(spec, &loaded.ir, drop_retries)?;
     let scratch;
     let _lock;
     let mut store: Box<dyn Store> = match (durable, state) {
@@ -738,13 +732,15 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     let mut read = 0_usize;
-    let mut rejected: Vec<(usize, String)> = Vec::new();
+    let mut invoked = 0_usize;
+    let mut rejected: Vec<String> = Vec::new();
     for (index, line) in std::io::stdin().lock().lines().enumerate() {
         let line = line.context("reading stdin")?;
         if line.trim().is_empty() {
             continue;
         }
         read += 1;
+        let mut fired = Vec::new();
         let result = match serde_json::from_str::<Request>(&line) {
             Err(error) => serde_json::json!({
                 "failure": {"kind": "invalid_request", "message": error.to_string()},
@@ -756,38 +752,48 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 }),
                 Ok(moved) => {
                     let now = move || moved.unwrap_or_else(std::time::SystemTime::now);
-                    let result = answer(
-                        &loaded.ir,
-                        store.as_mut(),
-                        answers.answers(),
-                        &calls,
-                        &request,
-                        mint.as_mut(),
-                        &now,
-                    );
+                    let mut running = lines::Running {
+                        ir: &loaded.ir,
+                        store: store.as_mut(),
+                        answers: answers.answers(),
+                        calls: &calls,
+                        mint: mint.as_mut(),
+                        now: &now,
+                    };
+                    let (result, events) = answer(&mut running, &request);
                     // A rejected line did not run, so the clock stays where it stood.
                     if result.get("failure").is_none() {
                         clock = moved;
                     }
+                    fired = bindings.fire(&mut running, index + 1, events);
                     result
                 }
             },
         };
         if let Some(failure) = result.get("failure") {
-            let kind = failure["kind"].as_str().unwrap_or_default().to_owned();
-            rejected.push((index + 1, kind));
+            let kind = failure["kind"].as_str().unwrap_or_default();
+            rejected.push(format!(
+                "line {} was rejected ({kind}): it did not run",
+                index + 1
+            ));
         }
         writeln!(out, "{result}")?;
+        invoked += fired.len();
+        for fired in fired {
+            rejected.extend(fired.rejected);
+            writeln!(out, "{}", fired.line)?;
+        }
         out.flush()?;
     }
     if rejected.is_empty() {
         return Ok(ExitCode::SUCCESS);
     }
-    for (line, kind) in &rejected {
-        eprintln!("b10x-spindle: line {line} was rejected ({kind}): it did not run");
+    for rejection in &rejected {
+        eprintln!("b10x-spindle: {rejection}");
     }
     eprintln!(
-        "b10x-spindle: {} rejected of {read} commands read, so the run exits 1",
+        "b10x-spindle: {} rejected of {read} lines read and {invoked} commands their bindings \
+         invoked, so the run exits 1",
         rejected.len()
     );
     Ok(ExitCode::FAILURE)
@@ -856,44 +862,27 @@ fn moved(
     Ok(Some(instant))
 }
 
-/// The result line for one request: a cause bound to an HTTP call is answered by it, any other by
-/// the line's own `external` object, then as `answers` answer it. Every identity and generated
-/// value is minted by `mint`, and `now` is the instant every guard and generated `Timestamp` reads.
+/// The result line for one request, and the events its command emitted where it took effect: a
+/// cause bound to an HTTP call is answered by it, any other by the line's own `external` object,
+/// then as the run's answers answer it. Every identity and generated value is minted by the
+/// run's mint, and its clock is the instant every guard and generated `Timestamp` reads.
 fn answer(
-    ir: &spindle_spec::EssIr,
-    store: &mut dyn Store,
-    answers: &Answers,
-    calls: &calls::Calls,
+    running: &mut lines::Running<'_>,
     request: &Request,
-    mint: &mut dyn spindle_kernel::Mint,
-    now: &dyn Fn() -> std::time::SystemTime,
-) -> serde_json::Value {
-    let mut decider = |question: &External<'_>| {
-        calls
-            .answer(question)
-            .unwrap_or_else(|| answers.decide(&request.external, question))
-    };
+) -> (serde_json::Value, Vec<spindle_kernel::Event>) {
     let invocation = spindle_kernel::Invocation {
         command: &request.command,
         input: &request.input,
         actor: request.actor.as_deref(),
         caller: request.caller.as_ref(),
     };
-    match spindle_kernel::execute_as(ir, store, &mut decider, mint, now, &invocation) {
-        Ok(executed) => {
-            let mut result = serde_json::json!({"command": request.command});
-            if let (Some(object), Ok(serde_json::Value::Object(fields))) =
-                (result.as_object_mut(), serde_json::to_value(&executed))
-            {
-                object.extend(fields);
-            }
-            result
-        }
-        Err(error) => serde_json::json!({
-            "command": request.command,
-            "failure": {"kind": error.kind(), "message": error.to_string()},
-        }),
-    }
+    let result = running.execute(&invocation, &request.external);
+    let printed = lines::printed(&request.command, &result);
+    let events = match result {
+        Ok(executed) if executed.error.is_none() => executed.events,
+        _ => Vec::new(),
+    };
+    (printed, events)
 }
 
 /// One line per command the kernel refuses whole and per other outcome it does not take, of each

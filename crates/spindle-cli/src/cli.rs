@@ -89,11 +89,20 @@ pub enum Command {
     /// Exits 3, running nothing, when admission is refused. At startup it prints on stderr the
     /// same lines `admit` prints for outcomes and commands the kernel does not run.
     ///
+    /// The event bindings fire as a served run fires them, on the run's one store: each command a
+    /// binding maps an emitted event to runs in the same step, sent as no actor, and prints its
+    /// result on a line of its own after the line's, with `"caused_by": {"line": <n>, "binding":
+    /// "<id>"}` and `"attempts"`; the events it emits fire bindings in turn. A specification that
+    /// declares no component routes them as one implied component. A binding a served run would
+    /// refuse (such as `on_failure: escalate`) exits 1 before any line is read.
+    ///
     /// A line whose result is a failure was rejected: it is not JSON, names no declared command,
     /// its input is not admitted, its external cause is unanswered, or the kernel refused it
-    /// before an outcome. The run answers every line, then names each rejected line on stderr by
-    /// its place in the input, counted from 1, and exits 1; with none rejected it exits 0. A line
-    /// answered by a declared outcome, a refusing one included, is not rejected.
+    /// before an outcome. A command a binding invoked is rejected where it is refused or does not
+    /// run. The run answers every line, then names each rejected line on stderr by its place in
+    /// the input, counted from 1, with the binding of each rejected command it caused, and exits
+    /// 1; with none rejected it exits 0. A line answered by a declared outcome, a refusing one
+    /// included, is not rejected.
     ///
     /// An external cause the line does not answer is answered by `--decisions`, then by
     /// `--answer-default`; one nothing answers fails that line, naming the outcome, and the run
@@ -194,8 +203,8 @@ pub enum Command {
     /// world that does not validate is refused `400` and changes nothing.
     ///
     /// An event binding with `on_failure: retry` runs its command again at once after each
-    /// attempt that fails, up to 5 attempts, unless `--drop-retries` is given; one with
-    /// `on_failure: escalate` exits 1 before listening.
+    /// attempt that fails, up to 5 attempts, unless `--drop-retries` is given, served or on stdin;
+    /// one with `on_failure: escalate` exits 1 before listening or reading stdin.
     Run {
         /// The specification directory.
         spec: PathBuf,
@@ -210,8 +219,8 @@ pub enum Command {
         state: Option<PathBuf>,
         /// Run each event binding that retries on failure (`on_failure: retry`, or a per-refusal
         /// policy that retries some refusal) as a `drop` binding: a failed invocation is dropped,
-        /// not retried. Prints one line per such binding on stderr before listening. Only where `run`
-        /// serves HTTP.
+        /// not retried. Prints one line per such binding on stderr before listening or reading
+        /// stdin.
         #[arg(long, conflicts_with = "scenario")]
         drop_retries: bool,
         /// An `ess-http/1` binding of the specification's commands and views to methods and paths,

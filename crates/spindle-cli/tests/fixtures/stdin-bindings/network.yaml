@@ -1,0 +1,139 @@
+format: ess/34
+system: desk
+version: v1
+summary: Tickets a clerk opens and a binding files, each filing archived once.
+domains:
+  - desk.tickets
+components:
+  - component: front
+    summary: Opens tickets, files them and archives filings.
+    owns:
+      domains:
+        - desk.tickets
+    accepts:
+      commands:
+        - desk.tickets.OpenTicket
+        - desk.tickets.FileTicket
+        - desk.tickets.ArchiveFiling
+    publishes:
+      events:
+        - desk.tickets.TicketOpened
+        - desk.tickets.TicketFiled
+        - desk.tickets.FilingArchived
+    reached_by: network
+bindings:
+  - id: file-ticket
+    when:
+      event: desk.tickets.TicketOpened
+    invoke:
+      command: desk.tickets.FileTicket
+    mapping:
+      ticket_id: event.ticket_id
+      copies: event.copies
+    delivery: at_most_once
+    on_failure: retry
+domain: desk.tickets
+entities:
+  - name: desk.tickets.Ticket
+    identity:
+      name: ticket_id
+      type: String
+    fields:
+      - name: copies
+        type: Integer
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+  - name: desk.tickets.Filing
+    identity:
+      name: ticket_id
+      type: String
+    fields:
+      - name: copies
+        type: Integer
+    invariants:
+      - copies <= 9
+    lifecycle:
+      initial: Filed
+      states: [Filed, Archived]
+      terminal: [Archived]
+      transitions:
+        - name: archive
+          from: [Filed]
+          to: Archived
+errors:
+  - name: desk.tickets.NothingToFile
+    summary: A ticket with no copies is not filed.
+    fields: []
+  - name: desk.tickets.NoSuchFiling
+    summary: No filing carries the id.
+    fields: []
+commands:
+  - name: desk.tickets.OpenTicket
+    input:
+      - name: ticket_id
+        type: String
+      - name: copies
+        type: Integer
+    outcomes:
+      - name: opened
+        creates: desk.tickets.Ticket
+        instance: ticket_id
+        sets:
+          copies: input.copies
+        emits: [desk.tickets.TicketOpened]
+        payload:
+          desk.tickets.TicketOpened: {ticket_id: input.ticket_id, copies: input.copies}
+        summary: The ticket is opened with its copies.
+  - name: desk.tickets.FileTicket
+    input:
+      - name: ticket_id
+        type: String
+      - name: copies
+        type: Integer
+    outcomes:
+      - name: declined
+        when: copies == 0
+        error: desk.tickets.NothingToFile
+        summary: A ticket with no copies is not filed.
+      - name: filed
+        creates: desk.tickets.Filing
+        instance: ticket_id
+        sets:
+          copies: input.copies
+        emits: [desk.tickets.TicketFiled]
+        payload:
+          desk.tickets.TicketFiled: {ticket_id: input.ticket_id}
+        summary: The ticket is filed; more than nine copies break the filing's invariant.
+  - name: desk.tickets.ArchiveFiling
+    input:
+      - name: ticket_id
+        type: String
+    outcomes:
+      - name: no-such-filing
+        unknown_instance: true
+        error: desk.tickets.NoSuchFiling
+        summary: No filing carries the id.
+      - name: archived
+        moves: desk.tickets.Filing.archive
+        instance: ticket_id
+        emits: [desk.tickets.FilingArchived]
+        payload:
+          desk.tickets.FilingArchived: {ticket_id: input.ticket_id}
+        summary: The filing is archived.
+events:
+  - name: desk.tickets.TicketOpened
+    fields:
+      - name: ticket_id
+        type: String
+      - name: copies
+        type: Integer
+  - name: desk.tickets.TicketFiled
+    fields:
+      - name: ticket_id
+        type: String
+  - name: desk.tickets.FilingArchived
+    fields:
+      - name: ticket_id
+        type: String

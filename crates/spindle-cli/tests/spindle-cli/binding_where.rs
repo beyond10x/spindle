@@ -2,8 +2,8 @@
 //! invokes the command for a payload that matches and nothing for one that does not, reporting
 //! nothing as failed, as ESS 0.90.0's interpreter does on the same specification; and `conform`
 //! runs ESS's suite for it, every scenario the in-process target can observe ending as the
-//! interpreter ends it (story:binding-where-condition). `run` reading stdin carries no binding, so
-//! the host is driven directly.
+//! interpreter ends it (story:binding-where-condition). The host is driven directly, so each
+//! invocation is read from its report.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
