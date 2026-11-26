@@ -1636,11 +1636,17 @@ impl Host {
     ///   (`book_id == param.id`, `person_id.name == holder`), or ordered against one where ESS
     ///   orders both and they are of one scalar kind (`started_at > person_id.joined_at`);
     /// - `defined(param.<name>)` or `defined(<field>)`;
+    /// - a parameter compared with a literal of its type (`param.label == ""`,
+    ///   `param.direction == all`), the count of a list parameter among them
+    ///   (`param.kinds.count == 0`);
+    /// - a text field, a text parameter or an element of a list parameter tested by
+    ///   `equals_ignore_case` or `in_ignore_case` against text literals, alone or under `trimmed`;
     ///
     /// leaves combined by `any`, `all` and `not`, or under `exists` or `forall` over a list
-    /// parameter or a list field of the row, a list field's element read as a field is and also
-    /// compared with `==` or `!=` to an outer binder. A filter unknown for a row, such as `==`
-    /// with an `Optional` parameter left out, refuses the read, as ESS's interpreter refuses it;
+    /// parameter or a list field of the row, a list field's element (and a member of it,
+    /// `g.id == param.group`) read as a field is and also compared with `==` or `!=` to an outer
+    /// binder. A filter unknown for a row, such as `==` with an `Optional` parameter left out,
+    /// refuses the read, as ESS's interpreter refuses it;
     /// one unknown only because a path it reads through a reference reads no row (the reference
     /// is empty or names no row) does not hold the row, as the interpreter hides it.
     /// Read from the same store as [`Host::view`], for either consistency. A view that reads

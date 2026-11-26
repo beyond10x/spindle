@@ -55,12 +55,19 @@ const STATE: &str = "state";
 ///   evaluates byte for byte and case-sensitively (`TextOp::holds`);
 /// - `always` or `never`, which ESS evaluates to true and false for every row
 ///   (`exists t in param.tags: (always)`, `story:view-filter-always-and-key`);
+/// - a parameter compared with a literal of its type, as a field is: `param.label == ""`,
+///   `param.assigned == false`, `param.direction == all`; the count of a list parameter is such a
+///   parameter (`param.kinds.count == 0`), `story:view-filter-parameter-literal`;
+/// - a text field, a text parameter or an element of a list parameter tested by
+///   `equals_ignore_case` or `in_ignore_case` against text literals, which ESS folds ASCII
+///   only (`FoldOp::holds`), alone or under `trimmed`, which trims only the tested text;
 ///
 /// leaves combined by `any`, `all` and `not`, or under `exists` or `forall` over a list parameter
 /// or a list field of the row. A list parameter's element is read as a parameter is; a list
-/// field's element as a field is, and is also compared with `==` or `!=` to an outer binder. Any
-/// other filter is named with its text and refused whole, since evaluating part of it would answer
-/// a subset of its rows.
+/// field's element as a field is, a member of it among them (`g.id == param.group`,
+/// `defined(g.name)`), and is also compared with `==` or `!=` to an outer binder. Any other filter
+/// is named with its text and refused whole, since evaluating part of it would answer a subset of
+/// its rows.
 ///
 /// An aggregation (`group_by:` and fields with `aggregate:`) is answered ([`aggregate`]) where
 /// each measure's `where:` is a filter read here, and no field of the view is read through a
@@ -78,13 +85,17 @@ pub(crate) fn unsupported(ir: &EssIr, view: &ResolvedView) -> Option<String> {
     } else {
         match &view.filter {
             Some(filter) if !reads(ir, view, filter) => Some(format!(
-                "the filter `{filter}`; only a field of the row (a member of a struct field \
-                 among them), or of the row a reference names, compared with a literal of its \
-                 type or ordered against `now`, listed `in:` or `none_of:` literals, or compared \
-                 with a parameter or another field, `defined`, a text field tested by \
-                 `contains`, `starts_with` or `ends_with` against a text literal or parameter, \
-                 and `always` and `never`, combined by `any`, `all` and `not` or quantified over \
-                 a list parameter or a list field by `exists` or `forall`, are read"
+                "the filter `{filter}`; only a field of the row (a member of a struct field or \
+                 of a list field's element among them), or of the row a reference names, \
+                 compared with a literal of its type or ordered against `now`, listed `in:` or \
+                 `none_of:` literals, or compared with a parameter or another field, a \
+                 parameter (or a list parameter's count) compared with a literal of its type, \
+                 `defined`, a text field tested by `contains`, `starts_with` or `ends_with` \
+                 against a text literal or parameter, a text field or parameter tested by \
+                 `equals_ignore_case` or `in_ignore_case` against text literals, alone or under \
+                 `trimmed`, and `always` and `never`, combined by `any`, `all` and `not` or \
+                 quantified over a list parameter or a list field by `exists` or `forall`, are \
+                 read"
             )),
             _ => None,
         }
@@ -206,6 +217,29 @@ impl<'a> Scope<'a> {
                     resolution: self.resolve(fields, &path)?,
                 })
             }
+            [namespace, name, count] if namespace == ViewSpec::PARAM && count == "count" => {
+                let list = self.resolve(self.params, &FactPath::from_segments([name.clone()]))?;
+                if !matches!(list.terminal, ResolvedTypeRef::List { .. }) {
+                    return None;
+                }
+                let (fields, path) = self.source(path);
+                Some(Typed {
+                    row: false,
+                    binder: false,
+                    resolution: self.resolve(fields, &path)?,
+                })
+            }
+            [root, members @ ..]
+                if !members.is_empty() && self.binders.iter().any(|binder| binder.name == root) =>
+            {
+                let binder = self
+                    .binders
+                    .iter()
+                    .rev()
+                    .find(|binder| binder.name == root)
+                    .filter(|binder| binder.row)?;
+                self.element_member(binder, members)
+            }
             [root, member] if !self.binders.iter().any(|binder| binder.name == root) => {
                 let Some((reference, _)) = self.view.navigated(self.ir, path) else {
                     return self.member(path);
@@ -254,6 +288,39 @@ impl<'a> Scope<'a> {
             row: true,
             binder: false,
             resolution: self.resolve(self.fields, path)?,
+        })
+    }
+
+    /// What `<binder>.<members>` names where `binder` walks a list field of the row: a member of
+    /// the struct its element is, each member after the first one of the struct the one before
+    /// holds, through `Optional` (`g.id` for `exists g in groups`,
+    /// `story:view-filter-parameter-literal`). ESS reads it at the element's own path
+    /// (`groups.<n>.id`, `Element::rebind`), where `ess-conformance` binds a list element's struct
+    /// members (`input::bind`). `None` for any other path: a list's element or count, a text's
+    /// length, a member of an element of a list parameter.
+    fn element_member(&self, binder: &Binder<'_>, members: &[String]) -> Option<Typed> {
+        let mut held = self.resolve(self.fields, &binder.element)?.terminal;
+        for member in members {
+            held = self
+                .structure(&held)?
+                .iter()
+                .find(|field| &field.name == member)?
+                .type_ref
+                .clone();
+        }
+        let path = FactPath::from_segments(
+            binder
+                .element
+                .segments()
+                .iter()
+                .chain(members)
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
+        Some(Typed {
+            row: true,
+            binder: false,
+            resolution: self.resolve(self.fields, &path)?,
         })
     }
 
@@ -308,8 +375,7 @@ impl<'a> Scope<'a> {
                 right: Operand::Fact(path),
                 ..
             } => self.typed(path).is_some_and(|typed| {
-                typed.row
-                    && fits(&typed.resolution, literal)
+                fits(&typed.resolution, literal)
                     && (matches!(op, CompareOp::Eq | CompareOp::Ne) || ordered(&typed.resolution))
             }),
             Predicate::AnyOf { path, values } | Predicate::NoneOf { path, values } => {
@@ -335,6 +401,20 @@ impl<'a> Scope<'a> {
                         TextOperand::Fact { .. } => false,
                     }
             }),
+            Predicate::FoldMatch { path, values, .. } => self.typed(path).is_some_and(|typed| {
+                typed.resolution.scalar == Some(ScalarKind::Text)
+                    && values
+                        .iter()
+                        .all(|value| matches!(value, FactValue::Text(_)))
+            }),
+            Predicate::Trimmed(inner) => {
+                matches!(
+                    **inner,
+                    Predicate::AnyOf { .. }
+                        | Predicate::TextMatch { .. }
+                        | Predicate::FoldMatch { .. }
+                ) && self.admits(inner)
+            }
             Predicate::Exists(quantified) | Predicate::Forall(quantified) => {
                 let Collection::Fact(over) = &quantified.over else {
                     return false;
