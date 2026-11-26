@@ -19,6 +19,7 @@
 //! `log2(steps)` replays find the shortest one. The divergence reported is the replay of that
 //! shortest prefix, which runs no step after the divergent one.
 
+use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::Path;
 use std::process::ExitCode;
@@ -30,9 +31,9 @@ use ess_conformance::{
     AdmittedSuite, AdvancingClock, ConformanceScenario, ConformanceSuite, Ids, Runner,
     RunnerConfig, ScenarioId, ScenarioResult, ScenarioStep, Status, SuiteProvenance,
 };
-use spindle_capability::Environment;
+use spindle_capability::{Admission, Environment};
 use spindle_conformance::{Answered, HostTarget, in_memory};
-use spindle_host::HostError;
+use spindle_host::{HostError, Refusal};
 
 /// Exit status of a replay the environment refused.
 const REFUSED: u8 = 3;
@@ -79,16 +80,12 @@ pub(crate) fn replay(spec: &Path, environment: &Path, scenario: &Path) -> Result
     }
 
     if let Err(refusal) = spindle_host::admit(&loaded.ir, &parsed) {
-        println!("{refusal}");
-        return Ok(ExitCode::from(REFUSED));
+        return refused(spec, &refusal);
     }
     let memory = in_memory(&parsed);
     match HostTarget::new(loaded.ir.clone(), memory.clone()).open() {
         Ok(_) => {}
-        Err(HostError::Refused(refusal)) => {
-            println!("{refusal}");
-            return Ok(ExitCode::from(REFUSED));
-        }
+        Err(HostError::Refused(refusal)) => return refused(spec, &refusal),
         Err(error) => return Err(error.into()),
     }
 
@@ -161,6 +158,28 @@ pub(crate) fn replay(spec: &Path, environment: &Path, scenario: &Path) -> Result
     )?;
     out.flush()?;
     Ok(ExitCode::FAILURE)
+}
+
+/// Prints `refusal` of the specification at `spec` and answers [`REFUSED`].
+///
+/// A specification that declares no component was refused as its implied component
+/// ([`spindle_spec::load_with_implied_component`]), a component it never declared: it is refused
+/// in the words stdin `run` uses, every capability it lacks and no component.
+fn refused(spec: &Path, refusal: &Refusal) -> Result<ExitCode> {
+    if spindle_spec::load_model(spec)?.ir.components().is_empty() {
+        let missing = refusal
+            .missing
+            .values()
+            .flatten()
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        println!("{}", serde_json::to_value(Admission::Refused { missing })?);
+    } else {
+        println!("{refusal}");
+    }
+    Ok(ExitCode::from(REFUSED))
 }
 
 /// What replaying one prefix needs.

@@ -449,4 +449,9 @@ fn a_specification_without_components_is_refused_on_a_lacking_environment() {
         !printed.contains("timeline["),
         "no step runs on a refused admission: {printed}"
     );
+    assert_eq!(
+        printed,
+        stdout(&stdin),
+        "the refusal in the words stdin mode uses, naming no component"
+    );
 }
