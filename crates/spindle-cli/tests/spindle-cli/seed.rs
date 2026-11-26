@@ -1221,3 +1221,4 @@ fn a_run_without_a_seed_resets_as_before() {
 }
 
 mod adversary_w25_reseed;
+mod adversary_w25_reseed_r2;
