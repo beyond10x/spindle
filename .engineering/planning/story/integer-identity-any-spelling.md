@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:integer-identity-any-spelling
 kind: story
-status: active
+status: implemented
 title: A command names an Integer identity whatever its spelling
 relations:
 - serves: vision:spindle
@@ -24,10 +24,11 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/integer_identity.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/spindle-kernel/main.rs
-revision: 10
+revision: 11
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-26T21:00:28Z", actor: "human:operator", revision: 8, decided_on: {"recorded":{"review_outcome":20}}}
 - {from: "proposed", to: "active", at: "2026-11-26T21:00:28Z", actor: "human:operator", revision: 9, decided_on: {"recorded":{"review_outcome":20}}}
+- {from: "active", to: "implemented", at: "2026-11-26T23:02:27Z", actor: "human:operator", revision: 11, decided_on: {"recorded":{"test_result":1,"review_outcome":21}}}
 ---
 # A command names an Integer identity whatever its spelling
 

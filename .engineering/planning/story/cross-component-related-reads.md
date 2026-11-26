@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:cross-component-related-reads
 kind: story
-status: active
+status: implemented
 title: A guard or an effect over another component's entity is refused or read from its owner
 summary: Guards and affects entries over an entity another component owns read the running component's store; refuse them by name or read the owner's.
 relations:
@@ -42,10 +42,11 @@ scope:
   path: docs/design/spindle.md
 - confidence: cited
   path: website/docs/concepts/specification.md
-revision: 32
+revision: 33
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-26T21:00:29Z", actor: "human:operator", revision: 31, decided_on: {"recorded":{"review_outcome":20}}}
 - {from: "proposed", to: "active", at: "2026-11-26T21:00:29Z", actor: "human:operator", revision: 32, decided_on: {"recorded":{"review_outcome":20}}}
+- {from: "active", to: "implemented", at: "2026-11-26T23:02:28Z", actor: "human:operator", revision: 33, decided_on: {"recorded":{"test_result":1,"review_outcome":21}}}
 ---
 # A guard or an effect over another component's entity is refused or read from its owner
 
