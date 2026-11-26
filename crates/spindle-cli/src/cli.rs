@@ -147,8 +147,9 @@ pub enum Command {
     /// not served, as above.
     ///
     /// A served request carries no `external` object: its external causes are answered by
-    /// `--decisions`, then by `--answer-default`, each answer per command and outcome, never per
-    /// input value. A request nothing answers is refused `501`, naming the outcome. Without either
+    /// `--decisions`, then by `--answer-default`; a rule of the file answers by the request's
+    /// input, any other answer of the file per command and outcome. A request nothing answers is
+    /// refused `501`, naming the outcome. A reset keeps the decisions file. Without either
     /// flag, a specification that declares an external outcome exits 1 before listening, unless
     /// the environment binds every one of them to an HTTP call.
     ///
@@ -217,7 +218,10 @@ pub enum Command {
         #[arg(long, value_name = "IP", conflicts_with = "scenario")]
         address: Option<std::net::IpAddr>,
         /// A TOML file of answers, `<outcome> = true | false`, at the top level for every command
-        /// or under a `["<command>"]` table for one; a command's table wins over the top level.
+        /// or under a `["<command>"]` table for one, and `[[rules]]` (`command`, `outcome`,
+        /// `answer`, `when = { "input.<field>" = <value> }`) for the requests whose input holds
+        /// every value; the first rule that matches wins, then a command's table, then the top
+        /// level.
         #[arg(long)]
         decisions: Option<PathBuf>,
         /// Answer every remaining external cause "does not hold" on a command that declares a

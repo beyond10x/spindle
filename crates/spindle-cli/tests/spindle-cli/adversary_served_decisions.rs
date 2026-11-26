@@ -298,6 +298,99 @@ fn served_decider_survives_a_console_reset() {
     assert_eq!(answer["outcome"], "flagged", "{answer}");
 }
 
+/// story:decisions-rules-on-input-predicates: a reset's world carrying `decisions.rules` decides
+/// by them until the next reset, laid over the run's decisions file.
+#[test]
+fn a_reset_world_with_rules_decides_by_them() {
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+    let file = decisions(&state, "flagged = false\nescalated = false\n");
+    let served = serve(REVIEW, &state, &["--decisions", &file]);
+    let world = json!({"decisions": {"rules": [{
+        "command": "probe.review.Submit",
+        "outcome": "flagged",
+        "answer": true,
+        "when": {"input.amount": 13},
+    }]}});
+    let (status, answer) = exchange(&served, "POST", "/api/reset", &world);
+    assert_eq!(status, 200, "{answer}");
+    let submit = |id: &str, amount: i64| {
+        call(
+            &served,
+            REVIEW,
+            "probe",
+            "probe.review.Submit",
+            &json!({"submission_id": id, "amount": amount}),
+        )
+    };
+    let (status, answer) = submit("s1", 13);
+    assert!(!(200..300).contains(&status), "{status} {answer}");
+    assert_eq!(
+        answer["outcome"], "flagged",
+        "the world's rule decides: {answer}"
+    );
+    let (status, answer) = submit("s2", 5);
+    assert!((200..300).contains(&status), "{status} {answer}");
+    assert_eq!(
+        answer["outcome"], "submitted",
+        "a request the rule does not match is answered by the file: {answer}"
+    );
+}
+
+/// story:decisions-rules-on-input-predicates: a reset without a world keeps the run's decisions
+/// file, its rules included.
+#[test]
+fn served_decisions_file_rules_survive_a_console_reset() {
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+    let file = decisions(
+        &state,
+        concat!(
+            "flagged = false\n",
+            "escalated = false\n",
+            "\n",
+            "[[rules]]\n",
+            "command = \"probe.review.Submit\"\n",
+            "outcome = \"escalated\"\n",
+            "answer = true\n",
+            "when = { \"input.submission_id\" = \"s1\" }\n",
+        ),
+    );
+    let served = serve(REVIEW, &state, &["--decisions", &file]);
+    let (status, answer) = exchange(&served, "POST", "/api/reset", &Value::Null);
+    assert_eq!(status, 200, "{answer}");
+    for (id, outcome) in [("s1", "escalated"), ("s2", "submitted")] {
+        let (_, answer) = call(
+            &served,
+            REVIEW,
+            "probe",
+            "probe.review.Submit",
+            &json!({"submission_id": id, "amount": 5}),
+        );
+        assert_eq!(answer["outcome"], outcome, "{id}: {answer}");
+    }
+}
+
+/// story:decisions-rules-on-input-predicates: a world's rule over an input its command does not
+/// declare is refused, naming the rule and the entry, and the world is not loaded.
+#[test]
+fn a_reset_world_with_a_rule_over_an_undeclared_input_is_refused() {
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+    let file = decisions(&state, "flagged = false\nescalated = false\n");
+    let served = serve(REVIEW, &state, &["--decisions", &file]);
+    let world = json!({"decisions": {"rules": [{
+        "command": "probe.review.Submit",
+        "outcome": "flagged",
+        "answer": true,
+        "when": {"input.colour": "red"},
+    }]}});
+    let (status, answer) = exchange(&served, "POST", "/api/reset", &world);
+    assert_eq!(status, 400, "{answer}");
+    let text = answer.to_string();
+    assert!(
+        text.contains("rules[0]") && text.contains("input.colour"),
+        "{answer}"
+    );
+}
+
 #[test]
 fn served_decisions_file_naming_an_unknown_command_exits_before_listening() {
     let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
