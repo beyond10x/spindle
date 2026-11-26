@@ -39,6 +39,7 @@ mod adversary_w25_mint_r2;
 mod adversary_w26_u3;
 mod adversary_w26_u4;
 mod adversary_w27_u1;
+mod adversary_w27_u3;
 mod adversary_world;
 mod adversary_world_spec;
 mod binding_shapes;

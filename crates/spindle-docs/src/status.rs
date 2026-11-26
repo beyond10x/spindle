@@ -387,7 +387,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "Form and query requests",
-        "A command an ess-http/1 binding reads as request: {encoding: form} or {encoding: query} is served: its input is read from an application/x-www-form-urlencoded body or from the query string, each value by its field's type as ESS's served application reads it; an undeclared field, one the path carries, or a form body under another Content-Type is refused 400 and writes nothing.",
+        "A command an ess-http/1 binding reads as request: {encoding: form} or {encoding: query} is served: its input is read from an application/x-www-form-urlencoded body or from the query string, each value by its field's type as ESS's served application reads it; an undeclared field, one the path carries, or a form body under another Content-Type is refused 400 and writes nothing. A json or form command whose binding lists request: {query: [input.<field>, ...]} reads those fields from the query string beside its body, a List field from its key repeated, and runs on the joined input; a body naming a listed field is refused 400.",
         "/docs/concepts/capabilities",
         "crates/spindle-cli/tests/spindle-cli/form_query.rs::a_form_encoded_command_runs",
     ),

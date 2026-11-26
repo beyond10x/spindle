@@ -35,6 +35,20 @@ are Spindle's releases.
   to a line not answered before it, or to a pointer its answer lacks, rejects the line
   (`story:stdin-arrange-and-line-references`).
 
+- A command whose `ess-http/1` binding reads some input fields from the query string beside its
+  `json` or `form` body (`request: {query: [input.<field>, ...]}`) is served, where its route
+  answered `501`. Each listed field is read from the query string under its wire name as ESS
+  0.99.1's served application reads it, a `List<T>` field from its key repeated
+  (`tags=a&tags=b`), and joined with the body's fields; the command runs on the joined input. A
+  body member or key naming a listed field is refused `400`, whether the query carries the field
+  or not, and so is a query key no listed field names under `unknown: refuse`, or one given twice
+  (`story:query-input-beside-body`).
+- A served `run` that names a command reading caller attributes not served, because the run
+  neither fixes a caller nor has each request prove one, prints one more stderr line naming both
+  ways to serve it: `--fixed-actor` with `--fixed-caller`, or `--trusted-caller-header` with
+  `--trusted-caller-secret`. The route's reason, its answer and `GET /api/served` are unchanged
+  (`story:caller-attributes-on-loopback`).
+
 ### Fixed
 
 - A command names an `Integer` identity whatever its spelling: one sent as `1.0` finds the row

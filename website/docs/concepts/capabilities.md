@@ -140,9 +140,11 @@ What is served is what ESS derives: each command the component accepts and, for 
 A command's request body is its input as ESS publishes it, less any field the path carries. A
 field the command does not declare is refused. Where the binding says `request: {unknown: ignore}`,
 such a member or key is dropped instead, and one the path carries is dropped when it holds the
-path's value and refused `400` when it holds another. A `multipart` request, `request.query`, a
-request body limit other than 1 MiB and a view with `representations` are not served; `run` names
-each such route at startup.
+path's value and refused `400` when it holds another. Fields the binding lists under
+`request.query` are read from the query string beside the body, under their wire names, a `List`
+field from its key repeated (`tags=a&tags=b`); a body naming one of them is refused `400`. A
+`multipart` request, a request body limit other than 1 MiB and a view with `representations` are
+not served; `run` names each such route at startup.
 
 A view's parameters are read from the query string under their wire names, and each row it
 answers holds its fields under their wire names, an enum variant in its wire spelling and a
