@@ -1,0 +1,52 @@
+domain: helpdesk.log
+summary: One mark for every touch received, under an identity the runtime mints.
+types:
+  - name: helpdesk.log.MarkId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: helpdesk.log.Mark
+    identity:
+      name: mark_id
+      type: helpdesk.log.MarkId
+    fields:
+      - name: ticket_id
+        type: String
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+errors: []
+commands:
+  - name: helpdesk.log.RecordMark
+    input:
+      - name: ticket_id
+        type: String
+    outcomes:
+      - name: marked
+        creates: helpdesk.log.Mark
+        instance: mark_id
+        sets:
+          ticket_id: input.ticket_id
+        emits: [helpdesk.log.Marked]
+        payload:
+          helpdesk.log.Marked:
+            mark_id: {generated: true}
+            ticket_id: input.ticket_id
+        summary: The touch is marked under an identity the runtime mints.
+events:
+  - name: helpdesk.log.Marked
+    fields:
+      - name: mark_id
+        type: helpdesk.log.MarkId
+      - name: ticket_id
+        type: String
+views:
+  - name: helpdesk.log.Marks
+    source: helpdesk.log.Mark
+    consistency: read_your_writes
+    fields:
+      - name: mark_id
+        type: helpdesk.log.MarkId
+      - name: ticket_id
+        type: String
