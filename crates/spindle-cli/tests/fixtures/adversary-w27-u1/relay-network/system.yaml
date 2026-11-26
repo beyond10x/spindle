@@ -1,0 +1,53 @@
+format: ess/34
+system: relay
+version: v1
+summary: A case opened on one component; one binding adds a copy on another component, one a memo on the first, each under an identity the runtime mints.
+domains:
+  - relay.alpha
+  - relay.zulu
+components:
+  - component: alpha
+    summary: Opens cases and keeps memos.
+    owns:
+      domains:
+        - relay.alpha
+    accepts:
+      commands:
+        - relay.alpha.Open
+        - relay.alpha.AddMemo
+    publishes:
+      events:
+        - relay.alpha.Opened
+        - relay.alpha.MemoAdded
+    reached_by: network
+  - component: zulu
+    summary: Keeps copies.
+    owns:
+      domains:
+        - relay.zulu
+    accepts:
+      commands:
+        - relay.zulu.AddCopy
+    publishes:
+      events:
+        - relay.zulu.CopyAdded
+    reached_by: in_process
+bindings:
+  - id: a-zulu
+    when:
+      event: relay.alpha.Opened
+    invoke:
+      command: relay.zulu.AddCopy
+    mapping:
+      case_id: event.case_id
+    delivery: at_most_once
+    on_failure: drop
+  - id: b-alpha
+    when:
+      event: relay.alpha.Opened
+    invoke:
+      command: relay.alpha.AddMemo
+    mapping:
+      case_id: event.case_id
+    delivery: at_most_once
+    on_failure: drop

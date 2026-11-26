@@ -1,0 +1,57 @@
+format: ess/34
+system: memo
+version: v1
+summary: Notes taken with an optional size; a binding records each large note, in a system that declares no component.
+domains:
+  - memo.notes
+bindings:
+  - id: record-large
+    when:
+      event: memo.notes.Noted
+      where: event.size == big
+    invoke:
+      command: memo.notes.Record
+    mapping:
+      note_id: event.note_id
+    delivery: at_most_once
+    on_failure: drop
+domain: memo.notes
+types:
+  - name: memo.notes.Size
+    kind: enum
+    variants: [small, big]
+errors: []
+commands:
+  - name: memo.notes.Note
+    input:
+      - name: note_id
+        type: String
+      - name: size
+        type: Optional<memo.notes.Size>
+    outcomes:
+      - name: noted
+        emits: [memo.notes.Noted]
+        payload:
+          memo.notes.Noted: {note_id: input.note_id, size: input.size}
+        summary: The note is taken.
+  - name: memo.notes.Record
+    input:
+      - name: note_id
+        type: String
+    outcomes:
+      - name: recorded
+        emits: [memo.notes.Recorded]
+        payload:
+          memo.notes.Recorded: {note_id: input.note_id}
+        summary: The note is recorded.
+events:
+  - name: memo.notes.Noted
+    fields:
+      - name: note_id
+        type: String
+      - name: size
+        type: Optional<memo.notes.Size>
+  - name: memo.notes.Recorded
+    fields:
+      - name: note_id
+        type: String
