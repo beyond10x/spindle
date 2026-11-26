@@ -35,7 +35,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: cited
   path: website/docs/status.md
-revision: 23
+revision: 24
 ---
 # A stdin run fires the bindings its commands' events match
 
@@ -57,6 +57,9 @@ only when Spindle serves HTTP, which needs a component `reached_by: network`.
 - `a_refused_bound_command_is_printed_and_fails_the_run`: `C` answering a declared refusing outcome
   prints that outcome on its `caused_by` line; the run reads every line and exits 1, counting `C` as
   rejected (D4 A, story:run-fails-on-rejected-line).
+- `a_rejected_bound_command_is_printed_and_fails_the_run`: `C` rejected by the kernel (no declared
+  outcome, a `failure` answer) prints that failure on its `caused_by` line; the run reads every line
+  and exits 1, counting `C` as rejected (D4 A).
 - `a_binding_the_router_refuses_stops_the_run_before_stdin`: a binding the served run's router
   refuses exits 1 before any line is read, naming the binding, as a served run refuses it (D2 A).
 - `drop_retries_is_accepted_on_stdin`: `--drop-retries` with stdin starts, and a bound command that
