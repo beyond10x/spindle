@@ -1,0 +1,70 @@
+domain: stoop.visit
+summary: A visit recorded, and a note left, for the person who sent it.
+types:
+  - name: stoop.visit.VisitId
+    kind: newtype
+    of: Uuid
+  - name: stoop.visit.PersonId
+    kind: newtype
+    of: Uuid
+actors:
+  - name: stoop.visit.Member
+    attributes:
+      - name: person_id
+        type: stoop.visit.PersonId
+    may:
+      - stoop.visit.RecordVisit
+      - stoop.visit.NoteVisit
+commands:
+  - name: stoop.visit.RecordVisit
+    input:
+      - name: visit_id
+        type: stoop.visit.VisitId
+    outcomes:
+      - name: recorded
+        emits: [stoop.visit.VisitRecorded]
+        payload:
+          stoop.visit.VisitRecorded:
+            visit_id: input.visit_id
+            person_id: {caller: person_id}
+        summary: The visit is recorded for the person the request proves.
+  - name: stoop.visit.NoteVisit
+    input:
+      - name: visit_id
+        type: stoop.visit.VisitId
+    outcomes:
+      - name: noted
+        emits: [stoop.visit.VisitNoted]
+        payload:
+          stoop.visit.VisitNoted:
+            visit_id: input.visit_id
+            person_id: {caller: person_id}
+        summary: The note is left for the person the request proves.
+  - name: stoop.visit.WaveVisit
+    input:
+      - name: visit_id
+        type: stoop.visit.VisitId
+    outcomes:
+      - name: waved
+        emits: [stoop.visit.VisitWaved]
+        payload:
+          stoop.visit.VisitWaved:
+            visit_id: input.visit_id
+        summary: A wave is published for the visit, from anyone.
+events:
+  - name: stoop.visit.VisitWaved
+    fields:
+      - name: visit_id
+        type: stoop.visit.VisitId
+  - name: stoop.visit.VisitRecorded
+    fields:
+      - name: visit_id
+        type: stoop.visit.VisitId
+      - name: person_id
+        type: stoop.visit.PersonId
+  - name: stoop.visit.VisitNoted
+    fields:
+      - name: visit_id
+        type: stoop.visit.VisitId
+      - name: person_id
+        type: stoop.visit.PersonId

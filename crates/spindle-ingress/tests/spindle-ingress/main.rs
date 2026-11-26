@@ -12,6 +12,7 @@ mod adversary_unpublished_event;
 mod adversary_view_parameters;
 mod adversary_w21_security;
 mod adversary_w22_exposed;
+mod adversary_w27_u3;
 mod always_and_key_routes;
 mod binding_shapes;
 mod concurrent_reads;
