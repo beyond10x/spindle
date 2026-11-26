@@ -45,6 +45,7 @@ mod adversary_store_contract;
 mod adversary_structured_responses;
 #[cfg(feature = "postgres")]
 mod adversary_w21_store;
+mod adversary_w25_guard;
 mod before_row;
 mod caller;
 mod creation_takes_unknown_row;
