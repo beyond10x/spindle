@@ -132,10 +132,12 @@ self_test() {
     # Every Markdown file outside website/ and .engineering/ that a Rust file under crates/ names
     # by its path outside a comment is read by a test, so a change to it must run the tests.
     named=$(cd "$root" && git ls-files '*.md' | while IFS= read -r path; do
+        # Each pattern opens with `(`: macOS's /bin/sh, bash 3.2, cannot parse a bare `pattern)`
+        # inside `$(...)`.
         case $path in
-            website/* | .engineering/* | crates/*) continue ;;
-            */*) ;;
-            *) continue ;;
+            (website/* | .engineering/* | crates/*) continue ;;
+            (*/*) ;;
+            (*) continue ;;
         esac
         if grep -rhF --include='*.rs' "$path" crates | grep -qvE '^[[:space:]]*//'; then
             echo "$path"
