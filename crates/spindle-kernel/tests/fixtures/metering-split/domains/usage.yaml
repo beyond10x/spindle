@@ -1,0 +1,180 @@
+domain: metering.usage
+summary: Accounts of organizations and the usage charged to them, guarded by rows of their own and by holds a second component keeps.
+types:
+  - name: metering.usage.AccountId
+    kind: newtype
+    of: Uuid
+  - name: metering.usage.ChargeId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: metering.usage.Account
+    identity:
+      name: account_id
+      type: metering.usage.AccountId
+    fields:
+      - name: org
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+  - name: metering.usage.Charge
+    identity:
+      name: charge_id
+      type: metering.usage.ChargeId
+    fields:
+      - name: account_id
+        type: metering.usage.AccountId
+    lifecycle:
+      initial: Billed
+      states: [Billed]
+      terminal: [Billed]
+errors:
+  - name: metering.usage.OnHold
+    summary: The organization is on hold.
+    fields: []
+  - name: metering.usage.NoHold
+    summary: No hold carries the id.
+    fields: []
+  - name: metering.usage.AlreadyCharged
+    summary: The account was charged before.
+    fields: []
+commands:
+  - name: metering.usage.OpenAccount
+    input:
+      - name: account_id
+        type: metering.usage.AccountId
+      - name: org
+        type: String
+    outcomes:
+      - name: opened
+        creates: metering.usage.Account
+        instance: account_id
+        sets:
+          org: input.org
+        emits: [metering.usage.AccountOpened]
+        payload:
+          metering.usage.AccountOpened:
+            account_id: input.account_id
+        summary: The account is opened.
+  - name: metering.usage.ChargeUsage
+    input:
+      - name: charge_id
+        type: metering.usage.ChargeId
+      - name: account_id
+        type: metering.usage.AccountId
+    outcomes:
+      - name: on-hold
+        when_related:
+          entity: metering.usage.Account
+          where:
+            all:
+              - account_id == input.account_id
+              - exists:
+                  in: {entity: metering.holds.Hold}
+                  as: hold
+                  that: hold.org == org
+          exists: true
+        error: metering.usage.OnHold
+        summary: The account's organization is on hold.
+      - name: charged
+        creates: metering.usage.Charge
+        instance: charge_id
+        sets:
+          account_id: input.account_id
+        emits: [metering.usage.UsageCharged]
+        payload:
+          metering.usage.UsageCharged:
+            charge_id: input.charge_id
+        summary: The usage is charged.
+  - name: metering.usage.ChargeDirect
+    input:
+      - name: charge_id
+        type: metering.usage.ChargeId
+      - name: account_id
+        type: metering.usage.AccountId
+      - name: org
+        type: String
+    outcomes:
+      - name: on-hold
+        when_related:
+          entity: metering.holds.Hold
+          where: org == input.org
+          exists: true
+        error: metering.usage.OnHold
+        summary: The organization is on hold.
+      - name: charged
+        creates: metering.usage.Charge
+        instance: charge_id
+        sets:
+          account_id: input.account_id
+        emits: [metering.usage.UsageCharged]
+        payload:
+          metering.usage.UsageCharged:
+            charge_id: input.charge_id
+        summary: The usage is charged.
+  - name: metering.usage.ChargeHeld
+    input:
+      - name: charge_id
+        type: metering.usage.ChargeId
+      - name: account_id
+        type: metering.usage.AccountId
+      - name: hold_id
+        type: metering.holds.HoldId
+    outcomes:
+      - name: no-hold
+        when_related:
+          via: input.hold_id
+          exists: false
+        error: metering.usage.NoHold
+        summary: The named hold does not exist.
+      - name: charged
+        creates: metering.usage.Charge
+        instance: charge_id
+        sets:
+          account_id: input.account_id
+        emits: [metering.usage.UsageCharged]
+        payload:
+          metering.usage.UsageCharged:
+            charge_id: input.charge_id
+        summary: The usage is charged against the hold.
+  - name: metering.usage.ChargeOnce
+    input:
+      - name: charge_id
+        type: metering.usage.ChargeId
+      - name: account_id
+        type: metering.usage.AccountId
+    outcomes:
+      - name: already-charged
+        when_related:
+          entity: metering.usage.Account
+          where:
+            all:
+              - account_id == input.account_id
+              - exists:
+                  in: {entity: metering.usage.Charge}
+                  as: charge
+                  that: charge.account_id == account_id
+          exists: true
+        error: metering.usage.AlreadyCharged
+        summary: The account was charged before.
+      - name: charged
+        creates: metering.usage.Charge
+        instance: charge_id
+        sets:
+          account_id: input.account_id
+        emits: [metering.usage.UsageCharged]
+        payload:
+          metering.usage.UsageCharged:
+            charge_id: input.charge_id
+        summary: The usage is charged once.
+events:
+  - name: metering.usage.AccountOpened
+    fields:
+      - name: account_id
+        type: metering.usage.AccountId
+  - name: metering.usage.UsageCharged
+    fields:
+      - name: charge_id
+        type: metering.usage.ChargeId

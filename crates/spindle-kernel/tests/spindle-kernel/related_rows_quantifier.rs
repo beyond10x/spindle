@@ -147,6 +147,112 @@ fn a_rows_quantifier_in_a_related_selector_is_served() {
     }
 }
 
+/// `tests/fixtures/metering-split`: the component `meter` owns accounts and charges, `holds` owns
+/// holds.
+fn split() -> spindle_spec::EssIr {
+    spindle_spec::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/metering-split"))
+        .expect("the split metering fixture compiles")
+        .ir
+}
+
+fn command<'ir>(
+    ir: &'ir spindle_spec::EssIr,
+    name: &str,
+) -> &'ir ess_compiler::ir::ResolvedCommand {
+    ir.commands()
+        .values()
+        .find(|command| command.name.to_string() == name)
+        .unwrap_or_else(|| panic!("the fixture declares {name}"))
+}
+
+/// A guard over the rows of an entity another component owns would be decided over the running
+/// component's store, which keeps none of them, where ESS's interpreter reads them: a rows
+/// quantifier walking it, a row set selecting it, and a row an input names. Every outcome of the
+/// command is refused by name at admission ([`spindle_kernel::takes`]), so `admit` and the route
+/// name it, and `execute` writes nothing.
+#[test]
+fn a_guard_over_another_components_rows_is_refused_by_name() {
+    let ir = split();
+    let mut store = MemoryStore::default();
+    send(
+        &mut store,
+        &ir,
+        (
+            "metering.usage.OpenAccount",
+            json!({"account_id": NORTH_ACCOUNT, "org": "north"}),
+        ),
+    )
+    .expect("the account opens");
+    for (name, guarded, input) in [
+        (
+            "metering.usage.ChargeUsage",
+            "on-hold",
+            json!({"charge_id": "c0c0c0c0-0000-4000-8000-000000000001", "account_id": NORTH_ACCOUNT}),
+        ),
+        (
+            "metering.usage.ChargeDirect",
+            "on-hold",
+            json!({"charge_id": "c0c0c0c0-0000-4000-8000-000000000002", "account_id": NORTH_ACCOUNT, "org": "north"}),
+        ),
+        (
+            "metering.usage.ChargeHeld",
+            "no-hold",
+            json!({"charge_id": "c0c0c0c0-0000-4000-8000-000000000003", "account_id": NORTH_ACCOUNT, "hold_id": SOUTH_HOLD}),
+        ),
+    ] {
+        let why = format!(
+            "the `when_related:` guard of `{name}/{guarded}`, which reads the rows of \
+             `metering.holds.Hold`, owned by component `holds`: the kernel reads only the store \
+             of component `meter`, which runs the command"
+        );
+        let spec = command(&ir, name);
+        for outcome in &spec.outcomes {
+            let refused = spindle_kernel::takes(&ir, spec, outcome)
+                .expect_err("every outcome of the command is refused");
+            assert_eq!(
+                refused.to_string(),
+                format!("unsupported: {why}, in `{name}/{}`", outcome.name.as_str()),
+            );
+        }
+        let charge_id = input["charge_id"].clone();
+        match send(&mut store, &ir, (name, input)) {
+            Err(ExecuteError::Unsupported { construct }) => assert!(
+                construct.starts_with(&why),
+                "`{name}` is refused by name: {construct}"
+            ),
+            other => panic!("`{name}` is refused by name, not {other:?}"),
+        }
+        assert!(
+            store
+                .load(CHARGE, &charge_id)
+                .expect("the store reads")
+                .is_none(),
+            "`{name}` writes nothing"
+        );
+    }
+
+    let once = command(&ir, "metering.usage.ChargeOnce");
+    spindle_kernel::runs(&ir, once).expect("a walk over the running component's own rows runs");
+    let charge = |number: u8| {
+        (
+            "metering.usage.ChargeOnce",
+            json!({
+                "charge_id": format!("c0c0c0c0-0000-4000-8000-0000000000{number:02x}"),
+                "account_id": NORTH_ACCOUNT,
+            }),
+        )
+    };
+    let outcomes: Vec<String> = [charge(4), charge(5)]
+        .into_iter()
+        .map(|step| {
+            send(&mut store, &ir, step)
+                .expect("ChargeOnce runs")
+                .outcome
+        })
+        .collect();
+    assert_eq!(outcomes, ["charged", "already-charged"]);
+}
+
 /// What another writer does to the store, once.
 type Race = Box<dyn FnOnce(&mut MemoryStore)>;
 

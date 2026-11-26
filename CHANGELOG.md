@@ -17,6 +17,11 @@ are Spindle's releases.
 
 ### Fixed
 
+- A command whose `when_related:` guard reads the rows of an entity another component owns (a row
+  set selecting it, a rows quantifier walking it, or a row an input names) is refused by name at
+  start, naming the entity, its owner and the running component, as a value read from such an
+  entity is. It was decided over the running component's store, which keeps none of those rows,
+  where ESS's interpreter reads them (`story:related-selector-rows-quantifier`).
 - A guard over an `Optional` field the held instance, a `when_related:` row or the input never
   wrote is still `undecidable` where ESS 0.99.1's interpreter selects no outcome, and its refusal
   now names the guard, the absent field and the way out, such as "`label == mine` is unknown on a

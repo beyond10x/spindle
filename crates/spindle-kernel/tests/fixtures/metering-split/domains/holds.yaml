@@ -1,0 +1,41 @@
+domain: metering.holds
+summary: Holds placed on organizations.
+types:
+  - name: metering.holds.HoldId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: metering.holds.Hold
+    identity:
+      name: hold_id
+      type: metering.holds.HoldId
+    fields:
+      - name: org
+        type: String
+    lifecycle:
+      initial: Active
+      states: [Active]
+      terminal: [Active]
+commands:
+  - name: metering.holds.PlaceHold
+    input:
+      - name: hold_id
+        type: metering.holds.HoldId
+      - name: org
+        type: String
+    outcomes:
+      - name: placed
+        creates: metering.holds.Hold
+        instance: hold_id
+        sets:
+          org: input.org
+        emits: [metering.holds.HoldPlaced]
+        payload:
+          metering.holds.HoldPlaced:
+            hold_id: input.hold_id
+        summary: The organization is put on hold.
+events:
+  - name: metering.holds.HoldPlaced
+    fields:
+      - name: hold_id
+        type: metering.holds.HoldId
