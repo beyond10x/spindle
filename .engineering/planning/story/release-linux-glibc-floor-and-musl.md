@@ -6,7 +6,7 @@ status: draft
 title: The Linux release runs on an old glibc and as a static binary
 relations:
 - serves: vision:spindle
-revision: 4
+revision: 5
 ---
 # The Linux release runs on an old glibc and as a static binary
 
@@ -134,3 +134,11 @@ Native blockers:
   without its embedded dependency list.
 - The musl-versus-gnu measurement follows the round-robin form of a sibling repository's
   `scripts/measure-release.sh`; musl becomes the default only on that measurement.
+
+## Shared files
+
+- `.github/workflows/release.yml`, `AGENTS.md` § Cutting a release, `README.md` § Releases and
+  `website/docs/getting-started.md`: this story's alone in wave 26.
+- `crates/spindle-cli/Cargo.toml` and `src/main.rs` only if mimalloc is measured into the build;
+  `main.rs` is then shared with U3, a separate hunk (`#[global_allocator]`).
+- `CHANGELOG.md` `[Unreleased]`: one bullet per story, merged by the coordinator.

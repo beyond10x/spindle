@@ -6,7 +6,7 @@ status: draft
 title: A guard over an absent optional field of a held row is decided as ESS decides it
 relations:
 - serves: vision:spindle
-revision: 3
+revision: 4
 ---
 # A guard over an absent optional field of a held row is decided as ESS decides it
 
@@ -109,3 +109,9 @@ Not established: whether the consumers' guards actually use a bare comparison ra
 - The confirmed gap is acceptance 3: the `Undecidable` refusal of a held-row or `when_related`
   guard names the guard and the absent field and suggests `defined(<field>)`, reusing
   `Unknowns::read` and `Unknowns::why` (`execute.rs:466-512`). The error code stays `undecidable`.
+
+## Shared files
+
+- `crates/spindle-kernel/src/execute.rs` (`Run::undecidable`) and `lib.rs`: shared with
+  `story:related-selector-rows-quantifier` in the same unit (U1), built after it on one branch.
+- `CHANGELOG.md` `[Unreleased]`: one bullet per story, merged by the coordinator.

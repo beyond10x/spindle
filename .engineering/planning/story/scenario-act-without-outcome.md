@@ -6,7 +6,7 @@ status: draft
 title: A scenario act that states no outcome is reported as ESS's runner reports it
 relations:
 - serves: vision:spindle
-revision: 3
+revision: 4
 ---
 # A scenario act that states no outcome is reported as ESS's runner reports it
 
@@ -87,3 +87,13 @@ Components-only replay: inferred (medium-low). `--scenario` does not refuse a do
 - The gap is the printed line: each act's line carries the outcome observed (or the refusal), so a
   refused step no longer reads `holds` alone. `HostTarget` records the outcome it took beside its
   command count, and the `SemanticCommandResult` it returns is unchanged, so `conform` does not move.
+
+## Shared files
+
+- `crates/spindle-cli/src/replay.rs` and its tests and fixtures: shared with
+  `story:scenario-without-components` in the same unit (U4), built before it on one branch.
+- `crates/spindle-conformance/src/target.rs`: shared with U3 (`story:clock-and-mint-in-every-mode`
+  changes `HostTarget::new`); separate functions, merged by the coordinator.
+- The `--scenario` help in `cli.rs`, the generated `cli.md` and `status.rs:450-455`: shared with U3;
+  separate hunks.
+- `CHANGELOG.md` `[Unreleased]`: one bullet per story, merged by the coordinator.

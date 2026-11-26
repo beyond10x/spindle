@@ -7,7 +7,7 @@ title: A view filter reads every parameter form a consumer's model declares
 relations:
 - serves: vision:spindle
 - informed_by: story:view-filter-text-contains
-revision: 5
+revision: 7
 ---
 # A view filter reads every parameter form a consumer's model declares
 
@@ -36,7 +36,12 @@ above and of leaves Spindle already reads.
 ## Acceptance
 
 - One test per form above: a view whose filter holds that form answers the interpreter's rows for
-  the parameter left out and given, compared with `ess_conformance::interpret` row by row.
+  the parameter left out and given, compared with `ess_conformance::interpret` row by row. For
+  `param.<x> as timestamp`, admitted today, the test is a regression test.
+- One test each, compared the same way, for three forms the consumer's filters also declare: a row
+  field under a case fold (`<field> equals_ignore_case "…"`), `defined(<binder>.<member>)` for an
+  element of a list field, and a member of a list-field element compared with an outer
+  list-parameter binder (`r.m == g`).
 - `the_consumer_filter_shapes_are_served`: three views built of the forms together, in the shape of
   the consumer's filters (optional-parameter guards `not defined(param.x) or …`, an `in_ignore_case`
   switch over a state, a time window cast `as timestamp`, a list-parameter `count == 0` escape),
@@ -96,3 +101,9 @@ Missing forms:
   spindle-cli `view-field-filters/domains/tray.yaml:165`, `adversary_unserved/domains/pad.yaml:53`,
   spindle-ingress `served-operations/domains/pad.yaml:91`.
 - One unit, not split: both halves edit the same `typed()` and `admits` matches.
+
+## Shared files
+
+- `crates/spindle-host/src/view.rs` and `host.rs:1625-1645`: this story's alone in wave 26.
+- Fixtures under spindle-cli and spindle-ingress named in "Decided when scoped": this story's alone.
+- `CHANGELOG.md` `[Unreleased]`: one bullet per story, merged by the coordinator.

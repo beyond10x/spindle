@@ -6,7 +6,7 @@ status: draft
 title: Every run mode takes a simulated clock and a seeded mint
 relations:
 - serves: vision:spindle
-revision: 3
+revision: 5
 ---
 # Every run mode takes a simulated clock and a seeded mint
 
@@ -31,9 +31,13 @@ need repeatable identities.
 - `a_line_moves_the_clock`: with `--clock 2026-01-01T00:00:00Z`, a line with `"at":
   "2026-02-01T00:00:00Z"` runs a command whose guard orders against `now` at February 1st, and a
   later line with an earlier `at` is rejected.
-- `a_periodic_binding_fires_as_the_clock_passes`: a monthly binding fires once per month line.
 - `the_served_run_and_the_scenario_take_both_flags`: HTTP and `--scenario` runs honour
   `--mint-seed` and `--clock`; a reset world's `mint` still overrides the seed until the next reset.
+- `a_plain_reset_mints_from_the_run_seed_again`: on a served run with `--mint-seed`, a reset whose
+  world has no `mint` mints the same identities as the run's first commands did.
+
+Moved to Not covered when scoped: `a_periodic_binding_fires_as_the_clock_passes`. No `run` mode
+fires periodic bindings today (only `play` does), and this story does not add it.
 
 ## Scope
 
@@ -66,3 +70,14 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
   acceptance case `a_periodic_binding_fires_as_the_clock_passes` moves to Not covered.
 - `--scenario` takes both flags into the host it opens (`HostTarget`); ESS's runner keeps its own
   clock and ids for the document.
+
+## Shared files
+
+- `crates/spindle-cli/src/main.rs`, `serve.rs`: shared with `story:run-fails-on-rejected-line` in
+  the same unit (U3), built after it on one branch.
+- `crates/spindle-conformance/src/target.rs` (`HostTarget::new` takes a clock and a mint): shared
+  with U4 (`story:scenario-act-without-outcome` records the outcome taken in `execute_command`);
+  separate functions, merged by the coordinator.
+- `crates/spindle-host/src/host.rs` (`reset_to`, the run seed): this story's alone in wave 26.
+- The `run` help in `cli.rs` and the generated `cli.md`: shared with U4, as above.
+- `CHANGELOG.md` `[Unreleased]`: one bullet per story, merged by the coordinator.

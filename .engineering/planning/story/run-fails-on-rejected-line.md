@@ -6,7 +6,7 @@ status: draft
 title: A run that rejects an input line or a seed entry exits non-zero
 relations:
 - serves: vision:spindle
-revision: 3
+revision: 5
 ---
 # A run that rejects an input line or a seed entry exits non-zero
 
@@ -32,6 +32,11 @@ Reported 2026-11-26 by two consumers driving Spindle 0.21.0 from scripts.
   exit status 0.
 - `a_seed_with_a_rejected_entry_stops_the_run`: a seed whose second entry is not admitted exits 1
   before listening, naming the entry, and serves nothing.
+- `a_seed_entry_rejected_at_run_time_exits_1`: a seed entry admitted at load whose execution fails
+  with a host error is counted `rejected` in the seed's end line, apart from declared refusals
+  (`refused`); the run prints it on stderr and exits 1 after the answers in hand are written.
+- `a_seed_entry_answered_by_a_declared_refusal_keeps_serving`: the end line counts it `refused`,
+  and the run keeps serving.
 
 ## Scope
 
@@ -61,3 +66,14 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
   and a rejection (`HostError::Execute` or any other host error, counted `rejected`, a new count in
   the end line). When the seed ends with a rejection, the run prints it on stderr and exits 1, the
   listener closed after the answers in hand are written. The seed keeps running beside the listener.
+
+## Shared files
+
+- `crates/spindle-cli/src/main.rs`, `seed.rs`, `serve.rs`: shared with
+  `story:clock-and-mint-in-every-mode` in the same unit (U3), built before it on one branch.
+- The `run` help in `crates/spindle-cli/src/cli.rs` and the generated `website/docs/reference/cli.md`:
+  shared with U4 (`--scenario` help); separate hunks, merged by the coordinator, the page generated
+  again after both.
+- `crates/spindle-docs/src/status.rs:430-435` and its generated pages: shared with U4
+  (`:450-455`); separate rows.
+- `CHANGELOG.md` `[Unreleased]`: one bullet per story, merged by the coordinator.
