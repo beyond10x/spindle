@@ -2,6 +2,7 @@
 //! one test binary (`story:one-test-binary-per-crate`). Test names are unchanged under their
 //! module path.
 
+mod absent_optional_guard;
 mod admit;
 mod adversary2_console_paths;
 mod adversary2_http_cause;
