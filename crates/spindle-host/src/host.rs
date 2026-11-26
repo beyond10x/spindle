@@ -2036,6 +2036,13 @@ impl Host {
         Ok(())
     }
 
+    /// How many envelopes this host holds the staging command of, for [`Failed::caused_by`]:
+    /// those staged between its own components and not yet invoked. Read by tests only.
+    #[doc(hidden)]
+    pub fn staged_envelopes(&self) -> usize {
+        self.staged_by.len()
+    }
+
     /// Takes every envelope still in flight off its channel without running it.
     fn discard(&mut self) -> Result<(), HostError> {
         for receiver in &mut self.receivers {
