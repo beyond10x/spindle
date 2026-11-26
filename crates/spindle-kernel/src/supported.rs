@@ -28,8 +28,8 @@ use std::collections::BTreeSet;
 use ess_compiler::EssIr;
 use ess_compiler::ir::{
     EntityHandle, EventHandle, ResolvedCommand, ResolvedCondition, ResolvedEffect,
-    ResolvedInstance, ResolvedOutcome, ResolvedPayloadField, ResolvedPayloadValue,
-    ResolvedRelatedTest, ResolvedRelatedVia, ResolvedTypeRef,
+    ResolvedFallback, ResolvedInstance, ResolvedOutcome, ResolvedPayloadField,
+    ResolvedPayloadValue, ResolvedRelatedTest, ResolvedRelatedVia, ResolvedTypeRef,
 };
 
 use crate::ExecuteError;
@@ -88,9 +88,10 @@ pub fn takes(
         let Some(shape) = crate::mint::identity(ir, &entity.identity.type_ref) else {
             return refuse(&format!(
                 "a creation whose identity `{}.{}` of type `{}` neither the input nor the \
-                 outcome determines; the runtime mints a `Uuid` identity or a newtype of one \
-                 without invariants, or a `String` newtype whose prefix and alphabet admit a \
-                 UUID's text and whose invariants bound only a length that text meets",
+                 outcome determines; the runtime mints a `Uuid`, `String` or `Integer` identity, \
+                 a `Uuid` or `Integer` newtype without invariants, or a `String` newtype whose \
+                 prefix and alphabet admit a UUID's text and whose invariants bound only a \
+                 length that text meets",
                 entity.name, field.name, entity.identity.type_ref
             ));
         };
@@ -657,7 +658,9 @@ pub(crate) fn reads_response(outcome: &ResolvedOutcome) -> bool {
 /// read outside an error's fields, where ESS's interpreter computes none. A response field
 /// (`{response: …}`) is read in an event payload of an outcome that answers the response, as
 /// ESS's interpreter reads it (`interpret::execute::determined::response`); anywhere else ESS
-/// has no response in hand.
+/// has no response in hand. An input with a literal or another input after `else:` is read
+/// wherever ESS's interpreter reads one: everywhere but an error's fields, and there over an
+/// input path or with another input after `else:`.
 fn value(ir: &EssIr, field: &ResolvedPayloadField, reading: Reading) -> Option<String> {
     let Reading { set, error, .. } = reading;
     let mintable = |present: bool| {
@@ -706,6 +709,21 @@ fn value(ir: &EssIr, field: &ResolvedPayloadField, reading: Reading) -> Option<S
         ResolvedPayloadValue::InputOrGenerated {
             otherwise: None, ..
         } => mintable(false),
+        // The input, else the literal or the other input `else:` names, as ESS's interpreter
+        // reads them (`interpret::execute::value`); nothing is minted. In an error's fields ESS
+        // reads one only over an input path or with another input after `else:`
+        // (`interpret::execute::error_value`), so a literal after a plain input stays refused
+        // there.
+        ResolvedPayloadValue::InputOrGenerated {
+            field: read,
+            otherwise: Some(otherwise),
+            ..
+        } if !error
+            || ess_domain::command::input_path::is_path(read)
+            || matches!(otherwise, ResolvedFallback::Input { .. }) =>
+        {
+            None
+        }
         ResolvedPayloadValue::Struct { fields } => {
             fields.iter().find_map(|member| value(ir, member, reading))
         }

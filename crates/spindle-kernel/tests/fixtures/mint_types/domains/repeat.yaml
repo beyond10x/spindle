@@ -1,0 +1,65 @@
+domain: minttypes.repeat
+summary: A chip and a mark whose identities a mint would repeat, a Bytes and a Timestamp.
+entities:
+  - name: minttypes.repeat.Chip
+    identity:
+      name: chip_id
+      type: Bytes
+    fields:
+      - name: note
+        type: String
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+  - name: minttypes.repeat.Mark
+    identity:
+      name: marked_at
+      type: Timestamp
+    fields:
+      - name: note
+        type: String
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+commands:
+  - name: minttypes.repeat.OpenChip
+    input:
+      - name: note
+        type: String
+    outcomes:
+      - name: opened
+        creates: minttypes.repeat.Chip
+        instance: chip_id
+        sets:
+          note: input.note
+        emits: [minttypes.repeat.ChipOpened]
+        payload:
+          minttypes.repeat.ChipOpened:
+            chip_id: {generated: true}
+        summary: The chip would open under one minted byte.
+  - name: minttypes.repeat.OpenMark
+    input:
+      - name: note
+        type: String
+    outcomes:
+      - name: opened
+        creates: minttypes.repeat.Mark
+        instance: marked_at
+        sets:
+          note: input.note
+        emits: [minttypes.repeat.MarkOpened]
+        payload:
+          minttypes.repeat.MarkOpened:
+            marked_at: {generated: true}
+        summary: The mark would open under the clock's reading.
+events:
+  - name: minttypes.repeat.ChipOpened
+    fields:
+      - name: chip_id
+        type: Bytes
+  - name: minttypes.repeat.MarkOpened
+    fields:
+      - name: marked_at
+        type: Timestamp

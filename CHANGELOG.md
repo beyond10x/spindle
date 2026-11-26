@@ -15,6 +15,13 @@ are Spindle's releases.
   a size without its page, a negative value, a page below `first_page` and an offset that
   overflows answer `400`, and the conformance target reports them unsupported. `Host::listed_with`
   and `Reader::listed_with` answer the rows with the total (`story:view-paging`).
+- A creation whose identity is a bare `String`, an `Integer` or an `Integer` newtype without
+  invariants mints it, where it was refused at start: a bare `String` as a UUID's text with no
+  prefix, an `Integer` drawn from a UUID as a generated `Integer` is. A `Bytes`, `Timestamp`,
+  `Decimal`, `Duration`, enum, struct, `Boolean` or `List` identity is still refused. A value
+  source with a fallback, `{input: f, else: <literal>}` or `{input: f, else: input.g}`, answers
+  the input, else the literal or the other input, as ESS 0.99.1's interpreter does, where it was
+  refused (`story:identity-mint-types-and-fallback`).
 
 ### Fixed
 

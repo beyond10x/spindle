@@ -1,0 +1,19 @@
+format: ess/34
+system: fallback
+version: v1
+summary: Parcels whose fields fall back where the request sends no value.
+domains:
+  - fallback.parcel
+components:
+  - component: depot
+    summary: Registers parcels.
+    owns:
+      domains:
+        - fallback.parcel
+    accepts:
+      commands:
+        - fallback.parcel.RegisterParcel
+    publishes:
+      events:
+        - fallback.parcel.ParcelRegistered
+    reached_by: in_process

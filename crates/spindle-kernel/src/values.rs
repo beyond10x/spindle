@@ -6,7 +6,8 @@
 //! (`{related: {via: input.<field>, field: …}}`), and what a set outcome changed
 //! (`{count: changed}`, `{changed: …}`), a value an expression computes (`{expr: …}`, outside
 //! an error), a field of the response the run answers (`{response: …}`, in an event payload),
-//! and the first element of a list of references that names no row (`{missing: input.<list>}`),
+//! the first element of a list of references that names no row (`{missing: input.<list>}`),
+//! an input with a fallback (`{input: f, else: …}`: a literal, another input or a minted value),
 //! and a field of the one row a selector selects (`{related: {entity, where, field}}`),
 //! are read here; the rest are refused by [`crate::supported`] before a command runs.
 //! Numbers are ESS's own [`Number`], so `{increment: N}` adds exactly as ESS adds, an expression
@@ -17,9 +18,9 @@ use std::collections::BTreeMap;
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::{
-    EntityHandle, EventHandle, ResolvedCommand, ResolvedCondition, ResolvedOutcome,
-    ResolvedPayloadField, ResolvedPayloadValue, ResolvedRelatedVia, ResolvedRowSelection,
-    ResolvedTypeRef,
+    EntityHandle, EventHandle, ResolvedCommand, ResolvedCondition, ResolvedFallback,
+    ResolvedOutcome, ResolvedPayloadField, ResolvedPayloadValue, ResolvedRelatedVia,
+    ResolvedRowSelection, ResolvedTypeRef,
 };
 use ess_domain::QualifiedName;
 use ess_domain::types::Primitive;
@@ -313,6 +314,28 @@ impl<'a> Sources<'a, '_> {
             } => match read_input(self.input, read) {
                 Some(value) => Ok(Some(value)),
                 None => self.generated(field, false),
+            },
+            // ESS's interpreter (`interpret::execute::value`): the input where the request sends
+            // it, else the literal written after `else:`, read against the field's type, or the
+            // other input `else:` names, which the request must send.
+            ResolvedPayloadValue::InputOrGenerated {
+                field: read,
+                otherwise: Some(otherwise),
+                ..
+            } => match read_input(self.input, read) {
+                Some(value) => Ok(Some(value)),
+                None => match otherwise {
+                    ResolvedFallback::Literal(text) => literal(self.ir, field, text).map(Some),
+                    ResolvedFallback::Input { input } => read_input(self.input, &input.field)
+                        .map(Some)
+                        .ok_or_else(|| ExecuteError::NoValue {
+                            what: format!(
+                                "`{}`, whose required fallback `input.{}` the request does not \
+                                 send",
+                                field.target, input.field
+                            ),
+                        }),
+                },
             },
             ResolvedPayloadValue::PayloadRead {
                 event, field: read, ..

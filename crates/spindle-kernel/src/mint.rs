@@ -4,10 +4,12 @@
 //! (`{generated: true}`, or no source at all) leaves the identity to the runtime. Admission binds
 //! that as the capability `identity.mint`; the kernel asks a [`Mint`] for the value, so a test can
 //! make it deterministic. A `Uuid` identity, or a newtype of one without invariants, is minted as
-//! a UUID; a `String` newtype whose prefix and alphabet admit a UUID's text, and whose invariants
-//! read only `value.count` and hold for that text's length, as its prefix and a UUID's text
-//! ([`identity`]). An entity invariant over the identity's length that no minted identity meets
-//! refuses the command before it runs ([`identity_bound`]).
+//! a UUID; a bare `String` as a UUID's text; a `String` newtype whose prefix and alphabet admit a
+//! UUID's text, and whose invariants read only `value.count` and hold for that text's length, as
+//! its prefix and a UUID's text; an `Integer`, or a newtype of one without invariants, as an
+//! integer drawn from a UUID, as a generated `Integer` is ([`identity`]). An entity invariant over
+//! the identity's length that no minted identity meets refuses the command before it runs
+//! ([`identity_bound`]).
 //!
 //! Any other field an outcome marks `{generated: true}` (in `sets:`, a payload or an error, and
 //! the `else:` of `{input: f, else: {generated: true}}`) is minted from its declared type
@@ -103,16 +105,15 @@ pub(crate) fn slot<'ir>(
 }
 
 /// How a minted creation identity of type `kind` is spelled, by [`minted`], the rule for
-/// generated fields: a `Uuid` or a newtype of one without invariants, or a `String` newtype whose
-/// prefix, alphabet and length invariants a minted text satisfies. `None` for every other type,
-/// among them a bare `String` and a `Uuid` newtype that declares an invariant.
+/// generated fields: a `Uuid` or a newtype of one without invariants; a bare `String`, as a
+/// minted text with no prefix; a `String` newtype whose prefix, alphabet and length invariants a
+/// minted text satisfies; an `Integer` or a newtype of one without invariants. `None` for every
+/// other type: a `Bytes` (one byte) and a `Timestamp` (the clock's reading) would give two
+/// creations one identity, and a `Boolean` or a `List` holds no distinct identities.
 pub(crate) fn identity(ir: &EssIr, kind: &ResolvedTypeRef) -> Option<Minted> {
     match minted(ir, kind, false)? {
-        Minted::Uuid => Some(Minted::Uuid),
-        text @ Minted::Text { .. } if matches!(kind, ResolvedTypeRef::Declared { .. }) => {
-            Some(text)
-        }
-        _ => None,
+        shape @ (Minted::Uuid | Minted::Text { .. } | Minted::Integer) => Some(shape),
+        Minted::Boolean | Minted::Bytes | Minted::List | Minted::Timestamp => None,
     }
 }
 

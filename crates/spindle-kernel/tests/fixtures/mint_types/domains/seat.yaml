@@ -1,0 +1,39 @@
+domain: minttypes.seat
+summary: A seat opened without a number, whose identity is an integer newtype the runtime mints.
+types:
+  - name: minttypes.seat.SeatNumber
+    kind: newtype
+    of: Integer
+entities:
+  - name: minttypes.seat.Seat
+    identity:
+      name: seat_number
+      type: minttypes.seat.SeatNumber
+    fields:
+      - name: holder
+        type: String
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+commands:
+  - name: minttypes.seat.OpenSeat
+    input:
+      - name: holder
+        type: String
+    outcomes:
+      - name: opened
+        creates: minttypes.seat.Seat
+        instance: seat_number
+        sets:
+          holder: input.holder
+        emits: [minttypes.seat.SeatOpened]
+        payload:
+          minttypes.seat.SeatOpened:
+            seat_number: {generated: true}
+        summary: The seat opens under a seat number the runtime mints.
+events:
+  - name: minttypes.seat.SeatOpened
+    fields:
+      - name: seat_number
+        type: minttypes.seat.SeatNumber

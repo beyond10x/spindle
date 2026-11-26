@@ -1,12 +1,13 @@
 //! A creation whose identity is neither an input nor a payload source: the runtime mints it.
 //!
 //! The fixture `tests/fixtures/mint` opens a ticket from a title alone, its `ticket_id` (a newtype
-//! of `Uuid`) given `{generated: true}` in both events the creation emits, and a label whose
-//! `String` identity nothing here mints.
+//! of `Uuid`) given `{generated: true}` in both events the creation emits, and a label whose bare
+//! `String` identity the runtime mints as a UUID's text with no prefix.
 
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use ess_primitives::node::Node;
 use serde_json::{Map, Value, json};
 use spindle_kernel::{
     ExecuteError, Identity, MemoryStore, NoExternals, Store, Uuid, execute, execute_minting,
@@ -182,12 +183,15 @@ fn a_creation_whose_identity_is_an_input_does_not_mint() {
 }
 
 #[test]
-fn a_minted_identity_that_is_not_a_uuid_is_unsupported_naming_the_command_and_the_field() {
+fn a_bare_string_identity_is_minted_as_a_text_without_a_prefix() {
     let ir = ir();
     let mut store = MemoryStore::default();
-    let mut mint =
-        |identity: &Identity<'_>| -> Uuid { panic!("nothing is minted for {}", identity.field) };
-    let error = execute_minting(
+    let mut asked = Vec::new();
+    let mut mint = |identity: &Identity<'_>| {
+        asked.push(format!("{}.{}", identity.entity, identity.field));
+        Uuid::parse_str(MINTED).expect("a UUID")
+    };
+    let opened = execute_minting(
         &ir,
         &mut store,
         &mut NoExternals,
@@ -195,15 +199,19 @@ fn a_minted_identity_that_is_not_a_uuid_is_unsupported_naming_the_command_and_th
         "mint.label.OpenLabel",
         &input(json!({"text": "fragile"})),
     )
-    .expect_err("a String identity is not minted");
-    match &error {
-        ExecuteError::Unsupported { construct } => {
-            assert!(construct.contains("mint.label.OpenLabel"), "{construct}");
-            assert!(construct.contains("label_id"), "{construct}");
-            assert!(construct.contains("String"), "{construct}");
-        }
-        other => panic!("expected Unsupported, got {other:?}"),
-    }
+    .expect("a bare String identity is minted");
+    assert_eq!(asked, vec!["mint.label.Label.label_id".to_owned()]);
+    assert_eq!(opened.outcome, "opened");
+    assert_eq!(
+        opened.events[0].payload["label_id"],
+        json!(MINTED),
+        "a bare `String` identity is the minted UUID's text, with no prefix"
+    );
+    let stored = store
+        .load("mint.label.Label", &json!(MINTED))
+        .expect("the store reads")
+        .expect("the new instance is stored under the minted identity");
+    assert_eq!(stored.row.fields.get("text"), Some(&json!("fragile")));
 }
 
 /// The fixture `tests/fixtures/mint_text`: a badge whose identity is a `String` newtype with a
@@ -320,5 +328,234 @@ fn a_newtype_the_runtime_cannot_satisfy_is_refused_by_name() {
             }
             other => panic!("{command}: expected Unsupported, got {other:?}"),
         }
+    }
+}
+
+/// The fixture `tests/fixtures/mint_types`: a note whose identity is a bare `String`, a counter
+/// whose identity is an `Integer`, and a seat whose identity is a newtype of `Integer` without
+/// invariants, each opened from one input with `{generated: true}` on its identity; and a chip
+/// (`Bytes`) and a mark (`Timestamp`) opened the same way, whose minted identities would repeat.
+fn types_ir() -> spindle_spec::EssIr {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mint_types");
+    spindle_spec::load(&root)
+        .expect("the mint_types fixture compiles")
+        .ir
+}
+
+/// Whether `identity` is a value of the minted identity's type: an integer for an `Integer` or
+/// a newtype of one, and for a bare `String` a minted text with no prefix, a UUID's text.
+fn of_type(identity: &Value, integer: bool) -> bool {
+    if integer {
+        return identity.is_i64();
+    }
+    identity.as_str().is_some_and(|text| {
+        Uuid::parse_str(text).is_ok_and(|uuid| uuid.hyphenated().to_string() == text)
+    })
+}
+
+#[test]
+fn an_identity_of_each_minted_type_is_minted() {
+    let ir = types_ir();
+    for (command, entity, identity_field, input_field, integer) in [
+        (
+            "minttypes.note.OpenNote",
+            "minttypes.note.Note",
+            "note_id",
+            "body",
+            false,
+        ),
+        (
+            "minttypes.counter.OpenCounter",
+            "minttypes.counter.Counter",
+            "counter_id",
+            "name",
+            true,
+        ),
+        (
+            "minttypes.seat.OpenSeat",
+            "minttypes.seat.Seat",
+            "seat_number",
+            "holder",
+            true,
+        ),
+    ] {
+        let spec = ir
+            .commands()
+            .values()
+            .find(|spec| spec.name.to_string() == command)
+            .unwrap_or_else(|| panic!("the fixture declares {command}"));
+        spindle_kernel::runs(&ir, spec)
+            .unwrap_or_else(|error| panic!("{command} is admitted at start: {error}"));
+
+        let mut store = MemoryStore::default();
+        let mut minted = Vec::new();
+        for sent in ["first", "second"] {
+            let opened = execute(
+                &ir,
+                &mut store,
+                &mut NoExternals,
+                command,
+                &input(json!({input_field: sent})),
+            )
+            .unwrap_or_else(|error| panic!("{command} mints its identity: {error}"));
+            assert_eq!(opened.outcome, "opened", "{command}");
+            assert_eq!(opened.error, None, "{command}");
+            let identity = opened.events[0].payload[identity_field].clone();
+            assert!(
+                of_type(&identity, integer),
+                "{command}: {identity} is a value of the identity's type"
+            );
+            let stored = store
+                .load(entity, &identity)
+                .expect("the store reads")
+                .unwrap_or_else(|| panic!("{command}: the instance is stored under {identity}"));
+            assert_eq!(stored.row.fields.get(input_field), Some(&json!(sent)));
+            minted.push(identity);
+        }
+        assert_ne!(
+            minted[0], minted[1],
+            "{command}: two creates mint two identities"
+        );
+    }
+}
+
+#[test]
+fn an_identity_a_mint_would_repeat_is_refused_at_start() {
+    let ir = types_ir();
+    for (command, field, kind) in [
+        ("minttypes.repeat.OpenChip", "chip_id", "Bytes"),
+        ("minttypes.repeat.OpenMark", "marked_at", "Timestamp"),
+    ] {
+        let spec = ir
+            .commands()
+            .values()
+            .find(|spec| spec.name.to_string() == command)
+            .unwrap_or_else(|| panic!("the fixture declares {command}"));
+        match spindle_kernel::runs(&ir, spec) {
+            Err(ExecuteError::Unsupported { construct }) => {
+                assert!(construct.contains(command), "{construct}");
+                assert!(construct.contains(field), "{construct}");
+                assert!(construct.contains(kind), "{construct}");
+            }
+            other => panic!("{command}: a {kind} identity is refused at start, not {other:?}"),
+        }
+    }
+}
+
+/// The fixture `tests/fixtures/fallback`: a parcel registered under the caller's id whose label
+/// falls back to the literal `unlabelled`, its priority to the literal `3`, its route to the
+/// input `depot`, its sequence (`Integer`) to `{generated: true}`, and its memo
+/// (`Optional<String>`) to `{generated: true}`, each in `sets:` and in the event.
+fn fallback_ir() -> spindle_spec::EssIr {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fallback");
+    spindle_spec::load(&root)
+        .expect("the fallback fixture compiles")
+        .ir
+}
+
+const REGISTER: &str = "fallback.parcel.RegisterParcel";
+const SENT: &str = "1a1a1a1a-0000-4000-8000-000000000001";
+const BARE: &str = "2b2b2b2b-0000-4000-8000-000000000002";
+
+/// `value` read as ESS's [`Node`]: the interpreter writes an integral `Integer` as `7.0` and the
+/// kernel as `7`, one number either way.
+fn node(field: &str, value: &Value) -> Node {
+    serde_json::from_value(value.clone())
+        .unwrap_or_else(|_| panic!("`{field}` holds a node, not {value}"))
+}
+
+/// Asserts that the kernel's `spindle` and the interpreter's `ess` hold the same fields with the
+/// same values, but for `sequence` where `minted`: present on both sides, the kernel's an
+/// integer and the interpreter's an integral number, values each mints for itself.
+fn agree(what: &str, spindle: &Map<String, Value>, ess: &Map<String, Value>, minted: bool) {
+    let fields = spindle.keys().chain(ess.keys()).collect::<BTreeSet<_>>();
+    for field in fields {
+        let (ours, theirs) = (spindle.get(field), ess.get(field));
+        if minted && field == "sequence" {
+            assert!(
+                ours.is_some_and(Value::is_i64),
+                "{what}: the kernel mints an Integer `{field}`: {ours:?}"
+            );
+            assert!(
+                theirs
+                    .and_then(Value::as_f64)
+                    .is_some_and(|number| number.fract() == 0.0),
+                "{what}: the interpreter mints an Integer `{field}`: {theirs:?}"
+            );
+        } else {
+            assert_eq!(
+                ours.map(|value| node(field, value)),
+                theirs.map(|value| node(field, value)),
+                "{what}: `{field}` is the value the interpreter answers"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_value_source_fallback_answers_as_the_interpreter() {
+    let ir = fallback_ir();
+    let views = [(
+        "fallback.parcel.ParcelCard",
+        "fallback.parcel.Parcel",
+        "parcel_id",
+    )];
+    let steps = [
+        (
+            REGISTER,
+            json!({
+                "parcel_id": SENT,
+                "label": "fragile",
+                "priority": 7,
+                "route": "north",
+                "depot": "east",
+                "sequence": 41,
+                "memo": "by hand",
+            }),
+        ),
+        (REGISTER, json!({"parcel_id": BARE, "depot": "east"})),
+    ];
+    let (ess_answers, ess_rows) = super::related_guards::interpreted(&ir, &views, &steps);
+    let (answers, rows) = super::related_guards::spindled(&ir, &views, &steps);
+
+    // The first request sends every primary input; the second sends none, so its label and
+    // priority are the literals, its route the other input, its sequence minted and its memo,
+    // an `Optional` minted without `present: true`, absent (`interpret::values::mint`).
+    assert_eq!(answers.len(), ess_answers.len());
+    for (step, (answer, ess)) in answers.iter().zip(&ess_answers).enumerate() {
+        assert_eq!(
+            (&answer.0, &answer.1),
+            (&ess.0, &ess.1),
+            "step {step}: the outcome"
+        );
+        assert_eq!(answer.2.len(), 1, "step {step}: {answer:?}");
+        assert_eq!(ess.2.len(), 1, "step {step}: {ess:?}");
+        assert_eq!(answer.2[0].0, ess.2[0].0, "step {step}: the event");
+        agree(
+            &format!("the event of step {step}"),
+            &answer.2[0].1,
+            &ess.2[0].1,
+            step == 1,
+        );
+    }
+    let mut fallen = answers[1].2[0].1.clone();
+    assert!(
+        fallen
+            .remove("sequence")
+            .is_some_and(|value| value.is_i64())
+    );
+    assert_eq!(
+        Value::Object(fallen),
+        json!({"parcel_id": BARE, "label": "unlabelled", "priority": 3, "route": "east"}),
+        "the request without the primary inputs falls back to the literals and the other input, \
+         and leaves the Optional memo absent"
+    );
+
+    assert_eq!((rows.len(), ess_rows.len()), (1, 1));
+    let (rows, ess_rows) = (&rows[0], &ess_rows[0]);
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert_eq!(ess_rows.len(), 2, "{ess_rows:?}");
+    for (step, (row, ess_row)) in rows.iter().zip(ess_rows).enumerate() {
+        agree(&format!("the row of step {step}"), row, ess_row, step == 1);
     }
 }
