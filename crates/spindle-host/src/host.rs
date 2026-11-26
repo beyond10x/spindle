@@ -1769,9 +1769,14 @@ impl Host {
             Ok(executed) => executed,
             Err(error) => return Ok(Err(error)),
         };
-        if !executed.events.is_empty() {
+        let sent: Vec<&Event> = executed
+            .events
+            .iter()
+            .filter(|event| published_anywhere(&self.ir, &event.name))
+            .collect();
+        if !sent.is_empty() {
             held.position += 1;
-            for event in &executed.events {
+            for event in sent {
                 held.sender.publish(
                     held.position,
                     spindle_channel::Event {
@@ -2150,6 +2155,19 @@ fn emptied_file(file: &Path, sink: &Sink) -> Result<Box<dyn Store>, String> {
             ))
         }
     }
+}
+
+/// Whether any component lists `event` under `publishes:`. An event no component publishes is
+/// committed with the write and listed by [`Host::published`], and is not handed to the channel:
+/// no route has it as its event ([`Router::build`]). An event another component publishes is
+/// handed over, and [`Sender::publish`] refuses it.
+fn published_anywhere(ir: &EssIr, event: &str) -> bool {
+    ir.components().values().any(|declared| {
+        declared
+            .publishes
+            .iter()
+            .any(|published| published.to_string() == event)
+    })
 }
 
 /// The component that accepts `command`.

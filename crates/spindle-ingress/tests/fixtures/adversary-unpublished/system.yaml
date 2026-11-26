@@ -1,0 +1,54 @@
+format: ess/34
+system: helpdesk
+version: v1
+summary: A help desk whose note event is published by the log, not by the desk that emits it.
+domains:
+  - helpdesk.tickets
+  - helpdesk.log
+components:
+  - component: desk
+    summary: Opens, touches and remarks tickets for callers outside the process.
+    owns:
+      domains:
+        - helpdesk.tickets
+    accepts:
+      commands:
+        - helpdesk.tickets.OpenTicket
+        - helpdesk.tickets.TouchTicket
+        - helpdesk.tickets.RemarkTicket
+    publishes:
+      events:
+        - helpdesk.tickets.Touched
+    reached_by: network
+  - component: log
+    summary: Keeps one mark for every touch and every note.
+    owns:
+      domains:
+        - helpdesk.log
+    accepts:
+      commands:
+        - helpdesk.log.RecordMark
+    publishes:
+      events:
+        - helpdesk.log.Marked
+        - helpdesk.tickets.Noted
+    reached_by: network
+bindings:
+  - id: mark-on-touch
+    when:
+      event: helpdesk.tickets.Touched
+    invoke:
+      command: helpdesk.log.RecordMark
+    mapping:
+      ticket_id: event.ticket_id
+    delivery: at_most_once
+    on_failure: drop
+  - id: mark-on-note
+    when:
+      event: helpdesk.tickets.Noted
+    invoke:
+      command: helpdesk.log.RecordMark
+    mapping:
+      ticket_id: event.ticket_id
+    delivery: at_most_once
+    on_failure: drop

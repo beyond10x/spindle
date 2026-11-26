@@ -1,0 +1,65 @@
+domain: helpdesk.tickets
+summary: Tickets opened under the id given and touched, each emitting events the desk does not all publish.
+entities:
+  - name: helpdesk.tickets.Ticket
+    identity:
+      name: ticket_id
+      type: String
+    fields:
+      - name: touched
+        type: Boolean
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+errors:
+  - name: helpdesk.tickets.NoSuchTicket
+    summary: No ticket carries the id.
+    fields: []
+commands:
+  - name: helpdesk.tickets.OpenTicket
+    input:
+      - name: ticket_id
+        type: String
+    outcomes:
+      - name: opened
+        creates: helpdesk.tickets.Ticket
+        instance: ticket_id
+        sets:
+          touched: false
+        emits: [helpdesk.tickets.Opened]
+        payload:
+          helpdesk.tickets.Opened: {ticket_id: input.ticket_id}
+        summary: The ticket opens; its identity is the ticket_id of the Opened it emits.
+  - name: helpdesk.tickets.TouchTicket
+    input:
+      - name: ticket_id
+        type: String
+    outcomes:
+      - name: no-such-ticket
+        unknown_instance: true
+        error: helpdesk.tickets.NoSuchTicket
+        summary: No ticket carries the id.
+      - name: touched
+        updates: helpdesk.tickets.Ticket
+        instance: ticket_id
+        sets:
+          touched: true
+        emits: [helpdesk.tickets.Touched, helpdesk.tickets.Noted]
+        payload:
+          helpdesk.tickets.Touched: {ticket_id: input.ticket_id}
+          helpdesk.tickets.Noted: {ticket_id: input.ticket_id}
+        summary: The ticket is touched; the touch is published and the note is not.
+events:
+  - name: helpdesk.tickets.Opened
+    fields:
+      - name: ticket_id
+        type: String
+  - name: helpdesk.tickets.Touched
+    fields:
+      - name: ticket_id
+        type: String
+  - name: helpdesk.tickets.Noted
+    fields:
+      - name: ticket_id
+        type: String

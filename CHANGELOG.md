@@ -16,6 +16,17 @@ are Spindle's releases.
   overflows answer `400`, and the conformance target reports them unsupported. `Host::listed_with`
   and `Reader::listed_with` answer the rows with the total (`story:view-paging`).
 
+### Fixed
+
+- A command whose outcome emits an event no component lists under `publishes:` is served, where
+  its route answered `501` "does not publish" after the row and the event were written. The event
+  is committed with the write and listed by `Host::published` and the response's `published`, as
+  ESS 0.99.1's interpreter lists every emitted event, and is not handed to the channel. A
+  published event the same command emitted is sent with the command, where it waited in the
+  outbox for a later one. An event its component does not publish but another component does is
+  still refused by `Sender::publish` and not delivered
+  (`story:command-with-unpublished-event-served`).
+
 ## [0.20.2] - 2026-11-25
 
 ### Added

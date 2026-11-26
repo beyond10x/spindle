@@ -9,6 +9,7 @@ relations:
 - decomposes: epic:split-run
 - depends_on: story:run-one-component
 - depends_on: story:events-read-from-store
+- depends_on: story:command-with-unpublished-event-served
 scope:
 - confidence: cited
   path: crates/spindle-channel/src/endpoint.rs
