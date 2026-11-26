@@ -3,6 +3,13 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
+use ess_conformance::authored::{self, Source};
+use ess_conformance::interpret::Interpreted;
+use ess_conformance::{
+    AdmittedSuite, AdvancingClock, ConformanceSuite, Ids, Runner, RunnerConfig, Status,
+    SuiteProvenance,
+};
+
 const SPEC: &str = "crates/spindle-cli/tests/fixtures/replay";
 const SCENARIOS: &str = "crates/spindle-cli/tests/fixtures/replay-scenarios";
 const LAPTOP: &str = "examples/environments/laptop.toml";
@@ -199,4 +206,113 @@ fn replay_starts_on_a_specification_with_converted_mappings() {
         assert!(printed.contains(step), "{step:?} in {printed}");
     }
     assert!(!printed.contains("diverges"), "{printed}");
+}
+
+/// The specification whose door is refused when shut again, and by no declared outcome when no
+/// one opened it (`story:scenario-act-without-outcome`).
+const REFUSALS: &str = "crates/spindle-cli/tests/fixtures/replay-refusals";
+
+/// The status ESS 0.99.1's own runner gives `scenario` against ESS's interpreter of `spec`.
+fn ess_runner_status(spec: &str, scenario: &str) -> Status {
+    let ir = spindle_spec::load(&root().join(spec))
+        .expect("the specification compiles")
+        .ir;
+    let document =
+        std::fs::read_to_string(root().join(SCENARIOS).join(scenario)).expect("the scenario reads");
+    let authoring = authored::compile(&ir, &[Source::new(scenario.to_owned(), document)]);
+    assert!(authoring.is_complete(), "{:?}", authoring.refusals);
+    let mut suite = ConformanceSuite::new(SuiteProvenance::of(&ir));
+    for (id, compiled) in authoring.scenarios {
+        suite.insert(id, compiled).expect("one scenario");
+    }
+    suite.select_fresh_format_for(&ir);
+    let admitted = AdmittedSuite::from_suite(&suite).expect("the suite is admitted");
+    let target = Interpreted::for_model(ir.clone());
+    let report = Runner::new(
+        RunnerConfig::default(),
+        AdvancingClock::default(),
+        Ids::for_suite(&suite),
+    )
+    .run_admitted(&admitted, &target)
+    .into_report();
+    report.scenarios[0].status
+}
+
+#[test]
+fn a_refused_act_without_an_outcome_prints_the_refusal() {
+    let scenario = "refused-without-outcome.yaml";
+    assert_eq!(ess_runner_status(REFUSALS, scenario), Status::Passed);
+    let output = replay_of(REFUSALS, scenario);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let printed = stdout(&output);
+    for line in [
+        "timeline[0] hatch.door.OpenDoor: holds, outcome opened\n",
+        "timeline[1] hatch.door.ShutDoor: holds, outcome shut\n",
+        "timeline[2] hatch.door.ShutDoor: holds, outcome already-shut, error hatch.door.AlreadyShut\n",
+    ] {
+        assert!(printed.contains(line), "{line:?} in {printed}");
+    }
+}
+
+#[test]
+fn an_undeclared_refusal_without_an_outcome_prints_it() {
+    let scenario = "undeclared-without-outcome.yaml";
+    assert_eq!(ess_runner_status(REFUSALS, scenario), Status::Passed);
+    let output = replay_of(REFUSALS, scenario);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let printed = stdout(&output);
+    assert!(
+        printed.contains("timeline[0] hatch.door.ShutDoor: holds, undeclared\n"),
+        "{printed}"
+    );
+}
+
+#[test]
+fn an_act_without_an_outcome_that_runs_holds() {
+    let scenario = "runs-without-outcome.yaml";
+    assert_eq!(ess_runner_status(REFUSALS, scenario), Status::Passed);
+    let output = replay_of(REFUSALS, scenario);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let printed = stdout(&output);
+    assert!(
+        printed.contains("timeline[0] hatch.door.OpenDoor: holds, outcome opened\n"),
+        "{printed}"
+    );
+}
+
+#[test]
+fn an_act_with_an_outcome_prints_the_observed_one() {
+    let holding = replay("holds.yaml");
+    assert_eq!(holding.status.code(), Some(0), "{holding:?}");
+    let printed = stdout(&holding);
+    for line in [
+        "timeline[0] desk.ticket.OpenTicket: holds, outcome opened\n",
+        "timeline[1] desk.ticket.OpenTicket: holds, outcome opened\n",
+        "assert[0] desk.ticket.OpenTickets: holds\n",
+    ] {
+        assert!(printed.contains(line), "{line:?} in {printed}");
+    }
+
+    let diverging = replay("wrong-outcome.yaml");
+    assert_eq!(diverging.status.code(), Some(1), "{diverging:?}");
+    let printed = stdout(&diverging);
+    for line in [
+        "timeline[0] desk.ticket.OpenTicket: holds, outcome opened\n",
+        "timeline[1] desk.ticket.CloseTicket: diverges, outcome closed\n",
+    ] {
+        assert!(printed.contains(line), "{line:?} in {printed}");
+    }
+}
+
+#[test]
+fn a_refused_act_prints_its_error() {
+    let output = replay_of(REFUSALS, "refused-with-error.yaml");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let printed = stdout(&output);
+    assert!(
+        printed.contains(
+            "timeline[2] hatch.door.ShutDoor: holds, outcome already-shut, error hatch.door.AlreadyShut\n"
+        ),
+        "{printed}"
+    );
 }

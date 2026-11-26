@@ -1,0 +1,21 @@
+format: ess/34
+system: hatch
+version: v1
+summary: A hatch opened under an identity the runtime mints and shut once.
+domains:
+  - hatch.door
+components:
+  - component: hatch
+    summary: Opens and shuts doors.
+    owns:
+      domains:
+        - hatch.door
+    accepts:
+      commands:
+        - hatch.door.OpenDoor
+        - hatch.door.ShutDoor
+    publishes:
+      events:
+        - hatch.door.DoorOpened
+        - hatch.door.DoorShut
+    reached_by: in_process

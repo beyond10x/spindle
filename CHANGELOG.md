@@ -6,6 +6,15 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- `run --scenario` prints on each timeline act's line what its command answered: `outcome
+  <name>`, with `error <name>` where the outcome carries a declared error, `undeclared` or `not
+  granted`, beside `holds` or `diverges`. An act that states no `outcome:` and is refused printed
+  `holds` alone; it still holds and exits 0, as ESS 0.99.1's runner passes it, and now names the
+  refusal. `HostTarget::answered` lists what each command of the scenario answered
+  (`story:scenario-act-without-outcome`).
+
 ## [0.21.0] - 2026-11-26
 
 ### Added

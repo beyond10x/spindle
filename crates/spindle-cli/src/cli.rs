@@ -93,8 +93,11 @@ pub enum Command {
     /// With `--scenario`, replays an `ess-scenario` document instead of reading stdin: every
     /// component in one process on empty in-memory stores, the document read and checked by ESS,
     /// its steps run and compared by ESS's conformance runner. Prints what it arranges, each
-    /// timeline act and each assertion that holds; exits 0 when all hold. At the first that does
-    /// not, prints it with what was expected and what was observed and exits 1; that replay runs
+    /// timeline act and each assertion that holds; exits 0 when all hold. Each act's line ends with
+    /// what its command answered: `outcome <name>`, with `error <name>` where the outcome carries a
+    /// declared error, `undeclared` or `not granted`; an act that states no outcome holds when its
+    /// command is refused, as ESS's runner passes it. At the first step that does not hold,
+    /// prints it with what was expected and what was observed and exits 1; that replay runs
     /// nothing after it. A document ESS refuses, or one of more than 1000 steps, exits 1 before any
     /// step runs.
     ///

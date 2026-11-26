@@ -1,0 +1,25 @@
+type: ess-scenario/1
+domain: hatch.door
+scenario: a-door-shut-twice-is-refused-with-its-error
+summary: A door opens, shuts, and is refused when shut again, each act stating its outcome.
+arrange:
+  - instance: front
+    entity: hatch.door.Door
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: hatch.door.OpenDoor
+    input:
+      label: front
+    outcome: opened
+    capture: {instance: front, event: hatch.door.DoorOpened, field: door_id}
+  - at: 2026-01-05T09:01:00Z
+    command: hatch.door.ShutDoor
+    input:
+      door_id: {$instance: front}
+    outcome: shut
+  - at: 2026-01-05T09:02:00Z
+    command: hatch.door.ShutDoor
+    input:
+      door_id: {$instance: front}
+    outcome: already-shut
+    error: {name: hatch.door.AlreadyShut}

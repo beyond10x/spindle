@@ -5,7 +5,9 @@
 //! ([`ess_conformance::authored::compile`]), and its compiled steps are executed by ESS's own
 //! runner ([`ess_conformance::Runner`]) against [`HostTarget`]: a host with fresh in-memory
 //! stores for every replay, whatever `store.durable` is bound to, so a replay writes nothing to
-//! disk. Spindle compares nothing itself; what holds is the runner's answer.
+//! disk. Spindle compares nothing itself; what holds is the runner's answer. Each act's line also
+//! names what its command answered ([`HostTarget::answered`]): an act that states no outcome
+//! compiles to no outcome check, so the runner passes it refused, and the line says so.
 //!
 //! The runner reports a scenario as a whole and goes on past a failed expectation. To name the
 //! first step that diverges, the compiled steps are cut into the document's own steps (what is
@@ -27,7 +29,7 @@ use ess_conformance::{
     RunnerConfig, ScenarioId, ScenarioResult, ScenarioStep, Status, SuiteProvenance,
 };
 use spindle_capability::Environment;
-use spindle_conformance::{HostTarget, in_memory};
+use spindle_conformance::{Answered, HostTarget, in_memory};
 use spindle_host::HostError;
 
 /// Exit status of a replay the environment refused.
@@ -100,10 +102,11 @@ pub(crate) fn replay(spec: &Path, environment: &Path, scenario: &Path) -> Result
     let Some(last) = steps.last() else {
         return Ok(ExitCode::SUCCESS);
     };
+    let sends = sends(&compiled.steps, &steps);
     let whole = replays.run(last.end)?;
     if whole.result.status == Status::Passed {
-        for step in &steps {
-            writeln!(out, "{}: holds", step.label)?;
+        for (step, send) in steps.iter().zip(&sends) {
+            writeln!(out, "{}: holds{}", step.label, whole.answer(*send))?;
         }
         out.flush()?;
         return Ok(ExitCode::SUCCESS);
@@ -127,10 +130,15 @@ pub(crate) fn replay(spec: &Path, environment: &Path, scenario: &Path) -> Result
     } else {
         failing - 1
     };
-    for step in &steps[..index] {
-        writeln!(out, "{}: holds", step.label)?;
+    for (step, send) in steps[..index].iter().zip(&sends) {
+        writeln!(out, "{}: holds{}", step.label, divergent.answer(*send))?;
     }
-    writeln!(out, "{}: diverges", steps[index].label)?;
+    writeln!(
+        out,
+        "{}: diverges{}",
+        steps[index].label,
+        divergent.answer(sends[index])
+    )?;
     for check in divergent
         .result
         .checks
@@ -166,8 +174,31 @@ struct Replays<'a> {
 struct Replayed {
     result: ScenarioResult,
     commands: usize,
+    /// What each command the runner sent answered, in the order sent.
+    answered: Vec<Answered>,
     /// Whether it stopped at state the target could not arrange.
     unarranged: bool,
+}
+
+impl Replayed {
+    /// What the `send`-th command of this replay answered, as its act's line ends: the outcome
+    /// taken and the declared error it carries, `undeclared` or `not granted`; nothing for a step
+    /// that sends no command or a command the target failed to run.
+    fn answer(&self, send: Option<usize>) -> String {
+        match send.and_then(|send| self.answered.get(send)) {
+            Some(Answered::Took {
+                outcome,
+                error: None,
+            }) => format!(", outcome {outcome}"),
+            Some(Answered::Took {
+                outcome,
+                error: Some(error),
+            }) => format!(", outcome {outcome}, error {error}"),
+            Some(Answered::Undeclared) => ", undeclared".to_owned(),
+            Some(Answered::NotGranted) => ", not granted".to_owned(),
+            Some(Answered::Failed) | None => String::new(),
+        }
+    }
 }
 
 impl Replays<'_> {
@@ -200,6 +231,7 @@ impl Replays<'_> {
         Ok(Replayed {
             result,
             commands: target.commands(),
+            answered: target.answered(),
             unarranged: target.unarranged(),
         })
     }
@@ -278,6 +310,26 @@ fn steps(compiled: &[ScenarioStep]) -> Vec<Step> {
         .into_iter()
         .zip(ends)
         .map(|((_, label), end)| Step { end, label })
+        .collect()
+}
+
+/// For each of `steps`, the command it sends, counted from 0 in the order the runner asks the
+/// target to execute them: the first `execute_command` step of its compiled steps. A step that
+/// executes no command (what is arranged, an assertion) sends none.
+fn sends(compiled: &[ScenarioStep], steps: &[Step]) -> Vec<Option<usize>> {
+    let (mut start, mut sent) = (0, 0);
+    steps
+        .iter()
+        .map(|step| {
+            let own = compiled[start..step.end]
+                .iter()
+                .filter(|step| matches!(step, ScenarioStep::ExecuteCommand { .. }))
+                .count();
+            start = step.end;
+            let send = (own > 0).then_some(sent);
+            sent += own;
+            send
+        })
         .collect()
 }
 

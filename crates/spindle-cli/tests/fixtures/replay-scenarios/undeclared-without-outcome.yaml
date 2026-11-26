@@ -1,0 +1,9 @@
+type: ess-scenario/1
+domain: hatch.door
+scenario: a-door-no-one-opened-is-shut
+summary: A door no one opened is shut by an act that states no outcome; no declared outcome answers it.
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: hatch.door.ShutDoor
+    input:
+      door_id: 0b5e0000-0000-4000-8000-000000000001

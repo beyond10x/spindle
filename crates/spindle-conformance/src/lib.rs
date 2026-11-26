@@ -33,7 +33,7 @@ use ess_conformance::{
 use spindle_capability::Environment;
 use spindle_spec::Specification;
 
-pub use target::HostTarget;
+pub use target::{Answered, HostTarget};
 
 /// The format of a committed counts document.
 pub const COUNTS_FORMAT: &str = "spindle-conformance-counts/1";
