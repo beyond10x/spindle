@@ -1,0 +1,34 @@
+format: ess/34
+system: metering
+version: v1
+summary: Charges a meter keeps, guarded by holds a second component owns, which the meter also places.
+domains:
+  - metering.usage
+  - metering.holds
+components:
+  - component: meter
+    summary: Charges usage, and places holds on organizations it charges.
+    owns:
+      domains:
+        - metering.usage
+    accepts:
+      commands:
+        - metering.usage.ChargeDirect
+        - metering.usage.HoldOrg
+    publishes:
+      events:
+        - metering.usage.UsageCharged
+        - metering.usage.OrgHeld
+    reached_by: in_process
+  - component: holds
+    summary: Places holds on organizations.
+    owns:
+      domains:
+        - metering.holds
+    accepts:
+      commands:
+        - metering.holds.PlaceHold
+    publishes:
+      events:
+        - metering.holds.HoldPlaced
+    reached_by: in_process
