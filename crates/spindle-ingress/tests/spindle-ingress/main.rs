@@ -8,6 +8,7 @@ mod adversary_delivery;
 mod adversary_refusal_payload;
 mod adversary_route_precedence;
 mod adversary_router;
+mod adversary_unpublished_event;
 mod adversary_view_parameters;
 mod adversary_w21_security;
 mod adversary_w22_exposed;

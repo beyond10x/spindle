@@ -1772,7 +1772,7 @@ impl Host {
         let sent: Vec<&Event> = executed
             .events
             .iter()
-            .filter(|event| publishing(&self.ir, component, &event.name))
+            .filter(|event| published_anywhere(&self.ir, &event.name))
             .collect();
         if !sent.is_empty() {
             held.position += 1;
@@ -2157,16 +2157,16 @@ fn emptied_file(file: &Path, sink: &Sink) -> Result<Box<dyn Store>, String> {
     }
 }
 
-/// Whether `component` lists `event` under `publishes:`. An event it emits and does not publish
-/// is committed with the write and listed by [`Host::published`], and is not handed to the
-/// channel ([`Sender::publish`] refuses it).
-fn publishing(ir: &EssIr, component: &str, event: &str) -> bool {
+/// Whether any component lists `event` under `publishes:`. An event no component publishes is
+/// committed with the write and listed by [`Host::published`], and is not handed to the channel:
+/// no route has it as its event ([`Router::build`]). An event another component publishes is
+/// handed over, and [`Sender::publish`] refuses it.
+fn published_anywhere(ir: &EssIr, event: &str) -> bool {
     ir.components().values().any(|declared| {
-        declared.name.as_str() == component
-            && declared
-                .publishes
-                .iter()
-                .any(|published| published.to_string() == event)
+        declared
+            .publishes
+            .iter()
+            .any(|published| published.to_string() == event)
     })
 }
 
