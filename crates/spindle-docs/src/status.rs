@@ -456,6 +456,13 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "Arrange lines and line references on stdin",
+        "run reading JSON lines on stdin takes {\"arrange\": [rows]} in the shape a reset's world gives them, checked by ESS and against each entity's invariants and written all or none, before the next line; a seeded mint never mints an identity one wrote. A command's input may name a value an earlier line answered with {\"$line\": n, \"pointer\": \"/events/0/payload/<field>\"}; a reference to a line not yet answered, or to a pointer its answer lacks, rejects the line.",
+        "/docs/reference/cli#run",
+        "crates/spindle-cli/tests/spindle-cli/stdin_lines.rs::an_arrange_line_writes_rows_a_later_command_reads",
+    ),
+    shipped(
+        "Execution",
         "Simulated clock and seeded mint",
         "run --clock starts a run reading stdin, serving HTTP or replaying --scenario on a manual clock at an RFC 3339 instant; on stdin a line's at moves it forward before its command runs, an earlier instant rejects the line, and a rejected line leaves the clock where it stood. run --mint-seed mints every identity and generated value from a seed on stdin and over HTTP, so two runs of the same commands mint the same identities, never one the kept state already holds; a served reset without a world mints from it again. An environment binding identity.mint to seeded runs on stdin with seed 0, and serves HTTP given --mint-seed. No run fires a periodic binding.",
         "/docs/reference/cli",

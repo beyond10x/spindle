@@ -64,7 +64,10 @@ with seed 0 unless the flag names another, and serves HTTP given the flag. No `r
 periodic binding. Reading stdin, `run` fires the event bindings as a served run does: each command
 a binding invokes prints its result on its own line after the line that caused it, with
 `"caused_by": {"line": <n>, "binding": "<id>"}`, and one that is refused or does not run makes the
-run exit 1 after the last line.
+run exit 1 after the last line. A stdin line `{"arrange": [<row>]}` writes rows in the shape
+`POST /api/reset` takes them, `{"entity", "identity", "state", "fields"}`, before the next line,
+and a command's input may name what an earlier line answered, such as the identity line 1 minted,
+with `{"$line": 1, "pointer": "/events/0/payload/<field>"}`.
 
 Where `run` serves HTTP, `--seed <file>` (or `[seed] file` in the environment document) submits a
 JSON array of commands, each with its input, actor, caller and request id, on every start: checked

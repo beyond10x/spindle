@@ -27,6 +27,13 @@ are Spindle's releases.
   refused. A binding a served run refuses (such as `on_failure: escalate`) now stops a stdin run
   with exit 1 before any line is read, where it was ignored; a specification that declares no
   component routes its bindings as the one implied component (`story:stdin-run-fires-bindings`).
+- `run` reading stdin takes an arrange line, `{"arrange": [{"entity", "identity", "state",
+  "fields"}]}`, that writes those rows before the next line, read as a reset's world reads them
+  and checked against each entity's invariants, all or none; a seeded mint never mints an
+  identity one wrote. A command's input may name a value an earlier line answered with
+  `{"$line": <n>, "pointer": "<JSON pointer>"}`, such as the identity line `n` minted; a reference
+  to a line not answered before it, or to a pointer its answer lacks, rejects the line
+  (`story:stdin-arrange-and-line-references`).
 
 ### Fixed
 

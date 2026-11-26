@@ -1,7 +1,9 @@
-//! What `run` reading stdin does beside running each line's command: it fires the event bindings
-//! the command's events match, as a served run routes them ([`Bindings`]).
+//! The lines `run` reads on stdin and what it does beside running each line's command: a line is
+//! a command or an arrangement of rows ([`Line`]), a command's input may name a value of an
+//! earlier line's answer ([`Answered::resolve`]), and the event bindings the command's events
+//! match fire as a served run routes them ([`Bindings`]).
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
 use std::time::SystemTime;
 
@@ -9,11 +11,210 @@ use anyhow::{Context, Result};
 use ess_domain::binding::Failure;
 use serde_json::{Map, Value, json};
 use spindle_channel::{Route, Router};
-use spindle_kernel::{Event, ExecuteError, Executed, External, Mint, Store};
+use spindle_kernel::{Change, Event, ExecuteError, Executed, External, Mint, Store, Write};
 use spindle_spec::EssIr;
 
+use crate::Request;
 use crate::calls::Calls;
 use crate::decisions::Answers;
+
+/// One line of a stdin run.
+pub(crate) enum Line {
+    /// `{"command": ...}`: a command to run.
+    Command(Request),
+    /// `{"arrange": [<row>]}`: rows in the reset world's shape, written before the next line.
+    Arrange(Vec<Value>),
+}
+
+/// An arrange line: nothing beside its rows.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Arrange {
+    arrange: Vec<Value>,
+}
+
+impl Line {
+    /// Reads `text`: an object with the key `arrange` is an arrangement, anything else a command.
+    ///
+    /// # Errors
+    /// Why `text` is neither: not JSON, or not of either shape.
+    pub(crate) fn parse(text: &str) -> Result<Self, String> {
+        let value: Value = serde_json::from_str(text).map_err(|error| error.to_string())?;
+        if value.get("arrange").is_some() {
+            return serde_json::from_value::<Arrange>(value)
+                .map(|arrange| Self::Arrange(arrange.arrange))
+                .map_err(|error| format!("an arrange line: {error}"));
+        }
+        serde_json::from_str::<Request>(text)
+            .map(Self::Command)
+            .map_err(|error| error.to_string())
+    }
+}
+
+/// The answer each line of a stdin run printed, by its place in the input, counted from 1: what a
+/// later line's reference reads.
+#[derive(Default)]
+pub(crate) struct Answered(BTreeMap<usize, Value>);
+
+impl Answered {
+    /// Keeps `answer` as line `line`'s.
+    pub(crate) fn keep(&mut self, line: usize, answer: Value) {
+        self.0.insert(line, answer);
+    }
+
+    /// Replaces each reference in `input`, at any depth, by the value it names: an object
+    /// `{"$line": <n>, "pointer": "<JSON pointer>"}` is the value at that pointer in the answer
+    /// line `n` printed, `n` before `line`.
+    ///
+    /// # Errors
+    /// A reference of another shape, to a line not answered before `line` (a later line, `line`
+    /// itself, a blank line or none), or to a pointer that answer lacks; nothing is replaced.
+    pub(crate) fn resolve(
+        &self,
+        line: usize,
+        input: &mut Map<String, Value>,
+    ) -> Result<(), String> {
+        let mut resolved = input.clone();
+        for value in resolved.values_mut() {
+            self.replace(line, value)?;
+        }
+        *input = resolved;
+        Ok(())
+    }
+
+    fn replace(&self, line: usize, value: &mut Value) -> Result<(), String> {
+        match value {
+            Value::Object(object) if object.contains_key("$line") => {
+                *value = self.referenced(line, object)?;
+            }
+            Value::Object(object) => {
+                for member in object.values_mut() {
+                    self.replace(line, member)?;
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    self.replace(line, item)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn referenced(&self, line: usize, reference: &Map<String, Value>) -> Result<Value, String> {
+        let target = reference
+            .get("$line")
+            .and_then(Value::as_u64)
+            .and_then(|target| usize::try_from(target).ok());
+        let pointer = reference.get("pointer").and_then(Value::as_str);
+        let (Some(target), Some(pointer), 2) = (target, pointer, reference.len()) else {
+            return Err(format!(
+                "{} is no reference: one is {{\"$line\": <line number>, \"pointer\": \"<JSON \
+                 pointer>\"}} and nothing else",
+                Value::Object(reference.clone())
+            ));
+        };
+        if target >= line {
+            return Err(format!(
+                "line {line} names line {target}, which is not answered before it"
+            ));
+        }
+        let answer = self
+            .0
+            .get(&target)
+            .ok_or_else(|| format!("line {line} names line {target}, which is blank or no line"))?;
+        answer.pointer(pointer).cloned().ok_or_else(|| {
+            format!(
+                "line {line} names {pointer} of line {target}'s answer, which has none: {answer}"
+            )
+        })
+    }
+}
+
+/// One row an arrange line wrote.
+pub(crate) struct Arranged {
+    /// The entity, by qualified name.
+    pub entity: String,
+    /// The identity, as the store holds it.
+    pub identity: Value,
+}
+
+impl Arranged {
+    /// The result line of an arrange line that wrote `rows`: `{"arranged": [{"entity",
+    /// "identity"}]}`, in the line's order.
+    pub(crate) fn answer(rows: &[Self]) -> Value {
+        let rows = rows
+            .iter()
+            .map(|row| json!({"entity": row.entity, "identity": row.identity}))
+            .collect::<Vec<_>>();
+        json!({ "arranged": rows })
+    }
+}
+
+/// Writes `rows`, in the reset world's shape, to `store`: each checked by ESS as a scenario's setup
+/// is and by the host's reader ([`spindle_host::read_world`]), then against its entity's invariants
+/// ([`spindle_kernel::at_rest`]), then written all together or not at all
+/// ([`Store::commit_all`]).
+///
+/// # Errors
+/// The first row refused, by its place in the line counted from 0, or one already stored or named
+/// twice; nothing is written.
+pub(crate) fn arrange(
+    ir: &EssIr,
+    store: &mut dyn Store,
+    rows: Vec<Value>,
+) -> Result<Vec<Arranged>, String> {
+    let world = spindle_host::read_world(ir, &json!({"rows": rows}), |_| {
+        Box::new(spindle_kernel::NoExternals)
+    })
+    .map_err(|why| why.replace("reading the reset's world: ", ""))?;
+    let mut named = BTreeSet::new();
+    for (index, seed) in world.rows.iter().enumerate() {
+        let (entity, identity) = (&seed.entity, &seed.identity);
+        spindle_kernel::at_rest(ir, entity, identity, &seed.row)
+            .map_err(|error| format!("row {index}: {entity} {identity}: {error}"))?;
+        if !named.insert((entity.clone(), identity.to_string())) {
+            return Err(format!(
+                "row {index}: {entity} {identity} is already a row of this line"
+            ));
+        }
+        let stored = store
+            .load(entity, identity)
+            .map_err(|error| format!("row {index}: reading {entity} {identity}: {error}"))?;
+        if stored.is_some() {
+            return Err(format!(
+                "row {index}: {entity} {identity} is already stored, and an arrange line never \
+                 replaces an instance"
+            ));
+        }
+    }
+    let writes = world
+        .rows
+        .iter()
+        .map(|seed| {
+            Write::Commit(Change {
+                entity: seed.entity.clone(),
+                identity: seed.identity.clone(),
+                expected: None,
+                row: seed.row.clone(),
+                events: Vec::new(),
+                scanned: Vec::new(),
+            })
+        })
+        .collect::<Vec<_>>();
+    store
+        .commit_all(&writes)
+        .map_err(|error| format!("writing the rows: {error}"))?;
+    Ok(world
+        .rows
+        .into_iter()
+        .map(|seed| Arranged {
+            entity: seed.entity,
+            identity: seed.identity,
+        })
+        .collect())
+}
 
 /// What one command of a stdin run runs on: the run's model, its one store, its answers to external
 /// causes, its mint and its clock.

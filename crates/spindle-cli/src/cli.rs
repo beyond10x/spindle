@@ -86,6 +86,17 @@ pub enum Command {
     /// `"at": "<RFC 3339>"` that moves the clock `--clock` starts forward to that instant before
     /// the command runs. Each line prints one JSON result: the outcome with its events and
     /// declared error, or a failure.
+    ///
+    /// A line `{"arrange": [{"entity", "identity", "state", "fields"}]}` writes those rows, in the
+    /// shape a reset's world gives them, before the next line: each checked by ESS as a scenario's
+    /// setup is and against its entity's invariants, then all written or, where one is refused,
+    /// already stored or named twice, none. It prints `{"arranged": [{"entity", "identity"}]}`; a
+    /// seeded mint never mints an identity it wrote. A command's input may name a value an
+    /// earlier line answered with `{"$line": <n>, "pointer": "<JSON pointer>"}`, such as
+    /// `"/events/0/payload/<field>"` for an identity line `n` minted; lines are counted from 1,
+    /// blank ones included. A reference to a line not answered before it, or to a pointer its
+    /// answer lacks, rejects the line (`unresolved_reference`).
+    ///
     /// Exits 3, running nothing, when admission is refused. At startup it prints on stderr the
     /// same lines `admit` prints for outcomes and commands the kernel does not run.
     ///
@@ -98,8 +109,9 @@ pub enum Command {
     ///
     /// A line whose result is a failure was rejected: it is not JSON, names no declared command,
     /// its input is not admitted, its external cause is unanswered, or the kernel refused it
-    /// before an outcome. A command a binding invoked is rejected where it is refused or does not
-    /// run. The run answers every line, then names each rejected line on stderr by its place in
+    /// before an outcome; so is an arrange line whose rows were not written and a line whose
+    /// reference does not resolve. A command a binding invoked is rejected where it is refused or
+    /// does not run. The run answers every line, then names each rejected line on stderr by its place in
     /// the input, counted from 1, with the binding of each rejected command it caused, and exits
     /// 1; with none rejected it exits 0. A line answered by a declared outcome, a refusing one
     /// included, is not rejected.

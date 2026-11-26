@@ -721,19 +721,20 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         (None, Some(SEEDED_MINT)) => Some(0),
         (None, _) => None,
     };
-    let mut mint: Box<dyn spindle_kernel::Mint> = match seed {
-        Some(seed) => Box::new(
-            spindle_kernel::Seeded::new(seed)
-                .avoiding_identities(held_identities(&loaded.ir, store.as_mut())?.iter()),
-        ),
-        None => Box::new(spindle_kernel::UuidV4),
-    };
+    let mut seeded = seed
+        .map(|seed| {
+            held_identities(&loaded.ir, store.as_mut())
+                .map(|held| spindle_kernel::Seeded::new(seed).avoiding_identities(held.iter()))
+        })
+        .transpose()?;
+    let mut random = spindle_kernel::UuidV4;
     let mut clock = clock;
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     let mut read = 0_usize;
     let mut invoked = 0_usize;
     let mut rejected: Vec<String> = Vec::new();
+    let mut answered = lines::Answered::default();
     for (index, line) in std::io::stdin().lock().lines().enumerate() {
         let line = line.context("reading stdin")?;
         if line.trim().is_empty() {
@@ -741,35 +742,64 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         }
         read += 1;
         let mut fired = Vec::new();
-        let result = match serde_json::from_str::<Request>(&line) {
-            Err(error) => serde_json::json!({
-                "failure": {"kind": "invalid_request", "message": error.to_string()},
+        let result = match lines::Line::parse(&line) {
+            Err(message) => serde_json::json!({
+                "failure": {"kind": "invalid_request", "message": message},
             }),
-            Ok(request) => match moved(clock, request.at.as_deref()) {
-                Err(message) => serde_json::json!({
-                    "command": request.command,
-                    "failure": {"kind": "invalid_request", "message": message},
-                }),
-                Ok(moved) => {
-                    let now = move || moved.unwrap_or_else(std::time::SystemTime::now);
-                    let mut running = lines::Running {
-                        ir: &loaded.ir,
-                        store: store.as_mut(),
-                        answers: answers.answers(),
-                        calls: &calls,
-                        mint: mint.as_mut(),
-                        now: &now,
-                    };
-                    let (result, events) = answer(&mut running, &request);
-                    // A rejected line did not run, so the clock stays where it stood.
-                    if result.get("failure").is_none() {
-                        clock = moved;
+            Ok(lines::Line::Arrange(rows)) => {
+                match lines::arrange(&loaded.ir, store.as_mut(), rows) {
+                    Err(message) => serde_json::json!({
+                        "failure": {"kind": "invalid_arrangement", "message": message},
+                    }),
+                    Ok(arranged) => {
+                        // A seeded mint never mints an identity an arranged row holds.
+                        if let Some(seeded) = seeded.as_mut() {
+                            *seeded = seeded
+                                .clone()
+                                .avoiding_identities(arranged.iter().map(|row| &row.identity));
+                        }
+                        lines::Arranged::answer(&arranged)
                     }
-                    fired = bindings.fire(&mut running, index + 1, events);
-                    result
                 }
-            },
+            }
+            Ok(lines::Line::Command(mut request)) => {
+                match answered
+                    .resolve(index + 1, &mut request.input)
+                    .map_err(|message| ("unresolved_reference", message))
+                    .and_then(|()| {
+                        moved(clock, request.at.as_deref())
+                            .map_err(|message| ("invalid_request", message))
+                    }) {
+                    Err((kind, message)) => serde_json::json!({
+                        "command": request.command,
+                        "failure": {"kind": kind, "message": message},
+                    }),
+                    Ok(moved) => {
+                        let now = move || moved.unwrap_or_else(std::time::SystemTime::now);
+                        let mint: &mut dyn spindle_kernel::Mint = match seeded.as_mut() {
+                            Some(seeded) => seeded,
+                            None => &mut random,
+                        };
+                        let mut running = lines::Running {
+                            ir: &loaded.ir,
+                            store: store.as_mut(),
+                            answers: answers.answers(),
+                            calls: &calls,
+                            mint,
+                            now: &now,
+                        };
+                        let (result, events) = answer(&mut running, &request);
+                        // A rejected line did not run, so the clock stays where it stood.
+                        if result.get("failure").is_none() {
+                            clock = moved;
+                        }
+                        fired = bindings.fire(&mut running, index + 1, events);
+                        result
+                    }
+                }
+            }
         };
+        answered.keep(index + 1, result.clone());
         if let Some(failure) = result.get("failure") {
             let kind = failure["kind"].as_str().unwrap_or_default();
             rejected.push(format!(

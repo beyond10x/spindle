@@ -80,6 +80,7 @@ mod served_world;
 mod state_lock;
 mod state_move;
 mod stdin_bindings;
+mod stdin_lines;
 mod tls_cause;
 mod topology;
 mod trusted_caller;
