@@ -1,0 +1,169 @@
+domain: desk.ticket
+summary: Tickets and agents, each opened with optional fields that may never be written; a ticket is reviewed under a guard over its own fields and assigned under a guard over the agent's.
+types:
+  - name: desk.ticket.TicketId
+    kind: newtype
+    of: Uuid
+  - name: desk.ticket.AgentId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: desk.ticket.Ticket
+    identity:
+      name: ticket_id
+      type: desk.ticket.TicketId
+    fields:
+      - name: label
+        type: Optional<String>
+      - name: rank
+        type: Optional<Integer>
+      - name: flagged
+        type: Optional<Boolean>
+      - name: note
+        type: Optional<String>
+      - name: agent
+        type: Optional<desk.ticket.AgentId>
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+  - name: desk.ticket.Agent
+    identity:
+      name: agent_id
+      type: desk.ticket.AgentId
+    fields:
+      - name: label
+        type: Optional<String>
+      - name: rank
+        type: Optional<Integer>
+      - name: flagged
+        type: Optional<Boolean>
+    lifecycle:
+      initial: Active
+      states: [Active]
+      terminal: [Active]
+errors:
+  - name: desk.ticket.Refused
+    summary: The guard turns the request away.
+    fields: []
+  - name: desk.ticket.NoAgent
+    summary: No agent carries the id.
+    fields: []
+commands:
+  - name: desk.ticket.OpenAgent
+    input:
+      - name: agent_id
+        type: desk.ticket.AgentId
+      - name: label
+        type: Optional<String>
+      - name: rank
+        type: Optional<Integer>
+      - name: flagged
+        type: Optional<Boolean>
+    outcomes:
+      - name: opened
+        creates: desk.ticket.Agent
+        instance: agent_id
+        sets:
+          label: input.label
+          rank: input.rank
+          flagged: input.flagged
+        emits: [desk.ticket.AgentOpened]
+        payload:
+          desk.ticket.AgentOpened:
+            agent_id: input.agent_id
+        summary: The agent is opened with the fields given.
+  - name: desk.ticket.OpenTicket
+    input:
+      - name: ticket_id
+        type: desk.ticket.TicketId
+      - name: label
+        type: Optional<String>
+      - name: rank
+        type: Optional<Integer>
+      - name: flagged
+        type: Optional<Boolean>
+    outcomes:
+      - name: opened
+        creates: desk.ticket.Ticket
+        instance: ticket_id
+        sets:
+          label: input.label
+          rank: input.rank
+          flagged: input.flagged
+        emits: [desk.ticket.TicketOpened]
+        payload:
+          desk.ticket.TicketOpened:
+            ticket_id: input.ticket_id
+        summary: The ticket is opened with the fields given.
+  - name: desk.ticket.Review
+    input:
+      - name: ticket_id
+        type: desk.ticket.TicketId
+      - name: note
+        type: String
+    outcomes:
+      - name: held-refused
+        when_subject:
+          predicate: label == mine
+        error: desk.ticket.Refused
+        summary: The guard over the ticket's own fields turns the review away.
+      - name: reviewed
+        updates: desk.ticket.Ticket
+        instance: ticket_id
+        sets:
+          note: input.note
+        emits: [desk.ticket.Reviewed]
+        payload:
+          desk.ticket.Reviewed:
+            ticket_id: input.ticket_id
+        summary: The ticket is reviewed.
+  - name: desk.ticket.Assign
+    input:
+      - name: ticket_id
+        type: desk.ticket.TicketId
+      - name: agent_id
+        type: desk.ticket.AgentId
+    outcomes:
+      - name: no-agent
+        when_related:
+          via: input.agent_id
+          exists: false
+        error: desk.ticket.NoAgent
+        summary: The named agent does not exist.
+      - name: agent-refused
+        when_related:
+          via: input.agent_id
+          predicate: label == mine
+        error: desk.ticket.Refused
+        summary: The guard over the agent's fields turns the assignment away.
+      - name: assigned
+        updates: desk.ticket.Ticket
+        instance: ticket_id
+        sets:
+          agent: input.agent_id
+        emits: [desk.ticket.Assigned]
+        payload:
+          desk.ticket.Assigned:
+            ticket_id: input.ticket_id
+            agent_id: input.agent_id
+        summary: The ticket is assigned to the agent.
+events:
+  - name: desk.ticket.AgentOpened
+    fields:
+      - name: agent_id
+        type: desk.ticket.AgentId
+  - name: desk.ticket.TicketOpened
+    fields:
+      - name: ticket_id
+        type: desk.ticket.TicketId
+  - name: desk.ticket.Reviewed
+    fields:
+      - name: ticket_id
+        type: desk.ticket.TicketId
+  - name: desk.ticket.Assigned
+    fields:
+      - name: ticket_id
+        type: desk.ticket.TicketId
+      - name: agent_id
+        type: desk.ticket.AgentId

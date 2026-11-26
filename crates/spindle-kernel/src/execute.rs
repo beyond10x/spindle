@@ -489,11 +489,49 @@ impl Unknowns {
         }
     }
 
+    /// Reads the `Optional` input fields `predicate` reads that `input` holds nothing in: at
+    /// their own names, as an input guard reads them, or under `prefix.` where one is given, as a
+    /// guard over a row reads the input (`input.<field>`).
+    fn read_input(
+        &mut self,
+        predicate: &Predicate,
+        prefix: Option<&str>,
+        declared: &[ResolvedField],
+        input: &Map<String, Value>,
+    ) {
+        for path in predicate.fact_paths() {
+            let field = match (prefix, path.segments()) {
+                (None, [field]) => field,
+                (Some(prefix), [first, field]) if first.as_str() == prefix => field,
+                _ => continue,
+            };
+            let optional = declared
+                .iter()
+                .any(|declared| declared.name == *field && declared.type_ref.is_optional());
+            let written = path.to_string();
+            if optional
+                && input.get(field).is_none_or(Value::is_null)
+                && !self.absent.contains(&written)
+            {
+                self.absent.push(written);
+            }
+        }
+    }
+
     /// What `predicate`, the guard's `place`, leaves open on these rows of `entity`, and the way
     /// out where an absent `Optional` field is why: `defined(<field>)` beside it reads such a row
     /// `false` (ESS `docs/design/cross-record-and-stored-field-guards.md`, "Optional fields").
     fn why(&self, entity: &ResolvedEntity, predicate: &Predicate, place: &str) -> String {
-        let mut why = format!("`{predicate}` is unknown on a `{}` row", entity.name);
+        self.told(
+            format!("`{predicate}` is unknown on a `{}` row", entity.name),
+            place,
+            "such a row",
+        )
+    }
+
+    /// `why`, followed by the absent fields and the way out, where there are any:
+    /// `defined(<field>)` in the guard's `place` rules `what` out.
+    fn told(&self, mut why: String, place: &str, what: &str) -> String {
         if !self.absent.is_empty() {
             let quoted = |format: fn(&String) -> String, separator: &str| {
                 self.absent
@@ -503,7 +541,7 @@ impl Unknowns {
                     .join(separator)
             };
             why.push_str(&format!(
-                " where {} is absent; write {} in the {place} to rule such a row out",
+                " where {} is absent; write {} in the {place} to rule {what} out",
                 quoted(|field| format!("`{field}`"), " or "),
                 quoted(|field| format!("`defined({field})`"), " and "),
             ));
@@ -1098,14 +1136,102 @@ impl<'a, 'ir> Run<'a, 'ir> {
     }
 
     /// The refusal of `outcome`, whose guard read `Unknown`: it names what left a row-set guard
-    /// open where the last one read was this outcome's ([`Self::row_set`]).
+    /// open where the last one read was this outcome's ([`Self::row_set`]), and otherwise each part
+    /// of the guard an absent `Optional` field left open ([`Self::absent`]).
     fn undecidable(&mut self, outcome: &ResolvedOutcome) -> ExecuteError {
-        let outcome = self.qualified(outcome);
-        let why = self
-            .open
-            .take_if(|(open, _)| *open == outcome)
-            .map(|(_, why)| why);
-        ExecuteError::Undecidable { outcome, why }
+        let qualified = self.qualified(outcome);
+        let why = match self.open.take_if(|(open, _)| *open == qualified) {
+            Some((_, why)) => Some(why),
+            None => self.absent(outcome),
+        };
+        ExecuteError::Undecidable {
+            outcome: qualified,
+            why,
+        }
+    }
+
+    /// Each part of `outcome`'s guard that reads `Unknown` because an `Optional` field it reads
+    /// holds nothing, with that field and the way out, `defined(<field>)` ([`Unknowns::told`]):
+    /// the predicate over the held instance or over the related row, and the input guard. ESS
+    /// reads a comparison, an ordering, `in`, `none_of` or a bare boolean over an absent field as
+    /// `Unknown`, and selects no outcome (ESS
+    /// `docs/design/cross-record-and-stored-field-guards.md`, "Optional fields"). `None` where no
+    /// absent field is why, such as a guard over `now` with no instant.
+    fn absent(&mut self, outcome: &ResolvedOutcome) -> Option<String> {
+        let ir = self.ir;
+        let mut parts = Vec::new();
+        let input = match &outcome.condition {
+            ResolvedCondition::When { predicate }
+            | ResolvedCondition::ExternalWhen { predicate, .. } => Some(predicate),
+            ResolvedCondition::SubjectPredicate { predicate, input }
+            | ResolvedCondition::ExternalSubject {
+                predicate, input, ..
+            } => {
+                if let (Some(held), Some(row)) = (&self.held, self.before())
+                    && let Ok(facts) = self.subject_facts(outcome)
+                    && predicate.evaluate(&facts) == Truth::Unknown
+                {
+                    parts.extend(self.row_part(predicate, held.entity, row));
+                }
+                input.as_ref()
+            }
+            // ESS admits `when_subject: {field, equals}` over a required enum field alone, which a
+            // held row always holds.
+            ResolvedCondition::SubjectField { predicate, .. }
+            | ResolvedCondition::SubjectState { predicate, .. }
+            | ResolvedCondition::StateChange { predicate, .. } => predicate.as_ref(),
+            ResolvedCondition::RelatedSet { input, .. } => input.as_ref(),
+            ResolvedCondition::Related {
+                via,
+                entity,
+                test: ResolvedRelatedTest::Holds { predicate },
+                input,
+                ..
+            } => {
+                let entity = ir.entity(entity);
+                if let Ok(Reference::Row(identity, row)) = self.reference(via, entity)
+                    && predicate.evaluate(&self.related_facts(entity, &identity, &row))
+                        == Truth::Unknown
+                {
+                    parts.extend(self.row_part(predicate, entity, &row));
+                }
+                input.as_ref()
+            }
+            _ => None,
+        };
+        if let Some(guard) = input
+            && self.guard(Some(guard)) == Truth::Unknown
+        {
+            let mut unknowns = Unknowns::default();
+            unknowns.read_input(guard, None, &self.spec.input, self.input);
+            if !unknowns.absent.is_empty() {
+                parts.push(unknowns.told(
+                    format!("`{guard}` is unknown on the input"),
+                    "guard",
+                    "such a request",
+                ));
+            }
+        }
+        (!parts.is_empty()).then(|| parts.join("; and "))
+    }
+
+    /// What `predicate`, a guard over `row` of `entity`, leaves open where an `Optional` field of
+    /// the row, or of the input it reads under `input.`, holds nothing; `None` where none is why.
+    fn row_part(
+        &self,
+        predicate: &Predicate,
+        entity: &ResolvedEntity,
+        row: &Row,
+    ) -> Option<String> {
+        let mut unknowns = Unknowns::default();
+        unknowns.read(predicate, entity, row);
+        unknowns.read_input(
+            predicate,
+            Some(crate::facts::INPUT),
+            &self.spec.input,
+            self.input,
+        );
+        (!unknowns.absent.is_empty()).then(|| unknowns.why(entity, predicate, "guard"))
     }
 
     /// The `existing_instance:` answer where the plan places that branch in `phase`, step 1 on a

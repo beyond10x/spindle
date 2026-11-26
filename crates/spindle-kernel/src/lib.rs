@@ -173,7 +173,9 @@ pub enum ExecuteError {
         /// The outcome whose guard it is.
         outcome: String,
         /// What left it open, where the kernel can say: for a row-set guard, the predicate unknown
-        /// on stored rows, how many, and the absent field each reads with the way to rule it out.
+        /// on stored rows and the absent field each reads with the way to rule it out; for a guard
+        /// over the held instance, a related row or the input, the predicate an absent `Optional`
+        /// field leaves unknown, that field, and `defined(<field>)`.
         why: Option<String>,
     },
     /// The decider gave no answer for an external cause.

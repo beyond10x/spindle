@@ -15,6 +15,15 @@ are Spindle's releases.
   conflict, as a write to the guard's own entity does. A rows quantifier in an `affects:` or
   `instances:` filter stays refused, as ESS refuses it (`story:related-selector-rows-quantifier`).
 
+### Fixed
+
+- A guard over an `Optional` field the held instance, a `when_related:` row or the input never
+  wrote is still `undecidable` where ESS 0.99.1's interpreter selects no outcome, and its refusal
+  now names the guard, the absent field and the way out, such as "`label == mine` is unknown on a
+  `desk.ticket.Ticket` row where `label` is absent; write `defined(label)` in the guard to rule
+  such a row out", where it read "…is undecidable over the held instance and the input". The
+  error code and `run`'s status are unchanged (`story:guard-over-absent-row-field`).
+
 ## [0.21.0] - 2026-11-26
 
 ### Added
