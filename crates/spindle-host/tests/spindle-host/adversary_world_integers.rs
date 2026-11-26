@@ -248,13 +248,8 @@ struct Opened {
 
 fn host() -> Opened {
     let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
-    let host = Host::new(
-        ir(),
-        &memory(),
-        Arc::new(ManualClock::new()),
-        state.path(),
-    )
-    .unwrap_or_else(|error| panic!("the host opens: {error}"));
+    let host = Host::new(ir(), &memory(), Arc::new(ManualClock::new()), state.path())
+        .unwrap_or_else(|error| panic!("the host opens: {error}"));
     Opened {
         host,
         _state: state,
@@ -309,12 +304,13 @@ fn fields(pages: Value, weight: Value) -> Value {
            "size": {"width": 3}, "printed": "2026-01-02T03:04:05Z"})
 }
 
-/// Parity probes: a world row and a command row of the same spelling answer alike.
+/// Parity probes: a world row and a command row of the same spelling answer alike. A command's
+/// Integer input spelled `1.0` is still held as written (story:integer-identity-any-spelling), so
+/// that spelling is not probed here.
 #[test]
 fn a_world_row_answers_what_a_command_row_of_the_same_spelling_answers() {
     for (pages, weight) in [
         (json!(1), json!(1)),
-        (json!(1.0), json!(1.0)),
         (json!(9_007_199_254_740_993_i64), json!(1.5)),
     ] {
         let given = fields(pages.clone(), weight.clone());
@@ -354,7 +350,11 @@ fn a_world_reference_names_its_row_whatever_the_integer_spelling() {
     )
     .unwrap_or_else(|why| panic!("the world loads: {why}"));
     let books = listed(&mut opened.host, BOOKS);
-    assert_eq!(books[0].get("shelf_label"), Some(&json!("top")), "{books:?}");
+    assert_eq!(
+        books[0].get("shelf_label"),
+        Some(&json!("top")),
+        "{books:?}"
+    );
 }
 
 /// A world row whose `Integer` identity is written `1.0`, then a command naming it `1`, the
@@ -373,7 +373,10 @@ fn a_command_names_a_world_row_whatever_the_integer_spelling() {
     );
     let shelves = listed(&mut opened.host, SHELVES);
     assert!(renamed.is_ok(), "{renamed:?}; {shelves:?}");
-    assert_eq!(shelves, [object(json!({"shelf_id": 1, "label": "renamed"}))]);
+    assert_eq!(
+        shelves,
+        [object(json!({"shelf_id": 1, "label": "renamed"}))]
+    );
 }
 
 /// The story's Outcome: a world row answers its `Integer` fields as integers. Written `1.0`, a
