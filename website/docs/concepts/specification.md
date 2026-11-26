@@ -213,8 +213,18 @@ empty in-memory stores whatever `store.durable` is bound to. It compares what ha
 each step expects: the outcome, the error, the events, an identity captured as `$instance` for a
 later step, and each view assertion.
 
-Spindle prints what the document arranges, each timeline act and each assertion that holds. At the
-first that does not, it prints what was expected and what was observed and exits 1.
+A specification that declares no component replays as one implied component that owns every
+domain, accepts every command and publishes every event, as `run` without `--scenario` executes it.
+Admission then requires what that component needs, so an environment that lacks a capability
+refuses the replay with exit 3 and prints what `run` prints: the capabilities it lacks, naming no
+component. A specification that declares components replays unchanged, and a
+command no component accepts diverges with `no component accepts <command>`.
+
+Spindle prints what the document arranges, each timeline act and each assertion that holds. Each
+act's line ends with what its command answered: `outcome <name>`, with `error <name>` where the
+outcome carries a declared error, `undeclared` or `not granted`. An act that states no `outcome:`
+compiles to no outcome check, so it holds when its command is refused, as ESS's runner passes it.
+At the first step that does not hold, it prints what was expected and what was observed and exits 1.
 
 That step is found by replaying ever shorter prefixes of the document from an empty system, halving each time.
 The replay it prints ran no step after it. A document ESS refuses, such as one with an unknown

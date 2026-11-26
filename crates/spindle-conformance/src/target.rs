@@ -58,12 +58,50 @@ pub struct HostTarget {
     forced: Forcing,
     /// How many commands this target has sent to a host.
     commands: Cell<usize>,
+    /// What each command the runner asked of the scenario in progress, or the last one, answered.
+    answered: RefCell<Vec<Answered>>,
     /// Whether the runner asked for state the target does not arrange.
     unarranged: Cell<bool>,
     /// The clock every host it opens decides `now` by.
     clock: Arc<dyn Clock>,
     /// The seed every host it opens mints from ([`Host::seeded`]); `None` for random UUIDs.
     mint: Option<u64>,
+}
+
+/// What one command the runner asked of a [`HostTarget`] answered, as a replay prints it beside
+/// the act that sent it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Answered {
+    /// It took `outcome`, carrying the declared `error` where that outcome declares one.
+    Took {
+        /// The name of the outcome taken.
+        outcome: String,
+        /// The qualified name of the declared error it carries.
+        error: Option<String>,
+    },
+    /// It was refused by no declared outcome.
+    Undeclared,
+    /// Its actor may not send it.
+    NotGranted,
+    /// It did not run: the target answered an error.
+    Failed,
+}
+
+impl Answered {
+    /// What `sent` answered.
+    fn of(sent: &Result<SemanticCommandResult, TargetError>) -> Self {
+        match sent {
+            Ok(result) => match &result.outcome {
+                Some(taken) => Self::Took {
+                    outcome: taken.outcome.as_str().to_owned(),
+                    error: result.error.as_ref().map(|error| error.error.to_string()),
+                },
+                None => Self::Undeclared,
+            },
+            Err(TargetError::NotGranted { .. }) => Self::NotGranted,
+            Err(_) => Self::Failed,
+        }
+    }
 }
 
 /// The host of the scenario in progress, and every event its commands published.
@@ -116,6 +154,7 @@ impl HostTarget {
             running: RefCell::new(None),
             forced: Arc::default(),
             commands: Cell::new(0),
+            answered: RefCell::default(),
             unarranged: Cell::new(false),
             clock,
             mint,
@@ -133,6 +172,12 @@ impl HostTarget {
     /// How many commands this target has sent to a host.
     pub fn commands(&self) -> usize {
         self.commands.get()
+    }
+
+    /// What each command of the scenario in progress, or of the last one, answered, in the order
+    /// the runner asked them; the [`SemanticCommandResult`] each returned is unchanged.
+    pub fn answered(&self) -> Vec<Answered> {
+        self.answered.borrow().clone()
     }
 
     /// Whether the runner asked for state the target does not arrange.
@@ -187,62 +232,10 @@ impl HostTarget {
             *forced = None;
         }
     }
-}
 
-impl ConformanceTarget for HostTarget {
-    fn identity(&self) -> Result<ImplementationIdentity, TargetError> {
-        Ok(ImplementationIdentity::new(
-            "b10x-spindle",
-            env!("CARGO_PKG_VERSION"),
-        ))
-    }
-
-    fn fixture_values(
-        &self,
-        _scenario: &ScenarioContext,
-        _contract: &ess_conformance::fixtures::Contract,
-    ) -> Result<BTreeMap<String, Node>, TargetError> {
-        self.unarranged.set(true);
-        Err(TargetError::unsupported(
-            "fixture values",
-            "the in-process host provides no fixture",
-        ))
-    }
-
-    fn establish_entity(
-        &self,
-        request: ess_conformance::target::EntitySetupRequest,
-    ) -> Result<(), TargetError> {
-        let established = match self.running.borrow_mut().as_mut() {
-            Some(running) => crate::establish::establish(&self.ir, &mut running.host, &request),
-            None => Err(TargetError::unavailable(
-                "entity setup",
-                "no scenario is open",
-            )),
-        };
-        if established.is_err() {
-            self.unarranged.set(true);
-        }
-        established
-    }
-
-    fn begin_scenario(&self, _scenario: &ScenarioContext) -> Result<(), TargetError> {
-        self.force(None);
-        let host = self
-            .host()
-            .map_err(|error| TargetError::unavailable("starting the host", error.to_string()))?;
-        *self.running.borrow_mut() = Some(Running {
-            host,
-            writes: 0,
-            events: Vec::new(),
-        });
-        Ok(())
-    }
-
-    fn execute_command(
-        &self,
-        request: SemanticCommandRequest,
-    ) -> Result<SemanticCommandResult, TargetError> {
+    /// Sends `request` to the host of the scenario in progress: what
+    /// [`ConformanceTarget::execute_command`] answers.
+    fn send(&self, request: SemanticCommandRequest) -> Result<SemanticCommandResult, TargetError> {
         let command = request.command.to_string();
         let json = |fields: &BTreeMap<String, Node>| {
             fields
@@ -371,6 +364,67 @@ impl ConformanceTarget for HostTarget {
                 other.to_string(),
             )),
         }
+    }
+}
+
+impl ConformanceTarget for HostTarget {
+    fn identity(&self) -> Result<ImplementationIdentity, TargetError> {
+        Ok(ImplementationIdentity::new(
+            "b10x-spindle",
+            env!("CARGO_PKG_VERSION"),
+        ))
+    }
+
+    fn fixture_values(
+        &self,
+        _scenario: &ScenarioContext,
+        _contract: &ess_conformance::fixtures::Contract,
+    ) -> Result<BTreeMap<String, Node>, TargetError> {
+        self.unarranged.set(true);
+        Err(TargetError::unsupported(
+            "fixture values",
+            "the in-process host provides no fixture",
+        ))
+    }
+
+    fn establish_entity(
+        &self,
+        request: ess_conformance::target::EntitySetupRequest,
+    ) -> Result<(), TargetError> {
+        let established = match self.running.borrow_mut().as_mut() {
+            Some(running) => crate::establish::establish(&self.ir, &mut running.host, &request),
+            None => Err(TargetError::unavailable(
+                "entity setup",
+                "no scenario is open",
+            )),
+        };
+        if established.is_err() {
+            self.unarranged.set(true);
+        }
+        established
+    }
+
+    fn begin_scenario(&self, _scenario: &ScenarioContext) -> Result<(), TargetError> {
+        self.force(None);
+        self.answered.borrow_mut().clear();
+        let host = self
+            .host()
+            .map_err(|error| TargetError::unavailable("starting the host", error.to_string()))?;
+        *self.running.borrow_mut() = Some(Running {
+            host,
+            writes: 0,
+            events: Vec::new(),
+        });
+        Ok(())
+    }
+
+    fn execute_command(
+        &self,
+        request: SemanticCommandRequest,
+    ) -> Result<SemanticCommandResult, TargetError> {
+        let sent = self.send(request);
+        self.answered.borrow_mut().push(Answered::of(&sent));
+        sent
     }
 
     fn query_view(&self, request: SemanticViewRequest) -> Result<SemanticViewResult, TargetError> {

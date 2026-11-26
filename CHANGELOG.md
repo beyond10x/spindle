@@ -76,6 +76,23 @@ are Spindle's releases.
   served run with exit 1; `spindle_seed_commands_total` counts it under `refused`
   (`story:run-fails-on-rejected-line`).
 
+### Fixed
+
+- `run --scenario` prints on each timeline act's line what its command answered: `outcome
+  <name>`, with `error <name>` where the outcome carries a declared error, `undeclared` or `not
+  granted`, beside `holds` or `diverges`. An act that states no `outcome:` and is refused printed
+  `holds` alone; it still holds and exits 0, as ESS 0.99.1's runner passes it, and now names the
+  refusal. `HostTarget::answered` lists what each command of the scenario answered
+  (`story:scenario-act-without-outcome`).
+- `run --scenario` replays a specification that declares no component, the way `run` executes it
+  from stdin, where every act diverged with `no component accepts <command>` and the run exited 1.
+  It runs as one implied component, `implied`, that owns every domain, accepts every command and
+  publishes every event, compiled by ESS beside the specification's files
+  (`spindle_spec::load_with_implied_component`). Admission now derives that component's
+  requirements, so an environment that lacks one refuses the replay with exit 3, printed as `run`
+  prints it: the capabilities it lacks, naming no component. A specification that declares components replays on its unchanged model and still routes by
+  `accepts:` (`story:scenario-without-components`).
+
 ## [0.21.0] - 2026-11-26
 
 ### Added

@@ -1,11 +1,15 @@
 //! `run --scenario`: replaying an authored `ess-scenario` document against every component of a
-//! system in one process.
+//! system in one process. A specification that declares no component is loaded with one implied
+//! component that owns every domain ([`spindle_spec::load_with_implied_component`]), so the host
+//! routes every command to it and admission derives what it requires.
 //!
 //! The document is read and checked against the model by ESS's own reader
 //! ([`ess_conformance::authored::compile`]), and its compiled steps are executed by ESS's own
 //! runner ([`ess_conformance::Runner`]) against [`HostTarget`]: a host with fresh in-memory
 //! stores for every replay, whatever `store.durable` is bound to, so a replay writes nothing to
-//! disk. Spindle compares nothing itself; what holds is the runner's answer.
+//! disk. Spindle compares nothing itself; what holds is the runner's answer. Each act's line also
+//! names what its command answered ([`HostTarget::answered`]): an act that states no outcome
+//! compiles to no outcome check, so the runner passes it refused, and the line says so.
 //!
 //! The runner reports a scenario as a whole and goes on past a failed expectation. To name the
 //! first step that diverges, the compiled steps are cut into the document's own steps (what is
@@ -15,6 +19,7 @@
 //! `log2(steps)` replays find the shortest one. The divergence reported is the replay of that
 //! shortest prefix, which runs no step after the divergent one.
 
+use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::Path;
 use std::process::ExitCode;
@@ -28,9 +33,9 @@ use ess_conformance::{
     AdmittedSuite, AdvancingClock, ConformanceScenario, ConformanceSuite, Ids, Runner,
     RunnerConfig, ScenarioId, ScenarioResult, ScenarioStep, Status, SuiteProvenance,
 };
-use spindle_capability::Environment;
-use spindle_conformance::{HostTarget, in_memory};
-use spindle_host::{Clock, HostError, ManualClock, SystemClock};
+use spindle_capability::{Admission, Environment};
+use spindle_conformance::{Answered, HostTarget, in_memory};
+use spindle_host::{Clock, HostError, ManualClock, Refusal, SystemClock};
 
 /// Exit status of a replay the environment refused.
 const REFUSED: u8 = 3;
@@ -50,7 +55,7 @@ pub(crate) fn replay(
     clock: Option<SystemTime>,
     mint: Option<u64>,
 ) -> Result<ExitCode> {
-    let loaded = spindle_spec::load(spec)?;
+    let loaded = spindle_spec::load_with_implied_component(spec)?;
     let text = std::fs::read_to_string(environment)
         .with_context(|| format!("reading {}", environment.display()))?;
     let parsed =
@@ -83,16 +88,12 @@ pub(crate) fn replay(
     }
 
     if let Err(refusal) = spindle_host::admit(&loaded.ir, &parsed) {
-        println!("{refusal}");
-        return Ok(ExitCode::from(REFUSED));
+        return refused(spec, &refusal);
     }
     let memory = in_memory(&parsed);
     match HostTarget::new(loaded.ir.clone(), memory.clone()).open() {
         Ok(_) => {}
-        Err(HostError::Refused(refusal)) => {
-            println!("{refusal}");
-            return Ok(ExitCode::from(REFUSED));
-        }
+        Err(HostError::Refused(refusal)) => return refused(spec, &refusal),
         Err(error) => return Err(error.into()),
     }
 
@@ -110,10 +111,11 @@ pub(crate) fn replay(
     let Some(last) = steps.last() else {
         return Ok(ExitCode::SUCCESS);
     };
+    let sends = sends(&compiled.steps, &steps);
     let whole = replays.run(last.end)?;
     if whole.result.status == Status::Passed {
-        for step in &steps {
-            writeln!(out, "{}: holds", step.label)?;
+        for (step, send) in steps.iter().zip(&sends) {
+            writeln!(out, "{}: holds{}", step.label, whole.answer(*send))?;
         }
         out.flush()?;
         return Ok(ExitCode::SUCCESS);
@@ -137,10 +139,15 @@ pub(crate) fn replay(
     } else {
         failing - 1
     };
-    for step in &steps[..index] {
-        writeln!(out, "{}: holds", step.label)?;
+    for (step, send) in steps[..index].iter().zip(&sends) {
+        writeln!(out, "{}: holds{}", step.label, divergent.answer(*send))?;
     }
-    writeln!(out, "{}: diverges", steps[index].label)?;
+    writeln!(
+        out,
+        "{}: diverges{}",
+        steps[index].label,
+        divergent.answer(sends[index])
+    )?;
     for check in divergent
         .result
         .checks
@@ -163,6 +170,28 @@ pub(crate) fn replay(
     Ok(ExitCode::FAILURE)
 }
 
+/// Prints `refusal` of the specification at `spec` and answers [`REFUSED`].
+///
+/// A specification that declares no component was refused as its implied component
+/// ([`spindle_spec::load_with_implied_component`]), a component it never declared: it is refused
+/// in the words stdin `run` uses, every capability it lacks and no component.
+fn refused(spec: &Path, refusal: &Refusal) -> Result<ExitCode> {
+    if spindle_spec::load_model(spec)?.ir.components().is_empty() {
+        let missing = refusal
+            .missing
+            .values()
+            .flatten()
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        println!("{}", serde_json::to_value(Admission::Refused { missing })?);
+    } else {
+        println!("{refusal}");
+    }
+    Ok(ExitCode::from(REFUSED))
+}
+
 /// What replaying one prefix needs.
 struct Replays<'a> {
     ir: &'a EssIr,
@@ -180,8 +209,31 @@ struct Replays<'a> {
 struct Replayed {
     result: ScenarioResult,
     commands: usize,
+    /// What each command the runner sent answered, in the order sent.
+    answered: Vec<Answered>,
     /// Whether it stopped at state the target could not arrange.
     unarranged: bool,
+}
+
+impl Replayed {
+    /// What the `send`-th command of this replay answered, as its act's line ends: the outcome
+    /// taken and the declared error it carries, `undeclared` or `not granted`; nothing for a step
+    /// that sends no command or a command the target failed to run.
+    fn answer(&self, send: Option<usize>) -> String {
+        match send.and_then(|send| self.answered.get(send)) {
+            Some(Answered::Took {
+                outcome,
+                error: None,
+            }) => format!(", outcome {outcome}"),
+            Some(Answered::Took {
+                outcome,
+                error: Some(error),
+            }) => format!(", outcome {outcome}, error {error}"),
+            Some(Answered::Undeclared) => ", undeclared".to_owned(),
+            Some(Answered::NotGranted) => ", not granted".to_owned(),
+            Some(Answered::Failed) | None => String::new(),
+        }
+    }
 }
 
 impl Replays<'_> {
@@ -219,6 +271,7 @@ impl Replays<'_> {
         Ok(Replayed {
             result,
             commands: target.commands(),
+            answered: target.answered(),
             unarranged: target.unarranged(),
         })
     }
@@ -297,6 +350,26 @@ fn steps(compiled: &[ScenarioStep]) -> Vec<Step> {
         .into_iter()
         .zip(ends)
         .map(|((_, label), end)| Step { end, label })
+        .collect()
+}
+
+/// For each of `steps`, the command it sends, counted from 0 in the order the runner asks the
+/// target to execute them: the first `execute_command` step of its compiled steps. A step that
+/// executes no command (what is arranged, an assertion) sends none.
+fn sends(compiled: &[ScenarioStep], steps: &[Step]) -> Vec<Option<usize>> {
+    let (mut start, mut sent) = (0, 0);
+    steps
+        .iter()
+        .map(|step| {
+            let own = compiled[start..step.end]
+                .iter()
+                .filter(|step| matches!(step, ScenarioStep::ExecuteCommand { .. }))
+                .count();
+            start = step.end;
+            let send = (own > 0).then_some(sent);
+            sent += own;
+            send
+        })
         .collect()
 }
 
