@@ -145,6 +145,9 @@ pub struct Route {
     /// The input fields a command's binding reads from the query string beside its body
     /// (`request.query`, beyond10x/ess#754), in the order listed ([`Route::query_input`]).
     beside: Vec<Parameter>,
+    /// The input field a `json` request's bare body is the value of (`request.body:
+    /// input.<field>`), and whether the body is required ([`Route::bare_body`]).
+    bare: Option<(String, bool)>,
     /// The outcomes answered with the command's response beside the envelope.
     responding: Vec<String>,
     /// The outcomes the binding answers with a body other than the envelope, each with it:
@@ -590,6 +593,16 @@ impl Route {
     /// or `form` body (`request.query`, beyond10x/ess#754).
     pub(crate) fn reads_query_beside_body(&self) -> bool {
         !self.beside.is_empty()
+    }
+
+    /// The input field a `json` request's bare body is the value of (`request.body:
+    /// input.<field>`, [`ess_gen::http::bare_body`]), by name, and whether the body is required
+    /// ([`ess_gen::http::body_required_without`] the fields the path and the query string carry);
+    /// `None` where the body is an object of input fields.
+    pub(crate) fn bare_body(&self) -> Option<(&str, bool)> {
+        self.bare
+            .as_ref()
+            .map(|(field, required)| (field.as_str(), *required))
     }
 
     /// The input fields the binding lists under `request.query`, read from `query`, a request's
@@ -1632,6 +1645,7 @@ fn route(
         unknown: Unknown::Refuse,
         parameters: Vec::new(),
         beside: Vec::new(),
+        bare: None,
         responding: Vec::new(),
         bodies: BTreeMap::new(),
         headers: BTreeMap::new(),
@@ -1837,6 +1851,15 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
             if request.encoding == Encoding::Multipart {
                 return Err("a `multipart/form-data` request".to_owned());
             }
+            let mut outside = ess_gen::http::carried(ir, bound);
+            outside.extend(ess_gen::http::queried(bound.declared));
+            route.bare =
+                ess_gen::http::bare_body(ir.command(handle), bound.declared).map(|field| {
+                    (
+                        field.name.clone(),
+                        ess_gen::http::body_required_without(ir.command(handle), &outside),
+                    )
+                });
             route.beside = request
                 .query_fields()
                 .filter_map(|name| {

@@ -212,25 +212,28 @@ pub(crate) fn answering(
     };
     match &route.operation {
         Operation::Command(command) => {
-            let input = match route.encoding() {
-                Encoding::Json => input(body).and_then(|input| {
+            let input = match (route.encoding(), route.bare_body()) {
+                (Encoding::Json, Some((field, required))) => {
+                    bare_input(field, required, body).map(|input| (input, None))
+                }
+                (Encoding::Json, None) => input(body).and_then(|input| {
                     let named = route.queried_member(&input).map(str::to_owned);
                     ignoring(route, &carried, input).map(|input| (input, named))
                 }),
-                Encoding::Form => form(route, &carried, content_type, body).map(|input| {
+                (Encoding::Form, _) => form(route, &carried, content_type, body).map(|input| {
                     let named = route.queried_member(&input).map(str::to_owned);
                     (input, named)
                 }),
-                Encoding::Query => route
+                (Encoding::Query, _) => route
                     .flat_input(query, "query", &carried)
                     .map(|input| (input, None))
                     .map_err(|detail| Answer::refusal(400, detail)),
-                Encoding::Multipart => Err(Answer::refusal(
+                (Encoding::Multipart, _) => Err(Answer::refusal(
                     501,
                     "a `multipart/form-data` request is not served".to_owned(),
                 )),
             }
-            .and_then(|(input, named)| beside(route, query, input, named.as_deref()));
+            .and_then(|(input, named)| beside(route, query, &carried, input, named.as_deref()));
             match input {
                 Ok(input) => run(host, route, caller, command, &carried, input),
                 Err(refusal) => (refusal, Vec::new(), Answered::ingress()),
@@ -593,6 +596,23 @@ fn input(body: &[u8]) -> Result<Map<String, Value>, Answer> {
     }
 }
 
+/// The command's input from a `json` request whose bare body is the value of `field`
+/// (`request.body: input.<field>`), as ESS 0.99.1's served application reads it (`ess-synth`
+/// `http/bound.rs`: the object holding `field` alone, its value `http::json_body`): any JSON
+/// value, an object or an array included, is that one field's value, for the kernel to check
+/// against its type. A body empty or all whitespace is the input `{}` where the body is not
+/// `required`, and refused `400` where it is, as a body that is not UTF-8 or not JSON is.
+fn bare_input(field: &str, required: bool, body: &[u8]) -> Result<Map<String, Value>, Answer> {
+    let text = std::str::from_utf8(body)
+        .map_err(|error| Answer::refusal(400, format!("the body is not UTF-8: {error}")))?;
+    if !required && text.trim().is_empty() {
+        return Ok(Map::new());
+    }
+    let value = serde_json::from_str::<Value>(text)
+        .map_err(|error| Answer::refusal(400, format!("the body is not JSON: {error}")))?;
+    Ok(Map::from_iter([(field.to_owned(), value)]))
+}
+
 /// A `json` command input read where the binding says `unknown: ignore`, as ESS 0.99.0's served
 /// application reads it (`http::ignoring`, beyond10x/ess#752): a member the path carries is
 /// dropped when it holds the path's value ([`same_value`]) and refused `400` naming it otherwise,
@@ -646,18 +666,27 @@ fn form(
 
 /// `input`, a command's input read from its `json` or `form` body, joined with the fields the
 /// binding lists under `request.query`, read from `query` ([`Route::query_input`]), as ESS 0.99.1's
-/// served application joins them (`http::with_query`, beyond10x/ess#754): the query string is read
-/// after the body, and `named`, a listed field the body names ([`Route::queried_member`]), is
-/// then refused `400` `body.<name>`, whether the query carries the field or not. A route that
-/// lists none keeps `input` as it is and reads nothing from the query string.
+/// served application joins them (`http::with_path`, then `http::flat_object` and
+/// `http::with_query`, beyond10x/ess#754): a field `carried`, the path's, that the body names too
+/// is refused first, as [`run`] refuses it; then the query string is read, and `named`, a listed
+/// field the body names ([`Route::queried_member`]), is refused `400` `body.<name>`, whether the
+/// query carries the field or not. A route that lists none keeps `input` as it is and reads
+/// nothing from the query string.
 fn beside(
     route: &Route,
     query: &str,
+    carried: &Map<String, Value>,
     mut input: Map<String, Value>,
     named: Option<&str>,
 ) -> Result<Map<String, Value>, Answer> {
     if !route.reads_query_beside_body() {
         return Ok(input);
+    }
+    if let Some(field) = carried.keys().find(|field| input.contains_key(*field)) {
+        return Err(Answer::refusal(
+            400,
+            format!("{field} is carried in the path, and the body carries it too"),
+        ));
     }
     let read = route
         .query_input(query)
