@@ -42,12 +42,14 @@ tasks:
     desc: scripts/changed-paths.sh, the one path list CI reads, answers planning for .engineering/ and prose only, docs when a website/ file is added and code for any other path
     cmds:
       - sh scripts/changed-paths.sh test
+      - sh scripts/gate-scripts.adversary-test.sh
 
   check:within_fails_over_its_bound:
-    desc: scripts/within.sh, the timer of the test step and the wasm lanes, passes a command within its bound and fails one that runs over it
+    desc: scripts/within.sh, the timer of the test step and the wasm lanes, passes a command within its bound, fails one that runs over it and passes on a failing command's own status
     cmds:
       - sh scripts/within.sh 5 true
       - if sh scripts/within.sh 1 sleep 2; then echo "within.sh passed a 2-second sleep with a 1-second bound" >&2; exit 1; fi
+      - sh -c 'sh scripts/within.sh 5 sh -c "exit 3"; status=$?; [ "$status" -eq 3 ] || { echo "within.sh answered $status for a command that exits 3" >&2; exit 1; }'
 
   check:the_tests_pass_within_the_budget:
     desc: Every Rust test of the workspace under cargo-nextest, each killed at 60 s by .config/nextest.toml; the step after the build ends within 120 s and prints its ten slowest tests

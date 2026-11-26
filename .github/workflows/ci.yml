@@ -83,7 +83,6 @@ jobs:
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       - name: Install aep
-        if: steps.paths.outputs.class == 'code'
         env:
           AEP_VERSION: '0.79.0'
           AEP_SHA256: 7c54624685efa91065b8255311ad6d8af67c288021bcf44c0dc15da132000439
@@ -130,6 +129,10 @@ jobs:
       - name: Gate
         if: steps.paths.outputs.class == 'code'
         run: task check
+
+      - name: The planning store validates
+        if: steps.paths.outputs.class != 'code'
+        run: aep plan artifact validate
 
   postgres:
     name: PostgreSQL

@@ -55,7 +55,7 @@ github() {
     reason="event ${GITHUB_EVENT_NAME:-unset}: every job runs"
     if [ "${GITHUB_EVENT_NAME:-}" = pull_request ]; then
         if git rev-parse --verify --quiet 'HEAD^2' >/dev/null && git rev-parse --verify --quiet 'HEAD^1' >/dev/null; then
-            changed=$(git diff --name-only 'HEAD^1' HEAD)
+            changed=$(git diff --name-only --no-renames 'HEAD^1' HEAD)
             class=$(printf '%s\n' "$changed" | classify)
             count=$(printf '%s\n' "$changed" | grep -c . || true)
             reason="$count changed path(s) against the base of the merge commit"
