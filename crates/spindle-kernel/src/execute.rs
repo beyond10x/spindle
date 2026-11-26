@@ -19,9 +19,9 @@ use serde_json::{Map, Value};
 use spindle_capability::mint::Unsourced;
 
 use crate::decider::{Decider, External};
-use crate::facts::{Facts, Selector};
+use crate::facts::{Facts, Selector, Walked};
 use crate::mint::{Generator, IDENTITY_MINT, Identity, Mint, UuidV4};
-use crate::store::{Change, Row, Scanned, Store, Stored, Write};
+use crate::store::{Change, Row, Scan, Scanned, Store, Stored, Write};
 use crate::values::Sources;
 use crate::{DeclaredError, Event, ExecuteError, Executed};
 
@@ -907,11 +907,14 @@ impl<'a, 'ir> Run<'a, 'ir> {
     ///
     /// Every stored row is a candidate. The selector reads the row's fields, identity and held
     /// state, the input under `input.`, the addressed subject under `subject.` and the decision's
-    /// instant as `now` ([`crate::facts::Selector`]). A row it leaves `Unknown` stays a possible
-    /// member, and ESS decides the test over the members ([`ResolvedRowSetTest::decide`]): a test
-    /// those possible members leave open is `Unknown`, and what left it open is kept for the
-    /// refusal ([`Open`]). A selector reading `subject.` on a command that addresses no held row
-    /// decides nothing.
+    /// instant as `now` ([`crate::facts::Selector`]). A rows quantifier in the selector or the
+    /// test (`exists: {in: {entity: …}, …}`, ess/27) walks every stored row of its entity, read
+    /// from the same store once per decision (ESS `Reader::members`); each entity read so is
+    /// scanned, so the commit is conditioned on its version too. A row the selector leaves
+    /// `Unknown` stays a possible member, and ESS decides the test over the members
+    /// ([`ResolvedRowSetTest::decide`]): a test those possible members leave open is `Unknown`,
+    /// and what left it open is kept for the refusal ([`Open`]). A selector reading `subject.` on
+    /// a command that addresses no held row decides nothing.
     fn row_set(
         &mut self,
         outcome: &ResolvedOutcome,
@@ -941,14 +944,28 @@ impl<'a, 'ir> Run<'a, 'ir> {
         let now = self.now();
         let mut members = Vec::new();
         let mut open = Open::default();
-        let name = entity.name.to_string();
-        let scan = self.store.scan(&name)?;
-        if !self.scanned.iter().any(|scanned| scanned.entity == name) {
-            self.scanned.push(Scanned {
-                entity: name,
-                version: scan.version,
-            });
+        let names: std::collections::BTreeSet<&str> = std::iter::once(&selection.filter)
+            .chain(test.predicate())
+            .flat_map(ess_domain::command::related_rows::walked)
+            .collect();
+        let mut walked = Walked::new();
+        for name in names {
+            let Some(other) = name
+                .parse()
+                .ok()
+                .and_then(|parsed| ir.entities().get(&parsed))
+            else {
+                continue;
+            };
+            let rows = self
+                .scan(&other.name.to_string())?
+                .into_iter()
+                .map(|(identity, stored)| Facts::row(ir, other, &identity, &stored.row, None))
+                .collect();
+            walked.insert(name.to_owned(), rows);
         }
+        let walked = (!walked.is_empty()).then_some(&walked);
+        let scan = self.scan(&entity.name.to_string())?;
         for (identity, stored) in scan {
             let row = Facts::row(ir, entity, &identity, &stored.row, None);
             let facts = Selector {
@@ -956,6 +973,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 input: &input,
                 subject: subject.as_ref(),
                 now,
+                walked,
             };
             let selected = selection.filter.evaluate(&facts);
             let satisfies = match (test.predicate(), selected) {
@@ -1038,6 +1056,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     input: &input,
                     subject: subject.as_ref(),
                     now,
+                    walked: None,
                 };
                 members.push(RowMember {
                     selected: selection.filter.evaluate(&facts),
@@ -1057,6 +1076,20 @@ impl<'a, 'ir> Run<'a, 'ir> {
             selected.insert(key, chosen);
         }
         Ok(selected)
+    }
+
+    /// Every stored row of `entity`, read from the store as it was before selection, its version
+    /// kept where this run had not scanned the entity yet, so the commit is conditioned on it
+    /// (`Run::scanned`).
+    fn scan(&mut self, entity: &str) -> Result<Scan, ExecuteError> {
+        let scan = self.store.scan(entity)?;
+        if !self.scanned.iter().any(|scanned| scanned.entity == entity) {
+            self.scanned.push(Scanned {
+                entity: entity.to_owned(),
+                version: scan.version,
+            });
+        }
+        Ok(scan)
     }
 
     /// `outcome`'s name qualified by the command's, as a refusal names it.

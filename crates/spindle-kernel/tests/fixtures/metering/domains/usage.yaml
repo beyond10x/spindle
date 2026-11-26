@@ -1,0 +1,210 @@
+domain: metering.usage
+summary: Each account belongs to an organization; an active hold of an organization stops the usage of its accounts from being charged.
+types:
+  - name: metering.usage.AccountId
+    kind: newtype
+    of: Uuid
+  - name: metering.usage.HoldId
+    kind: newtype
+    of: Uuid
+  - name: metering.usage.ChargeId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: metering.usage.Account
+    identity:
+      name: account_id
+      type: metering.usage.AccountId
+    fields:
+      - name: org
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+  - name: metering.usage.Hold
+    identity:
+      name: hold_id
+      type: metering.usage.HoldId
+    fields:
+      - name: org
+        type: String
+    lifecycle:
+      initial: Active
+      states: [Active, Lifted]
+      terminal: [Lifted]
+      transitions:
+        - {name: lift, from: [Active], to: Lifted}
+  - name: metering.usage.Charge
+    identity:
+      name: charge_id
+      type: metering.usage.ChargeId
+    fields:
+      - name: account_id
+        type: metering.usage.AccountId
+    lifecycle:
+      initial: Billed
+      states: [Billed]
+      terminal: [Billed]
+errors:
+  - name: metering.usage.OnHold
+    summary: The account's organization is on hold.
+    fields: []
+  - name: metering.usage.Frozen
+    summary: Every account the bill names belongs to an organization on hold.
+    fields: []
+  - name: metering.usage.NotActive
+    summary: The hold is already lifted.
+    fields: []
+commands:
+  - name: metering.usage.OpenAccount
+    input:
+      - name: account_id
+        type: metering.usage.AccountId
+      - name: org
+        type: String
+    outcomes:
+      - name: opened
+        creates: metering.usage.Account
+        instance: account_id
+        sets:
+          org: input.org
+        emits: [metering.usage.AccountOpened]
+        payload:
+          metering.usage.AccountOpened:
+            account_id: input.account_id
+        summary: The account is opened for its organization.
+  - name: metering.usage.PlaceHold
+    input:
+      - name: hold_id
+        type: metering.usage.HoldId
+      - name: org
+        type: String
+    outcomes:
+      - name: placed
+        creates: metering.usage.Hold
+        instance: hold_id
+        sets:
+          org: input.org
+        emits: [metering.usage.HoldPlaced]
+        payload:
+          metering.usage.HoldPlaced:
+            hold_id: input.hold_id
+        summary: The organization is put on hold.
+  - name: metering.usage.LiftHold
+    input:
+      - name: hold_id
+        type: metering.usage.HoldId
+    outcomes:
+      - name: lifted
+        moves: metering.usage.Hold.lift
+        instance: hold_id
+        emits: [metering.usage.HoldLifted]
+        payload:
+          metering.usage.HoldLifted:
+            hold_id: input.hold_id
+        summary: The hold is lifted.
+      - name: wrong-state
+        wrong_state: true
+        error: metering.usage.NotActive
+        summary: The hold is already lifted.
+  - name: metering.usage.ChargeUsage
+    input:
+      - name: charge_id
+        type: metering.usage.ChargeId
+      - name: account_id
+        type: metering.usage.AccountId
+    outcomes:
+      - name: on-hold
+        when_related:
+          entity: metering.usage.Account
+          where:
+            all:
+              - account_id == input.account_id
+              - exists:
+                  in: {entity: metering.usage.Hold}
+                  as: hold
+                  that: {all: [hold.org == org, hold.state == Active]}
+          exists: true
+        error: metering.usage.OnHold
+        summary: The account's organization holds an active hold.
+      - name: charged
+        creates: metering.usage.Charge
+        instance: charge_id
+        sets:
+          account_id: input.account_id
+        emits: [metering.usage.UsageCharged]
+        payload:
+          metering.usage.UsageCharged:
+            charge_id: input.charge_id
+            account_id: input.account_id
+        summary: The usage is charged to the account.
+  - name: metering.usage.Bill
+    input:
+      - name: charge_id
+        type: metering.usage.ChargeId
+      - name: account_id
+        type: metering.usage.AccountId
+    outcomes:
+      - name: frozen
+        when_related:
+          entity: metering.usage.Account
+          where: account_id == input.account_id
+          forall:
+            exists:
+              in: {entity: metering.usage.Hold}
+              as: hold
+              that: {all: [hold.org == org, hold.state == Active]}
+        error: metering.usage.Frozen
+        summary: Every account the bill names belongs to an organization with an active hold.
+      - name: billed
+        creates: metering.usage.Charge
+        instance: charge_id
+        sets:
+          account_id: input.account_id
+        emits: [metering.usage.UsageCharged]
+        payload:
+          metering.usage.UsageCharged:
+            charge_id: input.charge_id
+            account_id: input.account_id
+        summary: The usage is billed to the account.
+events:
+  - name: metering.usage.AccountOpened
+    fields:
+      - name: account_id
+        type: metering.usage.AccountId
+  - name: metering.usage.HoldPlaced
+    fields:
+      - name: hold_id
+        type: metering.usage.HoldId
+  - name: metering.usage.HoldLifted
+    fields:
+      - name: hold_id
+        type: metering.usage.HoldId
+  - name: metering.usage.UsageCharged
+    fields:
+      - name: charge_id
+        type: metering.usage.ChargeId
+      - name: account_id
+        type: metering.usage.AccountId
+views:
+  - name: metering.usage.Charges
+    source: metering.usage.Charge
+    consistency: read_your_writes
+    fields:
+      - name: charge_id
+        type: metering.usage.ChargeId
+      - name: account_id
+        type: metering.usage.AccountId
+      - name: state
+        type: metering.usage.Charge.State
+  - name: metering.usage.Holds
+    source: metering.usage.Hold
+    consistency: read_your_writes
+    fields:
+      - name: hold_id
+        type: metering.usage.HoldId
+      - name: org
+        type: String
+      - name: state
+        type: metering.usage.Hold.State

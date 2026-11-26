@@ -6,6 +6,15 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- A `when_related:` row-set guard whose `where:` or `forall:` walks the rows of another entity,
+  `exists: {in: {entity: …}, as: …, that: …}`, is decided as ESS 0.99.1's interpreter decides it,
+  where it was refused at start: every stored row of the walked entity is read with the
+  candidates, and a write to it between that read and the commit refuses the command as a
+  conflict, as a write to the guard's own entity does. A rows quantifier in an `affects:` or
+  `instances:` filter stays refused, as ESS refuses it (`story:related-selector-rows-quantifier`).
+
 ## [0.21.0] - 2026-11-26
 
 ### Added

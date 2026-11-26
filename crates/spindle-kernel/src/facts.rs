@@ -18,7 +18,7 @@
 //! row-set selector ([`Selector`]). An invariant is read with no current time, as ESS's
 //! interpreter reads one at rest, so a comparison with `now` there stays `Unknown`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::{ResolvedEntity, ResolvedField, ResolvedTypeRef};
@@ -214,7 +214,9 @@ impl<'a> Facts<'a> {
 /// command's input, `subject.<field>` to the addressed subject as it was before the outcome, and
 /// every other path to the candidate row, its fields and identity at their own names and its held
 /// state at `state`. `now` is the decision's one instant. A selector is read as no caller, so
-/// `caller.<attribute>` binds nothing, and walks no rows.
+/// `caller.<attribute>` binds nothing. A rows quantifier (`exists: {in: {entity: …}, …}`, ess/27)
+/// walks the rows of its entity that `walked` holds, and is `Unknown` where it holds none, as
+/// ESS's `set_effects::Facts::rows` answers.
 pub(crate) struct Selector<'a> {
     /// The candidate row ([`Facts::row`], without the input).
     pub(crate) row: &'a Facts<'a>,
@@ -224,6 +226,55 @@ pub(crate) struct Selector<'a> {
     pub(crate) subject: Option<&'a Facts<'a>>,
     /// The decision's instant.
     pub(crate) now: Option<Rfc3339Instant>,
+    /// The stored rows of each entity a rows quantifier of the selector walks, where the reader
+    /// read them ([`Walked`]).
+    pub(crate) walked: Option<&'a Walked<'a>>,
+}
+
+/// The stored rows of each entity a selector's rows quantifier walks, each as [`Facts::row`] binds
+/// it, by the entity's name as the quantifier writes it: read from the same store as the
+/// candidates, before selection (ESS `interpret::execute::row_set::Reader::members`).
+pub(crate) type Walked<'a> = BTreeMap<String, Vec<Facts<'a>>>;
+
+/// One walked row, lent to the quantifier that walks it.
+struct Lent<'a>(&'a Facts<'a>);
+
+impl FactSource for Lent<'_> {
+    fn fact(&self, path: &FactPath) -> Option<FactValue> {
+        self.0.fact(path)
+    }
+
+    fn observe(&self, path: &FactPath) -> Option<FactValue> {
+        self.0.observe(path)
+    }
+
+    fn present(&self, path: &FactPath) -> bool {
+        self.0.present(path)
+    }
+
+    fn observed_presence(&self, path: &FactPath) -> Option<bool> {
+        self.0.observed_presence(path)
+    }
+
+    fn cardinality(&self, path: &FactPath) -> Option<usize> {
+        self.0.cardinality(path)
+    }
+
+    fn scales(&self) -> &Scales {
+        self.0.scales()
+    }
+
+    fn orders_as_instant(&self, path: &FactPath) -> bool {
+        self.0.orders_as_instant(path)
+    }
+
+    fn orders_text_by_bytes(&self, path: &FactPath) -> bool {
+        self.0.orders_text_by_bytes(path)
+    }
+
+    fn now(&self) -> Option<Rfc3339Instant> {
+        self.0.now()
+    }
 }
 
 impl Selector<'_> {
@@ -284,6 +335,15 @@ impl FactSource for Selector<'_> {
 
     fn now(&self) -> Option<Rfc3339Instant> {
         self.now
+    }
+
+    fn rows(&self, entity: &str) -> Option<Vec<Box<dyn FactSource + '_>>> {
+        let rows = self.walked?.get(entity)?;
+        Some(
+            rows.iter()
+                .map(|row| Box::new(Lent(row)) as Box<dyn FactSource + '_>)
+                .collect(),
+        )
     }
 }
 

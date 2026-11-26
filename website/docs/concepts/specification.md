@@ -63,9 +63,13 @@ row each element names. It holds where any element names no row, and an empty li
 order, as ESS's interpreter answers it.
 
 A `when_related:` guard over a row set, `{entity, where: [...], count: {gte: 1}}` or `exists:` or
-`forall:`, reads every stored row of the entity, as ESS's interpreter does. A comparison with an
-`Optional` field a row does not hold, such as `box_id == input.id` on an item in no box, is
-*unknown* for that row. It does not evaluate to false.
+`forall:`, reads every stored row of the entity, as ESS's interpreter does. Its `where:` and its
+`forall:` may walk the rows of another entity, `exists: {in: {entity: <E>}, as: r, that: ...}`:
+every stored row of `<E>` is read with the candidates, and a write to `<E>` between that read and
+the commit refuses the command as a conflict, as a write to the guard's own entity does.
+
+A comparison with an `Optional` field a row does not hold, such as `box_id == input.id` on an
+item in no box, is *unknown* for that row. It does not evaluate to false.
 
 The row may or may not be in the set, so a count it could change refuses the command as
 undecidable. The message gives the filter, the entity and the absent field, and no stored row. To

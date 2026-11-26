@@ -377,17 +377,8 @@ fn condition(condition: &ResolvedCondition) -> Option<&'static str> {
             Some("`when_related:` over a list of references other than `exists: false` on an input")
         }
         ResolvedCondition::Related { .. } => None,
-        // A row set is read from the store before selection ([`crate::execute`]); a selector or a
-        // `forall:` that walks the rows of an entity (`exists: {in: {entity: …}, …}`, ess/27)
-        // stays refused.
-        ResolvedCondition::RelatedSet {
-            selection, test, ..
-        } if std::iter::once(&selection.filter)
-            .chain(test.predicate())
-            .any(|predicate| !ess_domain::command::related_rows::walked(predicate).is_empty()) =>
-        {
-            Some("a rows quantifier in a `when_related:` row-set selector")
-        }
+        // A row set is read from the store before selection, with the rows of every entity its
+        // selector or `forall:` walks (`exists: {in: {entity: …}, …}`, ess/27) ([`crate::execute`]).
         ResolvedCondition::RelatedSet { .. } => None,
         ResolvedCondition::InputAbsent => Some("`input_absent:`"),
     }
