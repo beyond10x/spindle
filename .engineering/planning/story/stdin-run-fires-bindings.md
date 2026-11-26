@@ -35,7 +35,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: cited
   path: website/docs/status.md
-revision: 22
+revision: 23
 ---
 # A stdin run fires the bindings its commands' events match
 
@@ -64,6 +64,9 @@ only when Spindle serves HTTP, which needs a component `reached_by: network`.
 - `a_stdin_run_and_a_served_run_fire_the_same_bindings`: one sequence of commands sent on stdin and
   over HTTP leaves the same rows and the same events.
 - `a_specification_without_bindings_prints_as_today`: no extra line.
+- `a_specification_without_components_fires_its_bindings_on_stdin`: a specification that declares
+  no component and one binding from `E` to `C`; a stdin line emitting `E` prints `C`'s answer on
+  its `caused_by` line, routed through the one implied component (D3 A).
 
 ## Not covered
 

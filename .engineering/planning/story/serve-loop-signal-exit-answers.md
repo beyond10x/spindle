@@ -31,7 +31,7 @@ scope:
   path: crates/spindle-ingress/tests/spindle-ingress/main.rs
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 21
+revision: 22
 ---
 # The serve loop's signal exit takes no exchange and drops no answer
 
@@ -64,6 +64,9 @@ pre-existing.
   end, a reset whose first seed entry is held, then SIGTERM: the first entry finishes, and a restart
   with the same `--seed` applies the seed from its second entry, so the reset wrote the marker at
   count 0 before its first entry and the old full count is gone.
+- `the_answers_in_hand_are_written_before_a_rejecting_seed_stops_the_run`
+  (`adversary_w26_u3`): its `ignore` is removed and it passes; the grant the loop took reads 2xx
+  and a grant still queued at the stop reads 503.
 
 ## Scope
 
