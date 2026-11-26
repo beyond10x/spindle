@@ -24,7 +24,7 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/integer_identity.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/spindle-kernel/main.rs
-revision: 9
+revision: 10
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-26T21:00:28Z", actor: "human:operator", revision: 8, decided_on: {"recorded":{"review_outcome":20}}}
 - {from: "proposed", to: "active", at: "2026-11-26T21:00:28Z", actor: "human:operator", revision: 9, decided_on: {"recorded":{"review_outcome":20}}}
@@ -49,8 +49,11 @@ This story is the command half, in the kernel.
 - `a_created_row_answers_its_integer_identity_and_fields_as_integers`: created with `1.0`, `2.0`,
   `[3.0]` and `4.0` for an identity, an `Integer`, a `List<Integer>` and an `Optional<Integer>`, the
   row, the identity and the event payload answer integers.
-- `an_integer_identity_past_64_bits_is_held_as_written`: an integral `Integer` input past `i64`
-  runs as ESS admits it and is found again by the same spelling (D3 A).
+- `an_integer_identity_past_64_bits_is_held_as_written`: ESS 0.99.1 admits no `Integer` past `i64`
+  in any spelling (`ess-primitives` `is_integral` is `as_i64().is_some()`), so 2^63, 2^64 and
+  `1e20` are refused by the kernel and the interpreter alike with nothing stored, and both `i64`
+  limits run and are found by either spelling. Amended at implementation: D3 A assumed ESS held
+  such a value; it does not, and the test name is kept.
 
 ## Scope
 
