@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:identity-mint-types-and-fallback
 kind: story
-status: active
+status: implemented
 title: The host mints a bare String or Integer identity, and reads value-source fallbacks
 relations:
 - serves: vision:spindle
@@ -23,10 +23,11 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/mint.rs
 - confidence: cited
   path: website/docs/concepts/specification.md
-revision: 24
+revision: 25
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-22T18:23:52Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-26T04:51:43Z", actor: "human:operator", revision: 24, decided_on: {"recorded":{"review_outcome":19}}}
+- {from: "active", to: "implemented", at: "2026-11-26T08:12:34Z", actor: "human:operator", revision: 25, decided_on: {"recorded":{"test_result":1,"review_outcome":21}}}
 ---
 # The host mints a bare String or Integer identity, and reads value-source fallbacks
 

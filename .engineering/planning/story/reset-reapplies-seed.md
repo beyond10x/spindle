@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:reset-reapplies-seed
 kind: story
-status: active
+status: implemented
 title: A reset of a seeded run applies the seed again
 summary: After POST /api/reset on a run started with a seed, the seed runs again before the reset answers.
 relations:
@@ -32,10 +32,11 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 29
+revision: 30
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-26T04:51:42Z", actor: "human:operator", revision: 26, decided_on: {"recorded":{"review_outcome":19}}}
 - {from: "proposed", to: "active", at: "2026-11-26T04:51:43Z", actor: "human:operator", revision: 27, decided_on: {"recorded":{"review_outcome":19}}}
+- {from: "active", to: "implemented", at: "2026-11-26T08:12:35Z", actor: "human:operator", revision: 30, decided_on: {"recorded":{"test_result":1,"review_outcome":21}}}
 ---
 # A reset of a seeded run applies the seed again
 

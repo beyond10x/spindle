@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-26T08:12:32Z",
+  "actor": "human:operator",
+  "artifact": "story:test-step-within-budget",
+  "kind": "story",
+  "revision": 48,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "https://github.com/beyond10x/spindle/actions/runs/45775796152 (PR 90 Gate, macOS, PostgreSQL, Build documentation, Security and privacy green on 0e416178; wave 25)"
+  }
+}

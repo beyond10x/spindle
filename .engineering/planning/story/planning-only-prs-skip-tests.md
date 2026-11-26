@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:planning-only-prs-skip-tests
 kind: story
-status: active
+status: implemented
 title: A pull request that changes only planning or prose skips the build and test jobs
 relations:
 - serves: vision:spindle
@@ -19,10 +19,11 @@ scope:
   path: scripts
 - confidence: cited
   path: scripts/changed-paths.sh
-revision: 15
+revision: 16
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-22T18:23:52Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-26T04:51:42Z", actor: "human:operator", revision: 15, decided_on: {"recorded":{"review_outcome":19}}}
+- {from: "active", to: "implemented", at: "2026-11-26T08:12:32Z", actor: "human:operator", revision: 16, decided_on: {"recorded":{"test_result":1,"review_outcome":20}}}
 ---
 # A pull request that changes only planning or prose skips the build and test jobs
 

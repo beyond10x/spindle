@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:decisions-rules-on-input-predicates
 kind: story
-status: active
+status: implemented
 title: Decision rules match on the command's input
 relations:
 - serves: vision:spindle
@@ -23,10 +23,11 @@ scope:
   path: website/docs/concepts/capabilities.md
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 23
+revision: 24
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-22T18:23:52Z", actor: "human:timo", revision: 2}
 - {from: "proposed", to: "active", at: "2026-11-26T04:51:42Z", actor: "human:operator", revision: 23, decided_on: {"recorded":{"review_outcome":19}}}
+- {from: "active", to: "implemented", at: "2026-11-26T08:12:33Z", actor: "human:operator", revision: 24, decided_on: {"recorded":{"test_result":1,"review_outcome":20}}}
 ---
 # Decision rules match on the command's input
 

@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:world-row-integer-fields
 kind: story
-status: active
+status: implemented
 title: A row a reset's world loads keeps its Integer fields as integers
 relations:
 - serves: vision:spindle
@@ -14,10 +14,11 @@ scope:
   path: crates/spindle-node/tests/fixtures/world-exchanges.json
 - confidence: inferred
   path: crates/spindle-node/tests/spindle-node/listener.rs
-revision: 8
+revision: 9
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-26T04:51:42Z", actor: "human:operator", revision: 7, decided_on: {"recorded":{"review_outcome":19}}}
 - {from: "proposed", to: "active", at: "2026-11-26T04:51:43Z", actor: "human:operator", revision: 8, decided_on: {"recorded":{"review_outcome":19}}}
+- {from: "active", to: "implemented", at: "2026-11-26T08:12:36Z", actor: "human:operator", revision: 9, decided_on: {"recorded":{"test_result":1,"review_outcome":20}}}
 ---
 # A row a reset's world loads keeps its Integer fields as integers
 

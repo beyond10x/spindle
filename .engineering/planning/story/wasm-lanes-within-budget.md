@@ -16,7 +16,7 @@ scope:
   path: Taskfile.yml
 - confidence: inferred
   path: scripts
-revision: 13
+revision: 14
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-26T04:51:42Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"review_outcome":19}}}
 - {from: "proposed", to: "active", at: "2026-11-26T04:51:42Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"review_outcome":19}}}
@@ -79,3 +79,25 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
   `story:planning-only-prs-skip-tests` and `story:test-step-within-budget`, built before this story
   on the same branch; this story uses the timer `scripts/within.sh` that
   `story:test-step-within-budget` adds.
+
+## Found after wave 25
+
+Measured by the slot session on build-1d, 2026-11-26, at 117e166fb, lane `wasm:host:build`, 93 rustc
+calls: the shared sccache serves the ESS crates within one tree, one target path and one set of
+`CARGO_*` variables (first build 1 min 46 s, ESS 86.67 s; again on an emptied target in the same
+tree 18.15 s, ESS 11.03 s). sccache 0.18.0 keys on every `CARGO_*` variable and every `env!` value,
+and `OUT_DIR` (absolute, under `target/<profile>/`) reaches serde_core, serde and thiserror, so a
+new profile name or target path misses for every crate above serde. Three changes in this
+repository, untested here:
+
+1. The wasm runner in `.cargo/config.toml` (`[target.wasm32-unknown-unknown] runner = …`), not in
+   the lanes' environment: a lane with `CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER` shares nothing
+   with one without (service worker 109 s, ESS 88.98 s; the lane before it 17 s).
+2. Every lane in one profile directory; measure on an emptied directory, never a fresh profile name
+   (wave 25's measurements used `wasm-gate-t1` and `-t2`, which can never hit).
+3. One feature set of `serde_json` and `schemars` across the lanes: the memory-store lane compiles 7
+   of 8 ESS crates again in the same target directory under `--test` (99 s, ess-conformance
+   50.32 s).
+
+With these, measured order 105 s, then 18 s, 17 s, 16 s. The first ESS compile in each new worktree
+stays until slot's own story lands.

@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:test-step-within-budget
 kind: story
-status: active
+status: implemented
 title: The test step ends within 2 minutes and kills a test at 60 s
 relations:
 - serves: vision:spindle
@@ -38,10 +38,11 @@ scope:
   path: crates/spindle-telemetry/tests/spindle-telemetry/transport.rs
 - confidence: inferred
   path: scripts
-revision: 48
+revision: 49
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-22T18:23:51Z", actor: "human:timo", revision: 5}
 - {from: "proposed", to: "active", at: "2026-11-26T04:51:42Z", actor: "human:operator", revision: 48, decided_on: {"recorded":{"review_outcome":19}}}
+- {from: "active", to: "implemented", at: "2026-11-26T08:12:32Z", actor: "human:operator", revision: 49, decided_on: {"recorded":{"test_result":1,"review_outcome":20}}}
 ---
 # The test step ends within 2 minutes and kills a test at 60 s
 
