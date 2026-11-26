@@ -109,6 +109,21 @@ pub fn admits(
     typed::validate(ir, kind, value)
 }
 
+/// `value`, of `kind`, with every value the model types `Integer` written as the JSON integer
+/// (`1.0` as `1`), through `Optional`, newtypes, `List` elements, `Map` values, struct members and
+/// a union's payload; everything else held as written. The kernel writes a command's input so
+/// once [`admits`] took it, so `1` and `1.0` name one instance, as ESS reads them.
+///
+/// # Errors
+/// An `Integer` that is not an integral number within `i64`, naming where it sits.
+pub fn integers(
+    ir: &ess_compiler::EssIr,
+    kind: &ess_compiler::ir::ResolvedTypeRef,
+    value: &Value,
+) -> Result<Value, String> {
+    typed::integers(ir, kind, value)
+}
+
 /// One event a command emitted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Event {

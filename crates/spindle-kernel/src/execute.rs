@@ -250,6 +250,19 @@ pub fn execute_refusing(
     }
     let attributes = crate::caller::bind(ir, actor, caller)?;
     check_input(ir, spec, input)?;
+    // Every `Integer` of the input as the integer, so `1.0` and `1` address, hold and publish one
+    // value, as ESS reads both as one (`crate::typed::integers`).
+    let input = &input
+        .iter()
+        .map(|(name, value)| {
+            let held = match spec.input_field(name) {
+                Some(field) => crate::typed::integers(ir, &field.type_ref, value)
+                    .map_err(|error| ExecuteError::InvalidInput(format!("`{name}`: {error}")))?,
+                None => value.clone(),
+            };
+            Ok((name.clone(), held))
+        })
+        .collect::<Result<Map<String, Value>, ExecuteError>>()?;
     let address = match addressed(ir, spec)? {
         Some((entity, field)) => {
             let identity = input

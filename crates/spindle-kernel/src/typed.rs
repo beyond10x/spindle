@@ -24,6 +24,97 @@ pub(crate) fn validate(ir: &EssIr, kind: &ResolvedTypeRef, value: &Value) -> Res
     check(ir, kind, value, 0)
 }
 
+/// `value`, of `kind`, with every value the model types `Integer` written as the JSON integer
+/// (`1.0` as `1`), as the kernel writes one ([`crate::compute`]): through `Optional`, newtypes,
+/// `List` elements, `Map` values, struct members and a union's payload. Everything else is held as
+/// written. `value` is checked against `kind` before ([`validate`]), so `1` and `1.0` are one value
+/// as ESS reads them (`Number` compares the exact value) and are written alike.
+///
+/// # Errors
+/// An `Integer` that is not an integral number within `i64`: one ESS does not admit
+/// (`Number::is_integral` is `as_i64`), so none reaches here from an admitted value.
+pub(crate) fn integers(ir: &EssIr, kind: &ResolvedTypeRef, value: &Value) -> Result<Value, String> {
+    integral(ir, kind, value, 0)
+}
+
+fn integral(
+    ir: &EssIr,
+    kind: &ResolvedTypeRef,
+    value: &Value,
+    depth: usize,
+) -> Result<Value, String> {
+    if depth > MAX_TYPE_DEPTH {
+        return Err(format!("the type nests deeper than {MAX_TYPE_DEPTH}"));
+    }
+    if value.is_null() {
+        return Ok(Value::Null);
+    }
+    if ir.literal_primitive(kind) == Some(Primitive::Integer) {
+        return serde_json::from_value::<Number>(value.clone())
+            .ok()
+            .and_then(Number::as_i64)
+            .map(Value::from)
+            .ok_or_else(|| format!("{value} is not an Integer within 64 bits"));
+    }
+    let nested = |of: &ResolvedTypeRef, value: &Value| integral(ir, of, value, depth + 1);
+    match (kind.required(), value) {
+        (ResolvedTypeRef::List { of }, Value::Array(elements)) => elements
+            .iter()
+            .enumerate()
+            .map(|(index, element)| nested(of, element).map_err(|why| format!("[{index}]: {why}")))
+            .collect(),
+        (ResolvedTypeRef::Map { value: of, .. }, Value::Object(entries)) => entries
+            .iter()
+            .map(|(key, entry)| {
+                nested(of, entry)
+                    .map(|entry| (key.clone(), entry))
+                    .map_err(|why| format!("{key:?}: {why}"))
+            })
+            .collect(),
+        (ResolvedTypeRef::Declared { name }, _) => match &ir.named_type(name).body {
+            ResolvedBody::Newtype { of, .. } => nested(of, value),
+            ResolvedBody::Struct { fields, .. } => match value {
+                Value::Object(members) => members
+                    .iter()
+                    .map(|(member, held)| {
+                        let held = match fields.iter().find(|field| field.name == *member) {
+                            Some(field) => nested(&field.type_ref, held)
+                                .map_err(|why| format!("`{member}`: {why}"))?,
+                            None => held.clone(),
+                        };
+                        Ok((member.clone(), held))
+                    })
+                    .collect(),
+                _ => Ok(value.clone()),
+            },
+            ResolvedBody::Union { tag, variants } => {
+                let content = if tag == "value" { "content" } else { "value" };
+                let selected = value
+                    .get(tag)
+                    .and_then(Value::as_str)
+                    .and_then(|label| variants.get(label))
+                    .and_then(Option::as_ref);
+                match (selected, value) {
+                    (Some(selected), Value::Object(members)) => members
+                        .iter()
+                        .map(|(member, held)| {
+                            let held = if member == content {
+                                nested(selected, held)?
+                            } else {
+                                held.clone()
+                            };
+                            Ok((member.clone(), held))
+                        })
+                        .collect(),
+                    _ => Ok(value.clone()),
+                }
+            }
+            ResolvedBody::Enum { .. } => Ok(value.clone()),
+        },
+        _ => Ok(value.clone()),
+    }
+}
+
 fn check(ir: &EssIr, kind: &ResolvedTypeRef, value: &Value, depth: usize) -> Result<(), String> {
     if depth > MAX_TYPE_DEPTH {
         return Err(format!("the type nests deeper than {MAX_TYPE_DEPTH}"));
