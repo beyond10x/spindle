@@ -249,8 +249,9 @@ fn carried(caller: &Caller) -> String {
 ///
 /// With `serving.seed`, its entries are submitted once listening, on this thread, one before each
 /// wait for the next exchange, so a request never waits for the whole seed; while one is left the
-/// wait does not block ([`Seeding`]). A reset with no world submits them again, all of them, before
-/// it answers; a reset that gives a world does not ([`reset_seeded`]).
+/// wait does not block ([`Seeding`]). A reset drops the entries not yet sent; one with no world
+/// then submits them again, all of them, before it answers, and one that gives a world does not
+/// ([`reset_seeded`]). A signal stops a reset's seed between two entries.
 pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     for caller in &serving.callers {
         fixed(&ir, caller)?;
@@ -433,7 +434,15 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             if exchange.console() == Some(Console::Reset)
                 && let Some(seeding) = seeding.as_mut()
             {
-                reset_seeded(exchange, &mut host, &worlds, seeding, recorder.as_ref());
+                let stopped = || signalled.load(Ordering::SeqCst) != 0;
+                reset_seeded(
+                    exchange,
+                    &mut host,
+                    &worlds,
+                    seeding,
+                    recorder.as_ref(),
+                    stopped,
+                );
                 continue;
             }
             for failed in exchange.serve_with(&mut host, &worlds) {
@@ -457,25 +466,33 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
 
 /// Answers `exchange`, a `POST /api/reset` on a run with a seed: every store emptied and the world
 /// its body carries loaded, as [`console::reset`] answers it, and the reset counted on `recorder`
-/// where it succeeded. Where the body gives no world ([`console::carries_world`]), `seeding` is
-/// then submitted again from its first entry to its end ([`Seeding::restart`],
-/// [`Seeding::finish`]) before the answer is sent, so the reset answers with the seed's effects in
-/// place (`story:reset-reapplies-seed`).
+/// where it succeeded. A reset that succeeded drops the entries of the seed run under way not yet
+/// sent ([`Seeding::cut`]), so a world is loaded alone. Where the body gives no world
+/// ([`console::carries_world`]), `seeding` is then submitted again from its first entry to its
+/// end ([`Seeding::restart`], [`Seeding::finish`]) before the answer is sent, so the reset answers
+/// with the seed's effects in place (`story:reset-reapplies-seed`).
+///
+/// Where `stopped` answers `true` between two entries, a signal arrived: nothing more is
+/// submitted and the reset is not answered, and the serve loop exits as the signal asks.
 fn reset_seeded(
     exchange: Exchange,
     host: &mut Host,
     worlds: Worlds<'_>,
     seeding: &mut Seeding,
     recorder: Option<&Recorder>,
+    stopped: impl Fn() -> bool,
 ) {
     let answer = console::reset(host, exchange.body(), Some(worlds));
     if answer.status == 200 {
         if let Some(recorder) = recorder {
             recorder.count_reset();
         }
+        seeding.cut();
         if !console::carries_world(exchange.body()) {
             seeding.restart();
-            seeding.finish(host);
+            if !seeding.finish(host, stopped) {
+                return;
+            }
         }
     }
     exchange.respond(answer);

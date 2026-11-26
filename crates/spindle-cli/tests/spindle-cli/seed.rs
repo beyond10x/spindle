@@ -1085,9 +1085,10 @@ fn a_reset_of_a_seeded_run_applies_the_seed_again() {
     );
 }
 
-/// The end line and the counts in `/__spindle/metrics` after a reset are those of the seed run
-/// the reset started, not a sum with the start's: the request ids the start's run remembered are
-/// forgotten with the rows they wrote.
+/// The end line after a reset gives the counts of the seed run the reset started, not a sum with
+/// the start's: the request ids the start's run remembered are forgotten with the rows they wrote.
+/// `spindle_seed_commands_total` in `/__spindle/metrics` is a counter and goes on from the start's
+/// counts.
 #[test]
 fn the_seed_counts_after_a_reset_are_those_of_the_new_run() {
     let directory = scratch();
@@ -1125,7 +1126,11 @@ fn the_seed_counts_after_a_reset_are_those_of_the_new_run() {
         "the counts of the reset's seed run alone: {again}"
     );
     assert!(again.contains(&seed), "{again}");
-    assert_eq!(counted(served.address), [3, 2, 1, 0]);
+    assert_eq!(
+        counted(served.address),
+        [6, 4, 2, 0],
+        "spindle_seed_commands_total is a counter: it goes on across the reset"
+    );
     assert_eq!(role_ids(&served), ["admin", "auditor"]);
 }
 
@@ -1214,3 +1219,5 @@ fn a_run_without_a_seed_resets_as_before() {
         "a run without a seed prints no end line: {stderr:#?}"
     );
 }
+
+mod adversary_w25_reseed;

@@ -308,8 +308,9 @@ pub enum Command {
         /// has them as `spindle_seed_commands_total`. Only where `run` serves HTTP. Request ids are
         /// not kept across starts: a restart applies nothing new only where every entry is a
         /// create its command answers `existing_instance:`, and every other entry runs again.
-        /// `POST /api/reset` with no world submits the seed again, from its first entry, before it
-        /// answers, its counts started again; a reset with a world loads that world alone.
+        /// `POST /api/reset` drops the entries not yet sent; with no world it then submits the
+        /// seed again, from its first entry, before it answers, its end line counting that run
+        /// alone, and with a world it loads that world alone.
         #[arg(long, value_name = "FILE", conflicts_with = "scenario")]
         seed: Option<PathBuf>,
         /// The `ess-scenario` document to replay.

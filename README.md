@@ -61,9 +61,9 @@ when every entry is a create guarded by `existing_instance:`; any other entry ru
 start, so an update writes over later changes and a move is refused. Spindle keeps no record of
 request ids: within one start, an entry whose request id an earlier applied or already-there entry
 carried is not submitted again. A refusal is logged and the rest still run; one line on stderr
-gives the counts when the seed ends. `POST /api/reset` with no world submits the seed again, from
-its first entry, before it answers; a reset with a world loads that world alone. `play` and
-`deploy` refuse an environment with a `[seed]` table.
+gives the counts when the seed ends. `POST /api/reset` drops the entries not yet sent; with no
+world it then submits the seed again, from its first entry, before it answers, and with a world it
+loads that world alone. `play` and `deploy` refuse an environment with a `[seed]` table.
 
 Where `run` serves HTTP, `--observe` records every request it answers. `GET /__spindle/requests`
 lists the last 256 (`--observe-requests <N>`, 1 to 10000), newest first, with totals per class
