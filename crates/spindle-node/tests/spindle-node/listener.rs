@@ -242,3 +242,102 @@ fn a_world_row_keeps_its_integer_fields() {
         r#"{"rows":[{"amount":1,"submission_id":"s1"},{"amount":12,"submission_id":"s9"}]}"#
     );
 }
+
+const NESTED_SYSTEM: &str = r"format: ess/34
+system: probe
+version: v1
+summary: One kind of row holding integers in every shape.
+domains:
+  - probe.nest
+components:
+  - component: boxes
+    summary: Keeps boxes.
+    owns:
+      domains:
+        - probe.nest
+    reached_by: in_process
+";
+
+const NESTED_DOMAIN: &str = r"domain: probe.nest
+summary: One kind of row holding integers in every shape.
+types:
+  - name: probe.nest.Count
+    kind: newtype
+    of: Integer
+  - name: probe.nest.Size
+    kind: struct
+    fields:
+      - name: width
+        type: Integer
+  - name: probe.nest.Tagged
+    kind: union
+    tag: kind
+    variants:
+      sized: probe.nest.Size
+entities:
+  - name: probe.nest.Box
+    identity:
+      name: box_id
+      type: Integer
+    fields:
+      - {name: count, type: probe.nest.Count}
+      - {name: spare, type: Optional<Integer>}
+      - {name: counts, type: List<Integer>}
+      - {name: tallies, type: 'Map<String, Integer>'}
+      - {name: size, type: probe.nest.Size}
+      - {name: tagged, type: probe.nest.Tagged}
+      - {name: weight, type: Decimal}
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+";
+
+/// story:world-row-integer-fields: a world row holds every value its model types `Integer` as the
+/// integer, `1.0` as `1`, through a newtype, `Optional`, a list, a map, a struct member and a
+/// union's payload, its identity too; a `Decimal` is held as written.
+#[test]
+fn a_world_row_holds_every_nested_integer_as_an_integer() {
+    let ir = spindle_spec::compile(
+        &["system.yaml".to_owned(), "domains/nest.yaml".to_owned()],
+        &[NESTED_SYSTEM.to_owned(), NESTED_DOMAIN.to_owned()],
+    )
+    .expect("the inline model compiles");
+    let body: Value = serde_json::from_str(
+        r#"{"rows": [{"entity": "probe.nest.Box", "identity": 7.0, "state": "Kept", "fields": {
+            "count": 2.0, "spare": 3.0, "counts": [1.0, 2], "tallies": {"a": 4.0},
+            "size": {"width": 5.0}, "tagged": {"kind": "sized", "value": {"width": 6.0}},
+            "weight": 1.0}}]}"#,
+    )
+    .expect("the world parses");
+    let world = spindle_host::read_world(&ir, &body, |table| table.over(Answers::default()))
+        .unwrap_or_else(|why| panic!("the world reads: {why}"));
+    let seed = &world.rows[0];
+    assert_eq!(serde_json::to_string(&seed.identity).expect("writes"), "7");
+    assert_eq!(
+        serde_json::to_string(&seed.row.fields).expect("writes"),
+        r#"{"count":2,"counts":[1,2],"size":{"width":5},"spare":3,"tagged":{"kind":"sized","value":{"width":6}},"tallies":{"a":4},"weight":1.0}"#
+    );
+}
+
+/// story:world-row-integer-fields: a world row whose `Integer` field is not an integer within 64
+/// bits is refused, naming the row and the field, and loads nothing.
+#[test]
+fn a_world_row_refuses_an_integer_it_cannot_hold() {
+    for amount in ["1.5", "9223372036854775808", "1e19"] {
+        let world = format!(
+            r#"{{"rows": [{{"entity": "probe.review.Submission", "identity": "s1", "state": "Open", "fields": {{"amount": {amount}}}}}]}}"#
+        );
+        let answered = served(&[
+            exchange("POST", "/api/reset", &world),
+            exchange("GET", "/review/views/Submissions", ""),
+        ]);
+        assert_eq!(answered[0].status, 400, "amount {amount}: {answered:#?}");
+        let refused = &answered[0].answer;
+        assert!(
+            refused.contains("row 0: probe.review.Submission") && refused.contains("amount"),
+            "amount {amount}: {refused}"
+        );
+        assert_eq!(answered[1].answer, r#"{"rows":[]}"#, "amount {amount}");
+    }
+}
