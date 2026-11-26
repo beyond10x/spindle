@@ -2,11 +2,14 @@
 format: aep.planning-md/3
 id: story:related-selector-rows-quantifier
 kind: story
-status: draft
+status: active
 title: A when_related row-set selector that walks an entity's rows is decided
 relations:
 - serves: vision:spindle
-revision: 6
+revision: 8
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-26T18:58:23Z", actor: "human:operator", revision: 7, decided_on: {"recorded":{"review_outcome":14}}}
+- {from: "proposed", to: "active", at: "2026-11-26T18:58:23Z", actor: "human:operator", revision: 8, decided_on: {"recorded":{"review_outcome":14}}}
 ---
 # A when_related row-set selector that walks an entity's rows is decided
 

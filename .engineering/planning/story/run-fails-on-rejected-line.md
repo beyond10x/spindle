@@ -2,11 +2,14 @@
 format: aep.planning-md/3
 id: story:run-fails-on-rejected-line
 kind: story
-status: draft
+status: active
 title: A run that rejects an input line or a seed entry exits non-zero
 relations:
 - serves: vision:spindle
-revision: 7
+revision: 9
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-26T18:58:24Z", actor: "human:operator", revision: 8, decided_on: {"recorded":{"review_outcome":14}}}
+- {from: "proposed", to: "active", at: "2026-11-26T18:58:24Z", actor: "human:operator", revision: 9, decided_on: {"recorded":{"review_outcome":14}}}
 ---
 # A run that rejects an input line or a seed entry exits non-zero
 

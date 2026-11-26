@@ -2,11 +2,14 @@
 format: aep.planning-md/3
 id: story:release-linux-glibc-floor-and-musl
 kind: story
-status: draft
+status: active
 title: The Linux release runs on an old glibc and as a static binary
 relations:
 - serves: vision:spindle
-revision: 14
+revision: 16
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-26T18:58:26Z", actor: "human:operator", revision: 15, decided_on: {"recorded":{"review_outcome":14}}}
+- {from: "proposed", to: "active", at: "2026-11-26T18:58:26Z", actor: "human:operator", revision: 16, decided_on: {"recorded":{"review_outcome":14}}}
 ---
 # The Linux release runs on an old glibc and as a static binary
 

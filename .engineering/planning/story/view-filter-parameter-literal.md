@@ -2,12 +2,15 @@
 format: aep.planning-md/3
 id: story:view-filter-parameter-literal
 kind: story
-status: draft
+status: active
 title: A view filter reads every parameter form a consumer's model declares
 relations:
 - serves: vision:spindle
 - informed_by: story:view-filter-text-contains
-revision: 11
+revision: 13
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-26T18:58:23Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"review_outcome":14}}}
+- {from: "proposed", to: "active", at: "2026-11-26T18:58:24Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"review_outcome":14}}}
 ---
 # A view filter reads every parameter form a consumer's model declares
 

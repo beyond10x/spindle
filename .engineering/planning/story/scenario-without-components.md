@@ -2,12 +2,15 @@
 format: aep.planning-md/3
 id: story:scenario-without-components
 kind: story
-status: draft
+status: active
 title: run --scenario replays a specification that declares no component
 relations:
 - serves: vision:spindle
 - depends_on: story:scenario-act-without-outcome
-revision: 7
+revision: 9
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-26T18:58:25Z", actor: "human:operator", revision: 8, decided_on: {"recorded":{"review_outcome":14}}}
+- {from: "proposed", to: "active", at: "2026-11-26T18:58:25Z", actor: "human:operator", revision: 9, decided_on: {"recorded":{"review_outcome":14}}}
 ---
 # run --scenario replays a specification that declares no component
 

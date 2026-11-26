@@ -2,12 +2,15 @@
 format: aep.planning-md/3
 id: story:clock-and-mint-in-every-mode
 kind: story
-status: draft
+status: active
 title: Every run mode takes a simulated clock and a seeded mint
 relations:
 - serves: vision:spindle
 - depends_on: story:run-fails-on-rejected-line
-revision: 14
+revision: 16
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-26T18:58:24Z", actor: "human:operator", revision: 15, decided_on: {"recorded":{"review_outcome":14}}}
+- {from: "proposed", to: "active", at: "2026-11-26T18:58:24Z", actor: "human:operator", revision: 16, decided_on: {"recorded":{"review_outcome":14}}}
 ---
 # Every run mode takes a simulated clock and a seeded mint
 
