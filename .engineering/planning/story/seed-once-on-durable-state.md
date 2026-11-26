@@ -31,7 +31,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 20
+revision: 21
 ---
 # A seed is applied once to a durable state
 
@@ -65,6 +65,9 @@ Reported 2026-11-26 by a consumer that keeps its state across restarts.
 - `a_changed_seed_on_a_state_with_no_row_runs_from_its_first_entry`: a different seed on a state
   whose marker exists but which holds no row runs the new seed from its first entry, exit 0.
 - `the_seed_marker_is_private`: `seed.json` has mode 0600 (Unix).
+- `a_run_stopped_mid_seed_resumes_after_the_last_entry_done`: a seed of three entries, the second
+  held, then SIGTERM; a restart with the same `--seed` sends only the third entry and `seed.json`
+  reads every entry done.
 
 ## Scope
 
