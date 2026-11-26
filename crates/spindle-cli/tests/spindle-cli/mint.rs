@@ -36,7 +36,7 @@ fn results(output: &Output) -> Vec<serde_json::Value> {
 }
 
 #[test]
-fn run_mints_each_new_identity_and_names_the_one_it_cannot_mint() {
+fn run_mints_each_new_identity_a_uuid_newtype_and_a_bare_string() {
     let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
     let state = directory.path().join("state.sqlite");
     let lines = concat!(
@@ -77,11 +77,15 @@ fn run_mints_each_new_identity_and_names_the_one_it_cannot_mint() {
         .collect::<Vec<_>>();
     assert_ne!(minted[0], minted[1], "each creation mints its own identity");
 
-    let refused = &results[2]["failure"];
-    assert_eq!(refused["kind"], "unsupported", "{refused}");
-    let message = refused["message"].as_str().expect("a message");
-    assert!(message.contains("mint.label.OpenLabel"), "{message}");
-    assert!(message.contains("label_id"), "{message}");
+    let label = &results[2];
+    assert_eq!(label["outcome"], "opened", "{label}");
+    let identity = label["events"][0]["payload"]["label_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a minted text identity in {label}"));
+    assert!(
+        identity.len() == 36 && identity.chars().all(|c| c.is_ascii_hexdigit() || c == '-'),
+        "a bare `String` identity is a UUID's text with no prefix: {identity}"
+    );
 }
 
 #[test]
