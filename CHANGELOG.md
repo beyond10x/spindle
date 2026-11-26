@@ -27,6 +27,11 @@ are Spindle's releases.
   body member or key naming a listed field is refused `400`, whether the query carries the field
   or not, and so is a query key no listed field names under `unknown: refuse`, or one given twice
   (`story:query-input-beside-body`).
+- A served `run` that names a command reading caller attributes not served, because the run
+  neither fixes a caller nor has each request prove one, prints one more stderr line naming both
+  ways to serve it: `--fixed-actor` with `--fixed-caller`, or `--trusted-caller-header` with
+  `--trusted-caller-secret`. The route's reason, its answer and `GET /api/served` are unchanged
+  (`story:caller-attributes-on-loopback`).
 
 ### Fixed
 

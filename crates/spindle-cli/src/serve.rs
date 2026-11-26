@@ -358,6 +358,18 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     for line in surface.report() {
         eprintln!("b10x-spindle: {line}");
     }
+    if surface
+        .unserved()
+        .iter()
+        .any(|route| !route.reads_caller().is_empty())
+    {
+        eprintln!(
+            "b10x-spindle: a command that reads caller attributes is served where the run fixes \
+             its caller (--fixed-actor with --fixed-caller), a test backend, or where each \
+             request proves its caller through a trusted proxy (--trusted-caller-header with \
+             --trusted-caller-secret)"
+        );
+    }
     if surface.serves_nothing() {
         bail!(Surface::serves_nothing_reason(&serving.components));
     }

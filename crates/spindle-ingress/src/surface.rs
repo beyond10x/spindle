@@ -165,6 +165,9 @@ pub struct Route {
     not_granted: bool,
     /// Whether each request proves its own caller ([`Surface::proving_callers`]).
     proves: bool,
+    /// The caller attributes the command reads where the route neither fixes a caller nor has
+    /// each request prove one, for which it is not served ([`Route::reads_caller`]).
+    unproven: Vec<String>,
 }
 
 /// An actor and caller a surface sends commands as: fixed for the whole run
@@ -725,6 +728,15 @@ impl Route {
     /// one that proves none is refused, and the route fixes no caller.
     pub fn proves(&self) -> bool {
         self.proves
+    }
+
+    /// The caller attributes the command reads, for which the route is not served because it
+    /// neither fixes a caller ([`Surface::fixing_callers`]) nor has each request prove one
+    /// ([`Surface::proving_callers`]); empty for every other route. The reason
+    /// ([`Route::unserved`]) names the attributes and no setting of a host; `run` names its own
+    /// settings beside it.
+    pub fn reads_caller(&self) -> &[String] {
+        &self.unproven
     }
 
     /// The input `path` carries in its variables, read as [`ess_gen::http::Flat`] says; `None`
@@ -1630,6 +1642,7 @@ fn route(
         caller: caller.cloned(),
         not_granted: false,
         proves,
+        unproven: Vec::new(),
     };
     route.not_granted = match (&route.operation, caller) {
         (Operation::Command(command), Some(caller)) => !may_run(ir, &caller.actor, command),
@@ -1777,7 +1790,8 @@ fn refuse(ir: &EssIr, command: &ess_compiler::ir::ResolvedCommand, route: &mut R
 /// `multipart` request, a command whose outcome answers with its retained result, a path variable
 /// or a view parameter in the query string that is not a scalar, or a command that reads its
 /// caller where the route neither fixes a caller nor has each request prove one
-/// ([`Surface::proving_callers`], design §11).
+/// ([`Surface::proving_callers`], design §11), whose attributes it keeps for
+/// [`Route::reads_caller`].
 fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Result<(), String> {
     for (variable, field) in ess_gen::http::path_fields(ir, bound) {
         let position = route
@@ -1804,6 +1818,7 @@ fn served(ir: &EssIr, bound: &ess_gen::http::Route<'_>, route: &mut Route) -> Re
         ess_gen::http::Served::Command(handle) => {
             let read = spindle_kernel::caller_reads(ir, ir.command(handle));
             if !read.is_empty() && route.caller.is_none() && !route.proves {
+                route.unproven = read.iter().map(ToString::to_string).collect();
                 return Err(format!(
                     "the caller attributes it reads ({}), which no HTTP caller proves here",
                     read.iter()
