@@ -15,8 +15,9 @@
 //! understanding one of them would be a guess.
 //!
 //! A construct only the taken outcome reads refuses that outcome alone ([`takes`]): an effect
-//! beyond its subject (a compensating refusal, an `affects:` entry over an input list or over an
-//! entity another component owns, `sets:` without a subject), a value it
+//! beyond its subject (a compensating refusal, an `affects:` entry over an input list, `sets:`
+//! without a subject), a write of an entity another component owns (a subject, `instances:` or
+//! an `affects:` entry), a value it
 //! writes, publishes or answers, the identity it mints, an error field it fills, or a value read
 //! from a row of an entity the component running the command does not own. Selection
 //! never reads one, so a request that selects another outcome of the command runs, and only a
@@ -111,8 +112,9 @@ pub fn takes(
 /// running them in one process hands the kernel: a value, a `when_related:` guard or a row set
 /// over an entity one of them owns is read from its owner's store, as ESS's interpreter reads it
 /// from its one store, so it is not refused. A read of an entity whose owner `reached` does not
-/// name, or that no component owns, is refused as [`takes`] refuses it, and so is an `affects:`
-/// entry over an entity the running component does not own, whatever is reached: the kernel
+/// name, or that no component owns, is refused as [`takes`] refuses it, and so is a write (a
+/// subject, `instances:` or an `affects:` entry) of an entity the
+/// running component does not own, whatever is reached: the kernel
 /// writes only the running component's store.
 ///
 /// # Errors
@@ -141,7 +143,7 @@ pub(crate) fn taking(
     if let Some(what) = effect(outcome) {
         return refuse(what);
     }
-    if let Some(what) = foreign_affects(ir, command, outcome) {
+    if let Some(what) = foreign_write(ir, command, outcome) {
         return refuse(&what);
     }
     if let Some(what) = response(ir, command, outcome) {
@@ -241,26 +243,46 @@ pub(crate) fn taking(
     Ok(())
 }
 
-/// The `affects:` entry, named, over an entity a component running `command` does not own. The
-/// kernel selects and writes the rows of an `affects:` entry in the store it runs on, which a host
-/// hands it to write the running component's rows: such an entry would select none of the
-/// owner's rows and write rows the owner never reads, where ESS's interpreter, which holds every
-/// entity in one store, changes the owner's. It is refused in every run, whatever store is
-/// reached. A command no component accepts is not checked.
-fn foreign_affects(
+/// The write, named, of `outcome` over an entity a component running `command` does not own: its
+/// subject (`creates:`, `updates:`, `moves:`, `deletes:` or `preserves:`), the rows it changes
+/// (`instances:`), or an `affects:` entry. The kernel writes only the store it runs on, which a
+/// host hands it to write the running component's rows, while a host running the owner too reads
+/// that entity from the owner's store ([`takes_reaching`]): such a write would land where no read
+/// of the entity looks, and an existing row it acts on would be read from one store and written
+/// to another. ESS's interpreter, which holds every entity in one store, writes the owner's. It
+/// is refused in every run, whatever store is reached, before anything is written. A command no
+/// component accepts is not checked.
+fn foreign_write(
     ir: &EssIr,
     command: &ResolvedCommand,
     outcome: &ResolvedOutcome,
 ) -> Option<String> {
-    outcome.affects.iter().find_map(|affect| {
-        let entity = ir.entity(&affect.entity);
-        let (owner, runner) = foreign(ir, command, entity, None)?;
-        Some(format!(
-            "an `affects:` entry over `{}`, owned by {owner}: the kernel writes only the store \
-             of component `{runner}`, which runs the command",
-            entity.name,
-        ))
-    })
+    let subject = outcome
+        .subject
+        .iter()
+        .map(|subject| (&subject.entity, "the subject"));
+    let set = outcome.instances.iter().map(|set| {
+        (
+            &set.entity,
+            "the rows the outcome changes (`instances:`) of",
+        )
+    });
+    let affects = outcome
+        .affects
+        .iter()
+        .map(|affect| (&affect.entity, "an `affects:` entry over"));
+    subject
+        .chain(set)
+        .chain(affects)
+        .find_map(|(entity, what)| {
+            let entity = ir.entity(entity);
+            let (owner, runner) = foreign(ir, command, entity, None)?;
+            Some(format!(
+                "{what} `{}`, owned by {owner}: the kernel writes only the store of component \
+             `{runner}`, which runs the command",
+                entity.name,
+            ))
+        })
 }
 
 /// The value, named, that reads a row of an entity a component running `command` does not own:

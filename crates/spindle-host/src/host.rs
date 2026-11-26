@@ -479,8 +479,9 @@ impl Store for Tallied<'_> {
 /// conditioned on the version of the store that answered the scan: each entity another
 /// component owns is checked against its owner's version, then left out of what the running
 /// component's store checks, which holds no row of it. The check and the commit are two steps,
-/// which no other write comes between while this host is the one writer of the owner's store, as
-/// a state directory has one Spindle process.
+/// which no other write comes between while this host is the one writer of the owner's store: a
+/// memory store, or a SQLite state directory, which `run` locks. Two processes writing one
+/// PostgreSQL owner store can keep a stale decision (`docs/design/spindle.md` § 11).
 struct Routed<'a> {
     ir: &'a EssIr,
     running: Tallied<'a>,

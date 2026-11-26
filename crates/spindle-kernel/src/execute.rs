@@ -239,8 +239,8 @@ pub fn execute_refusing(
 /// each read of an entity one of them owns is answered from its owner's store, as a host running
 /// them in one process routes it, so a value, a `when_related:` guard or a row set over such an
 /// entity runs where [`execute_refusing`] refuses it ([`crate::takes_reaching`]). Every write goes
-/// to the running component's store; an `affects:` entry over another component's entity stays
-/// refused.
+/// to the running component's store; a subject, `instances:` or `affects:` entry over another
+/// component's entity stays refused.
 ///
 /// # Errors
 /// As [`execute`].

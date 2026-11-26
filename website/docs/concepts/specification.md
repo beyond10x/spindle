@@ -97,8 +97,9 @@ entity in one store. Where the owner runs in another process (`play --component`
 `admit --component`, which checks that run), the command reads only the store of the component
 that runs it: such a guard refuses the whole command, and such a value refuses its outcome, as
 unsupported, naming the entity, its owner and the running component, and `admit` lists it as not
-served. An `affects:` entry over another component's entity is refused the same way in every
-run: the kernel writes only the store of the component that runs the command.
+served. A write of another component's entity, by an `affects:` entry, a subject or `instances:`,
+is refused the same way in every run: the kernel writes only the store of the component that
+runs the command.
 
 A `creates:` outcome whose identity is neither an input nor a payload source (`generated: true`,
 or no source) leaves the identity to the runtime, which mints it with the `identity.mint`
