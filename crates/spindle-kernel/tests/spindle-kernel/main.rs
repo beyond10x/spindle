@@ -50,6 +50,7 @@ mod adversary_w25_guard;
 mod adversary_w25_mint;
 mod adversary_w25_mint_r2;
 mod adversary_w26_u1;
+mod adversary_w27_u5;
 mod before_row;
 mod caller;
 mod creation_takes_unknown_row;
