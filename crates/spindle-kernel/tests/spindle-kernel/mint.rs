@@ -604,55 +604,64 @@ fn a_fallback_minted_integer_identity_an_instance_holds_is_drawn_again() {
     assert_eq!(minted, [json!(0), json!(7)]);
 }
 
-/// A mint that answers one UUID on every draw: the second creation draws eight times, each
-/// minting the held `Integer`, and is refused naming the draws; the first tally is kept.
+/// A mint that answers one UUID on every draw, with `held` tallies stored, 0 among them: the next
+/// creation draws one more identity than the tallies held, as ESS's interpreter draws
+/// `0..=occupied` (`interpret::execute::creation_identity`), each minting the held 0, and is
+/// refused naming the draws; the stored tallies are kept.
 #[test]
-fn an_integer_identity_held_on_every_draw_is_refused_naming_the_draws() {
+fn an_integer_identity_held_on_every_draw_is_refused_after_one_draw_more_than_the_held() {
     let ir = redraw_ir();
-    let mut store = MemoryStore::default();
-    let mut asked = 0_usize;
-    let mut mint = |_: &Identity<'_>| {
-        asked += 1;
-        Uuid::nil()
-    };
-    execute_minting(
-        &ir,
-        &mut store,
-        &mut NoExternals,
-        &mut mint,
-        "mintredraw.tally.OpenTally",
-        &input(json!({"name": "first"})),
-    )
-    .expect("the first tally opens");
-    let error = execute_minting(
-        &ir,
-        &mut store,
-        &mut NoExternals,
-        &mut mint,
-        "mintredraw.tally.OpenTally",
-        &input(json!({"name": "second"})),
-    )
-    .expect_err("every draw mints the held 0");
-    match &error {
-        ExecuteError::Undeclared { reason, .. } => {
-            assert!(
-                reason.contains("each of 8 `Integer` identities"),
-                "{reason}"
-            );
-            assert!(reason.contains(TALLY), "{reason}");
+    for held in [1_u64, 3] {
+        let mut store = MemoryStore::default();
+        let mut unasked = |identity: &Identity<'_>| -> Uuid {
+            panic!("a supplied identity draws nothing: {identity:?}")
+        };
+        for tally in 0..held {
+            execute_minting(
+                &ir,
+                &mut store,
+                &mut NoExternals,
+                &mut unasked,
+                "mintredraw.tally.OpenTallyAs",
+                &input(json!({"tally_id": tally, "name": "held"})),
+            )
+            .unwrap_or_else(|error| panic!("tally {tally} opens: {error}"));
         }
-        other => panic!("a held identity on every draw is refused as Undeclared, not {other:?}"),
+        let mut asked = 0_usize;
+        let mut mint = |_: &Identity<'_>| {
+            asked += 1;
+            Uuid::nil()
+        };
+        let error = execute_minting(
+            &ir,
+            &mut store,
+            &mut NoExternals,
+            &mut mint,
+            "mintredraw.tally.OpenTally",
+            &input(json!({"name": "next"})),
+        )
+        .expect_err("every draw mints the held 0");
+        let draws = usize::try_from(held).expect("a small count") + 1;
+        match &error {
+            ExecuteError::Undeclared { reason, .. } => {
+                assert!(
+                    reason.contains(&format!("each of {draws} `Integer` identities")),
+                    "{held} held: {reason}"
+                );
+                assert!(reason.contains(TALLY), "{reason}");
+            }
+            other => {
+                panic!("a held identity on every draw is refused as Undeclared, not {other:?}")
+            }
+        }
+        assert_eq!(asked, draws, "{held} held: one draw more than the held");
+        let kept = store.scan(TALLY).expect("the store scans").rows;
+        assert_eq!(
+            kept.len(),
+            usize::try_from(held).expect("a small count"),
+            "{kept:?}"
+        );
     }
-    assert_eq!(
-        asked,
-        1 + 8,
-        "one draw for the first tally, eight for the second"
-    );
-    let kept = store
-        .load(TALLY, &json!(0))
-        .expect("the store reads")
-        .expect("the first tally is kept");
-    assert_eq!(kept.row.fields.get("name"), Some(&json!("first")));
 }
 
 /// An `Integer` identity the request sends is not drawn again: a held one refuses the creation,

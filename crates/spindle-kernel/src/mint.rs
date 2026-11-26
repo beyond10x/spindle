@@ -9,7 +9,8 @@
 //! its prefix and a UUID's text; an `Integer`, or a newtype of one without invariants, as an
 //! integer drawn from a UUID, as a generated `Integer` is ([`identity`]). Many UUIDs draw one
 //! integer, so a minted `Integer` identity an instance of the entity already holds is drawn
-//! again, at most [`INTEGER_DRAWS`] draws in all, as ESS's interpreter draws again; a minted
+//! again, at most one draw more than the instances of the entity held, as ESS's interpreter
+//! draws again (`interpret::execute::creation_identity`); a minted
 //! `Uuid` or text identity an instance holds came from a UUID it holds, and refuses the
 //! command ([`Mint::uuid`]). An entity invariant over
 //! the identity's length that no minted identity meets refuses the command before it runs
@@ -153,10 +154,6 @@ const INTEGER_BITS: u128 = (1 << 53) - 1;
 fn integer(uuid: Uuid) -> u64 {
     u64::try_from(uuid.as_u128() & INTEGER_BITS).unwrap_or(u64::MAX)
 }
-
-/// How many identities the kernel mints in turn for one creation whose minted `Integer`
-/// identity an instance of the entity already holds, before it refuses the command.
-pub(crate) const INTEGER_DRAWS: usize = 8;
 
 /// The values one command run mints for its generated fields, each minted once: a field read
 /// twice, in a payload and again through `{payload: <Event>.<field>}` in `sets:`, reads the same
@@ -480,8 +477,8 @@ pub trait Mint {
     /// A fresh `Uuid` for `identity`. The kernel refuses a creation whose `Uuid` or `String`
     /// identity minted from it an instance already holds. An `Integer` identity, which many UUIDs
     /// mint alike, the kernel draws again where an instance holds it, as ESS's interpreter draws
-    /// again (`interpret::execute::creation_identity`), and refuses the creation only once eight
-    /// draws in turn each minted a held one.
+    /// again (`interpret::execute::creation_identity`), and refuses the creation only once it has
+    /// drawn one more identity than the entity has instances, each a held one.
     fn uuid(&mut self, identity: &Identity<'_>) -> Uuid;
 }
 

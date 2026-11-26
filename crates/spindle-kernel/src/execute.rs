@@ -1830,21 +1830,20 @@ impl<'a, 'ir> Run<'a, 'ir> {
         Ok(())
     }
 
-    /// The identity a creation's payload determines for the new instance, published in `field` of
-    /// `event`.
     /// The identity of the instance `outcome` creates, published as `field` of `event`: minted
     /// ([`Self::mint_identity`]) where the outcome leaves it to the runtime, else what its source
     /// reads ([`Self::determined_identity`]), a `{generated: true}` fallback among them.
     ///
     /// An `Integer` identity minted in this draw, which many UUIDs mint alike, that an instance of
     /// `entity` already holds is minted again, as ESS's interpreter draws again on a held
-    /// identity (`interpret::execute::creation_identity`), at most
-    /// [`crate::mint::INTEGER_DRAWS`] draws in all.
+    /// identity (`interpret::execute::creation_identity`): at most one draw more than the
+    /// instances of `entity` the store holds, read once, on the first held draw.
     ///
     /// # Errors
     /// [`ExecuteError::Undeclared`] for an identity an instance already holds that this draw did
     /// not mint, a minted `Uuid` or text one (minted from a UUID the instance holds), or an
-    /// `Integer` one held on every draw, naming the draws; and as the mint or source reads.
+    /// `Integer` one held on every draw, naming the draws; and as the mint, the source or the
+    /// store reads.
     fn creation_identity(
         &mut self,
         outcome: &'ir ResolvedOutcome,
@@ -1857,7 +1856,12 @@ impl<'a, 'ir> Run<'a, 'ir> {
             Some(crate::mint::Minted::Integer)
         );
         let entity_name = entity.name.to_string();
-        for _ in 0..crate::mint::INTEGER_DRAWS {
+        // The instances of `entity` held, read on the first held draw: ESS draws
+        // `0..=occupied`, one candidate beyond the held population.
+        let mut occupied = None;
+        let mut draws = 0_usize;
+        loop {
+            draws += 1;
             let mark = self.generator.mark();
             let (identity, minted) =
                 if let Some((created, named)) = crate::mint::slot(self.ir, outcome) {
@@ -1880,18 +1884,31 @@ impl<'a, 'ir> Run<'a, 'ir> {
                     ),
                 });
             }
+            let held = match occupied {
+                Some(held) => held,
+                None => {
+                    let counts = self.store.counts(std::slice::from_ref(&entity_name))?;
+                    let held = counts.get(&entity_name).copied().unwrap_or(0);
+                    occupied = Some(held);
+                    held
+                }
+            };
+            if draws > held {
+                return Err(ExecuteError::Undeclared {
+                    command: self.command.to_owned(),
+                    reason: format!(
+                        "each of {draws} `Integer` identities minted in turn for a new \
+                         `{entity_name}`, one more than the {held} it holds, is already held by \
+                         one, and `creates:` never replaces an instance"
+                    ),
+                });
+            }
             self.generator.rewind(mark);
         }
-        Err(ExecuteError::Undeclared {
-            command: self.command.to_owned(),
-            reason: format!(
-                "each of {} `Integer` identities minted in turn for a new `{entity_name}` is \
-                 already held by one, and `creates:` never replaces an instance",
-                crate::mint::INTEGER_DRAWS
-            ),
-        })
     }
 
+    /// The identity a creation's payload determines for the new instance, published in `field` of
+    /// `event`.
     fn determined_identity(
         &self,
         outcome: &ResolvedOutcome,
