@@ -53,8 +53,8 @@ environment, and executes it. Humans start at [`README.md`](README.md); the desi
 
 ## Rules
 
-- **Running code is Rust**, clap derive for the command line. No Python, no shell helpers in the
-  repository.
+- **Running code is Rust**, clap derive for the command line. No Python; POSIX sh only for the gate's
+  helpers in `scripts/` (`check-ess-pin.sh`, `changed-paths.sh`, `within.sh`).
 - **ESS is read through its crates.** Parse, assemble and compile with `ess-domain` and
   `ess-compiler` at the pinned tag; never re-implement ESS parsing, validation or guard
   evaluation. A document `ess specify validate` refuses must be refused here too.
@@ -103,12 +103,14 @@ Steps (`Taskfile.yml`): `aep plan artifact validate`, `ess specify validate` on 
 `examples/rally/ess`, the three observe contract checks (`check:the_observe_domain_validates`,
 `check:the_generated_types_have_no_drift`, `check:every_fixture_answer_validates_against_its_schema`),
 `check:ui` (`pnpm` test, typecheck and build in `ui/`), `task docs-check`, the wasm and browser
-lanes (`check:a_service_worker_serves_a_specification` and `check:the_static_bundle_builds` among
+lanes, each timed by `scripts/within.sh 120` and built in the `wasm-gate` profile (`check:a_service_worker_serves_a_specification` and `check:the_static_bundle_builds` among
 them, which need `wasm-bindgen` and `wasm-bindgen-test-runner` of the locked `wasm-bindgen`
 version and a WebDriver on `PATH`), the Node lane (`check:node_serves_a_specification`, which needs `node` 22 and the same
 `wasm-bindgen`), `cargo fmt -- --check` (workspace members only: the generated `spindle-observe-api` is held byte-exact by the drift check instead),
 `cargo clippy --workspace --all-targets --locked -- -D warnings`,
-`cargo test --workspace --locked --no-fail-fast`. The ESS pin is the `tag` of `ess-compiler`,
+`check:the_tests_pass_within_the_budget` (`cargo nextest run --workspace` after its `--no-run`
+build, under `scripts/within.sh 120`; `.config/nextest.toml` kills a test at 60 s; the ten slowest
+tests printed; `cargo-nextest` on `PATH`; dependencies build at `opt-level = 1`). The ESS pin is the `tag` of `ess-compiler`,
 `ess-domain` and `ess-primitives` in `Cargo.toml`; CI installs the `ess` CLI of the same version
 (`.github/workflows/ci.yml`, `ESS_VERSION`), `ess/ess-inputs.yaml` requires it exactly, and
 `ESS_TOOLCHAIN` in `Taskfile.yml` and `.cargo/config.toml` routes every `ess` a task or a test

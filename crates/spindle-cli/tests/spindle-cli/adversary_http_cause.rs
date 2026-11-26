@@ -160,12 +160,19 @@ fn a_url_carrying_userinfo_never_puts_the_password_on_the_wire_as_host() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("b10x-spindle starts");
-    child
+    let written = child
         .stdin
         .take()
         .expect("stdin")
-        .write_all(ask("r1").as_bytes())
-        .expect("the line is written");
+        .write_all(ask("r1").as_bytes());
+    // `run` may refuse at start and exit before it reads a line, which closes the pipe.
+    if let Err(error) = written {
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::BrokenPipe,
+            "the line is written: {error}"
+        );
+    }
     let output = child.wait_with_output().expect("b10x-spindle runs");
     for request in desk.received() {
         for (name, value) in &request.headers {
