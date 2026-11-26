@@ -1,0 +1,283 @@
+domain: ledger.usage
+summary: Accounts of organizations, holds on organizations, and charges guarded by row-set conditions that walk the rows of an entity.
+types:
+  - name: ledger.usage.AccountId
+    kind: newtype
+    of: Uuid
+  - name: ledger.usage.HoldId
+    kind: newtype
+    of: Uuid
+  - name: ledger.usage.ChargeId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: ledger.usage.Account
+    identity:
+      name: account_id
+      type: ledger.usage.AccountId
+    fields:
+      - name: org
+        type: String
+      - name: hold_ref
+        type: Optional<ledger.usage.HoldId>
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+  - name: ledger.usage.Hold
+    identity:
+      name: hold_id
+      type: ledger.usage.HoldId
+    fields:
+      - name: org
+        type: String
+      - name: note
+        type: Optional<String>
+    lifecycle:
+      initial: Active
+      states: [Active, Lifted]
+      terminal: [Lifted]
+      transitions:
+        - {name: lift, from: [Active], to: Lifted}
+  - name: ledger.usage.Charge
+    identity:
+      name: charge_id
+      type: ledger.usage.ChargeId
+    fields:
+      - name: account_id
+        type: ledger.usage.AccountId
+    lifecycle:
+      initial: Billed
+      states: [Billed]
+      terminal: [Billed]
+errors:
+  - name: ledger.usage.Refused
+    summary: The guard turns the charge away.
+    fields: []
+  - name: ledger.usage.NotActive
+    summary: The hold is already lifted.
+    fields: []
+commands:
+  - name: ledger.usage.OpenAccount
+    input:
+      - name: account_id
+        type: ledger.usage.AccountId
+      - name: org
+        type: String
+      - name: hold_ref
+        type: Optional<ledger.usage.HoldId>
+    outcomes:
+      - name: opened
+        creates: ledger.usage.Account
+        instance: account_id
+        sets:
+          org: input.org
+          hold_ref: input.hold_ref
+        emits: [ledger.usage.AccountOpened]
+        payload:
+          ledger.usage.AccountOpened:
+            account_id: input.account_id
+        summary: The account is opened.
+  - name: ledger.usage.PlaceHold
+    input:
+      - name: hold_id
+        type: ledger.usage.HoldId
+      - name: org
+        type: String
+      - name: note
+        type: Optional<String>
+    outcomes:
+      - name: placed
+        creates: ledger.usage.Hold
+        instance: hold_id
+        sets:
+          org: input.org
+          note: input.note
+        emits: [ledger.usage.HoldPlaced]
+        payload:
+          ledger.usage.HoldPlaced:
+            hold_id: input.hold_id
+        summary: The organization is put on hold.
+  - name: ledger.usage.LiftHold
+    input:
+      - name: hold_id
+        type: ledger.usage.HoldId
+    outcomes:
+      - name: lifted
+        moves: ledger.usage.Hold.lift
+        instance: hold_id
+        emits: [ledger.usage.HoldLifted]
+        payload:
+          ledger.usage.HoldLifted:
+            hold_id: input.hold_id
+        summary: The hold is lifted.
+      - name: wrong-state
+        wrong_state: true
+        error: ledger.usage.NotActive
+        summary: The hold is already lifted.
+  - name: ledger.usage.ChargeSibling
+    input:
+      - name: charge_id
+        type: ledger.usage.ChargeId
+      - name: account_id
+        type: ledger.usage.AccountId
+    outcomes:
+      - name: shared
+        when_related:
+          entity: ledger.usage.Account
+          where:
+            all:
+              - account_id == input.account_id
+              - exists:
+                  in: {entity: ledger.usage.Account}
+                  as: other
+                  that: {all: [other.org == org, other.account_id != account_id]}
+          exists: true
+        error: ledger.usage.Refused
+        summary: Another account of the same organization exists.
+      - name: charged
+        creates: ledger.usage.Charge
+        instance: charge_id
+        sets:
+          account_id: input.account_id
+        emits: [ledger.usage.UsageCharged]
+        payload:
+          ledger.usage.UsageCharged:
+            charge_id: input.charge_id
+        summary: The usage is charged.
+  - name: ledger.usage.ChargeFree
+    input:
+      - name: charge_id
+        type: ledger.usage.ChargeId
+      - name: account_id
+        type: ledger.usage.AccountId
+    outcomes:
+      - name: held
+        when_related:
+          entity: ledger.usage.Account
+          where:
+            all:
+              - account_id == input.account_id
+              - not:
+                  exists:
+                    in: {entity: ledger.usage.Hold}
+                    as: hold
+                    that: {all: [hold.org == org, hold.state == Active]}
+          exists: false
+        error: ledger.usage.Refused
+        summary: No account of the id is free of an active hold.
+      - name: charged
+        creates: ledger.usage.Charge
+        instance: charge_id
+        sets:
+          account_id: input.account_id
+        emits: [ledger.usage.UsageCharged]
+        payload:
+          ledger.usage.UsageCharged:
+            charge_id: input.charge_id
+        summary: The usage is charged.
+  - name: ledger.usage.ChargeNote
+    input:
+      - name: charge_id
+        type: ledger.usage.ChargeId
+      - name: account_id
+        type: ledger.usage.AccountId
+    outcomes:
+      - name: urgent
+        when_related:
+          entity: ledger.usage.Account
+          where:
+            all:
+              - account_id == input.account_id
+              - exists:
+                  in: {entity: ledger.usage.Hold}
+                  as: hold
+                  that: {all: [hold.org == org, hold.note == urgent]}
+          exists: true
+        error: ledger.usage.Refused
+        summary: The account's organization holds an urgent hold.
+      - name: charged
+        creates: ledger.usage.Charge
+        instance: charge_id
+        sets:
+          account_id: input.account_id
+        emits: [ledger.usage.UsageCharged]
+        payload:
+          ledger.usage.UsageCharged:
+            charge_id: input.charge_id
+        summary: The usage is charged.
+  - name: ledger.usage.ChargeRef
+    input:
+      - name: charge_id
+        type: ledger.usage.ChargeId
+      - name: account_id
+        type: ledger.usage.AccountId
+    outcomes:
+      - name: referenced
+        when_related:
+          entity: ledger.usage.Account
+          where:
+            all:
+              - account_id == input.account_id
+              - exists:
+                  in: {entity: ledger.usage.Hold}
+                  as: hold
+                  that: {all: [hold.hold_id == hold_ref, hold.state == Active]}
+          exists: true
+        error: ledger.usage.Refused
+        summary: The account references an active hold.
+      - name: charged
+        creates: ledger.usage.Charge
+        instance: charge_id
+        sets:
+          account_id: input.account_id
+        emits: [ledger.usage.UsageCharged]
+        payload:
+          ledger.usage.UsageCharged:
+            charge_id: input.charge_id
+        summary: The usage is charged.
+  - name: ledger.usage.ChargeCount
+    input:
+      - name: charge_id
+        type: ledger.usage.ChargeId
+      - name: account_id
+        type: ledger.usage.AccountId
+    outcomes:
+      - name: crowded
+        when_related:
+          entity: ledger.usage.Account
+          where:
+            exists:
+              in: {entity: ledger.usage.Hold}
+              as: hold
+              that: {all: [hold.org == org, hold.state == Active]}
+          count: {gte: 2}
+        error: ledger.usage.Refused
+        summary: Two or more accounts sit under an active hold.
+      - name: charged
+        creates: ledger.usage.Charge
+        instance: charge_id
+        sets:
+          account_id: input.account_id
+        emits: [ledger.usage.UsageCharged]
+        payload:
+          ledger.usage.UsageCharged:
+            charge_id: input.charge_id
+        summary: The usage is charged.
+events:
+  - name: ledger.usage.AccountOpened
+    fields:
+      - name: account_id
+        type: ledger.usage.AccountId
+  - name: ledger.usage.HoldPlaced
+    fields:
+      - name: hold_id
+        type: ledger.usage.HoldId
+  - name: ledger.usage.HoldLifted
+    fields:
+      - name: hold_id
+        type: ledger.usage.HoldId
+  - name: ledger.usage.UsageCharged
+    fields:
+      - name: charge_id
+        type: ledger.usage.ChargeId

@@ -1,0 +1,35 @@
+format: ess/34
+system: ledger
+version: v1
+summary: Accounts a meter charges, and holds a second component places on organizations; a charge is guarded by the holds of the account's organization.
+domains:
+  - ledger.usage
+  - ledger.holds
+components:
+  - component: meter
+    summary: Opens accounts and charges usage.
+    owns:
+      domains:
+        - ledger.usage
+    accepts:
+      commands:
+        - ledger.usage.OpenAccount
+        - ledger.usage.ChargeUsage
+        - ledger.usage.ChargeDirect
+    publishes:
+      events:
+        - ledger.usage.AccountOpened
+        - ledger.usage.UsageCharged
+    reached_by: in_process
+  - component: holds
+    summary: Places holds on organizations.
+    owns:
+      domains:
+        - ledger.holds
+    accepts:
+      commands:
+        - ledger.holds.PlaceHold
+    publishes:
+      events:
+        - ledger.holds.HoldPlaced
+    reached_by: in_process
