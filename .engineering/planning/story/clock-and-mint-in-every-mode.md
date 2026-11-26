@@ -7,7 +7,7 @@ title: Every run mode takes a simulated clock and a seeded mint
 relations:
 - serves: vision:spindle
 - depends_on: story:run-fails-on-rejected-line
-revision: 11
+revision: 12
 ---
 # Every run mode takes a simulated clock and a seeded mint
 
@@ -38,8 +38,10 @@ need repeatable identities.
 - `a_served_run_starts_on_the_clock_flag`: a served run with `--clock 2026-02-01T00:00:00Z` answers
   a command whose guard orders against `now` with the outcome selected on February 1st.
 - `a_scenario_runs_on_the_clock_flag`: `--scenario` with `--clock 2026-02-01T00:00:00Z` replays an
-  act that states the outcome selected on February 1st by a guard over `now`; the act prints
-  `holds` and the run exits 0, and the same document without `--clock` diverges.
+  act that states the outcome selected on February 1st by a guard over `now`; the act's line
+  contains `holds` and the run exits 0, and the same document without `--clock` exits 1; the test
+  asserts the exit code and the `holds` substring only, since U4 adds the observed outcome to the
+  line.
 - `a_reset_world_mint_overrides_the_seed_until_the_next_reset`: on a served run with
   `--mint-seed`, a reset whose world carries `mint: <m>` mints as seed `<m>` does.
 - `a_plain_reset_mints_from_the_run_seed_again`: a following reset whose world has no `mint` mints

@@ -6,24 +6,22 @@ status: draft
 title: A guard over an absent optional field of a held row is decided as ESS decides it
 relations:
 - serves: vision:spindle
-revision: 5
+revision: 7
 ---
 # A guard over an absent optional field of a held row is decided as ESS decides it
 
 ## Outcome
 
-A command guard that reads an `Optional` field of the held instance (or of a related row) which was
-never written selects the outcome ESS 0.99.1's interpreter selects, instead of failing the command
-as `undecidable`. Where the interpreter also leaves the guard undetermined, Spindle's refusal says
-so and names the field, so the specification's author can add `defined(<field>)`.
+A command guard that compares an `Optional` field of the held instance (or of a related row) which
+was never written decides as ESS 0.99.1's interpreter decides it: the comparison is Unknown and no
+outcome is selected, so the command is refused as `undecidable` in both. Spindle's refusal then
+names the guard and the absent field and suggests `defined(<field>)`, so the specification's author
+can write the guard ESS decides. Today the refusal reads "…is undecidable over the held instance and
+the input" and names neither.
 
-Reported 2026-11-26 by two consumers on Spindle 0.21.0, at run time: an owner-enrolment guard over
-`claimed_by` on an organization created without it, an auto-upgrade guard over `auto_upgrade` never
-set, and a number-assignment guard over `phone_number_id` absent on a stocked number. Each guard is
-answered `undecidable`, so the outcome behind it is unreachable. The kernel binds the held row's
-fields as facts (`crates/spindle-kernel/src/facts.rs`) and an absent field leaves the leaf unknown.
-Inferred, not traced: whether ESS reads an absent `Optional` leaf as false, as absent, or as unknown
-in each comparison form.
+Reported 2026-11-26 by two consumers on Spindle 0.21.0, at run time: three guards, each comparing an
+optional field the held or related row never had (a claim reference, a boolean flag, a reference
+to an assigned resource), answered `undecidable` with no hint of the field.
 
 ## Acceptance
 
@@ -91,7 +89,7 @@ ESS paths below are relative to `crates/` of the ESS 0.99.1 source (tag 0.99.1, 
   - Spindle binds an absent or `null` field as no fact with presence false (`crates/spindle-kernel/src/facts.rs:12-13`, `:160-162`, `:299-301`). This is the same as ESS.
   - It evaluates with the same `Predicate::evaluate`: `execute.rs:757` for `when_subject`, `execute.rs:766-767` for the enum `{field, equals}` (absent gives Unknown).
   - The related row takes the same path: `execute.rs:817-821` reads it through `related_facts` (`:1197-1207`), which calls `Facts::row`.
-  - Spindle turns Unknown into `Undecidable` (`:736`, `:1453`), as ESS does. So the three consumer guards (`claimed_by`, `auto_upgrade`, `phone_number_id`) are very likely undecidable in ESS 0.99.1 too, unless they were written with `defined(...)` or `coalesce(...)`.
+  - Spindle turns Unknown into `Undecidable` (`:736`, `:1453`), as ESS does. So the three guards the consumers reported are very likely undecidable in ESS 0.99.1 too, unless they were written with `defined(...)` or `coalesce(...)`.
 - **The refusal message: gap confirmed** (cited).
   - For held-row and `when_related` guards, `Run::undecidable` gets a `why` only from the row-set `open` slot (`execute.rs:1069-1076`). Otherwise the message reads "…is undecidable over the held instance and the input" (`lib.rs:228-233`).
   - That message names neither the guard nor the absent field, and does not suggest `defined(<field>)`.

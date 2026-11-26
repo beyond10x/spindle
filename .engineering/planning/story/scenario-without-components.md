@@ -7,7 +7,7 @@ title: run --scenario replays a specification that declares no component
 relations:
 - serves: vision:spindle
 - depends_on: story:scenario-act-without-outcome
-revision: 6
+revision: 7
 ---
 # run --scenario replays a specification that declares no component
 
@@ -26,6 +26,9 @@ adds a generated component file to a copy of each specification before replaying
   not accept the act's command still diverges with `no component accepts <command>` and exits 1.
 - `stdin_and_scenario_agree_on_a_specification_without_components`: the same command sent on stdin
   and as a scenario act answers the same outcome.
+- `a_specification_without_components_is_refused_on_a_lacking_environment`: a specification without
+  components whose command needs `store.durable`, replayed with `--scenario` on an environment that
+  binds no durable store, is refused at admission and exits 3, as stdin mode refuses it.
 
 ## Not covered
 

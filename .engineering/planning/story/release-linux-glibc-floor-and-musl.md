@@ -6,23 +6,23 @@ status: draft
 title: The Linux release runs on an old glibc and as a static binary
 relations:
 - serves: vision:spindle
-revision: 9
+revision: 12
 ---
 # The Linux release runs on an old glibc and as a static binary
 
 
 ## Outcome
 
-Each release publishes, beside today's archives, an `x86_64-unknown-linux-gnu` binary built against
-glibc 2.17 and an `x86_64-unknown-linux-musl` static archive. A host on an older glibc (a build node
-runs glibc 2.34) runs `b10x-spindle` without the warning or failure a binary linked against a newer
-glibc gives it.
+Each release builds its `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` archives against
+glibc 2.17, under the asset names they have today, and publishes a new
+`x86_64-unknown-linux-musl` static archive beside them. A host on an older glibc (a build node runs
+glibc 2.34) runs `b10x-spindle` without the warning or failure a binary linked against a newer glibc
+gives it.
 
-Ordered on 2026-11-25 for every Rust tool of the organisation (static musl Linux releases, mimalloc where
-allocation is heavy, consumers pin the musl archives). Refined on 2026-11-26 from ESS's
-measurement: musl with mimalloc ran its synthesis workload 82 % slower than gnu, so ESS builds gnu
-against glibc 2.17 (cargo-zigbuild, checked with `objdump -T`) and keeps musl as the static
-fallback; the shared composite action takes the 2.17 floor as an option.
+Ordered on 2026-11-25 for every Rust tool of the organisation (static musl Linux releases). Refined
+on 2026-11-26 from ESS's measurement: musl with mimalloc ran its synthesis workload 82 % slower than
+gnu, so ESS builds gnu against glibc 2.17 (cargo-zigbuild, checked with `objdump -T`) and keeps musl
+as the static fallback.
 
 ## Acceptance
 
@@ -135,6 +135,16 @@ Native blockers:
 
 ## Shared files
 
-- `.github/workflows/release.yml`, `AGENTS.md` § Cutting a release, `README.md` § Releases and
+- `.github/workflows/release.yml`, `AGENTS.md` § Cutting a release and
   `website/docs/getting-started.md`: this story's alone in wave 26.
+- `README.md`: § Releases (`:214-219`) is this story's; U3 (`story:run-fails-on-rejected-line`,
+  `story:clock-and-mint-in-every-mode`) edits the run and seed paragraphs (`:56-64`). Separate
+  hunks, merged by the coordinator.
 - `CHANGELOG.md` `[Unreleased]`: one bullet per story, merged by the coordinator.
+
+## Not covered
+
+- A timing of the gnu binary against the musl binary, with or without mimalloc: a benchmark, which
+  the repository's rules keep out of the gate. gnu stays the default Linux archive.
+- mimalloc.
+- An `aarch64-unknown-linux-musl` archive.

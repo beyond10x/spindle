@@ -31,10 +31,17 @@ tests run through the shared pool; a step that writes into the tree runs as `slo
 ## Surfaces
 
 Each story's `## Scope` and `## Shared files` sections hold its surface. Shared, resolved by the
-coordinator at merge: the `mod` lines of the test `main.rs` files, the `run` help in
-`crates/spindle-cli/src/cli.rs` (U3, U4) with the generated `website/docs/reference/cli.md`,
-`crates/spindle-docs/src/status.rs` with its generated pages (U3, U4), and `CHANGELOG.md`
-`[Unreleased]`.
+coordinator at merge, each on separate hunks:
+
+- `crates/spindle-cli/src/replay.rs` and its tests (U3 the host opened at `:187`, U4 the rest);
+- `crates/spindle-conformance/src/target.rs` (U3 a new constructor, U4 a field on `HostTarget`;
+  U3 merges first);
+- `crates/spindle-host/src/host.rs` (U2 the leaf-list doc, U3 `Opening` and `reset_to`);
+- `README.md` (U3 the run and seed paragraphs, U5 § Releases);
+- the `run` help in `crates/spindle-cli/src/cli.rs` (U3, U4) with the generated
+  `website/docs/reference/cli.md`, and `crates/spindle-docs/src/status.rs` with its generated pages
+  (U3, U4);
+- the `mod` lines of the test `main.rs` files and `CHANGELOG.md` `[Unreleased]`.
 
 ## Exit
 
