@@ -21,7 +21,7 @@ scope:
   path: crates/spindle-ingress/src/surface.rs
 - confidence: inferred
   path: docs/design/spindle.md
-revision: 17
+revision: 18
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-26T21:00:28Z", actor: "human:operator", revision: 16, decided_on: {"recorded":{"review_outcome":20}}}
 - {from: "proposed", to: "active", at: "2026-11-26T21:00:28Z", actor: "human:operator", revision: 17, decided_on: {"recorded":{"review_outcome":20}}}
@@ -45,8 +45,11 @@ setting still gets 501 and must pass one.
 
 - `the_refusal_names_how_to_serve_a_caller_reading_command`: a loopback run of a command that reads
   a caller attribute, with neither setting, prints one stderr line naming `--fixed-actor` with
-  `--fixed-caller` and `--trusted-caller-header` with `--trusted-caller-secret`; the route still
-  answers 501 and its reason text is unchanged.
+  `--fixed-caller` and `--trusted-caller-header` with `--trusted-caller-secret`; the startup report
+  and `GET /api/served` keep the 501 reason text unchanged, and a request answers the unchanged
+  403 `{"refused":"not granted","actor":null}`. Amended at implementation: ESS refuses a
+  caller-reading command that no actor may invoke, so every such command has a grant and the
+  grant check answers 403 before the 501.
 - `a_loopback_request_proving_its_caller_runs_the_command`: the same run with
   `--trusted-caller-header` and `--trusted-caller-secret`, a request carrying the header and the
   secret, answers as ESS's interpreter answers for that caller (kept green:
