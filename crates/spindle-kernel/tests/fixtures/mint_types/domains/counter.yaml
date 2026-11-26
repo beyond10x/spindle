@@ -1,0 +1,35 @@
+domain: minttypes.counter
+summary: A counter opened without an id, whose identity is an integer the runtime mints.
+entities:
+  - name: minttypes.counter.Counter
+    identity:
+      name: counter_id
+      type: Integer
+    fields:
+      - name: name
+        type: String
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+commands:
+  - name: minttypes.counter.OpenCounter
+    input:
+      - name: name
+        type: String
+    outcomes:
+      - name: opened
+        creates: minttypes.counter.Counter
+        instance: counter_id
+        sets:
+          name: input.name
+        emits: [minttypes.counter.CounterOpened]
+        payload:
+          minttypes.counter.CounterOpened:
+            counter_id: {generated: true}
+        summary: The counter opens under an integer identity the runtime mints.
+events:
+  - name: minttypes.counter.CounterOpened
+    fields:
+      - name: counter_id
+        type: Integer

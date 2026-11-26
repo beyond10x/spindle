@@ -707,8 +707,9 @@ impl Recorder {
         self.ring(|ring| ring.seed = Some(counts));
     }
 
-    /// Counts one reset of the run's stores; it clears no count and no record.
-    pub(crate) fn count_reset(&self) {
+    /// Counts one reset of the run's stores; it clears no count and no record. A served run that
+    /// answers a reset itself, not through `Exchange::serve`, counts it here.
+    pub fn count_reset(&self) {
         self.ring(|ring| ring.resets += 1);
     }
 

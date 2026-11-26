@@ -1,0 +1,28 @@
+format: ess/34
+system: advw25r2
+version: v1
+summary: Tallies, others and badges under Integer identities the runtime mints and draws again where one is held.
+domains:
+  - advw25r2.tally
+components:
+  - component: desk
+    summary: Opens tallies, others and badges.
+    owns:
+      domains:
+        - advw25r2.tally
+    accepts:
+      commands:
+        - advw25r2.tally.OpenTally
+        - advw25r2.tally.OpenTallyAs
+        - advw25r2.tally.OpenPlain
+        - advw25r2.tally.OpenPlainAs
+        - advw25r2.tally.OpenOther
+        - advw25r2.tally.OpenBadge
+        - advw25r2.tally.OpenBadgeAs
+    publishes:
+      events:
+        - advw25r2.tally.TallyOpened
+        - advw25r2.tally.PlainOpened
+        - advw25r2.tally.OtherOpened
+        - advw25r2.tally.BadgeOpened
+    reached_by: in_process

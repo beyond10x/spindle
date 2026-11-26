@@ -2,11 +2,24 @@
 format: aep.planning-md/3
 id: story:wasm-lanes-within-budget
 kind: story
-status: draft
+status: active
 title: The wasm lanes of the gate end within the step budget
 relations:
 - serves: vision:spindle
-revision: 1
+- depends_on: story:test-step-within-budget
+scope:
+- confidence: inferred
+  path: .github/workflows/ci.yml
+- confidence: inferred
+  path: Cargo.toml
+- confidence: cited
+  path: Taskfile.yml
+- confidence: inferred
+  path: scripts
+revision: 14
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-26T04:51:42Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"review_outcome":19}}}
+- {from: "proposed", to: "active", at: "2026-11-26T04:51:42Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"review_outcome":19}}}
 ---
 # The wasm lanes of the gate end within the step budget
 
@@ -29,10 +42,62 @@ committed artifact with a digest of its sources, as the repository rules allow.
 
 ## Acceptance
 
-- `check:node_serves_a_specification` ends within 120 s on a cold `target/`, measured with `time`
-  in the change's report, and its tests pass unchanged.
-- Every wasm lane listed above prints its wall time and fails over 120 s.
+- `check:node_serves_a_specification` ends within 120 s on an empty `target/`, with the host's
+  shared compile cache as it is, measured with `time` in the change's report beside the `slot
+  status` header line of that moment, and its `node --test` tests pass unchanged.
+- `check:the_static_bundle_builds` ends within 120 s on an empty `target/`, measured the same way,
+  and `web/dist` builds as today.
+- `check:the_wasm_build_of_the_host_succeeds`, `check:a_command_runs_in_wasm_on_the_memory_store`,
+  `check:the_browser_store_keeps_state_in_indexeddb` and `check:a_service_worker_serves_a_specification`
+  each end within 120 s on an empty `target/`, measured the same way.
+- Each of the six lanes runs under `scripts/within.sh 120` (from `story:test-step-within-budget`),
+  in `task check` and in CI's `Gate`, and so prints its wall time and fails over 120 s.
+- The three `wasm-bindgen-test-runner` lanes set `WASM_BINDGEN_TEST_TIMEOUT` to 60 or below, where
+  it is `'120'` today (`Taskfile.yml:58`, `:66`, `:74`). The Node lane keeps
+  `node --test --test-timeout=60000` (`Taskfile.yml:83`).
+- No wasm lane needs `slot --timeout` to finish within the pool's 10-minute limit.
 
 ## Scope
 
-- `Taskfile.yml`, `Cargo.toml` profiles, `.github/workflows/ci.yml` (inferred).
+Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the story or the tree) or
+**inferred** (a reading that could be wrong).
+
+- **Primary surface:** `Taskfile.yml`, the six wasm lanes and the `check` task that calls them (`Taskfile.yml:24-29`, `:46-96`) — cited
+- **Files:** `Taskfile.yml:81` (`check:node_serves_a_specification`, `cargo build --release`) and `Taskfile.yml:93` (`web`, `cargo build --release -p spindle-wasm`, reached from `check:the_static_bundle_builds`) — cited
+- **Symbols:** tasks `check:node_serves_a_specification`, `check:the_wasm_build_of_the_host_succeeds`, `check:a_command_runs_in_wasm_on_the_memory_store`, `check:the_browser_store_keeps_state_in_indexeddb`, `check:a_service_worker_serves_a_specification`, `check:the_static_bundle_builds`, `web` — cited
+- **Also likely:** `Cargo.toml`, a new `[profile.*]` for the gate (the file has none today) — inferred
+- **Also likely:** `.github/workflows/ci.yml`, job `check` (`Gate`), only if CI needs its own timing step — inferred
+- **Also likely:** `scripts/`, a POSIX sh timer that prints a lane's wall time and fails over 120 s — inferred
+- **Documents:** none; `README.md:165` and `website/docs/concepts/environment-and-admission.md:249` show the release build and need no change if the gate's profile is separate — inferred
+- **Confidence:** medium. The lanes and their release builds are read; which fix is taken decides the second file.
+- **Would collide with:** any unit touching the `check` task or the wasm lanes in `Taskfile.yml`, a `[profile.*]` in `Cargo.toml`, or the `Gate` job of `.github/workflows/ci.yml`
+- **Safety:** the Node tests load the module from `target/spindle-node` or `SPINDLE_NODE_MODULE`, not from the cargo profile directory (`crates/spindle-node/tests/node/load.mjs:2`), so a different profile changes only `Taskfile.yml:81-82`; `crates/spindle-cli/tests/spindle-cli/conform.rs:619-625` requires the line `- task: check:conformance` in the `check` task as written, so a timer around `check`'s steps must keep it — inferred
+
+## Shared files
+
+- `Taskfile.yml` (task `check`) and `.github/workflows/ci.yml` (job `Gate`): shared with
+  `story:planning-only-prs-skip-tests` and `story:test-step-within-budget`, built before this story
+  on the same branch; this story uses the timer `scripts/within.sh` that
+  `story:test-step-within-budget` adds.
+
+## Found after wave 25
+
+Measured by the slot session on build-1d, 2026-11-26, at 117e166fb, lane `wasm:host:build`, 93 rustc
+calls: the shared sccache serves the ESS crates within one tree, one target path and one set of
+`CARGO_*` variables (first build 1 min 46 s, ESS 86.67 s; again on an emptied target in the same
+tree 18.15 s, ESS 11.03 s). sccache 0.18.0 keys on every `CARGO_*` variable and every `env!` value,
+and `OUT_DIR` (absolute, under `target/<profile>/`) reaches serde_core, serde and thiserror, so a
+new profile name or target path misses for every crate above serde. Three changes in this
+repository, untested here:
+
+1. The wasm runner in `.cargo/config.toml` (`[target.wasm32-unknown-unknown] runner = …`), not in
+   the lanes' environment: a lane with `CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER` shares nothing
+   with one without (service worker 109 s, ESS 88.98 s; the lane before it 17 s).
+2. Every lane in one profile directory; measure on an emptied directory, never a fresh profile name
+   (wave 25's measurements used `wasm-gate-t1` and `-t2`, which can never hit).
+3. One feature set of `serde_json` and `schemars` across the lanes: the memory-store lane compiles 7
+   of 8 ESS crates again in the same target directory under `--test` (99 s, ess-conformance
+   50.32 s).
+
+With these, measured order 105 s, then 18 s, 17 s, 16 s. The first ESS compile in each new worktree
+stays until slot's own story lands.

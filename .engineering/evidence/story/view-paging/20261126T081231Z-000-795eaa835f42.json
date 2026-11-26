@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-26T08:12:31Z",
+  "actor": "human:operator",
+  "artifact": "story:view-paging",
+  "kind": "story",
+  "revision": 21,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "https://github.com/beyond10x/spindle/actions/runs/45680938584 (PR 88 Gate, macOS, PostgreSQL, Build documentation, Security and privacy green on 1b3afd04; merged e13c22d8)"
+  }
+}

@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:view-paging
 kind: story
-status: active
+status: implemented
 title: A view that declares paging is answered
 summary: A paged view is served and paged as ESS's interpreter pages it, instead of refused at start.
 relations:
@@ -31,10 +31,11 @@ scope:
   path: ess/fixtures/observe/served/notes.json
 - confidence: cited
   path: website/docs/concepts/specification.md
-revision: 21
+revision: 22
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-25T17:17:48Z", actor: "human:operator", revision: 20, decided_on: {"recorded":{"review_outcome":14}}}
 - {from: "proposed", to: "active", at: "2026-11-25T17:17:49Z", actor: "human:operator", revision: 21, decided_on: {"recorded":{"review_outcome":14}}}
+- {from: "active", to: "implemented", at: "2026-11-26T08:12:31Z", actor: "human:operator", revision: 22, decided_on: {"recorded":{"test_result":1,"review_outcome":14}}}
 ---
 # A view that declares paging is answered
 

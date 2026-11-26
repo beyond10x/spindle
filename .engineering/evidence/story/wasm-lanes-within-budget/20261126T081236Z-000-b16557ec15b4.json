@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-26T08:12:36Z",
+  "actor": "human:operator",
+  "artifact": "story:wasm-lanes-within-budget",
+  "kind": "story",
+  "revision": 13,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "https://github.com/beyond10x/spindle/actions/runs/45775796152 (PR 90 green on 0e416178); the service-worker lane measured 120.9 s on an empty wasm-gate profile directory, over its 120 s bound, so the story stays active (D1 A)"
+  }
+}

@@ -10,6 +10,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use serde_json::{Map, Value, json};
 use spindle_kernel::{
@@ -19,11 +20,16 @@ use spindle_kernel::{
 const SHELF: &str = "probe.shelf.Shelf";
 const ID: &str = "4d1c7a2e-9b3f-4c5d-8e6f-0a1b2c3d4e5f";
 
-fn ir() -> spindle_spec::EssIr {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/adversary_append");
-    spindle_spec::load(&root)
-        .expect("the adversary_append fixture compiles")
-        .ir
+/// The fixture compiled once per test process, not once per command: a case that sends 2,000
+/// commands compiled it 2,000 times (`story:test-step-within-budget`).
+fn ir() -> &'static spindle_spec::EssIr {
+    static IR: OnceLock<spindle_spec::EssIr> = OnceLock::new();
+    IR.get_or_init(|| {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/adversary_append");
+        spindle_spec::load(&root)
+            .expect("the adversary_append fixture compiles")
+            .ir
+    })
 }
 
 fn input(value: Value) -> Map<String, Value> {
@@ -34,7 +40,7 @@ fn input(value: Value) -> Map<String, Value> {
 }
 
 fn run(store: &mut dyn Store, command: &str, sent: Value) -> Result<Executed, ExecuteError> {
-    execute(&ir(), store, &mut NoExternals, command, &input(sent))
+    execute(ir(), store, &mut NoExternals, command, &input(sent))
 }
 
 fn ok(store: &mut dyn Store, command: &str, sent: Value) {

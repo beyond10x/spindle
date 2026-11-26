@@ -1,0 +1,14 @@
+{
+  "at": "2026-11-26T06:52:14Z",
+  "actor": "human:operator",
+  "artifact": "story:planning-only-prs-skip-tests",
+  "kind": "story",
+  "revision": 15,
+  "change": {
+    "change": "evidence",
+    "kind": "review_outcome",
+    "source": "review-result:wave25-adversary-U1-r1",
+    "review": "review-result:wave25-adversary-U1-r1",
+    "outcome": "fixed"
+  }
+}

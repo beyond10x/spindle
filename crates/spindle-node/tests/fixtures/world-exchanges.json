@@ -33,7 +33,7 @@
     "body": "",
     "status": 200,
     "allow": null,
-    "answer": "{\"rows\":[{\"amount\":1.0,\"submission_id\":\"s1\"},{\"amount\":2.0,\"submission_id\":\"s2\"},{\"amount\":3.0,\"submission_id\":\"s3\"}]}"
+    "answer": "{\"rows\":[{\"amount\":1,\"submission_id\":\"s1\"},{\"amount\":2,\"submission_id\":\"s2\"},{\"amount\":3,\"submission_id\":\"s3\"}]}"
   },
   {
     "method": "POST",
@@ -51,7 +51,7 @@
     "body": "",
     "status": 200,
     "allow": null,
-    "answer": "{\"rows\":[{\"amount\":1.0,\"submission_id\":\"s1\"},{\"amount\":2.0,\"submission_id\":\"s2\"},{\"amount\":3.0,\"submission_id\":\"s3\"}]}"
+    "answer": "{\"rows\":[{\"amount\":1,\"submission_id\":\"s1\"},{\"amount\":2,\"submission_id\":\"s2\"},{\"amount\":3,\"submission_id\":\"s3\"}]}"
   },
   {
     "method": "POST",

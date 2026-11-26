@@ -1,0 +1,20 @@
+format: ess/35
+system: tally
+version: v1
+summary: Entries recorded over the network, each behind an input guard that reads an optional weight.
+domains:
+  - tally.entry
+components:
+  - component: clerk
+    summary: Records entries for callers outside the process.
+    owns:
+      domains:
+        - tally.entry
+    accepts:
+      commands:
+        - tally.entry.RecordEntry
+        - tally.entry.RecordCheckedEntry
+    publishes:
+      events:
+        - tally.entry.EntryRecorded
+    reached_by: network

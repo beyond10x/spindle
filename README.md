@@ -61,8 +61,9 @@ when every entry is a create guarded by `existing_instance:`; any other entry ru
 start, so an update writes over later changes and a move is refused. Spindle keeps no record of
 request ids: within one start, an entry whose request id an earlier applied or already-there entry
 carried is not submitted again. A refusal is logged and the rest still run; one line on stderr
-gives the counts when the seed ends. `POST /api/reset` drops what the seed wrote and does not
-submit it again. `play` and `deploy` refuse an environment with a `[seed]` table.
+gives the counts when the seed ends. `POST /api/reset` drops the entries not yet sent; with no
+world it then submits the seed again, from its first entry, before it answers, and with a world it
+loads that world alone. `play` and `deploy` refuse an environment with a `[seed]` table.
 
 Where `run` serves HTTP, `--observe` records every request it answers. `GET /__spindle/requests`
 lists the last 256 (`--observe-requests <N>`, 1 to 10000), newest first, with totals per class
@@ -119,7 +120,7 @@ No scenario is known to fail, so the task declares none and every executed scena
 | `ingress.command_line` | a component `reached_by: command_line` |
 | `projection` | a view with `consistency: eventual` |
 | `external.<command>.<outcome>` | an outcome whose condition is `external:` |
-| `identity.mint` | a `creates:` outcome whose identity is neither an input nor a payload source (`{generated: true}`); a `Uuid` identity is minted as a UUIDv4 (`uuid-v4`), a `Uuid` newtype without invariants likewise, and a `String` newtype identity whose prefix and alphabet admit a UUID's text and whose invariants bound only its length (`value.count`) as its prefix and a UUIDv4's text; any other identity type, and an entity invariant no minted length meets, is refused by name where a request selects that outcome, before anything is written, and the command's other outcomes run |
+| `identity.mint` | a `creates:` outcome whose identity is neither an input nor a payload source (`{generated: true}`); a `Uuid` identity is minted as a UUIDv4 (`uuid-v4`), a `Uuid` newtype without invariants likewise, a bare `String` identity as a UUIDv4's text, a `String` newtype identity whose prefix and alphabet admit a UUID's text and whose invariants bound only its length (`value.count`) as its prefix and a UUIDv4's text, and an `Integer` identity, or an `Integer` newtype without invariants, as an integer drawn from a UUIDv4; any other identity type, and an entity invariant no minted length meets, is refused by name where a request selects that outcome, before anything is written, and the command's other outcomes run |
 | `identity.mint`, `clock` | an outcome field marked `{generated: true}` (or `{input: f, else: {generated: true}}`) other than a minted creation identity, a refusal's error field the outcome gives no source and the row it is answered for does not hold (an `Optional` one stays absent; a type the runtime does not mint is refused by name where a request selects that outcome, before anything is written), and each `response:` field of a command whose outcome returns it (`returns: true`; a `one_time_response:` field is minted fresh per invocation and written nowhere else): a `Uuid`, `String`, `Integer`, `Boolean`, `Bytes` or `List` is minted through `identity.mint` (a `List` as `[]`, as ESS mints it), a `Timestamp` read from `clock`; a response record, a union's first variant and a one-entry map need what their members, content and key need, an enum response is the variant one `identity.mint` draw names, and a constrained newtype answered by a literal its invariants name needs nothing |
 
 ## Environment

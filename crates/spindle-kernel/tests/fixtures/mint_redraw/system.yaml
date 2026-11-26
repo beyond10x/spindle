@@ -1,0 +1,20 @@
+format: ess/34
+system: mintredraw
+version: v1
+summary: Tallies whose Integer identity the runtime mints, or takes from the request where it sends one.
+domains:
+  - mintredraw.tally
+components:
+  - component: desk
+    summary: Opens tallies.
+    owns:
+      domains:
+        - mintredraw.tally
+    accepts:
+      commands:
+        - mintredraw.tally.OpenTally
+        - mintredraw.tally.OpenTallyAs
+    publishes:
+      events:
+        - mintredraw.tally.TallyOpened
+    reached_by: in_process

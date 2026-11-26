@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:command-with-unpublished-event-served
 kind: story
-status: active
+status: implemented
 title: A command whose event no component publishes is served
 summary: A command emitting an event no component publishes answers its outcome as ESS's interpreter does; the event stays unpublished, instead of a 501.
 relations:
@@ -18,10 +18,11 @@ scope:
   path: crates/spindle-ingress/tests/fixtures/unpublished
 - confidence: cited
   path: crates/spindle-ingress/tests/spindle-ingress/main.rs
-revision: 19
+revision: 20
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-26T03:50:23Z", actor: "human:operator", revision: 14, decided_on: {"recorded":{"review_outcome":7}}}
 - {from: "proposed", to: "active", at: "2026-11-26T03:50:24Z", actor: "human:operator", revision: 15, decided_on: {"recorded":{"review_outcome":7}}}
+- {from: "active", to: "implemented", at: "2026-11-26T08:12:31Z", actor: "human:operator", revision: 20, decided_on: {"recorded":{"test_result":1,"review_outcome":8}}}
 ---
 # A command whose event no component publishes is served
 

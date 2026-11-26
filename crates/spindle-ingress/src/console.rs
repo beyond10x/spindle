@@ -308,6 +308,13 @@ pub fn served(surface: &Surface) -> Value {
 /// the reason it is refused otherwise.
 pub type Worlds<'a> = &'a dyn Fn(&EssIr, &Value) -> Result<World, String>;
 
+/// Whether a `POST /api/reset` whose body is `body` gives a world: any body but an empty one or one
+/// all whitespace, which [`reset`] answers by loading no world. A served run with a seed submits
+/// it again only after a reset that gives none.
+pub fn carries_world(body: &[u8]) -> bool {
+    !body.iter().all(u8::is_ascii_whitespace)
+}
+
 /// What `POST /api/reset` answers once every store of the run is empty and the world `body`
 /// carries is loaded ([`Host::reset_to`]): `200` with `{"emptied": [<component>, ...]}`.
 ///
@@ -316,9 +323,7 @@ pub type Worlds<'a> = &'a dyn Fn(&EssIr, &Value) -> Result<World, String>;
 /// refused `400` before any store is emptied. A store that could not be emptied or written is
 /// refused `500`, naming why.
 pub fn reset(host: &mut Host, body: &[u8], worlds: Option<Worlds<'_>>) -> Answer {
-    let world = if body.iter().all(u8::is_ascii_whitespace) {
-        World::default()
-    } else {
+    let world = if carries_world(body) {
         let read = serde_json::from_slice::<Value>(body)
             .map_err(|error| format!("the reset body is not JSON: {error}"))
             .and_then(|value| match worlds {
@@ -329,6 +334,8 @@ pub fn reset(host: &mut Host, body: &[u8], worlds: Option<Worlds<'_>>) -> Answer
             Ok(world) => world,
             Err(why) => return Answer::refusal(400, why),
         }
+    } else {
+        World::default()
     };
     match host.reset_to(world) {
         Ok(emptied) => Answer {

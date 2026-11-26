@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-26
+
 ### Added
 
 - A view that declares `paging:` is served, where it was refused at start. A read that sends
@@ -15,6 +17,46 @@ are Spindle's releases.
   a size without its page, a negative value, a page below `first_page` and an offset that
   overflows answer `400`, and the conformance target reports them unsupported. `Host::listed_with`
   and `Reader::listed_with` answer the rows with the total (`story:view-paging`).
+- A creation whose identity is a bare `String`, an `Integer` or an `Integer` newtype without
+  invariants mints it, where it was refused at start: a bare `String` as a UUID's text with no
+  prefix, an `Integer` drawn from a UUID as a generated `Integer` is, drawn again where an
+  instance already holds it (at most one draw more than the entity's instances, as ESS's
+  interpreter draws), and never one a reset world's row holds when the world seeds the mint. A
+  `Bytes`, `Timestamp`,
+  `Decimal`, `Duration`, enum, struct, `Boolean` or `List` identity is still refused. A value
+  source with a fallback, `{input: f, else: <literal>}` or `{input: f, else: input.g}`, answers
+  the input, else the literal or the other input, as ESS 0.99.1's interpreter does, where it was
+  refused (`story:identity-mint-types-and-fallback`).
+- A decisions file holds `[[rules]]`, each naming a command, one of its external outcomes, the
+  answer and, in `when`, values the command's input must hold (`"input.<field>"`, dots for a
+  struct's members; a string, an integer or a boolean). The first rule in file order whose every
+  entry holds answers the request, before the command's table and the top-level answers; an
+  input the request leaves out holds no entry. A reset's world carries the same array under
+  `decisions.rules`. A rule over a command, outcome or input the specification does not declare,
+  or a value not of the input's type, is refused at load, naming `rules[<index>]` and the entry.
+  `run`, the Node export and the Service Worker read rules alike, and a reset keeps the
+  decisions file a Node instance was created with (`story:decisions-rules-on-input-predicates`).
+- A pull request that changes only `.engineering/` and Markdown outside `website/` passes `Gate`,
+  `macOS`, `PostgreSQL` and `Build documentation` without building or testing; one that also
+  changes `website/` builds and checks the site and skips the build and test steps of the code
+  jobs. `scripts/changed-paths.sh` holds the one path list every job reads, and the design pages
+  under `docs/design/`, which tests read, count as code
+  (`story:planning-only-prs-skip-tests`).
+- The test step of `task check` and of CI's `Gate` runs under cargo-nextest: a test is killed at
+  60 s (`.config/nextest.toml`), the step after its build fails over 120 s (`scripts/within.sh`)
+  and prints its ten slowest tests. Dependencies build at `opt-level = 1` in the dev profile,
+  which cut the summed test time of the conformance, kernel and CLI binaries from about 935 s to
+  about 240 s; a kernel case compiles its fixture once rather than per command, the
+  stuck-collector case sends 20,000 frames rather than 200,000, and the transport, metrics-read
+  and concurrent-reads cases bound a second or more, not milliseconds
+  (`story:test-step-within-budget`).
+- The six wasm lanes of `task check` build in the `wasm-gate` profile (the dev profile without
+  debug info or incremental compilation, dependencies at `opt-level = 0`) in place of the release
+  profile and the dev profile, and each runs under `scripts/within.sh 120`. On an empty profile
+  directory the Node lane took 212 s in the release profile and takes about 100 s; the build and
+  the lint of `check:the_wasm_build_of_the_host_succeeds` run side by side, the lint in the
+  `wasm-lint` profile. The `wasm-bindgen-test-runner` lanes time a test out at 60 s, not 120 s.
+  `task web` still builds the release profile (`story:wasm-lanes-within-budget`).
 
 ### Fixed
 
@@ -26,6 +68,23 @@ are Spindle's releases.
   outbox for a later one. An event its component does not publish but another component does is
   still refused by `Sender::publish` and not delivered
   (`story:command-with-unpublished-event-served`).
+- A row a reset's world loads answers its `Integer` fields as integers, where `"amount": 1` was
+  listed as `"amount":1.0`. `spindle_host::read_world` writes every value the model types `Integer`
+  in a row's identity and fields as the integer, through `Optional`, newtypes, lists, maps, struct
+  members and union payloads, so `1` and `1.0` name one row and a reference spelled either way
+  finds it; every other value is held as the world spells it. An `Integer` that is not an integral
+  number within 64 bits is refused, naming the row and the field, as before. `run`, the Node export
+  and every host that loads a world answer alike. A command's input is still held as its caller
+  spells it: a row `Submit` created from `"amount": 1.0` lists `"amount":1.0`
+  (`story:world-row-integer-fields`).
+- `POST /api/reset` with no world on a run started with a seed (`run --seed`, or the environment's
+  `[seed] file`) submits the seed again, from its first entry to its end, before it answers, where
+  it emptied the store and left the seeded rows gone. The end line then gives the counts of that
+  seed run alone; `spindle_seed_commands_total` goes on counting across resets and never falls,
+  and the reset is still counted in `spindle_resets_total`. A reset drops the entries of a seed
+  run not yet sent, so a reset whose body gives a world loads that world alone and does not submit
+  the seed. SIGINT or SIGTERM during a reset's seed stops the run between two entries
+  (`story:reset-reapplies-seed`).
 
 ## [0.20.2] - 2026-11-25
 

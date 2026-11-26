@@ -1,0 +1,71 @@
+domain: tally.entry
+summary: Entries, each recorded with an optional weight that an input guard reads.
+errors:
+  - name: tally.entry.TooHeavy
+    summary: The entry weighs more than ten.
+    fields: []
+entities:
+  - name: tally.entry.Entry
+    identity:
+      name: id
+      type: Uuid
+    fields:
+      - name: label
+        type: String
+    lifecycle:
+      initial: Recorded
+      states: [Recorded]
+      terminal: [Recorded]
+commands:
+  - name: tally.entry.RecordEntry
+    input:
+      - name: id
+        type: Uuid
+      - name: label
+        type: String
+      - name: weight
+        type: Optional<Integer>
+    outcomes:
+      - name: too-heavy
+        when: weight > 10
+        error: tally.entry.TooHeavy
+        summary: An entry that weighs more than ten is refused.
+      - name: recorded
+        creates: tally.entry.Entry
+        instance: id
+        sets:
+          label: input.label
+        emits: [tally.entry.EntryRecorded]
+        payload:
+          tally.entry.EntryRecorded:
+            id: input.id
+        summary: The entry is recorded.
+  - name: tally.entry.RecordCheckedEntry
+    input:
+      - name: id
+        type: Uuid
+      - name: label
+        type: String
+      - name: weight
+        type: Optional<Integer>
+    outcomes:
+      - name: too-heavy
+        when:
+          all: [defined(weight), weight > 10]
+        error: tally.entry.TooHeavy
+        summary: An entry weighed at more than ten is refused.
+      - name: recorded
+        creates: tally.entry.Entry
+        instance: id
+        sets:
+          label: input.label
+        emits: [tally.entry.EntryRecorded]
+        payload:
+          tally.entry.EntryRecorded:
+            id: input.id
+        summary: The entry is recorded, weighed or not.
+events:
+  - name: tally.entry.EntryRecorded
+    fields:
+      - name: id
+        type: Uuid

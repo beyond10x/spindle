@@ -254,12 +254,19 @@ fn run(environment: &str, lines: &str) -> Output {
         .stderr(Stdio::piped())
         .spawn()
         .expect("b10x-spindle starts");
-    child
+    let written = child
         .stdin
         .take()
         .expect("stdin is piped")
-        .write_all(lines.as_bytes())
-        .expect("the commands are written");
+        .write_all(lines.as_bytes());
+    // `run` may refuse at start and exit before it reads a line, which closes the pipe.
+    if let Err(error) = written {
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::BrokenPipe,
+            "the commands are written: {error}"
+        );
+    }
     child.wait_with_output().expect("b10x-spindle runs")
 }
 

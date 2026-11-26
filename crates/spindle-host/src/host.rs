@@ -1180,7 +1180,8 @@ impl Host {
     /// reset, and every identity and generated value minted by its mint until then. A world
     /// without answers leaves causes to the decider the host was opened with, and one without a
     /// mint mints random version 4 UUIDs. A seeded mint never answers a UUID a row's identity
-    /// holds, or ends in ([`Seeded::avoiding`]).
+    /// holds or ends in, nor one whose low 53 bits are a row's `Integer` identity
+    /// ([`Seeded::avoiding_identities`]).
     ///
     /// Every row is checked before any store is emptied: its entity declared and owned by a
     /// running component, its invariants held, its identity one its store can key (read from the
@@ -1214,15 +1215,9 @@ impl Host {
                 })?;
             owners.push(owner);
         }
-        let held = world
-            .rows
-            .iter()
-            .filter_map(|seed| seed.identity.as_str())
-            .filter_map(|text| {
-                let tail = text.len().checked_sub(36).and_then(|at| text.get(at..))?;
-                Uuid::parse_str(tail).ok()
-            })
-            .collect::<Vec<_>>();
+        let held = world.mint.map(|seed| {
+            Seeded::new(seed).avoiding_identities(world.rows.iter().map(|seed| &seed.identity))
+        });
         for component in self.components.values_mut() {
             component.store.hold();
         }
@@ -1234,9 +1229,9 @@ impl Host {
         }
         let emptied = loaded?;
         self.answers = world.answers;
-        self.mint = world.mint.map_or_else(
+        self.mint = held.map_or_else(
             || Box::new(UuidV4) as Box<dyn Mint + Send>,
-            |seed| Box::new(Seeded::new(seed).avoiding(held)),
+            |seeded| Box::new(seeded),
         );
         Ok(emptied)
     }

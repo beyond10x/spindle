@@ -1,0 +1,162 @@
+domain: advw25r2.tally
+summary: Tallies under an Integer identity the runtime mints, others under another Integer identity, and badges under an Integer newtype.
+types:
+  - name: advw25r2.tally.BadgeNo
+    kind: newtype
+    of: Integer
+entities:
+  - name: advw25r2.tally.Tally
+    identity: {name: tally_id, type: Integer}
+    fields:
+      - {name: name, type: String}
+      - {name: stamp, type: Optional<Uuid>}
+      - {name: copy, type: Optional<Integer>}
+    lifecycle: {initial: Kept, states: [Kept], terminal: [Kept]}
+  - name: advw25r2.tally.Other
+    identity: {name: other_id, type: Integer}
+    fields:
+      - {name: name, type: String}
+    lifecycle: {initial: Kept, states: [Kept], terminal: [Kept]}
+  - name: advw25r2.tally.Badge
+    identity: {name: badge_no, type: advw25r2.tally.BadgeNo}
+    fields:
+      - {name: name, type: String}
+    lifecycle: {initial: Kept, states: [Kept], terminal: [Kept]}
+events:
+  - name: advw25r2.tally.TallyOpened
+    fields:
+      - {name: tally_id, type: Integer}
+      - {name: token, type: Uuid}
+  - name: advw25r2.tally.PlainOpened
+    fields:
+      - {name: tally_id, type: Integer}
+  - name: advw25r2.tally.OtherOpened
+    fields:
+      - {name: other_id, type: Integer}
+  - name: advw25r2.tally.BadgeOpened
+    fields:
+      - {name: badge_no, type: advw25r2.tally.BadgeNo}
+commands:
+  - name: advw25r2.tally.OpenTally
+    input:
+      - {name: name, type: String}
+    response:
+      - {name: ticket, type: String}
+    outcomes:
+      - name: opened
+        creates: advw25r2.tally.Tally
+        instance: tally_id
+        sets:
+          name: input.name
+          stamp: {payload: advw25r2.tally.TallyOpened.token}
+          copy: {payload: advw25r2.tally.TallyOpened.tally_id}
+        emits: [advw25r2.tally.TallyOpened]
+        payload:
+          advw25r2.tally.TallyOpened:
+            tally_id: {generated: true}
+            token: {generated: true}
+        returns: true
+        one_time_response: [ticket]
+        summary: The tally opens under a minted integer, with a minted token and a one-time ticket.
+  - name: advw25r2.tally.OpenTallyAs
+    input:
+      - {name: tally_id, type: Optional<Integer>}
+      - {name: name, type: String}
+    response:
+      - {name: ticket, type: String}
+    outcomes:
+      - name: opened
+        creates: advw25r2.tally.Tally
+        instance: tally_id
+        sets:
+          name: input.name
+          stamp: {payload: advw25r2.tally.TallyOpened.token}
+          copy: {payload: advw25r2.tally.TallyOpened.tally_id}
+        emits: [advw25r2.tally.TallyOpened]
+        payload:
+          advw25r2.tally.TallyOpened:
+            tally_id: {input: tally_id, else: {generated: true}}
+            token: {generated: true}
+        returns: true
+        one_time_response: [ticket]
+        summary: The tally opens under the identity the request sends, else a minted one.
+  - name: advw25r2.tally.OpenPlain
+    input:
+      - {name: name, type: String}
+    outcomes:
+      - name: opened
+        creates: advw25r2.tally.Tally
+        instance: tally_id
+        sets:
+          name: input.name
+        emits: [advw25r2.tally.PlainOpened]
+        payload:
+          advw25r2.tally.PlainOpened:
+            tally_id: {generated: true}
+        summary: The tally opens under a minted integer and nothing else is minted.
+  - name: advw25r2.tally.OpenPlainAs
+    input:
+      - {name: tally_id, type: Optional<Integer>}
+      - {name: name, type: String}
+    outcomes:
+      - name: opened
+        creates: advw25r2.tally.Tally
+        instance: tally_id
+        sets:
+          name: input.name
+        emits: [advw25r2.tally.PlainOpened]
+        payload:
+          advw25r2.tally.PlainOpened:
+            tally_id: {input: tally_id, else: {generated: true}}
+        summary: The tally opens under the identity the request sends, else a minted one.
+  - name: advw25r2.tally.OpenOther
+    input:
+      - {name: name, type: String}
+    outcomes:
+      - name: opened
+        creates: advw25r2.tally.Other
+        instance: other_id
+        sets:
+          name: input.name
+        emits: [advw25r2.tally.OtherOpened]
+        payload:
+          advw25r2.tally.OtherOpened:
+            other_id: {generated: true}
+        summary: The other opens under a minted integer.
+  - name: advw25r2.tally.OpenBadge
+    input:
+      - {name: name, type: String}
+    outcomes:
+      - name: opened
+        creates: advw25r2.tally.Badge
+        instance: badge_no
+        sets:
+          name: input.name
+        emits: [advw25r2.tally.BadgeOpened]
+        payload:
+          advw25r2.tally.BadgeOpened:
+            badge_no: {generated: true}
+        summary: The badge opens under a minted integer newtype.
+  - name: advw25r2.tally.OpenBadgeAs
+    input:
+      - {name: badge_no, type: Optional<advw25r2.tally.BadgeNo>}
+      - {name: name, type: String}
+    outcomes:
+      - name: opened
+        creates: advw25r2.tally.Badge
+        instance: badge_no
+        sets:
+          name: input.name
+        emits: [advw25r2.tally.BadgeOpened]
+        payload:
+          advw25r2.tally.BadgeOpened:
+            badge_no: {input: badge_no, else: {generated: true}}
+        summary: The badge opens under the number the request sends, else a minted one.
+views:
+  - name: advw25r2.tally.AllTallies
+    source: advw25r2.tally.Tally
+    consistency: read_your_writes
+    fields:
+      - {name: tally_id, type: Integer}
+      - {name: name, type: String}
+      - {name: state, type: advw25r2.tally.Tally.State}

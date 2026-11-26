@@ -62,16 +62,43 @@ An `external.*` capability is an outcome the model cannot decide on its own. `b1
 answers it per command, from these sources in order:
 
 1. the line's `"external"` object
-2. a `--decisions` TOML file: `<outcome> = true | false` at the top level for every command, or
-   under a `["<command>"]` table for one
+2. a `--decisions` TOML file: the first of its `[[rules]]` that matches the request, then
+   `<outcome> = true | false` under a `["<command>"]` table for one command, then at the top
+   level for every command
 3. with `--answer-default`, "does not hold" on a command that declares a default branch
 
 A line that nothing answers fails with the outcome in its message, and the run goes on.
 
+A rule answers one outcome of one command for the requests whose input holds every value in its
+`when`:
+
+```toml
+[[rules]]
+command = "helpdesk.tickets.Escalate"
+outcome = "refused"
+answer = true
+when = { "input.target" = "R" }
+```
+
+- `when` maps an input path, `input.<field>` with dots for the members of a struct, to a string,
+  an integer or a boolean. A rule matches when every entry equals the request's value. A request's
+  `13.0` equals the integer `13`, and a number with a fraction equals no integer.
+- `{ input = { target = "R" } }` says the same as `{ "input.target" = "R" }`. One path written
+  twice, in both forms, is refused at load like a duplicate key, and so is one answer written under
+  both `["a.b.C"]` and `[a.b.C]`.
+- An optional input that the request leaves out, or sends as `null`, matches no entry.
+- Rules are read in file order. The first rule that matches answers.
+- A request that no rule matches is answered by the command's table, then the top-level answer.
+- At load, `run` refuses a rule that names an undeclared command, an outcome that is not external,
+  an input that the command does not declare, or a value of another type, an empty table or a JSON
+  `null` in a reset's table. The message names the rule as `rules[<index>]`, counted from 0, and
+  names the entry.
+
 A `run` serving `ingress.network` answers a request's external causes from the decisions file and
 then `--answer-default`. A request carries no `"external"` object. A request
-that nothing answers is refused `501`, with the outcome in the refusal. The file answers per
-command and outcome, not per input value, so every request to one command gets the same answer.
+that nothing answers is refused `501`, with the outcome in the refusal. A reset keeps the
+decisions file. The world of a reset can carry a decision table of the same shape under
+`decisions`, its rules under `decisions.rules`, and that table answers first until the next reset.
 Without either flag, a served specification that declares an external outcome is refused before
 anything listens.
 

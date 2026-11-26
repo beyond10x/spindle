@@ -1,0 +1,87 @@
+domain: yard.crates
+summary: Crates opened under an integer the runtime mints and renamed by it, and notes opened under a text the runtime mints.
+entities:
+  - name: yard.crates.Crate
+    identity: {name: crate_id, type: Integer}
+    fields:
+      - {name: name, type: String}
+    lifecycle: {initial: Open, states: [Open], terminal: [Open]}
+  - name: yard.crates.Note
+    identity: {name: note_id, type: String}
+    fields:
+      - {name: body, type: String}
+    lifecycle: {initial: Open, states: [Open], terminal: [Open]}
+errors:
+  - name: yard.crates.NoCrate
+    summary: No crate carries the id.
+    fields: []
+events:
+  - name: yard.crates.CrateOpened
+    fields:
+      - {name: crate_id, type: Integer}
+      - {name: name, type: String}
+  - name: yard.crates.CrateRenamed
+    fields:
+      - {name: crate_id, type: Integer}
+      - {name: name, type: String}
+  - name: yard.crates.NoteOpened
+    fields:
+      - {name: note_id, type: String}
+commands:
+  - name: yard.crates.OpenCrate
+    input:
+      - {name: name, type: String}
+    outcomes:
+      - name: opened
+        creates: yard.crates.Crate
+        instance: crate_id
+        sets:
+          name: input.name
+        emits: [yard.crates.CrateOpened]
+        payload:
+          yard.crates.CrateOpened:
+            crate_id: {generated: true}
+            name: input.name
+        summary: The crate opens under an integer the runtime mints.
+  - name: yard.crates.RenameCrate
+    input:
+      - {name: crate_id, type: Integer}
+      - {name: name, type: String}
+    outcomes:
+      - name: no-crate
+        unknown_instance: true
+        error: yard.crates.NoCrate
+        summary: No crate carries the id.
+      - name: renamed
+        updates: yard.crates.Crate
+        instance: crate_id
+        sets:
+          name: input.name
+        emits: [yard.crates.CrateRenamed]
+        payload:
+          yard.crates.CrateRenamed:
+            crate_id: input.crate_id
+            name: input.name
+        summary: The crate is renamed.
+  - name: yard.crates.OpenNote
+    input:
+      - {name: body, type: String}
+    outcomes:
+      - name: opened
+        creates: yard.crates.Note
+        instance: note_id
+        sets:
+          body: input.body
+        emits: [yard.crates.NoteOpened]
+        payload:
+          yard.crates.NoteOpened:
+            note_id: {generated: true}
+        summary: The note opens under a text the runtime mints.
+views:
+  - name: yard.crates.AllCrates
+    source: yard.crates.Crate
+    consistency: read_your_writes
+    fields:
+      - {name: crate_id, type: Integer}
+      - {name: name, type: String}
+      - {name: state, type: yard.crates.Crate.State}
