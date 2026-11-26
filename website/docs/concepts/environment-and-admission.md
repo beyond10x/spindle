@@ -207,18 +207,24 @@ listener: on a run with `--trusted-caller-header` it needs no proxy secret, and 
 |---|---|
 | `applied` | whose outcome took effect |
 | `already_there` | whose outcome the specification declares `existing_instance:`, or whose request id an earlier entry carried that was applied or already there |
-| `refused` | refused for any other reason: a declared error, or a refusal of the kernel such as `not_granted`. It is logged as `seed <file> entry <n>: <command> (request id <id>) refused: <error>` and the next entry is submitted |
+| `refused` | answered by any other outcome the specification declares with an error. It is logged as `seed <file> entry <n>: <command> (request id <id>) refused: <error>` and the next entry is submitted |
+| `rejected` | that did not run: the host or the kernel refused it before an outcome, such as `not_granted` for a caller its command does not grant. It is logged as `seed <file> entry <n>: <command> (request id <id>) rejected: <error>` and the next entry is submitted |
 
 `sent` counts every entry taken from the file. An entry that repeats the request id of a refused
-entry is submitted again and counted by what it becomes. A refusal does not stop the run. When the
-last entry has run, `run` prints one line on stderr:
+or rejected entry is submitted again and counted by what it becomes. A refusal does not stop the
+run. When the last entry has run, `run` prints one line on stderr:
 
 ```text
-b10x-spindle: seed seed/roles.json ended: 3 sent, 2 applied, 1 already there, 0 refused
+b10x-spindle: seed seed/roles.json ended: 3 sent, 2 applied, 1 already there, 0 refused, 0 rejected
 ```
 
+A seed that ends with a rejected entry stops the run: the listener has served beside it until
+then, and once the end line is printed `run` names the seed file on stderr and exits 1. An entry
+the file does not declare correctly never gets that far: it exits 1 before listening.
+
 With `--observe`, `GET /__spindle/metrics` has the same counts as
-`spindle_seed_commands_total{counted="sent"}` and so on, from the first scrape.
+`spindle_seed_commands_total{counted="sent"}` and so on, from the first scrape. The metric counts a
+rejected entry under `refused`.
 
 ### What a seed does not do
 

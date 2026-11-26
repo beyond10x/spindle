@@ -429,9 +429,16 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "Seed at start",
-        "run --seed, or the environment's [seed] file, names a JSON array of commands, each with its input, actor, caller and request id, that a served run submits on every start after its stores open: checked against the specification before listening, then one at a time in the file's order beside the listener. Each counts as applied, already there (an existing_instance: outcome, or a request id an earlier applied or already-there entry carried) or refused; a refusal is logged and the rest still run, and the counts are in one log line and in /__spindle/metrics. Request ids are not kept across starts: a restart applies nothing new only where every entry is an existing_instance:-guarded create. A reset drops the entries not yet sent; with no world it submits the seed again before it answers, and with a world it loads that world alone.",
+        "run --seed, or the environment's [seed] file, names a JSON array of commands, each with its input, actor, caller and request id, that a served run submits on every start after its stores open: checked against the specification before listening, then one at a time in the file's order beside the listener. Each counts as applied, already there (an existing_instance: outcome, or a request id an earlier applied or already-there entry carried), refused (a declared refusing outcome) or rejected (the host or the kernel refused it before an outcome); each is logged and the rest still run, the counts are in one log line and in /__spindle/metrics, and a seed that ends with a rejected entry stops the run with exit 1. Request ids are not kept across starts: a restart applies nothing new only where every entry is an existing_instance:-guarded create. A reset drops the entries not yet sent; with no world it submits the seed again before it answers, and with a world it loads that world alone.",
         "/docs/concepts/environment-and-admission#a-seed-submitted-at-start",
         "crates/spindle-cli/tests/spindle-cli/seed.rs::a_second_run_on_one_state_applies_nothing_new",
+    ),
+    shipped(
+        "Execution",
+        "A rejected line fails the run",
+        "run reading JSON lines on stdin answers every line, then exits 1 when a line was rejected (not JSON, no declared command, input not admitted, an external cause unanswered, or refused by the kernel before an outcome), naming each such line on stderr by its place in the input. A line answered by a declared outcome, a refusing one included, leaves the exit status 0.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-cli/tests/spindle-cli/rejected_line.rs::a_stdin_run_with_a_rejected_line_exits_1",
     ),
     shipped(
         "Execution",

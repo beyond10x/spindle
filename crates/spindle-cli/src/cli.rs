@@ -86,9 +86,15 @@ pub enum Command {
     /// Exits 3, running nothing, when admission is refused. At startup it prints on stderr the
     /// same lines `admit` prints for outcomes and commands the kernel does not run.
     ///
+    /// A line whose result is a failure was rejected: it is not JSON, names no declared command,
+    /// its input is not admitted, its external cause is unanswered, or the kernel refused it
+    /// before an outcome. The run answers every line, then names each rejected line on stderr by
+    /// its place in the input, counted from 1, and exits 1; with none rejected it exits 0. A line
+    /// answered by a declared outcome, a refusing one included, is not rejected.
+    ///
     /// An external cause the line does not answer is answered by `--decisions`, then by
     /// `--answer-default`; one nothing answers fails that line, naming the outcome, and the run
-    /// goes on.
+    /// goes on to the next line.
     ///
     /// With `--scenario`, replays an `ess-scenario` document instead of reading stdin: every
     /// component in one process on empty in-memory stores, the document read and checked by ESS,
@@ -102,7 +108,8 @@ pub enum Command {
     /// in one process and serves those over HTTP on 127.0.0.1, or `--address`, instead of reading
     /// stdin; only `http-loopback` is served, and any other binding exits 1 before listening. Prints
     /// `{"listening": "<address>", "components": [...]}` once listening and serves until SIGINT
-    /// or SIGTERM (exit 130 or 143). Routes are where `ess generate --kind openapi` publishes them:
+    /// or SIGTERM (exit 130 or 143), or until a seed that rejected an entry ends (exit 1,
+    /// `--seed`). Routes are where `ess generate --kind openapi` publishes them:
     /// ESS's derived routes, or with `--http` the `ess-http/1` binding's, read and checked by ESS
     /// (methods, paths, path variables and per-outcome statuses), an operation it does not name
     /// keeping its derived route. A command's body is its input; it answers its outcome's status
@@ -306,10 +313,14 @@ pub enum Command {
         /// between the requests the listener hands over, never through the listener. Each counts
         /// as applied, already there (an outcome the specification declares
         /// `existing_instance:`, or a request id an earlier applied or already-there entry of this
-        /// start carried, not submitted again) or refused; a refusal is printed on stderr with the
-        /// entry, command, request id and error name, and the next entry is submitted. One line on
+        /// start carried, not submitted again), refused (a declared refusing outcome) or rejected
+        /// (it did not run: the host or the kernel refused it before an outcome, such as
+        /// `not_granted`); each refusal and rejection is printed on stderr with the entry,
+        /// command, request id and error name, and the next entry is submitted. One line on
         /// stderr gives the counts when the seed ends; with `--observe`, `GET /__spindle/metrics`
-        /// has them as `spindle_seed_commands_total`. Only where `run` serves HTTP. Request ids are
+        /// has them as `spindle_seed_commands_total`, a rejected entry counted `refused` there.
+        /// A seed that ends having rejected an entry stops the run: it serves until then, and
+        /// exits 1 once the end line is printed. Only where `run` serves HTTP. Request ids are
         /// not kept across starts: a restart applies nothing new only where every entry is a
         /// create its command answers `existing_instance:`, and every other entry runs again.
         /// `POST /api/reset` drops the entries not yet sent; with no world it then submits the

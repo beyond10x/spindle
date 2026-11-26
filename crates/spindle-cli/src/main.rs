@@ -693,11 +693,14 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
     }
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
-    for line in std::io::stdin().lock().lines() {
+    let mut read = 0_usize;
+    let mut rejected: Vec<(usize, String)> = Vec::new();
+    for (index, line) in std::io::stdin().lock().lines().enumerate() {
         let line = line.context("reading stdin")?;
         if line.trim().is_empty() {
             continue;
         }
+        read += 1;
         let result = match serde_json::from_str::<Request>(&line) {
             Err(error) => serde_json::json!({
                 "failure": {"kind": "invalid_request", "message": error.to_string()},
@@ -710,10 +713,24 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 &request,
             ),
         };
+        if let Some(failure) = result.get("failure") {
+            let kind = failure["kind"].as_str().unwrap_or_default().to_owned();
+            rejected.push((index + 1, kind));
+        }
         writeln!(out, "{result}")?;
         out.flush()?;
     }
-    Ok(ExitCode::SUCCESS)
+    if rejected.is_empty() {
+        return Ok(ExitCode::SUCCESS);
+    }
+    for (line, kind) in &rejected {
+        eprintln!("b10x-spindle: line {line} was rejected ({kind}): it did not run");
+    }
+    eprintln!(
+        "b10x-spindle: {} rejected of {read} commands read, so the run exits 1",
+        rejected.len()
+    );
+    Ok(ExitCode::FAILURE)
 }
 
 /// Removes `directory` and exits 130 or 143 on SIGINT or SIGTERM: `run` reading stdin blocks in a

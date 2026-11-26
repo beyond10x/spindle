@@ -251,7 +251,9 @@ fn carried(caller: &Caller) -> String {
 /// wait for the next exchange, so a request never waits for the whole seed; while one is left the
 /// wait does not block ([`Seeding`]). A reset drops the entries not yet sent; one with no world
 /// then submits them again, all of them, before it answers, and one that gives a world does not
-/// ([`reset_seeded`]). A signal stops a reset's seed between two entries.
+/// ([`reset_seeded`]). A signal stops a reset's seed between two entries. Once a seed run ends
+/// having rejected an entry ([`Seeding::failed`]), the run stops listening, the answers already
+/// handed back given a moment to be written, and exits 1 (`story:run-fails-on-rejected-line`).
 pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     for caller in &serving.callers {
         fixed(&ir, caller)?;
@@ -424,6 +426,15 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         }
         if let Some(seeding) = seeding.as_mut() {
             seeding.step(&mut host);
+            if seeding.failed() {
+                eprintln!(
+                    "b10x-spindle: seed {} rejected an entry, so the run exits 1",
+                    seeding.path().display()
+                );
+                drop(listener);
+                std::thread::sleep(SIGNAL_POLL);
+                return Ok(ExitCode::FAILURE);
+            }
         }
         let wait = if seeding.as_ref().is_some_and(Seeding::pending) {
             Duration::ZERO

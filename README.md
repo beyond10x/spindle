@@ -60,8 +60,10 @@ before listening, then one at a time in order beside the listener. An outcome de
 when every entry is a create guarded by `existing_instance:`; any other entry runs again on every
 start, so an update writes over later changes and a move is refused. Spindle keeps no record of
 request ids: within one start, an entry whose request id an earlier applied or already-there entry
-carried is not submitted again. A refusal is logged and the rest still run; one line on stderr
-gives the counts when the seed ends. `POST /api/reset` drops the entries not yet sent; with no
+carried is not submitted again. A declared refusal is logged and the rest still run; one line on
+stderr gives the counts when the seed ends. An entry that did not run (the host or the kernel
+refused it before an outcome, such as `not_granted`) is counted `rejected`, and once the seed ends
+the run exits 1. `POST /api/reset` drops the entries not yet sent; with no
 world it then submits the seed again, from its first entry, before it answers, and with a world it
 loads that world alone. `play` and `deploy` refuse an environment with a `[seed]` table.
 

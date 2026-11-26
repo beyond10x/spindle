@@ -286,7 +286,11 @@ fn a_call_that_times_out_fails_the_command_and_commits_nothing() {
     let environment = environment(&directory, &desk.url(), 200, false);
 
     let output = run(&environment, &ask("r1"), true);
-    assert_eq!(output.status.code(), Some(0), "the run goes on: {output:?}");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "the run goes on, then exits 1 for the rejected line (story:run-fails-on-rejected-line): {output:?}"
+    );
     let results = results(&output);
     assert_eq!(results.len(), 1, "{results:?}");
     assert_eq!(results[0]["failure"]["kind"], "undecided", "{results:?}");
@@ -311,7 +315,11 @@ fn a_failed_reply_fails_the_command() {
     let environment = environment(&directory, &desk.url(), 5_000, false);
 
     let output = run(&environment, &ask("r1"), true);
-    assert_eq!(output.status.code(), Some(0), "the run goes on: {output:?}");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "the run goes on, then exits 1 for the rejected line (story:run-fails-on-rejected-line): {output:?}"
+    );
     let results = results(&output);
     assert_eq!(results[0]["failure"]["kind"], "undecided", "{results:?}");
     let message = results[0]["failure"]["message"]

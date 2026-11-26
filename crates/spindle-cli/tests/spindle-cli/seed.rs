@@ -449,8 +449,9 @@ fn a_second_run_on_one_state_applies_nothing_new() {
     );
 }
 
-/// An entry refused for any other reason, a declared error or a kernel refusal, is logged with its
-/// command, request id and error name; the entries after it still run and the run keeps serving.
+/// An entry a declared error refuses is logged with its command, request id and error name; the
+/// entries after it still run and the run keeps serving. A kernel refusal is a rejection, which
+/// stops the run once the seed ends (`seed::rejected`, `story:run-fails-on-rejected-line`).
 #[test]
 fn a_refused_entry_is_logged_and_the_rest_still_run() {
     let directory = scratch();
@@ -460,8 +461,8 @@ fn a_refused_entry_is_logged_and_the_rest_still_run() {
         &json!([
             {"command": RETIRE, "input": {"role_id": "ghost"}, "actor": OPERATOR,
              "caller": {"tenant": "north"}, "request_id": "seed-retire-ghost"},
-            {"command": GRANT, "input": {"role_id": "admin", "title": "Admin"}, "actor": VISITOR,
-             "request_id": "seed-visitor-grant"},
+            {"command": RETIRE, "input": {"role_id": "phantom"}, "actor": OPERATOR,
+             "caller": {"tenant": "north"}, "request_id": "seed-retire-phantom"},
             grant("admin", "north", "seed-admin"),
         ])
         .to_string(),
@@ -500,15 +501,15 @@ fn a_refused_entry_is_logged_and_the_rest_still_run() {
             && missing.contains("refused: vault.access.RoleMissing"),
         "{missing}"
     );
-    let visitor = stderr
+    let phantom = stderr
         .iter()
-        .find(|line| line.contains("seed-visitor-grant"))
+        .find(|line| line.contains("seed-retire-phantom"))
         .unwrap_or_else(|| panic!("the refusal is logged: {stderr:#?}"));
     assert!(
-        visitor.contains("entry 2")
-            && visitor.contains(GRANT)
-            && visitor.contains("refused: not_granted"),
-        "{visitor}"
+        phantom.contains("entry 2")
+            && phantom.contains(RETIRE)
+            && phantom.contains("refused: vault.access.RoleMissing"),
+        "{phantom}"
     );
 }
 
@@ -1222,3 +1223,4 @@ fn a_run_without_a_seed_resets_as_before() {
 
 mod adversary_w25_reseed;
 mod adversary_w25_reseed_r2;
+mod rejected;

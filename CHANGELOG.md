@@ -6,6 +6,18 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- `run` reading JSON lines on stdin exits 1 when a line was rejected (not JSON, naming no
+  declared command, its input not admitted, its external cause unanswered, or refused by the
+  kernel before an outcome), after it answered every line, and names each rejected line on stderr
+  by its place in the input; it exited 0 whatever the lines did. A line answered by a declared
+  outcome, a refusing one included, is not rejected. A seed entry the host or the kernel refuses
+  before an outcome, such as `not_granted`, is counted `rejected` in the seed's end line, apart
+  from the declared refusals still counted `refused`, and a seed that ends with one stops the
+  served run with exit 1; `spindle_seed_commands_total` counts it under `refused`
+  (`story:run-fails-on-rejected-line`).
+
 ## [0.21.0] - 2026-11-26
 
 ### Added
