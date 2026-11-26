@@ -45,8 +45,9 @@ are Spindle's releases.
   `check:the_static_bundle_builds` builds `spindle-wasm` in `wasm-gate` itself (`task web` still
   builds the release profile). A new step, `check:the_wasm_lanes_share_one_cache_key`
   (`scripts/wasm-cache-key.sh`), fails when the Taskfile sets a `CARGO_*` variable, when a lane
-  builds in a profile other than `wasm-gate` (the lint: `wasm-lint`) or when `.cargo/config.toml`
-  names no wasm runner (`story:wasm-lanes-within-budget`).
+  builds in a profile other than `wasm-gate` (the lint: `wasm-lint`), when one of the six lanes is
+  not run under `scripts/within.sh 120` or holds no wasm `cargo` command the script reads, or when
+  `.cargo/config.toml` names no wasm runner (`story:wasm-lanes-within-budget`).
 
 ### Fixed
 
