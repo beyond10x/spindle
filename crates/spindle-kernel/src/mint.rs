@@ -7,7 +7,11 @@
 //! a UUID; a bare `String` as a UUID's text; a `String` newtype whose prefix and alphabet admit a
 //! UUID's text, and whose invariants read only `value.count` and hold for that text's length, as
 //! its prefix and a UUID's text; an `Integer`, or a newtype of one without invariants, as an
-//! integer drawn from a UUID, as a generated `Integer` is ([`identity`]). An entity invariant over
+//! integer drawn from a UUID, as a generated `Integer` is ([`identity`]). Many UUIDs draw one
+//! integer, so a minted `Integer` identity an instance of the entity already holds is drawn
+//! again, at most [`INTEGER_DRAWS`] draws in all, as ESS's interpreter draws again; a minted
+//! `Uuid` or text identity an instance holds came from a UUID it holds, and refuses the
+//! command ([`Mint::uuid`]). An entity invariant over
 //! the identity's length that no minted identity meets refuses the command before it runs
 //! ([`identity_bound`]).
 //!
@@ -143,6 +147,16 @@ pub(crate) fn answers(outcome: &ResolvedOutcome) -> bool {
 
 /// The low 53 bits: the integers every JSON reader holds exactly.
 const INTEGER_BITS: u128 = (1 << 53) - 1;
+
+/// The `Integer` a minted `Integer` is drawn from `uuid` as: its low 53 bits. Many UUIDs give
+/// one integer, so a fresh UUID may give an integer an instance already holds.
+fn integer(uuid: Uuid) -> u64 {
+    u64::try_from(uuid.as_u128() & INTEGER_BITS).unwrap_or(u64::MAX)
+}
+
+/// How many identities the kernel mints in turn for one creation whose minted `Integer`
+/// identity an instance of the entity already holds, before it refuses the command.
+pub(crate) const INTEGER_DRAWS: usize = 8;
 
 /// The values one command run mints for its generated fields, each minted once: a field read
 /// twice, in a payload and again through `{payload: <Event>.<field>}` in `sets:`, reads the same
@@ -378,12 +392,7 @@ pub(crate) fn value(
             prefix.as_deref().unwrap_or_default(),
             uuid().hyphenated()
         ))),
-        Minted::Integer => {
-            let low = uuid().as_u128() & INTEGER_BITS;
-            u64::try_from(low)
-                .map(Value::from)
-                .map_err(|_| format!("{low} is past the integers a JSON reader holds"))
-        }
+        Minted::Integer => Ok(Value::from(integer(uuid()))),
         Minted::Boolean => Ok(Value::Bool(uuid().as_u128() & 1 == 0)),
         Minted::Bytes => Ok(Value::String(base64_byte(byte(uuid())))),
         Minted::List => {
@@ -468,7 +477,11 @@ pub struct Identity<'a> {
 
 /// Mints the identity of a new instance.
 pub trait Mint {
-    /// A fresh `Uuid` for `identity`. The kernel refuses one that an instance already holds.
+    /// A fresh `Uuid` for `identity`. The kernel refuses a creation whose `Uuid` or `String`
+    /// identity minted from it an instance already holds. An `Integer` identity, which many UUIDs
+    /// mint alike, the kernel draws again where an instance holds it, as ESS's interpreter draws
+    /// again (`interpret::execute::creation_identity`), and refuses the creation only once eight
+    /// draws in turn each minted a held one.
     fn uuid(&mut self, identity: &Identity<'_>) -> Uuid;
 }
 
@@ -499,12 +512,15 @@ impl Mint for UuidV4 {
 /// Version 4 UUIDs drawn from a seed: two mints made from one seed answer the same UUIDs in the
 /// same order, so the same commands mint the same identities. Each UUID's random bits are the
 /// next 128 bits of a `SplitMix64` sequence started at the seed; not for anything an attacker may
-/// guess. A UUID it was told is [held](Seeded::avoiding) is skipped and the next one drawn, so it
-/// never mints an identity a seeded instance already holds and stays deterministic.
+/// guess. A UUID it was told is [held](Seeded::avoiding), or whose minted `Integer` is
+/// ([`Seeded::avoiding_identities`]), is skipped and the next one drawn, so it never mints an
+/// identity a seeded instance already holds and stays deterministic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Seeded {
     state: u64,
     held: BTreeSet<Uuid>,
+    /// The `Integer` identities held: a UUID whose low 53 bits are one of them is skipped.
+    integers: BTreeSet<u64>,
 }
 
 impl Seeded {
@@ -513,6 +529,7 @@ impl Seeded {
         Self {
             state: seed,
             held: BTreeSet::new(),
+            integers: BTreeSet::new(),
         }
     }
 
@@ -521,6 +538,48 @@ impl Seeded {
     pub fn avoiding(mut self, held: impl IntoIterator<Item = Uuid>) -> Self {
         self.held.extend(held);
         self
+    }
+
+    /// This mint, never answering a UUID that mints one of `identities`, as instances hold them:
+    /// a text that is a UUID's text or ends in one (a `Uuid`, a bare `String`, a `String`
+    /// newtype's prefix and UUID), and an integer within the 53 bits an `Integer` is minted from
+    /// (spelled `42` or `42.0`), whose UUIDs are every UUID with those low bits. Any other
+    /// identity no UUID mints, and is passed over.
+    #[must_use]
+    pub fn avoiding_identities<'v>(
+        mut self,
+        identities: impl IntoIterator<Item = &'v Value>,
+    ) -> Self {
+        for identity in identities {
+            match identity {
+                Value::String(text) => {
+                    if let Some(uuid) = text
+                        .len()
+                        .checked_sub(36)
+                        .and_then(|at| text.get(at..))
+                        .and_then(|tail| Uuid::parse_str(tail).ok())
+                    {
+                        self.held.insert(uuid);
+                    }
+                }
+                Value::Number(number) => {
+                    if let Some(held) = number
+                        .as_u64()
+                        .or_else(|| whole(number.as_f64()?))
+                        .filter(|held| u128::from(*held) <= INTEGER_BITS)
+                    {
+                        self.integers.insert(held);
+                    }
+                }
+                _ => {}
+            }
+        }
+        self
+    }
+
+    /// Whether `uuid` mints an identity this mint was told is held.
+    fn holds(&self, uuid: Uuid) -> bool {
+        self.held.contains(&uuid) || self.integers.contains(&integer(uuid))
     }
 
     fn draw(&mut self) -> Uuid {
@@ -544,12 +603,24 @@ impl Seeded {
 impl Mint for Seeded {
     fn uuid(&mut self, _identity: &Identity<'_>) -> Uuid {
         let mut drawn = self.draw();
-        for _ in 0..=self.held.len() {
-            if !self.held.contains(&drawn) {
+        for _ in 0..=self.held.len() + self.integers.len() {
+            if !self.holds(drawn) {
                 break;
             }
             drawn = self.draw();
         }
         drawn
     }
+}
+
+/// `float` as the integer it denotes, where it is whole and within the 53 bits a double holds
+/// exactly.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the float is whole and within 0..2^53, which a u64 holds exactly"
+)]
+fn whole(float: f64) -> Option<u64> {
+    (float.fract() == 0.0 && (0.0..9_007_199_254_740_992.0).contains(&float))
+        .then_some(float as u64)
 }

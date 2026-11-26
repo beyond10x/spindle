@@ -1685,29 +1685,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 self.publish_reads(outcome, None)?;
                 // The creation's identity may itself read the response, so it is prepared first.
                 self.prepare(outcome)?;
-                if let Some((created, named)) = crate::mint::slot(self.ir, outcome) {
-                    let minted = self.mint_identity(outcome, created, named)?;
-                    self.minted = Some((event, named.name.clone(), minted));
-                }
-                let identity = if let Some((_, _, minted)) = &self.minted {
-                    minted.clone()
-                } else {
-                    self.determined_identity(outcome, event, field)?
-                };
-                if self
-                    .store
-                    .load(&entity.name.to_string(), &identity)?
-                    .is_some()
-                {
-                    return Err(ExecuteError::Undeclared {
-                        command: self.command.to_owned(),
-                        reason: format!(
-                            "a `{}` already has the identity {identity}, and `creates:` never \
-                             replaces an instance",
-                            entity.name
-                        ),
-                    });
-                }
+                let identity = self.creation_identity(outcome, entity, event, field)?;
                 let state = subject
                     .into
                     .as_ref()
@@ -1854,6 +1832,66 @@ impl<'a, 'ir> Run<'a, 'ir> {
 
     /// The identity a creation's payload determines for the new instance, published in `field` of
     /// `event`.
+    /// The identity of the instance `outcome` creates, published as `field` of `event`: minted
+    /// ([`Self::mint_identity`]) where the outcome leaves it to the runtime, else what its source
+    /// reads ([`Self::determined_identity`]), a `{generated: true}` fallback among them.
+    ///
+    /// An `Integer` identity minted in this draw, which many UUIDs mint alike, that an instance of
+    /// `entity` already holds is minted again, as ESS's interpreter draws again on a held
+    /// identity (`interpret::execute::creation_identity`), at most
+    /// [`crate::mint::INTEGER_DRAWS`] draws in all.
+    ///
+    /// # Errors
+    /// [`ExecuteError::Undeclared`] for an identity an instance already holds that this draw did
+    /// not mint, a minted `Uuid` or text one (minted from a UUID the instance holds), or an
+    /// `Integer` one held on every draw, naming the draws; and as the mint or source reads.
+    fn creation_identity(
+        &mut self,
+        outcome: &'ir ResolvedOutcome,
+        entity: &ResolvedEntity,
+        event: &'ir EventHandle,
+        field: &ResolvedField,
+    ) -> Result<Value, ExecuteError> {
+        let redraws = matches!(
+            crate::mint::identity(self.ir, &entity.identity.type_ref),
+            Some(crate::mint::Minted::Integer)
+        );
+        let entity_name = entity.name.to_string();
+        for _ in 0..crate::mint::INTEGER_DRAWS {
+            let mark = self.generator.mark();
+            let (identity, minted) =
+                if let Some((created, named)) = crate::mint::slot(self.ir, outcome) {
+                    let minted = self.mint_identity(outcome, created, named)?;
+                    self.minted = Some((event, named.name.clone(), minted.clone()));
+                    (minted, true)
+                } else {
+                    let identity = self.determined_identity(outcome, event, field)?;
+                    (identity, self.generator.mark() > mark)
+                };
+            if self.store.load(&entity_name, &identity)?.is_none() {
+                return Ok(identity);
+            }
+            if !(redraws && minted) {
+                return Err(ExecuteError::Undeclared {
+                    command: self.command.to_owned(),
+                    reason: format!(
+                        "a `{entity_name}` already has the identity {identity}, and `creates:` \
+                         never replaces an instance"
+                    ),
+                });
+            }
+            self.generator.rewind(mark);
+        }
+        Err(ExecuteError::Undeclared {
+            command: self.command.to_owned(),
+            reason: format!(
+                "each of {} `Integer` identities minted in turn for a new `{entity_name}` is \
+                 already held by one, and `creates:` never replaces an instance",
+                crate::mint::INTEGER_DRAWS
+            ),
+        })
+    }
+
     fn determined_identity(
         &self,
         outcome: &ResolvedOutcome,

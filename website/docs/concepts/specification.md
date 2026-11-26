@@ -101,8 +101,9 @@ A `Uuid` identity, or a `Uuid` newtype without invariants, is minted as a UUIDv4
 `String` identity is minted as a UUIDv4's text. A `String` newtype identity whose prefix and
 alphabet admit a UUID's text, and whose invariants bound only its length, is minted as its prefix
 and a UUIDv4's text. An `Integer` identity, or an `Integer` newtype without invariants, is minted
-as an integer drawn from a UUIDv4. Any other identity type is refused: a `Bytes` or `Timestamp`
-identity would repeat, and a `Boolean` or `List` cannot hold distinct identities.
+as an integer drawn from a UUIDv4's low 53 bits; one an instance already holds is drawn again, up
+to eight draws, as ESS's interpreter draws again. Any other identity type is refused: a `Bytes` or
+`Timestamp` identity would repeat, and a `Boolean` or `List` cannot hold distinct identities.
 
 The kernel runs the constructs Spindle's own specification and the rally example use. Any other
 construct is refused as unsupported before anything is written, with the construct in the

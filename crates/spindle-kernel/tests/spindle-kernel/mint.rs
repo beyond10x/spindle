@@ -10,7 +10,8 @@ use std::path::Path;
 use ess_primitives::node::Node;
 use serde_json::{Map, Value, json};
 use spindle_kernel::{
-    ExecuteError, Identity, MemoryStore, NoExternals, Store, Uuid, execute, execute_minting,
+    ExecuteError, Identity, MemoryStore, Mint, NoExternals, Seeded, Store, Uuid, execute,
+    execute_minting,
 };
 
 fn ir() -> spindle_spec::EssIr {
@@ -558,4 +559,169 @@ fn a_value_source_fallback_answers_as_the_interpreter() {
     for (step, (row, ess_row)) in rows.iter().zip(ess_rows).enumerate() {
         agree(&format!("the row of step {step}"), row, ess_row, step == 1);
     }
+}
+
+/// The fixture `tests/fixtures/mint_redraw`: a tally under an `Integer` identity, opened by
+/// `OpenTally` with `{generated: true}` on it, and by `OpenTallyAs` with the identity the request
+/// sends, else `{generated: true}`.
+fn redraw_ir() -> spindle_spec::EssIr {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mint_redraw");
+    spindle_spec::load(&root)
+        .expect("the mint_redraw fixture compiles")
+        .ir
+}
+
+const TALLY: &str = "mintredraw.tally.Tally";
+
+/// The nil UUID and `1 << 53` share their low 53 bits, so both mint the `Integer` 0: the second
+/// creation through the `{generated: true}` fallback draws again and opens under 7, as the
+/// creation that mints its identity directly does.
+#[test]
+fn a_fallback_minted_integer_identity_an_instance_holds_is_drawn_again() {
+    let ir = redraw_ir();
+    let mut store = MemoryStore::default();
+    let mut uuids = vec![Uuid::nil(), Uuid::from_u128(1 << 53), Uuid::from_u128(7)].into_iter();
+    let mut mint = |_: &Identity<'_>| uuids.next().expect("a UUID left");
+    let mut minted = Vec::new();
+    for name in ["first", "second"] {
+        let opened = execute_minting(
+            &ir,
+            &mut store,
+            &mut NoExternals,
+            &mut mint,
+            "mintredraw.tally.OpenTallyAs",
+            &input(json!({"name": name})),
+        )
+        .unwrap_or_else(|error| panic!("{name}: the tally opens: {error}"));
+        let identity = opened.events[0].payload["tally_id"].clone();
+        let stored = store
+            .load(TALLY, &identity)
+            .expect("the store reads")
+            .unwrap_or_else(|| panic!("{name}: stored under {identity}"));
+        assert_eq!(stored.row.fields.get("name"), Some(&json!(name)));
+        minted.push(identity);
+    }
+    assert_eq!(minted, [json!(0), json!(7)]);
+}
+
+/// A mint that answers one UUID on every draw: the second creation draws eight times, each
+/// minting the held `Integer`, and is refused naming the draws; the first tally is kept.
+#[test]
+fn an_integer_identity_held_on_every_draw_is_refused_naming_the_draws() {
+    let ir = redraw_ir();
+    let mut store = MemoryStore::default();
+    let mut asked = 0_usize;
+    let mut mint = |_: &Identity<'_>| {
+        asked += 1;
+        Uuid::nil()
+    };
+    execute_minting(
+        &ir,
+        &mut store,
+        &mut NoExternals,
+        &mut mint,
+        "mintredraw.tally.OpenTally",
+        &input(json!({"name": "first"})),
+    )
+    .expect("the first tally opens");
+    let error = execute_minting(
+        &ir,
+        &mut store,
+        &mut NoExternals,
+        &mut mint,
+        "mintredraw.tally.OpenTally",
+        &input(json!({"name": "second"})),
+    )
+    .expect_err("every draw mints the held 0");
+    match &error {
+        ExecuteError::Undeclared { reason, .. } => {
+            assert!(
+                reason.contains("each of 8 `Integer` identities"),
+                "{reason}"
+            );
+            assert!(reason.contains(TALLY), "{reason}");
+        }
+        other => panic!("a held identity on every draw is refused as Undeclared, not {other:?}"),
+    }
+    assert_eq!(
+        asked,
+        1 + 8,
+        "one draw for the first tally, eight for the second"
+    );
+    let kept = store
+        .load(TALLY, &json!(0))
+        .expect("the store reads")
+        .expect("the first tally is kept");
+    assert_eq!(kept.row.fields.get("name"), Some(&json!("first")));
+}
+
+/// An `Integer` identity the request sends is not drawn again: a held one refuses the creation,
+/// and the mint is not asked.
+#[test]
+fn a_held_integer_identity_the_request_sends_is_refused_without_a_draw() {
+    let ir = redraw_ir();
+    let mut store = MemoryStore::default();
+    let mut asked = 0_usize;
+    let mut mint = |_: &Identity<'_>| {
+        asked += 1;
+        Uuid::from_u128(5)
+    };
+    for (name, first) in [("first", true), ("again", false)] {
+        let opened = execute_minting(
+            &ir,
+            &mut store,
+            &mut NoExternals,
+            &mut mint,
+            "mintredraw.tally.OpenTallyAs",
+            &input(json!({"tally_id": 5, "name": name})),
+        );
+        match (opened, first) {
+            (Ok(_), true) => {}
+            (Err(ExecuteError::Undeclared { reason, .. }), false) => {
+                assert!(reason.contains("already has the identity 5"), "{reason}");
+            }
+            (other, _) => panic!("{name}: {other:?}"),
+        }
+    }
+    assert_eq!(
+        asked, 0,
+        "the mint is not asked for an identity the request sends"
+    );
+}
+
+/// A seeded mint told a row holds the `Integer` its first UUID mints, spelled `n` or `n.0`, or
+/// the text that UUID is or ends in, skips that UUID and answers the one after it.
+#[test]
+fn a_seeded_mint_skips_a_uuid_whose_integer_or_text_an_identity_holds() {
+    let at = Identity {
+        capability: "identity.mint",
+        command: "mintredraw.tally.OpenTally",
+        outcome: "opened",
+        entity: TALLY,
+        field: "tally_id",
+    };
+    let mut plain = Seeded::new(7);
+    let first = plain.uuid(&at);
+    let second = plain.uuid(&at);
+    let low = u64::try_from(first.as_u128() & ((1 << 53) - 1)).expect("53 bits");
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "53 bits, which a double holds exactly"
+    )]
+    let spelled = low as f64;
+    for held in [
+        json!(low),
+        json!(spelled),
+        json!(format!("prefix_{first}")),
+        json!(first.to_string()),
+    ] {
+        let mut avoiding = Seeded::new(7).avoiding_identities([&held]);
+        assert_eq!(avoiding.uuid(&at), second, "held {held}");
+    }
+    let mut unheld = Seeded::new(7).avoiding_identities([&json!(low + 1), &json!(true)]);
+    assert_eq!(
+        unheld.uuid(&at),
+        first,
+        "an identity no first UUID mints skips nothing"
+    );
 }

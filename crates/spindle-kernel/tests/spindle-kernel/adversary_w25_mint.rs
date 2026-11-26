@@ -264,6 +264,9 @@ struct Step {
     events: Vec<(String, BTreeMap<String, Node>)>,
 }
 
+/// Each step's answer, or its refusal, and the rows each view read after the steps.
+type Answered = (Vec<Result<Step, String>>, Vec<Vec<BTreeMap<String, Node>>>);
+
 fn nodes(map: &Map<String, Value>) -> BTreeMap<String, Node> {
     map.iter()
         .filter(|(_, value)| !value.is_null())
@@ -315,11 +318,7 @@ fn canonical_step(step: &Step) -> Step {
 
 /// Each step through ESS's interpreter, an `Err` where it answers none, and the rows of `views`
 /// after the last.
-fn interpreted(
-    ir: &spindle_spec::EssIr,
-    views: &[&str],
-    steps: &[(&str, Value)],
-) -> (Vec<Result<Step, String>>, Vec<Vec<BTreeMap<String, Node>>>) {
+fn interpreted(ir: &spindle_spec::EssIr, views: &[&str], steps: &[(&str, Value)]) -> Answered {
     let target = Interpreted::for_model(ir.clone());
     let context = ScenarioContext::new(
         "advw25.box/authored/fallback"
@@ -387,7 +386,7 @@ fn spindled(
     ir: &spindle_spec::EssIr,
     entities: &[(&str, &str)],
     steps: &[(&str, Value)],
-) -> (Vec<Result<Step, String>>, Vec<Vec<BTreeMap<String, Node>>>) {
+) -> Answered {
     let mut store = MemoryStore::default();
     let answers = steps
         .iter()
@@ -440,11 +439,7 @@ fn sorted_rows(rows: &[BTreeMap<String, Node>]) -> Vec<BTreeMap<String, Node>> {
 
 /// Asserts both sides answered each step alike (a value by its number, not its spelling), and
 /// hold the same rows.
-fn agree(
-    steps: &[(&str, Value)],
-    ours: &(Vec<Result<Step, String>>, Vec<Vec<BTreeMap<String, Node>>>),
-    theirs: &(Vec<Result<Step, String>>, Vec<Vec<BTreeMap<String, Node>>>),
-) {
+fn agree(steps: &[(&str, Value)], ours: &Answered, theirs: &Answered) {
     for (index, ((command, input), (spindle, ess))) in
         steps.iter().zip(ours.0.iter().zip(&theirs.0)).enumerate()
     {
