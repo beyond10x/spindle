@@ -821,11 +821,18 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
     for rejection in &rejected {
         eprintln!("b10x-spindle: {rejection}");
     }
-    eprintln!(
-        "b10x-spindle: {} rejected of {read} lines read and {invoked} commands their bindings \
-         invoked, so the run exits 1",
-        rejected.len()
-    );
+    if bindings.is_empty() {
+        eprintln!(
+            "b10x-spindle: {} rejected of {read} commands read, so the run exits 1",
+            rejected.len()
+        );
+    } else {
+        eprintln!(
+            "b10x-spindle: {} rejected of {read} lines read and {invoked} commands their \
+             bindings invoked, so the run exits 1",
+            rejected.len()
+        );
+    }
     Ok(ExitCode::FAILURE)
 }
 

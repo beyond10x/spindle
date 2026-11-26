@@ -56,8 +56,7 @@ frames of a real run.
 ## Drive it by hand
 
 `run` admits the whole system and executes commands read as JSON lines on stdin, one JSON result
-per line. The event bindings fire as a served run fires them, each bound command on a line of its
-own with `caused_by`; no timer runs, so the periodic `tick` does not fire.
+per line. It runs commands only: no timer, no channel, so bindings do not fire.
 
 `requests.jsonl` opens a match, ticks once, and opens the same match again:
 

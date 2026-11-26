@@ -10,7 +10,7 @@ use std::time::SystemTime;
 use anyhow::{Context, Result};
 use ess_domain::binding::Failure;
 use serde_json::{Map, Value, json};
-use spindle_channel::{Route, Router};
+use spindle_channel::{Command, Route, Router};
 use spindle_kernel::{Change, Event, ExecuteError, Executed, External, Mint, Store, Write};
 use spindle_spec::EssIr;
 
@@ -321,10 +321,19 @@ impl Bindings {
         Ok(Self { router })
     }
 
+    /// Whether the specification declares no event binding: its runs print as before bindings
+    /// fired on stdin.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.router.routes().is_empty()
+    }
+
     /// Runs every command the bindings invoke for `events`, emitted by the command of stdin line
-    /// `line`, and for the events those commands emit in turn, in the order they were emitted:
-    /// each sent as no actor, its external causes answered by the run's answers. A command that
-    /// is refused or does not run is attempted again where its binding retries it, up to
+    /// `line`, and for the events those commands emit in turn, in the order a served run delivers
+    /// them (`spindle_host::Host`'s `settle`): one link per publishing and accepting component,
+    /// the links in name order, each drained of what it carries, what those commands send it
+    /// included, before the next, round after round until none carries anything. Each command is
+    /// sent as no actor, its external causes answered by the run's answers. A command that is
+    /// refused or does not run is attempted again where its binding retries it, up to
     /// [`spindle_host::RETRY_ATTEMPTS`] in all. Stops after [`spindle_host::DELIVERY_LIMIT`]
     /// commands, the rest rejected as a runaway.
     pub(crate) fn fire(
@@ -334,9 +343,96 @@ impl Bindings {
         events: Vec<Event>,
     ) -> Vec<Fired> {
         let mut fired = Vec::new();
-        let mut queue = VecDeque::from(events);
+        let mut links: BTreeMap<(String, String), VecDeque<(&Route, Command)>> = self
+            .router
+            .routes()
+            .iter()
+            .map(|route| ((route.from.clone(), route.to.clone()), VecDeque::new()))
+            .collect();
+        let order: Vec<(String, String)> = links.keys().cloned().collect();
+        self.publish(line, events, &mut links, &mut fired);
         let mut deliveries = 0_usize;
-        while let Some(event) = queue.pop_front() {
+        loop {
+            let mut delivered = false;
+            for link in &order {
+                while let Some((route, command)) = links.get_mut(link).and_then(VecDeque::pop_front)
+                {
+                    delivered = true;
+                    let caused_by = json!({"line": line, "binding": route.binding});
+                    if deliveries >= spindle_host::DELIVERY_LIMIT {
+                        fired.push(Fired {
+                            line: json!({
+                                "command": route.command,
+                                "failure": {
+                                    "kind": "runaway",
+                                    "message": format!(
+                                        "stopped after {deliveries} commands the bindings of one \
+                                         line invoked"
+                                    ),
+                                },
+                                "caused_by": caused_by,
+                                "attempts": 0,
+                            }),
+                            rejected: Some(format!(
+                                "line {line}: its bindings kept invoking commands; stopped after \
+                                 {deliveries}, binding {} the last",
+                                route.binding
+                            )),
+                        });
+                        return fired;
+                    }
+                    deliveries += 1;
+                    let (attempts, result) =
+                        attempted(running, route, &command.name, &command.fields);
+                    let mut printed = printed(&command.name, &result);
+                    if let Some(object) = printed.as_object_mut() {
+                        object.insert("caused_by".to_owned(), caused_by);
+                        object.insert("attempts".to_owned(), json!(attempts));
+                    }
+                    let rejected = match &result {
+                        Ok(Executed { error: None, .. }) => None,
+                        Ok(Executed { outcome, .. }) => Some(format!("was refused ({outcome})")),
+                        Err(error) => Some(format!("did not run ({})", error.kind())),
+                    }
+                    .map(|what| {
+                        format!(
+                            "line {line}: binding {} invoked {}, which {what} after {attempts} \
+                             attempt(s)",
+                            route.binding, command.name
+                        )
+                    });
+                    fired.push(Fired {
+                        line: printed,
+                        rejected,
+                    });
+                    if let Ok(Executed {
+                        error: None,
+                        events,
+                        ..
+                    }) = result
+                    {
+                        self.publish(line, events, &mut links, &mut fired);
+                    }
+                }
+            }
+            if !delivered {
+                return fired;
+            }
+        }
+    }
+
+    /// Puts the command each binding maps each of `events` to on its link, in the order the
+    /// events were emitted and, per event, in binding-name order, as a served run's sender stages
+    /// them; a binding whose input is unmet or whose condition is undecided is printed as a
+    /// command that did not run.
+    fn publish<'r>(
+        &'r self,
+        line: usize,
+        events: Vec<Event>,
+        links: &mut BTreeMap<(String, String), VecDeque<(&'r Route, Command)>>,
+        fired: &mut Vec<Fired>,
+    ) {
+        for event in events {
             let event = spindle_channel::Event {
                 name: event.name,
                 fields: event.payload,
@@ -347,81 +443,28 @@ impl Bindings {
                 .iter()
                 .filter(|route| route.event == event.name)
             {
-                let caused_by = json!({"line": line, "binding": route.binding});
-                let command = match route.invoke(&event) {
-                    Ok(Some(command)) => command,
-                    Ok(None) => continue,
-                    Err(unmet) => {
-                        fired.push(Fired {
-                            line: json!({
-                                "command": route.command,
-                                "failure": {"kind": "unmet_binding", "message": unmet.to_string()},
-                                "caused_by": caused_by,
-                                "attempts": 0,
-                            }),
-                            rejected: Some(format!(
-                                "line {line}: binding {} did not invoke {}: {unmet}",
-                                route.binding, route.command
-                            )),
-                        });
-                        continue;
+                match route.invoke(&event) {
+                    Ok(Some(command)) => {
+                        if let Some(link) = links.get_mut(&(route.from.clone(), route.to.clone())) {
+                            link.push_back((route, command));
+                        }
                     }
-                };
-                if deliveries >= spindle_host::DELIVERY_LIMIT {
-                    fired.push(Fired {
+                    Ok(None) => {}
+                    Err(unmet) => fired.push(Fired {
                         line: json!({
                             "command": route.command,
-                            "failure": {
-                                "kind": "runaway",
-                                "message": format!(
-                                    "stopped after {deliveries} commands the bindings of one line invoked"
-                                ),
-                            },
-                            "caused_by": caused_by,
+                            "failure": {"kind": "unmet_binding", "message": unmet.to_string()},
+                            "caused_by": {"line": line, "binding": route.binding},
                             "attempts": 0,
                         }),
                         rejected: Some(format!(
-                            "line {line}: its bindings kept invoking commands; stopped after \
-                             {deliveries}, binding {} the last",
-                            route.binding
+                            "line {line}: binding {} did not invoke {}: {unmet}",
+                            route.binding, route.command
                         )),
-                    });
-                    return fired;
+                    }),
                 }
-                deliveries += 1;
-                let (attempts, result) = attempted(running, route, &command.name, &command.fields);
-                let mut printed = printed(&command.name, &result);
-                if let Some(object) = printed.as_object_mut() {
-                    object.insert("caused_by".to_owned(), caused_by);
-                    object.insert("attempts".to_owned(), json!(attempts));
-                }
-                let rejected = match &result {
-                    Ok(Executed { error: None, .. }) => None,
-                    Ok(Executed { outcome, .. }) => Some(format!("was refused ({outcome})")),
-                    Err(error) => Some(format!("did not run ({})", error.kind())),
-                }
-                .map(|what| {
-                    format!(
-                        "line {line}: binding {} invoked {}, which {what} after {attempts} \
-                         attempt(s)",
-                        route.binding, command.name
-                    )
-                });
-                if let Ok(Executed {
-                    error: None,
-                    events,
-                    ..
-                }) = result
-                {
-                    queue.extend(events);
-                }
-                fired.push(Fired {
-                    line: printed,
-                    rejected,
-                });
             }
         }
-        fired
     }
 }
 
