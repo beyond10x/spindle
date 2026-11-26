@@ -85,6 +85,12 @@
       "summary": "External causes a served command asked about, by what answered each: world, file, default, call or unanswered."
     },
     {
+      "name": "spindle_bound_refusals_total",
+      "kind": "counter",
+      "labels": ["binding", "command", "refusal"],
+      "summary": "Commands an event binding invoked while a request was answered that were refused, as the request's record lists them, by binding, command and refusal: the refusing outcome, or the kernel's error kind where it selected none."
+    },
+    {
       "name": "spindle_seed_commands_total",
       "kind": "counter",
       "labels": ["counted"],

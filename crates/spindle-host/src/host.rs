@@ -14,7 +14,7 @@ use ess_domain::binding::Failure;
 use serde_json::{Map, Value};
 use spindle_capability::{Capability, Environment};
 use spindle_channel::{
-    ChannelError, Envelope, Receiver, Route, RouteError, Router, Sender, in_process,
+    ChannelError, DeliveryId, Envelope, Receiver, Route, RouteError, Router, Sender, in_process,
 };
 use spindle_kernel::{
     Change, Committed, Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, Mint,
@@ -81,8 +81,16 @@ pub struct Failed {
     pub command: String,
     /// Why it was invoked.
     pub cause: Cause,
+    /// The qualified command whose run published the event a binding carried here, for a
+    /// command an event binding invoked, or whose input was unmet, in this host; `None` for a
+    /// tick's command, and for an envelope delivered from another process (a run split over
+    /// processes, [`Host::component`]), whose publishing command this host never ran.
+    pub caused_by: Option<String>,
     /// The kernel's error on the last attempt, as text.
     pub error: String,
+    /// The kind of the kernel's error on the last attempt ([`ExecuteError::kind`]); `None` for a
+    /// binding whose input was unmet, which no attempt ran.
+    pub kind: Option<&'static str>,
     /// How many times it was run: 0 for a binding whose input was unmet, so its command was
     /// never sent.
     pub attempts: u32,
@@ -98,6 +106,9 @@ pub struct RefusedCommand {
     pub command: String,
     /// Why it was invoked.
     pub cause: Cause,
+    /// The qualified command whose run published the event a binding carried here, as
+    /// [`Failed::caused_by`].
+    pub caused_by: Option<String>,
     /// The refusing outcome of the last attempt.
     pub outcome: String,
     /// The error that outcome declares.
@@ -585,6 +596,10 @@ pub struct Host {
     /// The routes of the event bindings this host may retry, by binding name: read from its own
     /// routes, never from an envelope, so a peer's frame does not decide the policy.
     retrying: BTreeMap<String, Arc<Route>>,
+    /// The qualified command whose run staged each envelope in flight between this host's own
+    /// components, by the publishing component and the envelope's id; taken when the envelope is
+    /// invoked ([`Failed::caused_by`]). Empty in a run split over processes.
+    staged_by: BTreeMap<(String, DeliveryId), String>,
 }
 
 impl std::fmt::Debug for Host {
@@ -996,6 +1011,7 @@ impl Host {
             mint: Box::new(UuidV4),
             seed: None,
             retrying,
+            staged_by: BTreeMap::new(),
         };
         if seeded { host.seeded(0) } else { Ok(host) }
     }
@@ -1493,7 +1509,7 @@ impl Host {
                 });
             }
         }
-        self.unmet(&component, &mut report);
+        self.unmet(&component, command, &mut report);
         self.settle(&mut report, &mut Deliveries::default())?;
         Ok(report)
     }
@@ -1823,6 +1839,7 @@ impl Host {
             .collect();
         if !sent.is_empty() {
             held.position += 1;
+            let first = held.sender.next_delivery();
             for event in sent {
                 held.sender.publish(
                     held.position,
@@ -1831,6 +1848,13 @@ impl Host {
                         fields: event.payload.clone(),
                     },
                 )?;
+            }
+            if self.remote.is_none() {
+                let DeliveryId(after) = held.sender.next_delivery();
+                for id in first.0..after {
+                    self.staged_by
+                        .insert((component.to_owned(), DeliveryId(id)), command.to_owned());
+                }
             }
             held.sender.mark_durable(held.position);
             held.sender.flush()?;
@@ -1847,7 +1871,7 @@ impl Host {
         cause: Cause,
         report: &mut Report,
     ) -> Result<(), HostError> {
-        self.attempt(component, command, input, cause, None, report)
+        self.attempt(component, command, input, cause, None, None, report)
     }
 
     /// Runs the command `envelope` carries; where this host's own route of `envelope.binding`
@@ -1855,9 +1879,12 @@ impl Host {
     /// attempt that is refused or does not execute and that the route answers with
     /// [`Failure::Retry`] ([`Route::answer`]: `on_failure: retry`, or the refusal's policy under
     /// `on_refusal`), until one takes effect, the route drops one, or [`RETRY_ATTEMPTS`] were
-    /// made, each attempt counted on the receiving component.
+    /// made, each attempt counted on the receiving component. A command it reports as refused or
+    /// not executed names the command whose run in this host staged `envelope`; one delivered
+    /// from another process names none.
     fn invoke(&mut self, envelope: &Envelope, report: &mut Report) -> Result<(), HostError> {
         let retried = self.retrying.get(&envelope.binding).cloned();
+        let caused_by = self.staged_by.remove(&(envelope.from.clone(), envelope.id));
         self.attempt(
             &envelope.to,
             &envelope.command.name,
@@ -1865,6 +1892,7 @@ impl Host {
             Cause::Delivered {
                 binding: envelope.binding.clone(),
             },
+            caused_by,
             retried.as_deref(),
             report,
         )
@@ -1872,13 +1900,15 @@ impl Host {
 
     /// Runs `command` once, or, when `retried` is the binding's route, again after each attempt
     /// the route answers with [`Failure::Retry`], up to [`RETRY_ATTEMPTS`] in all; reports the
-    /// attempt that took effect, or the last one.
+    /// attempt that took effect, or the last one, a refused or failed one as `caused_by`.
+    #[allow(clippy::too_many_arguments)]
     fn attempt(
         &mut self,
         component: &str,
         command: &str,
         input: &Map<String, Value>,
         cause: Cause,
+        caused_by: Option<String>,
         retried: Option<&Route>,
         report: &mut Report,
     ) -> Result<(), HostError> {
@@ -1917,6 +1947,7 @@ impl Host {
                     component: component.to_owned(),
                     command: command.to_owned(),
                     cause,
+                    caused_by,
                     outcome,
                     error,
                     attempts,
@@ -1932,18 +1963,21 @@ impl Host {
                     component: component.to_owned(),
                     command: command.to_owned(),
                     cause,
+                    caused_by,
                     error: error.to_string(),
+                    kind: Some(error.kind()),
                     attempts,
                 }),
             }
-            self.unmet(component, report);
+            self.unmet(component, command, report);
             return Ok(());
         }
     }
 
-    /// Reports every binding the events `component` just published triggered whose input was unmet
-    /// as a command that did not execute: its command was never sent ([`spindle_channel::Unmet`]).
-    fn unmet(&mut self, component: &str, report: &mut Report) {
+    /// Reports every binding the events `component` just published, running `command`, triggered
+    /// whose input was unmet as a command that did not execute: its command was never sent
+    /// ([`spindle_channel::Unmet`]), and `command` caused it.
+    fn unmet(&mut self, component: &str, command: &str, report: &mut Report) {
         let Some(held) = self.components.get_mut(component) else {
             return;
         };
@@ -1955,7 +1989,9 @@ impl Host {
                 cause: Cause::Delivered {
                     binding: unmet.binding,
                 },
+                caused_by: Some(command.to_owned()),
                 error: unmet.error.to_string(),
+                kind: None,
                 attempts: 0,
             }));
     }
@@ -2000,11 +2036,19 @@ impl Host {
         Ok(())
     }
 
+    /// How many envelopes this host holds the staging command of, for [`Failed::caused_by`]:
+    /// those staged between its own components and not yet invoked. Read by tests only.
+    #[doc(hidden)]
+    pub fn staged_envelopes(&self) -> usize {
+        self.staged_by.len()
+    }
+
     /// Takes every envelope still in flight off its channel without running it.
     fn discard(&mut self) -> Result<(), HostError> {
         for receiver in &mut self.receivers {
             receiver.discard()?;
         }
+        self.staged_by.clear();
         Ok(())
     }
 }

@@ -1,0 +1,118 @@
+domain: ledger.audit
+summary: Notes of posted entries, refusing an empty or a large one, and reviews of applied changes, refusing a flagged one.
+entities:
+  - name: ledger.audit.Note
+    identity:
+      name: entry_id
+      type: String
+    fields:
+      - name: amount
+        type: Integer
+    lifecycle:
+      initial: Noted
+      states: [Noted]
+      terminal: [Noted]
+  - name: ledger.audit.Clearance
+    identity:
+      name: entry_id
+      type: String
+    fields:
+      - name: amount
+        type: Integer
+    lifecycle:
+      initial: Cleared
+      states: [Cleared]
+      terminal: [Cleared]
+errors:
+  - name: ledger.audit.Empty
+    summary: The entry is 0, naming the entry.
+    fields:
+      - name: entry_id
+        type: String
+  - name: ledger.audit.Large
+    summary: The entry is over 1000, naming the entry.
+    fields:
+      - name: entry_id
+        type: String
+  - name: ledger.audit.Flagged
+    summary: The change is over 100 and is held for review, naming the entry.
+    fields:
+      - name: entry_id
+        type: String
+commands:
+  - name: ledger.audit.Record
+    input:
+      - name: entry_id
+        type: String
+      - name: amount
+        type: Integer
+    outcomes:
+      - name: empty
+        when: amount == 0
+        error: ledger.audit.Empty
+        payload:
+          ledger.audit.Empty: {entry_id: input.entry_id}
+        summary: An entry of 0 is refused.
+      - name: large
+        when: amount > 1000
+        error: ledger.audit.Large
+        payload:
+          ledger.audit.Large: {entry_id: input.entry_id}
+        summary: An entry over 1000 is refused.
+      - name: noted
+        creates: ledger.audit.Note
+        instance: entry_id
+        sets:
+          amount: input.amount
+        emits: [ledger.audit.Noted]
+        payload:
+          ledger.audit.Noted: {entry_id: input.entry_id}
+        summary: The entry is noted.
+  - name: ledger.audit.Review
+    input:
+      - name: entry_id
+        type: String
+      - name: amount
+        type: Integer
+    outcomes:
+      - name: flagged
+        when: amount > 100
+        error: ledger.audit.Flagged
+        payload:
+          ledger.audit.Flagged: {entry_id: input.entry_id}
+        summary: A change over 100 is refused as flagged.
+      - name: cleared
+        creates: ledger.audit.Clearance
+        instance: entry_id
+        sets:
+          amount: input.amount
+        emits: [ledger.audit.Cleared]
+        payload:
+          ledger.audit.Cleared: {entry_id: input.entry_id}
+        summary: The change is cleared.
+events:
+  - name: ledger.audit.Noted
+    fields:
+      - name: entry_id
+        type: String
+  - name: ledger.audit.Cleared
+    fields:
+      - name: entry_id
+        type: String
+views:
+  - name: ledger.audit.Notes
+    source: ledger.audit.Note
+    consistency: read_your_writes
+    fields:
+      - name: entry_id
+        type: String
+      - name: amount
+        type: Integer
+  - name: ledger.audit.Clearances
+    source: ledger.audit.Clearance
+    consistency: read_your_writes
+    fields:
+      - name: entry_id
+        type: String
+      - name: amount
+        type: Integer

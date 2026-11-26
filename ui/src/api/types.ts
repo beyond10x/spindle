@@ -39,6 +39,7 @@ export type {
   MetricFamily,
   Payload,
   RecentAnswer,
+  RefusedBound,
   RequestLog,
   RequestRecord,
   RequestTotals,

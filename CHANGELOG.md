@@ -34,7 +34,6 @@ are Spindle's releases.
   `{"$line": <n>, "pointer": "<JSON pointer>"}`, such as the identity line `n` minted; a reference
   to a line not answered before it, or to a pointer its answer lacks, rejects the line
   (`story:stdin-arrange-and-line-references`).
-
 - A command whose `ess-http/1` binding reads some input fields from the query string beside its
   `json` or `form` body (`request: {query: [input.<field>, ...]}`) is served, where its route
   answered `501`. Each listed field is read from the query string under its wire name as ESS
@@ -48,6 +47,16 @@ are Spindle's releases.
   ways to serve it: `--fixed-actor` with `--fixed-caller`, or `--trusted-caller-header` with
   `--trusted-caller-secret`. The route's reason, its answer and `GET /api/served` are unchanged
   (`story:caller-attributes-on-loopback`).
+- A command an event binding invokes that is refused, by an outcome that declares an error or by
+  the kernel, is listed in the record of the request that led to it, under `refused_bound`
+  (`spindle.observe.RefusedBound`): the binding, the component, the command, the command whose
+  event the binding carried (`caused_by`), the refusing outcome and its error, or the kernel's
+  error kind, and the attempts, never a value of the error's fields; and counted as
+  `spindle_bound_refusals_total{binding, command, refusal}` in `GET /__spindle/metrics`. The log
+  stays `spindle-requests/1`, and `GET /api/events` still lists only the events the run committed.
+  `spindle_host::Failed` and `RefusedCommand` carry `caused_by`, and `Failed` the kernel's error
+  `kind`; `spindle_channel::Sender::next_delivery` reads the id the next envelope carries
+  (`story:refused-bound-command-recorded`).
 
 ### Fixed
 
@@ -60,7 +69,6 @@ are Spindle's releases.
   kernel's, `spindle_kernel::integers`. A durable row a command created with `1.0` before this
   change is keyed `1.0` and is no longer found; it is not migrated
   (`story:integer-identity-any-spelling`).
-
 - The `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` archives run on glibc 2.17 and
   newer, where 0.21.0's needed `GLIBC_2.39`: `release.yml` links them through `cargo auditable
   zigbuild` against glibc 2.17, fails the row on any newer `GLIBC_` symbol version (`objdump -T`)

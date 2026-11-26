@@ -32,7 +32,8 @@
           "command": "library.notices.SendThanks",
           "reason": "binding thank-on-close: the input reader_id is unmet: … is not a library.notices.ReaderRef: its invariant … is false"
         }
-      ]
+      ],
+      "refused_bound": []
     },
     {
       "sequence": 0,
@@ -48,7 +49,8 @@
       "duration_us": 552653,
       "events": ["library.lending.LoanClosed"],
       "externals": [],
-      "unmet": []
+      "unmet": [],
+      "refused_bound": []
     }
   ]
 }

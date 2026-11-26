@@ -1,0 +1,39 @@
+domain: ledger.till
+summary: Entries the till posts, each once.
+entities:
+  - name: ledger.till.Entry
+    identity:
+      name: entry_id
+      type: String
+    fields:
+      - name: amount
+        type: Integer
+    lifecycle:
+      initial: Posted
+      states: [Posted]
+      terminal: [Posted]
+errors: []
+commands:
+  - name: ledger.till.Post
+    input:
+      - name: entry_id
+        type: String
+      - name: amount
+        type: Integer
+    outcomes:
+      - name: posted
+        creates: ledger.till.Entry
+        instance: entry_id
+        sets:
+          amount: input.amount
+        emits: [ledger.till.Posted]
+        payload:
+          ledger.till.Posted: {entry_id: input.entry_id, amount: input.amount}
+        summary: The entry is posted.
+events:
+  - name: ledger.till.Posted
+    fields:
+      - name: entry_id
+        type: String
+      - name: amount
+        type: Integer

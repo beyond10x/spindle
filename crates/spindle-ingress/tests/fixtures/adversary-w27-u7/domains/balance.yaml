@@ -1,0 +1,61 @@
+domain: ledger.balance
+summary: Changes to the balance, one per posted entry; an entry of 0 leaves it unchanged and is refused, and no change may exceed 1000.
+entities:
+  - name: ledger.balance.Change
+    identity:
+      name: entry_id
+      type: String
+    fields:
+      - name: amount
+        type: Integer
+    invariants:
+      - amount <= 1000
+    lifecycle:
+      initial: Applied
+      states: [Applied]
+      terminal: [Applied]
+errors:
+  - name: ledger.balance.Unchanged
+    summary: The entry leaves the balance unchanged, naming the entry.
+    fields:
+      - name: entry_id
+        type: String
+commands:
+  - name: ledger.balance.Apply
+    input:
+      - name: entry_id
+        type: String
+      - name: amount
+        type: Integer
+    outcomes:
+      - name: unchanged
+        when: amount == 0
+        error: ledger.balance.Unchanged
+        payload:
+          ledger.balance.Unchanged: {entry_id: input.entry_id}
+        summary: An entry of 0 leaves the balance unchanged and is refused.
+      - name: applied
+        creates: ledger.balance.Change
+        instance: entry_id
+        sets:
+          amount: input.amount
+        emits: [ledger.balance.Applied]
+        payload:
+          ledger.balance.Applied: {entry_id: input.entry_id, amount: input.amount}
+        summary: The entry changes the balance.
+events:
+  - name: ledger.balance.Applied
+    fields:
+      - name: entry_id
+        type: String
+      - name: amount
+        type: Integer
+views:
+  - name: ledger.balance.Changes
+    source: ledger.balance.Change
+    consistency: read_your_writes
+    fields:
+      - name: entry_id
+        type: String
+      - name: amount
+        type: Integer

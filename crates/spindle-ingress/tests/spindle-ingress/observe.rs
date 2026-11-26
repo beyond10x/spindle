@@ -575,3 +575,246 @@ fn a_long_unrouted_path_is_recorded_cut_to_its_bound() {
     let (_, log) = send(address, "GET", "/__spindle/requests");
     assert_eq!(log["requests"][0]["path"], "/no/…", "{log}");
 }
+
+/// The command `refused-bound`'s till accepts over the network.
+const POST: &str = "ledger.till.Post";
+/// The command `apply-posted` invokes on the balance for each posted entry.
+const APPLY: &str = "ledger.balance.Apply";
+
+/// `story:refused-bound-command-recorded`: the fixture `tests/fixtures/refused-bound`. The till's
+/// `Post`, reached over the network, publishes `Posted`, which the binding `apply-posted` carries
+/// to the balance's `Apply`. `Apply` refuses an entry of 0 as `unchanged`, declaring
+/// `ledger.balance.Unchanged` with the entry's id; it applies any other amount, and the kernel
+/// rejects one over 1000, which would break the change's invariant. Served observing, with the
+/// console, every read answered through the host's reader as `run --observe` answers it.
+struct Ledger {
+    host: Host,
+    listener: Listener,
+    address: SocketAddr,
+    method: String,
+    path: String,
+    _state: tempfile::TempDir,
+}
+
+impl Ledger {
+    fn new() -> Self {
+        let ir = spindle_spec::load(&fixtures().join("refused-bound"))
+            .expect("the refused-bound fixture compiles")
+            .ir;
+        let surface = Surface::new(&ir, &["till".to_owned()], None)
+            .expect("the till surface is served")
+            .with_console(spindle_ingress::HTTP_LOOPBACK)
+            .expect("the console is served")
+            .observing(16);
+        let post = surface
+            .routes()
+            .iter()
+            .find(|route| route.operation.name() == POST)
+            .expect("the surface serves Post");
+        let (method, path) = (post.method.to_string().to_uppercase(), post.path.clone());
+        let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let host = Host::new(ir, &in_memory(), Arc::new(ManualClock::new()), state.path())
+            .unwrap_or_else(|error| panic!("the host admits the ledger: {error}"));
+        let listener =
+            Listener::bind_reading(0, surface, host.reader()).expect("the listener binds");
+        let address = listener.local_addr();
+        Self {
+            host,
+            listener,
+            address,
+            method,
+            path,
+            _state: state,
+        }
+    }
+
+    /// Posts `amount` as the entry `entry`, one request served on the host; its status must be
+    /// served, whatever the binding's command did.
+    fn post(&mut self, entry: &str, amount: i64) {
+        let (address, method, path) = (self.address, self.method.clone(), self.path.clone());
+        let body = serde_json::json!({ "entry_id": entry, "amount": amount });
+        let asked = thread::spawn(move || send_json(address, &method, &path, &body));
+        self.listener
+            .next(ARRIVAL)
+            .expect("the request arrives as an exchange")
+            .serve(&mut self.host);
+        let (status, answer) = asked.join().expect("the request thread ends");
+        assert!((200..300).contains(&status), "{status} {answer}");
+    }
+
+    /// The request log.
+    fn log(&self) -> Value {
+        let (status, log) = send(self.address, "GET", "/__spindle/requests");
+        assert_eq!(status, 200, "{log}");
+        log
+    }
+
+    /// The `refused_bound` list of the newest record.
+    fn refused_bound(&self) -> Value {
+        let log = self.log();
+        log["requests"][0]["refused_bound"].clone()
+    }
+
+    /// The metrics, as text.
+    fn metrics(&self) -> String {
+        let (status, metrics) = send_text(self.address, "GET", "/__spindle/metrics");
+        assert_eq!(status, 200, "{metrics}");
+        metrics
+    }
+}
+
+#[test]
+fn a_refused_bound_command_is_listed_with_its_cause() {
+    let mut ledger = Ledger::new();
+    ledger.post("entry-1", 0);
+
+    assert_eq!(
+        ledger.refused_bound(),
+        serde_json::json!([{
+            "binding": "apply-posted",
+            "component": "balance",
+            "command": APPLY,
+            "caused_by": POST,
+            "outcome": "unchanged",
+            "error": "ledger.balance.Unchanged",
+            "attempts": 1,
+        }])
+    );
+    let (status, events) = send(ledger.address, "GET", "/api/events");
+    assert_eq!(status, 200, "{events}");
+    assert_eq!(
+        events["events"],
+        serde_json::json!([{
+            "component": "till",
+            "command": POST,
+            "event": "ledger.till.Posted",
+            "payload": {"entry_id": "entry-1", "amount": 0},
+        }]),
+        "the event log lists the events the run committed and nothing of the refused Apply"
+    );
+}
+
+#[test]
+fn a_bound_command_that_runs_adds_no_refusal_entry() {
+    let mut ledger = Ledger::new();
+    ledger.post("entry-1", 10);
+
+    assert_eq!(ledger.refused_bound(), serde_json::json!([]));
+    let (status, events) = send(ledger.address, "GET", "/api/events");
+    assert_eq!(status, 200, "{events}");
+    let commands = events["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .map(|event| event["command"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(commands, [POST, APPLY], "{events}");
+}
+
+#[test]
+fn a_refused_bound_command_records_no_error_field_value() {
+    let mut ledger = Ledger::new();
+    let value = "entry-7f3a9c";
+    ledger.post(value, 0);
+
+    let listed = ledger.refused_bound();
+    let entry = &listed[0];
+    assert_eq!(entry["outcome"], "unchanged", "{listed}");
+    assert_eq!(entry["error"], "ledger.balance.Unchanged", "{listed}");
+    let mut members = entry
+        .as_object()
+        .expect("an entry is an object")
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    members.sort();
+    assert_eq!(
+        members,
+        [
+            "attempts",
+            "binding",
+            "caused_by",
+            "command",
+            "component",
+            "error",
+            "outcome"
+        ],
+        "{listed}"
+    );
+    assert!(
+        !listed.to_string().contains(value),
+        "the error's field value {value:?} is not recorded: {listed}"
+    );
+}
+
+#[test]
+fn a_refused_bound_command_is_counted_in_the_metrics() {
+    let mut ledger = Ledger::new();
+    let family = "spindle_bound_refusals_total";
+    ledger.post("entry-1", 10);
+    let metrics = ledger.metrics();
+    assert!(
+        metrics
+            .lines()
+            .any(|line| line == format!("# TYPE {family} counter")),
+        "{metrics}"
+    );
+    assert!(
+        !metrics
+            .lines()
+            .any(|line| line.starts_with(&format!("{family}{{"))),
+        "no series before a refusal: {metrics}"
+    );
+
+    ledger.post("entry-2", 0);
+    ledger.post("entry-3", 5000);
+    let metrics = ledger.metrics();
+    let series = metrics
+        .lines()
+        .filter(|line| line.starts_with(&format!("{family}{{")))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        series,
+        [
+            format!(
+                "{family}{{binding=\"apply-posted\",command=\"{APPLY}\",refusal=\"broken_invariant\"}} 1"
+            ),
+            format!(
+                "{family}{{binding=\"apply-posted\",command=\"{APPLY}\",refusal=\"unchanged\"}} 1"
+            ),
+        ],
+        "{metrics}"
+    );
+}
+
+#[test]
+fn a_rejected_bound_command_is_listed_with_its_kind() {
+    let mut ledger = Ledger::new();
+    ledger.post("entry-1", 5000);
+
+    assert_eq!(
+        ledger.refused_bound(),
+        serde_json::json!([{
+            "binding": "apply-posted",
+            "component": "balance",
+            "command": APPLY,
+            "caused_by": POST,
+            "kind": "broken_invariant",
+            "attempts": 1,
+        }])
+    );
+}
+
+#[test]
+fn the_request_log_stays_version_1() {
+    let mut ledger = Ledger::new();
+    ledger.post("entry-1", 0);
+
+    let log = ledger.log();
+    assert_eq!(log["format"], "spindle-requests/1", "{log}");
+    assert_eq!(
+        log["requests"][0]["refused_bound"].as_array().map(Vec::len),
+        Some(1),
+        "{log}"
+    );
+}

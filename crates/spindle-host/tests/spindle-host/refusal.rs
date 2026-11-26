@@ -218,3 +218,162 @@ fn refusal_attempts_are_counted() {
     );
     assert_eq!(counters.uncatalogued(), 0);
 }
+
+/// One length-prefixed link message, as a peer writes it.
+fn send_linked(stream: &mut std::net::TcpStream, message: &Value) {
+    use std::io::Write as _;
+    let body = serde_json::to_vec(message).expect("encodes");
+    let mut bytes = u32::try_from(body.len())
+        .expect("small")
+        .to_be_bytes()
+        .to_vec();
+    bytes.extend_from_slice(&body);
+    stream.write_all(&bytes).expect("the write");
+}
+
+/// `story:refused-bound-command-recorded`: a refused command whose envelope another process
+/// published names no command that caused it, since no command of this host published its
+/// event. The sink of the notice fixture runs on its own (`Host::component`); a stand-in source
+/// sends one `pin-post` envelope over its link, and `Pin`, with no board yet, is refused
+/// `no-board` on every attempt.
+#[test]
+fn a_refusal_from_another_process_has_no_cause() {
+    use std::net::{TcpListener, TcpStream};
+    use std::time::Duration;
+
+    const SOURCE: &str = "notice-source";
+    const SINK: &str = "notice-sink";
+    const PIN: &str = "notice.sink.Pin";
+
+    let loaded =
+        spindle_spec::load(&root().join("crates/spindle-host/tests/fixtures/adversary/notice"))
+            .expect("notice compiles");
+    let text = std::fs::read_to_string(root().join("examples/environments/laptop-processes.toml"))
+        .expect("laptop-processes.toml reads");
+    let environment = Environment::parse(&text).expect("an environment");
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
+    let mut sink = Host::component(
+        loaded.ir,
+        &environment,
+        Arc::new(ManualClock::new()),
+        state.path(),
+        SINK,
+    )
+    .expect("the sink is admitted");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let mut stream =
+        TcpStream::connect(listener.local_addr().expect("bound")).expect("the source connects");
+    send_linked(&mut stream, &json!({"hello": {"from": SOURCE, "to": SINK}}));
+    for _ in 0..400 {
+        sink.accept(&listener).expect("the listener works");
+        if sink.unlinked().is_empty() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(sink.unlinked(), Vec::<String>::new(), "the link opens");
+
+    let frame = json!({"deliver": {
+        "id": 1,
+        "binding": "pin-post",
+        "from": SOURCE,
+        "to": SINK,
+        "delivery": "at_least_once",
+        "on_failure": "retry",
+        "attempt": 1,
+        "command": {"name": PIN, "fields": {"board_id": "b1", "beat": "first"}},
+    }});
+    send_linked(&mut stream, &json!({ "frame": frame }));
+    let mut refused = Vec::new();
+    for _ in 0..200 {
+        let report = sink.deliver().expect("the sink delivers");
+        refused.extend(report.refused);
+        if refused.iter().any(|refused| refused.command == PIN) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let pinned = refused
+        .iter()
+        .find(|refused| refused.command == PIN)
+        .unwrap_or_else(|| panic!("the refused Pin is reported: {refused:?}"));
+    assert_eq!(pinned.outcome, "no-board", "{pinned:?}");
+    assert_eq!(
+        pinned.cause,
+        Cause::Delivered {
+            binding: "pin-post".to_owned()
+        }
+    );
+    assert_eq!(pinned.caused_by, None, "{pinned:?}");
+}
+
+/// `story:refused-bound-command-recorded`: an in-process delivery that is refused names the
+/// command whose run published the event its binding carried: `CloseLoan` published
+/// `LoanClosed`, which `thank-on-close` carried to `SendThanks`, refused `no-reader`.
+#[test]
+fn a_delivered_refusal_names_the_command_that_published_its_event() {
+    let notices = Notices::answering([Some("no-reader")]);
+    let (mut host, _state) = host(&notices, Retries::default());
+    let report = close(&mut host, "loan-1");
+
+    assert_eq!(report.refused.len(), 1, "{report:?}");
+    let refused = &report.refused[0];
+    assert_eq!(refused.command, THANK);
+    assert_eq!(refused.cause, delivered());
+    assert_eq!(refused.caused_by.as_deref(), Some(CLOSE), "{refused:?}");
+    assert_eq!(
+        host.staged_envelopes(),
+        0,
+        "the cause of an invoked envelope is not kept"
+    );
+}
+
+/// `story:refused-bound-command-recorded`: a host of one component of a run split over
+/// processes (`Host::component`) keeps no cause of an envelope it sends to a peer, which no
+/// command of this host will invoke. The source of the notice fixture runs on its own, linked to
+/// a listener standing in for the sink; `Post` publishes `Posted`, which `pin-post` sends over
+/// the link. The call stops at once instead of waiting for the sink to settle it.
+#[test]
+fn a_split_run_host_keeps_no_cause_of_an_envelope_it_sends_to_a_peer() {
+    use std::net::TcpListener;
+
+    const SOURCE: &str = "notice-source";
+    const SINK: &str = "notice-sink";
+
+    let loaded =
+        spindle_spec::load(&root().join("crates/spindle-host/tests/fixtures/adversary/notice"))
+            .expect("notice compiles");
+    let text = std::fs::read_to_string(root().join("examples/environments/laptop-processes.toml"))
+        .expect("laptop-processes.toml reads");
+    let environment = Environment::parse(&text).expect("an environment");
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
+    let mut source = Host::component(
+        loaded.ir,
+        &environment,
+        Arc::new(ManualClock::new()),
+        state.path(),
+        SOURCE,
+    )
+    .expect("the source is admitted");
+    let sink = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    source
+        .connect(SINK, sink.local_addr().expect("bound"))
+        .expect("the source links to the sink");
+    source.stop_when(|| true);
+
+    let Value::Object(input) = json!({"board_id": "b1", "beat": "first"}) else {
+        unreachable!("an object")
+    };
+    let submitted = source.submit("notice.source.Post", input);
+    assert!(
+        matches!(submitted, Err(spindle_host::HostError::Stopped)),
+        "{submitted:?}"
+    );
+    let counters = source.counters(SOURCE).expect("the source runs");
+    assert_eq!(
+        counters.value("binding.pin-post.sent"),
+        Some(1),
+        "the envelope was sent to the peer"
+    );
+    assert_eq!(source.staged_envelopes(), 0);
+}

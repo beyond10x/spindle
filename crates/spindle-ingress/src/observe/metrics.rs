@@ -3,8 +3,9 @@
 //! (`ess/fixtures/observe/metrics/families.json`), in its order.
 //!
 //! Read when scraped, beside the host's thread where the listener has the host's [`Reader`], else
-//! on it: the request and external cause families from the [`Recorder`] (the external causes as
-//! the run's decider noted them, [`Recorder::answered`]), the command, event, binding, timer and
+//! on it: the request, external cause and refused bound command families from the [`Recorder`]
+//! (the external causes as the run's decider noted them, [`Recorder::answered`], the refused
+//! bound commands as each request's record lists them), the command, event, binding, timer and
 //! store families from the [`Counters`] the host holds per component ([`Reader::counters`]), and
 //! the rows each entity holds as the host keeps them from its store's writes ([`Reader::rows`]),
 //! so a scrape reads no store and never waits for a command.
@@ -46,7 +47,7 @@ pub(crate) struct Family {
 
 /// Every family the metrics expose, in the order `ess/fixtures/observe/metrics/families.json`
 /// lists them; a unit test holds the two equal.
-pub(crate) const FAMILIES: [Family; 16] = [
+pub(crate) const FAMILIES: [Family; 17] = [
     Family {
         name: "spindle_http_requests_total",
         kind: "counter",
@@ -145,6 +146,14 @@ pub(crate) const FAMILIES: [Family; 16] = [
         labels: &["command", "outcome", "source"],
         summary: "External causes a served command asked about, by what answered each: world, \
                   file, default, call or unanswered.",
+    },
+    Family {
+        name: "spindle_bound_refusals_total",
+        kind: "counter",
+        labels: &["binding", "command", "refusal"],
+        summary: "Commands an event binding invoked while a request was answered that were \
+                  refused, as the request's record lists them, by binding, command and refusal: \
+                  the refusing outcome, or the kernel's error kind where it selected none.",
     },
     Family {
         name: "spindle_seed_commands_total",
@@ -386,6 +395,7 @@ pub(crate) fn exposition(recorder: &Recorder, host: &Reader, rows: Vec<(String, 
         scraped_us,
         resets,
         externals,
+        refusals,
         seed,
     } = recorder.traffic();
     for (labels, count) in requests {
@@ -422,6 +432,13 @@ pub(crate) fn exposition(recorder: &Recorder, host: &Reader, rows: Vec<(String, 
     for (labels, count) in externals {
         samples.add(
             "spindle_external_causes_total",
+            &labels,
+            Value::Number(count),
+        );
+    }
+    for (labels, count) in refusals {
+        samples.add(
+            "spindle_bound_refusals_total",
             &labels,
             Value::Number(count),
         );

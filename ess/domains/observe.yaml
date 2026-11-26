@@ -437,6 +437,17 @@ types:
           another component failed, a component's state could not be read or written, or another
           component stopped answering, the bindings found unmet before that failure are not
           listed.
+      - name: refused_bound
+        type: List<spindle.observe.RefusedBound>
+        summary: >-
+          Every command an event binding invoked while the request was answered that was refused
+          on its last attempt: first those a refusing outcome refused, then those the kernel
+          rejected, each in the order the runtime reported them. Empty when every one ran. Each
+          is counted in `spindle_bound_refusals_total`. The list is complete when everything the
+          request led to has run. When it stopped because bindings kept triggering each other,
+          only the kernel's rejections before that are listed; when it failed as `unmet` says,
+          none is. A command a timer fired, and one refused in another process of a run split
+          over processes, is in no record.
     invariants:
       - sequence >= 0
       - status >= 100
@@ -810,3 +821,54 @@ types:
           value the event carried never recorded: every value in the text (a quoted string, a
           list, an object, a number, `true`, `false` or `null`) is written `…`. At most 512
           bytes, cut with `…` where longer.
+
+  - name: spindle.observe.RefusedBound
+    kind: struct
+    naming:
+      summary: >-
+        One command an event binding invoked that was refused on its last attempt, so nothing it
+        would have written was written: refused by an outcome that declares an error, or rejected
+        by the kernel, which selected no outcome (an input, guard or invariant it could not
+        satisfy). The command that published the event stays committed, and the event log
+        (`GET /api/events`) lists only the events the run committed. ESS defines no observable
+        result for a refused bound command; this entry is Spindle's (`docs/design/spindle.md`
+        § 11, refused bound command). It names the error and never a value of its fields.
+    fields:
+      - name: binding
+        type: String
+        summary: The binding id.
+      - name: component
+        type: String
+        summary: The component that accepts the command.
+      - name: command
+        type: String
+        summary: The qualified name of the refused command.
+      - name: caused_by
+        type: Optional<String>
+        summary: >-
+          The qualified command whose run published the event the binding carried: the routed
+          command, or one an event binding invoked on the way. Absent where the event was
+          published in another process of a run split over processes.
+      - name: outcome
+        type: Optional<String>
+        summary: The refusing outcome the model selected; absent where the kernel rejected it.
+      - name: error
+        type: Optional<String>
+        summary: >-
+          The qualified name of the error that outcome declares; absent where the kernel
+          rejected it.
+      - name: kind
+        type: Optional<String>
+        summary: >-
+          Where the kernel rejected it, the kind of its error, as `spindle_command_failures_total`
+          labels it (`invalid_input`, `undecidable`, `undecided`, `no_value`, `invalid_value`,
+          `broken_invariant`, `undeclared`, `unsupported`, `store`, `not_granted`,
+          `unknown_command`); absent where an outcome refused it.
+      - name: attempts
+        type: Integer
+        summary: >-
+          How many times it was run, the last included: more than 1 only where the binding
+          retries.
+    invariants:
+      - attempts >= 1
+      - attempts <= 5

@@ -55,6 +55,7 @@ So a model of hundreds of commands that has run none writes one series, `spindle
 | `spindle_store_rows_written_total`, `spindle_store_bytes_written_total` | the component's first write |
 | `spindle_entity_rows` | the first scrape that finds the entity holding a row; it stays, at 0, after a reset |
 | `spindle_http_requests_total`, `spindle_http_request_duration_seconds`, `spindle_external_causes_total` | the first request or cause counted with those labels |
+| `spindle_bound_refusals_total` | the first refused bound command a request record listed with that binding, command and refusal |
 | `spindle_metrics_scrape_duration_seconds` | the second scrape; it reports how long the scrape before it took |
 | `spindle_resets_total` | the first scrape |
 | `spindle_seed_commands_total` | the first scrape of a run given a [seed](environment-and-admission.md#a-seed-submitted-at-start), each of `sent`, `applied`, `already_there` and `refused`; a run without one never writes it |
@@ -75,6 +76,16 @@ sent.
 
 The `reason` of each binding listed under `unmet` is bounded the same way: it gives the binding,
 the input and the type it expected, and not the value the event carried.
+
+Under `refused_bound`, a record lists each command an event binding invoked on the way that was
+refused, so nothing it would have written was written. An entry gives the binding, the component,
+the command, `caused_by` (the command whose event the binding carried), how many attempts ran, and
+why: the refusing `outcome` and the `error` it declares, or, where the kernel rejected the command,
+its error `kind` (`broken_invariant`, `invalid_input` and the rest). An entry holds no value of the
+error's fields. `GET /api/events` lists only the events the run committed, so a refused command
+shows there by its absence alone. `spindle_bound_refusals_total{binding, command, refusal}`
+counts the entries, `refusal` being the outcome or the kind. A command a timer fired, and one
+refused in another process of a run split over processes, is in no record.
 
 ## Resources
 

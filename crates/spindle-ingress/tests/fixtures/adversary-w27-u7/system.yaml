@@ -1,0 +1,78 @@
+format: ess/34
+system: ledger
+version: v1
+summary: A till posts entries; one binding applies each to the balance and one records it in the audit, and a third reviews each applied change, retrying a flagged one.
+domains:
+  - ledger.till
+  - ledger.balance
+  - ledger.audit
+components:
+  - component: till
+    summary: Posts entries.
+    owns:
+      domains:
+        - ledger.till
+    accepts:
+      commands:
+        - ledger.till.Post
+    publishes:
+      events:
+        - ledger.till.Posted
+    reached_by: network
+  - component: balance
+    summary: Applies posted entries; only a binding reaches it.
+    owns:
+      domains:
+        - ledger.balance
+    accepts:
+      commands:
+        - ledger.balance.Apply
+    publishes:
+      events:
+        - ledger.balance.Applied
+    reached_by: in_process
+  - component: audit
+    summary: Records posted entries and reviews applied changes; only a binding reaches it.
+    owns:
+      domains:
+        - ledger.audit
+    accepts:
+      commands:
+        - ledger.audit.Record
+        - ledger.audit.Review
+    publishes:
+      events:
+        - ledger.audit.Noted
+        - ledger.audit.Cleared
+    reached_by: in_process
+bindings:
+  - id: apply-posted
+    when:
+      event: ledger.till.Posted
+    invoke:
+      command: ledger.balance.Apply
+    mapping:
+      entry_id: event.entry_id
+      amount: event.amount
+    delivery: at_most_once
+    on_failure: drop
+  - id: record-posted
+    when:
+      event: ledger.till.Posted
+    invoke:
+      command: ledger.audit.Record
+    mapping:
+      entry_id: event.entry_id
+      amount: event.amount
+    delivery: at_most_once
+    on_failure: drop
+  - id: review-applied
+    when:
+      event: ledger.balance.Applied
+    invoke:
+      command: ledger.audit.Review
+    mapping:
+      entry_id: event.entry_id
+      amount: event.amount
+    delivery: at_most_once
+    on_failure: retry

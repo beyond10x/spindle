@@ -22,7 +22,8 @@
       "duration_us": 74,
       "events": [],
       "externals": [],
-      "unmet": []
+      "unmet": [],
+      "refused_bound": []
     },
     {
       "sequence": 5,
@@ -35,7 +36,8 @@
       "duration_us": 61,
       "events": [],
       "externals": [],
-      "unmet": []
+      "unmet": [],
+      "refused_bound": []
     },
     {
       "sequence": 4,
@@ -51,7 +53,8 @@
       "duration_us": 412,
       "events": [],
       "externals": [],
-      "unmet": []
+      "unmet": [],
+      "refused_bound": []
     },
     {
       "sequence": 3,
@@ -66,7 +69,8 @@
       "duration_us": 538,
       "events": [],
       "externals": [],
-      "unmet": []
+      "unmet": [],
+      "refused_bound": []
     },
     {
       "sequence": 2,
@@ -82,7 +86,8 @@
       "duration_us": 701,
       "events": [],
       "externals": [],
-      "unmet": []
+      "unmet": [],
+      "refused_bound": []
     },
     {
       "sequence": 1,
@@ -98,7 +103,8 @@
       "duration_us": 1243,
       "events": ["tasks.board.TaskClosed"],
       "externals": [],
-      "unmet": []
+      "unmet": [],
+      "refused_bound": []
     },
     {
       "sequence": 0,
@@ -114,7 +120,8 @@
       "duration_us": 1587,
       "events": ["tasks.board.TaskOpened"],
       "externals": [],
-      "unmet": []
+      "unmet": [],
+      "refused_bound": []
     }
   ]
 }

@@ -15,9 +15,11 @@
 //!
 //! A record keeps a bounded reason ([`reason`]): the answer's `refused` text with every value in
 //! it written `…`, at most [`REASON_MOST`] bytes, so a refused value is never recorded. Each
-//! unmet binding input it lists keeps its reason bounded the same way ([`UnmetInput::of`]). A
-//! record keeps the route template a request resolved to as its path, and of a request no route
-//! serves the first segment only, so it holds no resource identifier from a path ([`kept_path`]).
+//! unmet binding input it lists keeps its reason bounded the same way ([`UnmetInput::of`]), and
+//! each refused bound command it lists names the outcome and error, or the kernel's error kind,
+//! and no value of the error's fields ([`RefusedBound`]). A record keeps the route template a
+//! request resolved to as its path, and of a request no route serves the first segment only, so
+//! it holds no resource identifier from a path ([`kept_path`]).
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -27,7 +29,7 @@ use std::time::{Duration, SystemTime};
 
 use ess_gen::http::NOT_GRANTED;
 use serde_json::{Map, Value, json};
-use spindle_host::{Cause, Failed};
+use spindle_host::{Cause, Failed, RefusedCommand};
 use spindle_telemetry::DURATION_BOUNDS_US;
 
 use crate::answer::{Answer, NO_INPUT_FIELD};
@@ -321,9 +323,100 @@ impl UnmetInput {
     }
 }
 
+/// Why a bound command was refused: the refusing outcome the model selected, with the error it
+/// declares, or the kind of error the kernel answered where it selected none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Refusal {
+    Declared { outcome: String, error: String },
+    Rejected { kind: &'static str },
+}
+
+/// One command an event binding invoked that was refused, on its last attempt: by an outcome that
+/// declares an error, or by the kernel, which ran no outcome
+/// (`spindle.observe.RefusedBound`, `docs/design/spindle.md` § 11, refused bound command). It
+/// names the error, never a value of its fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RefusedBound {
+    binding: String,
+    component: String,
+    command: String,
+    caused_by: Option<String>,
+    refusal: Refusal,
+    attempts: u32,
+}
+
+impl RefusedBound {
+    /// The refused bound command `refused` reports, if an event binding invoked it.
+    pub(crate) fn refused(refused: &RefusedCommand) -> Option<Self> {
+        match &refused.cause {
+            Cause::Delivered { binding } => Some(Self {
+                binding: binding.clone(),
+                component: refused.component.clone(),
+                command: refused.command.clone(),
+                caused_by: refused.caused_by.clone(),
+                refusal: Refusal::Declared {
+                    outcome: refused.outcome.clone(),
+                    error: refused.error.name.clone(),
+                },
+                attempts: refused.attempts,
+            }),
+            _ => None,
+        }
+    }
+
+    /// The bound command the kernel rejected that `failed` reports, if it is one: one an event
+    /// binding invoked, at least once, and whose last attempt the kernel answered with an error
+    /// ([`Failed::kind`]). An unmet input, which no attempt ran, is not one ([`UnmetInput::of`]).
+    pub(crate) fn rejected(failed: &Failed) -> Option<Self> {
+        match (&failed.cause, failed.kind) {
+            (Cause::Delivered { binding }, Some(kind)) if failed.attempts > 0 => Some(Self {
+                binding: binding.clone(),
+                component: failed.component.clone(),
+                command: failed.command.clone(),
+                caused_by: failed.caused_by.clone(),
+                refusal: Refusal::Rejected { kind },
+                attempts: failed.attempts,
+            }),
+            _ => None,
+        }
+    }
+
+    /// The labels it is counted by in `spindle_bound_refusals_total`: the binding, the command,
+    /// and the refusing outcome or the kernel's error kind.
+    fn series(&self) -> [String; 3] {
+        let refusal = match &self.refusal {
+            Refusal::Declared { outcome, .. } => outcome.clone(),
+            Refusal::Rejected { kind } => (*kind).to_owned(),
+        };
+        [self.binding.clone(), self.command.clone(), refusal]
+    }
+
+    fn json(&self) -> Value {
+        let mut entry = Map::new();
+        entry.insert("binding".to_owned(), json!(self.binding));
+        entry.insert("component".to_owned(), json!(self.component));
+        entry.insert("command".to_owned(), json!(self.command));
+        if let Some(caused_by) = &self.caused_by {
+            entry.insert("caused_by".to_owned(), json!(caused_by));
+        }
+        match &self.refusal {
+            Refusal::Declared { outcome, error } => {
+                entry.insert("outcome".to_owned(), json!(outcome));
+                entry.insert("error".to_owned(), json!(error));
+            }
+            Refusal::Rejected { kind } => {
+                entry.insert("kind".to_owned(), json!(kind));
+            }
+        }
+        entry.insert("attempts".to_owned(), json!(self.attempts));
+        Value::Object(entry)
+    }
+}
+
 /// What the model answered a request with, beside its status and body: who answered, the outcome
-/// it selected, the events it published, every external cause asked while it was answered and
-/// every event binding whose input was unmet on the way.
+/// it selected, the events it published, every external cause asked while it was answered, every
+/// event binding whose input was unmet on the way and every command a binding invoked on the way
+/// that was refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Answered {
     pub(crate) by: By,
@@ -331,6 +424,7 @@ pub(crate) struct Answered {
     pub(crate) events: Vec<String>,
     pub(crate) externals: Vec<ExternalAnswer>,
     pub(crate) unmet: Vec<UnmetInput>,
+    pub(crate) refused_bound: Vec<RefusedBound>,
 }
 
 impl Answered {
@@ -342,6 +436,7 @@ impl Answered {
             events: Vec::new(),
             externals: Vec::new(),
             unmet: Vec::new(),
+            refused_bound: Vec::new(),
         }
     }
 
@@ -353,6 +448,7 @@ impl Answered {
             events,
             externals: Vec::new(),
             unmet: Vec::new(),
+            refused_bound: Vec::new(),
         }
     }
 
@@ -423,6 +519,7 @@ struct Record {
     events: Vec<String>,
     externals: Vec<ExternalAnswer>,
     unmet: Vec<UnmetInput>,
+    refused_bound: Vec<RefusedBound>,
 }
 
 impl Record {
@@ -470,6 +567,10 @@ impl Record {
             "unmet".to_owned(),
             Value::Array(self.unmet.iter().map(UnmetInput::json).collect()),
         );
+        record.insert(
+            "refused_bound".to_owned(),
+            Value::Array(self.refused_bound.iter().map(RefusedBound::json).collect()),
+        );
         Value::Object(record)
     }
 }
@@ -492,6 +593,9 @@ struct Ring {
     resets: u64,
     /// Every external cause answered, by command, outcome and source.
     externals: BTreeMap<[String; 3], u64>,
+    /// Every refused bound command a record listed, by binding, command and refusal
+    /// ([`RefusedBound::series`]).
+    refusals: BTreeMap<[String; 3], u64>,
     /// What the run's seed counted, where it was given one ([`Recorder::seeded`]).
     seed: Option<SeedCounts>,
     /// Whether the host's thread is answering a request ([`Recorder::serving`]).
@@ -535,6 +639,9 @@ pub(crate) struct Traffic {
     pub(crate) resets: u64,
     /// Every external cause answered, by command, outcome and source, in label order.
     pub(crate) externals: Vec<([String; 3], u64)>,
+    /// Every refused bound command a record listed, by binding, command and refusal, in label
+    /// order.
+    pub(crate) refusals: Vec<([String; 3], u64)>,
     /// What the run's seed counted, where it was given one.
     pub(crate) seed: Option<SeedCounts>,
 }
@@ -560,6 +667,7 @@ impl Recorder {
             rows_seen: BTreeSet::new(),
             resets: 0,
             externals: BTreeMap::new(),
+            refusals: BTreeMap::new(),
             seed: None,
             serving: false,
             answers: Vec::new(),
@@ -648,6 +756,9 @@ impl Recorder {
             });
             durations.counts[bucket] += 1;
             durations.sum_us = durations.sum_us.saturating_add(micros);
+            for refused in &note.answered.refused_bound {
+                *ring.refusals.entry(refused.series()).or_default() += 1;
+            }
             let record = Record {
                 sequence: ring.recorded,
                 at,
@@ -667,6 +778,7 @@ impl Recorder {
                 events: note.answered.events,
                 externals: note.answered.externals,
                 unmet: note.answered.unmet,
+                refused_bound: note.answered.refused_bound,
             };
             ring.recorded += 1;
             ring.totals[class.index()] += 1;
@@ -767,6 +879,11 @@ impl Recorder {
             resets: ring.resets,
             externals: ring
                 .externals
+                .iter()
+                .map(|(series, count)| (series.clone(), *count))
+                .collect(),
+            refusals: ring
+                .refusals
                 .iter()
                 .map(|(series, count)| (series.clone(), *count))
                 .collect(),
@@ -1285,7 +1402,7 @@ fn classes(query: &str) -> Result<Vec<Class>, String> {
 mod tests {
     use std::time::{Duration, UNIX_EPOCH};
 
-    use super::{Answered, By, Class, Note, Recorder, Reserved, Target};
+    use super::{Answered, By, Class, Note, Recorder, RefusedBound, Reserved, Target};
     use crate::answer::Answer;
     use crate::router::Response;
 
@@ -1612,5 +1729,69 @@ mod tests {
         assert_eq!(recorder.served(), vec![asked()]);
         recorder.answered(asked());
         assert_eq!(recorder.ring(|ring| ring.answers.len()), 0);
+    }
+
+    /// `story:refused-bound-command-recorded`: a refused command whose envelope came from another
+    /// process names no cause ([`spindle_host::RefusedCommand::caused_by`] `None`), and its entry
+    /// in the record has no `caused_by` member, rather than an empty or `null` one.
+    #[test]
+    fn a_refusal_without_a_cause_has_no_cause_member() {
+        let refused = spindle_host::RefusedCommand {
+            component: "balance".to_owned(),
+            command: "ledger.balance.Apply".to_owned(),
+            cause: spindle_host::Cause::Delivered {
+                binding: "apply-posted".to_owned(),
+            },
+            caused_by: None,
+            outcome: "unchanged".to_owned(),
+            error: spindle_kernel::DeclaredError {
+                name: "ledger.balance.Unchanged".to_owned(),
+                fields: serde_json::Map::from_iter([(
+                    "entry_id".to_owned(),
+                    serde_json::json!("entry-1"),
+                )]),
+                unknown_instance: false,
+            },
+            attempts: 1,
+        };
+        let entry = RefusedBound::refused(&refused).expect("a delivered refusal is listed");
+        let recorder = Recorder::new(4);
+        recorder.record(
+            UNIX_EPOCH,
+            Duration::from_micros(7),
+            "POST",
+            Target {
+                path: "/till/commands/Post",
+                query: "",
+            },
+            &Answer {
+                status: 200,
+                body: Some(serde_json::json!({"outcome": "posted", "published": []})),
+                headers: Vec::new(),
+            }
+            .into(),
+            Note {
+                route: Some("/till/commands/Post".to_owned()),
+                operation: Some("ledger.till.Post".to_owned()),
+                kind: Some("command"),
+                answered: Answered {
+                    refused_bound: vec![entry],
+                    ..Answered::model(Some("posted".to_owned()), Vec::new())
+                },
+            },
+        );
+        let log = recorder.log(&[]);
+        assert_eq!(
+            log["requests"][0]["refused_bound"],
+            serde_json::json!([{
+                "binding": "apply-posted",
+                "component": "balance",
+                "command": "ledger.balance.Apply",
+                "outcome": "unchanged",
+                "error": "ledger.balance.Unchanged",
+                "attempts": 1,
+            }]),
+            "{log}"
+        );
     }
 }

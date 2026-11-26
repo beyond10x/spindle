@@ -25,7 +25,8 @@
       "duration_us": 688,
       "events": [],
       "externals": [],
-      "unmet": []
+      "unmet": [],
+      "refused_bound": []
     },
     {
       "sequence": 1,
@@ -41,7 +42,8 @@
       "duration_us": 1190,
       "events": ["tasks.board.TaskClosed"],
       "externals": [],
-      "unmet": []
+      "unmet": [],
+      "refused_bound": []
     },
     {
       "sequence": 0,
@@ -57,7 +59,8 @@
       "duration_us": 1544,
       "events": ["tasks.board.TaskOpened"],
       "externals": [],
-      "unmet": []
+      "unmet": [],
+      "refused_bound": []
     }
   ]
 }

@@ -180,6 +180,13 @@ impl Sender {
         Ok(staged)
     }
 
+    /// The [`DeliveryId`] the next envelope this sender stages carries. Ids are minted one after
+    /// another, so the envelopes one [`publish`](Self::publish) staged carry every id from the one
+    /// this answers before it up to, not including, the one it answers after it. Reads only.
+    pub fn next_delivery(&self) -> DeliveryId {
+        DeliveryId(self.next)
+    }
+
     /// Every binding whose input was unmet since the last call, in the order published; each is
     /// returned once.
     pub fn take_unmet(&mut self) -> Vec<Unmet> {
