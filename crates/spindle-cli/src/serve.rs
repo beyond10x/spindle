@@ -12,7 +12,8 @@ use anyhow::{Context, Result, bail};
 use ess_gen::http::Binding;
 use spindle_capability::{Capability, Environment};
 use spindle_host::{Cause, Host, HostError, Retries, SystemClock};
-use spindle_ingress::{Caller, Listener, Surface, Unfixed};
+use spindle_ingress::console::{self, Worlds};
+use spindle_ingress::{Caller, Console, Exchange, Listener, Recorder, Surface, Unfixed};
 use spindle_spec::EssIr;
 
 use crate::decisions::{self, Run};
@@ -112,7 +113,8 @@ pub(crate) struct Serving<'a> {
     /// the proxy presents in [`Surface::SECRET_HEADER`]; given exactly when `caller_header` is.
     pub proxy_secret: Option<(&'a Path, String)>,
     /// The seed file read and checked before listening ([`crate::seed::load`]): its entries are
-    /// submitted once listening, one between each two exchanges ([`crate::seed::Seeding`]).
+    /// submitted once listening, one between each two exchanges ([`crate::seed::Seeding`]), and
+    /// again, all before the answer, after each reset with no world ([`reset_seeded`]).
     pub seed: Option<crate::seed::Seed>,
 }
 
@@ -247,7 +249,8 @@ fn carried(caller: &Caller) -> String {
 ///
 /// With `serving.seed`, its entries are submitted once listening, on this thread, one before each
 /// wait for the next exchange, so a request never waits for the whole seed; while one is left the
-/// wait does not block ([`Seeding`]).
+/// wait does not block ([`Seeding`]). A reset with no world submits them again, all of them, before
+/// it answers; a reset that gives a world does not ([`reset_seeded`]).
 pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     for caller in &serving.callers {
         fixed(&ir, caller)?;
@@ -427,6 +430,12 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             SIGNAL_POLL
         };
         if let Some(exchange) = listener.next(wait) {
+            if exchange.console() == Some(Console::Reset)
+                && let Some(seeding) = seeding.as_mut()
+            {
+                reset_seeded(exchange, &mut host, &worlds, seeding, recorder.as_ref());
+                continue;
+            }
             for failed in exchange.serve_with(&mut host, &worlds) {
                 let binding = match &failed.cause {
                     Cause::Delivered { binding } | Cause::Tick { binding } => binding.as_str(),
@@ -444,4 +453,30 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             }
         }
     }
+}
+
+/// Answers `exchange`, a `POST /api/reset` on a run with a seed: every store emptied and the world
+/// its body carries loaded, as [`console::reset`] answers it, and the reset counted on `recorder`
+/// where it succeeded. Where the body gives no world ([`console::carries_world`]), `seeding` is
+/// then submitted again from its first entry to its end ([`Seeding::restart`],
+/// [`Seeding::finish`]) before the answer is sent, so the reset answers with the seed's effects in
+/// place (`story:reset-reapplies-seed`).
+fn reset_seeded(
+    exchange: Exchange,
+    host: &mut Host,
+    worlds: Worlds<'_>,
+    seeding: &mut Seeding,
+    recorder: Option<&Recorder>,
+) {
+    let answer = console::reset(host, exchange.body(), Some(worlds));
+    if answer.status == 200 {
+        if let Some(recorder) = recorder {
+            recorder.count_reset();
+        }
+        if !console::carries_world(exchange.body()) {
+            seeding.restart();
+            seeding.finish(host);
+        }
+    }
+    exchange.respond(answer);
 }

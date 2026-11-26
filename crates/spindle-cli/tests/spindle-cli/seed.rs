@@ -838,3 +838,379 @@ fn play_and_deploy_refuse_an_environment_with_a_seed() {
         );
     }
 }
+
+const ROLE: &str = "vault.access.Role";
+const ROLES: &str = "vault.access.Roles";
+
+/// The method and path ESS publishes for the operation `id` of the fixture's component `gate`.
+fn route(id: &str) -> (String, String) {
+    let loaded = spindle_spec::load(&root().join(SPEC)).expect("the fixture compiles");
+    let component = loaded
+        .ir
+        .components()
+        .values()
+        .find(|component| component.name.as_str() == "gate")
+        .expect("the fixture declares the component");
+    let document: Value = serde_json::from_str(&ess_gen::openapi::json(&loaded.ir, component))
+        .expect("the projection is JSON");
+    for (path, item) in document["paths"].as_object().expect("paths") {
+        for (method, operation) in item.as_object().expect("a path item") {
+            if operation["operationId"] == id {
+                return (method.to_uppercase(), path.clone());
+            }
+        }
+    }
+    panic!("the contract declares no operation {id}")
+}
+
+/// One HTTP/1.1 exchange on its own connection, `body` sent as JSON: the status and the body.
+fn sent(address: SocketAddr, method: &str, path: &str, body: &str) -> (u16, String) {
+    let mut stream = TcpStream::connect_timeout(&address, ANSWER).expect("the listener accepts");
+    stream
+        .set_read_timeout(Some(ANSWER))
+        .expect("a read timeout");
+    write!(
+        stream,
+        "{method} {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    )
+    .expect("the request is written");
+    let mut answer = Vec::new();
+    stream
+        .read_to_end(&mut answer)
+        .expect("the answer is read before the timeout");
+    let answer = String::from_utf8(answer).expect("the answer is UTF-8");
+    let (head, body) = answer
+        .split_once("\r\n\r\n")
+        .unwrap_or_else(|| panic!("an answer with a head: {answer:?}"));
+    let status = head
+        .split(' ')
+        .nth(1)
+        .and_then(|status| status.parse().ok())
+        .unwrap_or_else(|| panic!("a status line: {head:?}"));
+    (status, body.to_owned())
+}
+
+/// `POST /api/reset` on the run at `address` with `world` as its body, or none: the status and
+/// the JSON body.
+fn reset(address: SocketAddr, world: Option<&Value>) -> (u16, Value) {
+    let body = world.map(Value::to_string).unwrap_or_default();
+    let (status, body) = sent(address, "POST", "/api/reset", &body);
+    let body = serde_json::from_str(&body).unwrap_or_else(|error| panic!("{error}: {body:?}"));
+    (status, body)
+}
+
+/// The rows the view `vault.access.Roles` answers, in identity order.
+fn roles(served: &Served) -> Vec<Value> {
+    let (method, path) = route(ROLES);
+    let (status, body) = sent(served.address, &method, &path, "");
+    assert_eq!(status, 200, "{body}");
+    let body: Value = serde_json::from_str(&body).expect("the view answers JSON");
+    let mut rows = body["rows"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the view answers rows: {body}"))
+        .clone();
+    rows.sort_by_key(|row| row["role_id"].to_string());
+    rows
+}
+
+/// The identities of the rows the view `vault.access.Roles` answers, in order.
+fn role_ids(served: &Served) -> Vec<String> {
+    roles(served)
+        .iter()
+        .map(|row| row["role_id"].as_str().unwrap_or_default().to_owned())
+        .collect()
+}
+
+/// A world holding one active role, `guest`, of the tenant `east`.
+fn guest_world() -> Value {
+    json!({"rows": [{"entity": ROLE, "identity": "guest", "state": "Active",
+                     "fields": {"title": "Guest", "tenant": "east"}}]})
+}
+
+/// `spindle_resets_total` at the run at `address`'s `/__spindle/metrics`.
+fn resets(address: SocketAddr) -> u64 {
+    let (status, text) = exchange(address, "GET", "/__spindle/metrics", &[]);
+    assert_eq!(status, 200, "{text}");
+    text.lines()
+        .find_map(|line| line.strip_prefix("spindle_resets_total "))
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_else(|| panic!("no series spindle_resets_total in {text}"))
+}
+
+impl Served {
+    /// Waits for the `count`-th end line of the seed; answers it.
+    fn ended_times(&mut self, count: usize) -> String {
+        let deadline = Instant::now() + ANSWER;
+        loop {
+            let ends: Vec<&String> = self
+                .seen
+                .iter()
+                .filter(|line| line.contains(" ended: "))
+                .collect();
+            if let Some(line) = ends.get(count - 1) {
+                return (*line).clone();
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            let Ok(line) = self.stderr.recv_timeout(left) else {
+                panic!(
+                    "no end line number {count} of the seed within {ANSWER:?}: {:#?}",
+                    self.seen
+                );
+            };
+            self.seen.push(line);
+        }
+    }
+}
+
+/// A desk on 127.0.0.1 answering every vouch request `{"holds": true}`, one at a time, each only
+/// once `release` is sent; `asked` is sent as each request arrives.
+fn holding_desk() -> (SocketAddr, mpsc::Receiver<()>, mpsc::Sender<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("the desk binds");
+    let address = listener.local_addr().expect("the desk has an address");
+    let (asked, arrived) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else { return };
+            let _ = stream.set_read_timeout(Some(ANSWER));
+            let mut reader = BufReader::new(stream);
+            let mut length = 0;
+            loop {
+                let mut header = String::new();
+                if reader.read_line(&mut header).is_err() {
+                    return;
+                }
+                let header = header.trim_end().to_ascii_lowercase();
+                if header.is_empty() {
+                    break;
+                }
+                if let Some(value) = header.strip_prefix("content-length:") {
+                    length = value.trim().parse().unwrap_or(0);
+                }
+            }
+            let mut body = vec![0; length];
+            if reader.read_exact(&mut body).is_err() {
+                return;
+            }
+            if asked.send(()).is_err() || released.recv_timeout(STARTUP).is_err() {
+                return;
+            }
+            let body = json!({"holds": true}).to_string();
+            let _ = write!(
+                reader.into_inner(),
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    (address, arrived, release)
+}
+
+/// A reset with no world on a seeded run answers only once the seed ran again: while the desk
+/// holds the seed's last entry the reset has not answered, and once it answers the view over the
+/// seeded entity holds the rows it held after the start (`story:reset-reapplies-seed`).
+#[test]
+fn a_reset_of_a_seeded_run_applies_the_seed_again() {
+    let directory = scratch();
+    let (desk, asked, release) = holding_desk();
+    let seed = write(
+        &directory,
+        "seed.json",
+        &json!([
+            grant("admin", "north", "seed-1"),
+            grant("auditor", "south", "seed-2"),
+            {
+                "command": VOUCH,
+                "input": {"voucher_id": "v-1", "role_id": "admin"},
+                "actor": VISITOR,
+                "request_id": "seed-3",
+            },
+        ])
+        .to_string(),
+    );
+    let document = environment(&directory, "memory", Some(desk), "");
+    let mut served = serve(&["--environment", &document, "--seed", &seed, "--observe"]);
+    asked
+        .recv_timeout(ANSWER)
+        .expect("the start's seed asks the desk");
+    release.send(()).expect("the desk is released");
+    let ended = served.ended();
+    assert!(
+        ended.contains("3 sent, 3 applied, 0 already there, 0 refused"),
+        "{ended}"
+    );
+    let started = roles(&served);
+    assert_eq!(
+        started
+            .iter()
+            .map(|row| row["role_id"].clone())
+            .collect::<Vec<_>>(),
+        vec![json!("admin"), json!("auditor")],
+        "{started:#?}"
+    );
+    let started_events = published(&served.events(&[]));
+    assert_eq!(started_events.len(), 3, "{started_events:#?}");
+
+    let address = served.address;
+    let (answered, answer) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = answered.send(reset(address, None));
+    });
+    asked
+        .recv_timeout(ANSWER)
+        .expect("the reset's seed asks the desk again");
+    assert!(
+        answer.recv_timeout(Duration::from_millis(500)).is_err(),
+        "the reset answers only once its seed has run to its end"
+    );
+    release.send(()).expect("the desk is released");
+    let (status, body) = answer
+        .recv_timeout(ANSWER)
+        .expect("the reset answers once its seed ended");
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body, json!({"emptied": ["gate"]}));
+    assert_eq!(
+        roles(&served),
+        started,
+        "the view holds the seeded rows after the reset, as after the start"
+    );
+    assert_eq!(published(&served.events(&[])), started_events);
+    assert_eq!(resets(served.address), 1, "the reset is counted");
+    let ended = served.ended_times(2);
+    assert!(
+        ended.contains("3 sent, 3 applied, 0 already there, 0 refused"),
+        "{ended}"
+    );
+}
+
+/// The end line and the counts in `/__spindle/metrics` after a reset are those of the seed run
+/// the reset started, not a sum with the start's: the request ids the start's run remembered are
+/// forgotten with the rows they wrote.
+#[test]
+fn the_seed_counts_after_a_reset_are_those_of_the_new_run() {
+    let directory = scratch();
+    let seed = write(
+        &directory,
+        "seed.json",
+        &json!([
+            grant("admin", "north", "seed-1"),
+            grant("auditor", "north", "seed-2"),
+            grant("admin", "north", "seed-1"),
+        ])
+        .to_string(),
+    );
+    let document = environment(&directory, "memory", None, "");
+    let mut served = serve(&[
+        "--environment",
+        &document,
+        "--seed",
+        &seed,
+        "--answer-default",
+        "--observe",
+    ]);
+    let ended = served.ended();
+    assert!(
+        ended.contains("3 sent, 2 applied, 1 already there, 0 refused"),
+        "{ended}"
+    );
+    assert_eq!(counted(served.address), [3, 2, 1, 0]);
+
+    let (status, body) = reset(served.address, None);
+    assert_eq!(status, 200, "{body}");
+    let again = served.ended_times(2);
+    assert!(
+        again.contains("3 sent, 2 applied, 1 already there, 0 refused"),
+        "the counts of the reset's seed run alone: {again}"
+    );
+    assert!(again.contains(&seed), "{again}");
+    assert_eq!(counted(served.address), [3, 2, 1, 0]);
+    assert_eq!(role_ids(&served), ["admin", "auditor"]);
+}
+
+/// A reset whose body gives a world on a seeded run loads that world alone: its rows and none of
+/// the seed's, and the seed does not run again.
+#[test]
+fn a_reset_with_a_world_does_not_seed() {
+    let directory = scratch();
+    let seed = write(
+        &directory,
+        "seed.json",
+        &json!([grant("admin", "north", "seed-1")]).to_string(),
+    );
+    let document = environment(&directory, "memory", None, "");
+    let mut served = serve(&[
+        "--environment",
+        &document,
+        "--seed",
+        &seed,
+        "--answer-default",
+        "--observe",
+    ]);
+    let ended = served.ended();
+    assert!(ended.contains("1 sent, 1 applied"), "{ended}");
+    assert_eq!(role_ids(&served), ["admin"]);
+
+    let (status, body) = reset(served.address, Some(&guest_world()));
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body, json!({"emptied": ["gate"]}));
+    assert_eq!(
+        role_ids(&served),
+        ["guest"],
+        "the world's rows and none of the seed's"
+    );
+    assert!(served.events(&[]).is_empty(), "the seed published nothing");
+    assert_eq!(counted(served.address), [1, 1, 0, 0]);
+    assert_eq!(resets(served.address), 1);
+    let stderr = served.stop();
+    let ends = stderr
+        .iter()
+        .filter(|line| line.contains(" ended: "))
+        .count();
+    assert_eq!(ends, 1, "the seed ran at the start alone: {stderr:#?}");
+}
+
+/// A reset on a run without a seed answers as before: with no world it empties every store, with
+/// one it loads that world.
+#[test]
+fn a_run_without_a_seed_resets_as_before() {
+    let directory = scratch();
+    let document = environment(&directory, "memory", None, "");
+    let caller = json!({"tenant": "north"}).to_string();
+    let served = serve(&[
+        "--environment",
+        &document,
+        "--answer-default",
+        "--observe",
+        "--fixed-actor",
+        OPERATOR,
+        "--fixed-caller",
+        &caller,
+    ]);
+    let (method, path) = route(GRANT);
+    let (status, body) = sent(
+        served.address,
+        &method,
+        &path,
+        &json!({"role_id": "admin", "title": "Admin"}).to_string(),
+    );
+    assert!((200..300).contains(&status), "{status} {body}");
+    assert_eq!(role_ids(&served), ["admin"]);
+
+    let (status, body) = reset(served.address, None);
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body, json!({"emptied": ["gate"]}));
+    assert!(role_ids(&served).is_empty(), "the reset emptied the store");
+    assert!(served.events(&[]).is_empty());
+
+    let (status, body) = reset(served.address, Some(&guest_world()));
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(role_ids(&served), ["guest"]);
+    assert_eq!(resets(served.address), 2);
+    let stderr = served.stop();
+    assert!(
+        stderr.iter().all(|line| !line.contains(" ended: ")),
+        "a run without a seed prints no end line: {stderr:#?}"
+    );
+}

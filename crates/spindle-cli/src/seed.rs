@@ -15,6 +15,11 @@
 //! ids across starts or replicas (`story:request-id-idempotency`). An entry whose id only a
 //! refused entry carried is submitted again, and counts as what it becomes: the refusal left
 //! nothing there, and what refused it may since have changed.
+//!
+//! A `POST /api/reset` with no world submits the seed again from its first entry, once every store
+//! is empty and before the reset answers, as a start does: the request ids remembered and the
+//! counts start again ([`Seeding::restart`], `story:reset-reapplies-seed`). A reset that gives a
+//! world loads that world alone.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -227,6 +232,30 @@ impl Seeding {
     /// Whether an entry is left to submit.
     pub(crate) fn pending(&self) -> bool {
         self.next < self.seed.entries.len()
+    }
+
+    /// Starts the seed again from its first entry, as a start does: no request id remembered,
+    /// every count zero and noted so, and the end line printed again once it ends. A reset with
+    /// no world calls it once every store is empty (`story:reset-reapplies-seed`).
+    pub(crate) fn restart(&mut self) {
+        eprintln!(
+            "b10x-spindle: seed {}: {} entries, submitted again after a reset, before it answers",
+            self.seed.path.display(),
+            self.seed.len()
+        );
+        self.next = 0;
+        self.submitted.clear();
+        self.counts = SeedCounts::default();
+        self.ended = false;
+        self.note();
+    }
+
+    /// Submits every entry left to `host`, one after another, then prints the end line.
+    pub(crate) fn finish(&mut self, host: &mut Host) {
+        while self.pending() {
+            self.step(host);
+        }
+        self.step(host);
     }
 
     /// Submits the next entry to `host`, or, once none is left, prints the end line once. A

@@ -26,6 +26,12 @@ are Spindle's releases.
   outbox for a later one. An event its component does not publish but another component does is
   still refused by `Sender::publish` and not delivered
   (`story:command-with-unpublished-event-served`).
+- `POST /api/reset` with no world on a run started with a seed (`run --seed`, or the environment's
+  `[seed] file`) submits the seed again, from its first entry to its end, before it answers, where
+  it emptied the store and left the seeded rows gone. The end line and
+  `spindle_seed_commands_total` then give the counts of that seed run alone, and the reset is
+  still counted in `spindle_resets_total`. A reset whose body gives a world loads that world alone
+  and does not submit the seed (`story:reset-reapplies-seed`).
 
 ## [0.20.2] - 2026-11-25
 

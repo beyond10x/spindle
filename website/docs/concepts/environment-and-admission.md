@@ -231,9 +231,11 @@ the file, for that start. The run submits the whole file on every start, so:
   the last start, and a move from a state the row has left is refused and counted `refused`.
 - Two replicas starting at once each submit the whole file; only `existing_instance:` outcomes keep
   that from writing twice.
-- `POST /api/reset` empties every store, so what the seed wrote is gone after a reset, and the seed
-  is not submitted again. A reset loads exactly the world it is given; restart the run to seed
-  again, or put the seeded rows into the world.
+- `POST /api/reset` with no world empties every store and then submits the seed again, from its
+  first entry to its end, before it answers: the request ids the run remembered are forgotten, the
+  counts start again from zero and the end line is printed again. A reset whose body gives a world
+  loads that world alone and does not submit the seed; put the seeded rows into the world to keep
+  them.
 - Only a served `run` submits a seed. `play` and `deploy` stop with exit 1 on an environment
   document with a `[seed]` table, as `run` does where nothing requires `ingress.network`.
 
