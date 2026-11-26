@@ -2,14 +2,15 @@
 format: aep.planning-md/3
 id: story:guard-over-absent-row-field
 kind: story
-status: active
+status: implemented
 title: A guard over an absent optional field of a held row is decided as ESS decides it
 relations:
 - serves: vision:spindle
-revision: 11
+revision: 12
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-26T18:58:23Z", actor: "human:operator", revision: 10, decided_on: {"recorded":{"review_outcome":14}}}
 - {from: "proposed", to: "active", at: "2026-11-26T18:58:23Z", actor: "human:operator", revision: 11, decided_on: {"recorded":{"review_outcome":14}}}
+- {from: "active", to: "implemented", at: "2026-11-26T22:17:36Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"test_result":1,"review_outcome":15}}}
 ---
 # A guard over an absent optional field of a held row is decided as ESS decides it
 

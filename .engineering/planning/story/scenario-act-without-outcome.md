@@ -2,14 +2,15 @@
 format: aep.planning-md/3
 id: story:scenario-act-without-outcome
 kind: story
-status: active
+status: implemented
 title: A scenario act that states no outcome is reported as ESS's runner reports it
 relations:
 - serves: vision:spindle
-revision: 12
+revision: 13
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-26T18:58:25Z", actor: "human:operator", revision: 11, decided_on: {"recorded":{"review_outcome":14}}}
 - {from: "proposed", to: "active", at: "2026-11-26T18:58:25Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"review_outcome":14}}}
+- {from: "active", to: "implemented", at: "2026-11-26T22:17:37Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"test_result":1,"review_outcome":15}}}
 ---
 # A scenario act that states no outcome is reported as ESS's runner reports it
 
