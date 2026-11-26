@@ -14,6 +14,7 @@ tasks:
       - aep plan artifact validate
       - task: check:the_ess_pin_is_one_release
       - task: check:changed_paths_are_classified
+      - task: check:the_release_binary_checks_refuse_what_they_must
       - task: check:within_fails_over_its_bound
       - ess specify validate --path ess
       - ess specify validate --path examples/rally/ess
@@ -43,6 +44,11 @@ tasks:
     cmds:
       - sh scripts/changed-paths.sh test
       - sh scripts/gate-scripts.adversary-test.sh
+
+  check:the_release_binary_checks_refuse_what_they_must:
+    desc: scripts/release-linux-binary.sh, the release job's glibc floor, static and image checks, refuses a binary over the floor, one that is not static and an image not pinned by digest, on stub tools; and release.yml's target lists equal its build matrix
+    cmds:
+      - sh scripts/release-linux-binary.adversary-test.sh
 
   check:within_fails_over_its_bound:
     desc: scripts/within.sh, the timer of the test step and the wasm lanes, passes a command within its bound, fails one that runs over it and passes on a failing command's own status

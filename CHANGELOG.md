@@ -6,6 +6,16 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- The `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` archives run on glibc 2.17 and
+  newer, where 0.21.0's needed `GLIBC_2.39`: `release.yml` links them through `cargo auditable
+  zigbuild` against glibc 2.17, fails the row on any newer `GLIBC_` symbol version (`objdump -T`)
+  and runs `--version` in `debian:bookworm`. A new archive,
+  `b10x-spindle-<version>-x86_64-unknown-linux-musl.tar.gz`, carries a static binary, checked for
+  no `INTERP` and no `NEEDED` and run in Alpine; the SBOM covers the five targets and
+  `SHA256SUMS` the five archives (`story:release-linux-glibc-floor-and-musl`).
+
 ## [0.21.0] - 2026-11-26
 
 ### Added
