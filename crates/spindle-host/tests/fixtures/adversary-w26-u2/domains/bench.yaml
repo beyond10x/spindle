@@ -1,0 +1,235 @@
+domain: org.bench
+summary: Cards, each with a title, a rank, an amount and slots that carry a code, an optional note, a tag and words.
+types:
+  - name: org.bench.CardId
+    kind: newtype
+    of: String
+  - name: org.bench.Meta
+    kind: struct
+    fields:
+      - name: tag
+        type: String
+  - name: org.bench.Slot
+    kind: struct
+    fields:
+      - name: code
+        type: String
+      - name: note
+        type: Optional<String>
+      - name: meta
+        type: org.bench.Meta
+      - name: words
+        type: List<String>
+entities:
+  - name: org.bench.Card
+    identity:
+      name: card_id
+      type: org.bench.CardId
+    fields:
+      - name: title
+        type: String
+      - name: rank
+        type: Integer
+      - name: amount
+        type: Decimal
+      - name: slots
+        type: List<org.bench.Slot>
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+commands:
+  - name: org.bench.AddCard
+    input:
+      - name: card_id
+        type: org.bench.CardId
+      - name: title
+        type: String
+      - name: rank
+        type: Integer
+      - name: amount
+        type: Decimal
+      - name: slots
+        type: List<org.bench.Slot>
+    outcomes:
+      - name: added
+        creates: org.bench.Card
+        instance: card_id
+        sets:
+          title: input.title
+          rank: input.rank
+          amount: input.amount
+          slots: input.slots
+        emits: [org.bench.CardAdded]
+        payload:
+          org.bench.CardAdded: {card_id: input.card_id}
+        summary: The card is kept.
+events:
+  - name: org.bench.CardAdded
+    fields:
+      - name: card_id
+        type: org.bench.CardId
+views:
+  - name: org.bench.KindIs
+    source: org.bench.Card
+    consistency: read_your_writes
+    params:
+      - {name: kinds, type: Optional<List<String>>}
+    filter:
+      any:
+        - all:
+            - {exists: {in: param.kinds, as: p, that: p == "high"}}
+            - rank > 1
+        - all:
+            - {exists: {in: param.kinds, as: p, that: p != "high"}}
+            - rank <= 1
+    fields: &fields
+      - name: card_id
+        type: org.bench.CardId
+      - name: title
+        type: String
+  - name: org.bench.RankList
+    source: org.bench.Card
+    consistency: read_your_writes
+    params:
+      - {name: ranks, type: Optional<List<Integer>>}
+    filter:
+      exists:
+        in: param.ranks
+        as: n
+        that:
+          all:
+            - n >= 2
+            - rank == n
+    fields: *fields
+  - name: org.bench.RankLimit
+    source: org.bench.Card
+    consistency: read_your_writes
+    params:
+      - {name: limit, type: Optional<Integer>}
+    filter:
+      any:
+        - all: [param.limit > 2, rank > 2]
+        - all: [param.limit <= 2, rank <= 2]
+    fields: *fields
+  - name: org.bench.ManyKinds
+    source: org.bench.Card
+    consistency: read_your_writes
+    params:
+      - {name: kinds, type: Optional<List<String>>}
+    filter:
+      any:
+        - all: [param.kinds.count >= 2, rank > 1]
+        - all: [param.kinds.count < 2, rank <= 1]
+    fields: *fields
+  - name: org.bench.DefinedCount
+    source: org.bench.Card
+    consistency: read_your_writes
+    params:
+      - {name: kinds, type: Optional<List<String>>}
+    filter:
+      any:
+        - all: [defined(param.kinds.count), rank > 1]
+        - all: [{not: defined(param.kinds.count)}, rank <= 1]
+    fields: *fields
+  - name: org.bench.AmountFloor
+    source: org.bench.Card
+    consistency: read_your_writes
+    params:
+      - {name: amount, type: Optional<Decimal>}
+    filter:
+      any:
+        - all: [param.amount >= 1.5, rank >= 2]
+        - all: [param.amount < 1.5, rank < 2]
+    fields: *fields
+  - name: org.bench.AtInstant
+    source: org.bench.Card
+    consistency: read_your_writes
+    params:
+      - {name: at, type: Optional<Timestamp>}
+    filter:
+      any:
+        - all: [param.at == "2026-03-01T00:00:00Z", rank >= 3]
+        - all: [param.at > "2026-03-01T00:00:00Z", rank == 2]
+        - all: [param.at < "2026-03-01T00:00:00Z", rank <= 1]
+    fields: *fields
+  - name: org.bench.NoteIs
+    source: org.bench.Card
+    consistency: read_your_writes
+    filter: {exists: {in: slots, as: g, that: g.note == "n1"}}
+    fields: *fields
+  - name: org.bench.NoteFolded
+    source: org.bench.Card
+    consistency: read_your_writes
+    filter:
+      exists:
+        in: slots
+        as: g
+        that:
+          all:
+            - defined(g.note)
+            - {g.note: {equals_ignore_case: N1}}
+    fields: *fields
+  - name: org.bench.MetaTag
+    source: org.bench.Card
+    consistency: read_your_writes
+    params:
+      - {name: tag, type: Optional<String>}
+    filter:
+      any:
+        - {not: defined(param.tag)}
+        - {exists: {in: slots, as: g, that: g.meta.tag == param.tag}}
+    fields: *fields
+  - name: org.bench.SlotWords
+    source: org.bench.Card
+    consistency: read_your_writes
+    filter:
+      exists:
+        in: slots
+        as: g
+        that: {exists: {in: g.words, as: w, that: w == "x"}}
+    fields: *fields
+  - name: org.bench.FoldNonAscii
+    source: org.bench.Card
+    consistency: read_your_writes
+    filter: {title: {in_ignore_case: ["éclair", "STRASSE"]}}
+    fields: *fields
+  - name: org.bench.TrimmedWord
+    source: org.bench.Card
+    consistency: read_your_writes
+    params:
+      - {name: word, type: Optional<String>}
+    filter:
+      any:
+        - all:
+            - {param.word: {trimmed: {equals_ignore_case: go}}}
+            - rank > 1
+        - all:
+            - {not: {param.word: {trimmed: {equals_ignore_case: go}}}}
+            - rank <= 1
+    fields: *fields
+  - name: org.bench.TrimmedTitle
+    source: org.bench.Card
+    consistency: read_your_writes
+    filter: {title: {trimmed: {in_ignore_case: [eclair, strasse]}}}
+    fields: *fields
+  - name: org.bench.AllNoted
+    source: org.bench.Card
+    consistency: read_your_writes
+    filter: {forall: {in: slots, as: g, that: defined(g.note)}}
+    fields: *fields
+  - name: org.bench.Paged
+    source: org.bench.Card
+    consistency: read_your_writes
+    params:
+      - {name: page, type: Integer}
+      - {name: size, type: Integer}
+      - {name: wanted, type: Optional<String>}
+    order_by: [title desc]
+    paging: {page: page, size: size, total: true}
+    filter:
+      any:
+        - {not: defined(param.wanted)}
+        - {param.wanted: {in_ignore_case: [every]}}
+        - {title: {trimmed: {equals_ignore_case: eclair}}}
+    fields: *fields
