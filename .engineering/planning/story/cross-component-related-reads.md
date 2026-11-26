@@ -42,7 +42,7 @@ scope:
   path: docs/design/spindle.md
 - confidence: cited
   path: website/docs/concepts/specification.md
-revision: 21
+revision: 25
 ---
 # A guard or an effect over another component's entity is refused or read from its owner
 
@@ -74,21 +74,25 @@ Found by a review of `0.19.0..0.19.1`, beside the value refusal.
 
 ## Acceptance
 
-- `a_guard_over_another_components_entity_is_refused_by_name`: on a two-component fixture, a
-  command with a `when_related:` guard over the other component's entity is named not served by
-  `admit` and `run`, and a request for it answers `unsupported` naming the entity, its owner and
-  the running component.
-- `a_row_set_guard_over_another_components_entity_is_refused_by_name`: the same for a row-set
-  guard.
-- `an_affects_entry_over_another_components_entity_is_refused_by_name`: the same for an
-  `affects:` entry, refused for the outcome alone.
-- `a_guard_over_the_running_components_entity_is_served`: a guard over the running component's
-  own entity answers as before.
+- `a_guard_over_another_components_row_is_read_from_its_owner`: on a two-component fixture served in
+  one host, a command with a `when_related:` guard over the other component's entity selects the
+  outcome ESS's interpreter selects, the row read from the owner's store; `admit` without
+  `--component` lists it served.
+- `a_row_set_guard_over_another_components_entity_is_read_from_its_owner`: the same for a row-set
+  guard with a rows quantifier.
+- `a_split_run_refuses_a_read_of_another_components_entity_by_name`: `admit --component <runner>`
+  and a `play --component` run name the command not served, naming the entity, its owner and the
+  running component.
+- `an_affects_entry_over_another_components_entity_is_refused_by_name`: refused by name in a one-host
+  run and in a split run, writing no row (D2 A; today nothing refuses it).
+- `a_guard_over_the_running_components_entity_is_served`: a guard over the running component's own
+  entity answers as before.
 
 ## Not covered
 
-- Reading another component's store in one process: a choice for after this refusal, recorded in
-  the design (§11) if taken.
+- Reading another component's store when the owner runs in another process (a split run): kept
+  refused by name.
+- Writing another component's entity (`affects:`): refused by name in every run.
 
 ## Joined 2026-11-26
 
@@ -189,9 +193,17 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
 Taken 2026-11-26 on the scoper's recommended option, each reversible, unless noted.
 
 - D2 A: an `affects:` entry over another component's entity is refused by name in
+  every run (today nothing refuses it).
 - D1 A, answered by the operator through the host operator, 2026-11-26 about 21:15 CET: the
   kernel's admission checks (`takes`, `check`, `execute_refusing`) take the set of components the
   store reaches, and a routing store in `Host::execute` reads each entity from its owner's store;
   `admit` passes all components, or the one `--component`; `component` passes one. A row in
   `docs/design/spindle.md` § 11 records it.
 - The one-host branch of the Outcome is the one delivered; a split run keeps the refusal by name.
+- The widening is additive: `takes`, `check`, `execute_refusing`, `execute_as` and the
+  `Surface` constructors keep their signatures and treat only the running component as reached;
+  new functions beside them (`takes_reaching`, `execute_reaching`, a `Surface` builder taking
+  the reached set) carry the set. Their other callers (`spindle-control`, `spindle-embed`, the
+  kernel and CLI test files, `main.rs:882`) stay unchanged.
+- `crates/spindle-kernel/src/lib.rs`: the new re-exports sit beside `runs` (`:95`); U5 adds its
+  export beside `admits` (`:104`); U5 merges first.

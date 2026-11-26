@@ -19,29 +19,35 @@ scope:
   path: crates/spindle-ingress/src/surface.rs
 - confidence: inferred
   path: docs/design/spindle.md
-revision: 10
+revision: 13
 ---
 # A loopback served run serves a command that reads its caller
 
 ## Outcome
 
-A command that reads caller attributes is served on a loopback run where no caller is fixed. Today
-the ingress names it not served, "this ingress does not serve the caller attributes it reads
-(`<attribute>`), which no HTTP caller proves here" (`crates/spindle-ingress/src/surface.rs`, `served`),
-unless the run fixes a caller (`--fixed-caller`) or is served behind a proxy that proves each caller
-(`Surface::proving_callers`, the caller header with the proxy secret). The story decides, when
-scoped, which of these holds and delivers it:
+A loopback served run already serves a command that reads caller attributes when the run fixes a
+caller (`--fixed-actor` with `--fixed-caller`) or each request proves one (`--trusted-caller-header`
+with `--trusted-caller-secret`, accepted on loopback). Without either, the ingress names the route not
+served, "this ingress does not serve the caller attributes it reads (`<attribute>`), which no HTTP
+caller proves here" (`crates/spindle-ingress/src/surface.rs`, `served`), and that text names neither
+setting. This story makes `run` name both settings on stderr when it reports such a route.
 
-- each request on a loopback run may prove its caller in the caller header, without a proxy secret,
-  because only local processes reach the listener; or
-- the existing routes already serve it, and the refusal names the flag or setting that does.
+Not delivered: trusting the caller header on loopback without the secret. It would amend the
+accepted `architecture-decision-record:http-caller-proof`; a consumer that runs without either
+setting still gets 501 and must pass one.
 
 ## Acceptance
 
-- `a_loopback_request_proving_its_caller_runs_the_command`: a command guarded on a caller attribute
-  answers as ESS's interpreter answers for that caller; or, for the second branch,
-  `the_refusal_names_how_to_serve_a_caller_reading_command`.
-- `an_exposed_run_still_requires_the_proxy_secret`: unchanged.
+- `the_refusal_names_how_to_serve_a_caller_reading_command`: a loopback run of a command that reads
+  a caller attribute, with neither setting, prints one stderr line naming `--fixed-actor` with
+  `--fixed-caller` and `--trusted-caller-header` with `--trusted-caller-secret`; the route still
+  answers 501 and its reason text is unchanged.
+- `a_loopback_request_proving_its_caller_runs_the_command`: the same run with
+  `--trusted-caller-header` and `--trusted-caller-secret`, a request carrying the header and the
+  secret, answers as ESS's interpreter answers for that caller (kept green:
+  `trusted_caller.rs:263`).
+- `a_non_loopback_address_without_the_trusted_proxy_is_refused_before_listening`
+  (`ingress.rs:457`): unchanged, exit 2 before listening.
 
 ## Origin
 
@@ -101,3 +107,4 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
 Taken 2026-11-26 on the scoper's recommended option, each reversible, unless noted.
 
 - D1 A: the ingress text stays flag-free; `run` prints one stderr line naming
+  `--fixed-actor/--fixed-caller` and `--trusted-caller-header/--trusted-caller-secret`.

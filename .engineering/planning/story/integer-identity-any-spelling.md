@@ -24,7 +24,7 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/integer_identity.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/spindle-kernel/main.rs
-revision: 5
+revision: 7
 ---
 # A command names an Integer identity whatever its spelling
 
@@ -43,7 +43,11 @@ This story is the command half, in the kernel.
 
 - `a_command_names_an_integer_identity_whatever_its_spelling`: a row created with `"shelf_id": 1.0`
   is found by a command with `"shelf_id": 1`, and a row created with `1` by one with `1.0`.
-- A created row answers its `Integer` identity and fields as integers whatever the input spelling.
+- `a_created_row_answers_its_integer_identity_and_fields_as_integers`: created with `1.0`, `2.0`,
+  `[3.0]` and `4.0` for an identity, an `Integer`, a `List<Integer>` and an `Optional<Integer>`, the
+  row, the identity and the event payload answer integers.
+- `an_integer_identity_past_64_bits_is_held_as_written`: an integral `Integer` input past `i64`
+  runs as ESS admits it and is found again by the same spelling (D3 A).
 
 ## Scope
 
@@ -71,5 +75,6 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
 Taken 2026-11-26 on the scoper's recommended option, each reversible, unless noted.
 
 - D1 A: the kernel writes Integer input as integers after `check_input`; the
+  world's walk moves into the kernel.
 - D2 A: no migration of durable rows keyed `1.0`; the changelog says so.
 - D3 A: an integral Integer past 64 bits stays as written, as ESS admits it.

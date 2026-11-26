@@ -51,7 +51,7 @@ scope:
   path: ui/src/api/types.ts
 - confidence: cited
   path: website/docs/concepts/observe.md
-revision: 25
+revision: 26
 ---
 # A refused bound command is recorded where a run can read it
 
@@ -73,8 +73,15 @@ Where the record lives is decided when scoped:
 ## Acceptance
 
 - `a_refused_bound_command_is_listed_with_its_cause`: a binding from `E` to `C` where `C` refuses
-  with a declared outcome; the record names `C`, the binding, the outcome and the causing command.
-- `a_bound_command_that_runs_adds_no_refusal_entry`.
+  with a declared outcome; the request record of `GET /__spindle/requests` lists one `refused_bound`
+  entry naming `C`, the binding, the outcome (and its declared error, if any) and the command that
+  published `E`.
+- `a_bound_command_that_runs_adds_no_refusal_entry`: the same binding where `C` runs; the record's
+  `refused_bound` is `[]`.
+- `a_refused_bound_command_records_no_error_field_value`: the entry names the outcome and error, and
+  holds none of the error's field values.
+- `a_refused_bound_command_is_counted_in_the_metrics`: after the refusal,
+  `GET /__spindle/metrics` reads `spindle_bound_refusals_total{binding, command, refusal}` 1 (D2 A).
 
 ## Origin
 

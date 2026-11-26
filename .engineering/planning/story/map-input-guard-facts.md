@@ -24,7 +24,7 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/main.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/spindle-kernel/map_input_guard.rs
-revision: 11
+revision: 13
 ---
 # A guard over a present Map input is decided as ESS decides it
 
@@ -43,10 +43,12 @@ base 16bba3d5f, so pre-existing.
 ## Acceptance
 
 - `a_map_count_guard_answers_as_the_interpreter`: `Optional<Map<String, Integer>>` with the guard
-  `scores.count > 0`, for `{}` and `{"a": 7}`, selects the interpreter's outcome.
+  `scores.count > 0`, for `{}`, `{"a": 7}` and the key left out, selects the interpreter's outcome.
 - `a_map_exists_guard_answers_as_the_interpreter`: `exists: {in: scores, as: s, that: s > 5}` over
-  `{"a": 1}` selects the interpreter's outcome.
-- The served JSON route answers the interpreter's outcome with its status, not 501.
+  `{"a": 1}` and `{"a": 1, "b": 9}` selects the interpreter's outcome.
+- `a_map_all_guard_answers_as_the_interpreter`: the same with `all`.
+- `a_map_guard_is_served_with_the_interpreters_status` (`spindle-cli`): the served JSON route answers
+  the interpreter's outcome with its status, not 501.
 
 ## Scope
 
@@ -74,3 +76,4 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
 Taken 2026-11-26 on the scoper's recommended option, each reversible, unless noted.
 
 - D1 A: `Facts::bind` follows the declared type; a Map binds `count` and its values by
+  index in key order, as ESS 0.99.1.

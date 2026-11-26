@@ -7,6 +7,7 @@ title: The serve loop's signal exit takes no exchange and drops no answer
 relations:
 - serves: vision:spindle
 - informed_by: story:reset-reapplies-seed
+- depends_on: story:seed-once-on-durable-state
 scope:
 - confidence: inferred
   path: crates/spindle-cli/src/cli.rs
@@ -30,7 +31,7 @@ scope:
   path: crates/spindle-ingress/tests/spindle-ingress/main.rs
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 14
+revision: 17
 ---
 # The serve loop's signal exit takes no exchange and drops no answer
 
@@ -48,11 +49,16 @@ pre-existing.
 
 ## Acceptance
 
-- `a_reset_taken_after_a_signal_empties_the_state_only_where_it_answers`: a reset queued behind a
-  held seed entry, then SIGTERM: the run exits 143, and the reset is either answered 200 or leaves
-  the state as it was.
+- `a_reset_taken_after_a_signal_is_answered_200`: a seeded reset taken while a seed entry is held,
+  then SIGTERM: the client reads 200 once the entry under way is done, the run exits 143, and a
+  restart on the same `--state` without `--seed` holds the rows the seed applied before the signal
+  (D2 A).
 - `a_refused_reset_taken_after_a_signal_is_answered`: the same with a reset refused 400: the client
   reads the 400.
+- `a_request_queued_at_the_signal_reads_503`: a request still queued when SIGTERM arrives is not
+  taken; the client reads 503, never a closed connection (D1 A).
+- `a_closed_listener_writes_every_answer_it_was_handed`: in `spindle-ingress`, closing the listener
+  writes every answer handed to it before the thread ends.
 
 ## Scope
 
@@ -76,4 +82,8 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
 Taken 2026-11-26 on the scoper's recommended option, each reversible, unless noted.
 
 - D1 A: a request still queued at the signal is answered 503 before exit; acceptance 2
+  reads "400 or 503, never EOF".
 - D2 A: a seeded reset cut by the signal answers 200 after the entry under way.
+- A seeded reset cut by the signal leaves `seed.json` (story:seed-once-on-durable-state) at
+  the count of entries done, written after each; a restart on that state resumes after the last
+  entry done. Hence `depends_on story:seed-once-on-durable-state`.

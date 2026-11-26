@@ -42,7 +42,12 @@ by the coordinator at merge:
   `check_input`; U8 widens the signature. U5 merges before U8.
 - `crates/spindle-host/src/host.rs`: U7 `Failed`, `RefusedCommand`, `attempt`, `execute`'s publish;
   U8 the store `Host::execute` hands the kernel. U7 merges before U8. U2 only reads `Host::rows`;
-  U5 may move the world's integer walk out of `crates/spindle-host/src/world.rs`.
+  U5 moves the world's integer walk out of `crates/spindle-host/src/world.rs` (D1 A).
+- `crates/spindle-kernel/src/lib.rs`: U5 one re-export beside `admits` (`:104`); U8 new re-exports
+  beside `runs` (`:95`). U5 merges before U8.
+- U8's widening is additive (its "Decided when scoped"): `takes`, `execute_as` and the `Surface`
+  constructors keep their signatures, so their callers in `spindle-control`, `spindle-embed`, the
+  test files and U1's stdin `answer` stay as they are.
 - `crates/spindle-ingress/src/surface.rs`: U3 `served`; U8 `refuse` and the surface constructors.
   U3 merges before U8.
 - `crates/spindle-ingress/src/answer.rs`: U3 `answering` (`:215-225`); U7 `run` (`:486-509`). U4

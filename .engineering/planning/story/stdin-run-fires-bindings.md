@@ -35,7 +35,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: cited
   path: website/docs/status.md
-revision: 18
+revision: 20
 ---
 # A stdin run fires the bindings its commands' events match
 
@@ -52,12 +52,17 @@ only when Spindle serves HTTP, which needs a component `reached_by: network`.
 
 - `a_stdin_line_fires_the_binding_its_event_matches`: a specification with one binding from event
   `E` to a system command `C`; a stdin line whose command emits `E` prints its answer, then `C`'s
-  answer, marked as caused by that line, and `C`'s write is visible to the next line.
-- `a_bound_command_refused_is_printed_and_does_not_fail_the_line`: `C` answering a declared
-  refusing outcome prints that outcome; the run exits 0 (story:run-fails-on-rejected-line counts a
-  rejected bound command as a rejection).
+  answer on its own line with `"caused_by": {"line": <n>, "binding": "<id>"}`, and `C`'s write is
+  visible to the next line.
+- `a_refused_bound_command_is_printed_and_fails_the_run`: `C` answering a declared refusing outcome
+  prints that outcome on its `caused_by` line; the run reads every line and exits 1, counting `C` as
+  rejected (D4 A, story:run-fails-on-rejected-line).
+- `a_binding_the_router_refuses_stops_the_run_before_stdin`: a binding the served run's router
+  refuses exits 1 before any line is read, naming the binding, as a served run refuses it (D2 A).
+- `drop_retries_is_accepted_on_stdin`: `--drop-retries` with stdin starts, and a bound command that
+  fails runs once and is not retried (D6 A).
 - `a_stdin_run_and_a_served_run_fire_the_same_bindings`: one sequence of commands sent on stdin and
-  over HTTP leaves the same rows and the same event log.
+  over HTTP leaves the same rows and the same events.
 - `a_specification_without_bindings_prints_as_today`: no extra line.
 
 ## Not covered
@@ -96,6 +101,7 @@ Taken 2026-11-26 on the scoper's recommended option, each reversible, unless not
 
 - D1 A: dispatch in the stdin loop with the served run's router, on the one store.
 - D2 A: a binding the router refuses stops the run before stdin, as served
+  (changelog line).
 - D3 A: a spec without components routes as one implied component.
 - D4 A: a failed bound command counts as rejected; the run exits 1.
 - D5 A: its own line with `"caused_by": {"line": n, "binding": "<id>"}`.

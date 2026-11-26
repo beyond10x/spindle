@@ -25,7 +25,7 @@ scope:
   path: website/docs/concepts/capabilities.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 5
+revision: 6
 ---
 # A command route reads input fields from the query string beside its body
 
@@ -42,10 +42,12 @@ fields read from the query string beside the body" (`crates/spindle-ingress/src/
 
 - `a_command_reads_its_query_fields_beside_the_body`: a binding with one query field and one body
   field; a request carrying both answers what the interpreter answers for the joined input.
-- `a_missing_required_query_field_is_refused_as_ess_publishes_it`: the status and body ESS's binding
-  gives a request without it.
-- `a_query_field_that_is_not_a_scalar_is_still_not_served`: named at start, as today for a view
-  parameter.
+- `a_missing_required_query_field_is_refused_400`: a request without the required query field
+  answers 400 with Spindle's `{"refused": ...}` body naming the field (D2 A).
+- `a_body_member_the_query_carries_is_refused_400`: a body naming a field the binding reads from the
+  query answers 400, as ESS's binding refuses it.
+- `a_list_query_field_reads_each_repeated_key`: a `List<T>` query field read from `key=a&key=b`
+  joins `["a", "b"]` into the input (D1 A).
 
 ## Origin
 

@@ -35,7 +35,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 18
+revision: 20
 ---
 # A stdin run arranges rows and names what earlier lines minted
 
@@ -55,15 +55,18 @@ actor, which stdin accepts.
 
 ## Acceptance
 
-- `an_arrange_line_writes_rows_a_later_command_reads`: an arrange line with one row, then a command
-  guarded on that row, answers the guarded outcome.
+- `an_arrange_line_writes_rows_a_later_command_reads`: an `{"arrange": [<row>]}` line with one row
+  in the reset world's shape, then a command guarded on that row, answers the guarded outcome.
 - `a_line_names_an_identity_an_earlier_line_minted`: a create line, then an update line whose
-  instance is a reference to the create's minted identity, answers the update's outcome.
+  instance is `{"$line": 1, "pointer": "/events/0/payload/<identity field>"}`, answers the update's
+  outcome.
 - `a_reference_to_a_line_not_yet_answered_is_rejected`: a reference to a later line, an unknown
-  line or a field the answer lacks rejects the line, and with story:run-fails-on-rejected-line the
-  run exits 1.
+  line or a pointer the earlier answer lacks rejects the line, and the run exits 1.
 - `an_arrange_line_refused_by_the_schema_is_rejected`: a row whose fields the entity does not
   declare rejects the line and writes nothing.
+- `a_seeded_mint_avoids_an_arranged_identity`: with `--mint-seed`, an arrange line writes a row
+  under the identity the seed would draw first; the next create mints another identity and answers
+  its created outcome (D3 A).
 - `a_system_actor_command_on_stdin_still_answers`: a command granted only to a system actor, sent
   on stdin, answers as today.
 
@@ -101,5 +104,6 @@ Derived 2026-11-26 by `story-scoper`. Every line is **cited** (read from the sto
 Taken 2026-11-26 on the scoper's recommended option, each reversible, unless noted.
 
 - D1 B: a reference is `{"$line": n, "pointer": "/events/0/payload/<f>"}` into the
+  earlier line's printed answer.
 - D2 A: `{"arrange": [rows in the reset world's shape]}`.
 - D3 A: a seeded mint avoids identities an arrange line wrote.
