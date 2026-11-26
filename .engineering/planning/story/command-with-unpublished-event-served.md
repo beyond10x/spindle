@@ -18,7 +18,7 @@ scope:
   path: crates/spindle-ingress/tests/fixtures/unpublished
 - confidence: cited
   path: crates/spindle-ingress/tests/spindle-ingress/main.rs
-revision: 15
+revision: 19
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-26T03:50:23Z", actor: "human:operator", revision: 14, decided_on: {"recorded":{"review_outcome":7}}}
 - {from: "proposed", to: "active", at: "2026-11-26T03:50:24Z", actor: "human:operator", revision: 15, decided_on: {"recorded":{"review_outcome":7}}}
@@ -27,21 +27,20 @@ transitions:
 
 ## Outcome
 
-A command whose outcome emits an event that its component does not list under `publishes:` is
-served. The route answers the command's outcome, where it answered 501 after the row and the
-event were already written. The event is committed to the component's own store with the write,
-as today; `Host::published` and the response's `published` array list it, as ESS 0.99.1's
-interpreter lists every emitted event (`interpret/command.rs` `complete_command`). It is not
-handed to the channel: `publishes:` decides what leaves the component, not what the command
-emits. No binding can name such an event (`Router::build` refuses one at start), so no delivery
-is dropped.
+A command whose outcome emits an event that no component lists under `publishes:` is served. The
+route answers the command's outcome, where it answered 501 after the row and the event were
+already written. The event is committed to the component's own store with the write, as today;
+`Host::published` and the response's `published` array list it, as ESS 0.99.1's interpreter lists
+every emitted event (`interpret/command.rs` `complete_command`). It is not handed to the channel:
+`publishes:` decides what leaves a component, not what the command emits. No binding can name
+such an event (`Router::build` refuses one at start), so no delivery is dropped.
 
 A command that emits a published event and an unpublished one sends the published event's
 envelope in the same command. Today the refusal of the second returns before the first is marked
 durable and flushed, so that envelope waits in the outbox for a later command.
 
-The change is in `Host::execute`: an event its component does not publish is not handed to
-`Sender::publish`, which keeps refusing it for any other caller.
+The change is in `Host::execute`: an event no component publishes is not handed to
+`Sender::publish`, which keeps refusing an event its component does not publish for any caller.
 
 ## Why
 
@@ -62,6 +61,11 @@ after the kernel committed the row and the event, and the route answers 501 with
 
 A create that emits no event at all is refused by ESS (`ESS-COMMAND-001`, no field of an emitted
 event names the created identity) and keeps its refusal here.
+
+- An event its component does not publish but another component does keeps its refusal
+  (`Sender::publish` answers `ChannelError::NotPublished`, the route answers 501 with
+  `committed: true`) and is not delivered, although ESS 0.99.1's interpreter invokes a binding on
+  it (`adversary_unpublished_event::an_event_another_component_publishes_reaches_its_binding`).
 
 ## Acceptance
 
@@ -95,8 +99,9 @@ validate.
 ## Scope
 
 - `crates/spindle-host/src/host.rs` (`Host::execute`, the loop that hands each emitted event to
-  `held.sender.publish`, the only caller of `Sender::publish` outside tests): an event its
-  component does not publish is skipped; `held.position`, `mark_durable` and `flush` run when an
+  `held.sender.publish`, the only caller of `Sender::publish` outside tests): an event no
+  component publishes is skipped (one another component publishes is handed over and refused
+  as before); `held.position`, `mark_durable` and `flush` run when an
   event was staged.
 - Unchanged: `crates/spindle-channel/src/endpoint.rs` (`Sender::publish` keeps
   `ChannelError::NotPublished`), `crates/spindle-ingress/src/answer.rs` (the 501 mapping of a
@@ -126,4 +131,4 @@ skipping the event drops no delivery.
 - `crates/spindle-ingress/tests/spindle-ingress/main.rs`: every story that adds an ingress test
   module adds one line.
 - `CHANGELOG.md` `[Unreleased]`: every story that ships adds a bullet.
-- `Sender::publish` in `crates/spindle-channel/src/endpoint.rs`: `story:committed-events-survive-restart` restages committed events after a restart, a second caller; it runs after this story (`depends_on`) and skips an event its component does not publish, as `Host::execute` does.
+- `Sender::publish` in `crates/spindle-channel/src/endpoint.rs`: `story:committed-events-survive-restart` restages committed events after a restart, a second caller; it runs after this story (`depends_on`) and skips an event no component publishes, as `Host::execute` does.
