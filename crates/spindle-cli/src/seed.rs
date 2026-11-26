@@ -15,6 +15,13 @@
 //! ids across starts or replicas (`story:request-id-idempotency`). An entry whose id only a
 //! refused entry carried is submitted again, and counts as what it becomes: the refusal left
 //! nothing there, and what refused it may since have changed.
+//!
+//! A `POST /api/reset` drops the entries of the seed run under way that are not yet sent
+//! ([`Seeding::cut`]). One with no world then submits the seed again from its first entry, once
+//! every store is empty and before the reset answers, as a start does: no request id remembered,
+//! and an end line counting that run alone ([`Seeding::restart`], `story:reset-reapplies-seed`).
+//! The counts in the metrics go on across resets and never fall. A reset that gives a world loads
+//! that world alone.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -192,12 +199,14 @@ fn existing(ir: &EssIr, command: &str, outcome: &str) -> bool {
 }
 
 /// A seed being submitted: the next entry, the request ids of the entries applied or already
-/// there so far, and the counts.
+/// there so far in this seed run, its counts, and those of the runs before it in this start.
 pub(crate) struct Seeding {
     seed: Seed,
     next: usize,
     submitted: BTreeSet<String>,
     counts: SeedCounts,
+    /// What the seed runs a reset cut or saw end counted, before the one under way.
+    earlier: SeedCounts,
     recorder: Option<Recorder>,
     ended: bool,
 }
@@ -217,6 +226,7 @@ impl Seeding {
             next: 0,
             submitted: BTreeSet::new(),
             counts: SeedCounts::default(),
+            earlier: SeedCounts::default(),
             recorder,
             ended: false,
         };
@@ -229,25 +239,78 @@ impl Seeding {
         self.next < self.seed.entries.len()
     }
 
+    /// Ends the seed run under way where a reset emptied the stores it wrote: its entries not yet
+    /// sent are dropped, named on stderr, and never submitted, and its end line is printed with
+    /// what it counted so far. A run that already ended is left as it is
+    /// (`story:reset-reapplies-seed`).
+    pub(crate) fn cut(&mut self) {
+        let left = self.seed.entries.len().saturating_sub(self.next);
+        if left > 0 {
+            eprintln!(
+                "b10x-spindle: seed {}: a reset dropped the {left} entries not yet sent",
+                self.seed.path.display()
+            );
+            self.next = self.seed.entries.len();
+        }
+        self.end();
+    }
+
+    /// Starts a new seed run from the first entry, as a start does: no request id remembered,
+    /// the end line counting this run alone and printed again once it ends. The counts noted on
+    /// the recorder go on from those of the earlier runs and never fall. A reset with no world
+    /// calls it once every store is empty and the run under way is cut ([`Seeding::cut`]).
+    pub(crate) fn restart(&mut self) {
+        eprintln!(
+            "b10x-spindle: seed {}: {} entries, submitted again after a reset, before it answers",
+            self.seed.path.display(),
+            self.seed.len()
+        );
+        self.earlier = summed(self.earlier, self.counts);
+        self.counts = SeedCounts::default();
+        self.next = 0;
+        self.submitted.clear();
+        self.ended = false;
+    }
+
+    /// Submits every entry left to `host`, one after another, then prints the end line; `true`
+    /// once it ended. Before each entry it asks `stopped`, and where that answers `true` it
+    /// submits nothing more and answers `false`, so a signal stops the run between two entries.
+    pub(crate) fn finish(&mut self, host: &mut Host, stopped: impl Fn() -> bool) -> bool {
+        while self.pending() {
+            if stopped() {
+                return false;
+            }
+            self.step(host);
+        }
+        self.end();
+        true
+    }
+
+    /// Prints the end line of the run under way once: the counts of this run alone.
+    fn end(&mut self) {
+        if self.ended {
+            return;
+        }
+        self.ended = true;
+        let SeedCounts {
+            sent,
+            applied,
+            already_there,
+            refused,
+        } = self.counts;
+        eprintln!(
+            "b10x-spindle: seed {} ended: {sent} sent, {applied} applied, \
+             {already_there} already there, {refused} refused",
+            self.seed.path.display()
+        );
+    }
+
     /// Submits the next entry to `host`, or, once none is left, prints the end line once. A
     /// refusal is printed with the entry's place, command, request id and error name; a command an
     /// entry's events led to that did not run is printed as `run` prints one a request led to.
     pub(crate) fn step(&mut self, host: &mut Host) {
         let Some(entry) = self.seed.entries.get(self.next) else {
-            if !self.ended {
-                self.ended = true;
-                let SeedCounts {
-                    sent,
-                    applied,
-                    already_there,
-                    refused,
-                } = self.counts;
-                eprintln!(
-                    "b10x-spindle: seed {} ended: {sent} sent, {applied} applied, \
-                     {already_there} already there, {refused} refused",
-                    self.seed.path.display()
-                );
-            }
+            self.end();
             return;
         };
         let place = self.next + 1;
@@ -280,11 +343,22 @@ impl Seeding {
         self.note();
     }
 
-    /// Notes the counts on the recorder, where the run observes.
+    /// Notes the counts of every seed run of this start on the recorder, where the run observes:
+    /// a counter, so a reset never makes one fall.
     fn note(&self) {
         if let Some(recorder) = &self.recorder {
-            recorder.seeded(self.counts);
+            recorder.seeded(summed(self.earlier, self.counts));
         }
+    }
+}
+
+/// The counts `one` and `other` make together.
+fn summed(one: SeedCounts, other: SeedCounts) -> SeedCounts {
+    SeedCounts {
+        sent: one.sent + other.sent,
+        applied: one.applied + other.applied,
+        already_there: one.already_there + other.already_there,
+        refused: one.refused + other.refused,
     }
 }
 

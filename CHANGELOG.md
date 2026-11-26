@@ -22,6 +22,15 @@ are Spindle's releases.
   source with a fallback, `{input: f, else: <literal>}` or `{input: f, else: input.g}`, answers
   the input, else the literal or the other input, as ESS 0.99.1's interpreter does, where it was
   refused (`story:identity-mint-types-and-fallback`).
+- A decisions file holds `[[rules]]`, each naming a command, one of its external outcomes, the
+  answer and, in `when`, values the command's input must hold (`"input.<field>"`, dots for a
+  struct's members; a string, an integer or a boolean). The first rule in file order whose every
+  entry holds answers the request, before the command's table and the top-level answers; an
+  input the request leaves out holds no entry. A reset's world carries the same array under
+  `decisions.rules`. A rule over a command, outcome or input the specification does not declare,
+  or a value not of the input's type, is refused at load, naming `rules[<index>]` and the entry.
+  `run`, the Node export and the Service Worker read rules alike, and a reset keeps the
+  decisions file a Node instance was created with (`story:decisions-rules-on-input-predicates`).
 
 ### Fixed
 
@@ -33,6 +42,23 @@ are Spindle's releases.
   outbox for a later one. An event its component does not publish but another component does is
   still refused by `Sender::publish` and not delivered
   (`story:command-with-unpublished-event-served`).
+- A row a reset's world loads answers its `Integer` fields as integers, where `"amount": 1` was
+  listed as `"amount":1.0`. `spindle_host::read_world` writes every value the model types `Integer`
+  in a row's identity and fields as the integer, through `Optional`, newtypes, lists, maps, struct
+  members and union payloads, so `1` and `1.0` name one row and a reference spelled either way
+  finds it; every other value is held as the world spells it. An `Integer` that is not an integral
+  number within 64 bits is refused, naming the row and the field, as before. `run`, the Node export
+  and every host that loads a world answer alike. A command's input is still held as its caller
+  spells it: a row `Submit` created from `"amount": 1.0` lists `"amount":1.0`
+  (`story:world-row-integer-fields`).
+- `POST /api/reset` with no world on a run started with a seed (`run --seed`, or the environment's
+  `[seed] file`) submits the seed again, from its first entry to its end, before it answers, where
+  it emptied the store and left the seeded rows gone. The end line then gives the counts of that
+  seed run alone; `spindle_seed_commands_total` goes on counting across resets and never falls,
+  and the reset is still counted in `spindle_resets_total`. A reset drops the entries of a seed
+  run not yet sent, so a reset whose body gives a world loads that world alone and does not submit
+  the seed. SIGINT or SIGTERM during a reset's seed stops the run between two entries
+  (`story:reset-reapplies-seed`).
 
 ## [0.20.2] - 2026-11-25
 

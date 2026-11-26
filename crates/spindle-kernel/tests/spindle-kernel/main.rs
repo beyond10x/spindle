@@ -5,6 +5,7 @@
 mod rally_cases;
 
 mod absent_optional;
+mod absent_optional_guard;
 mod adversary;
 mod adversary_admission;
 mod adversary_admission_checked;
@@ -44,6 +45,7 @@ mod adversary_store_contract;
 mod adversary_structured_responses;
 #[cfg(feature = "postgres")]
 mod adversary_w21_store;
+mod adversary_w25_guard;
 mod adversary_w25_mint;
 mod before_row;
 mod caller;

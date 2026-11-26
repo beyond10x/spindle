@@ -32,7 +32,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 27
+revision: 29
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-26T04:51:42Z", actor: "human:operator", revision: 26, decided_on: {"recorded":{"review_outcome":19}}}
 - {from: "proposed", to: "active", at: "2026-11-26T04:51:43Z", actor: "human:operator", revision: 27, decided_on: {"recorded":{"review_outcome":19}}}
@@ -62,11 +62,15 @@ the seed is `crates/spindle-cli/src/seed.rs`.
 - `a_reset_of_a_seeded_run_applies_the_seed_again`: on a run with a seed of rows, a reset with no
   world answers only after the seed ran again, and a view over the seeded entity holds the seeded
   rows after it, as it held them after the start.
-- `the_seed_counts_after_a_reset_are_those_of_the_new_run`: the end line and the counts after a
-  reset are the counts of the seed run the reset started, not a sum with the start's.
+- `the_seed_counts_after_a_reset_are_those_of_the_new_run`: the end line a reset's seed run prints
+  counts that run alone, not a sum with the start's. The metric `spindle_seed_commands_total` is a
+  counter and keeps counting across resets: no series falls.
 - `a_reset_with_a_world_does_not_seed`: on a run with a seed, a reset whose body gives a world
-  answers with that world's rows and none of the seed's.
+  answers with that world's rows and none of the seed's, also when the start's seed has entries
+  left: a reset drops the entries of an earlier seed run that were not sent.
 - `a_run_without_a_seed_resets_as_before`: a reset on a run without a seed answers as today.
+- A SIGTERM while a reset's seed runs ends the run between two entries, as it does during the
+  start's seed.
 
 ## Decided when scoped
 
@@ -82,7 +86,6 @@ the seed is `crates/spindle-cli/src/seed.rs`.
 
 - The readiness signal during a reset's seed run: `story:seed-readiness`, a draft, provides the
   signal; this story makes no readiness claim.
-- A reset that arrives while the start's seed or an earlier reset's seed is still running.
 
 ## Scope
 
