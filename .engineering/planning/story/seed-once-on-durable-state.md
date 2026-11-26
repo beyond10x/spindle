@@ -31,7 +31,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 21
+revision: 22
 ---
 # A seed is applied once to a durable state
 
@@ -68,6 +68,9 @@ Reported 2026-11-26 by a consumer that keeps its state across restarts.
 - `a_run_stopped_mid_seed_resumes_after_the_last_entry_done`: a seed of three entries, the second
   held, then SIGTERM; a restart with the same `--seed` sends only the third entry and `seed.json`
   reads every entry done.
+- `a_kill_during_a_resets_first_entry_restarts_the_seed`: on a `--state` whose seed ran to the end,
+  a reset whose first entry is held, then SIGKILL; a restart with the same `--seed` applies the seed
+  from its first entry, because the reset wrote `seed.json` at count 0 before sending it.
 
 ## Scope
 

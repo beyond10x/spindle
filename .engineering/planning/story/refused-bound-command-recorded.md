@@ -52,7 +52,7 @@ scope:
   path: ui/src/api/types.ts
 - confidence: cited
   path: website/docs/concepts/observe.md
-revision: 27
+revision: 28
 ---
 # A refused bound command is recorded where a run can read it
 
@@ -86,6 +86,11 @@ Where the record lives is decided when scoped:
 - `a_rejected_bound_command_is_listed_with_its_kind`: the same binding where the kernel rejects
   `C` (no declared outcome, `Failed`); the entry names `C`, the binding, the kernel's error kind
   and the causing command.
+- `a_refusal_from_another_process_has_no_cause`: in `crates/spindle-host`, a `RefusedCommand` for
+  an envelope delivered from another process (a split run's channel) carries `caused_by: None`, and
+  the request record's entry has no `caused_by` member.
+- `the_request_log_stays_version_1`: `GET /__spindle/requests` with a refusal entry answers
+  `"format": "spindle-requests/1"` (D3 A).
 
 ## Origin
 

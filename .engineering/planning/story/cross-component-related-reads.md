@@ -42,7 +42,7 @@ scope:
   path: docs/design/spindle.md
 - confidence: cited
   path: website/docs/concepts/specification.md
-revision: 29
+revision: 30
 ---
 # A guard or an effect over another component's entity is refused or read from its owner
 
@@ -97,6 +97,9 @@ Found by a review of `0.19.0..0.19.1`, beside the value refusal.
 - `a_stdin_run_reads_another_components_entity`: the value-read and guard commands above, sent as
   stdin lines on the same fixture, answer what ESS's interpreter answers and are not refused at
   start.
+- `a_served_run_answers_a_cross_component_guard`: the fixture with one component `reached_by:
+  network`, served by `run` on loopback; an HTTP request for the guarded command answers the
+  interpreter's outcome with its status, not 501, and `GET /api/served` lists the route served.
 
 ## Not covered
 
