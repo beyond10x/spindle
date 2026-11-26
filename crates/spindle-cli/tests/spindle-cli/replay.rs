@@ -1,5 +1,6 @@
 //! `run --scenario`: replaying an `ess-scenario/1` timeline, read by ESS's own reader.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -314,5 +315,138 @@ fn a_refused_act_prints_its_error() {
             "timeline[2] hatch.door.ShutDoor: holds, outcome already-shut, error hatch.door.AlreadyShut\n"
         ),
         "{printed}"
+    );
+}
+
+/// A specification of one domain that declares no component
+/// (`story:scenario-without-components`).
+const WITHOUT_COMPONENTS: &str = "crates/spindle-cli/tests/fixtures/replay-without-components.yaml";
+
+/// The same domain, whose one component accepts `hatch.door.OpenDoor` and no component
+/// `hatch.door.ShutDoor`.
+const UNACCEPTED: &str = "crates/spindle-cli/tests/fixtures/replay-unaccepted.yaml";
+
+/// An environment that binds no `store.durable`.
+const NO_DURABLE_STORE: &str = "crates/spindle-cli/tests/fixtures/no-durable-store.toml";
+
+/// `run` of `spec` on `environment` reading `lines` on stdin.
+fn stdin_run(spec: &str, environment: &str, lines: &str) -> Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+        .current_dir(root())
+        .args(["run", spec, "--environment", environment])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("b10x-spindle starts");
+    let written = child
+        .stdin
+        .take()
+        .expect("stdin is piped")
+        .write_all(lines.as_bytes());
+    // `run` may refuse at start and exit before it reads a line, which closes the pipe.
+    if let Err(error) = written {
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe, "{error}");
+    }
+    child.wait_with_output().expect("b10x-spindle runs")
+}
+
+/// `run --scenario` of `scenario` against `spec` on `environment`.
+fn replay_on(spec: &str, environment: &str, scenario: &str) -> Output {
+    let scenario = format!("{SCENARIOS}/{scenario}");
+    Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+        .current_dir(root())
+        .args([
+            "run",
+            spec,
+            "--environment",
+            environment,
+            "--scenario",
+            &scenario,
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .expect("b10x-spindle runs")
+}
+
+#[test]
+fn a_scenario_replays_a_specification_without_components() {
+    let output = replay_of(WITHOUT_COMPONENTS, "runs-without-outcome.yaml");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let printed = stdout(&output);
+    assert!(
+        printed.contains("timeline[0] hatch.door.OpenDoor: holds"),
+        "{printed}"
+    );
+    assert!(!printed.contains("diverges"), "{printed}");
+}
+
+#[test]
+fn a_scenario_on_declared_components_still_routes_by_accepts() {
+    let output = replay_of(UNACCEPTED, "undeclared-without-outcome.yaml");
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let printed = stdout(&output);
+    assert!(
+        printed.contains("timeline[0] hatch.door.ShutDoor: diverges"),
+        "{printed}"
+    );
+    assert!(
+        printed.contains("no component accepts hatch.door.ShutDoor"),
+        "{printed}"
+    );
+}
+
+#[test]
+fn stdin_and_scenario_agree_on_a_specification_without_components() {
+    let lines = concat!(
+        r#"{"command": "hatch.door.OpenDoor", "input": {"label": "front"}}"#,
+        "\n",
+        r#"{"command": "hatch.door.ShutDoor", "input": {"door_id": "0b5e0000-0000-4000-8000-000000000001"}}"#,
+        "\n",
+    );
+    let stdin = stdin_run(WITHOUT_COMPONENTS, LAPTOP, lines);
+    assert_eq!(stdin.status.code(), Some(0), "{stdin:?}");
+    let answers = stdout(&stdin)
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("one JSON line"))
+        .collect::<Vec<_>>();
+    assert_eq!(answers.len(), 2, "{answers:?}");
+    assert_eq!(answers[0]["outcome"], "opened", "{answers:?}");
+    assert_eq!(answers[1]["failure"]["kind"], "undeclared", "{answers:?}");
+
+    let opened = replay_of(WITHOUT_COMPONENTS, "runs-without-outcome.yaml");
+    assert_eq!(opened.status.code(), Some(0), "{opened:?}");
+    assert!(
+        stdout(&opened).contains("timeline[0] hatch.door.OpenDoor: holds, outcome opened\n"),
+        "{opened:?}"
+    );
+    let refused = replay_of(WITHOUT_COMPONENTS, "undeclared-without-outcome.yaml");
+    assert_eq!(refused.status.code(), Some(0), "{refused:?}");
+    assert!(
+        stdout(&refused).contains("timeline[0] hatch.door.ShutDoor: holds, undeclared\n"),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn a_specification_without_components_is_refused_on_a_lacking_environment() {
+    let stdin = stdin_run(WITHOUT_COMPONENTS, NO_DURABLE_STORE, "");
+    assert_eq!(stdin.status.code(), Some(3), "{stdin:?}");
+    assert!(stdout(&stdin).contains("store.durable"), "{stdin:?}");
+
+    let output = replay_on(
+        WITHOUT_COMPONENTS,
+        NO_DURABLE_STORE,
+        "runs-without-outcome.yaml",
+    );
+    assert_eq!(output.status.code(), Some(3), "{output:?}");
+    let printed = stdout(&output);
+    assert!(
+        printed.contains("store.durable"),
+        "the capability missing: {printed}"
+    );
+    assert!(
+        !printed.contains("timeline["),
+        "no step runs on a refused admission: {printed}"
     );
 }

@@ -1,0 +1,12 @@
+format = "spindle-environment/1"
+name = "without-durable-store"
+os = "linux"
+arch = "x86_64"
+
+[provides]
+"store.ephemeral" = ["memory"]
+"identity.mint" = ["uuid-v4"]
+clock = ["system"]
+channel = ["in-process"]
+projection = ["in-process"]
+"external.*" = ["operator-prompt"]

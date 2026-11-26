@@ -85,7 +85,7 @@ pub struct Model {
 ///
 /// `root` is a directory, or a single source file for a one-file specification.
 pub fn load(root: &Path) -> Result<Specification, LoadError> {
-    let (model, scenarios) = loading(root, true)?;
+    let (model, scenarios) = loading(root, true, false)?;
     Ok(Specification {
         ir: model.ir,
         files: model.files,
@@ -98,12 +98,40 @@ pub fn load(root: &Path) -> Result<Specification, LoadError> {
 /// scenario's text is read. For a command that runs no scenario (`check`, `capabilities`,
 /// `admit`).
 pub fn load_model(root: &Path) -> Result<Model, LoadError> {
-    loading(root, false).map(|(model, _)| model)
+    loading(root, false, false).map(|(model, _)| model)
+}
+
+/// The component [`load_with_implied_component`] adds to a specification that declares none.
+pub const IMPLIED_COMPONENT: &str = "implied";
+
+/// Where ESS's diagnostics say the implied component's document comes from.
+const IMPLIED_SOURCE: &str = "<implied component>";
+
+/// [`load`], with one implied component where the specification declares none: named
+/// [`IMPLIED_COMPONENT`], it owns every domain, accepts every command and publishes every event.
+/// Its document is generated from the compiled IR and compiled by ESS beside the files read, so
+/// ESS refuses it as it would refuse the same document written by hand. A specification that
+/// declares a component is returned as [`load`] returns it, on the same IR.
+///
+/// For a command that runs the whole system in one host, which routes each command to the
+/// component that accepts it (`run --scenario`).
+pub fn load_with_implied_component(root: &Path) -> Result<Specification, LoadError> {
+    let (model, scenarios) = loading(root, true, true)?;
+    Ok(Specification {
+        ir: model.ir,
+        files: model.files,
+        scenarios,
+    })
 }
 
 /// Discovers, reads and compiles the specification rooted at `root`; reads its scenarios too
-/// where `scenarios` is set, after its source documents and before compiling them.
-fn loading(root: &Path, scenarios: bool) -> Result<(Model, Vec<Scenario>), LoadError> {
+/// where `scenarios` is set, after its source documents and before compiling them; compiles it
+/// again with the implied component where `implied` is set and it declares no component.
+fn loading(
+    root: &Path,
+    scenarios: bool,
+    implied: bool,
+) -> Result<(Model, Vec<Scenario>), LoadError> {
     let Discovered {
         specification: paths,
         scenarios: scenario_paths,
@@ -133,7 +161,12 @@ fn loading(root: &Path, scenarios: bool) -> Result<(Model, Vec<Scenario>), LoadE
             });
         }
     }
-    let ir = compile(&identities, &texts)?;
+    let mut ir = compile(&identities, &texts)?;
+    if implied && ir.components().is_empty() {
+        let identities = [identities.as_slice(), &[IMPLIED_SOURCE.to_owned()]].concat();
+        let texts = [texts, vec![implied_component(&ir)]].concat();
+        ir = compile(&identities, &texts)?;
+    }
     Ok((
         Model {
             ir,
@@ -141,6 +174,20 @@ fn loading(root: &Path, scenarios: bool) -> Result<(Model, Vec<Scenario>), LoadE
         },
         read_scenarios,
     ))
+}
+
+/// The document of the component that owns every domain of `ir`, accepts every command and
+/// publishes every event: a component file, naming no domain of its own.
+fn implied_component(ir: &EssIr) -> String {
+    let names = |names: Vec<String>| serde_json::to_string(&names).expect("names serialise");
+    format!(
+        "components:\n  - component: {IMPLIED_COMPONENT}\n    summary: Every domain of a \
+         specification that declares no component.\n    owns:\n      domains: {}\n    \
+         accepts:\n      commands: {}\n    publishes:\n      events: {}\n",
+        names(ir.domains().keys().map(ToString::to_string).collect()),
+        names(ir.commands().keys().map(ToString::to_string).collect()),
+        names(ir.events().keys().map(ToString::to_string).collect()),
+    )
 }
 
 /// Compiles source documents already in memory: `identities[i]` names `texts[i]`.

@@ -1,0 +1,88 @@
+format: ess/34
+system: hatch
+version: v1
+summary: A door opened and shut, in a system whose one component accepts the opening only.
+domains:
+  - hatch.door
+components:
+  - component: opener
+    summary: Opens doors; no component accepts the shutting.
+    owns:
+      domains:
+        - hatch.door
+    accepts:
+      commands:
+        - hatch.door.OpenDoor
+    publishes:
+      events:
+        - hatch.door.DoorOpened
+    reached_by: in_process
+domain: hatch.door
+types:
+  - name: hatch.door.DoorId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: hatch.door.Door
+    identity:
+      name: door_id
+      type: hatch.door.DoorId
+    fields:
+      - name: label
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open, Shut]
+      terminal: [Shut]
+      transitions:
+        - name: shut
+          from: [Open]
+          to: Shut
+errors:
+  - name: hatch.door.AlreadyShut
+    summary: The door is already shut.
+    fields: []
+commands:
+  - name: hatch.door.OpenDoor
+    input:
+      - name: label
+        type: String
+    outcomes:
+      - name: opened
+        creates: hatch.door.Door
+        instance: door_id
+        sets:
+          label: input.label
+        emits: [hatch.door.DoorOpened]
+        payload:
+          hatch.door.DoorOpened:
+            door_id: {generated: true}
+            label: input.label
+        summary: The door opens under an identity the runtime mints.
+  - name: hatch.door.ShutDoor
+    input:
+      - name: door_id
+        type: hatch.door.DoorId
+    outcomes:
+      - name: already-shut
+        when_subject: {predicate: state == Shut}
+        error: hatch.door.AlreadyShut
+        summary: A shut door stays shut.
+      - name: shut
+        moves: hatch.door.Door.shut
+        instance: door_id
+        emits: [hatch.door.DoorShut]
+        payload:
+          hatch.door.DoorShut: {door_id: input.door_id}
+        summary: The door shuts.
+events:
+  - name: hatch.door.DoorOpened
+    fields:
+      - name: door_id
+        type: hatch.door.DoorId
+      - name: label
+        type: String
+  - name: hatch.door.DoorShut
+    fields:
+      - name: door_id
+        type: hatch.door.DoorId

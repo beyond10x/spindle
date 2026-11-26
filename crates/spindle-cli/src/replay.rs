@@ -1,5 +1,7 @@
 //! `run --scenario`: replaying an authored `ess-scenario` document against every component of a
-//! system in one process.
+//! system in one process. A specification that declares no component is loaded with one implied
+//! component that owns every domain ([`spindle_spec::load_with_implied_component`]), so the host
+//! routes every command to it and admission derives what it requires.
 //!
 //! The document is read and checked against the model by ESS's own reader
 //! ([`ess_conformance::authored::compile`]), and its compiled steps are executed by ESS's own
@@ -44,7 +46,7 @@ pub(crate) const MOST_STEPS: usize = 1000;
 /// document or when it has more than [`MOST_STEPS`] steps, and 3, running nothing, when admission
 /// is refused.
 pub(crate) fn replay(spec: &Path, environment: &Path, scenario: &Path) -> Result<ExitCode> {
-    let loaded = spindle_spec::load(spec)?;
+    let loaded = spindle_spec::load_with_implied_component(spec)?;
     let text = std::fs::read_to_string(environment)
         .with_context(|| format!("reading {}", environment.display()))?;
     let parsed =
