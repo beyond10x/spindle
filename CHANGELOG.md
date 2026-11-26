@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-26
+
 ### Added
 
 - A view that declares `paging:` is served, where it was refused at start. A read that sends
