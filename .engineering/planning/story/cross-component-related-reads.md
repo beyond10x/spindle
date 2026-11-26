@@ -7,7 +7,7 @@ title: A guard or an effect over another component's entity is refused or read f
 summary: Guards and affects entries over an entity another component owns read the running component's store; refuse them by name or read the owner's.
 relations:
 - serves: vision:spindle
-revision: 1
+revision: 2
 ---
 # A guard or an effect over another component's entity is refused or read from its owner
 
@@ -54,3 +54,13 @@ Found by a review of `0.19.0..0.19.1`, beside the value refusal.
 
 - Reading another component's store in one process: a choice for after this refusal, recorded in
   the design (§11) if taken.
+
+## Joined 2026-11-26
+
+A consumer, 2026-11-26, on Spindle 0.21.0, split one domain into its own component and was refused
+at admission: "unsupported: the value source `<entity>.<field>` … owned by component `<a>`: the
+kernel reads only the store of component `<b>`, which runs the command". Every component of that
+run is in one process (stdin or one served host), so the owner's store is open beside the running
+component's. The wanted answer is the first branch of this story's Outcome: read the value, the
+guard's row and the row set from the owner's store when both components run in one host, and keep
+the refusal only for a split run where the owner is another process.
