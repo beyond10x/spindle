@@ -1,6 +1,7 @@
 //! `run` where a component is reached over the network: every component in one host, the
 //! components that require `ingress.network` served over HTTP on 127.0.0.1.
 
+use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::Path;
 use std::process::ExitCode;
@@ -325,8 +326,16 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             }
         }
     }
+    // Every component runs in the one host below, so a command reads each entity from its
+    // owner's store (`story:cross-component-related-reads`).
+    let reached: BTreeSet<String> = ir
+        .components()
+        .values()
+        .map(|component| component.name.as_str().to_owned())
+        .collect();
+    let reaching = Surface::reaching(&reached);
     let surface = match (serving.caller_header, &serving.proxy_secret) {
-        (Some(header), Some((_, secret))) => Surface::proving_callers(
+        (Some(header), Some((_, secret))) => reaching.proving_callers(
             &ir,
             &serving.components,
             serving.binding.as_ref(),
@@ -336,7 +345,7 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         (Some(header), None) => {
             bail!("--trusted-caller-header {header} needs --trusted-caller-secret <FILE>")
         }
-        (None, _) => Surface::fixing_callers(
+        (None, _) => reaching.fixing_callers(
             &ir,
             &serving.components,
             serving.binding.as_ref(),

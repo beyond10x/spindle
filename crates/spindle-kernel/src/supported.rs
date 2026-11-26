@@ -16,12 +16,19 @@
 //!
 //! A construct only the taken outcome reads refuses that outcome alone ([`takes`]): an effect
 //! beyond its subject (a compensating refusal, an `affects:` entry over an input list, `sets:`
-//! without a subject), a value it
+//! without a subject), a write of an entity another component owns (a subject, `instances:` or
+//! an `affects:` entry), a value it
 //! writes, publishes or answers, the identity it mints, an error field it fills, or a value read
 //! from a row of an entity the component running the command does not own. Selection
 //! never reads one, so a request that selects another outcome of the command runs, and only a
 //! request that selects this one is refused, once it is selected and before anything is minted
 //! or written.
+//!
+//! A read of an entity another component owns (a value, a `when_related:` guard, a row set) is
+//! refused only where the store the command runs on does not reach the owner's: [`takes`] and
+//! [`check`] reach the running component's store alone, [`takes_reaching`] and [`check_reaching`]
+//! the stores of the components they are given, as a host running several components in one
+//! process reads each entity from its owner's store.
 
 use std::collections::BTreeSet;
 
@@ -41,10 +48,33 @@ use crate::ExecuteError;
 /// # Errors
 /// [`ExecuteError::Unsupported`], naming the construct and the outcome that declares it.
 pub fn check(ir: &EssIr, command: &ResolvedCommand) -> Result<(), ExecuteError> {
+    checking(ir, command, None)
+}
+
+/// [`check`], on a store that reaches the stores of the components `reached` names: a read of an
+/// entity one of them owns is read from its owner's store, so it is not refused
+/// ([`takes_reaching`]).
+///
+/// # Errors
+/// As [`check`].
+pub fn check_reaching(
+    ir: &EssIr,
+    command: &ResolvedCommand,
+    reached: &BTreeSet<String>,
+) -> Result<(), ExecuteError> {
+    checking(ir, command, Some(reached))
+}
+
+/// [`check`], reaching the stores `reached` names, or the running component's alone.
+fn checking(
+    ir: &EssIr,
+    command: &ResolvedCommand,
+    reached: Option<&BTreeSet<String>>,
+) -> Result<(), ExecuteError> {
     mixed(command)?;
     for outcome in &command.outcomes {
         selecting(command, outcome)?;
-        takes(ir, command, outcome)?;
+        taking(ir, command, outcome, reached)?;
     }
     Ok(())
 }
@@ -75,13 +105,46 @@ pub fn takes(
     command: &ResolvedCommand,
     outcome: &ResolvedOutcome,
 ) -> Result<(), ExecuteError> {
+    taking(ir, command, outcome, None)
+}
+
+/// [`takes`], on a store that reaches the stores of the components `reached` names, as a host
+/// running them in one process hands the kernel: a value, a `when_related:` guard or a row set
+/// over an entity one of them owns is read from its owner's store, as ESS's interpreter reads it
+/// from its one store, so it is not refused. A read of an entity whose owner `reached` does not
+/// name, or that no component owns, is refused as [`takes`] refuses it, and so is a write (a
+/// subject, `instances:` or an `affects:` entry) of an entity the
+/// running component does not own, whatever is reached: the kernel
+/// writes only the running component's store.
+///
+/// # Errors
+/// As [`takes`].
+pub fn takes_reaching(
+    ir: &EssIr,
+    command: &ResolvedCommand,
+    outcome: &ResolvedOutcome,
+    reached: &BTreeSet<String>,
+) -> Result<(), ExecuteError> {
+    taking(ir, command, outcome, Some(reached))
+}
+
+/// [`takes`], reaching the stores `reached` names, or the running component's alone.
+pub(crate) fn taking(
+    ir: &EssIr,
+    command: &ResolvedCommand,
+    outcome: &ResolvedOutcome,
+    reached: Option<&BTreeSet<String>>,
+) -> Result<(), ExecuteError> {
     let refuse = |what: &str| Err(unsupported(command, outcome, what));
     let set = outcome.instances.is_some();
-    if let Some(what) = foreign_guard(ir, command) {
+    if let Some(what) = foreign_guard(ir, command, reached) {
         return refuse(&what);
     }
     if let Some(what) = effect(outcome) {
         return refuse(what);
+    }
+    if let Some(what) = foreign_write(ir, command, outcome) {
+        return refuse(&what);
     }
     if let Some(what) = response(ir, command, outcome) {
         return refuse(&what);
@@ -174,23 +237,67 @@ pub fn takes(
     if let Some(what) = unfilled_error_field(ir, command, outcome) {
         return refuse(&what);
     }
-    if let Some(what) = foreign_read(ir, command, outcome) {
+    if let Some(what) = foreign_read(ir, command, outcome, reached) {
         return refuse(&what);
     }
     Ok(())
 }
 
+/// The write, named, of `outcome` over an entity a component running `command` does not own: its
+/// subject (`creates:`, `updates:`, `moves:`, `deletes:` or `preserves:`), the rows it changes
+/// (`instances:`), or an `affects:` entry. The kernel writes only the store it runs on, which a
+/// host hands it to write the running component's rows, while a host running the owner too reads
+/// that entity from the owner's store ([`takes_reaching`]): such a write would land where no read
+/// of the entity looks, and an existing row it acts on would be read from one store and written
+/// to another. ESS's interpreter, which holds every entity in one store, writes the owner's. It
+/// is refused in every run, whatever store is reached, before anything is written. A command no
+/// component accepts is not checked.
+fn foreign_write(
+    ir: &EssIr,
+    command: &ResolvedCommand,
+    outcome: &ResolvedOutcome,
+) -> Option<String> {
+    let subject = outcome
+        .subject
+        .iter()
+        .map(|subject| (&subject.entity, "the subject"));
+    let set = outcome.instances.iter().map(|set| {
+        (
+            &set.entity,
+            "the rows the outcome changes (`instances:`) of",
+        )
+    });
+    let affects = outcome
+        .affects
+        .iter()
+        .map(|affect| (&affect.entity, "an `affects:` entry over"));
+    subject
+        .chain(set)
+        .chain(affects)
+        .find_map(|(entity, what)| {
+            let entity = ir.entity(entity);
+            let (owner, runner) = foreign(ir, command, entity, None)?;
+            Some(format!(
+                "{what} `{}`, owned by {owner}: the kernel writes only the store of component \
+             `{runner}`, which runs the command",
+                entity.name,
+            ))
+        })
+}
+
 /// The value, named, that reads a row of an entity a component running `command` does not own:
 /// `{related: {entity, where, field}}` (ess/22) or `{related: {via, field}}` (ess/16, ess/28), in
 /// `outcome`'s `sets:`, `affects:`, payloads or error, struct members included. The kernel reads
-/// only the store of the component that runs the command ([`crate::values`]), where no row of
-/// such an entity is kept, so the read would find none and answer `no_value` for every request.
-/// ESS's interpreter holds every entity in one store and reads it: the outcome is refused rather
-/// than answered otherwise. A command no component accepts is not checked.
+/// only the store it runs on ([`crate::values`]); where that store does not reach the owner's
+/// (`reached`, [`foreign`]), no row of such an entity is kept there, so the read would find none
+/// and answer `no_value` for every request. ESS's interpreter holds every entity in one store and
+/// reads it: the outcome is refused rather than answered otherwise. A command no component
+/// accepts is not checked.
 fn foreign_read(
     ir: &EssIr,
     command: &ResolvedCommand,
     outcome: &ResolvedOutcome,
+    reached: Option<&BTreeSet<String>>,
 ) -> Option<String> {
     fn reads<'f>(
         fields: impl IntoIterator<Item = &'f ResolvedPayloadField>,
@@ -220,7 +327,7 @@ fn foreign_read(
     );
     found.into_iter().find_map(|(field, entity)| {
         let entity = ir.entity(entity);
-        let (owner, runner) = foreign(ir, command, entity)?;
+        let (owner, runner) = foreign(ir, command, entity, reached)?;
         Some(format!(
             "the value source {} for `{}`, which reads a row of `{}`, owned by {owner}: the \
              kernel reads only the store of component `{runner}`, which runs the command",
@@ -231,43 +338,62 @@ fn foreign_read(
     })
 }
 
-/// Where `entity` is owned by another component than one running `command`: the owner, named
-/// (`component \`<name>\`` or `no component`), and the component running the command that does
-/// not own it. `None` where every component accepting `command` owns it, and for a command no
-/// component accepts.
+/// Where `entity` is owned by another component than one running `command`, in a store that does
+/// not reach the owner's: the owner, named (`component \`<name>\`` or `no component`), and the
+/// component running the command that does not own it, one `reached` names where one does.
+/// `None` where every component accepting `command` owns it, where `reached` names the owner (a
+/// host running both reads the entity from the owner's store), and for a command no component
+/// accepts. With `reached` `None` only the running component's store is reached.
 fn foreign(
     ir: &EssIr,
     command: &ResolvedCommand,
     entity: &ResolvedEntity,
+    reached: Option<&BTreeSet<String>>,
 ) -> Option<(String, String)> {
     let name = command.name.to_string();
     let components = ir.components().values();
-    let runner = components.clone().find(|component| {
+    let mut runners = components.clone().filter(|component| {
         component
             .accepts
             .iter()
             .any(|accepted| accepted.to_string() == name)
             && !component.owns.contains(&entity.domain)
-    })?;
+    });
+    let runner = match reached {
+        Some(reached) => runners
+            .clone()
+            .find(|runner| reached.contains(runner.name.as_str()))
+            .or_else(|| runners.next()),
+        None => runners.next(),
+    }?;
     let owner = components
         .clone()
-        .find(|component| component.owns.contains(&entity.domain))
-        .map_or_else(
-            || "no component".to_owned(),
-            |owner| format!("component `{}`", owner.name.as_str()),
-        );
+        .find(|component| component.owns.contains(&entity.domain));
+    if let (Some(owner), Some(reached)) = (owner, reached)
+        && reached.contains(owner.name.as_str())
+    {
+        return None;
+    }
+    let owner = owner.map_or_else(
+        || "no component".to_owned(),
+        |owner| format!("component `{}`", owner.name.as_str()),
+    );
     Some((owner, runner.name.as_str().to_owned()))
 }
 
 /// The guard, named, of any outcome of `command` that reads the rows of an entity a component
 /// running `command` does not own: a `when_related:` row set over such an entity, a rows
 /// quantifier in its selector or test walking one (`exists: {in: {entity: …}, …}`, ess/27), or a
-/// `when_related:` row such an entity holds. The kernel reads only the store of the component that
-/// runs the command, where no row of such an entity is kept, so the guard would be decided over no
-/// rows; ESS's interpreter holds every entity in one store and reads them. Selection reads every
-/// guard it reaches, so every outcome of the command is refused, as [`foreign_read`] refuses a
-/// value. A command no component accepts is not checked.
-fn foreign_guard(ir: &EssIr, command: &ResolvedCommand) -> Option<String> {
+/// `when_related:` row such an entity holds. The kernel reads only the store it runs on; where that
+/// store does not reach the owner's (`reached`, [`foreign`]), no row of such an entity is kept
+/// there, so the guard would be decided over no rows; ESS's interpreter holds every entity in one
+/// store and reads them. Selection reads every guard it reaches, so every outcome of the command
+/// is refused, as [`foreign_read`] refuses a value. A command no component accepts is not checked.
+fn foreign_guard(
+    ir: &EssIr,
+    command: &ResolvedCommand,
+    reached: Option<&BTreeSet<String>>,
+) -> Option<String> {
     command.outcomes.iter().find_map(|outcome| {
         let read: Vec<&ResolvedEntity> = match &outcome.condition {
             ResolvedCondition::RelatedSet {
@@ -287,7 +413,7 @@ fn foreign_guard(ir: &EssIr, command: &ResolvedCommand) -> Option<String> {
             _ => Vec::new(),
         };
         read.into_iter().find_map(|entity| {
-            let (owner, runner) = foreign(ir, command, entity)?;
+            let (owner, runner) = foreign(ir, command, entity, reached)?;
             Some(format!(
                 "the `when_related:` guard of `{}/{}`, which reads the rows of `{}`, owned by \
                  {owner}: the kernel reads only the store of component `{runner}`, which runs \

@@ -1,0 +1,42 @@
+format: ess/34
+system: metering
+version: v1
+summary: Charges a meter keeps, guarded by counts and universal tests over holds a second component keeps.
+domains:
+  - metering.usage
+  - metering.holds
+components:
+  - component: meter
+    summary: Charges usage.
+    owns:
+      domains:
+        - metering.usage
+    accepts:
+      commands:
+        - metering.usage.ChargeCounted
+        - metering.usage.ChargeUnlessAllHigh
+        - metering.usage.ChargeUnlessNone
+        - metering.usage.NoteHeld
+        - metering.usage.TagCharges
+    publishes:
+      events:
+        - metering.usage.UsageCharged
+        - metering.usage.HoldNoted
+        - metering.usage.ChargesTagged
+    reached_by: in_process
+  - component: holds
+    summary: Places, levels and releases holds on organizations.
+    owns:
+      domains:
+        - metering.holds
+    accepts:
+      commands:
+        - metering.holds.PlaceHold
+        - metering.holds.LevelHold
+        - metering.holds.ReleaseHold
+    publishes:
+      events:
+        - metering.holds.HoldPlaced
+        - metering.holds.HoldLevelled
+        - metering.holds.HoldReleased
+    reached_by: in_process

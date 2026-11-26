@@ -57,6 +57,17 @@ are Spindle's releases.
   `spindle_host::Failed` and `RefusedCommand` carry `caused_by`, and `Failed` the kernel's error
   `kind`; `spindle_channel::Sender::next_delivery` reads the id the next envelope carries
   (`story:refused-bound-command-recorded`).
+- A value (`{related: …}`), a `when_related:` guard or a row set over an entity another component
+  owns is read from the owner's store where both components run in one process (`run` reading
+  stdin, a served `run`), and answers what ESS 0.99.1's interpreter answers, where it was refused
+  as unsupported and `admit` listed it as not served. `admit --component` and `play --component`,
+  where the owner runs in another process, still refuse it by name, naming the entity, its owner
+  and the running component. A write of another component's entity, an `affects:` entry, a
+  subject or the rows of `instances:`, is refused by name in every run, where nothing refused
+  it and it wrote the running component's store, where no read of that entity looks. The
+  kernel's `takes_reaching`, `runs_reaching` and `execute_reaching` and the ingress's
+  `Surface::reaching` take the components the store reaches
+  (`story:cross-component-related-reads`).
 
 ### Fixed
 

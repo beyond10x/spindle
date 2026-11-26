@@ -1,0 +1,159 @@
+domain: metering.usage
+summary: Charges guarded by a count, a universal test and an absence over holds a second component keeps.
+types:
+  - name: metering.usage.ChargeId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: metering.usage.Charge
+    identity:
+      name: charge_id
+      type: metering.usage.ChargeId
+    fields:
+      - name: org
+        type: String
+      - name: tag
+        type: Optional<String>
+    lifecycle:
+      initial: Billed
+      states: [Billed]
+      terminal: [Billed]
+errors:
+  - name: metering.usage.OnHold
+    summary: The organization is on hold.
+    fields: []
+commands:
+  - name: metering.usage.ChargeCounted
+    input:
+      - name: charge_id
+        type: metering.usage.ChargeId
+      - name: org
+        type: String
+    outcomes:
+      - name: over-held
+        when_related:
+          entity: metering.holds.Hold
+          where: org == input.org
+          count: {gte: 2}
+        error: metering.usage.OnHold
+        summary: Two holds or more are placed on the organization.
+      - name: charged
+        creates: metering.usage.Charge
+        instance: charge_id
+        sets:
+          org: input.org
+        emits: [metering.usage.UsageCharged]
+        payload:
+          metering.usage.UsageCharged:
+            charge_id: input.charge_id
+        summary: The usage is charged.
+  - name: metering.usage.ChargeUnlessAllHigh
+    input:
+      - name: charge_id
+        type: metering.usage.ChargeId
+      - name: org
+        type: String
+    outcomes:
+      - name: all-high
+        when_related:
+          entity: metering.holds.Hold
+          where: org == input.org
+          forall: level >= 3
+        error: metering.usage.OnHold
+        summary: Every hold on the organization is at level 3 or more, none being one.
+      - name: charged
+        creates: metering.usage.Charge
+        instance: charge_id
+        sets:
+          org: input.org
+        emits: [metering.usage.UsageCharged]
+        payload:
+          metering.usage.UsageCharged:
+            charge_id: input.charge_id
+        summary: The usage is charged.
+  - name: metering.usage.ChargeUnlessNone
+    input:
+      - name: charge_id
+        type: metering.usage.ChargeId
+      - name: org
+        type: String
+    outcomes:
+      - name: unheld
+        when_related:
+          entity: metering.holds.Hold
+          where: org == input.org
+          exists: false
+        error: metering.usage.OnHold
+        summary: No hold is placed on the organization.
+      - name: charged
+        creates: metering.usage.Charge
+        instance: charge_id
+        sets:
+          org: input.org
+        emits: [metering.usage.UsageCharged]
+        payload:
+          metering.usage.UsageCharged:
+            charge_id: input.charge_id
+        summary: The usage is charged against a hold.
+  - name: metering.usage.NoteHeld
+    input:
+      - name: org
+        type: String
+    outcomes:
+      - name: noted
+        when_related:
+          entity: metering.holds.Hold
+          where: org == input.org
+          exists: true
+        emits: [metering.usage.HoldNoted]
+        payload:
+          metering.usage.HoldNoted:
+            org: input.org
+        summary: A hold on the organization is noted, and nothing is written.
+      - name: not-held
+        error: metering.usage.OnHold
+        summary: No hold is placed on the organization.
+  - name: metering.usage.TagCharges
+    input:
+      - name: charge_id
+        type: metering.usage.ChargeId
+      - name: org
+        type: String
+      - name: tag
+        type: String
+    outcomes:
+      - name: tagged
+        when_related:
+          entity: metering.holds.Hold
+          where: org == input.org
+          exists: true
+        updates: metering.usage.Charge
+        instance: charge_id
+        sets:
+          tag: input.tag
+        affects:
+          - entity: metering.usage.Charge
+            where: org == input.org
+            sets:
+              tag: input.tag
+        emits: [metering.usage.ChargesTagged]
+        payload:
+          metering.usage.ChargesTagged:
+            charge_id: input.charge_id
+        summary: The charge and every charge of the held organization carry the tag.
+      - name: not-held
+        error: metering.usage.OnHold
+        summary: No hold is placed on the organization.
+events:
+  - name: metering.usage.UsageCharged
+    fields:
+      - name: charge_id
+        type: metering.usage.ChargeId
+  - name: metering.usage.HoldNoted
+    fields:
+      - name: org
+        type: String
+  - name: metering.usage.ChargesTagged
+    fields:
+      - name: charge_id
+        type: metering.usage.ChargeId

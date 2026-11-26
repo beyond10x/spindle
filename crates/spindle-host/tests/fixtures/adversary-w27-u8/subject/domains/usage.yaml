@@ -1,0 +1,73 @@
+domain: metering.usage
+summary: Charges guarded by holds another component owns, and a command of the meter that places one of them.
+types:
+  - name: metering.usage.ChargeId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: metering.usage.Charge
+    identity:
+      name: charge_id
+      type: metering.usage.ChargeId
+    fields:
+      - name: org
+        type: String
+    lifecycle:
+      initial: Billed
+      states: [Billed]
+      terminal: [Billed]
+errors:
+  - name: metering.usage.OnHold
+    summary: The organization is on hold.
+    fields: []
+commands:
+  - name: metering.usage.ChargeDirect
+    input:
+      - name: charge_id
+        type: metering.usage.ChargeId
+      - name: org
+        type: String
+    outcomes:
+      - name: on-hold
+        when_related:
+          entity: metering.holds.Hold
+          where: org == input.org
+          exists: true
+        error: metering.usage.OnHold
+        summary: The organization is on hold.
+      - name: charged
+        creates: metering.usage.Charge
+        instance: charge_id
+        sets:
+          org: input.org
+        emits: [metering.usage.UsageCharged]
+        payload:
+          metering.usage.UsageCharged:
+            charge_id: input.charge_id
+        summary: The usage is charged.
+  - name: metering.usage.HoldOrg
+    input:
+      - name: hold_id
+        type: metering.holds.HoldId
+      - name: org
+        type: String
+    outcomes:
+      - name: held
+        creates: metering.holds.Hold
+        instance: hold_id
+        sets:
+          org: input.org
+        emits: [metering.usage.OrgHeld]
+        payload:
+          metering.usage.OrgHeld:
+            hold_id: input.hold_id
+        summary: The meter puts the organization on hold.
+events:
+  - name: metering.usage.UsageCharged
+    fields:
+      - name: charge_id
+        type: metering.usage.ChargeId
+  - name: metering.usage.OrgHeld
+    fields:
+      - name: hold_id
+        type: metering.holds.HoldId

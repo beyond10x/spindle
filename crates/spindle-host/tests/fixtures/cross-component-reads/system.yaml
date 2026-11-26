@@ -1,7 +1,7 @@
 format: ess/34
 system: access
 version: v1
-summary: Resources a catalogue keeps, and grants a second component issues, each reading a resource of the catalogue as it is issued.
+summary: Resources a catalogue keeps, and grants a second component issues, each reading a resource of the catalogue as it is issued, and labelling one.
 domains:
   - access.resources
   - access.grants
@@ -33,7 +33,9 @@ components:
       commands:
         - access.grants.IssueGrant
         - access.grants.IssueNamedGrant
+        - access.grants.LabelGrantedResource
     publishes:
       events:
         - access.grants.GrantIssued
+        - access.grants.ResourceLabelled
     reached_by: in_process

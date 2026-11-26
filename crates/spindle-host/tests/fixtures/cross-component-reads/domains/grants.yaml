@@ -62,8 +62,37 @@ commands:
         payload:
           access.grants.GrantIssued: {grant_id: input.grant_id}
         summary: The grant is kept with the name of the resource its input names.
+  - name: access.grants.LabelGrantedResource
+    input:
+      - name: grant_id
+        type: access.grants.GrantId
+      - name: holder
+        type: String
+      - name: name
+        type: String
+      - name: label
+        type: String
+    outcomes:
+      - name: labelled
+        updates: access.grants.Grant
+        instance: grant_id
+        sets:
+          holder: input.holder
+        affects:
+          - entity: access.resources.Resource
+            where: name == input.name
+            sets:
+              label: input.label
+        emits: [access.grants.ResourceLabelled]
+        payload:
+          access.grants.ResourceLabelled: {grant_id: input.grant_id}
+        summary: The grant passes to a new holder, and the resource its name selects is labelled.
 events:
   - name: access.grants.GrantIssued
+    fields:
+      - name: grant_id
+        type: access.grants.GrantId
+  - name: access.grants.ResourceLabelled
     fields:
       - name: grant_id
         type: access.grants.GrantId

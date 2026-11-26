@@ -74,6 +74,7 @@ use serde_json::{Map, Value};
 
 pub use caller::{binds as caller_binds, reads as caller_reads};
 pub use decider::{Decider, External, NoExternals};
+pub use execute::execute_reaching;
 pub use execute::{
     Invocation, at_rest, execute, execute_as, execute_at, execute_minting, execute_refusing,
 };
@@ -93,6 +94,7 @@ pub use store::{
     Scanned, Store, StoreError, Stored, Write, whole_writes,
 };
 pub use supported::{check as runs, selects, takes};
+pub use supported::{check_reaching as runs_reaching, takes_reaching};
 pub use values::{Undetermined, compute};
 
 /// Refuses `value` unless it is a value of `kind`, naming what it is not: the check every command

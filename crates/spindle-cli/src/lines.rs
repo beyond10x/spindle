@@ -228,8 +228,9 @@ pub(crate) struct Running<'a> {
 }
 
 impl Running<'_> {
-    /// Runs `invocation` once: a cause bound to an HTTP call is answered by it, any other by
-    /// `external`, then as the run's answers answer it.
+    /// Runs `invocation` once, reaching every component, whose rows the one store holds
+    /// (`story:cross-component-related-reads`): a cause bound to an HTTP call is answered by it,
+    /// any other by `external`, then as the run's answers answer it.
     pub(crate) fn execute(
         &mut self,
         invocation: &spindle_kernel::Invocation<'_>,
@@ -241,13 +242,15 @@ impl Running<'_> {
                 .answer(question)
                 .unwrap_or_else(|| answers.decide(external, question))
         };
-        spindle_kernel::execute_as(
+        spindle_kernel::execute_reaching(
             self.ir,
             self.store,
             &mut decider,
             self.mint,
             self.now,
             invocation,
+            &BTreeMap::new(),
+            &crate::every_component(self.ir),
         )
     }
 }
