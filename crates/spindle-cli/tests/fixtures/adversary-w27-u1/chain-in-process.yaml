@@ -1,0 +1,189 @@
+format: ess/34
+system: casework
+version: v1
+summary: Cases a clerk opens; bindings note each case, flag the urgent ones, and touch a case once its note is added.
+domains:
+  - casework.cases
+components:
+  - component: front
+    summary: Opens, notes, flags and touches cases.
+    owns:
+      domains:
+        - casework.cases
+    accepts:
+      commands:
+        - casework.cases.OpenCase
+        - casework.cases.AddNote
+        - casework.cases.FlagCase
+        - casework.cases.TouchCase
+    publishes:
+      events:
+        - casework.cases.CaseOpened
+        - casework.cases.NoteAdded
+        - casework.cases.CaseFlagged
+        - casework.cases.CaseTouched
+    reached_by: in_process
+bindings:
+  - id: a-note
+    when:
+      event: casework.cases.CaseOpened
+    invoke:
+      command: casework.cases.AddNote
+    mapping:
+      case_id: event.case_id
+    delivery: at_most_once
+    on_failure: drop
+  - id: b-flag
+    when:
+      event: casework.cases.CaseOpened
+      where: event.urgency == urgent
+    invoke:
+      command: casework.cases.FlagCase
+    mapping:
+      case_id: event.case_id
+    delivery: at_most_once
+    on_failure: drop
+  - id: c-touch
+    when:
+      event: casework.cases.NoteAdded
+    invoke:
+      command: casework.cases.TouchCase
+    mapping:
+      case_id: event.case_id
+    delivery: at_most_once
+    on_failure: drop
+domain: casework.cases
+types:
+  - name: casework.cases.Urgency
+    kind: enum
+    variants: [routine, urgent]
+  - name: casework.cases.NoteId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: casework.cases.Case
+    identity:
+      name: case_id
+      type: String
+    fields:
+      - name: urgency
+        type: casework.cases.Urgency
+    lifecycle:
+      initial: Open
+      states: [Open, Flagged, Touched]
+      terminal: [Touched]
+      transitions:
+        - name: flag
+          from: [Open]
+          to: Flagged
+        - name: touch
+          from: [Flagged]
+          to: Touched
+  - name: casework.cases.Note
+    identity:
+      name: note_id
+      type: casework.cases.NoteId
+    fields:
+      - name: case_id
+        type: String
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+errors:
+  - name: casework.cases.NoSuchCase
+    summary: No case carries the id.
+    fields: []
+  - name: casework.cases.NotFlagged
+    summary: Only a flagged case is touched.
+    fields: []
+commands:
+  - name: casework.cases.OpenCase
+    input:
+      - name: case_id
+        type: String
+      - name: urgency
+        type: casework.cases.Urgency
+    outcomes:
+      - name: opened
+        creates: casework.cases.Case
+        instance: case_id
+        sets:
+          urgency: input.urgency
+        emits: [casework.cases.CaseOpened]
+        payload:
+          casework.cases.CaseOpened: {case_id: input.case_id, urgency: input.urgency}
+        summary: The case is opened with its urgency.
+  - name: casework.cases.AddNote
+    input:
+      - name: case_id
+        type: String
+    outcomes:
+      - name: added
+        creates: casework.cases.Note
+        instance: note_id
+        sets:
+          case_id: input.case_id
+        emits: [casework.cases.NoteAdded]
+        payload:
+          casework.cases.NoteAdded:
+            note_id: {generated: true}
+            case_id: input.case_id
+        summary: A note is kept under an identity the runtime mints.
+  - name: casework.cases.FlagCase
+    input:
+      - name: case_id
+        type: String
+    outcomes:
+      - name: no-such-case
+        unknown_instance: true
+        error: casework.cases.NoSuchCase
+        summary: No case carries the id.
+      - name: flagged
+        moves: casework.cases.Case.flag
+        instance: case_id
+        emits: [casework.cases.CaseFlagged]
+        payload:
+          casework.cases.CaseFlagged: {case_id: input.case_id}
+        summary: The case is flagged.
+  - name: casework.cases.TouchCase
+    input:
+      - name: case_id
+        type: String
+    outcomes:
+      - name: no-such-case
+        unknown_instance: true
+        error: casework.cases.NoSuchCase
+        summary: No case carries the id.
+      - name: not-flagged
+        when_subject: {predicate: state == Open}
+        error: casework.cases.NotFlagged
+        summary: An open case is not touched.
+      - name: touched
+        moves: casework.cases.Case.touch
+        instance: case_id
+        emits: [casework.cases.CaseTouched]
+        payload:
+          casework.cases.CaseTouched: {case_id: input.case_id}
+        summary: The flagged case is touched.
+events:
+  - name: casework.cases.CaseOpened
+    fields:
+      - name: case_id
+        type: String
+      - name: urgency
+        type: casework.cases.Urgency
+  - name: casework.cases.NoteAdded
+    fields:
+      - name: note_id
+        type: casework.cases.NoteId
+      - name: case_id
+        type: String
+  - name: casework.cases.CaseFlagged
+    fields:
+      - name: case_id
+        type: String
+  - name: casework.cases.CaseTouched
+    fields:
+      - name: case_id
+        type: String
