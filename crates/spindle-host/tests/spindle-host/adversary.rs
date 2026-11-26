@@ -116,6 +116,9 @@ fn echo_child_submits_once() {
     println!("ECHO-CHILD-RETURNED {}", outcome.is_ok());
 }
 
+/// How long the child may take to start, admit `echo` and return from its one submit.
+const DEADLINE: Duration = Duration::from_secs(30);
+
 #[test]
 fn bindings_that_trigger_each_other_do_not_hang_the_host() {
     let mut child = Command::new(std::env::current_exe().expect("the test binary"))
@@ -130,7 +133,10 @@ fn bindings_that_trigger_each_other_do_not_hang_the_host() {
         .stderr(Stdio::null())
         .spawn()
         .expect("the child starts");
-    let deadline = Instant::now() + Duration::from_secs(5);
+    // 30 s, not 5 s: the child is this binary started again and admitting `echo`, which a loaded
+    // build pool held past 5 s (`story:test-step-within-budget`); a submit without a bound never
+    // returns, so any deadline under the runner's 60 s tells the two apart.
+    let deadline = Instant::now() + DEADLINE;
     loop {
         if let Some(status) = child.try_wait().expect("the child is observable") {
             let output = child.wait_with_output().expect("the child's output reads");
@@ -147,8 +153,8 @@ fn bindings_that_trigger_each_other_do_not_hang_the_host() {
             let _ = child.wait();
             panic!(
                 "Host::new admitted echo (left-to-right and right-to-left trigger each other) \
-                 and one submit of echo.left.Send had not returned after 5 s: settle has no bound \
-                 and no refusal of a binding cycle"
+                 and one submit of echo.left.Send had not returned after {DEADLINE:?}: settle has no \
+                 bound and no refusal of a binding cycle"
             );
         }
         std::thread::sleep(Duration::from_millis(50));

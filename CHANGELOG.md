@@ -21,6 +21,14 @@ are Spindle's releases.
   jobs. `scripts/changed-paths.sh` holds the one path list every job reads, and the design pages
   under `docs/design/`, which tests read, count as code
   (`story:planning-only-prs-skip-tests`).
+- The test step of `task check` and of CI's `Gate` runs under cargo-nextest: a test is killed at
+  60 s (`.config/nextest.toml`), the step after its build fails over 120 s (`scripts/within.sh`)
+  and prints its ten slowest tests. Dependencies build at `opt-level = 1` in the dev profile,
+  which cut the summed test time of the conformance, kernel and CLI binaries from about 935 s to
+  about 240 s; a kernel case compiles its fixture once rather than per command, the
+  stuck-collector case sends 20,000 frames rather than 200,000, and the transport, metrics-read
+  and concurrent-reads cases bound a second or more, not milliseconds
+  (`story:test-step-within-budget`).
 
 ### Fixed
 

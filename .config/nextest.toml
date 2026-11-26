@@ -1,0 +1,7 @@
+[profile.default]
+slow-timeout = { period = "30s", terminate-after = 2 }
+final-status-level = "slow"
+fail-fast = false
+
+[profile.default.junit]
+path = "junit.xml"
