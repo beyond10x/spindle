@@ -310,6 +310,7 @@ fn the_events_are_read_from_the_store_not_from_a_list_the_host_keeps() {
     behind.attribute(Some(Origin {
         command: "tasks.board.OpenTask".to_owned(),
         sequence: u64::MAX,
+        cause: None,
     }));
     let opened = event(
         "board",

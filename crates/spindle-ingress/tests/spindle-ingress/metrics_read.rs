@@ -449,9 +449,10 @@ fn a_metrics_read_scans_no_store() {
 // story:metrics-observed-series: a scrape writes a series only once something was counted in it.
 
 /// The series a scrape of the generated model writes before anything is executed: only
-/// `spindle_resets_total`, which every scrape writes. 0.13.0 wrote 15,565 series for a model of
-/// 471 commands, about 33 per declared command.
-const UNEXECUTED_SERIES: usize = 1;
+/// `spindle_resets_total` and `spindle_metrics_series_mode`, which every scrape writes
+/// (`story:metrics-series-bounded`). 0.13.0 wrote 15,565 series for a model of 471 commands,
+/// about 33 per declared command.
+const UNEXECUTED_SERIES: usize = 2;
 
 /// The sample lines of `exposition`: one per series, each histogram bucket its own.
 fn sample_lines(exposition: &str) -> Vec<&str> {
@@ -538,7 +539,14 @@ fn an_unexecuted_model_of_500_commands_writes_fewer_than_1000_series() {
     );
     assert!(series < 1_000, "{series} series:\n{body}");
     assert_eq!(series, UNEXECUTED_SERIES, "{body}");
-    assert_eq!(sample_lines(&body), ["spindle_resets_total 0"], "{body}");
+    assert_eq!(
+        sample_lines(&body),
+        [
+            "spindle_resets_total 0",
+            r#"spindle_metrics_series_mode{mode="per-command"} 1"#
+        ],
+        "{body}"
+    );
 }
 
 #[test]

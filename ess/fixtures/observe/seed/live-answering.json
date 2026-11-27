@@ -1,0 +1,5 @@
+{
+  "live": true,
+  "idle_ms": 12,
+  "bound_ms": 60000
+}

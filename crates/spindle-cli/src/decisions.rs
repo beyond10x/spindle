@@ -38,6 +38,18 @@ impl Run {
         &self.answers
     }
 
+    /// These answers with the decisions file read only for the causes of `capabilities`
+    /// ([`Answers::answering_only`]): an environment's `[decisions]` file answers only the causes
+    /// bound to `decisions-file`.
+    #[must_use]
+    pub fn answering_only(self, capabilities: &std::collections::BTreeSet<String>) -> Self {
+        Self {
+            file: self.file.answering_only(capabilities.clone()),
+            answers: self.answers.answering_only(capabilities.clone()),
+            ..self
+        }
+    }
+
     /// These answers beneath `calls`: a cause bound to an HTTP call is answered by it.
     pub(crate) fn calling(self, calls: Calls) -> Self {
         Self { calls, ..self }

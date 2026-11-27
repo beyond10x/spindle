@@ -21,7 +21,7 @@ use ess_primitives::node::Node;
 use serde_json::{Map, Value};
 use spindle_capability::Environment;
 use spindle_host::{
-    Cause, Clock, Host, HostError, Placements, RETRY_ATTEMPTS, Refusal, SystemClock,
+    Answers, Cause, Clock, Host, HostError, Placements, RETRY_ATTEMPTS, Refusal, SystemClock,
 };
 use spindle_kernel::{Decider, ExecuteError, External};
 
@@ -39,8 +39,9 @@ type Forcing = Arc<Mutex<Option<(String, String)>>>;
 /// forced outcome's cause holds and every other cause of that command does not, for the next
 /// invocation of the command only, the scenario's own send or one a binding makes: the forcing
 /// is consumed where its cause is answered, and lapses after any invocation of its command that
-/// did not ask it. A cause nothing forced does not hold, so the model selects as it would without
-/// it. Nothing forced in one scenario reaches the next.
+/// did not ask it. A cause nothing forced is answered by the decisions file the target was given
+/// ([`HostTarget::answering`]); without one, or where it does not answer, the cause does not hold,
+/// so the model selects as it would without it. Nothing forced in one scenario reaches the next.
 ///
 /// A command sent as an actor whose `may:` does not name it is refused before it runs, as ESS's
 /// interpreter refuses it ([`TargetError::NotGranted`]); one sent as no actor is not checked. A
@@ -56,6 +57,8 @@ pub struct HostTarget {
     admission: Result<Arc<Placements>, Refusal>,
     running: RefCell<Option<Running>>,
     forced: Forcing,
+    /// What answers a cause the scenario does not force ([`HostTarget::answering`]).
+    answers: Option<Answers>,
     /// How many commands this target has sent to a host.
     commands: Cell<usize>,
     /// What each command the runner asked of the scenario in progress, or the last one, answered.
@@ -112,21 +115,34 @@ struct Running {
     events: Vec<ObservedEvent>,
 }
 
-/// The decider of every host the target opens: what the scenario forced, else "does not hold".
-struct Forced(Forcing);
+/// The decider of every host the target opens: what the scenario forced, for every cause of the
+/// forced command; else what the decisions file answers, where the target has one
+/// ([`HostTarget::answering`]); else "does not hold".
+struct Forced {
+    forcing: Forcing,
+    answers: Option<Answers>,
+}
 
 impl Decider for Forced {
     fn decide(&mut self, question: &External<'_>) -> Result<bool, String> {
-        let mut forced = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        let holds = forced.as_ref().is_some_and(|(command, outcome)| {
-            command == question.command && outcome == question.outcome
-        });
-        if holds {
-            // Consumed where it is answered, whichever invocation asks: the scenario's own send
-            // or a binding's, as ESS's interpreter consumes it.
-            *forced = None;
+        let mut forced = self.forcing.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((command, outcome)) = forced.as_ref()
+            && command == question.command
+        {
+            let holds = outcome == question.outcome;
+            if holds {
+                // Consumed where it is answered, whichever invocation asks: the scenario's own
+                // send or a binding's, as ESS's interpreter consumes it.
+                *forced = None;
+            }
+            return Ok(holds);
         }
-        Ok(holds)
+        // A cause neither forced nor answered by the file does not hold, as ESS's runner reads
+        // a cause nothing forces.
+        Ok(self
+            .answers
+            .as_ref()
+            .is_some_and(|answers| answers.decide(&BTreeMap::new(), question).unwrap_or(false)))
     }
 }
 
@@ -153,11 +169,23 @@ impl HostTarget {
             admission,
             running: RefCell::new(None),
             forced: Arc::default(),
+            answers: None,
             commands: Cell::new(0),
             answered: RefCell::default(),
             unarranged: Cell::new(false),
             clock,
             mint,
+        }
+    }
+
+    /// This target, answering an `external:` cause the scenario does not force from `answers`, a
+    /// decisions file as `run --decisions` reads it: every host it opens asks them where no
+    /// forcing of the cause's command is pending, and a cause they do not answer does not hold.
+    #[must_use]
+    pub fn answering(self, answers: Answers) -> Self {
+        Self {
+            answers: Some(answers),
+            ..self
         }
     }
 
@@ -192,7 +220,10 @@ impl HostTarget {
             placements,
             Arc::clone(&self.clock),
             Path::new(""),
-            Box::new(Forced(self.forced.clone())),
+            Box::new(Forced {
+                forcing: self.forced.clone(),
+                answers: self.answers.clone(),
+            }),
         )?;
         match self.mint {
             Some(seed) => host.seeded(seed),

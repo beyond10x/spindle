@@ -7,6 +7,7 @@
 use std::convert::Infallible;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -27,6 +28,7 @@ use spindle_host::{Failed, Host, Reader};
 
 use crate::answer::Answer;
 use crate::console::{Console, Worlds};
+use crate::health::{LIVENESS, Probed, SeedState};
 use crate::observe::{Answered, By, Note, Reserved, Target};
 use crate::router::{Asked, BODY_LIMIT, Pending, Response as Reply};
 use crate::surface::{Caller, Route, Surface};
@@ -129,6 +131,66 @@ struct Served {
     /// The host's reader, where the listener answers reads beside the host's thread
     /// ([`Listener::bind_reading`]).
     reader: Option<Reader>,
+    /// What the health routes read beside the caller's thread.
+    health: Arc<Health>,
+}
+
+/// What `GET /__spindle/live` and `GET /__spindle/ready` read beside the caller's thread
+/// (`story:health-and-graceful-drain`): when the caller last asked for a request
+/// ([`Listener::next`]), whether it holds a request it took, how long it may go without asking,
+/// and whether the run is stopping.
+#[derive(Debug)]
+struct Health {
+    /// When the listener was bound; the instants below are counted from it.
+    since: Instant,
+    /// Milliseconds from `since` to the caller's last ask.
+    asked: AtomicU64,
+    /// Whether the caller holds a request [`Listener::next`] handed it: set when it hands one,
+    /// cleared at the caller's next ask.
+    holding: AtomicBool,
+    /// The liveness bound, in milliseconds ([`Listener::live_within`]).
+    bound: AtomicU64,
+    /// Set once the run stops taking work ([`Listener::stopping`]).
+    stopping: Arc<AtomicBool>,
+}
+
+impl Health {
+    fn new() -> Self {
+        Self {
+            since: Instant::now(),
+            asked: AtomicU64::new(0),
+            holding: AtomicBool::new(false),
+            bound: AtomicU64::new(millis(LIVENESS)),
+            stopping: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// The caller asks for a request now.
+    fn beat(&self) {
+        self.asked
+            .store(millis(self.since.elapsed()), Ordering::SeqCst);
+    }
+
+    fn stopping(&self) -> bool {
+        self.stopping.load(Ordering::SeqCst)
+    }
+
+    /// What the health routes read now, the run's seed being `seed`.
+    fn probed<'a>(&self, seed: Option<&'a SeedState>) -> Probed<'a> {
+        let asked = Duration::from_millis(self.asked.load(Ordering::SeqCst));
+        Probed {
+            seed,
+            stopping: self.stopping(),
+            holding: self.holding.load(Ordering::SeqCst),
+            idle: self.since.elapsed().saturating_sub(asked),
+            bound: Duration::from_millis(self.bound.load(Ordering::SeqCst)),
+        }
+    }
+}
+
+/// `duration` in whole milliseconds.
+fn millis(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 /// What every request to a guarded listener must carry: a `Host` header naming the listener on
@@ -215,12 +277,19 @@ fn same(left: &str, right: &str) -> bool {
 ///
 /// Dropping it stops accepting and ends the server thread at once: an answer not yet written is
 /// not written. [`Listener::close`] answers every request it holds before the thread ends.
+///
+/// Beside every route it answers the run's health on its own threads, with or without a recorder
+/// (`story:health-and-graceful-drain`): `GET /__spindle/live` `200` while the caller holds a
+/// request it took or asked for one ([`Listener::next`]) within [`LIVENESS`], or the bound given
+/// ([`Listener::live_within`]), and `503` once it has done neither; `GET /__spindle/ready` `503` once the
+/// run stops taking work ([`Listener::stopping`]).
 #[derive(Debug)]
 pub struct Listener {
     address: SocketAddr,
     exchanges: Option<mpsc::Receiver<Exchange>>,
     shutdown: Option<oneshot::Sender<Stop>>,
     server: Option<std::thread::JoinHandle<io::Result<()>>>,
+    health: Arc<Health>,
 }
 
 /// How the server thread stops.
@@ -336,11 +405,13 @@ impl Listener {
             .build()?;
         let (sender, exchanges) = mpsc::channel();
         let (shutdown, mut stopped) = oneshot::channel::<Stop>();
+        let health = Arc::new(Health::new());
         let served = Arc::new(Served {
             surface,
             exchanges: sender,
             guard,
             reader,
+            health: Arc::clone(&health),
         });
         let server = std::thread::Builder::new()
             .name("spindle-ingress".to_owned())
@@ -384,6 +455,7 @@ impl Listener {
             exchanges: Some(exchanges),
             shutdown: Some(shutdown),
             server: Some(server),
+            health,
         })
     }
 
@@ -392,9 +464,35 @@ impl Listener {
         self.address
     }
 
-    /// The next request for a route, waiting at most `timeout`; `None` when none arrived.
+    /// The next request for a route, waiting at most `timeout`; `None` when none arrived. Each
+    /// call counts as the caller's thread answering for `GET /__spindle/live`, as it starts and as
+    /// it returns; from a request it hands until the next call, the caller holds that request and
+    /// reads live however long it takes to answer it.
     pub fn next(&self, timeout: Duration) -> Option<Exchange> {
-        self.exchanges.as_ref()?.recv_timeout(timeout).ok()
+        self.health.holding.store(false, Ordering::SeqCst);
+        self.health.beat();
+        let next = self.exchanges.as_ref()?.recv_timeout(timeout).ok();
+        self.health.beat();
+        self.health.holding.store(next.is_some(), Ordering::SeqCst);
+        next
+    }
+
+    /// This listener answering `GET /__spindle/live` `503` once the caller, holding no request,
+    /// has not asked for one ([`Listener::next`]) for longer than `bound`, in place of
+    /// [`LIVENESS`]. A served run keeps [`LIVENESS`].
+    #[must_use]
+    pub fn live_within(self, bound: Duration) -> Self {
+        self.health.bound.store(millis(bound), Ordering::SeqCst);
+        self
+    }
+
+    /// The flag that stops this listener taking work (`story:health-and-graceful-drain`): once it
+    /// is set, `GET /__spindle/ready` answers `503`, and every request that arrives from then on is
+    /// answered `503` at once, but those under `/__spindle/`; each request already handed over
+    /// still arrives on [`Listener::next`]. It is set by whoever holds it, such as a signal
+    /// handler, without the caller's thread (`signal_hook::flag::register`).
+    pub fn stopping(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.health.stopping)
     }
 
     /// Stops the listener so that no client reads a closed connection where an answer was due:
@@ -506,6 +604,11 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
     if reserved.is_some() && unproxied {
         return (Answer::not_proven().into(), None);
     }
+    // Once the run stops taking work, a request arriving is answered at once and never queued
+    // (`story:health-and-graceful-drain`); the run's own routes still answer, readiness `503`.
+    if reserved.is_none() && served.health.stopping() {
+        return (stopping().into(), None);
+    }
     if let Some(reserved) = reserved {
         let query = request.uri().query().unwrap_or_default();
         let query = match &served.guard {
@@ -515,6 +618,7 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         let reply = crate::observe::reserved(
             served.surface.recorder(),
             served.surface.panel(),
+            &served.health.probed(served.surface.seed()),
             reserved,
             request.method().as_str(),
             request.uri().path(),
@@ -685,6 +789,10 @@ async fn handed(served: &Served, pending: Pending) -> Result<(Reply, Answered), 
         }
         _ => pending,
     };
+    // A request whose body was still arriving when the run stopped taking work is not queued.
+    if served.health.stopping() && !matches!(pending.asked, Asked::Hosted(_)) {
+        return Err(stopping());
+    }
     let (reply, replying) = oneshot::channel();
     if served.exchanges.send(Exchange { pending, reply }).is_err() {
         return Err(Answer::refusal(503, "the listener is stopping"));
@@ -692,6 +800,11 @@ async fn handed(served: &Served, pending: Pending) -> Result<(Reply, Answered), 
     replying
         .await
         .map_err(|_| Answer::refusal(503, "the listener stopped before answering"))
+}
+
+/// The refusal of a request that arrives once the run stops taking work.
+fn stopping() -> Answer {
+    Answer::refusal(503, "the run is stopping")
 }
 
 /// What a record notes of a request for `asked`, answered as `answered` says: the route

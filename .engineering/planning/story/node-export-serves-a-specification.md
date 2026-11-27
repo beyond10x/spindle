@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:node-export-serves-a-specification
 kind: story
-status: active
+status: implemented
 title: Node loads the wasm host and serves a specification
 relations:
 - serves: vision:spindle
@@ -42,10 +42,11 @@ scope:
   path: examples/environments/node.toml
 - confidence: inferred
   path: website/docs
-revision: 11
+revision: 12
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-25T02:59:15Z", actor: "human:operator", revision: 10, decided_on: {"recorded":{"review_outcome":6}}}
 - {from: "proposed", to: "active", at: "2026-11-25T02:59:15Z", actor: "human:operator", revision: 11, decided_on: {"recorded":{"review_outcome":6}}}
+- {from: "active", to: "implemented", at: "2026-11-27T07:11:14Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"test_result":1,"review_outcome":6}}}
 ---
 # Node loads the wasm host and serves a specification
 

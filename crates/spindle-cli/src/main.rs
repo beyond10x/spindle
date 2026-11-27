@@ -7,6 +7,7 @@ mod database;
 mod decisions;
 mod deploy;
 mod lines;
+mod log;
 mod replay;
 mod scaled;
 mod seed;
@@ -15,19 +16,21 @@ mod state;
 mod state_lock;
 mod world;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use signal_hook::consts::{SIGINT, SIGTERM};
-use spindle_capability::{Admission, Capability, Environment, Requirements};
-use spindle_cli::cli::{Cli, Command, StateCommand, StoreCommand};
+use spindle_capability::{
+    Admission, Binding, Capability, DECISIONS_FILE, Environment, Requirements,
+};
+use spindle_cli::cli::{Cli, Command, LogFormat, StateCommand, StoreCommand};
 use spindle_host::{Host, HostError, rally};
 use spindle_kernel::{MemoryStore, SqliteStore, Store};
 
@@ -61,10 +64,14 @@ struct Request {
 }
 
 fn main() -> ExitCode {
-    match run(Cli::parse()) {
+    let cli = Cli::parse();
+    if let Command::Run { log_format, .. } = &cli.command {
+        log::set(*log_format);
+    }
+    match run(cli) {
         Ok(code) => code,
         Err(error) => {
-            eprintln!("b10x-spindle: {error:#}");
+            log::error(format!("{error:#}")).write();
             ExitCode::FAILURE
         }
     }
@@ -191,10 +198,18 @@ fn run(cli: Cli) -> Result<ExitCode> {
             spec,
             environment,
             scenario: Some(scenario),
+            decisions,
             clock,
             mint_seed,
             ..
-        } => replay::replay(&spec, &environment, &scenario, clock, mint_seed),
+        } => replay::replay(
+            &spec,
+            &environment,
+            &scenario,
+            decisions.as_deref(),
+            clock,
+            mint_seed,
+        ),
         Command::Run {
             spec,
             environment,
@@ -204,6 +219,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             http,
             port,
             address,
+            console,
             drop_retries,
             fixed_actor,
             fixed_caller,
@@ -211,9 +227,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
             trusted_caller_secret,
             observe,
             observe_requests,
+            observe_series,
             seed,
+            drain,
             clock,
             mint_seed,
+            log_format,
             scenario: None,
         } => execute(&Execute {
             spec: &spec,
@@ -224,14 +243,18 @@ fn run(cli: Cli) -> Result<ExitCode> {
             http: http.as_deref(),
             port,
             address,
+            console,
             drop_retries,
             callers: serve::callers(fixed_actor, fixed_caller)?,
             observe: observe.then_some(usize::from(observe_requests)),
+            observe_series,
             caller_header: trusted_caller_header.as_deref(),
             caller_secret: trusted_caller_secret.as_deref(),
             seed: seed.as_deref(),
+            drain: Duration::from_secs(drain),
             clock,
             mint_seed,
+            log_format,
         }),
         Command::Play {
             spec,
@@ -323,6 +346,17 @@ fn signals() -> Result<Arc<AtomicUsize>> {
     Ok(signalled)
 }
 
+/// Sets `flag` on SIGINT and SIGTERM, beside [`signals`]: a served run's listener reads it on its
+/// own threads, so readiness reads `503` and a request arriving is refused `503` as the signal
+/// arrives, while a command still holds the run's thread (`story:health-and-graceful-drain`).
+fn stopping_on(flag: &Arc<AtomicBool>) -> Result<()> {
+    for signal in [SIGINT, SIGTERM] {
+        signal_hook::flag::register(signal, Arc::clone(flag))
+            .context("handling SIGINT and SIGTERM")?;
+    }
+    Ok(())
+}
+
 fn play(
     spec: &Path,
     environment: &Path,
@@ -337,6 +371,7 @@ fn play(
     let parsed =
         Environment::parse(&text).with_context(|| format!("in {}", environment.display()))?;
     refuse_seed(&parsed, environment, "play")?;
+    refuse_decisions(&parsed, environment, "play")?;
     let state = tempfile::tempdir().context("creating the state directory")?;
     let clock = scaled::Scaled::new(speed);
     let mut host = match Host::new(loaded.ir, &parsed, Arc::new(clock), state.path()) {
@@ -421,6 +456,28 @@ pub(crate) fn refuse_seed(environment: &Environment, path: &Path, command: &str)
     Ok(())
 }
 
+/// Refuses `environment`, read from `path`, where it names a decisions file in a `[decisions]`
+/// table: `command` answers no external cause from a file, as only `run` does ([`execute`]).
+///
+/// # Errors
+/// Naming the document, the table, its file and `command`.
+pub(crate) fn refuse_decisions(
+    environment: &Environment,
+    path: &Path,
+    command: &str,
+) -> Result<()> {
+    if let Some(decisions) = &environment.decisions {
+        bail!(
+            "{} names the decisions file {} in its [decisions] table, which {command} would \
+             never read: external causes are answered from it by run; remove the table for \
+             {command}",
+            path.display(),
+            decisions.file
+        );
+    }
+    Ok(())
+}
+
 /// Every counter of `counters` that is not zero, one per line.
 fn counted(counters: &spindle_telemetry::Counters) -> String {
     counters
@@ -453,6 +510,80 @@ fn wait_until(deadline: Instant, clock: &scaled::Scaled, signalled: &AtomicUsize
     }
 }
 
+/// The implementation `run` answers an external cause as when the request line, `--decisions`
+/// or `--answer-default` does.
+const OPERATOR_PROMPT: &str = "operator-prompt";
+
+/// The decisions file `run` answers external causes from: `flag` (`--decisions`), for every
+/// cause, or else the environment's `[decisions]` file, for the causes `bindings` bind to
+/// [`DECISIONS_FILE`] alone.
+///
+/// # Errors
+/// An external cause bound to an implementation `run` does not provide (one other than
+/// [`OPERATOR_PROMPT`], [`DECISIONS_FILE`] and an `[http.<name>]` call `environment` declares),
+/// naming the capability and the name; or one bound to [`DECISIONS_FILE`] where neither the flag
+/// nor the environment names a file.
+fn decisions_file(
+    environment: &Environment,
+    bindings: &[Binding],
+    flag: Option<&Path>,
+) -> Result<Option<DecisionsFile>> {
+    let external = bindings.iter().filter(|binding| {
+        binding
+            .capability
+            .as_str()
+            .starts_with(Capability::EXTERNAL_PREFIX)
+    });
+    if let Some(unprovided) = external.clone().find(|binding| {
+        let name = binding.implementation.as_str();
+        ![OPERATOR_PROMPT, DECISIONS_FILE].contains(&name) && !environment.http.contains_key(name)
+    }) {
+        bail!(
+            "{} is bound to `{}` on {}; run answers an external cause as {OPERATOR_PROMPT}, \
+             {DECISIONS_FILE} or an [http.<name>] call the environment declares",
+            unprovided.capability,
+            unprovided.implementation,
+            environment.name
+        );
+    }
+    if let Some(path) = flag {
+        return Ok(Some(DecisionsFile {
+            path: path.to_owned(),
+            only: None,
+        }));
+    }
+    let from_file: BTreeSet<String> = external
+        .filter(|binding| {
+            binding.implementation.as_str() == DECISIONS_FILE
+                && !environment.http.contains_key(DECISIONS_FILE)
+        })
+        .map(|binding| binding.capability.as_str().to_owned())
+        .collect();
+    let Some(first) = from_file.first() else {
+        return Ok(None);
+    };
+    match &environment.decisions {
+        Some(named) => Ok(Some(DecisionsFile {
+            path: PathBuf::from(&named.file),
+            only: Some(from_file),
+        })),
+        None => bail!(
+            "{first} is bound to {DECISIONS_FILE} on {}, but no decisions file is named: give \
+             --decisions <FILE>, or name it in the environment's [decisions] table",
+            environment.name
+        ),
+    }
+}
+
+/// The decisions file of a `run`, and the causes it answers.
+struct DecisionsFile {
+    /// `--decisions`, or the environment's `[decisions]` file.
+    path: PathBuf,
+    /// For the environment's file, the capabilities bound to [`DECISIONS_FILE`]: it answers no
+    /// other cause. `None` for `--decisions`, which answers every cause.
+    only: Option<BTreeSet<String>>,
+}
+
 /// The arguments of `run` without `--scenario`.
 struct Execute<'a> {
     spec: &'a Path,
@@ -464,20 +595,30 @@ struct Execute<'a> {
     port: Option<u16>,
     /// `--address`: the IP address to serve on, 127.0.0.1 without it.
     address: Option<std::net::IpAddr>,
+    /// `--console` (`SPINDLE_SETTING_CONSOLE`): whether the console routes are served, decided
+    /// with the address where not given ([`spindle_cli::cli::console_served`]).
+    console: Option<spindle_cli::cli::Switch>,
     drop_retries: bool,
     callers: Vec<spindle_ingress::Caller>,
     /// With `--observe`, how many request records to keep.
     observe: Option<usize>,
+    /// `--observe-series`: how a metrics scrape writes the labels taken from the specification.
+    observe_series: spindle_ingress::SeriesMode,
     /// `--trusted-caller-header`: the header each request proves its caller in.
     caller_header: Option<&'a str>,
     /// `--trusted-caller-secret`: the file holding the secret the proxy presents.
     caller_secret: Option<&'a Path>,
     /// `--seed`: the seed file to submit at every start, in place of the environment's.
     seed: Option<&'a Path>,
+    /// `--drain`: how long a served run answers the requests waiting when a signal arrives.
+    drain: Duration,
     /// `--clock`: the instant the run's manual clock starts at, the system clock without it.
     clock: Option<std::time::SystemTime>,
     /// `--mint-seed`: the seed every identity and generated value is minted from.
     mint_seed: Option<u64>,
+    /// `--log-format`: how the lines on stderr are written ([`log`]), set in `main`; JSON only
+    /// where the run serves HTTP.
+    log_format: LogFormat,
 }
 
 fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
@@ -490,23 +631,28 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         http,
         port,
         address,
+        console,
         drop_retries,
         ref callers,
         observe,
+        observe_series,
         caller_header,
         caller_secret,
         seed,
+        drain,
         clock,
         mint_seed,
+        log_format,
     } = *arguments;
     if let Some(address) = address.filter(|address| spindle_ingress::exposed(*address))
         && (caller_header.is_none() || caller_secret.is_none())
     {
-        eprintln!(
-            "b10x-spindle: --address {address} is not loopback, so every request must come \
-             through an authenticating proxy: give --trusted-caller-header <NAME> with \
+        log::error(format!(
+            "--address {address} is not loopback, so every request must come through an \
+             authenticating proxy: give --trusted-caller-header <NAME> with \
              --trusted-caller-secret <FILE> (--fixed-actor proves nobody)"
-        );
+        ))
+        .write();
         return Ok(ExitCode::from(USAGE));
     }
     if let (Some(header), Some(caller)) = (caller_header, callers.first()) {
@@ -530,7 +676,6 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         (None, None) => None,
     };
     let loaded = spindle_spec::load(spec)?;
-    let answers = decisions::load(&loaded.ir, decisions, answer_default)?;
     let requirements = spindle_capability::derive(&loaded.ir, None)
         .with_context(|| format!("deriving the capabilities of {}", spec.display()))?;
     let text = std::fs::read_to_string(environment)
@@ -555,6 +700,15 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
             parsed.name,
             spindle_kernel::UuidV4::IMPLEMENTATION
         );
+    }
+    let decisions = decisions_file(&parsed, bindings, decisions)?;
+    let mut answers = decisions::load(
+        &loaded.ir,
+        decisions.as_ref().map(|file| file.path.as_path()),
+        answer_default,
+    )?;
+    if let Some(only) = decisions.as_ref().and_then(|file| file.only.as_ref()) {
+        answers = answers.answering_only(only);
     }
     let calls = calls::Calls::bind(&parsed, bindings)
         .with_context(|| format!("in {}", environment.display()))?;
@@ -599,6 +753,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         let seed = seed_path
             .map(|path| seed::load(&path, &loaded.ir))
             .transpose()?;
+        let address = address.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
         return serve::serve(
             loaded.ir,
             serve::Serving {
@@ -608,16 +763,19 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 components,
                 binding,
                 port: port.unwrap_or(0),
-                address: address.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+                address,
                 ingress: ingress.implementation.as_str(),
+                console: spindle_cli::cli::console_served(console, address),
                 drop_retries,
                 decides,
                 answers: answers.calling(calls),
                 callers: callers.clone(),
                 observe,
+                observe_series,
                 caller_header,
                 proxy_secret,
                 seed,
+                drain,
                 clock,
                 mint_seed,
             },
@@ -639,6 +797,13 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
     if observe.is_some() {
         bail!(
             "nothing in {} requires ingress.network, so --observe would be ignored",
+            spec.display()
+        );
+    }
+    if log_format == LogFormat::Json {
+        bail!(
+            "nothing in {} requires ingress.network, so --log-format json would not be kept: \
+             only a run serving HTTP writes its log as JSON lines",
             spec.display()
         );
     }

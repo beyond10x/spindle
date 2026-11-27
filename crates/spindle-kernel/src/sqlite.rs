@@ -21,16 +21,19 @@
 //! entity's stream holds one.
 //!
 //! A write attributed to a command ([`Store::attribute`]) names it in each of its `spindle.written`
-//! events too (`"origin": {"command", "sequence"}`). The events the commands committed are read
-//! back from the tenant's feed past a position ([`Store::events_after`]), each at the feed
-//! position of its append group's last event and attributed as its group's `spindle.written`
-//! events name.
+//! events too (`"origin": {"command", "sequence", "cause"}`), the cause being what caused the
+//! command ([`crate::Provenance`]: a request's or seed entry's caller with the request's id, a
+//! tick, or a binding), and the append's actor is that caller's actor; an origin a release before
+//! 0.23.0 wrote names no cause. Each append keeps a request id of its own. The events the
+//! commands committed are read back from the tenant's feed past a position
+//! ([`Store::events_after`]), each at the feed position of its append group's last event and
+//! attributed as its group's `spindle.written` events name.
 //!
 //! The encoding is the store's, not SQLite's: [`LogStore`] keeps it on any eventlog event store
 //! that appends groups and answers the tenant's whole log ([`Log`]), and the PostgreSQL store
 //! (`PostgresStore`, the `postgres` feature) is the same store on PostgreSQL.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, btree_map};
 #[cfg(feature = "sqlite")]
 use std::path::Path;
 use std::path::PathBuf;
@@ -50,8 +53,8 @@ use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::store::{
-    Change, Committed, Origin, Position, Reading, Removal, Row, Scan, Scanned, Store, StoreError,
-    Stored, Write, first_writes, identity_from_key, moved,
+    Change, Committed, Origin, Position, Provenance, Reading, Removal, Row, Scan, Scanned, Store,
+    StoreError, Stored, Write, first_writes, identity_from_key, moved,
 };
 
 /// The table prefix Spindle's events are kept under.
@@ -71,6 +74,18 @@ pub(crate) const WRITTEN_SCHEMA: u32 = 2;
 /// ([`Store::attribute`]): `{"command": <qualified name>, "sequence": <n>}`. A write attributed
 /// to none, and every write of a release before it, carries none.
 const ORIGIN: &str = "origin";
+/// The field of an origin naming what caused its command ([`Origin::cause`], [`Provenance`]); an
+/// origin a release before 0.23.0 wrote carries none.
+const CAUSE: &str = "cause";
+/// The field of a `spindle.written` event's body, and of a `spindle.published` end's, naming the
+/// outcome named for its write ([`Store::outcome`]); a write of a release before 0.23.0 names
+/// none.
+const OUTCOME: &str = "outcome";
+/// The field of a `spindle.written` event's body listing the identity of each instance of its
+/// entity the write wrote as its key text (the canonical JSON text the stream id and the `rows`
+/// keys hold, in which U+0000 is escaped), each once in text order ([`Committed::instances`]); a
+/// write of a release before 0.23.0, and one that wrote no instance of the entity, carries none.
+const INSTANCES: &str = "instances";
 /// The stream of the events a command committed with no row ([`Store::commit_events`]): each
 /// such write appends them, then one [`PUBLISHED_END`] event naming the command under
 /// [`ORIGIN`]. Of the stream type [`MARKS`] is of, which a scan and a state move count as no
@@ -91,7 +106,8 @@ pub(crate) const ENTITY: &str = "spindle:entity";
 /// it before it copies such a write into a PostgreSQL store. A scan of a marked log reads the
 /// whole log.
 pub(crate) const MARKS: (&str, &str) = ("spindle:log", "unnamed-writes");
-/// Who records the change: the runtime itself.
+/// Who records the change: the runtime itself, the actor of an append whose cause names no actor
+/// ([`LogStore::attributed`]).
 const ACTOR: &str = "spindle-kernel";
 /// The schema version of every event Spindle appends but `spindle.written` ([`WRITTEN_SCHEMA`]).
 const SCHEMA: u32 = 1;
@@ -179,6 +195,9 @@ pub struct LogStore<L> {
     /// The command the writes are attributed to ([`Store::attribute`]): each write's
     /// `spindle.written` events carry it.
     origin: Option<Origin>,
+    /// The outcome named for the writes ([`Store::outcome`]): each write's `spindle.written`
+    /// events, and the end of a write of events no row carries, carry it.
+    outcome: Option<String>,
     /// How far the feed holds this store's own appends, shared with its reading handle where
     /// that reads through the same event store ([`LogStore::published`]).
     own: Arc<Own>,
@@ -347,6 +366,7 @@ impl<L: Log> LogStore<L> {
             #[cfg(feature = "sqlite")]
             rows: None,
             origin: None,
+            outcome: None,
             own: Arc::default(),
         })
     }
@@ -367,6 +387,7 @@ impl<L: Log> LogStore<L> {
             #[cfg(feature = "sqlite")]
             rows: None,
             origin: None,
+            outcome: None,
             own: Arc::clone(&self.own),
         }
     }
@@ -579,6 +600,8 @@ impl<L: Log> Store for LogStore<L> {
             marks.entry(write.instance().0).or_insert(Expected::Any);
         }
         let mut written = BTreeMap::<&str, Written>::new();
+        // The identities each entity's writes wrote, by their text: each once, in text order.
+        let mut named = BTreeMap::<&str, BTreeSet<String>>::new();
         let mut instances = Vec::with_capacity(writes.len());
         for write in writes {
             let (entity, identity) = write.instance();
@@ -605,6 +628,10 @@ impl<L: Log> Store for LogStore<L> {
                 .entry(entity)
                 .or_default()
                 .note(stream.stream_id(), after, removed);
+            named
+                .entry(entity)
+                .or_default()
+                .insert(identity.to_string());
             instances.push(StreamAppend {
                 stream,
                 expected,
@@ -614,9 +641,8 @@ impl<L: Log> Store for LogStore<L> {
         let mut appends = Vec::with_capacity(instances.len() + marks.len());
         for (entity, expected) in marks {
             let mut body = written.remove(entity).unwrap_or_default().body();
-            if let (Some(origin), Value::Object(fields)) = (&self.origin, &mut body) {
-                fields.insert(ORIGIN.to_owned(), origin_body(origin));
-            }
+            let identities = named.remove(entity).unwrap_or_default();
+            self.attributing(&mut body, identities);
             appends.push(StreamAppend {
                 stream: self.entity_stream(entity)?,
                 expected,
@@ -627,7 +653,7 @@ impl<L: Log> Store for LogStore<L> {
         let entries: Vec<&Vec<NewEvent>> = appends.iter().map(|append| &append.events).collect();
         let group = AppendGroup {
             tenant: self.tenant.clone(),
-            meta: meta(request_hash(&entries).map_err(backend)?),
+            meta: self.attributed(request_hash(&entries).map_err(backend)?),
             appends,
         };
         match self.call(self.log.append_group(&group)) {
@@ -685,8 +711,14 @@ impl<L: Log> Store for LogStore<L> {
         self.reading.clone()
     }
 
+    /// Names no outcome until one is named again.
     fn attribute(&mut self, origin: Option<Origin>) {
         self.origin = origin;
+        self.outcome = None;
+    }
+
+    fn outcome(&mut self, outcome: &str) {
+        self.outcome = Some(outcome.to_owned());
     }
 
     /// Appends `events` to the stream [`PUBLISHED`], closed by a `spindle.published` event
@@ -707,9 +739,7 @@ impl<L: Log> Store for LogStore<L> {
         let mut appends = Vec::with_capacity(scanned.len() + 1);
         for scanned in scanned {
             let mut body = Written::default().body();
-            if let (Some(origin), Value::Object(fields)) = (&self.origin, &mut body) {
-                fields.insert(ORIGIN.to_owned(), origin_body(origin));
-            }
+            self.attributing(&mut body, BTreeSet::new());
             appends.push(StreamAppend {
                 stream: self.entity_stream(&scanned.entity)?,
                 expected: match scanned.version {
@@ -719,11 +749,9 @@ impl<L: Log> Store for LogStore<L> {
                 events: vec![NewEvent::new(WRITTEN, WRITTEN_SCHEMA, body).map_err(backend)?],
             });
         }
-        let mut body = serde_json::Map::new();
-        if let Some(origin) = &self.origin {
-            body.insert(ORIGIN.to_owned(), origin_body(origin));
-        }
-        let end = NewEvent::new(PUBLISHED_END, SCHEMA, Value::Object(body)).map_err(backend)?;
+        let mut body = Value::Object(serde_json::Map::new());
+        self.attributing(&mut body, BTreeSet::new());
+        let end = NewEvent::new(PUBLISHED_END, SCHEMA, body).map_err(backend)?;
         let (kind, id) = PUBLISHED;
         appends.push(StreamAppend {
             stream: StreamId::new(self.tenant.clone(), kind, id).map_err(backend)?,
@@ -775,6 +803,45 @@ impl<L: Log> Store for LogStore<L> {
 }
 
 impl<L: Log> LogStore<L> {
+    /// What an append records about the command it is for ([`meta`]), its actor the actor of the
+    /// caller its writes are attributed to ([`Provenance::sender`]) where the cause names one.
+    /// The request id stays fresh for each append: a read of the feed tells one write from the
+    /// next by it ([`LogStore::groups_after`]).
+    fn attributed(&self, request_hash: String) -> CommandMeta {
+        let mut meta = meta(request_hash);
+        if let Some(actor) = self
+            .origin
+            .as_ref()
+            .and_then(|origin| origin.cause.as_ref())
+            .and_then(Provenance::sender)
+            .and_then(|sender| sender.actor.clone())
+        {
+            meta.actor = actor;
+        }
+        meta
+    }
+
+    /// Adds to `body`, a `spindle.written` or `spindle.published` event's, the command the writes
+    /// are attributed to ([`ORIGIN`]), the outcome named for them ([`OUTCOME`]) and, where any,
+    /// `identities`, the key texts of the entity's instances the write wrote ([`INSTANCES`]).
+    fn attributing(&self, body: &mut Value, identities: BTreeSet<String>) {
+        let Value::Object(fields) = body else {
+            return;
+        };
+        if let Some(origin) = &self.origin {
+            fields.insert(ORIGIN.to_owned(), origin_body(origin));
+        }
+        if let Some(outcome) = &self.outcome {
+            fields.insert(OUTCOME.to_owned(), Value::String(outcome.clone()));
+        }
+        if !identities.is_empty() {
+            fields.insert(
+                INSTANCES.to_owned(),
+                identities.into_iter().map(Value::String).collect(),
+            );
+        }
+    }
+
     /// Appends `appends` as one append group.
     fn append(&self, appends: Vec<StreamAppend>) -> Result<(), EventLogError> {
         let entries: Vec<&Vec<NewEvent>> = appends.iter().map(|append| &append.events).collect();
@@ -782,7 +849,7 @@ impl<L: Log> LogStore<L> {
             request_hash(&entries).map_err(|error| EventLogError::Backend(error.to_string()))?;
         let group = AppendGroup {
             tenant: self.tenant.clone(),
-            meta: meta(hash),
+            meta: self.attributed(hash),
             appends,
         };
         let landed = self.call(self.log.append_group(&group))?;
@@ -1102,6 +1169,10 @@ struct Group {
     /// The feed position of its last event.
     position: u64,
     origin: Option<Origin>,
+    /// The outcome its `spindle.written` events, or its `spindle.published` end, name.
+    outcome: Option<String>,
+    /// The instances its `spindle.written` events name, by entity and identity text.
+    instances: BTreeMap<(String, String), Value>,
     events: Vec<crate::Event>,
 }
 
@@ -1136,10 +1207,17 @@ impl<L: Log> LogStore<L> {
         Ok(groups
             .into_iter()
             .flat_map(|group| {
-                let (position, origin) = (group.position, group.origin);
+                let (position, origin, outcome) = (group.position, group.origin, group.outcome);
+                let instances: Vec<(String, Value)> = group
+                    .instances
+                    .into_iter()
+                    .map(|((entity, _), identity)| (entity, identity))
+                    .collect();
                 group.events.into_iter().map(move |event| Committed {
                     position,
                     origin: origin.clone(),
+                    outcome: outcome.clone(),
+                    instances: instances.clone(),
                     event,
                 })
             })
@@ -1213,6 +1291,8 @@ impl<L: Log> LogStore<L> {
                         request: event.request_id.clone(),
                         position: event.global_seq,
                         origin: None,
+                        outcome: None,
+                        instances: BTreeMap::new(),
                         events: Vec::new(),
                     });
                 }
@@ -1222,8 +1302,34 @@ impl<L: Log> LogStore<L> {
                 };
                 group.position = group.position.max(event.global_seq);
                 if event.stream_type == ENTITY {
-                    if event.name == WRITTEN && group.origin.is_none() {
-                        group.origin = origin_of(&event.data);
+                    if event.name == WRITTEN {
+                        if group.origin.is_none() {
+                            group.origin = origin_of(&event.data);
+                        }
+                        if group.outcome.is_none() {
+                            group.outcome = outcome_of(&event.data);
+                        }
+                        for text in event
+                            .data
+                            .get(INSTANCES)
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                        {
+                            let Some(text) = text.as_str() else {
+                                return Err(StoreError::Backend(format!(
+                                    "the event {} at version {} of the stream {} {} names an \
+                                     instance by no key text",
+                                    event.name, event.version, event.stream_type, event.stream_id
+                                )));
+                            };
+                            if let btree_map::Entry::Vacant(vacant) = group
+                                .instances
+                                .entry((event.stream_id.clone(), text.to_owned()))
+                            {
+                                vacant.insert(identity_from_key(text)?);
+                            }
+                        }
                     }
                     continue;
                 }
@@ -1236,6 +1342,9 @@ impl<L: Log> LogStore<L> {
                 if stream == PUBLISHED && event.name == PUBLISHED_END {
                     if group.origin.is_none() {
                         group.origin = origin_of(&event.data);
+                    }
+                    if group.outcome.is_none() {
+                        group.outcome = outcome_of(&event.data);
                     }
                     continue;
                 }
@@ -1268,17 +1377,35 @@ impl<L: Log> LogStore<L> {
     }
 }
 
-/// What a body names `origin` as, under [`ORIGIN`].
+/// What a body names `origin` as, under [`ORIGIN`]: `{"command", "sequence"}`, and `"cause"`
+/// ([`Provenance`]) where the origin names one.
 fn origin_body(origin: &Origin) -> Value {
-    serde_json::json!({"command": origin.command, "sequence": origin.sequence})
+    let mut body = serde_json::json!({"command": origin.command, "sequence": origin.sequence});
+    if let (Some(cause), Value::Object(fields)) = (&origin.cause, &mut body)
+        && let Ok(cause) = serde_json::to_value(cause)
+    {
+        fields.insert(CAUSE.to_owned(), cause);
+    }
+    body
 }
 
-/// The command a `spindle.written` event's body names under [`ORIGIN`], if it names one.
+/// The outcome a `spindle.written` event's body, or a `spindle.published` end's, names under
+/// [`OUTCOME`], if it names one.
+fn outcome_of(body: &Value) -> Option<String> {
+    body.get(OUTCOME)?.as_str().map(str::to_owned)
+}
+
+/// The command a `spindle.written` event's body names under [`ORIGIN`], if it names one, with
+/// its cause; an origin a release before 0.23.0 wrote, `{"command", "sequence"}` only, names no
+/// cause.
 fn origin_of(body: &Value) -> Option<Origin> {
     let origin = body.get(ORIGIN)?;
     Some(Origin {
         command: origin.get("command")?.as_str()?.to_owned(),
         sequence: origin.get("sequence")?.as_u64()?,
+        cause: origin
+            .get(CAUSE)
+            .and_then(|cause| serde_json::from_value(cause.clone()).ok()),
     })
 }
 
@@ -2224,6 +2351,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::store::Sender;
 
     const TASK: &str = "a.Task";
 
@@ -2268,7 +2396,7 @@ mod tests {
             last_written(&store, TASK),
             (
                 WRITTEN_SCHEMA,
-                json!({"rows": {"\"a\"": 1, "\"b\"": 2}, "removed": {}})
+                json!({"rows": {"\"a\"": 1, "\"b\"": 2}, "removed": {}, "instances": ["\"a\"", "\"b\""]})
             )
         );
         store
@@ -2282,7 +2410,10 @@ mod tests {
             .expect("a is removed");
         assert_eq!(
             last_written(&store, TASK),
-            (WRITTEN_SCHEMA, json!({"rows": {}, "removed": {"\"a\"": 2}}))
+            (
+                WRITTEN_SCHEMA,
+                json!({"rows": {}, "removed": {"\"a\"": 2}, "instances": ["\"a\""]})
+            )
         );
         let mut conditioned = change("c", None, "Open");
         conditioned.entity = "b.Other".to_owned();
@@ -2412,6 +2543,193 @@ mod tests {
             .runtime
             .block_on(store.log.append_group(&group))
             .expect("appended");
+    }
+
+    /// A write as the store of 0.22.0 appended it, attributed to `command`: its
+    /// `spindle.written` event's origin names the command and its sequence only, and its
+    /// instance's stream carries one event of the command before the row.
+    fn write_as_released(store: &SqliteStore, identity: &str, command: &str, sequence: u64) {
+        let appends = vec![
+            StreamAppend {
+                stream: store.entity_stream(TASK).expect("a stream id"),
+                expected: Expected::Any,
+                events: vec![
+                    NewEvent::new(
+                        WRITTEN,
+                        WRITTEN_SCHEMA,
+                        json!({
+                            "rows": {json!(identity).to_string(): 2},
+                            "removed": {},
+                            "origin": {"command": command, "sequence": sequence},
+                        }),
+                    )
+                    .expect("an event"),
+                ],
+            },
+            StreamAppend {
+                stream: store.stream(TASK, &json!(identity)).expect("a stream id"),
+                expected: Expected::NoStream,
+                events: vec![
+                    NewEvent::new("a.Opened", SCHEMA, json!({"id": identity})).expect("an event"),
+                    row_event(&change(identity, None, "Old").row).expect("a row"),
+                ],
+            },
+        ];
+        let entries: Vec<&Vec<NewEvent>> = appends.iter().map(|append| &append.events).collect();
+        let group = AppendGroup {
+            tenant: store.tenant.clone(),
+            meta: meta(request_hash(&entries).expect("a hash")),
+            appends,
+        };
+        store
+            .runtime
+            .block_on(store.log.append_group(&group))
+            .expect("appended");
+    }
+
+    /// `story:events-record-their-caller` (D3 A): an origin 0.22.0 wrote, `{"command",
+    /// "sequence"}` only, reads back with its command and sequence and no cause, beside a write
+    /// of this release that names its caller; nothing is migrated.
+    #[test]
+    fn a_store_written_before_reads_back_no_caller() {
+        let mut store = store();
+        write_as_released(&store, "old", "a.Open", 7);
+        let cause = Provenance::Request(Sender {
+            actor: Some("a.Owner".to_owned()),
+            attributes: serde_json::Map::new(),
+            request: Some("r-1".to_owned()),
+        });
+        store.attribute(Some(Origin {
+            command: "a.Open".to_owned(),
+            sequence: 8,
+            cause: Some(cause.clone()),
+        }));
+        let mut opened = change("new", None, "Open");
+        opened.events = vec![crate::Event {
+            name: "a.Opened".to_owned(),
+            payload: serde_json::Map::from_iter([("id".to_owned(), json!("new"))]),
+        }];
+        store.commit(&opened).expect("a write after the upgrade");
+        let origins: Vec<Option<Origin>> = store
+            .events_after(0, usize::MAX)
+            .expect("the events read")
+            .into_iter()
+            .map(|committed| committed.origin)
+            .collect();
+        assert_eq!(
+            origins,
+            [
+                Some(Origin {
+                    command: "a.Open".to_owned(),
+                    sequence: 7,
+                    cause: None,
+                }),
+                Some(Origin {
+                    command: "a.Open".to_owned(),
+                    sequence: 8,
+                    cause: Some(cause),
+                }),
+            ]
+        );
+    }
+
+    /// `story:entity-event-history`: a write 0.22.0 stored names no instances, so the history
+    /// of an instance, which a host reads as the events of the writes naming it
+    /// ([`Committed::instances`]), holds only the writes after the upgrade: here the second
+    /// write of `old`, not the one that created it.
+    #[test]
+    fn a_store_written_before_reads_history_only_from_new_writes() {
+        let mut store = store();
+        write_as_released(&store, "old", "a.Open", 7);
+        store.attribute(Some(Origin {
+            command: "a.Revise".to_owned(),
+            sequence: 8,
+            cause: None,
+        }));
+        store.outcome("revised");
+        let mut revised = change("old", Some(2), "Revised");
+        revised.events = vec![crate::Event {
+            name: "a.Revised".to_owned(),
+            payload: serde_json::Map::from_iter([("id".to_owned(), json!("old"))]),
+        }];
+        store.commit(&revised).expect("a write after the upgrade");
+        let committed = store.events_after(0, usize::MAX).expect("the events read");
+        type Read<'a> = (&'a str, Vec<(String, Value)>, Option<&'a str>);
+        let read: Vec<Read<'_>> = committed
+            .iter()
+            .map(|committed| {
+                (
+                    committed.event.name.as_str(),
+                    committed.instances.clone(),
+                    committed.outcome.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            read,
+            [
+                ("a.Opened", Vec::new(), None),
+                (
+                    "a.Revised",
+                    vec![(TASK.to_owned(), json!("old"))],
+                    Some("revised")
+                ),
+            ]
+        );
+        let history: Vec<&str> = committed
+            .iter()
+            .filter(|committed| {
+                committed
+                    .instances
+                    .contains(&(TASK.to_owned(), json!("old")))
+            })
+            .map(|committed| committed.event.name.as_str())
+            .collect();
+        assert_eq!(history, ["a.Revised"], "only the write after the upgrade");
+    }
+
+    /// `story:entity-event-history`: a write of an instance whose identity holds U+0000 names it
+    /// in its `spindle.written` event as the identity's key text, in which U+0000 is escaped, so
+    /// no event of the log holds U+0000 in a JSON string, which PostgreSQL refuses and a state
+    /// move checks for ([`crate::state_move::nul`]); the write still reads back naming the
+    /// identity itself.
+    #[cfg(feature = "postgres")]
+    #[test]
+    fn an_identity_holding_u0000_reaches_no_event_body_raw() {
+        let mut store = store();
+        let identity = json!("a\u{0}b");
+        let mut opened = change("a\u{0}b", None, "Open");
+        opened.events = vec![crate::Event {
+            name: "a.Opened".to_owned(),
+            payload: serde_json::Map::new(),
+        }];
+        store.attribute(Some(Origin {
+            command: "a.Open".to_owned(),
+            sequence: 1,
+            cause: None,
+        }));
+        store.outcome("opened");
+        store.commit(&opened).expect("a write");
+        let page = store
+            .call(store.log.read_feed(&store.tenant, 0, 1_000))
+            .expect("the feed reads");
+        assert!(!page.events.is_empty());
+        let raw: Vec<String> = page
+            .events
+            .iter()
+            .filter_map(|event| {
+                crate::state_move::nul(&event.data, "body").map(|at| {
+                    format!(
+                        "{} {} {}: {at}",
+                        event.stream_type, event.stream_id, event.name
+                    )
+                })
+            })
+            .collect();
+        assert_eq!(raw, Vec::<String>::new(), "no body holds U+0000");
+        let committed = store.events_after(0, usize::MAX).expect("the events read");
+        assert_eq!(committed.len(), 1, "{committed:?}");
+        assert_eq!(committed[0].instances, [(TASK.to_owned(), identity)]);
     }
 
     #[test]

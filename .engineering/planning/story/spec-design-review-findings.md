@@ -2,11 +2,13 @@
 format: aep.planning-md/3
 id: story:spec-design-review-findings
 kind: story
-status: draft
+status: archived
 title: Close the gaps the spec design review found
 relations:
 - serves: vision:spindle
-revision: 3
+revision: 4
+transitions:
+- {from: "draft", to: "archived", at: "2026-11-27T07:11:15Z", actor: "human:operator", revision: 4}
 ---
 ## Story
 

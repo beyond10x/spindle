@@ -49,6 +49,8 @@ pub struct Answers {
     commands: BTreeMap<String, BTreeMap<String, bool>>,
     /// With the default branch taken, the commands whose IR declares one.
     defaults: Option<BTreeSet<String>>,
+    /// Where given, the only capabilities the decisions file answers ([`Self::answering_only`]).
+    only: Option<BTreeSet<String>>,
 }
 
 /// One of the decisions file's `[[rules]]`: the answer to `outcome` of `command` for a request
@@ -160,6 +162,16 @@ impl Answers {
         self
     }
 
+    /// These answers with the decisions file read only for the causes of `capabilities`
+    /// (`external.<command>.<outcome>`): any other cause is answered by the request and the
+    /// default branch alone. `run` answers so from an environment's `[decisions]` file, which
+    /// answers only the causes the environment binds to `decisions-file`.
+    #[must_use]
+    pub fn answering_only(mut self, capabilities: BTreeSet<String>) -> Self {
+        self.only = Some(capabilities);
+        self
+    }
+
     fn from_table(ir: &EssIr, table: &toml::Table) -> Result<Self, String> {
         let mut answers = Vec::new();
         let mut rules = Vec::new();
@@ -248,6 +260,13 @@ impl Answers {
     /// The answer the table gives `question`: the first rule that matches it, else under its
     /// command, else at the top level.
     fn table(&self, question: &External<'_>) -> Option<bool> {
+        if self
+            .only
+            .as_ref()
+            .is_some_and(|only| !only.contains(&question.capability))
+        {
+            return None;
+        }
         if let Some(rule) = self.rules.iter().find(|rule| rule.matches(question)) {
             return Some(rule.answer);
         }

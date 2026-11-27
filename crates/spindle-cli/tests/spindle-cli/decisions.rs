@@ -15,9 +15,29 @@ fn root() -> PathBuf {
 }
 
 fn run(extra: &[&str], lines: &str) -> Output {
+    run_on(
+        &root(),
+        Path::new(SPEC),
+        Path::new(ENVIRONMENT),
+        extra,
+        lines,
+    )
+}
+
+/// `run` on `spec` and `environment`, started in `directory`, with `extra` added.
+fn run_on(
+    directory: &Path,
+    spec: &Path,
+    environment: &Path,
+    extra: &[&str],
+    lines: &str,
+) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
-        .current_dir(root())
-        .args(["run", SPEC, "--environment", ENVIRONMENT])
+        .current_dir(directory)
+        .arg("run")
+        .arg(spec)
+        .arg("--environment")
+        .arg(environment)
         .args(extra)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -387,22 +407,13 @@ fn desk(directory: &Path) -> String {
 }
 
 fn run_spec(spec: &str, extra: &[&str], lines: &str) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
-        .current_dir(root())
-        .args(["run", spec, "--environment", ENVIRONMENT])
-        .args(extra)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("b10x-spindle starts");
-    child
-        .stdin
-        .take()
-        .expect("stdin is piped")
-        .write_all(lines.as_bytes())
-        .expect("the commands are written");
-    child.wait_with_output().expect("b10x-spindle runs")
+    run_on(
+        &root(),
+        Path::new(spec),
+        Path::new(ENVIRONMENT),
+        extra,
+        lines,
+    )
 }
 
 fn ask(id: &str, extra: &str) -> String {
@@ -719,4 +730,280 @@ fn one_answer_written_twice_in_two_spellings_is_refused_at_load() {
             assert!(stderr.contains(named), "{text}: names `{named}`: {stderr}");
         }
     }
+}
+
+// story:environment-binds-external-decisions: an environment binds `external.*` to
+// `decisions-file` and names the file in a `[decisions]` table; `run` refuses an external
+// implementation it does not provide.
+
+/// An environment document for the fixture, its stores in memory: `external.*` bound to
+/// `implementation`, and `extra` appended. Written to `directory` as `environment.toml`.
+fn bound_environment(directory: &Path, implementation: &str, extra: &str) -> PathBuf {
+    let path = directory.join("environment.toml");
+    std::fs::write(
+        &path,
+        format!(
+            "format = \"spindle-environment/1\"\nname = \"scratchpad\"\nos = \"linux\"\n\
+             arch = \"x86_64\"\n\n[provides]\n\"store.durable\" = [\"memory\"]\n\
+             \"external.*\" = [\"{implementation}\"]\n{extra}"
+        ),
+    )
+    .expect("the environment is written");
+    path
+}
+
+#[test]
+fn an_environment_binding_external_to_a_decisions_file_answers_from_it() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+    std::fs::create_dir(directory.path().join("answers")).expect("a directory for the file");
+    std::fs::write(
+        directory.path().join("answers/review.toml"),
+        "flagged = false\n\n[\"probe.review.Submit\"]\nescalated = true\n\n\
+         [probe.review.Decide]\nvetoed = false\n",
+    )
+    .expect("the decisions file is written");
+    let environment = bound_environment(
+        directory.path(),
+        "decisions-file",
+        "\n[decisions]\nfile = \"answers/review.toml\"\n",
+    );
+    let lines = submit("s1", None) + &decide("d1", true);
+    let output = run_on(
+        directory.path(),
+        &root().join(SPEC),
+        &environment,
+        &[],
+        &lines,
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "the file, relative to where run starts, answers every cause: {output:?}"
+    );
+    let results = results(&output);
+    assert_eq!(results.len(), 2, "{results:?}");
+    assert_eq!(results[0]["outcome"], "escalated", "{results:?}");
+    assert_eq!(results[1]["outcome"], "approved", "{results:?}");
+}
+
+#[test]
+fn the_decisions_flag_wins_over_the_environment_s_file() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+    std::fs::write(
+        directory.path().join("environment-answers.toml"),
+        "flagged = false\n\n[\"probe.review.Submit\"]\nescalated = true\n",
+    )
+    .expect("the environment's decisions file is written");
+    std::fs::write(
+        directory.path().join("flag-answers.toml"),
+        "[\"probe.review.Submit\"]\nflagged = true\n",
+    )
+    .expect("the flag's decisions file is written");
+    let environment = bound_environment(
+        directory.path(),
+        "decisions-file",
+        "\n[decisions]\nfile = \"environment-answers.toml\"\n",
+    );
+    let spec = root().join(SPEC);
+    let alone = run_on(
+        directory.path(),
+        &spec,
+        &environment,
+        &[],
+        &submit("s1", None),
+    );
+    assert_eq!(alone.status.code(), Some(0), "{alone:?}");
+    assert_eq!(
+        results(&alone)[0]["outcome"],
+        "escalated",
+        "the environment's file answers alone: {alone:?}"
+    );
+    let flagged = run_on(
+        directory.path(),
+        &spec,
+        &environment,
+        &["--decisions", "flag-answers.toml"],
+        &submit("s1", None),
+    );
+    assert_eq!(flagged.status.code(), Some(0), "{flagged:?}");
+    assert_eq!(
+        results(&flagged)[0]["outcome"],
+        "flagged",
+        "--decisions answers in place of the environment's file: {flagged:?}"
+    );
+
+    let missing = bound_environment(
+        directory.path(),
+        "decisions-file",
+        "\n[decisions]\nfile = \"no-such-answers.toml\"\n",
+    );
+    let output = run_on(
+        directory.path(),
+        &spec,
+        &missing,
+        &["--decisions", "flag-answers.toml"],
+        &submit("s1", None),
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "with --decisions the environment's file is not read: {output:?}"
+    );
+}
+
+#[test]
+fn run_refuses_an_external_binding_it_does_not_provide() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+    let spec = root().join(SPEC);
+    let (_answers, file) = decisions("flagged = false\nescalated = false\nvetoed = false\n");
+    for (implementation, extra, capability, name) in [
+        ("operator", "", "external.probe.review.", "`operator`"),
+        (
+            "operator-prompt",
+            "\"external.probe.review.Decide.vetoed\" = [\"desk-phone\", \"operator-prompt\"]\n",
+            "external.probe.review.Decide.vetoed",
+            "`desk-phone`",
+        ),
+    ] {
+        let environment = bound_environment(directory.path(), implementation, extra);
+        let output = run_on(
+            directory.path(),
+            &spec,
+            &environment,
+            &["--decisions", &file, "--answer-default"],
+            &(submit("s1", None) + &decide("d1", true)),
+        );
+        assert_eq!(output.status.code(), Some(1), "{name}: {output:?}");
+        assert!(output.stdout.is_empty(), "{name}: nothing runs: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(capability) && stderr.contains(name),
+            "the refusal names the capability {capability} and the name {name}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn a_decisions_file_binding_without_a_file_exits_1() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+    let environment = bound_environment(directory.path(), "decisions-file", "");
+    let output = run_on(
+        directory.path(),
+        &root().join(SPEC),
+        &environment,
+        &["--answer-default"],
+        &submit("s1", None),
+    );
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(output.stdout.is_empty(), "nothing runs: {output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("external.probe.review.") && stderr.contains("decisions-file"),
+        "the refusal names the capability and the implementation: {stderr}"
+    );
+}
+
+/// `play`, `play --component` and `deploy` answer no external cause from a file: given an
+/// environment with a `[decisions]` table they stop with exit 1 before running anything, naming
+/// the table and the file, as they refuse a `[seed]` table.
+#[test]
+fn play_and_deploy_refuse_an_environment_with_a_decisions_table() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+    let bound = |name: &str, shipped: &str| {
+        let text = std::fs::read_to_string(root().join(shipped)).expect("a shipped environment");
+        let text = text.replace("[\"operator-prompt\"]", "[\"decisions-file\"]");
+        let path = directory.path().join(name);
+        std::fs::write(
+            &path,
+            format!("{text}\n[decisions]\nfile = \"answers/review.toml\"\n"),
+        )
+        .expect("the environment is written");
+        path.to_str().expect("a UTF-8 path").to_owned()
+    };
+    let laptop = bound("laptop.toml", "examples/environments/laptop.toml");
+    let processes = bound(
+        "laptop-processes.toml",
+        "examples/environments/laptop-processes.toml",
+    );
+    let cases: [(&str, Vec<&str>); 4] = [
+        (
+            "run --scenario",
+            vec![
+                "run",
+                "crates/spindle-cli/tests/fixtures/review",
+                "--environment",
+                &laptop,
+                "--scenario",
+                "crates/spindle-cli/tests/fixtures/review-scenarios/unforced.yaml",
+            ],
+        ),
+        (
+            "play",
+            vec!["play", "examples/rally/ess", "--environment", &laptop],
+        ),
+        (
+            "play --component",
+            vec![
+                "play",
+                "examples/rally/ess",
+                "--environment",
+                &processes,
+                "--component",
+                "rally-table",
+                "--listen",
+                "127.0.0.1:0",
+            ],
+        ),
+        (
+            "deploy",
+            vec![
+                "deploy",
+                "examples/rally/ess",
+                "--environment",
+                &processes,
+                "--placement",
+                "examples/placements/rally-processes.toml",
+                "--port",
+                "0",
+            ],
+        ),
+    ];
+    for (case, arguments) in cases {
+        let Some((code, stderr)) = stopped_within(&arguments) else {
+            panic!("{case} ran with a [decisions] table it never reads");
+        };
+        assert_eq!(code, Some(1), "{case}: {stderr}");
+        assert!(
+            stderr.contains("[decisions]") && stderr.contains("answers/review.toml"),
+            "{case}: the refusal names the table and the file: {stderr}"
+        );
+    }
+}
+
+/// Runs `b10x-spindle` with `arguments` from the workspace root for at most 10 s: its exit code
+/// and stderr, or `None` where it was still running and was killed.
+fn stopped_within(arguments: &[&str]) -> Option<(Option<i32>, String)> {
+    use std::io::Read;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+        .current_dir(root())
+        .args(arguments)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("b10x-spindle starts");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        if let Ok(Some(status)) = child.try_wait() {
+            let mut stderr = String::new();
+            if let Some(mut piped) = child.stderr.take() {
+                let _ = piped.read_to_string(&mut stderr);
+            }
+            return Some((status.code(), stderr));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    None
 }

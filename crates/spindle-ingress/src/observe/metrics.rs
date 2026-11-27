@@ -19,13 +19,20 @@
 //! A series is written only once something was counted in it, and from then on, since no count
 //! falls (`story:metrics-observed-series`): a labelled counter or histogram from its first count,
 //! an entity's rows from the first scrape that finds it holding one ([`Recorder::observed_rows`]),
-//! the last scrape's duration from the second scrape. Only `spindle_resets_total` is written from
-//! the start, and, in a run given a seed, each series of `spindle_seed_commands_total`. So a
-//! scrape of a model of hundreds of commands that has run none writes one series, not about 33
-//! per command.
+//! the last scrape's duration from the second scrape. Only `spindle_resets_total` and
+//! `spindle_metrics_series_mode` are written from the start, and, in a run given a seed, each
+//! series of `spindle_seed_commands_total`. So a scrape of a model of hundreds of commands that
+//! has run none writes two series, not about 33 per command.
+//!
+//! A run's [`SeriesMode`] decides how the labels whose values come from the specification
+//! ([`SPECIFIED_LABELS`]) are written (`story:metrics-series-bounded`): each value its own series,
+//! or every one written empty, with each refusal of a bound command that names an outcome the
+//! specification declares, and the series that then share every label summed, so the series
+//! no longer grow with the specification. It is applied here, when the scrape is written: the
+//! [`Recorder`] keeps every label, since the topology's `routes` edges read them.
 
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 
 use spindle_host::Reader;
@@ -47,7 +54,7 @@ pub(crate) struct Family {
 
 /// Every family the metrics expose, in the order `ess/fixtures/observe/metrics/families.json`
 /// lists them; a unit test holds the two equal.
-pub(crate) const FAMILIES: [Family; 17] = [
+pub(crate) const FAMILIES: [Family; 18] = [
     Family {
         name: "spindle_http_requests_total",
         kind: "counter",
@@ -171,6 +178,60 @@ pub(crate) const FAMILIES: [Family; 17] = [
         summary: "How long the last GET /__spindle/metrics before this one took to read the \
                   counts and write them; absent until one was answered.",
     },
+    Family {
+        name: "spindle_metrics_series_mode",
+        kind: "gauge",
+        labels: &["mode"],
+        summary: "1, labelled with how the run writes the labels whose values come from the \
+                  specification: per-command, each value its own series, or aggregated, every \
+                  route, operation, command, outcome, event, binding and entity, and each \
+                  refusal that names a declared outcome, written empty and the series that \
+                  then share their labels summed.",
+    },
+];
+
+/// How a scrape writes the labels whose values come from the specification
+/// ([`SPECIFIED_LABELS`]): `run --observe-series`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SeriesMode {
+    /// Each value its own series, as the run counted it: the series grow with the
+    /// specification.
+    #[default]
+    PerCommand,
+    /// Every such label written empty, and the series that then share every label summed: the
+    /// series no longer grow with the specification.
+    Aggregated,
+}
+
+impl SeriesMode {
+    /// Every mode, the default first.
+    pub const ALL: [Self; 2] = [Self::PerCommand, Self::Aggregated];
+
+    /// The mode's name: `per-command` or `aggregated`, as `spindle_metrics_series_mode` and
+    /// `--observe-series` write it.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::PerCommand => "per-command",
+            Self::Aggregated => "aggregated",
+        }
+    }
+
+    /// The mode named `name` ([`SeriesMode::name`]); `None` for any other name.
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|mode| mode.name() == name)
+    }
+}
+
+/// The labels whose values come from the specification: an aggregated scrape
+/// ([`SeriesMode::Aggregated`]) writes each of them empty.
+pub(crate) const SPECIFIED_LABELS: [&str; 7] = [
+    "route",
+    "operation",
+    "command",
+    "outcome",
+    "event",
+    "binding",
+    "entity",
 ];
 
 /// One sample's value.
@@ -237,17 +298,45 @@ struct Series {
 #[derive(Debug, Default)]
 struct Samples {
     families: BTreeMap<&'static str, Series>,
+    /// How the labels of [`SPECIFIED_LABELS`] are written.
+    mode: SeriesMode,
 }
 
 impl Samples {
+    /// No sample yet, its labels written as `mode` writes them.
+    fn of(mode: SeriesMode) -> Self {
+        Self {
+            families: BTreeMap::new(),
+            mode,
+        }
+    }
+
     /// Adds `value` to the series of `family` with the label values `values`, one per label of the
-    /// family in its order.
+    /// family in its order. Aggregated ([`SeriesMode::Aggregated`]), each label of
+    /// [`SPECIFIED_LABELS`] is written empty, so the value is added to the series that shares
+    /// every other label.
     fn add(&mut self, family: &'static str, values: &[impl AsRef<str>], value: Value) {
         let names = FAMILIES
             .iter()
             .find(|declared| declared.name == family)
             .map_or(&[][..], |declared| declared.labels);
-        let labels = pairs(names, values);
+        let labels = match self.mode {
+            SeriesMode::PerCommand => pairs(names, values),
+            SeriesMode::Aggregated => {
+                let kept = names
+                    .iter()
+                    .zip(values)
+                    .map(|(name, value)| {
+                        if SPECIFIED_LABELS.contains(name) {
+                            ""
+                        } else {
+                            value.as_ref()
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                pairs(names, &kept)
+            }
+        };
         let series = self.families.entry(family).or_default();
         let next = series.held.len();
         match series.at.entry(labels) {
@@ -388,7 +477,8 @@ pub(crate) fn seconds(micros: u64) -> String {
 /// holds, `rows` ([`Reader::rows`], or [`spindle_host::Host::rows`] on the host's thread), as the
 /// text exposition.
 pub(crate) fn exposition(recorder: &Recorder, host: &Reader, rows: Vec<(String, usize)>) -> String {
-    let mut samples = Samples::default();
+    let mode = recorder.series_mode();
+    let mut samples = Samples::of(mode);
     let Traffic {
         requests,
         durations,
@@ -436,7 +526,15 @@ pub(crate) fn exposition(recorder: &Recorder, host: &Reader, rows: Vec<(String, 
             Value::Number(count),
         );
     }
-    for (labels, count) in refusals {
+    let declared = match mode {
+        SeriesMode::PerCommand => HashSet::new(),
+        SeriesMode::Aggregated => declared_outcomes(host, &components),
+    };
+    for (mut labels, count) in refusals {
+        let [_, command, refusal] = &labels;
+        if declared.contains(&(command.as_str(), refusal.as_str())) {
+            labels[2] = String::new();
+        }
         samples.add(
             "spindle_bound_refusals_total",
             &labels,
@@ -464,7 +562,28 @@ pub(crate) fn exposition(recorder: &Recorder, host: &Reader, rows: Vec<(String, 
             Value::Seconds(micros),
         );
     }
+    samples.add(
+        "spindle_metrics_series_mode",
+        &[mode.name()],
+        Value::Number(1),
+    );
     samples.text()
+}
+
+/// Every outcome the specification declares, with its command, as the catalogue of each of
+/// `components` lists it. An aggregated scrape writes a bound command's `refusal` empty where it
+/// is one of them, and keeps the kernel's own error kinds (`broken_invariant`), which do not grow
+/// with the specification.
+fn declared_outcomes<'a>(host: &'a Reader, components: &[String]) -> HashSet<(&'a str, &'a str)> {
+    components
+        .iter()
+        .filter_map(|component| host.counters(component))
+        .flat_map(|counters| &counters.catalogue().counters)
+        .filter_map(|counter| match &counter.key {
+            Key::Outcome { command, outcome } => Some((command.as_str(), outcome.as_str())),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Adds every counter and histogram of `component`'s `counters` that counted anything to
@@ -553,6 +672,133 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(Value::Array(exposed), specified()["families"]);
+    }
+
+    /// The labels an aggregated scrape keeps, each with what its values are: a new label of a
+    /// family is one of these or of [`SPECIFIED_LABELS`](super::SPECIFIED_LABELS).
+    const KEPT_LABELS: [&str; 13] = [
+        // The nine methods RFC 9110 registers and `other`.
+        "method",
+        // `command` or `view`.
+        "kind",
+        // The six request classes.
+        "class",
+        // `1xx` to `5xx`.
+        "status_class",
+        // The kernel's failure kinds.
+        "failure",
+        // The components the run places, not its commands.
+        "component",
+        // sent, delivered, redelivered, dropped.
+        "carried",
+        // attempted, exhausted.
+        "retried",
+        // fired, late, dropped.
+        "timed",
+        // world, file, default, call, unanswered.
+        "source",
+        // The kernel's error kind of a rejected bound command; a refusing outcome the
+        // specification declares is written empty ([`declared_outcomes`](super::declared_outcomes)).
+        "refusal",
+        // sent, applied, already_there, refused.
+        "counted",
+        // per-command, aggregated.
+        "mode",
+    ];
+
+    /// story:metrics-series-bounded: in the aggregated mode every label whose value comes from
+    /// the specification is written empty and equal label sets are summed; every other label
+    /// keeps its value. The per-command mode writes each value as its own series.
+    #[test]
+    fn an_aggregated_scrape_drops_the_specified_labels() {
+        use super::{DURATION_BOUNDS_US, SPECIFIED_LABELS, Samples, SeriesMode, Value as Sample};
+
+        let mut aggregated = Samples::of(SeriesMode::Aggregated);
+        let mut per_command = Samples::of(SeriesMode::PerCommand);
+        for family in FAMILIES {
+            for label in family.labels {
+                assert!(
+                    SPECIFIED_LABELS.contains(label) || KEPT_LABELS.contains(label),
+                    "{}: the label {label} is either specified or kept",
+                    family.name
+                );
+            }
+            for specification in ["a", "b"] {
+                let values = family
+                    .labels
+                    .iter()
+                    .map(|label| {
+                        if SPECIFIED_LABELS.contains(label) {
+                            format!("x.{specification}.{label}")
+                        } else {
+                            format!("{label}-value")
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let value = if family.kind == "histogram" {
+                    Sample::Buckets {
+                        counts: vec![1; DURATION_BOUNDS_US.len() + 1],
+                        sum_us: Some(5),
+                    }
+                } else {
+                    Sample::Number(2)
+                };
+                aggregated.add(family.name, &values, value.clone());
+                per_command.add(family.name, &values, value);
+            }
+        }
+        let text = aggregated.text();
+        assert!(
+            !text.contains("x."),
+            "no specified value is written:\n{text}"
+        );
+        for line in [
+            r#"spindle_http_requests_total{method="method-value",route="",operation="",kind="kind-value",class="class-value",status_class="status_class-value"} 4"#,
+            r#"spindle_http_request_duration_seconds_count{method="method-value",route=""} 26"#,
+            r#"spindle_http_request_duration_seconds_sum{method="method-value",route=""} 0.00001"#,
+            r#"spindle_commands_total{command="",outcome=""} 4"#,
+            r#"spindle_command_failures_total{command="",failure="failure-value"} 4"#,
+            r#"spindle_command_duration_seconds_count{command=""} 26"#,
+            r#"spindle_events_appended_total{event=""} 4"#,
+            r#"spindle_bindings_total{component="component-value",binding="",carried="carried-value"} 4"#,
+            r#"spindle_binding_retries_total{binding="",retried="retried-value"} 4"#,
+            r#"spindle_timer_ticks_total{binding="",timed="timed-value"} 4"#,
+            r#"spindle_store_rows_written_total{component="component-value"} 4"#,
+            r#"spindle_entity_rows{entity=""} 4"#,
+            r#"spindle_external_causes_total{command="",outcome="",source="source-value"} 4"#,
+            r#"spindle_bound_refusals_total{binding="",command="",refusal="refusal-value"} 4"#,
+            r#"spindle_seed_commands_total{counted="counted-value"} 4"#,
+        ] {
+            assert!(text.lines().any(|held| held == line), "{line}:\n{text}");
+        }
+        let kept = per_command.text();
+        for specification in ["a", "b"] {
+            let line = format!(
+                r#"spindle_commands_total{{command="x.{specification}.command",outcome="x.{specification}.outcome"}} 2"#
+            );
+            assert!(kept.lines().any(|held| held == line), "{line}:\n{kept}");
+        }
+        let series = |text: &str, family: &str| {
+            text.lines()
+                .filter(|line| {
+                    line.strip_prefix(family)
+                        .is_some_and(|rest| rest.starts_with(['{', ' ']))
+                })
+                .count()
+        };
+        for family in FAMILIES.iter().filter(|family| family.kind != "histogram") {
+            let specified = family
+                .labels
+                .iter()
+                .any(|label| SPECIFIED_LABELS.contains(label));
+            assert_eq!(series(&text, family.name), 1, "{}:\n{text}", family.name);
+            assert_eq!(
+                series(&kept, family.name),
+                if specified { 2 } else { 1 },
+                "{}:\n{kept}",
+                family.name
+            );
+        }
     }
 
     #[test]

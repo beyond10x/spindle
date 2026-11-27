@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-27T07:11:14Z",
+  "actor": "human:operator",
+  "artifact": "story:node-export-serves-a-specification",
+  "kind": "story",
+  "revision": 11,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "https://github.com/beyond10x/spindle/actions/runs/45909350721 (PR 93 Gate, PostgreSQL, macOS green on ce66f6834; released as 0.22.0)"
+  }
+}
