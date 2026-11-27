@@ -1,0 +1,23 @@
+{
+  "dead_letters": [
+    {
+      "id": 7,
+      "component": "shipping",
+      "binding": "ship-on-order",
+      "event": "depot.orders.OrderPlaced",
+      "command": "depot.shipping.Ship",
+      "outcome": "busy",
+      "error": "depot.shipping.Busy",
+      "attempts": 5
+    },
+    {
+      "id": 12,
+      "component": "shipping",
+      "binding": "ship-on-order",
+      "event": "depot.orders.OrderPlaced",
+      "command": "depot.shipping.Ship",
+      "error": "undecided",
+      "attempts": 1
+    }
+  ]
+}

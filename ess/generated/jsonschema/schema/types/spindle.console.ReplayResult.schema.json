@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.console.ReplayResult.schema.json",
+  "$ref": "#/$defs/spindle.console.ReplayResult",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "contract_digest": "slice-sha256/2:72bdc47c862e344dc16e3fa8373b60214eac318e2b5bb4e434ac7235bb62aeb5",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.console.ReplayResult": {
+      "title": "ReplayResult",
+      "description": "What the replayed command did. `ran`: it took effect, and what its events lead to ran after it. `refused`: an outcome that declares an error refused it. `failed`: the kernel rejected it. A refused or failed replay is kept as a new dead letter.",
+      "x-ess-name": "spindle.console.ReplayResult",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "ran",
+        "refused",
+        "failed"
+      ]
+    }
+  }
+}

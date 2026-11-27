@@ -1,12 +1,12 @@
 {
   "format": "ess-types-report/3",
-  "source_digest": "6aff9d3b13c9c43f883cc9c6dd02d69017932331d4e80fe81d143b23c09e58c5",
+  "source_digest": "88bcbc977a2ce8a3fee2620d14ba44c695e574db4f4ea8004dd455ffbef05936",
   "input": {
     "kind": "model",
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:9ea2a2bb685b040574998e72535d5d21bdaec116bb6d5114c0a9dc6e1e792f44",
-    "projection_digest": "ca5ef53d5af5de64ba859ebf4afbbfa7c76fa764f58d460faa8a8f21f968a212"
+    "contract_digest": "slice-sha256/2:ad38b534d4b1c965fcd4a66c2432a29a8d329a20ed1315b4712290b65d3e88cc",
+    "projection_digest": "17f92253c8675bc769dae4934f89006f86453693fc53c2832f844c845fe39c9e"
   },
   "generator_version": "0.99.2",
   "target": "rust",
@@ -16,6 +16,7 @@
   },
   "roots": [
     "spindle.observe.Catalogue",
+    "spindle.observe.DeadLetters",
     "spindle.observe.Deployment",
     "spindle.observe.Liveness",
     "spindle.observe.MetricFamilies",
@@ -38,6 +39,8 @@
     "spindle.observe.CounterKind": "CounterKind",
     "spindle.observe.CounterSource": "CounterSource",
     "spindle.observe.CounterValue": "CounterValue",
+    "spindle.observe.DeadLetter": "DeadLetter",
+    "spindle.observe.DeadLetters": "DeadLetters",
     "spindle.observe.DeliveryGuarantee": "DeliveryGuarantee",
     "spindle.observe.DeployedInstance": "DeployedInstance",
     "spindle.observe.Deployment": "Deployment",
@@ -345,6 +348,86 @@
     },
     {
       "pointer": "/$defs/spindle.observe.CounterValue/x-ess-name",
+      "rule": "x-ess-name",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeadLetter/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeadLetter/properties/attempts/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeadLetter/properties/binding/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeadLetter/properties/command/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeadLetter/properties/component/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeadLetter/properties/error/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeadLetter/properties/event/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeadLetter/properties/id/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeadLetter/properties/outcome/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeadLetter/title",
+      "rule": "title",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeadLetter/x-ess-kind",
+      "rule": "x-ess-kind",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeadLetter/x-ess-name",
+      "rule": "x-ess-name",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeadLetters/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeadLetters/title",
+      "rule": "title",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeadLetters/x-ess-kind",
+      "rule": "x-ess-kind",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeadLetters/x-ess-name",
       "rule": "x-ess-name",
       "detail": "model identity and wire mapping retained in source.schema.json"
     },
@@ -1607,6 +1690,36 @@
     },
     {
       "pointer": "/$defs/spindle.observe.CounterValue/x-ess-invariants",
+      "rule": "model_invariants",
+      "detail": "enforce the retained model invariant statements; structural codecs do not evaluate predicates"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeadLetter/properties/attempts/maximum",
+      "rule": "maximum",
+      "detail": "validate this constraint against the source schema at runtime"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeadLetter/properties/attempts/minimum",
+      "rule": "minimum",
+      "detail": "validate this constraint against the source schema at runtime"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeadLetter/properties/id",
+      "rule": "integer",
+      "detail": "serde_json::Number holds exact JSON numbers with the default `exact-numbers` feature and binary64 without it, and does not enforce integrality; validate the source constraint"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeadLetter/properties/id",
+      "rule": "rust_exact_numbers",
+      "detail": "this value holds JSON numbers in serde_json; the generated crate's default-on `exact-numbers` feature enables serde_json/arbitrary_precision, and a consumer that turns default features off gets these numbers as binary64"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeadLetter/properties/id/minimum",
+      "rule": "minimum",
+      "detail": "validate this constraint against the source schema at runtime"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.DeadLetter/x-ess-invariants",
       "rule": "model_invariants",
       "detail": "enforce the retained model invariant statements; structural codecs do not evaluate predicates"
     },
