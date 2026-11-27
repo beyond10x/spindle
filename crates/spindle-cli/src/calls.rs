@@ -69,8 +69,9 @@ impl std::fmt::Debug for Calls {
     }
 }
 
-/// One `[http.<name>]` table, resolved: its URL parsed and its secret read.
-struct Call {
+/// One `[http.<name>]` table, resolved: its URL parsed and its secret read. An external cause
+/// asks it ([`Calls`]); an egress posts events to it ([`crate::egress`]).
+pub(crate) struct Call {
     name: String,
     method: Method,
     /// Where to connect: `host:port`.
@@ -172,7 +173,7 @@ impl Call {
     /// `declared`, resolved: its URL parsed and checked, its secret read and, for an `https://`
     /// URL, its TLS client built. `platform` is the client verifying against the platform's
     /// roots, read on first need and shared by every call without a `ca_file`.
-    fn new(
+    pub(crate) fn new(
         name: &str,
         declared: &HttpCall,
         platform: &mut Option<Arc<rustls::ClientConfig>>,
@@ -309,7 +310,9 @@ impl Call {
             question.capability, self.name
         );
         let (status, reply) = runtime
-            .block_on(async { tokio::time::timeout(self.timeout, self.send(body)).await })
+            .block_on(async {
+                tokio::time::timeout(self.timeout, self.send(body, Reply::Read)).await
+            })
             .map_err(|_| {
                 format!(
                     "{called}, which did not reply within {} ms",
@@ -326,31 +329,64 @@ impl Call {
             .ok_or_else(|| format!("{called}, whose reply is not {{\"holds\": true | false}}"))
     }
 
-    /// One request on its own connection: the status and the body of the reply.
-    async fn send(&self, body: String) -> Result<(u16, Bytes), String> {
+    /// Sends `body`, a JSON text, within the call's timeout: `Ok` for a `2xx` status, the reason
+    /// otherwise (a timeout, a failure, or the status answered). Decided on the status alone: the
+    /// reply body is not read, however long or slow it is, and the connection is closed once the
+    /// status arrived.
+    pub(crate) fn post(
+        &self,
+        runtime: &tokio::runtime::Runtime,
+        body: String,
+    ) -> Result<(), String> {
+        let (status, _) = runtime
+            .block_on(async {
+                tokio::time::timeout(self.timeout, self.send(body, Reply::Status)).await
+            })
+            .map_err(|_| {
+                format!(
+                    "the HTTP call `{}` did not reply within {} ms",
+                    self.name,
+                    self.timeout.as_millis()
+                )
+            })?
+            .map_err(|why| format!("the HTTP call `{}` failed: {why}", self.name))?;
+        if (200..300).contains(&status) {
+            Ok(())
+        } else {
+            Err(format!("the HTTP call `{}` answered {status}", self.name))
+        }
+    }
+
+    /// One request on its own connection: the status and, as `reply` asks, the body of the reply.
+    async fn send(&self, body: String, reply: Reply) -> Result<(u16, Bytes), String> {
         let stream = tokio::net::TcpStream::connect(&self.address)
             .await
             .map_err(|error| format!("connecting to {}: {error}", self.address))?;
         let Some(tls) = &self.tls else {
-            return self.exchange(stream, body).await;
+            return self.exchange(stream, body, reply).await;
         };
         let stream = tls
             .connector
             .connect(tls.server.clone(), stream)
             .await
             .map_err(|error| format!("TLS with {}: {error}", self.address))?;
-        self.exchange(stream, body).await
+        self.exchange(stream, body, reply).await
     }
 
     /// The request written on `stream`, once it is connected (and, for `https://`, verified).
-    async fn exchange<S>(&self, stream: S, body: String) -> Result<(u16, Bytes), String>
+    async fn exchange<S>(
+        &self,
+        stream: S,
+        body: String,
+        reply: Reply,
+    ) -> Result<(u16, Bytes), String>
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
         let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
             .await
             .map_err(|error| error.to_string())?;
-        tokio::spawn(connection);
+        let connection = tokio::spawn(connection);
         let mut request = Request::builder()
             .method(self.method.clone())
             .uri(self.target.clone())
@@ -367,6 +403,13 @@ impl Call {
             .await
             .map_err(|error| error.to_string())?;
         let status = response.status().as_u16();
+        if reply == Reply::Status {
+            // The body is never read: the connection goes with it, so a slow or endless body
+            // holds nothing open.
+            drop(response);
+            connection.abort();
+            return Ok((status, Bytes::new()));
+        }
         let reply = Limited::new(response.into_body(), REPLY_LIMIT)
             .collect()
             .await
@@ -380,6 +423,15 @@ impl Call {
             .to_bytes();
         Ok((status, reply))
     }
+}
+
+/// What a call reads of its reply.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Reply {
+    /// The status and the body, up to [`REPLY_LIMIT`]: what an external cause is answered from.
+    Read,
+    /// The status alone: what decides an egress post.
+    Status,
 }
 
 /// A TLS client on `ring` verifying its server against `roots` only.

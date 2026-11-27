@@ -148,6 +148,9 @@ pub(crate) struct Serving<'a> {
     /// `--mint-seed`: the host mints from this seed from its first command, and again after each
     /// reset whose world carries no mint ([`Host::seeded`]).
     pub mint_seed: Option<u64>,
+    /// The environment's `[egress]`, checked and its calls resolved: each bound event is posted
+    /// to its call beside the run's thread once the host is open ([`crate::egress`]).
+    pub egress: Option<crate::egress::Plan>,
 }
 
 /// The secret in the file `path` (`--trusted-caller-secret`), one trailing newline (`\n` or
@@ -487,6 +490,12 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     for component in host.unrecorded() {
         log::info(crate::database::unrecorded(component)).write();
     }
+    // Each bound event is posted beside this thread; the cursors are saved on it, between two
+    // exchanges and once more as the run ends (`story:event-egress-webhook`).
+    let mut egress = serving
+        .egress
+        .map(|plan| crate::egress::Egress::start(plan, directory))
+        .transpose()?;
     if serving.drop_retries {
         for binding in &retried {
             log::info(format!(
@@ -556,6 +565,9 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     // entry, and before the wait for an exchange. From then on the loop takes only the exchanges
     // already queued, none once the drain bound has passed, and sends no seed entry.
     let code = loop {
+        if let Some(egress) = egress.as_mut() {
+            egress.tend();
+        }
         match draining {
             Some((code, Some(until))) if Instant::now() >= until => break code,
             Some(_) => {}
@@ -602,6 +614,13 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             // they are (`story:health-and-graceful-drain`).
             exchange.respond(Answer::refusal(503, "the run is stopping on a signal"));
             continue;
+        }
+        if exchange.console() == Some(Console::Reset)
+            && let Some(egress) = egress.as_mut()
+        {
+            // The egress reads the stores the reset empties: it stops before, and starts again
+            // on the emptied stores at the top of the next turn.
+            egress.pause();
         }
         if exchange.console() == Some(Console::Reset)
             && let Some(seeding) = seeding.as_mut()
@@ -691,6 +710,8 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     // the run exits; readiness reads 503 meanwhile.
     stopping.store(true, Ordering::SeqCst);
     listener.close(CLOSE_GRACE);
+    // The lanes stop, each after its post under way, and the cursors they handed back are saved.
+    drop(egress);
     Ok(code)
 }
 

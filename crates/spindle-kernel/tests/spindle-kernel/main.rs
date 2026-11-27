@@ -80,6 +80,8 @@ mod guards;
 mod held_null;
 mod integer_identity;
 mod list_append;
+#[cfg(feature = "sqlite")]
+mod log_streams;
 mod map_input_guard;
 mod mint;
 mod placement;

@@ -6,6 +6,7 @@ mod conform;
 mod database;
 mod decisions;
 mod deploy;
+mod egress;
 mod lines;
 mod listener_tls;
 mod log;
@@ -758,6 +759,16 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
     }
     let calls = calls::Calls::bind(&parsed, bindings)
         .with_context(|| format!("in {}", environment.display()))?;
+    let egress = match egress::plan(&loaded.ir, &parsed)
+        .with_context(|| format!("in {}", environment.display()))?
+    {
+        None => None,
+        Some(Ok(plan)) => Some(plan),
+        Some(Err(refusal)) => {
+            log::error(refusal).write();
+            return Ok(ExitCode::from(REFUSED));
+        }
+    };
     let seed_path = seed.map(Path::to_owned).or_else(|| {
         parsed
             .seed
@@ -825,6 +836,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 drain,
                 clock,
                 mint_seed,
+                egress,
             },
         );
     }
@@ -844,6 +856,13 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
             "{unserved}, so {given} {} would never be submitted: a seed is submitted by a run \
              serving HTTP",
             path.display()
+        );
+    }
+    if egress.is_some() {
+        bail!(
+            "{unserved}, so the [egress] of {} would never post an event: an event is posted by a \
+             run serving HTTP",
+            environment.display()
         );
     }
     if observe.is_some() {

@@ -1,0 +1,43 @@
+domain: notes.pad
+summary: A note opened once; its opening publishes two events.
+entities:
+  - name: notes.pad.Note
+    identity:
+      name: note_id
+      type: String
+    fields:
+      - name: title
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+commands:
+  - name: notes.pad.OpenNote
+    input:
+      - name: note_id
+        type: String
+      - name: title
+        type: String
+    outcomes:
+      - name: opened
+        creates: notes.pad.Note
+        instance: note_id
+        sets:
+          title: input.title
+        emits: [notes.pad.NoteOpened, notes.pad.NoteCounted]
+        payload:
+          notes.pad.NoteOpened: {note_id: input.note_id, title: input.title}
+          notes.pad.NoteCounted: {note_id: input.note_id}
+        summary: The note opens, and is counted.
+events:
+  - name: notes.pad.NoteOpened
+    fields:
+      - name: note_id
+        type: String
+      - name: title
+        type: String
+  - name: notes.pad.NoteCounted
+    fields:
+      - name: note_id
+        type: String

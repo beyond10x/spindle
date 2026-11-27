@@ -139,7 +139,7 @@ ca_file = "approvals-ca.pem"
 
 These are refused when the document is read. The message gives the table's name, not the value:
 
-- a table that no `external.` key uses
+- a table that no `external.` key and no `[egress]` entry uses
 - a `timeout_ms` outside 1 to 30000
 - a `url` carrying userinfo (`user:password@`)
 - an `http://` `url` whose host is not loopback
@@ -149,6 +149,54 @@ These are refused when the document is read. The message gives the table's name,
 A served run whose every external cause is bound to a call needs neither `--decisions` nor
 `--answer-default`. With `--observe`, a cause a call answers is listed and counted with the source
 `call`, and one whose call failed as `unanswered`.
+
+## Published events posted to a webhook
+
+The `[egress]` table binds a published event, by its qualified name, to an `[http.<name>]` call
+of the same document. A served `run` posts each such event to its call. The call's method must be
+`POST`; its `url`, `timeout_ms`, `secret_env` and `ca_file` work as for an external cause.
+
+```toml
+[egress]
+"shop.order.OrderPlaced" = "orders-hook"
+
+[http.orders-hook]
+method = "POST"
+url = "https://hooks.example/orders"
+timeout_ms = 2000
+secret_env = "ORDERS_HOOK_TOKEN"
+```
+
+Each request carries one event as `spindle-egress/1` JSON:
+
+```json
+{"format": "spindle-egress/1", "event": "shop.order.OrderPlaced", "component": "shop",
+ "log": 7311250318264215037, "position": 42, "fields": {"order_id": "o-1"}}
+```
+
+`position` is the event's store position, its own place in the component's log; it rises with
+each event, the events of one write included. `log` is the id of that log: a reset that creates
+the store's SQLite file again starts a new log, whose positions start over, so `component`,
+`log` and `position` together name one event. `fields` are the event's fields as published.
+
+| Case | What happens |
+|---|---|
+| order | one component's events reach a call in the order their commands committed |
+| a failure | a timeout, a failure or a status other than `2xx` is sent again after a pause that doubles up to 5 s, without end; the component's later events to that call wait for it. A `2xx` is decided on its status: its body is not read |
+| a restart | the position up to which the call answered `2xx` is kept in the component's store, and `run` on the same state posts the events after it |
+| at least once | an event answered just before the process is killed may be posted again |
+| a reset | `POST /api/reset` stops the posting while it empties the stores; the events after it are posted, from a SQLite store under a new `log` |
+
+The events are posted beside the thread that runs commands, so a slow webhook holds no request
+back. The kept position is no published event: `GET /api/events` does not list it.
+
+These are refused:
+
+- an `[egress]` entry naming a call the document does not declare, or one whose method is not
+  `POST`, when the document is read
+- an event no component of the specification publishes, before `run` listens (exit 3)
+- an event of a component whose state is kept in `memory`, before `run` listens (exit 3)
+- an `[egress]` in a `run` that reads stdin
 
 ## A seed submitted at start
 

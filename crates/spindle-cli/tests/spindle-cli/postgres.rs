@@ -589,3 +589,53 @@ fn an_incompatible_change_exits_before_listening_on_postgres() {
         .collect();
     assert_eq!(cards, vec![(json!("c1"), json!({"code": "X1"}))]);
 }
+
+/// `story:event-egress-webhook`: the egress cursor is kept in the component's PostgreSQL tables,
+/// so an event posted before a restart is not posted again after it, and the cursor is no event
+/// `GET /api/events` lists.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn an_egress_cursor_survives_on_postgres() {
+    use super::egress::{BINDING, SPEC, Webhook, environment, listening, named};
+
+    const OPENED: &str = "tasks.board.TaskOpened";
+    let schema = schema();
+    let url = owner_url();
+    let settings = [("database_url", url.as_str()), ("database_schema", &schema)];
+    let webhook = Webhook::start(200);
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path(), "postgres", &webhook.url(), &[OPENED]);
+    let environment = environment.to_str().expect("a UTF-8 path");
+    let command = || {
+        spindle(
+            &["run", SPEC, "--http", BINDING, "--environment", environment],
+            &settings,
+        )
+    };
+    let first = listening(command());
+    first.open("t1");
+    webhook.wait_for(1);
+    assert_eq!(first.terminate().code(), Some(143));
+
+    let second = listening(command());
+    second.open("t2");
+    webhook.wait_for(2);
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(
+        named(&webhook.accepted()),
+        [
+            (OPENED.to_owned(), "t1".to_owned()),
+            (OPENED.to_owned(), "t2".to_owned()),
+        ],
+        "t1 is not posted again"
+    );
+    let events = second.events();
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| event["event"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>(),
+        [OPENED, OPENED],
+        "{events:?}"
+    );
+}

@@ -113,6 +113,14 @@ pub(crate) const MARKS: (&str, &str) = ("spindle:log", "unnamed-writes");
 pub(crate) const SPECIFICATION: (&str, &str) = ("spindle:log", "specification");
 /// The event of [`SPECIFICATION`].
 const SPECIFIED: &str = "spindle.specified";
+/// The stream id prefix of an egress cursor, a stream of the type [`MARKS`] is of, one per
+/// `[http.<name>]` call: `egress:<name>` ([`Store::egress_posted`]). Each of its events is one
+/// [`EGRESS_MARK`]; the last names the cursor. No published event: a read of the events
+/// committed skips it.
+const EGRESS: &str = "egress:";
+/// The event of an egress cursor's stream: `{"position": <n>}`, the position of the last write
+/// whose events were posted to the call.
+const EGRESS_MARK: &str = "spindle.egress";
 /// Who records the change: the runtime itself, the actor of an append whose cause names no actor
 /// ([`LogStore::attributed`]).
 const ACTOR: &str = "spindle-kernel";
@@ -811,6 +819,47 @@ impl<L: Log> Store for LogStore<L> {
     fn events_id(&mut self) -> Result<u64, StoreError> {
         self.log_id()
     }
+
+    /// The `position` of the last event of the call's cursor stream ([`EGRESS`]), `0` for none.
+    fn egress_position(&mut self, call: &str) -> Result<u64, StoreError> {
+        let stream = self.egress_stream(call)?;
+        let Some((_, last)) = self.last(&stream)? else {
+            return Ok(0);
+        };
+        last.data
+            .get("position")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                StoreError::Backend(format!(
+                    "the egress cursor of {call} at version {} names no position",
+                    last.version
+                ))
+            })
+    }
+
+    /// Appends one `spindle.egress` event to the call's cursor stream ([`EGRESS`]), as an append
+    /// group of its own.
+    fn egress_posted(&mut self, call: &str, position: u64) -> Result<(), StoreError> {
+        let mark = NewEvent::new(
+            EGRESS_MARK,
+            SCHEMA,
+            serde_json::json!({"position": position}),
+        )
+        .map_err(backend)?;
+        self.append(vec![StreamAppend {
+            stream: self.egress_stream(call)?,
+            expected: Expected::Any,
+            events: vec![mark],
+        }])
+        .map_err(backend)
+    }
+}
+
+impl<L: Log> LogStore<L> {
+    /// The egress cursor stream of the call `call` ([`EGRESS`]).
+    fn egress_stream(&self, call: &str) -> Result<StreamId, StoreError> {
+        StreamId::new(self.tenant.clone(), MARKS.0, format!("{EGRESS}{call}")).map_err(backend)
+    }
 }
 
 impl<L: Log> LogStore<L> {
@@ -978,6 +1027,16 @@ impl<L: Log> Reading for SharedReading<L> {
     fn events_after(&self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
         let _turn = self.turns.take()?;
         self.store.committed_after(position, limit)
+    }
+
+    /// Reads the feed through the store's own pool on a turn, as a scan does.
+    fn events_placed_after(
+        &self,
+        position: u64,
+        limit: usize,
+    ) -> Result<Vec<(u64, Committed)>, StoreError> {
+        let _turn = self.turns.take()?;
+        self.store.placed_after(position, limit)
     }
 
     /// Reads the feed through the store's own pool on a turn, as a scan does.
@@ -1189,7 +1248,8 @@ struct Group {
     outcome: Option<String>,
     /// The instances its `spindle.written` events name, by entity and identity text.
     instances: BTreeMap<(String, String), Value>,
-    events: Vec<crate::Event>,
+    /// Each event of a command, with its own feed position.
+    events: Vec<(u64, crate::Event)>,
 }
 
 impl<L: Log> LogStore<L> {
@@ -1204,6 +1264,20 @@ impl<L: Log> LogStore<L> {
     /// Where the read stops before the feed's end, a reset mark ([`RESET`]) past where it stopped
     /// forgets every event it read: the feed is then read again from the last mark.
     fn committed_after(&self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
+        Ok(self
+            .placed_after(position, limit)?
+            .into_iter()
+            .map(|(_, committed)| committed)
+            .collect())
+    }
+
+    /// [`LogStore::committed_after`], each event with its own feed position
+    /// ([`Reading::events_placed_after`]).
+    fn placed_after(
+        &self,
+        position: u64,
+        limit: usize,
+    ) -> Result<Vec<(u64, Committed)>, StoreError> {
         if limit == 0 {
             return Ok(Vec::new());
         }
@@ -1229,12 +1303,17 @@ impl<L: Log> LogStore<L> {
                     .into_iter()
                     .map(|((entity, _), identity)| (entity, identity))
                     .collect();
-                group.events.into_iter().map(move |event| Committed {
-                    position,
-                    origin: origin.clone(),
-                    outcome: outcome.clone(),
-                    instances: instances.clone(),
-                    event,
+                group.events.into_iter().map(move |(placed, event)| {
+                    (
+                        placed,
+                        Committed {
+                            position,
+                            origin: origin.clone(),
+                            outcome: outcome.clone(),
+                            instances: instances.clone(),
+                            event,
+                        },
+                    )
                 })
             })
             .collect())
@@ -1389,6 +1468,7 @@ impl<L: Log> LogStore<L> {
                     || stream == SPECIFICATION
                     || event.name == ROW
                     || event.name == REMOVED
+                    || (event.stream_type == MARKS.0 && event.stream_id.starts_with(EGRESS))
                 {
                     continue;
                 }
@@ -1399,10 +1479,13 @@ impl<L: Log> LogStore<L> {
                         event.name, event.version, event.stream_type, event.stream_id
                     )));
                 };
-                group.events.push(crate::Event {
-                    name: event.name,
-                    payload,
-                });
+                group.events.push((
+                    event.global_seq,
+                    crate::Event {
+                        name: event.name,
+                        payload,
+                    },
+                ));
                 count += 1;
             }
             if !page.has_more {
@@ -2272,6 +2355,14 @@ impl Reading for SqliteReading {
 
     fn events_after(&self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
         self.with(|connection| connection.committed_after(position, limit))
+    }
+
+    fn events_placed_after(
+        &self,
+        position: u64,
+        limit: usize,
+    ) -> Result<Vec<(u64, Committed)>, StoreError> {
+        self.with(|connection| connection.placed_after(position, limit))
     }
 
     fn events_head(&self) -> Result<u64, StoreError> {
