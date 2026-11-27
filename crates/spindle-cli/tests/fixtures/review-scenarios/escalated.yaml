@@ -1,0 +1,12 @@
+type: ess-scenario/1
+domain: probe.review
+scenario: a-submission-is-escalated
+summary: A reviewer escalates a submission, as the act forces whatever the decisions file answers.
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: probe.review.Submit
+    input:
+      submission_id: s1
+      amount: 5
+    outcome: escalated
+    error: {name: probe.review.Escalated}

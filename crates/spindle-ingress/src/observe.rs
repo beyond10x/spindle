@@ -76,10 +76,21 @@ pub const PANEL_POLICY: &str = "default-src 'none'; script-src 'unsafe-inline'; 
 /// Where the observe panel's page is built, as a `503` without it names it.
 const PANEL_BUILT: &str = "ui/dist-panel/panel.html";
 
-/// A route under the reserved prefix: the epic lays out four; every other path under it is
-/// [`Reserved::Other`].
+/// A route under the reserved prefix: the epic lays out four, and a served run's health adds
+/// three; every other path under it is [`Reserved::Other`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reserved {
+    /// `/__spindle/seed`: the state of the run's seed, a `spindle.observe.SeedState`, answered
+    /// with or without a recorder ([`crate::SeedState`]).
+    Seed,
+    /// `/__spindle/ready`: `200` once the run's seed has ended and until the run stops, `503`
+    /// otherwise, a `spindle.observe.Readiness`, answered with or without a recorder.
+    Ready,
+    /// `/__spindle/live`: `200` while the host's thread holds a request it took or asks for
+    /// requests within the listener's bound, `503` once it has done neither, a
+    /// `spindle.observe.Liveness`, answered with or without a
+    /// recorder ([`crate::Listener::live_within`]).
+    Live,
     /// `/__spindle/requests`: the request log.
     Requests,
     /// `/__spindle/metrics`: the metrics, as the Prometheus text format ([`metrics`]).
@@ -107,6 +118,9 @@ impl Reserved {
             ["requests"] => Self::Requests,
             ["metrics"] => Self::Metrics,
             ["topology"] => Self::Topology,
+            ["seed"] => Self::Seed,
+            ["ready"] => Self::Ready,
+            ["live"] => Self::Live,
             ["ui", ..] => Self::Ui,
             _ => Self::Other,
         })
@@ -605,6 +619,9 @@ struct Ring {
     answers: Vec<ExternalAnswer>,
     /// The routes of the surface it records for, each a `routes` edge of the topology.
     routes: Vec<topology::Routed>,
+    /// How a scrape writes the labels whose values come from the specification; the counts
+    /// above keep every label, as the topology reads them.
+    series: metrics::SeriesMode,
 }
 
 /// The labels a request is counted by: method, route template, operation, kind, class and status
@@ -672,7 +689,22 @@ impl Recorder {
             serving: false,
             answers: Vec::new(),
             routes: Vec::new(),
+            series: metrics::SeriesMode::PerCommand,
         })))
+    }
+
+    /// This recorder written by a scrape as `series` says ([`metrics::SeriesMode`]); what it
+    /// counts is the same in every mode.
+    #[must_use]
+    pub(crate) fn with_series(self, series: metrics::SeriesMode) -> Self {
+        self.ring(|ring| ring.series = series);
+        self
+    }
+
+    /// How a scrape writes the labels whose values come from the specification
+    /// ([`Recorder::with_series`]).
+    pub(crate) fn series_mode(&self) -> metrics::SeriesMode {
+        self.ring(|ring| ring.series)
     }
 
     /// This recorder recording for the surface whose routes are `routes`.
@@ -1215,31 +1247,55 @@ fn starts_word(kept: &str) -> bool {
 }
 
 /// Answers a request for the reserved route `reserved` with `method`, `path` and `query` (after
-/// the `?`, still percent-encoded): without a recorder every path under the prefix answers `404`;
-/// with one, `GET /__spindle/requests` answers the request log, each `class=<class>` pair of the
-/// query keeping only that class, and any other method `405`; `GET /__spindle/ui` answers the
-/// panel's page `panel`, `503` naming it without one; `GET /__spindle/metrics` and
-/// `GET /__spindle/topology` read the host's counters and kept rows, beside its thread through
-/// its reader ([`read_hosted`]) or on it ([`hosted`]), so they answer `None` here, and any other
-/// method `405`.
+/// the `?`, still percent-encoded): without a recorder every path under the prefix but the three
+/// health routes answers `404`; with one, `GET /__spindle/requests` answers the request log, each
+/// `class=<class>` pair of the query keeping only that class, and any other method `405`;
+/// `GET /__spindle/ui` answers the panel's page `panel`, `503` naming it without one;
+/// `GET /__spindle/metrics` and `GET /__spindle/topology` read the host's counters and kept rows,
+/// beside its thread through its reader ([`read_hosted`]) or on it ([`hosted`]), so they answer
+/// `None` here, and any other method `405`.
 /// Every other reserved path answers `404`. A query pair other than a known `class` is refused
 /// `400`.
+///
+/// With a recorder or without, the health routes answer what `probed` reads, any other method
+/// `405`: `GET /__spindle/seed` the state of the run's seed ([`crate::health::seed`]),
+/// `GET /__spindle/ready` whether it has ended and the run is not stopping
+/// ([`crate::health::ready`]), and `GET /__spindle/live` whether the host's thread holds a request
+/// it took or asked for one within its bound ([`crate::health::live`]).
 pub(crate) fn reserved(
     recorder: Option<&Recorder>,
     panel: Option<&'static str>,
+    probed: &crate::health::Probed<'_>,
     reserved: Reserved,
     method: &str,
     path: &str,
     query: &str,
 ) -> Option<Response> {
     let not_found = || Answer::refusal(404, format!("no route serves {path}")).into();
-    let Some(recorder) = recorder else {
-        return Some(not_found());
-    };
     let only_get = || {
         let mut response: Response = Answer::refusal(405, "this path answers GET").into();
         response.allow = Some("GET".to_owned());
         response
+    };
+    let health = |(status, body): (u16, Value)| -> Response {
+        Answer {
+            status,
+            body: Some(body),
+            headers: Vec::new(),
+        }
+        .into()
+    };
+    match reserved {
+        Reserved::Seed | Reserved::Ready | Reserved::Live if method != "GET" => {
+            return Some(only_get());
+        }
+        Reserved::Seed => return Some(health((200, crate::health::seed(probed.seed)))),
+        Reserved::Ready => return Some(health(crate::health::ready(probed))),
+        Reserved::Live => return Some(health(crate::health::live(probed))),
+        _ => {}
+    }
+    let Some(recorder) = recorder else {
+        return Some(not_found());
     };
     Some(match reserved {
         Reserved::Requests if method == "GET" => match classes(query) {
@@ -1258,7 +1314,11 @@ pub(crate) fn reserved(
         }
         Reserved::Metrics | Reserved::Topology => return None,
         Reserved::Ui => self::panel(panel, method, path).unwrap_or_else(not_found),
-        Reserved::Requests | Reserved::Other => not_found(),
+        Reserved::Requests
+        | Reserved::Seed
+        | Reserved::Ready
+        | Reserved::Live
+        | Reserved::Other => not_found(),
     })
 }
 

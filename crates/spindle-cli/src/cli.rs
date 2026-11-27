@@ -3,8 +3,10 @@
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use clap::builder::TypedValueParser as _;
 use clap::{Parser, Subcommand};
 use serde_json::{Map, Value};
+use spindle_ingress::SeriesMode;
 
 /// The `b10x-spindle` command line.
 #[derive(Debug, Parser)]
@@ -16,6 +18,16 @@ use serde_json::{Map, Value};
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
+}
+
+/// How `run --log-format` writes each line on stderr.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum LogFormat {
+    /// Prose, `b10x-spindle: <message>`.
+    #[default]
+    Text,
+    /// One JSON object per line.
+    Json,
 }
 
 /// One `b10x-spindle` command.
@@ -131,15 +143,23 @@ pub enum Command {
     /// command is refused, as ESS's runner passes it. At the first step that does not hold,
     /// prints it with what was expected and what was observed and exits 1; that replay runs
     /// nothing after it. A document ESS refuses, or one of more than 1000 steps, exits 1 before any
-    /// step runs.
+    /// step runs. An external cause is answered as the act forces it, for every cause of the
+    /// forced command; one the scenario does not force is answered by `--decisions`, and one
+    /// neither answers does not hold. A decisions file the model refuses exits 1 before any step
+    /// runs.
     ///
     /// Where a component requires `ingress.network` (`reached_by: network`), runs every component
     /// in one process and serves those over HTTP on 127.0.0.1, or `--address`, instead of reading
     /// stdin; only `http-loopback` is served, and any other binding exits 1 before listening. Prints
     /// `{"listening": "<address>", "components": [...]}` once listening and serves until SIGINT
     /// or SIGTERM (exit 130 or 143), or until a seed that rejected an entry ends (exit 1,
-    /// `--seed`); then it takes no further request, writes every answer it has given, answers
-    /// each request still waiting `503`, and exits. Routes are where `ess generate --kind
+    /// `--seed`). On the signal `GET /__spindle/ready` answers `503` and every request that
+    /// arrives is answered `503` at once; the request under way finishes, and those already
+    /// waiting are answered in arrival order for up to `--drain` seconds. Then, as when the seed
+    /// stops it, it takes no further request, writes every answer it has given, answers each
+    /// request still waiting `503`, and exits. `GET /__spindle/live` answers `200` while the
+    /// run's thread answers a request it took or has asked for one within 60 s, `503` once it
+    /// has done neither, with or without `--observe`. Routes are where `ess generate --kind
     /// openapi` publishes them:
     /// ESS's derived routes, or with `--http` the `ess-http/1` binding's, read and checked by ESS
     /// (methods, paths, path variables and per-outcome statuses), an operation it does not name
@@ -189,7 +209,8 @@ pub enum Command {
     /// input, any other answer of the file per command and outcome. A request nothing answers is
     /// refused `501`, naming the outcome. A reset keeps the decisions file. Without either
     /// flag, a specification that declares an external outcome exits 1 before listening, unless
-    /// the environment binds every one of them to an HTTP call.
+    /// the environment binds every one of them to an HTTP call, or binds them to
+    /// `decisions-file` and names the file in its `[decisions]` table.
     ///
     /// An external cause whose capability the environment binds to an `[http.<name>]` table
     /// (`method`, `url`, `timeout_ms`, `secret_env`, `ca_file`) is answered, on a stdin line or a
@@ -252,15 +273,34 @@ pub enum Command {
         /// before listening; `--fixed-actor` is not enough, since it proves nobody. There every
         /// request without the proxy's secret is refused `403` `{"refused": "not granted",
         /// "actor": null}` before anything of it is read, on every route, the console routes and
-        /// `/__spindle/` included. On loopback `run` serves as without `--address`. Only where
-        /// `run` serves HTTP.
+        /// `/__spindle/` included. Off loopback the console routes are off unless `--console on`
+        /// is given. On loopback `run` serves as without `--address`. Only where `run` serves
+        /// HTTP.
         #[arg(long, value_name = "IP", conflicts_with = "scenario")]
         address: Option<std::net::IpAddr>,
+        /// `on` or `off`: serve the console routes (`POST /api/reset`, `GET /api/events`,
+        /// `GET /api/model`, `GET /api/served` and every other route under `/api/` the console
+        /// answers) or not. Off, each answers `404` as an unrouted path does, whatever secret the
+        /// request carries, and the routes the specification publishes and `/__spindle/` are
+        /// served as before. A route the binding or ESS publishes at a console path exits 1
+        /// before listening either way. Read from the setting `SPINDLE_SETTING_CONSOLE` where the
+        /// flag is not given. Without either the console is on where `run` listens on loopback
+        /// and off where `--address` is off loopback. Only where `run` serves HTTP; ignored
+        /// otherwise, `--scenario` included.
+        #[arg(long, value_name = "SWITCH", env = "SPINDLE_SETTING_CONSOLE")]
+        console: Option<Switch>,
         /// A TOML file of answers, `<outcome> = true | false`, at the top level for every command
         /// or under a `["<command>"]` table for one, and `[[rules]]` (`command`, `outcome`,
         /// `answer`, `when = { "input.<field>" = <value> }`) for the requests whose input holds
         /// every value; the first rule that matches wins, then a command's table, then the top
-        /// level.
+        /// level. With `--scenario`, it answers each external cause the scenario does not force.
+        ///
+        /// Without this flag, an environment that binds an external cause to `decisions-file`
+        /// answers it from the file its `[decisions]` table names (`file`, relative to where
+        /// `run` starts); this flag wins over that file, which is then not read. A cause bound to
+        /// `decisions-file` with neither exits 1 before running, and so does one bound to an
+        /// implementation `run` does not provide: `operator-prompt`, `decisions-file` and an
+        /// `[http.<name>]` call the environment declares are the ones it does.
         #[arg(long)]
         decisions: Option<PathBuf>,
         /// Answer every remaining external cause "does not hold" on a command that declares a
@@ -321,8 +361,10 @@ pub enum Command {
         /// `GET /__spindle/topology` with a `spindle-topology/1` graph derived from the
         /// specification, each edge but `contains` with live numbers from the same counters and
         /// log; a `POST /api/reset` keeps every count and the log. Without it every path under
-        /// `/__spindle/` answers `404`; with it or without, a binding route under that prefix
-        /// exits 1 before listening. The listening line is the same either way. Only where `run`
+        /// `/__spindle/` answers `404` but `GET /__spindle/seed`, `GET /__spindle/ready` and
+        /// `GET /__spindle/live`, which every served run answers (`--seed`, `--drain`); with it or
+        /// without, a binding route under that prefix exits 1 before listening. The listening line
+        /// is the same either way. Only where `run`
         /// serves HTTP.
         #[arg(long, conflicts_with = "scenario")]
         observe: bool,
@@ -336,6 +378,27 @@ pub enum Command {
             conflicts_with = "scenario"
         )]
         observe_requests: u16,
+        /// How `GET /__spindle/metrics` of `--observe` writes the labels whose values come from
+        /// the specification (`route`, `operation`, `command`, `outcome`, `event`, `binding`,
+        /// `entity`, and a bound command's `refusal` where it names a declared outcome).
+        /// `per-command`: each value its own series, so the series grow with the specification.
+        /// `aggregated`: each of them written empty and the series that then share every label
+        /// summed, so the series count does not grow with the number of commands or outcomes;
+        /// `component` keeps one value per declared component. The scrape names the mode as
+        /// `spindle_metrics_series_mode{mode}`; the request log and the topology are the same in
+        /// either.
+        #[arg(
+            long,
+            value_name = "MODE",
+            default_value = "per-command",
+            value_parser = clap::builder::PossibleValuesParser::new(
+                SeriesMode::ALL.map(SeriesMode::name)
+            )
+            .map(|name| SeriesMode::named(&name).unwrap_or_default()),
+            requires = "observe",
+            conflicts_with = "scenario"
+        )]
+        observe_series: SeriesMode,
         /// A seed file to submit at every start: one JSON array of entries `{"command", "input",
         /// "actor", "caller", "request_id"}`, in place of the environment document's `[seed]
         /// file`. It is read and checked before listening: a file that does not parse, or an
@@ -351,6 +414,11 @@ pub enum Command {
         /// command, request id and error name, and the next entry is submitted. One line on
         /// stderr gives the counts when the seed ends; with `--observe`, `GET /__spindle/metrics`
         /// has them as `spindle_seed_commands_total`, a rejected entry counted `refused` there.
+        /// With or without `--observe`, `GET /__spindle/seed` answers `{"state": "running" |
+        /// "ended", "entries", "left", "sent", "applied", "already_there", "refused",
+        /// "rejected"}`, the counts of the seed run under way, `{"state": "none"}` on a run
+        /// without a seed, and `GET /__spindle/ready` answers `503` while the seed runs and `200`
+        /// once its last entry has returned.
         /// A seed that ends having rejected an entry stops the run: it serves until then, and
         /// exits 1 once the end line is printed. Only where `run` serves HTTP. With `--state`,
         /// `seed.json` there records the seed file's digest, how many entries were sent and which
@@ -366,6 +434,22 @@ pub enum Command {
         /// and with a world it loads that world alone and records every entry done.
         #[arg(long, value_name = "FILE", conflicts_with = "scenario")]
         seed: Option<PathBuf>,
+        /// How many seconds a served run goes on answering, after SIGINT or SIGTERM, the requests
+        /// already waiting for it, in arrival order, counted from when the request under way, if
+        /// any, has finished; `0` answers none of them. From the signal on, `GET
+        /// /__spindle/ready` answers `503` and every request that arrives is answered `503` at
+        /// once; the request under way always finishes, and so does one taken within the bound,
+        /// but a `POST /api/reset`, answered `503` with nothing emptied. A bound too large for the
+        /// clock sets none: the drain ends once no request is waiting. Each request still waiting
+        /// once the bound has passed is answered `503`, then the run exits 130 or 143. Only where
+        /// `run` serves HTTP.
+        #[arg(
+            long,
+            value_name = "SECONDS",
+            default_value_t = 20,
+            conflicts_with = "scenario"
+        )]
+        drain: u64,
         /// Start the run on a manual clock standing at this RFC 3339 instant
         /// (`2026-02-01T00:00:00Z`, a fraction of a second and an offset read as given) instead of
         /// the system clock: every guard and view that reads `now`, and every generated
@@ -388,8 +472,25 @@ pub enum Command {
         /// replay's host mints from it.
         #[arg(long, value_name = "N")]
         mint_seed: Option<u64>,
+        /// How a run serving HTTP writes each line on stderr: `text`, the default, as prose, or
+        /// `json`, each line one JSON object `{"time", "level", "message"}`: `time` the instant
+        /// it was written, RFC 3339 in UTC; `level` `info`, `warn` or `error`; `message` the text
+        /// line's words; and, where the line names them, the fields `component`, `command`,
+        /// `binding` (a dropped bound command's binding), `attempts`, `error` and `request_id` (a
+        /// seed entry's) at the top level; a line before listening that names an operation not
+        /// served, or an outcome answered `501`, carries it as `command`, or `view` for a view.
+        /// The error a run exits 1 with, and a panic, are a line too. No line is written per answered request. `json` on a run that does not serve
+        /// HTTP exits 1 before reading stdin.
+        #[arg(
+            long,
+            value_name = "FORMAT",
+            value_enum,
+            default_value_t = LogFormat::Text,
+            conflicts_with = "scenario"
+        )]
+        log_format: LogFormat,
         /// The `ess-scenario` document to replay.
-        #[arg(long, conflicts_with_all = ["state", "decisions", "answer_default"])]
+        #[arg(long, conflicts_with_all = ["state", "answer_default"])]
         scenario: Option<PathBuf>,
     },
     /// Play the rally example in this terminal: every component in one process, one tick per
@@ -424,8 +525,9 @@ pub enum Command {
     /// token in the setting `ingress_token` (as `?t=` or `Authorization: Bearer`) or whose `Host` is
     /// not `127.0.0.1:<port>` or `localhost:<port>`; `ingress` without `ingress_token` exits 1.
     ///
-    /// Play submits no seed: an environment document with a `[seed]` table exits 1, with or
-    /// without `--component`, before anything runs.
+    /// Play submits no seed and answers no external cause from a file: an environment document
+    /// with a `[seed]` or a `[decisions]` table exits 1, with or without `--component`, before
+    /// anything runs.
     Play {
         /// The rally specification directory.
         spec: PathBuf,
@@ -473,8 +575,8 @@ pub enum Command {
     /// ingress of a running instance; `GET /` the observe UI, built into this binary. SIGINT,
     /// SIGTERM or SIGHUP stops every instance and exits 130, 143 or 129. Each instance is also
     /// sent SIGTERM by the system should `deploy` end without stopping it. An environment
-    /// document with a `[seed]` table exits 1 before anything is launched: no instance submits a
-    /// seed.
+    /// document with a `[seed]` or a `[decisions]` table exits 1 before anything is launched: no
+    /// instance submits a seed or answers an external cause from a file.
     Deploy {
         /// The specification directory.
         spec: PathBuf,
@@ -633,6 +735,24 @@ pub enum StoreCommand {
         #[arg(long)]
         environment: PathBuf,
     },
+}
+
+/// `run --console`: whether the console routes are served.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum Switch {
+    /// Serve them.
+    On,
+    /// Answer each `404`, as an unrouted path.
+    Off,
+}
+
+/// Whether a run listening on `address` serves the console routes: as `switch` says where it is
+/// given, otherwise on unless `address` is off loopback ([`spindle_ingress::exposed`]).
+pub fn console_served(switch: Option<Switch>, address: std::net::IpAddr) -> bool {
+    match switch {
+        Some(switch) => switch == Switch::On,
+        None => !spindle_ingress::exposed(address),
+    }
 }
 
 /// The instant an RFC 3339 `date-time` names (`2026-02-01T00:00:00Z`, `2026-02-01T01:00:00+01:00`,

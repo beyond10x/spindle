@@ -5,7 +5,7 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:473b9bb19e23f47b4c9188a0444d45a1591bb177709037d9fde1bfc5090ad670",
+    "contract_digest": "slice-sha256/2:068e675af4fdabf188bf346b7c1c045e3f3242ac48bc17ee364b324cf6bb36b1",
     "regenerate": "ess generate"
   },
   "$defs": {
@@ -215,7 +215,7 @@
           "type": "string"
         },
         "query": {
-          "description": "The query string of a console request (`/api/model`, `/api/events`, `/api/reset`), absent where it carried none and for every other request. Each pair is kept in order, empty pairs dropped: `after` and `limit` by name, the value of `after` where the request was answered `200` (a cursor `GET /api/events` answered) and the value of `limit` where it is digits; every other name and value is written `…`. At most 2,048 bytes, as the path, cut with `…` where longer.",
+          "description": "The query string of a console request (`/api/model`, `/api/events`, `/api/history`, `/api/reset`), absent where it carried none and for every other request. Each pair is kept in order, empty pairs dropped: `after` and `limit` by name, the value of `after` where the request was answered `200` (a cursor `GET /api/events` or `GET /api/history` answered) and the value of `limit` where it is digits; every other name and value is written `…`. At most 2,048 bytes, as the path, cut with `…` where longer.",
           "type": "string"
         },
         "route": {

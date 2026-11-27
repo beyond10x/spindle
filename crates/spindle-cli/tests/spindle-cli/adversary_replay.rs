@@ -191,11 +191,9 @@ fn a_refused_admission_exits_three_before_any_step() {
 #[test]
 fn scenario_refuses_each_flag_of_the_stdin_run() {
     let scenario = "crates/spindle-cli/tests/fixtures/replay-scenarios/holds.yaml";
-    for extra in [
-        &["--state", "x.sqlite"][..],
-        &["--decisions", "x.toml"][..],
-        &["--answer-default"][..],
-    ] {
+    // `--decisions` is no longer refused: a replay answers what its scenario does not force from
+    // the file (`story:replay-with-decisions`).
+    for extra in [&["--state", "x.sqlite"][..], &["--answer-default"][..]] {
         let mut arguments = vec!["run", SPEC, "--environment", LAPTOP, "--scenario", scenario];
         arguments.extend_from_slice(extra);
         let output = spindle(&arguments);

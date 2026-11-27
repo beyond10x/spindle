@@ -8,6 +8,39 @@ are Spindle's releases.
 
 ### Added
 
+- `run --log-format json` writes every line a served run prints on stderr as one JSON object:
+  `time` (RFC 3339 in UTC), `level` (`info`, `warn`, `error`), `message` (the text line's words)
+  and, where the line names them, `component`, `command`, `binding`, `attempts`, `error` and
+  `request_id` at the top level, so a log collector reads a dropped bound command or a refused
+  seed entry without matching its wording; a line before listening that names an operation not
+  served, or an outcome answered `501`, carries it as `command`, or `view` for a view. The error a
+  run exits with and a panic are a line too. `text`, the default, writes each line as before.
+  `json` on a run that reads stdin exits 1 before reading a line (`story:structured-json-logs`).
+- `run --scenario` takes `--decisions`, where clap refused the pair (exit 2): an external cause
+  the scenario does not force is answered by the decisions file, and one neither forces nor
+  answers does not hold, as before. An act that names an outcome forces it for every cause of its
+  command, the file's answers included, until the forcing is consumed or lapses. A decisions file
+  the model refuses exits 1 before any step runs; `--answer-default` stays refused with
+  `--scenario`. `spindle_conformance::HostTarget::answering` gives a target the same answers
+  (`story:replay-with-decisions`).
+- An environment document binds external causes to `decisions-file` and names the file in a
+  `[decisions]` table (`file`, relative to where `run` starts): `run`, reading stdin or serving
+  HTTP, answers those causes from it as it answers from `--decisions`, which wins over the table.
+  A cause bound to `decisions-file` with no file named exits 1 before anything runs, naming the
+  capability. A `[decisions]` table no `external.` key binds to `decisions-file` is refused when
+  the document is read, and `run --scenario`, `play`, `play --component` and `deploy` refuse an
+  environment with one (`story:environment-binds-external-decisions`).
+- `run --observe-series <per-command|aggregated>` bounds the series `GET /__spindle/metrics`
+  writes. `aggregated` writes every label whose value comes from the specification (`route`,
+  `operation`, `command`, `outcome`, `event`, `binding`, `entity`, and a bound command's `refusal`
+  where it names a declared outcome) empty and sums the series that then share every label: the
+  series count does not grow with the number of commands or outcomes, and `component` keeps one
+  value per declared component, so a specification of 300 commands writes as many series as one
+  of 30;
+  `per-command`, the default, writes them as before. Every scrape names the mode in a new family,
+  `spindle_metrics_series_mode{mode}`, at 1, also listed in
+  `ess/fixtures/observe/metrics/families.json`. The request log and the topology keep every label.
+  `--observe-series` without `--observe` exits 2 (`story:metrics-series-bounded`).
 - Every event a store commits records what caused its command, read back with it
   (`Store::events_after`, `Origin::cause`, `spindle_kernel::Provenance`): a request's caller,
   its actor, its attributes and the request id the ingress mints for each HTTP request; the
@@ -29,13 +62,52 @@ are Spindle's releases.
   number `42` of an `Integer` one, and a quoted `identity=%2242%22` the text. A cursor taken
   before a restart reads on after its store position, whatever sequences the restarted run's
   commands take (`story:entity-event-history`).
+- A served `run` answers `GET /__spindle/seed` with the state of its seed, `{"state": "none"}`
+  without one, otherwise `running` or `ended` with the entries left and the end line's counts, and
+  `GET /__spindle/ready` `503` while the seed runs and `200` once it has ended, so a container
+  healthcheck or a readiness probe needs no view row. Both answer without `--observe` and without
+  waiting for a command; the seed reads `ended` only once its last entry's command has returned,
+  from the first request where `--state` records every entry done, and `running` again while a
+  reset's seed runs. On a `--trusted-caller-header` run both require the proxy's secret, as every
+  `/__spindle/` route does (`story:seed-readiness`).
+- A served `run` answers `GET /__spindle/live` `200` while its thread answers a request it took
+  or has asked for one within 60 s, and `503` once it has done neither, and drains on SIGTERM or
+  SIGINT: `GET /__spindle/ready` reads `503` as the signal arrives, each request arriving from then
+  on is answered `503` at once, the command under way finishes, and the requests already waiting
+  are answered with their outcomes for up to `run --drain <seconds>`, 20 by default, before the run
+  exits 143 or 130; a reset among them is answered `503` and empties nothing. Before, every
+  request still waiting at the signal was answered `503`; `--drain 0` keeps that
+  (`story:health-and-graceful-drain`).
 
 ### Changed
 
+- `run --console <on|off>` (or the setting `SPINDLE_SETTING_CONSOLE`) turns the console routes
+  (`POST /api/reset`, `GET /api/events`, `GET /api/model`, `GET /api/served`) on or off on every
+  listener. Off, each answers `404` as an unrouted path does, whatever secret the request carries,
+  and the routes the specification publishes and `/__spindle/` are served as before; a route
+  they publish at a console path still exits 1 before listening, the console on or off. The
+  setting is ignored where `run` serves no HTTP, `--scenario` included. Without either, a run
+  listening on loopback serves the console as before, and a run whose `--address` is off
+  loopback no longer serves it, where it answered every request carrying the proxy's secret
+  (`story:console-routes-off`).
 - `spindle_kernel::Origin` has a new public field `cause`, and `spindle_kernel::Committed` the
   new public fields `outcome` and `instances`: a crate that builds either as a struct literal
   now names them (`cause: None`, `outcome: None`, `instances: Vec::new()` for what it built
   before) (`story:events-record-their-caller`, `story:entity-event-history`).
+
+### Fixed
+
+- `run --scenario` names the divergent step of a scenario whose command returns a one-time
+  response (`one_time_response:`), where it ended in an error: each prefix the bisection replays
+  keeps only the one-time event windows anchored to its own steps, the origins it invokes and the
+  required origins it selects, and carries no trace where none is required, so ESS 0.99.1 admits
+  it instead of refusing it with `InvalidOneTimeResponse`
+  (`story:one-time-response-admission`).
+- `run` refuses, with exit 1 before anything runs, an environment that binds an external cause to
+  an implementation it does not provide, naming the capability and the name; it accepted any name
+  and answered the cause as `operator-prompt`. `run` provides `operator-prompt`, `decisions-file`
+  and each `[http.<name>]` call the environment declares
+  (`story:environment-binds-external-decisions`).
 
 ## [0.22.0] - 2026-11-27
 

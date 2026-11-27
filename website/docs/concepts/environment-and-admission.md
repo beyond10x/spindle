@@ -68,7 +68,7 @@ admitted on microvm
 | `clock` | `system` |
 | `identity.mint` | `uuid-v4` |
 | `ingress.network` | `http-loopback`: `run` serves the routes and the console routes over HTTP on 127.0.0.1; `service-worker`: the Service Worker host (`spindle-wasm`, the site in `web/`) answers the specification's routes and the console routes in the browser, through the router the loopback listener calls; `node`: the Node export (`spindle-node`) answers them in-process, each request handed to it by the Node program that loaded it ([below](#the-node-export)) |
-| `external.*` | any binding: `run` answers from the line, `--decisions` or `--answer-default`, unless the binding is an HTTP call the environment declares ([below](#an-external-cause-bound-to-an-http-call)); `decisions-file`: the Service Worker host answers each external outcome from the decisions file it is opened with, as `run --decisions` answers it; the Node export answers from its decisions file and the answer default, as `run --decisions` and `--answer-default` do |
+| `external.*` | `operator-prompt`: `run` answers from the line, `--decisions` or `--answer-default`; an HTTP call the environment declares ([below](#an-external-cause-bound-to-an-http-call)); `decisions-file`: `run` answers from the file the environment's `[decisions]` table names, or `--decisions` ([below](#external-causes-answered-from-a-decisions-file)); `run` refuses any other name before anything runs. `decisions-file`: the Service Worker host answers each external outcome from the decisions file it is opened with, as `run --decisions` answers it; the Node export answers from its decisions file and the answer default, as `run --decisions` and `--answer-default` do |
 
 The SQLite store keeps one `<component>.sqlite` file per component in the directory `run --state`
 gives. It keeps each entity's rows
@@ -226,6 +226,11 @@ With `--observe`, `GET /__spindle/metrics` has the same counts as
 `spindle_seed_commands_total{counted="sent"}` and so on, from the first scrape. The metric counts a
 rejected entry under `refused`.
 
+With or without `--observe`, `GET /__spindle/seed` answers whether the seed is `running` or has
+`ended`, with the entries left and the counts of the end line, and `GET /__spindle/ready` answers
+`503` until the seed has ended and `200` from then on, so a readiness probe waits for the seed
+without counting view rows ([the seed and readiness routes](observe.md#a-served-runs-seed-readiness-and-liveness)).
+
 ### A seed on a kept state
 
 On a `--state` directory the run records the seed in `seed.json` beside the state's files, readable
@@ -265,9 +270,44 @@ only where every entry is a create whose command declares `existing_instance:`.
   and records every entry done, so a restart sends none; put the seeded rows into the world to
   keep them. SIGINT or SIGTERM during a reset's seed stops the seed between two entries: the reset
   answers `200` once the entry under way is done, `seed.json` counts the entries done, and the run
-  exits. A request still waiting for the run when the signal arrives is answered `503`.
+  exits once the requests already waiting are answered, for up to `--drain` seconds, each still
+  waiting then answered `503` ([draining on SIGTERM](observe.md#draining-on-sigterm)).
 - Only a served `run` submits a seed. `play` and `deploy` stop with exit 1 on an environment
   document with a `[seed]` table, as `run` does where nothing requires `ingress.network`.
+
+## External causes answered from a decisions file
+
+An environment can bind external causes to `decisions-file` and name the file in a `[decisions]`
+table:
+
+```toml
+[provides]
+"external.*" = ["decisions-file"]
+
+[decisions]
+file = "decisions/answers.toml"
+```
+
+`file` is a path, relative to the directory `run` starts in, to a decisions file in the shape
+[`run --decisions`](../reference/cli.md#run) reads. `run`, on stdin or serving HTTP,
+answers each cause bound to `decisions-file` from it as it answers from `--decisions`: a request
+line's own `external` object first, then the file, then `--answer-default`. A cause bound to an
+`[http.<name>]` call is still answered by its call first. The file answers no other cause: one
+bound to `operator-prompt` is answered from the line, then `--answer-default`, even where the file
+answers it (served, a request nothing answers is refused `501`). `--decisions` wins over the
+table: the environment's file is then not read, and `--decisions` answers every cause.
+
+`run` stops with exit 1 before anything runs, naming the capability:
+
+- on a cause bound to `decisions-file` with neither `--decisions` nor a `[decisions]` table
+- on a cause bound to an implementation `run` does not provide, naming it too: `run` provides
+  `operator-prompt` (the request line, `--decisions` and `--answer-default` answer the cause),
+  `decisions-file` and each `[http.<name>]` call the environment declares
+
+An environment document with a `[decisions]` table is refused when it is read unless an
+`external.` key lists `decisions-file` first, the implementation admission binds. `play`,
+`play --component` and `deploy` stop with exit 1 on a document with a `[decisions]` table, naming
+the table and its file: they answer no external cause from a file.
 
 ## The Node export
 

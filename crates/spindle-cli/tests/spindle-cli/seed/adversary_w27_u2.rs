@@ -308,8 +308,10 @@ fn a_reset_completed_after_the_signal_reads_503_and_leaves_the_state() {
     assert_eq!(role_ids(&restarted), ["admin"], "the reset was not taken");
 }
 
-/// SIGINT while the start's seed holds its second entry and a grant is queued: the grant reads
-/// `503`, the run exits 130, and the state holds what the seed applied, never the grant.
+/// SIGINT while the start's seed holds its second entry and a grant is queued, on a run given
+/// `--drain 0`: the grant reads `503`, the run exits 130, and the state holds what the seed
+/// applied, never the grant. With the default bound the queued grant is answered instead
+/// (`story:health-and-graceful-drain`, D4).
 #[test]
 fn sigint_with_a_grant_queued_reads_503_and_exits_130() {
     let directory = scratch();
@@ -334,6 +336,8 @@ fn sigint_with_a_grant_queued_reads_503_and_exits_130() {
         OPERATOR,
         "--fixed-caller",
         &caller,
+        "--drain",
+        "0",
     ]);
     asked.recv_timeout(ANSWER).expect("the second entry asks");
     let (method, path) = route(GRANT);
