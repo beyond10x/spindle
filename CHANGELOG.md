@@ -176,7 +176,7 @@ are Spindle's releases.
   whose lease connection is closed or refused stands by on, connects again, and warns naming the
   leases and the connection error. A leader paused inside a write holds its lease row
   until the store's 10 s idle timeout ends its transaction, so the takeover comes at most one
-  lease plus 10 s after the pause; a session outside Spindle that locks a lease row stops the
+  lease plus 10 s and one ask of the standby after the pause; a session outside Spindle that locks a lease row stops the
   takeover while it holds it, and the leader exits 1 after one lease without a renewal. A write
   that failed committing nothing, where the lease is then found lost, answers `503`. A
   `database_lease` that is not a whole number from 1 to 86400 exits 1 before connecting, and with it tables a release
