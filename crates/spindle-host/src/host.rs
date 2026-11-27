@@ -2013,9 +2013,10 @@ impl Host {
     ///   `equals_ignore_case` or `in_ignore_case` against text literals, alone or under `trimmed`;
     ///
     /// leaves combined by `any`, `all` and `not`, or under `exists` or `forall` over a list
-    /// parameter or a list field of the row, a list field's element (and a member of it,
-    /// `g.id == param.group`) read as a field is and also compared with `==` or `!=` to an outer
-    /// binder. A filter unknown for a row, such as `==` with an `Optional` parameter left out,
+    /// parameter, a list field of the row or a list member of an outer list field's element
+    /// (`exists w in g.words` inside `exists g in slots`), a list field's element (and a member
+    /// of it, `g.id == param.group`) read as a field is and also compared with `==` or `!=` to an
+    /// outer binder. A filter unknown for a row, such as `==` with an `Optional` parameter left out,
     /// refuses the read, as ESS's interpreter refuses it;
     /// one unknown only because a path it reads through a reference reads no row (the reference
     /// is empty or names no row) does not hold the row, as the interpreter hides it.

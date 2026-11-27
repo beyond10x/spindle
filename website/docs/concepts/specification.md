@@ -170,9 +170,10 @@ over a list field, a member of the element is a field too: `g.id == param.group`
 `defined(g.name)`.
 
 The leaves are combined by `any`, `all` and `not`, or quantified by `exists` or `forall` over a
-list parameter or a list field of the row. Each filter is evaluated as ESS evaluates it. A filter
-ESS leaves unknown for a row, such as a comparison with an optional field the row does not hold,
-refuses the read as ESS's interpreter does.
+list parameter or a list field of the row. Inside such a quantifier, a list member of the element
+may be quantified over in turn: `exists g in slots: (exists w in g.words: w == "x")`. Each filter
+is evaluated as ESS evaluates it. A filter ESS leaves unknown for a row, such as a comparison with
+an optional field the row does not hold, refuses the read as ESS's interpreter does.
 
 A view with aggregate fields, `open_sessions: {aggregate: {count: {}}}` or `sum` or `avg`, answers
 the rows ESS's interpreter answers. The filter keeps the instances first. They are then grouped by

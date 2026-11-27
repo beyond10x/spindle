@@ -62,12 +62,14 @@ const STATE: &str = "state";
 ///   `equals_ignore_case` or `in_ignore_case` against text literals, which ESS folds ASCII
 ///   only (`FoldOp::holds`), alone or under `trimmed`, which trims only the tested text;
 ///
-/// leaves combined by `any`, `all` and `not`, or under `exists` or `forall` over a list parameter
-/// or a list field of the row. A list parameter's element is read as a parameter is; a list
-/// field's element as a field is, a member of it among them (`g.id == param.group`,
-/// `defined(g.name)`), and is also compared with `==` or `!=` to an outer binder. Any other filter
-/// is named with its text and refused whole, since evaluating part of it would answer a subset of
-/// its rows.
+/// leaves combined by `any`, `all` and `not`, or under `exists` or `forall` over a list parameter,
+/// a list field of the row, or a list member of an outer list field's element (`exists w in
+/// g.words` inside `exists g in slots`, read at `slots.<n>.words.<m>`,
+/// `story:view-filter-nested-element-quantifier`). A list parameter's element is read as a
+/// parameter is; a list field's element as a field is, a member of it among them
+/// (`g.id == param.group`, `defined(g.name)`), and is also compared with `==` or `!=` to an outer
+/// binder. Any other filter is named with its text and refused whole, since evaluating part of it
+/// would answer a subset of its rows.
 ///
 /// An aggregation (`group_by:` and fields with `aggregate:`) is answered ([`aggregate`]) where
 /// each measure's `where:` is a filter read here, and no field of the view is read through a
@@ -94,8 +96,8 @@ pub(crate) fn unsupported(ir: &EssIr, view: &ResolvedView) -> Option<String> {
                  against a text literal or parameter, a text field or parameter tested by \
                  `equals_ignore_case` or `in_ignore_case` against text literals, alone or under \
                  `trimmed`, and `always` and `never`, combined by `any`, `all` and `not` or \
-                 quantified over a list parameter or a list field by `exists` or `forall`, are \
-                 read"
+                 quantified over a list parameter, a list field or a list member of its \
+                 element by `exists` or `forall`, are read"
             )),
             _ => None,
         }
@@ -135,8 +137,9 @@ fn unread_aggregation(
 /// it ([`ess_compiler::expression::resolve_path`]): a field against the source's observable
 /// fields, a field read through a reference (`<via>.<field>`) against the observable fields of the
 /// entity it names, a parameter against the view's, and a binder as the element (`<list>.0`) of
-/// the list it walks. ESS evaluates a quantifier over the elements a list publishes
-/// (`<name>.count`, `<name>.<index>`). The parser bounds the nesting at `MAX_PREDICATE_DEPTH`.
+/// the list it walks, at the outer element's path where that list is a member of an outer binder's
+/// element (`slots.0.words.0` for `w` in `exists w in g.words`). ESS evaluates a quantifier over
+/// the elements a list publishes (`<name>.count`, `<name>.<index>`). The parser bounds the nesting at `MAX_PREDICATE_DEPTH`.
 fn reads(ir: &EssIr, view: &ResolvedView, filter: &Predicate) -> bool {
     let fields = ir.entity(&view.source).observable_fields();
     let scope = Scope {
@@ -346,6 +349,34 @@ impl<'a> Scope<'a> {
         })
     }
 
+    /// The segments of the list `over`, a quantifier's target, as the row holds it: where `over`
+    /// is a member of an outer binder's element (`g.words` for `exists g in slots`), the outer
+    /// element's own path and the members (`slots.0.words`), as ESS reads it through the outer
+    /// binder (`Element::rebind`), `story:view-filter-nested-element-quantifier`; otherwise
+    /// `over` as written.
+    fn walked(&self, over: &FactPath) -> Vec<String> {
+        match over.segments() {
+            [root, members @ ..] if !members.is_empty() => self
+                .binders
+                .iter()
+                .rev()
+                .find(|binder| binder.name == root)
+                .map_or_else(
+                    || over.segments().to_vec(),
+                    |binder| {
+                        binder
+                            .element
+                            .segments()
+                            .iter()
+                            .chain(members)
+                            .cloned()
+                            .collect()
+                    },
+                ),
+            _ => over.segments().to_vec(),
+        }
+    }
+
     fn admits(&self, filter: &Predicate) -> bool {
         match filter {
             Predicate::Compare {
@@ -426,9 +457,8 @@ impl<'a> Scope<'a> {
                     return false;
                 }
                 let element = FactPath::from_segments(
-                    over.segments()
-                        .iter()
-                        .cloned()
+                    self.walked(over)
+                        .into_iter()
                         .chain(std::iter::once("0".to_owned()))
                         .collect::<Vec<_>>(),
                 );

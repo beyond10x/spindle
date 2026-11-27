@@ -8,6 +8,11 @@ are Spindle's releases.
 
 ### Added
 
+- A view filter that quantifies over a list member of an outer list field's element
+  (`exists g in slots: (exists w in g.words: w == "x")`) is answered with the rows ESS's
+  interpreter answers, each inner element read at the outer element's path
+  (`slots.<n>.words.<m>`). Before, the host refused the view whole as `unsupported`
+  (`story:view-filter-nested-element-quantifier`).
 - An event binding whose `on_failure` escalates runs, where `run` exited 1 before listening or
   reading stdin: universal (`on_failure: {escalate: {emits: <event>}}`) or chosen per refusal
   (`escalate: {emits: <event>, outcomes: [...]}` beside `drop:` and `retry:`). An attempt the
