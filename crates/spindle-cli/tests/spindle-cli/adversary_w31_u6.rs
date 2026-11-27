@@ -967,8 +967,9 @@ mod postgres {
     /// Round 3, change 1: a renewal lands only on the session that took the lease, so a dropped
     /// lease connection of a leader fails over. While commands flow to the leader its lease
     /// connection is terminated: the leader exits 1 naming the lease, the standby takes over, every
-    /// command the old leader answered `201` is held once and none it answered `503`, and the
-    /// webhook is sent each opened task once.
+    /// command the old leader answered `201` is held once and none it answered `503`, every task
+    /// opened is posted at least once, and a repeat names the same component, log and position
+    /// as its first post.
     #[test]
     #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
     fn a_dropped_leader_session_fails_over_with_each_write_once() {
@@ -1029,21 +1030,62 @@ mod postgres {
         }
         let (status, answer) = standby.open("n1");
         assert_eq!(status, 201, "{answer}");
-        accepted(&webhook, held.len() + 1);
+        // Every task opened is posted at least once (at least once, the egress's contract).
+        let mut committed = held.clone();
+        committed.push("n1".to_owned());
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let posted: Vec<String> = crate::egress::named(&webhook.accepted())
+                .into_iter()
+                .map(|(_, task)| task)
+                .collect();
+            let missing: Vec<&String> = committed
+                .iter()
+                .filter(|task| !posted.contains(task))
+                .collect();
+            if missing.is_empty() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "never posted within 30 s: {missing:?} of {committed:?}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
         std::thread::sleep(Duration::from_millis(500));
-        let posted: Vec<String> = crate::egress::named(&webhook.accepted())
-            .into_iter()
-            .map(|(_, task)| task)
-            .collect();
-        let mut twice: Vec<&String> = posted
-            .iter()
-            .filter(|task| posted.iter().filter(|other| other == task).count() > 1)
-            .collect();
-        twice.dedup();
-        assert!(
-            twice.is_empty(),
-            "posted more than once across the failover: {twice:?} of {} posts",
-            posted.len()
+        // A repeat across the failover (decided: the old leader's last unsaved page may be posted
+        // again) names the same event as its first post: the same component, log and position.
+        let bodies = webhook.accepted();
+        let mut first: std::collections::BTreeMap<String, (Value, Value, Value)> =
+            std::collections::BTreeMap::new();
+        let mut repeats = 0;
+        for body in &bodies {
+            let task = body["fields"]["task_id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned();
+            let named = (
+                body["component"].clone(),
+                body["log"].clone(),
+                body["position"].clone(),
+            );
+            match first.get(&task) {
+                None => {
+                    first.insert(task, named);
+                }
+                Some(earlier) => {
+                    repeats += 1;
+                    assert_eq!(
+                        earlier, &named,
+                        "{task} is posted again naming another (component, log, position)"
+                    );
+                }
+            }
+        }
+        eprintln!(
+            "{} posts of {} tasks, {repeats} repeats, each naming its first post's event",
+            bodies.len(),
+            first.len()
         );
     }
 
