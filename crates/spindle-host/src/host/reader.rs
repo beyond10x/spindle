@@ -12,7 +12,9 @@ use spindle_telemetry::Counters;
 use spindle_timer::Clock;
 
 use super::rows::Shared;
-use super::{Cursor, HostError, Listed, Page, Published, listing, owner_of, readable};
+use super::{
+    Cursor, History, HistoryCursor, HostError, Listed, Page, Published, listing, owner_of, readable,
+};
 use crate::admission::Placements;
 
 /// What reads a host's committed state from any thread while the host's own thread runs
@@ -198,6 +200,42 @@ impl Reader {
             stores.push((name.clone(), generation, reading.events_head()?));
         }
         Ok(super::range::head(self.run, &stores, sequence))
+    }
+
+    /// The history of the instance of `entity` with `identity` after `after`, at most `limit`,
+    /// as [`super::Host::history`] answers it: read through the reading handle of the store of
+    /// the component that owns the entity, beside the host's thread.
+    ///
+    /// # Errors
+    /// [`HostError::NoEntity`] where the model declares no `entity`, [`HostError::Unsupported`]
+    /// where that store gives no reading handle ([`Reader::reads_events`]), and
+    /// [`HostError::Store`] where it cannot be read.
+    pub fn history(
+        &self,
+        entity: &str,
+        identity: &Value,
+        after: &HistoryCursor,
+        limit: usize,
+    ) -> Result<History, HostError> {
+        let owner = super::holding(&self.ir, entity)?;
+        let read = self
+            .components
+            .get(&owner)
+            .ok_or_else(|| HostError::Unsupported(format!("{owner} is not running")))?;
+        // The generation and the handle are taken together: a reset hands its readers both at
+        // once.
+        let (generation, reading) = read.shared.handed();
+        let reading = reading.ok_or_else(|| {
+            HostError::Unsupported(format!("{owner} is read on the host's thread only"))
+        })?;
+        super::range::history(
+            (self.run, generation),
+            after,
+            (entity, identity),
+            limit,
+            super::civil,
+            |position, wanted| Ok(reading.events_after(position, wanted)?),
+        )
     }
 
     /// Whether this reader answers the events published ([`Reader::published`]): whether every

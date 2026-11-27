@@ -231,8 +231,32 @@ pub struct Committed {
     pub position: u64,
     /// The command its write was attributed to, or `None` for a write attributed to none.
     pub origin: Option<Origin>,
+    /// The outcome the command took, as named to the store before its write
+    /// ([`Store::outcome`]); `None` where none was named, and for every write a release before
+    /// 0.23.0 stored.
+    pub outcome: Option<String>,
+    /// Each instance its write wrote, by entity (qualified name) and identity, each once,
+    /// ordered by entity and then by the identity's canonical JSON text ([`instances_of`]):
+    /// every instance of a group of writes ([`Store::commit_all`]). Empty for events no row
+    /// carried ([`Store::commit_events`]), and for every write a release before 0.23.0 stored,
+    /// which named none.
+    pub instances: Vec<(String, Value)>,
     /// The event and its payload.
     pub event: Event,
+}
+
+/// The instances `writes` write, as [`Committed::instances`] lists them: each once, ordered by
+/// entity and then by the identity's canonical JSON text.
+pub fn instances_of(writes: &[Write]) -> Vec<(String, Value)> {
+    let mut seen = BTreeMap::new();
+    for write in writes {
+        let (entity, identity) = write.instance();
+        seen.entry(key(entity, identity))
+            .or_insert_with(|| identity.clone());
+    }
+    seen.into_iter()
+        .map(|((entity, _), identity)| (entity, identity))
+        .collect()
 }
 
 /// What a store that does not read back the events it commits answers to
@@ -361,6 +385,15 @@ pub trait Store {
     /// wraps another hands it on.
     fn attribute(&mut self, origin: Option<Origin>) {
         let _ = origin;
+    }
+
+    /// Names `outcome`, the outcome the command the writes are attributed to took, for the
+    /// writes that follow until the store is attributed again ([`Store::attribute`], which names
+    /// none): each event they commit is read back with it ([`Committed::outcome`]). The kernel
+    /// names it before it commits the outcome's writes. This default, for a store that does not
+    /// read back its events, keeps nothing; a store that wraps another hands it on.
+    fn outcome(&mut self, outcome: &str) {
+        let _ = outcome;
     }
 
     /// Records `events`, which a command emitted with no row to write them with (an outcome
@@ -660,6 +693,8 @@ pub struct MemoryStore {
     held: Arc<RwLock<Held>>,
     /// The command the writes are attributed to ([`Store::attribute`]).
     origin: Option<Origin>,
+    /// The outcome named for the writes ([`Store::outcome`]).
+    outcome: Option<String>,
 }
 
 /// What a [`MemoryStore`] holds: each entity's instances, by qualified name, each as one value its
@@ -686,8 +721,15 @@ struct Events {
 }
 
 impl Events {
-    /// Records `events`, which one write committed, at the next position, attributed to `origin`.
-    fn record(&mut self, events: Vec<Event>, origin: Option<&Origin>) {
+    /// Records `events`, which one write of `instances` committed, at the next position,
+    /// attributed to `origin` and `outcome`.
+    fn record(
+        &mut self,
+        events: Vec<Event>,
+        origin: Option<&Origin>,
+        outcome: Option<&String>,
+        instances: &[(String, Value)],
+    ) {
         if events.is_empty() {
             return;
         }
@@ -700,6 +742,8 @@ impl Events {
             Arc::make_mut(&mut self.open).push(Committed {
                 position: self.position,
                 origin: origin.cloned(),
+                outcome: outcome.cloned(),
+                instances: instances.to_vec(),
                 event,
             });
         }
@@ -966,15 +1010,22 @@ impl MemoryStore {
     /// Lands one write on what the store holds, under its lock: on each entity it changes
     /// itself where no read holds it, else on a copy of that entity that then stands in its place.
     /// The events it committed are recorded with it, under the same lock, so a read sees the
-    /// write and its events together.
+    /// write and its events together, with the instances it writes (`instances`, as
+    /// [`instances_of`] lists them).
     fn write(
         &mut self,
+        instances: &[(String, Value)],
         write: impl FnOnce(&mut Held, &mut Vec<Event>) -> Result<(), StoreError>,
     ) -> Result<(), StoreError> {
         let mut held = self.held.write().unwrap_or_else(PoisonError::into_inner);
         let mut events = Vec::new();
         write(&mut held, &mut events)?;
-        held.events.record(events, self.origin.as_ref());
+        held.events.record(
+            events,
+            self.origin.as_ref(),
+            self.outcome.as_ref(),
+            instances,
+        );
         Ok(())
     }
 }
@@ -989,14 +1040,16 @@ impl Store for MemoryStore {
     }
 
     fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
-        self.write(|held, events| {
+        let instances = [(change.entity.clone(), change.identity.clone())];
+        self.write(&instances, |held, events| {
             held.unmoved(&change.scanned)?;
             held.put(change, events)
         })
     }
 
     fn remove(&mut self, removal: &Removal) -> Result<(), StoreError> {
-        self.write(|held, events| {
+        let instances = [(removal.entity.clone(), removal.identity.clone())];
+        self.write(&instances, |held, events| {
             held.unmoved(&removal.scanned)?;
             held.remove(removal, events)
         })
@@ -1006,7 +1059,9 @@ impl Store for MemoryStore {
     /// instance it touches held before; where one is refused, every instance is put back and the
     /// events recorded since dropped. A read sees all of them or none.
     fn commit_all(&mut self, writes: &[Write]) -> Result<(), StoreError> {
-        self.write(|held, events| held.commit_all(writes, events))
+        self.write(&instances_of(writes), |held, events| {
+            held.commit_all(writes, events)
+        })
     }
 
     fn scan(&mut self, entity: &str) -> Result<Scan, StoreError> {
@@ -1017,15 +1072,21 @@ impl Store for MemoryStore {
         Some(Arc::new(MemoryReading(Arc::clone(&self.held))))
     }
 
+    /// Names no outcome until one is named again.
     fn attribute(&mut self, origin: Option<Origin>) {
         self.origin = origin;
+        self.outcome = None;
+    }
+
+    fn outcome(&mut self, outcome: &str) {
+        self.outcome = Some(outcome.to_owned());
     }
 
     fn commit_events(&mut self, events: &[Event], scanned: &[Scanned]) -> Result<(), StoreError> {
         if events.is_empty() {
             return Ok(());
         }
-        self.write(|held, recorded| {
+        self.write(&[], |held, recorded| {
             held.unmoved(scanned)?;
             recorded.extend(events.iter().cloned());
             Ok(())

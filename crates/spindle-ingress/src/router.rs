@@ -286,9 +286,10 @@ impl Pending {
 
     /// Whether the request is a read `reader` answers beside the host's thread: a view whose
     /// owning store it reads ([`Reader::reads`]), `GET /api/model`, `GET /api/served`,
-    /// `GET /api/events` where every store gives a reading handle ([`Reader::reads_events`]), and
-    /// on an observing surface the metrics and the topology. A command, `POST /api/reset` and a view
-    /// read on the host's thread only are answered there, one at a time in arrival order.
+    /// `GET /api/events` and `GET /api/history` where every store gives a reading handle
+    /// ([`Reader::reads_events`]), and on an observing surface the metrics and the topology. A
+    /// command, `POST /api/reset` and a view read on the host's thread only are answered there, one
+    /// at a time in arrival order.
     #[cfg_attr(not(feature = "listener"), allow(dead_code))]
     pub(crate) fn reads(&self, reader: &Reader) -> bool {
         match &self.asked {
@@ -297,7 +298,7 @@ impl Pending {
                 Operation::Command(_) => false,
             },
             Asked::Console(Console::Model | Console::Served) => true,
-            Asked::Console(Console::Events) => reader.reads_events(),
+            Asked::Console(Console::Events | Console::History) => reader.reads_events(),
             Asked::Console(Console::Reset) => false,
             Asked::Hosted(_) => self.recorder.is_some(),
         }
@@ -334,6 +335,10 @@ impl Pending {
             )),
             (Asked::Console(Console::Events), _) => Some((
                 crate::console::events_read_queried(reader, &self.query).into(),
+                Answered::ingress(),
+            )),
+            (Asked::Console(Console::History), _) => Some((
+                crate::console::history_read_queried(reader, &self.query).into(),
                 Answered::ingress(),
             )),
             (Asked::Console(Console::Served), _) => {
@@ -411,6 +416,11 @@ impl Pending {
             ),
             Asked::Console(Console::Events) => (
                 crate::console::events_queried(host, &self.query).into(),
+                Vec::new(),
+                Answered::ingress(),
+            ),
+            Asked::Console(Console::History) => (
+                crate::console::history_queried(host, &self.query).into(),
                 Vec::new(),
                 Answered::ingress(),
             ),

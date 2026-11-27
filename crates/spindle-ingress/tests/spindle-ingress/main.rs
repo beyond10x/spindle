@@ -23,6 +23,7 @@ mod events_from_store;
 mod events_range;
 mod exposed;
 mod grants;
+mod instance_history;
 mod metrics_read;
 mod observe;
 mod outcome_headers;

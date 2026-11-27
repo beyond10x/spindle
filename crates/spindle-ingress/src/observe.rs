@@ -1060,9 +1060,9 @@ fn recorded_path(path: &str) -> String {
 
 /// The query string `query` of a console request as a record keeps it: each pair in order,
 /// empty pairs dropped, `after` and `limit` by name, the value of `after` where the request was
-/// `answered` (a cursor `GET /api/events` read, which is text it wrote) and the value of `limit`
-/// where it is digits; every other name and value is caller input and written `…`. At most
-/// [`PATH_MOST`] bytes, cut with `…` where longer, as a path is.
+/// `answered` (a cursor `GET /api/events` or `GET /api/history` read, which is text it wrote)
+/// and the value of `limit` where it is digits; every other name and value is caller input and
+/// written `…`. At most [`PATH_MOST`] bytes, cut with `…` where longer, as a path is.
 fn recorded_query(query: &str, answered: bool) -> String {
     let mut kept = String::new();
     for pair in query.split('&').filter(|pair| !pair.is_empty()) {

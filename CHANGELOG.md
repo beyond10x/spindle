@@ -17,6 +17,14 @@ are Spindle's releases.
   in each write's `spindle.written` origin and as the append's actor; an origin written before
   this release reads back with no cause, without a migration. `Host::submit_caused` sends a
   command with its cause (`story:events-record-their-caller`).
+- `GET /api/history?entity=<Entity>&identity=<id>` on the console reads the events of one
+  instance, oldest first, a page at a time with an opaque `after` cursor and `limit`: each with
+  its store position, its civil time, the command and outcome that committed it, its caller and
+  cause, its event type and payload. A command's write names every instance it wrote, an
+  `affects:` group included, and the events it published are that instance's (`Host::history`,
+  `Reader::history`, `Committed::instances`); the request log keeps the cursor and elides the
+  entity and identity. A write stored before this release names no instance, so its events are in
+  no history; an instance no command changed reads an empty page (`story:entity-event-history`).
 
 ## [0.22.0] - 2026-11-27
 

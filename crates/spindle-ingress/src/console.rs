@@ -5,7 +5,9 @@
 use ess_compiler::EssIr;
 use ess_http::{Method, Operation};
 use serde_json::{Value, json};
-use spindle_host::{Cursor, Host, HostError, Page, Published, Reader, World};
+use spindle_host::{
+    Cursor, History, HistoryCursor, Host, HostError, Page, Published, Reader, Revision, World,
+};
 
 use crate::answer::Answer;
 use crate::surface::{Surface, form_decoded};
@@ -23,16 +25,25 @@ pub enum Console {
     /// `GET /api/served`: every command and view the surface routes, whether it serves it, and
     /// why not ([`served`]).
     Served,
+    /// `GET /api/history`: the committed events of one entity instance, oldest first, paged
+    /// ([`history_queried`]).
+    History,
 }
 
 impl Console {
     /// Every console route.
-    pub const ALL: [Self; 4] = [Self::Model, Self::Events, Self::Reset, Self::Served];
+    pub const ALL: [Self; 5] = [
+        Self::Model,
+        Self::Events,
+        Self::Reset,
+        Self::Served,
+        Self::History,
+    ];
 
     /// The method it answers.
     pub fn method(self) -> Method {
         match self {
-            Self::Model | Self::Events | Self::Served => Method::Get,
+            Self::Model | Self::Events | Self::Served | Self::History => Method::Get,
             Self::Reset => Method::Post,
         }
     }
@@ -44,6 +55,7 @@ impl Console {
             Self::Events => "/api/events",
             Self::Reset => "/api/reset",
             Self::Served => "/api/served",
+            Self::History => "/api/history",
         }
     }
 }
@@ -223,6 +235,182 @@ fn one<'a>(name: &str, values: &[&'a str]) -> Result<Option<&'a str>, String> {
             several.len()
         )),
     }
+}
+
+/// The query parameter naming the entity a history read reads, by qualified name.
+pub(crate) const ENTITY: &str = "entity";
+
+/// The query parameter naming the instance a history read reads, by its identity.
+pub(crate) const IDENTITY: &str = "identity";
+
+/// What a history read asks for: the instance, where it starts and a limit.
+struct Asked {
+    entity: String,
+    identity: Value,
+    after: HistoryCursor,
+    limit: usize,
+}
+
+/// What `GET /api/history?<query>` answers on the host's thread: `200` with `{"events": [...],
+/// "next": <cursor>}`, the events committed by every write that wrote the instance of `entity`
+/// (a qualified entity name) with `identity`, oldest first, after the cursor `after` (from the
+/// first without one), at most `limit` write by write ([`EVENTS_LIMIT_DEFAULT`] without one, and
+/// at most [`EVENTS_LIMIT_MOST`]), and the cursor after the last of them ([`Host::history`]).
+/// Each event is `{"position", "at", "command", "outcome", "caller", "cause", "event",
+/// "payload"}` ([`revision`]). The identity is read as JSON where it is JSON, and as text
+/// otherwise: `identity=t1` and `identity=%22t1%22` both name `"t1"`,
+/// `identity=7` names `7`. A query that leaves out `entity` or `identity`, names no entity of
+/// the model, gives a parameter twice, or a malformed `after` or `limit` is refused `400` naming
+/// the parameter, never its value; a store that cannot be read `500`.
+pub fn history_queried(host: &mut Host, query: &str) -> Answer {
+    match history_asked(host.ir(), query) {
+        Ok(asked) => {
+            historied(host.history(&asked.entity, &asked.identity, &asked.after, asked.limit))
+        }
+        Err(why) => Answer::refusal(400, why),
+    }
+}
+
+/// What `GET /api/history?<query>` answers, read beside the host's thread through its `reader`,
+/// as [`history_queried`] answers it ([`Reader::history`]).
+pub fn history_read_queried(reader: &Reader, query: &str) -> Answer {
+    match history_asked(reader.ir(), query) {
+        Ok(asked) => {
+            historied(reader.history(&asked.entity, &asked.identity, &asked.after, asked.limit))
+        }
+        Err(why) => Answer::refusal(400, why),
+    }
+}
+
+/// The history read `query` asks for; the refusal of a malformed one, which never repeats a
+/// value.
+fn history_asked(ir: &EssIr, query: &str) -> Result<Asked, String> {
+    let mut given: [(&str, Vec<&str>); 4] = [
+        (ENTITY, Vec::new()),
+        (IDENTITY, Vec::new()),
+        (AFTER, Vec::new()),
+        (LIMIT, Vec::new()),
+    ];
+    for pair in query.split('&').filter(|pair| !pair.is_empty()) {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        let Some(key) = form_decoded(key) else {
+            continue;
+        };
+        if let Some((_, values)) = given.iter_mut().find(|(name, _)| *name == key) {
+            values.push(value);
+        }
+    }
+    let [(_, entity), (_, identity), (_, after), (_, limit)] = given;
+    let decoded = |name: &str, raw: &str| {
+        form_decoded(raw)
+            .ok_or_else(|| format!("query.{name}: expected percent-encoded UTF-8 text"))
+    };
+    let entity = match one(ENTITY, &entity)? {
+        Some(raw) => decoded(ENTITY, raw)?,
+        None => {
+            return Err(format!(
+                "query.{ENTITY}: expected an entity's qualified name"
+            ));
+        }
+    };
+    if !ir
+        .entities()
+        .values()
+        .any(|declared| declared.name.to_string() == entity)
+    {
+        return Err(format!(
+            "query.{ENTITY}: expected an entity the model declares"
+        ));
+    }
+    let identity = match one(IDENTITY, &identity)? {
+        Some(raw) => {
+            let text = decoded(IDENTITY, raw)?;
+            serde_json::from_str::<Value>(&text).unwrap_or(Value::String(text))
+        }
+        None => return Err(format!("query.{IDENTITY}: expected an instance's identity")),
+    };
+    let after = match one(AFTER, &after)? {
+        None => HistoryCursor::start(),
+        Some(raw) => decoded(AFTER, raw).and_then(|text| {
+            HistoryCursor::parse(&text).map_err(|why| format!("query.{AFTER}: {why}"))
+        })?,
+    };
+    let limit = match one(LIMIT, &limit)? {
+        None => EVENTS_LIMIT_DEFAULT,
+        Some(raw) => limited(raw)?,
+    };
+    Ok(Asked {
+        entity,
+        identity,
+        after,
+        limit,
+    })
+}
+
+/// The limit `raw`, a value of [`LIMIT`], names: a whole number from 1, at most
+/// [`EVENTS_LIMIT_MOST`]; the refusal of another.
+fn limited(raw: &str) -> Result<usize, String> {
+    let malformed = || format!("query.{LIMIT}: expected a whole number of events, from 1");
+    let text = form_decoded(raw).ok_or_else(malformed)?;
+    if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(malformed());
+    }
+    // Only digits: a number too large for any integer is larger than the maximum.
+    match text.parse::<usize>() {
+        Ok(0) => Err(malformed()),
+        Ok(limit) => Ok(limit.min(EVENTS_LIMIT_MOST)),
+        Err(_) => Ok(EVENTS_LIMIT_MOST),
+    }
+}
+
+/// `200` with `{"events": [...], "next": <cursor>}` for `history`; `400` for an entity the model
+/// does not declare, `500` naming why a store could not be read.
+fn historied(history: Result<History, HostError>) -> Answer {
+    match history {
+        Ok(history) => Answer {
+            status: 200,
+            body: Some(json!({
+                "events": history.events.iter().map(revision).collect::<Vec<_>>(),
+                "next": history.next.to_string(),
+            })),
+            headers: Vec::new(),
+        },
+        Err(HostError::NoEntity(_)) => Answer::refusal(
+            400,
+            format!("query.{ENTITY}: expected an entity the model declares"),
+        ),
+        Err(error) => Answer::refusal(500, error.to_string()),
+    }
+}
+
+/// One event of a history as `GET /api/history` answers it: `position` (its write's place in
+/// the store's commit order), `at` (its command's time, RFC 3339), `command` and `outcome` (or
+/// `null`), `caller` (`{"actor", "attributes", "request"}`: the caller of the request or seed
+/// entry that caused it, for a binding's command that of the command whose event the binding
+/// carried; `null` where none is known), `cause` (what caused it, [`spindle_kernel::Provenance`]
+/// as stored, or `null`), `event` and `payload`.
+fn revision(revision: &Revision) -> Value {
+    let caller = revision
+        .cause
+        .as_ref()
+        .and_then(spindle_kernel::Provenance::sender)
+        .map_or(Value::Null, |sender| {
+            json!({
+                "actor": sender.actor,
+                "attributes": sender.attributes,
+                "request": sender.request,
+            })
+        });
+    json!({
+        "position": revision.position,
+        "at": revision.at,
+        "command": revision.command,
+        "outcome": revision.outcome,
+        "caller": caller,
+        "cause": revision.cause,
+        "event": revision.event.name,
+        "payload": revision.event.payload,
+    })
 }
 
 /// `200` with `{"events": [...], "next": <cursor>}` for `page`; `400` for a cursor of another

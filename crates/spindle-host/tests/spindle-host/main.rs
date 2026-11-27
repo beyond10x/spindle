@@ -61,6 +61,8 @@ mod generated;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod grants;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod instance_history;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod list_append;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod mint;

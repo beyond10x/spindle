@@ -8,7 +8,7 @@ use std::fmt;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde_json::{Value, json};
-use spindle_kernel::Committed;
+use spindle_kernel::{Committed, Event, Provenance};
 
 use super::{HostError, Published};
 
@@ -377,5 +377,193 @@ pub(super) fn range(
     Ok(Page {
         events,
         next: Cursor { run, last, marks },
+    })
+}
+
+/// The version of a history cursor's encoding.
+const HISTORY_VERSION: u64 = 1;
+
+/// How many events one read of a store asks for while a history read filters them.
+const HISTORY_READ: usize = 256;
+
+/// Where a page of an instance's history ends ([`super::Host::history`]): opaque text, written
+/// with [`fmt::Display`] and read back with [`HistoryCursor::parse`], of the characters
+/// `A-Z a-z 0-9 - _` only, as a [`Cursor`] is.
+///
+/// It holds the position of the last write of the instance's store the page read past, the
+/// store it was taken from (the host's run and the store's generation) and the sequence of that
+/// write's command. A read from the same store reads only after that position. Where the store
+/// was replaced since (a reset, a restart), the store is read from its start and every event of
+/// a command whose sequence is not after the cursor's is skipped, so a cursor taken before a
+/// restart resumes after its last event as long as the civil time does not go back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryCursor {
+    run: u64,
+    generation: u64,
+    position: u64,
+    sequence: u64,
+}
+
+/// One page of an instance's history ([`super::Host::history`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct History {
+    /// The events after the cursor, oldest first, at most the limit, read write by write: a
+    /// write's events are answered together, so the last write may bring more.
+    pub events: Vec<Revision>,
+    /// The cursor after the last write read: the cursor given, with nothing left to read.
+    pub next: HistoryCursor,
+}
+
+/// One event of an instance's history: an event a write of the instance committed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Revision {
+    /// The position of its write in its store's commit order ([`Committed::position`]).
+    pub position: u64,
+    /// The civil time of its command, as RFC 3339 in UTC to the millisecond, read from the
+    /// sequence the host attributed the command with ([`spindle_kernel::Origin::sequence`]);
+    /// `None` for a write attributed to no command.
+    pub at: Option<String>,
+    /// The command, by qualified name; `None` for a write attributed to none.
+    pub command: Option<String>,
+    /// The outcome the command took ([`Committed::outcome`]).
+    pub outcome: Option<String>,
+    /// What caused the command ([`spindle_kernel::Origin::cause`]): its caller.
+    pub cause: Option<Provenance>,
+    /// The event and its payload.
+    pub event: Event,
+}
+
+impl HistoryCursor {
+    /// The cursor before every event.
+    pub fn start() -> Self {
+        Self {
+            run: 0,
+            generation: 0,
+            position: 0,
+            sequence: 0,
+        }
+    }
+
+    /// The cursor `text` is, as [`fmt::Display`] writes one.
+    ///
+    /// # Errors
+    /// Why `text` is not a cursor; it does not repeat `text`.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let malformed = || "expected a cursor a history read answered as `next`".to_owned();
+        let bytes = URL_SAFE_NO_PAD.decode(text).map_err(|_| malformed())?;
+        let value = serde_json::from_slice::<Value>(&bytes).map_err(|_| malformed())?;
+        let numbers = value
+            .as_array()
+            .map(|items| items.iter().map(Value::as_u64).collect::<Option<Vec<_>>>())
+            .ok_or_else(malformed)?
+            .ok_or_else(malformed)?;
+        let [HISTORY_VERSION, run, generation, position, sequence] = numbers.as_slice() else {
+            return Err(malformed());
+        };
+        let cursor = Self {
+            run: *run,
+            generation: *generation,
+            position: *position,
+            sequence: *sequence,
+        };
+        if cursor.to_string() != text {
+            return Err(malformed());
+        }
+        Ok(cursor)
+    }
+}
+
+impl Default for HistoryCursor {
+    fn default() -> Self {
+        Self::start()
+    }
+}
+
+impl fmt::Display for HistoryCursor {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let encoded = json!([
+            HISTORY_VERSION,
+            self.run,
+            self.generation,
+            self.position,
+            self.sequence
+        ]);
+        formatter.write_str(&URL_SAFE_NO_PAD.encode(encoded.to_string()))
+    }
+}
+
+/// The history of the instance of `entity` with `identity` after `after`, at most `limit` events
+/// (write by write), read from the store that holds it, of `generation` in `run`, by `read`,
+/// which answers the store's events after a position, up to a limit, as
+/// [`spindle_kernel::Store::events_after`] does: every event of every write that names the
+/// instance among those it wrote ([`Committed::instances`]), oldest first; and the cursor after
+/// the last write read. `at` turns a command's sequence into its time.
+///
+/// # Errors
+/// Any error of `read`.
+pub(super) fn history(
+    (run, generation): (u64, u64),
+    after: &HistoryCursor,
+    (entity, identity): (&str, &Value),
+    limit: usize,
+    at: impl Fn(u64) -> Option<String>,
+    mut read: impl FnMut(u64, usize) -> Result<Vec<Committed>, HostError>,
+) -> Result<History, HostError> {
+    let same = after.run == run && after.generation == generation;
+    // Read from the store's start where it is not the one the cursor marks, skipping what the
+    // cursor answered by its command's sequence.
+    let (mut position, skipped) = if same {
+        (after.position, 0)
+    } else {
+        (0, after.sequence)
+    };
+    let mut sequence = after.sequence;
+    let mut events = Vec::new();
+    'read: while events.len() < limit {
+        let committed = read(position, HISTORY_READ)?;
+        let answered_all = committed.len() < HISTORY_READ;
+        let mut writes = committed.into_iter().peekable();
+        while let Some(first) = writes.next() {
+            let mut write = vec![first];
+            while let Some(next) = writes.next_if(|next| next.position == write[0].position) {
+                write.push(next);
+            }
+            let written_at = write[0].position;
+            let origin = write[0].origin.clone();
+            let command_sequence = origin.as_ref().map(|origin| origin.sequence);
+            let wrote = write[0]
+                .instances
+                .iter()
+                .any(|(written, held)| written == entity && held == identity);
+            if wrote && command_sequence.is_none_or(|sequence| sequence > skipped) {
+                events.extend(write.into_iter().map(|committed| Revision {
+                    position: committed.position,
+                    at: command_sequence.and_then(&at),
+                    command: origin.as_ref().map(|origin| origin.command.clone()),
+                    outcome: committed.outcome,
+                    cause: origin.as_ref().and_then(|origin| origin.cause.clone()),
+                    event: committed.event,
+                }));
+            }
+            if let Some(command_sequence) = command_sequence {
+                sequence = sequence.max(command_sequence);
+            }
+            position = written_at;
+            if events.len() >= limit {
+                break 'read;
+            }
+        }
+        if answered_all {
+            break;
+        }
+    }
+    Ok(History {
+        events,
+        next: HistoryCursor {
+            run,
+            generation,
+            position,
+            sequence,
+        },
     })
 }

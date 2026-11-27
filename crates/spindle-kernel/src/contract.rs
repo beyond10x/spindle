@@ -133,6 +133,10 @@ pub const CASES: &[Case] = &[
         name: "an_event_records_the_caller_of_its_request",
         run: an_event_records_the_caller_of_its_request,
     },
+    Case {
+        name: "the_store_names_the_instances_each_write_wrote",
+        run: the_store_names_the_instances_each_write_wrote,
+    },
 ];
 
 fn row(state: &str, title: &str) -> Row {
@@ -1074,6 +1078,86 @@ fn requested(request: &str) -> Sender {
         actor: Some("contract.tasks.Owner".to_owned()),
         attributes: Map::from_iter([("team".to_owned(), json!("blue"))]),
         request: Some(request.to_owned()),
+    }
+}
+
+/// Each event a store commits reads back with the instances its write wrote, each once, ordered
+/// by entity and identity text ([`Committed::instances`]): a change's or a removal's one
+/// instance, every instance of a group of writes, none for events no row carries; attributed or
+/// not. It reads back with the outcome named to the store before its write
+/// ([`Store::outcome`]), until the store is attributed again. Where the store gives a reading
+/// handle, it reads them alike.
+fn the_store_names_the_instances_each_write_wrote(store: &mut dyn Store) {
+    let case = "the_store_names_the_instances_each_write_wrote";
+    let (first, second, other) = (json!("t1"), json!("t2"), json!("o1"));
+    store.attribute(origin("Open", 1));
+    store.outcome("opened");
+    let mut opened = change(TASK, &first, None, row("Open", "1"));
+    opened.events = vec![named("A")];
+    commit(case, store, &opened);
+    store.attribute(origin("Pair", 2));
+    store.outcome("paired");
+    let mut paired = change(TASK, &second, None, row("Open", "2"));
+    paired.events = Vec::new();
+    let mut beside = change(OTHER, &other, None, row("Open", "o"));
+    beside.events = vec![named("B")];
+    let one = held(case, store, &first);
+    let mut moved = change(TASK, &first, Some(one.version), row("Done", "1"));
+    moved.events = vec![named("C")];
+    store
+        .commit_all(&[
+            Write::Commit(paired),
+            Write::Commit(beside),
+            Write::Commit(moved),
+        ])
+        .unwrap_or_else(|error| panic!("{case}: the group commits: {error}"));
+    store.attribute(origin("Ping", 3));
+    store
+        .commit_events(&[named("D")], &[])
+        .unwrap_or_else(|error| panic!("{case}: the events commit: {error}"));
+    store.attribute(None);
+    let two = held(case, store, &second);
+    let mut closing = removal(&second, two.version);
+    closing.events = vec![named("E")];
+    commit_removal(case, store, &closing);
+
+    let every = after(case, store, 0);
+    assert_eq!(names(&every).join(""), "ABCDE", "{case}: in commit order");
+    let written = |pairs: &[(&str, &Value)]| -> Vec<(String, Value)> {
+        pairs
+            .iter()
+            .map(|(entity, identity)| ((*entity).to_owned(), (*identity).clone()))
+            .collect()
+    };
+    let instances = every
+        .iter()
+        .map(|committed| committed.instances.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        instances,
+        [
+            written(&[(TASK, &first)]),
+            written(&[(OTHER, &other), (TASK, &first), (TASK, &second)]),
+            written(&[(OTHER, &other), (TASK, &first), (TASK, &second)]),
+            Vec::new(),
+            written(&[(TASK, &second)]),
+        ],
+        "{case}: each with the instances its write wrote"
+    );
+    let outcomes = every
+        .iter()
+        .map(|committed| committed.outcome.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        outcomes,
+        [Some("opened"), Some("paired"), Some("paired"), None, None],
+        "{case}: each with the outcome named before its write"
+    );
+    if let Some(reading) = store.reading() {
+        let read = reading
+            .events_after(0, usize::MAX)
+            .unwrap_or_else(|error| panic!("{case}: the handle reads the events: {error}"));
+        assert_eq!(read, every, "{case}: the handle reads them as the store");
     }
 }
 

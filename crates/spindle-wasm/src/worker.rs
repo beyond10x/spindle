@@ -276,6 +276,12 @@ impl Store for Shared {
         }
     }
 
+    fn outcome(&mut self, outcome: &str) {
+        if let Some(store) = self.0.borrow_mut().as_mut() {
+            store.outcome(outcome);
+        }
+    }
+
     fn commit_events(
         &mut self,
         events: &[spindle_kernel::Event],

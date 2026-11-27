@@ -368,6 +368,10 @@ impl Store for Counted {
         self.store.attribute(origin);
     }
 
+    fn outcome(&mut self, outcome: &str) {
+        self.store.outcome(outcome);
+    }
+
     fn commit_events(&mut self, events: &[Event], scanned: &[Scanned]) -> Result<(), StoreError> {
         self.store.commit_events(events, scanned)
     }

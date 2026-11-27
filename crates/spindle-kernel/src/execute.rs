@@ -1880,6 +1880,9 @@ impl<'a, 'ir> Run<'a, 'ir> {
     /// run ([`Self::runs`]) is refused there, and a move from a state the row does not hold is
     /// the wrong-state answer instead.
     fn take(&mut self, outcome: &'ir ResolvedOutcome) -> Result<Executed, ExecuteError> {
+        // Named before anything is written, so each event the outcome commits reads back with it
+        // (`Store::outcome`); an outcome that writes nothing leaves it unread.
+        self.store.outcome(outcome.name.as_str());
         if let Some(set) = &outcome.instances {
             self.acts(outcome)?;
             return self.take_set(outcome, set);

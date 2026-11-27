@@ -31,7 +31,7 @@ mod range;
 mod reader;
 mod rows;
 
-pub use range::{Cursor, Page};
+pub use range::{Cursor, History, HistoryCursor, Page, Revision};
 pub use reader::Reader;
 use rows::Counted;
 
@@ -249,6 +249,9 @@ pub enum HostError {
     /// No view has this name.
     #[error("no view {0}")]
     NoView(String),
+    /// No entity has this name ([`Host::history`]). Nothing was read.
+    #[error("no entity {0}")]
+    NoEntity(String),
     /// A view was read with parameter values it refuses ([`Host::list_with`]): one it does not
     /// declare, a required one left out, or one not of its declared type. Nothing was read.
     #[error("{view}: {detail}")]
@@ -438,6 +441,10 @@ impl Store for Tallied<'_> {
         self.store.attribute(origin);
     }
 
+    fn outcome(&mut self, outcome: &str) {
+        self.store.outcome(outcome);
+    }
+
     fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
         self.store.events_after(position, limit)
     }
@@ -618,6 +625,10 @@ impl Store for Routed<'_> {
         self.running.attribute(origin);
     }
 
+    fn outcome(&mut self, outcome: &str) {
+        self.running.outcome(outcome);
+    }
+
     fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
         self.running.events_after(position, limit)
     }
@@ -704,6 +715,10 @@ impl Store for Supplied {
 
     fn attribute(&mut self, origin: Option<Origin>) {
         self.0.attribute(origin);
+    }
+
+    fn outcome(&mut self, outcome: &str) {
+        self.0.outcome(outcome);
     }
 
     fn commit_events(&mut self, events: &[Event], scanned: &[Scanned]) -> Result<(), StoreError> {
@@ -1359,6 +1374,42 @@ impl Host {
             stores.push((name.clone(), generation, component.store.events_head()?));
         }
         Ok(range::head(self.run, &stores, sequence))
+    }
+
+    /// The committed events of the instance of `entity` (a qualified entity name) with
+    /// `identity` after `after`, oldest first, at most `limit` write by write, and the cursor
+    /// after them ([`History`]): every event of every write that wrote the instance, a group of
+    /// writes included (`affects:`, a set outcome), each with its position, its command's time,
+    /// the command, its outcome and its cause ([`Revision`]). Read from the store of the
+    /// component that owns the entity ([`Store::events_after`]), filtered by the instances each
+    /// write names ([`spindle_kernel::Committed::instances`]): a write a release before 0.23.0
+    /// stored names none, so it is in no history. An instance no command wrote reads empty.
+    ///
+    /// # Errors
+    /// [`HostError::NoEntity`] where the model declares no `entity`, and [`HostError::Store`]
+    /// where the store cannot be read.
+    pub fn history(
+        &mut self,
+        entity: &str,
+        identity: &Value,
+        after: &HistoryCursor,
+        limit: usize,
+    ) -> Result<History, HostError> {
+        let owner = holding(&self.ir, entity)?;
+        let generation = self
+            .components
+            .get(&owner)
+            .map(|component| component.store.generation())
+            .ok_or_else(|| HostError::Unsupported(format!("{owner} is not running")))?;
+        let store = store_of(&mut self.components, &owner)?;
+        range::history(
+            (self.run, generation),
+            after,
+            (entity, identity),
+            limit,
+            civil,
+            |position, wanted| Ok(store.events_after(position, wanted)?),
+        )
     }
 
     /// How many events each command appended since the host started, by command and event,
@@ -2568,6 +2619,24 @@ fn readable<'ir>(ir: &'ir EssIr, view: &str) -> Result<(&'ir ResolvedView, Strin
 ///
 /// # Errors
 /// [`HostError::Unsupported`] where none does.
+/// The component whose store holds the instances of `entity`, a qualified entity name.
+fn holding(ir: &EssIr, entity: &str) -> Result<String, HostError> {
+    let declared = ir
+        .entities()
+        .values()
+        .find(|declared| declared.name.to_string() == entity)
+        .ok_or_else(|| HostError::NoEntity(entity.to_owned()))?;
+    owner_of(ir, declared)
+}
+
+/// The civil time a command attributed with `sequence` ran at ([`Origin::sequence`]: its civil
+/// time in microseconds, or one past the last command's), as RFC 3339 in UTC to the
+/// millisecond; `None` past the years RFC 3339 spells.
+fn civil(sequence: u64) -> Option<String> {
+    let at = std::time::SystemTime::UNIX_EPOCH.checked_add(Duration::from_micros(sequence))?;
+    crate::view::instant(at).map(ess_primitives::Rfc3339Instant::to_rfc3339)
+}
+
 fn owner_of(ir: &EssIr, entity: &ResolvedEntity) -> Result<String, HostError> {
     ir.components()
         .values()

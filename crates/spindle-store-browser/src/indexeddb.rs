@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use spindle_kernel::{
     Change, Committed, EVERY_INSTANCE, Event, Origin, Provenance, Removal, Row, Scan, Scanned,
-    Store, StoreError, Stored, Write, whole_writes,
+    Store, StoreError, Stored, Write, instances_of, whole_writes,
 };
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
@@ -58,6 +58,14 @@ struct Recorded {
     /// recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cause: Option<Provenance>,
+    /// The outcome named for its write ([`Store::outcome`]); none on an event a release before
+    /// 0.23.0 recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    outcome: Option<String>,
+    /// Every instance its write wrote ([`Committed::instances`]), on each event of the write;
+    /// none on an event a release before 0.23.0 recorded.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    instances: Vec<(String, Value)>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     reset: bool,
 }
@@ -157,6 +165,8 @@ struct Shared {
     position: u64,
     /// The command the writes are attributed to ([`Store::attribute`]).
     origin: Option<Origin>,
+    /// The outcome named for the writes ([`Store::outcome`]).
+    outcome: Option<String>,
     /// Settles when the last write's transaction completes or aborts.
     written: Option<Promise>,
     /// Why a write did not land, once one did not.
@@ -287,6 +297,7 @@ impl Shared {
             events: Vec::new(),
             position: 0,
             origin: None,
+            outcome: None,
             written: None,
             failed: Rc::new(RefCell::new(None)),
             channel: None,
@@ -329,19 +340,22 @@ impl Shared {
         Ok(shared)
     }
 
-    /// Records `events`, which one write committed, at the position after the last, attributed
-    /// as the writes are.
-    fn record(&mut self, events: Vec<Event>) {
+    /// Records `events`, which one write of `instances` committed, at the position after the last,
+    /// attributed as the writes are.
+    fn record(&mut self, events: Vec<Event>, instances: &[(String, Value)]) {
         if events.is_empty() {
             return;
         }
         self.position += 1;
         let position = self.position;
         let origin = self.origin.clone();
+        let outcome = self.outcome.clone();
         self.events
             .extend(events.into_iter().map(|event| Committed {
                 position,
                 origin: origin.clone(),
+                outcome: outcome.clone(),
+                instances: instances.to_vec(),
                 event,
             }));
     }
@@ -472,7 +486,11 @@ impl Shared {
     /// otherwise the transaction aborts and none of them lands. The requests are queued before
     /// this returns; the transaction runs once control returns to the browser, after every
     /// transaction on the database queued before it, whichever global scope queued it.
-    fn write(&mut self, pending: &[Pending<'_>]) -> Result<(), StoreError> {
+    fn write(
+        &mut self,
+        pending: &[Pending<'_>],
+        instances: &[(String, Value)],
+    ) -> Result<(), StoreError> {
         let scope = Array::of2(&ROWS.into(), &EVENTS.into());
         let transaction = self
             .database
@@ -499,6 +517,8 @@ impl Shared {
                         command: self.origin.as_ref().map(|origin| origin.command.clone()),
                         sequence: self.origin.as_ref().map(|origin| origin.sequence),
                         cause: self.origin.as_ref().and_then(|origin| origin.cause.clone()),
+                        outcome: self.outcome.clone(),
+                        instances: instances.to_vec(),
                         reset: false,
                     })
                 })
@@ -623,6 +643,7 @@ impl Store for BrowserStore {
                 });
             }
         }
+        let instances = instances_of(writes);
         let mut before: BTreeMap<Key, (Option<Stored>, Option<u64>)> = BTreeMap::new();
         let staged = (|| {
             let mut pending = Vec::with_capacity(writes.len());
@@ -649,7 +670,7 @@ impl Store for BrowserStore {
                     events,
                 });
             }
-            shared.write(&pending)
+            shared.write(&pending, &instances)
         })();
         if staged.is_ok() {
             let mut events = Vec::new();
@@ -661,7 +682,7 @@ impl Store for BrowserStore {
                 *shared.entities.entry(entity.clone()).or_default() += 1;
                 events.extend(committed.iter().cloned());
             }
-            shared.record(events);
+            shared.record(events, &instances);
         } else {
             for (key, (row, removed)) in before {
                 match row {
@@ -697,8 +718,15 @@ impl Store for BrowserStore {
         })
     }
 
+    /// Names no outcome until one is named again.
     fn attribute(&mut self, origin: Option<Origin>) {
-        self.shared.borrow_mut().origin = origin;
+        let mut shared = self.shared.borrow_mut();
+        shared.origin = origin;
+        shared.outcome = None;
+    }
+
+    fn outcome(&mut self, outcome: &str) {
+        self.shared.borrow_mut().outcome = Some(outcome.to_owned());
     }
 
     /// Checks `scanned` against the versions this global scope holds, as
@@ -734,11 +762,13 @@ impl Store for BrowserStore {
                     .origin
                     .as_ref()
                     .and_then(|origin| origin.cause.clone()),
+                outcome: shared.outcome.clone(),
+                instances: Vec::new(),
                 reset: false,
             })
             .collect::<Vec<_>>();
         shared.append(&recorded)?;
-        shared.record(events.to_vec());
+        shared.record(events.to_vec(), &[]);
         Ok(())
     }
 
@@ -755,6 +785,8 @@ impl Store for BrowserStore {
             command: None,
             sequence: None,
             cause: None,
+            outcome: None,
+            instances: Vec::new(),
             reset: true,
         }])?;
         shared.events.clear();
@@ -805,6 +837,8 @@ fn committed(recorded: Vec<Recorded>) -> (Vec<Committed>, u64) {
         committed.push(Committed {
             position,
             origin,
+            outcome: recorded.outcome,
+            instances: recorded.instances,
             event: Event {
                 name: recorded.event,
                 payload: recorded.payload,
