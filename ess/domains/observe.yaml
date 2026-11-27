@@ -872,3 +872,69 @@ types:
     invariants:
       - attempts >= 1
       - attempts <= 5
+
+  - name: spindle.observe.SeedStateKind
+    kind: enum
+    naming:
+      summary: >-
+        Where a served run's seed is. `none`: the run has no seed. `running`: an entry of the seed
+        run under way is left, or the last one's submission has not returned. `ended`: the last
+        entry's submission has returned, so whatever it wrote is in place, whatever each entry
+        became; also from the first request of a start whose `--state` records every entry done.
+    variants: [none, running, ended]
+
+  - name: spindle.observe.SeedState
+    kind: struct
+    naming:
+      summary: >-
+        The answer of `GET /__spindle/seed`, with or without `--observe` and without the host's
+        thread: the state of the seed run under way, or of the last one, and its counts, that
+        run's alone, as the seed's end line prints them. A reset with no world starts a new seed
+        run, which reads `running` from before the reset empties the stores, with its own
+        counts, until it ends. On a run without a seed only `state` is given, `none`.
+    fields:
+      - name: state
+        type: spindle.observe.SeedStateKind
+      - name: entries
+        type: Optional<Integer>
+        summary: The entries of the seed file.
+      - name: left
+        type: Optional<Integer>
+        summary: >-
+          The entries of this run not yet done: not yet sent, or recorded rejected by the state and
+          sent again first. 0 once it has ended.
+      - name: sent
+        type: Optional<Integer>
+        summary: Entries this run sent; each is then counted once in one of the four below.
+      - name: applied
+        type: Optional<Integer>
+        summary: Entries whose outcome took effect.
+      - name: already_there
+        type: Optional<Integer>
+        summary: >-
+          Entries an outcome declared `existing_instance:` answered, or whose request id an earlier
+          applied or already-there entry carried.
+      - name: refused
+        type: Optional<Integer>
+        summary: Entries a declared refusing outcome answered.
+      - name: rejected
+        type: Optional<Integer>
+        summary: >-
+          Entries that did not run: the host or the kernel refused them before an outcome. A seed
+          run that ends with one stops the run with exit 1.
+
+  - name: spindle.observe.Readiness
+    kind: struct
+    naming:
+      summary: >-
+        The answer of `GET /__spindle/ready`, with or without `--observe` and without the host's
+        thread, beside its status: `200` where the run has no seed or its seed run has ended, a
+        declared refusal among its entries included; `503` while it runs. A probe reading `200`
+        reads every view holding what the seed's last entry wrote.
+    fields:
+      - name: ready
+        type: Boolean
+        summary: Whether the status is `200`.
+      - name: seed
+        type: spindle.observe.SeedStateKind
+        summary: The `state` `GET /__spindle/seed` answers.

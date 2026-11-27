@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.SeedState.schema.json",
+  "$ref": "#/$defs/spindle.observe.SeedState",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "contract_digest": "slice-sha256/2:e5ffde92d7b3ffd3b804ab8d8b2024001e6759b7da99c81ac47b8e4e25b4918e",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.SeedState": {
+      "title": "SeedState",
+      "description": "The answer of `GET /__spindle/seed`, with or without `--observe` and without the host's thread: the state of the seed run under way, or of the last one, and its counts, that run's alone, as the seed's end line prints them. A reset with no world starts a new seed run, which reads `running` from before the reset empties the stores, with its own counts, until it ends. On a run without a seed only `state` is given, `none`.",
+      "x-ess-name": "spindle.observe.SeedState",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/spindle.observe.SeedStateKind"
+        },
+        "entries": {
+          "description": "The entries of the seed file.",
+          "type": "integer"
+        },
+        "left": {
+          "description": "The entries of this run not yet done: not yet sent, or recorded rejected by the state and sent again first. 0 once it has ended.",
+          "type": "integer"
+        },
+        "sent": {
+          "description": "Entries this run sent; each is then counted once in one of the four below.",
+          "type": "integer"
+        },
+        "applied": {
+          "description": "Entries whose outcome took effect.",
+          "type": "integer"
+        },
+        "already_there": {
+          "description": "Entries an outcome declared `existing_instance:` answered, or whose request id an earlier applied or already-there entry carried.",
+          "type": "integer"
+        },
+        "refused": {
+          "description": "Entries a declared refusing outcome answered.",
+          "type": "integer"
+        },
+        "rejected": {
+          "description": "Entries that did not run: the host or the kernel refused them before an outcome. A seed run that ends with one stops the run with exit 1.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "spindle.observe.SeedStateKind": {
+      "title": "SeedStateKind",
+      "description": "Where a served run's seed is. `none`: the run has no seed. `running`: an entry of the seed run under way is left, or the last one's submission has not returned. `ended`: the last entry's submission has returned, so whatever it wrote is in place, whatever each entry became; also from the first request of a start whose `--state` records every entry done.",
+      "x-ess-name": "spindle.observe.SeedStateKind",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "none",
+        "running",
+        "ended"
+      ]
+    }
+  }
+}

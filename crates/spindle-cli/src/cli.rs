@@ -321,8 +321,9 @@ pub enum Command {
         /// `GET /__spindle/topology` with a `spindle-topology/1` graph derived from the
         /// specification, each edge but `contains` with live numbers from the same counters and
         /// log; a `POST /api/reset` keeps every count and the log. Without it every path under
-        /// `/__spindle/` answers `404`; with it or without, a binding route under that prefix
-        /// exits 1 before listening. The listening line is the same either way. Only where `run`
+        /// `/__spindle/` answers `404` but `GET /__spindle/seed` and `GET /__spindle/ready`, which
+        /// every served run answers (`--seed`); with it or without, a binding route under that
+        /// prefix exits 1 before listening. The listening line is the same either way. Only where `run`
         /// serves HTTP.
         #[arg(long, conflicts_with = "scenario")]
         observe: bool,
@@ -351,6 +352,11 @@ pub enum Command {
         /// command, request id and error name, and the next entry is submitted. One line on
         /// stderr gives the counts when the seed ends; with `--observe`, `GET /__spindle/metrics`
         /// has them as `spindle_seed_commands_total`, a rejected entry counted `refused` there.
+        /// With or without `--observe`, `GET /__spindle/seed` answers `{"state": "running" |
+        /// "ended", "entries", "left", "sent", "applied", "already_there", "refused",
+        /// "rejected"}`, the counts of the seed run under way, `{"state": "none"}` on a run
+        /// without a seed, and `GET /__spindle/ready` answers `503` while the seed runs and `200`
+        /// once its last entry has returned.
         /// A seed that ends having rejected an entry stops the run: it serves until then, and
         /// exits 1 once the end line is printed. Only where `run` serves HTTP. With `--state`,
         /// `seed.json` there records the seed file's digest, how many entries were sent and which

@@ -87,6 +87,35 @@ shows there by its absence alone. `spindle_bound_refusals_total{binding, command
 counts the entries, `refusal` being the outcome or the kind. A command a timer fired, and one
 refused in another process of a run split over processes, is in no record.
 
+## A served run's seed and readiness
+
+Every served `run` answers two routes of its own, with or without `--observe`, so a container
+healthcheck or an orchestrator's readiness probe needs no view row:
+
+| Route | Answers |
+|---|---|
+| `GET /__spindle/seed` | the state of the run's [seed](environment-and-admission.md#a-seed-submitted-at-start), `{"state": "none"}` on a run without one; otherwise `{"state", "entries", "left", "sent", "applied", "already_there", "refused", "rejected"}`, `state` being `running` or `ended` |
+| `GET /__spindle/ready` | `200` where the run has no seed or its seed has ended, `503` while it runs; the body is `{"ready", "seed"}`, `seed` being the `state` above |
+
+```console
+$ curl -s http://127.0.0.1:8080/__spindle/seed
+{"already_there":0,"applied":1,"entries":3,"left":2,"refused":0,"rejected":0,"sent":1,"state":"running"}
+```
+
+The counts are those of the seed run under way, as the seed's end line prints them, not summed
+over resets as `spindle_seed_commands_total` is. The seed reads `ended` only once the last entry's
+command has returned, so a probe that reads `200` reads every view holding what that entry wrote. A
+declared refusal among the entries leaves the run ready; a rejected one stops the run with exit 1.
+On a `--state` whose `seed.json` records every entry done, the seed reads `ended` from the first
+request. A `POST /api/reset` with no world reads `running` and `503` from before it empties the
+stores until its seed run ends, with that run's counts.
+
+Both are answered by the listener's own threads, never waiting for a command, a seed entry or an
+external call. On a run with `--trusted-caller-header` they require the proxy's secret, as every
+`/__spindle/` route does: a probe sends the `Spindle-Proxy-Secret` header, such as Kubernetes'
+`httpGet.httpHeaders`. The answers are declared by `spindle.observe.SeedState` and
+`spindle.observe.Readiness` in `ess/domains/observe.yaml`.
+
 ## Resources
 
 A launcher samples from `/proc` what an instance costs the host: CPU seconds (user and system

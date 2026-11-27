@@ -226,6 +226,11 @@ With `--observe`, `GET /__spindle/metrics` has the same counts as
 `spindle_seed_commands_total{counted="sent"}` and so on, from the first scrape. The metric counts a
 rejected entry under `refused`.
 
+With or without `--observe`, `GET /__spindle/seed` answers whether the seed is `running` or has
+`ended`, with the entries left and the counts of the end line, and `GET /__spindle/ready` answers
+`503` until the seed has ended and `200` from then on, so a readiness probe waits for the seed
+without counting view rows ([the seed and readiness routes](observe.md#a-served-runs-seed-and-readiness)).
+
 ### A seed on a kept state
 
 On a `--state` directory the run records the seed in `seed.json` beside the state's files, readable

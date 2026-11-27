@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.Readiness.schema.json",
+  "$ref": "#/$defs/spindle.observe.Readiness",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "contract_digest": "slice-sha256/2:3091bb278309caf63e1d0bdb1503b03d4d3e5cda91d229e1ba05bccacbaea9a2",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.Readiness": {
+      "title": "Readiness",
+      "description": "The answer of `GET /__spindle/ready`, with or without `--observe` and without the host's thread, beside its status: `200` where the run has no seed or its seed run has ended, a declared refusal among its entries included; `503` while it runs. A probe reading `200` reads every view holding what the seed's last entry wrote.",
+      "x-ess-name": "spindle.observe.Readiness",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "ready": {
+          "description": "Whether the status is `200`.",
+          "type": "boolean"
+        },
+        "seed": {
+          "$ref": "#/$defs/spindle.observe.SeedStateKind",
+          "description": "The `state` `GET /__spindle/seed` answers."
+        }
+      },
+      "required": [
+        "ready",
+        "seed"
+      ],
+      "additionalProperties": false
+    },
+    "spindle.observe.SeedStateKind": {
+      "title": "SeedStateKind",
+      "description": "Where a served run's seed is. `none`: the run has no seed. `running`: an entry of the seed run under way is left, or the last one's submission has not returned. `ended`: the last entry's submission has returned, so whatever it wrote is in place, whatever each entry became; also from the first request of a start whose `--state` records every entry done.",
+      "x-ess-name": "spindle.observe.SeedStateKind",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "none",
+        "running",
+        "ended"
+      ]
+    }
+  }
+}

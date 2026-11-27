@@ -76,10 +76,16 @@ pub const PANEL_POLICY: &str = "default-src 'none'; script-src 'unsafe-inline'; 
 /// Where the observe panel's page is built, as a `503` without it names it.
 const PANEL_BUILT: &str = "ui/dist-panel/panel.html";
 
-/// A route under the reserved prefix: the epic lays out four; every other path under it is
-/// [`Reserved::Other`].
+/// A route under the reserved prefix: the epic lays out four, and a served run's health adds two;
+/// every other path under it is [`Reserved::Other`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reserved {
+    /// `/__spindle/seed`: the state of the run's seed, a `spindle.observe.SeedState`, answered
+    /// with or without a recorder ([`crate::SeedState`]).
+    Seed,
+    /// `/__spindle/ready`: `200` once the run's seed has ended, `503` before, a
+    /// `spindle.observe.Readiness`, answered with or without a recorder.
+    Ready,
     /// `/__spindle/requests`: the request log.
     Requests,
     /// `/__spindle/metrics`: the metrics, as the Prometheus text format ([`metrics`]).
@@ -107,6 +113,8 @@ impl Reserved {
             ["requests"] => Self::Requests,
             ["metrics"] => Self::Metrics,
             ["topology"] => Self::Topology,
+            ["seed"] => Self::Seed,
+            ["ready"] => Self::Ready,
             ["ui", ..] => Self::Ui,
             _ => Self::Other,
         })
@@ -1215,7 +1223,8 @@ fn starts_word(kept: &str) -> bool {
 }
 
 /// Answers a request for the reserved route `reserved` with `method`, `path` and `query` (after
-/// the `?`, still percent-encoded): without a recorder every path under the prefix answers `404`;
+/// the `?`, still percent-encoded): without a recorder every path under the prefix but the seed
+/// and readiness routes answers `404`;
 /// with one, `GET /__spindle/requests` answers the request log, each `class=<class>` pair of the
 /// query keeping only that class, and any other method `405`; `GET /__spindle/ui` answers the
 /// panel's page `panel`, `503` naming it without one; `GET /__spindle/metrics` and
@@ -1224,22 +1233,41 @@ fn starts_word(kept: &str) -> bool {
 /// method `405`.
 /// Every other reserved path answers `404`. A query pair other than a known `class` is refused
 /// `400`.
+///
+/// With a recorder or without, `GET /__spindle/seed` answers the state of the run's `seed`
+/// ([`crate::health::seed`]) and `GET /__spindle/ready` whether it has ended
+/// ([`crate::health::ready`]), any other method `405`.
 pub(crate) fn reserved(
     recorder: Option<&Recorder>,
     panel: Option<&'static str>,
+    seed: Option<&crate::SeedState>,
     reserved: Reserved,
     method: &str,
     path: &str,
     query: &str,
 ) -> Option<Response> {
     let not_found = || Answer::refusal(404, format!("no route serves {path}")).into();
-    let Some(recorder) = recorder else {
-        return Some(not_found());
-    };
     let only_get = || {
         let mut response: Response = Answer::refusal(405, "this path answers GET").into();
         response.allow = Some("GET".to_owned());
         response
+    };
+    let health = |(status, body): (u16, Value)| -> Response {
+        Answer {
+            status,
+            body: Some(body),
+            headers: Vec::new(),
+        }
+        .into()
+    };
+    match reserved {
+        Reserved::Seed | Reserved::Ready if method != "GET" => return Some(only_get()),
+        Reserved::Seed => return Some(health((200, crate::health::seed(seed)))),
+        Reserved::Ready => return Some(health(crate::health::ready(seed))),
+        _ => {}
+    }
+    let Some(recorder) = recorder else {
+        return Some(not_found());
     };
     Some(match reserved {
         Reserved::Requests if method == "GET" => match classes(query) {
@@ -1258,7 +1286,7 @@ pub(crate) fn reserved(
         }
         Reserved::Metrics | Reserved::Topology => return None,
         Reserved::Ui => self::panel(panel, method, path).unwrap_or_else(not_found),
-        Reserved::Requests | Reserved::Other => not_found(),
+        Reserved::Requests | Reserved::Seed | Reserved::Ready | Reserved::Other => not_found(),
     })
 }
 

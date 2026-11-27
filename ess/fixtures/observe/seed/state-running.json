@@ -1,0 +1,10 @@
+{
+  "state": "running",
+  "entries": 3,
+  "left": 2,
+  "sent": 1,
+  "applied": 1,
+  "already_there": 0,
+  "refused": 0,
+  "rejected": 0
+}

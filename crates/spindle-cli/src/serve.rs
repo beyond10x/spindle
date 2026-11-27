@@ -14,7 +14,9 @@ use ess_gen::http::Binding;
 use spindle_capability::{Capability, Environment};
 use spindle_host::{Cause, Clock, Host, HostError, ManualClock, Retries, SystemClock};
 use spindle_ingress::console::{self, Worlds};
-use spindle_ingress::{Answer, Caller, Console, Exchange, Listener, Recorder, Surface, Unfixed};
+use spindle_ingress::{
+    Answer, Caller, Console, Exchange, Listener, Recorder, SeedState, Surface, Unfixed,
+};
 use spindle_spec::EssIr;
 
 use crate::decisions::{self, Run};
@@ -260,7 +262,10 @@ fn carried(caller: &Caller) -> String {
 /// then submits them again, all of them, before it answers, and one that gives a world does not
 /// ([`reset_seeded`]). A signal stops a reset's seed between two entries, and the reset still
 /// answers. Once a seed run ends having rejected an entry ([`Seeding::failed`]), the run exits 1
-/// (`story:run-fails-on-rejected-line`).
+/// (`story:run-fails-on-rejected-line`). The seed's state is answered beside this thread, with or
+/// without `--observe`: `GET /__spindle/seed` and `GET /__spindle/ready`, `200` only once the seed
+/// run under way has ended, and from the first request on a run without a seed
+/// ([`Surface::with_seed`], `story:seed-readiness`).
 ///
 /// Once a signal arrives, or a seed that rejected an entry ends, the loop takes no further
 /// exchange: the one it is answering is answered, every answer handed back is written, each
@@ -369,6 +374,16 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         (Some(capacity), None) => surface.observing(capacity),
         (None, _) => surface,
     };
+    // The seed's state, published by `Seeding` on this thread and answered by the listener at
+    // `GET /__spindle/seed` and `GET /__spindle/ready`, with or without `--observe`.
+    let published = serving
+        .seed
+        .as_ref()
+        .map(|seed| SeedState::new(u64::try_from(seed.len()).unwrap_or(u64::MAX)));
+    let surface = match &published {
+        Some(published) => surface.with_seed(published.clone()),
+        None => surface,
+    };
     for line in surface.report() {
         eprintln!("b10x-spindle: {line}");
     }
@@ -425,14 +440,15 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     }
     // Where a `--state` records the seed applied to it (`seed.json`), a seed it does not record
     // stops the run here, before listening.
-    let mut seeding = match serving.seed {
-        Some(seed) => Some(crate::seed::begin(
+    let mut seeding = match (serving.seed, published) {
+        (Some(seed), Some(published)) => Some(crate::seed::begin(
             seed,
             serving.state,
             &mut host,
             recorder.clone(),
+            published,
         )?),
-        None => None,
+        _ => None,
     };
     let listener = Listener::bind_reading_on(serving.address, serving.port, surface, host.reader())
         .context("binding the HTTP listener")?;
@@ -567,7 +583,16 @@ fn reset_seeded(
     recorder: Option<&Recorder>,
     stopped: impl Fn() -> bool,
 ) {
+    let plain = !console::carries_world(exchange.body());
+    if plain {
+        // No request reads the run ready while the reset empties its stores and seeds them again
+        // (`story:seed-readiness`).
+        seeding.resetting();
+    }
     let answer = console::reset(host, exchange.body(), Some(worlds));
+    if answer.status != 200 && plain {
+        seeding.unreset();
+    }
     if answer.status == 200 {
         if let Some(recorder) = recorder {
             recorder.count_reset();

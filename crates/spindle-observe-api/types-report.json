@@ -1,12 +1,12 @@
 {
   "format": "ess-types-report/3",
-  "source_digest": "768b49d0ee4e413744f98b60ca5d08125d3a9410aba380e215477e8525748e44",
+  "source_digest": "be4dd819b6792da90c06f6204de8aafced70cd4626dcd01d497d2e3af35bceb2",
   "input": {
     "kind": "model",
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:8febbdf432c4e043f26574b762a66814a51585243cfc38e08ced8b3b318a4584",
-    "projection_digest": "6c9d2e8fdf153886199a7705dca31e33124be8ca857c0ea3e56a0d7116c1cec8"
+    "contract_digest": "slice-sha256/2:920293aea53a7ad4f12b02c5df715249fd69ff0d3dac932643638f6b9ebe8017",
+    "projection_digest": "6fa0eeee2ecc91d87c83a2a70cbf22e0c45658113ece9b9d26ffd3aa7c7b510d"
   },
   "generator_version": "0.99.1",
   "target": "rust",
@@ -18,8 +18,10 @@
     "spindle.observe.Catalogue",
     "spindle.observe.Deployment",
     "spindle.observe.MetricFamilies",
+    "spindle.observe.Readiness",
     "spindle.observe.RequestLog",
     "spindle.observe.Sample",
+    "spindle.observe.SeedState",
     "spindle.observe.ServedOperations",
     "spindle.observe.StateChange",
     "spindle.observe.Topology"
@@ -48,6 +50,7 @@
     "spindle.observe.NodeKind": "NodeKind",
     "spindle.observe.OperationKind": "OperationKind",
     "spindle.observe.Payload": "Payload",
+    "spindle.observe.Readiness": "Readiness",
     "spindle.observe.RecentAnswer": "RecentAnswer",
     "spindle.observe.RefusedBound": "RefusedBound",
     "spindle.observe.RequestClass": "RequestClass",
@@ -57,6 +60,8 @@
     "spindle.observe.RequestTotals": "RequestTotals",
     "spindle.observe.ResourceReading": "ResourceReading",
     "spindle.observe.Sample": "Sample",
+    "spindle.observe.SeedState": "SeedState",
+    "spindle.observe.SeedStateKind": "SeedStateKind",
     "spindle.observe.ServedKind": "ServedKind",
     "spindle.observe.ServedOperation": "ServedOperation",
     "spindle.observe.ServedOperations": "ServedOperations",
@@ -657,6 +662,36 @@
       "detail": "model identity and wire mapping retained in source.schema.json"
     },
     {
+      "pointer": "/$defs/spindle.observe.Readiness/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Readiness/properties/ready/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Readiness/properties/seed/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Readiness/title",
+      "rule": "title",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Readiness/x-ess-kind",
+      "rule": "x-ess-kind",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Readiness/x-ess-name",
+      "rule": "x-ess-name",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
       "pointer": "/$defs/spindle.observe.RecentAnswer/description",
       "rule": "description",
       "detail": "retained in source.schema.json; no decoder behavior inferred"
@@ -998,6 +1033,81 @@
     },
     {
       "pointer": "/$defs/spindle.observe.Sample/x-ess-name",
+      "rule": "x-ess-name",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/already_there/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/applied/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/entries/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/left/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/refused/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/rejected/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/sent/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/title",
+      "rule": "title",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/x-ess-kind",
+      "rule": "x-ess-kind",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/x-ess-name",
+      "rule": "x-ess-name",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedStateKind/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedStateKind/title",
+      "rule": "title",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedStateKind/x-ess-kind",
+      "rule": "x-ess-kind",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedStateKind/x-ess-name",
       "rule": "x-ess-name",
       "detail": "model identity and wire mapping retained in source.schema.json"
     },
@@ -1797,6 +1907,76 @@
       "pointer": "/$defs/spindle.observe.Sample/x-ess-invariants",
       "rule": "model_invariants",
       "detail": "enforce the retained model invariant statements; structural codecs do not evaluate predicates"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/already_there",
+      "rule": "integer",
+      "detail": "serde_json::Number holds exact JSON numbers with the default `exact-numbers` feature and binary64 without it, and does not enforce integrality; validate the source constraint"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/already_there",
+      "rule": "rust_exact_numbers",
+      "detail": "this value holds JSON numbers in serde_json; the generated crate's default-on `exact-numbers` feature enables serde_json/arbitrary_precision, and a consumer that turns default features off gets these numbers as binary64"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/applied",
+      "rule": "integer",
+      "detail": "serde_json::Number holds exact JSON numbers with the default `exact-numbers` feature and binary64 without it, and does not enforce integrality; validate the source constraint"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/applied",
+      "rule": "rust_exact_numbers",
+      "detail": "this value holds JSON numbers in serde_json; the generated crate's default-on `exact-numbers` feature enables serde_json/arbitrary_precision, and a consumer that turns default features off gets these numbers as binary64"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/entries",
+      "rule": "integer",
+      "detail": "serde_json::Number holds exact JSON numbers with the default `exact-numbers` feature and binary64 without it, and does not enforce integrality; validate the source constraint"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/entries",
+      "rule": "rust_exact_numbers",
+      "detail": "this value holds JSON numbers in serde_json; the generated crate's default-on `exact-numbers` feature enables serde_json/arbitrary_precision, and a consumer that turns default features off gets these numbers as binary64"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/left",
+      "rule": "integer",
+      "detail": "serde_json::Number holds exact JSON numbers with the default `exact-numbers` feature and binary64 without it, and does not enforce integrality; validate the source constraint"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/left",
+      "rule": "rust_exact_numbers",
+      "detail": "this value holds JSON numbers in serde_json; the generated crate's default-on `exact-numbers` feature enables serde_json/arbitrary_precision, and a consumer that turns default features off gets these numbers as binary64"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/refused",
+      "rule": "integer",
+      "detail": "serde_json::Number holds exact JSON numbers with the default `exact-numbers` feature and binary64 without it, and does not enforce integrality; validate the source constraint"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/refused",
+      "rule": "rust_exact_numbers",
+      "detail": "this value holds JSON numbers in serde_json; the generated crate's default-on `exact-numbers` feature enables serde_json/arbitrary_precision, and a consumer that turns default features off gets these numbers as binary64"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/rejected",
+      "rule": "integer",
+      "detail": "serde_json::Number holds exact JSON numbers with the default `exact-numbers` feature and binary64 without it, and does not enforce integrality; validate the source constraint"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/rejected",
+      "rule": "rust_exact_numbers",
+      "detail": "this value holds JSON numbers in serde_json; the generated crate's default-on `exact-numbers` feature enables serde_json/arbitrary_precision, and a consumer that turns default features off gets these numbers as binary64"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/sent",
+      "rule": "integer",
+      "detail": "serde_json::Number holds exact JSON numbers with the default `exact-numbers` feature and binary64 without it, and does not enforce integrality; validate the source constraint"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/sent",
+      "rule": "rust_exact_numbers",
+      "detail": "this value holds JSON numbers in serde_json; the generated crate's default-on `exact-numbers` feature enables serde_json/arbitrary_precision, and a consumer that turns default features off gets these numbers as binary64"
     },
     {
       "pointer": "/$defs/spindle.observe.SourceCount/properties/count",

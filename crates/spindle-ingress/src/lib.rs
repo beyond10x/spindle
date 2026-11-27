@@ -64,10 +64,14 @@
 //! with its [`AnswerSource`]); the
 //! record of a request lists every one asked while it was answered, with the command that
 //! asked. A reset clears no count and no record. Without a recorder every path under the prefix
-//! answers `404`.
+//! answers `404`, but two: with a recorder or without, `GET /__spindle/seed` answers the state of
+//! the run's seed ([`Surface::with_seed`], [`SeedState`]: `none`, `running` or `ended`, with its
+//! counts), and `GET /__spindle/ready` answers `200` once the seed has ended and `503` before, so a
+//! readiness probe needs no view row; both are answered without the host's thread.
 
 mod answer;
 pub mod console;
+mod health;
 #[cfg(feature = "listener")]
 mod listener;
 // The recording half (notes, records) is the listener's; without it only the reserved routes answer.
@@ -79,6 +83,7 @@ mod wire;
 
 pub use answer::{Answer, answer, answered};
 pub use console::Console;
+pub use health::{SeedPhase, SeedProgress, SeedState};
 #[cfg(feature = "listener")]
 pub use listener::{BODY_READ, Exchange, HEADER_READ, Listener, exposed};
 pub use observe::metrics::METRICS_MEDIA;

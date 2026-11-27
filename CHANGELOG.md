@@ -6,6 +6,17 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- A served `run` answers `GET /__spindle/seed` with the state of its seed, `{"state": "none"}`
+  without one, otherwise `running` or `ended` with the entries left and the end line's counts, and
+  `GET /__spindle/ready` `503` while the seed runs and `200` once it has ended, so a container
+  healthcheck or a readiness probe needs no view row. Both answer without `--observe` and without
+  waiting for a command; the seed reads `ended` only once its last entry's command has returned,
+  from the first request where `--state` records every entry done, and `running` again while a
+  reset's seed runs. On a `--trusted-caller-header` run both require the proxy's secret, as every
+  `/__spindle/` route does (`story:seed-readiness`).
+
 ## [0.22.0] - 2026-11-27
 
 ### Added

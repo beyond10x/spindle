@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.SeedStateKind.schema.json",
+  "$ref": "#/$defs/spindle.observe.SeedStateKind",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "contract_digest": "slice-sha256/2:44e215ddf4542d7be64176f67f348aaae1ba9f25f7cea5f1e68189d5f40da59a",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.SeedStateKind": {
+      "title": "SeedStateKind",
+      "description": "Where a served run's seed is. `none`: the run has no seed. `running`: an entry of the seed run under way is left, or the last one's submission has not returned. `ended`: the last entry's submission has returned, so whatever it wrote is in place, whatever each entry became; also from the first request of a start whose `--state` records every entry done.",
+      "x-ess-name": "spindle.observe.SeedStateKind",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "none",
+        "running",
+        "ended"
+      ]
+    }
+  }
+}

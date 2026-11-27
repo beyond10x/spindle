@@ -515,6 +515,7 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         let reply = crate::observe::reserved(
             served.surface.recorder(),
             served.surface.panel(),
+            served.surface.seed(),
             reserved,
             request.method().as_str(),
             request.uri().path(),
