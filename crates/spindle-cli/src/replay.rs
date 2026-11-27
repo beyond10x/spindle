@@ -234,8 +234,8 @@ struct Replayed {
 
 impl Replayed {
     /// What the `send`-th command of this replay answered, as its act's line ends: the outcome
-    /// taken and the declared error it carries, `undeclared` or `not granted`; nothing for a step
-    /// that sends no command or a command the target failed to run.
+    /// taken and the declared error it carries, `undeclared`, `unavailable` or `not granted`;
+    /// nothing for a step that sends no command or a command the target failed to run.
     fn answer(&self, send: Option<usize>) -> String {
         match send.and_then(|send| self.answered.get(send)) {
             Some(Answered::Took {
@@ -247,6 +247,7 @@ impl Replayed {
                 error: Some(error),
             }) => format!(", outcome {outcome}, error {error}"),
             Some(Answered::Undeclared) => ", undeclared".to_owned(),
+            Some(Answered::Unavailable) => ", unavailable".to_owned(),
             Some(Answered::NotGranted) => ", not granted".to_owned(),
             Some(Answered::Failed) | None => String::new(),
         }

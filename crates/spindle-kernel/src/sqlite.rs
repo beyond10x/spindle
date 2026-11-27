@@ -800,6 +800,10 @@ impl<L: Log> Store for LogStore<L> {
     fn events_head(&mut self) -> Result<u64, StoreError> {
         self.feed_end()
     }
+
+    fn events_id(&mut self) -> Result<u64, StoreError> {
+        self.log_id()
+    }
 }
 
 impl<L: Log> LogStore<L> {
@@ -973,6 +977,11 @@ impl<L: Log> Reading for SharedReading<L> {
     fn events_head(&self) -> Result<u64, StoreError> {
         let _turn = self.turns.take()?;
         self.store.feed_end()
+    }
+
+    fn events_id(&self) -> Result<u64, StoreError> {
+        let _turn = self.turns.take()?;
+        self.store.log_id()
     }
 }
 
@@ -1222,6 +1231,27 @@ impl<L: Log> LogStore<L> {
                 })
             })
             .collect())
+    }
+
+    /// The id of the log ([`Store::events_id`]), read from the first event of the tenant's feed:
+    /// its event id, which the event log draws at random when it appends the event, folded into
+    /// 64 bits. The first event stays the first while the log is kept, a reset that empties the
+    /// log in place included; a file created again, or a log a state move copied, starts with
+    /// another. `0` for an empty feed. Nothing is written for it, so a file of any release has one.
+    fn log_id(&self) -> Result<u64, StoreError> {
+        let page = self
+            .call(self.log.read_feed(&self.tenant, 0, 1))
+            .map_err(backend)?;
+        Ok(page.events.first().map_or(0, |event| {
+            // FNV-1a: the same id in every process and release.
+            let folded = event
+                .event_id
+                .bytes()
+                .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+                    (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+                });
+            folded.max(1)
+        }))
     }
 
     /// The feed position of the last event of the tenant's feed, `0` for an empty one
@@ -2156,6 +2186,10 @@ impl Reading for SqliteReading {
 
     fn events_head(&self) -> Result<u64, StoreError> {
         self.with(|connection| connection.feed_end())
+    }
+
+    fn events_id(&self) -> Result<u64, StoreError> {
+        self.with(|connection| connection.log_id())
     }
 
     /// The entities taken from the resting rows a connection caught up ([`LogStore::taken`]);

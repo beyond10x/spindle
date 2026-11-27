@@ -16,6 +16,11 @@
 //! label with a minted `barcode` (`Bytes`, published and stored from the event) and minted
 //! `tags` (`List<String>`), and whose `ReprintLabel` mints the barcode again. Its cases, too, run
 //! on ESS's own interpreter and compare.
+//!
+//! The fixture `tests/fixtures/generated_error` is a kiosk whose `IssueTicket` refuses with a
+//! generated error field or an unsourced one, and otherwise issues a ticket under a minted
+//! identity. Its cases run on ESS's own interpreter and compare the identities minted after a
+//! refusal.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -901,5 +906,166 @@ fn derivation_names_the_capability_these_mints_need() {
         requirements.get(&Capability::new(Capability::CLOCK)),
         None,
         "neither reads a clock"
+    );
+}
+
+const ISSUE: &str = "kiosk.ticket.IssueTicket";
+
+/// `tests/fixtures/generated_error`: `IssueTicket` refuses a blocked request with `Blocked`,
+/// whose `incident` its outcome marks `{generated: true}`, refuses a quiet one with `Quiet`,
+/// whose `reference` it gives no source, and otherwise issues a ticket under a minted identity.
+fn kiosk() -> spindle_spec::EssIr {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/generated_error");
+    spindle_spec::load(&root)
+        .expect("the generated error fixture compiles")
+        .ir
+}
+
+/// `IssueTicket`'s input: refused as `blocked` or `quiet` where either is set, issued otherwise.
+fn issue(blocked: bool, quiet: bool) -> Value {
+    json!({"title": "t", "blocked": blocked, "quiet": quiet})
+}
+
+/// What ESS's interpreter answers for `requests` of `IssueTicket` in one scenario: for each, the
+/// error's carried fields where it refuses, and the identity the ticket was issued under where
+/// it issues one.
+fn interpreted_issues(ir: &spindle_spec::EssIr, requests: &[Value]) -> Vec<Value> {
+    let target = Interpreted::for_model(ir.clone());
+    let context = ScenarioContext::new(
+        "kiosk.ticket/authored/generated-error"
+            .parse()
+            .expect("a scenario id"),
+        CorrelationId::new("generated-error").expect("a correlation id"),
+    );
+    target.begin_scenario(&context).expect("the scenario opens");
+    requests
+        .iter()
+        .map(|request| {
+            let input: BTreeMap<String, Node> =
+                serde_json::from_value(request.clone()).expect("the input as ESS values");
+            let result = target
+                .execute_command(SemanticCommandRequest {
+                    command: CommandRef::new(ISSUE.parse().expect("a command name")),
+                    actor: None,
+                    caller: None,
+                    input,
+                    correlation: context.correlation.clone(),
+                })
+                .expect("the interpreter runs the command");
+            match (&result.error, result.direct_events.first()) {
+                (Some(error), _) => json!({
+                    "error": error.error.to_string(),
+                    "fields": error
+                        .fields
+                        .iter()
+                        .map(|(field, value)| (field.clone(), json_of(value)))
+                        .collect::<Map<_, _>>(),
+                }),
+                (None, Some(event)) => json_of(&event.payload["ticket_id"]),
+                (None, None) => panic!("the interpreter issues no ticket: {result:?}"),
+            }
+        })
+        .collect()
+}
+
+/// The kernel's run of `requests` of `IssueTicket` on one store under `mint`: for each, the
+/// error's fields where it refuses, and the identity the ticket was issued under where it issues
+/// one.
+fn executed_issues(
+    ir: &spindle_spec::EssIr,
+    mint: &mut dyn spindle_kernel::Mint,
+    requests: &[Value],
+) -> Vec<Value> {
+    let mut store = MemoryStore::default();
+    requests
+        .iter()
+        .map(|request| {
+            let executed = execute_minting(
+                ir,
+                &mut store,
+                &mut NoExternals,
+                &mut *mint,
+                ISSUE,
+                &input(request.clone()),
+            )
+            .unwrap_or_else(|error| panic!("{request} runs: {error:?}"));
+            match executed.error {
+                Some(error) => json!({"error": error.name, "fields": error.fields}),
+                None => executed.events[0].payload["ticket_id"].clone(),
+            }
+        })
+        .collect()
+}
+
+/// The refusal's `field`, which the kernel answers and ESS's interpreter does not carry: a UUID.
+fn uuid_field(refused: &Value, field: &str) -> Uuid {
+    let text = refused["fields"][field]
+        .as_str()
+        .unwrap_or_else(|| panic!("`{field}` is minted: {refused}"));
+    Uuid::parse_str(text).unwrap_or_else(|_| panic!("`{field}` is a UUID: {text}"))
+}
+
+/// ESS's interpreter carries no `{generated: true}` error field and draws no tick for it
+/// (`interpret::execute::declared_error`): under a mint that answers its ticks, the ticket issued
+/// after a refusal is the one the interpreter issues.
+#[test]
+fn an_error_payload_draws_as_ess_draws() {
+    let ir = kiosk();
+    let requests = [issue(true, false), issue(false, false), issue(false, false)];
+    let ess = interpreted_issues(&ir, &requests);
+    assert_eq!(
+        ess[0],
+        json!({"error": "kiosk.ticket.Blocked", "fields": {}}),
+        "ESS carries no generated error field"
+    );
+    let mut mint = Ticks {
+        ir: ir.clone(),
+        tick: 0,
+        asked: Vec::new(),
+    };
+    let spindle = executed_issues(&ir, &mut mint, &requests);
+    assert_eq!(spindle[0]["error"], "kiosk.ticket.Blocked", "{spindle:?}");
+    uuid_field(&spindle[0], "incident");
+    assert_eq!(
+        spindle[1..],
+        ess[1..],
+        "the tickets issued after the refusal are minted on ESS's ticks"
+    );
+    assert_eq!(
+        mint.asked,
+        vec!["kiosk.ticket.Ticket.ticket_id"; 2],
+        "the refusal draws nothing from the run's mint"
+    );
+}
+
+/// The same for an error field the outcome gives no source: ESS's interpreter leaves it to the
+/// implementation and draws no tick for it.
+#[test]
+fn an_unsourced_error_field_draws_as_ess_draws() {
+    let ir = kiosk();
+    let requests = [issue(false, true), issue(false, false), issue(false, false)];
+    let ess = interpreted_issues(&ir, &requests);
+    assert_eq!(
+        ess[0],
+        json!({"error": "kiosk.ticket.Quiet", "fields": {}}),
+        "ESS carries no unsourced error field"
+    );
+    let mut mint = Ticks {
+        ir: ir.clone(),
+        tick: 0,
+        asked: Vec::new(),
+    };
+    let spindle = executed_issues(&ir, &mut mint, &requests);
+    assert_eq!(spindle[0]["error"], "kiosk.ticket.Quiet", "{spindle:?}");
+    uuid_field(&spindle[0], "reference");
+    assert_eq!(
+        spindle[1..],
+        ess[1..],
+        "the tickets issued after the refusal are minted on ESS's ticks"
+    );
+    assert_eq!(
+        mint.asked,
+        vec!["kiosk.ticket.Ticket.ticket_id"; 2],
+        "the refusal draws nothing from the run's mint"
     );
 }

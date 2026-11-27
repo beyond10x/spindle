@@ -323,6 +323,16 @@ fn reaching(
         }
         None => None,
     };
+    // Every identity the command reads or writes by, in one spelling, so `1.0` and `1` of a
+    // `Decimal` or `Binary64` identity name one row, as ESS reads both as one value
+    // (`crate::typed::spelled`); every read and write of the command goes through this store.
+    // The subject's identity is held so too, as the rows a scan answers are keyed, so it is
+    // told apart from them by equality (an `affects:` entry over its own entity leaves it out).
+    let address = address.map(|(entity, field, identity)| {
+        let identity = crate::typed::spelled(&identity).into_owned();
+        (entity, field, identity)
+    });
+    let mut spelled = crate::store::Spelled(store);
     let mut run = Run {
         ir,
         spec,
@@ -330,7 +340,7 @@ fn reaching(
         input,
         caller,
         attributes,
-        store,
+        store: &mut spelled,
         decider,
         held: None,
         related: crate::values::Related::new(),
@@ -827,6 +837,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
         Err(ExecuteError::Undeclared {
             command: self.command.to_owned(),
             reason: "no outcome's condition holds and the command declares no default".to_owned(),
+            held: None,
         })
     }
 
@@ -1821,13 +1832,15 @@ impl<'a, 'ir> Run<'a, 'ir> {
             let reason = match &self.held {
                 Some(Addressed {
                     entity,
+                    field,
                     identity,
                     stored: None,
-                    ..
                 }) => format!(
-                    "no `{}` has the identity {identity}, and the command declares neither \
+                    "no `{}` has the identity {}, and the command declares neither \
                      `unknown_instance:` nor `wrong_state:`",
-                    entity.name
+                    entity.name,
+                    // As the caller sent it, not in the one spelling the row is keyed by.
+                    self.input.get(&field.name).unwrap_or(identity)
                 ),
                 _ => "the held state is not one this command acts from, and the command \
                       declares no `wrong_state:`"
@@ -1836,6 +1849,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
             return Err(ExecuteError::Undeclared {
                 command: self.command.to_owned(),
                 reason,
+                held: None,
             });
         };
         self.refusal(outcome)
@@ -2104,12 +2118,19 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 return Ok(identity);
             }
             if !(redraws && minted) {
+                // A supplied identity, not one this draw minted, is the held identity ESS's
+                // interpreter refuses as a request no branch describes (`interpret::execute::create`).
+                let held = (!minted).then(|| crate::HeldIdentity {
+                    outcome: outcome.name.to_string(),
+                    entity: entity_name.clone(),
+                });
                 return Err(ExecuteError::Undeclared {
                     command: self.command.to_owned(),
                     reason: format!(
                         "a `{entity_name}` already has the identity {identity}, and `creates:` \
                          never replaces an instance"
                     ),
+                    held,
                 });
             }
             let held = match occupied {
@@ -2129,6 +2150,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                          `{entity_name}`, one more than the {held} it holds, is already held by \
                          one, and `creates:` never replaces an instance"
                     ),
+                    held: None,
                 });
             }
             self.generator.rewind(mark);
@@ -2351,10 +2373,13 @@ impl<'a, 'ir> Run<'a, 'ir> {
     /// Fills each field of `outcome`'s error that `outcome` gives no source, after the sourced
     /// ones, as [`spindle_capability::mint::unsourced`] says: from the row the refusal is
     /// answered for (`before`), as ESS's served application reads it, else minted from its type,
-    /// as ESS's interpreter leaves it to the implementation; an `Optional` one no row fills stays
-    /// absent. Without a row (the unknown-instance arm of `wrong_state:`) a field the row would
-    /// fill is left out: an instance that does not exist has nothing to describe. With `mint`
-    /// false a field that would be minted is left out too.
+    /// as ESS's interpreter leaves it to the implementation, apart from the run's sequence
+    /// ([`crate::Mint::error_uuid`]: the interpreter draws no tick for it); an `Optional` one no
+    /// row fills stays absent. Without a row (the unknown-instance arm of `wrong_state:`) a
+    /// field the row would fill is left out: an instance that does not exist has nothing to
+    /// describe. With `mint` false a field that would be minted is left out too. A required field
+    /// of an `unknown_instance:` refusal ([`Unsourced::Unanswered`]) is not reached: the outcome
+    /// is refused by name before it runs ([`Self::runs`]).
     fn unsourced_error_fields(
         &self,
         outcome: &ResolvedOutcome,
@@ -2382,7 +2407,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 (Unsourced::Minted(choice), _) => {
                     let minted = self
                         .generator
-                        .choose(
+                        .choose_error(
                             &choice,
                             &Identity {
                                 capability: IDENTITY_MINT,

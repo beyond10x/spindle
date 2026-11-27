@@ -2,7 +2,9 @@
 //!
 //! The fixture `tests/fixtures/mint` opens a ticket from a title alone, its `ticket_id` (a newtype
 //! of `Uuid`) given `{generated: true}` in both events the creation emits, and a label whose bare
-//! `String` identity the runtime mints as a UUID's text with no prefix.
+//! `String` identity the runtime mints as a UUID's text with no prefix. The fixture
+//! `tests/fixtures/generated_error` refuses with error fields the runtime mints before it issues
+//! tickets under minted identities.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -732,5 +734,83 @@ fn a_seeded_mint_skips_a_uuid_whose_integer_or_text_an_identity_holds() {
         unheld.uuid(&at),
         first,
         "an identity no first UUID mints skips nothing"
+    );
+}
+
+/// `tests/fixtures/generated_error`: `IssueTicket` refuses a blocked request under a generated
+/// `incident` and a quiet one under a `reference` its outcome gives no source, and otherwise
+/// issues a ticket under a minted identity.
+fn kiosk_ir() -> spindle_spec::EssIr {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/generated_error");
+    spindle_spec::load(&root)
+        .expect("the generated error fixture compiles")
+        .ir
+}
+
+/// The kernel's run of `IssueTicket` with each `(blocked, quiet)` of `requests` on one store
+/// under `mint`: the identities of the tickets issued, and the fields of each refusal.
+fn kiosk_run(
+    ir: &spindle_spec::EssIr,
+    mint: &mut Seeded,
+    requests: &[(bool, bool)],
+) -> (Vec<Value>, Vec<Map<String, Value>>) {
+    let mut store = MemoryStore::default();
+    let mut issued = Vec::new();
+    let mut refused = Vec::new();
+    for (blocked, quiet) in requests {
+        let executed = execute_minting(
+            ir,
+            &mut store,
+            &mut NoExternals,
+            &mut *mint,
+            "kiosk.ticket.IssueTicket",
+            &input(json!({"title": "t", "blocked": blocked, "quiet": quiet})),
+        )
+        .unwrap_or_else(|error| panic!("({blocked}, {quiet}) runs: {error:?}"));
+        match executed.error {
+            Some(error) => refused.push(error.fields),
+            None => issued.push(executed.events[0].payload["ticket_id"].clone()),
+        }
+    }
+    (issued, refused)
+}
+
+/// A seeded mint answers a declared error's values from a stream of its seed of their own: the
+/// identities minted after a refused command are those of the same run without the refusal, and
+/// one seed answers the same error values on every run.
+#[test]
+fn a_seeded_mint_answers_error_values_from_its_seed() {
+    let ir = kiosk_ir();
+    let with = [
+        (false, false),
+        (true, false),
+        (false, false),
+        (false, true),
+        (false, false),
+    ];
+    let without = [(false, false), (false, false), (false, false)];
+    let (issued, refused) = kiosk_run(&ir, &mut Seeded::new(7), &with);
+    let (alone, none) = kiosk_run(&ir, &mut Seeded::new(7), &without);
+    assert!(none.is_empty(), "{none:?}");
+    assert_eq!(
+        issued, alone,
+        "the refusals draw nothing from the stream identities are minted from"
+    );
+    assert_eq!(refused.len(), 2, "{refused:?}");
+    for (fields, field) in refused.iter().zip(["incident", "reference"]) {
+        let minted = fields[field]
+            .as_str()
+            .unwrap_or_else(|| panic!("`{field}` is minted: {fields:?}"));
+        assert!(Uuid::parse_str(minted).is_ok(), "{minted}");
+        assert!(
+            !issued.contains(&json!(minted)),
+            "`{field}` is not an identity the run mints: {minted}"
+        );
+    }
+    let (again, refused_again) = kiosk_run(&ir, &mut Seeded::new(7), &with);
+    assert_eq!(
+        (again, refused_again),
+        (issued, refused),
+        "one seed answers the same error values on every run"
     );
 }

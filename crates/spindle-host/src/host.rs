@@ -487,6 +487,10 @@ impl Store for Tallied<'_> {
         self.store.events_head()
     }
 
+    fn events_id(&mut self) -> Result<u64, StoreError> {
+        self.store.events_id()
+    }
+
     /// Kept for [`Host::published`], tallied as no write's: an event no write carries counts
     /// nothing appended ([`Host::emitted`]).
     fn commit_events(&mut self, events: &[Event], scanned: &[Scanned]) -> Result<(), StoreError> {
@@ -671,6 +675,10 @@ impl Store for Routed<'_> {
         self.running.events_head()
     }
 
+    fn events_id(&mut self) -> Result<u64, StoreError> {
+        self.running.events_id()
+    }
+
     fn commit_events(&mut self, events: &[Event], scanned: &[Scanned]) -> Result<(), StoreError> {
         if events.is_empty() {
             return self.running.commit_events(events, scanned);
@@ -769,6 +777,10 @@ impl Store for Supplied {
 
     fn events_head(&mut self) -> Result<u64, StoreError> {
         self.0.events_head()
+    }
+
+    fn events_id(&mut self) -> Result<u64, StoreError> {
+        self.0.events_id()
     }
 }
 
@@ -1294,7 +1306,8 @@ impl Host {
     /// Writes `row` as the instance of `entity` (its qualified name) with `identity` into the
     /// store of the component that owns the entity's domain, as it rests, with no command: the
     /// state a scenario arranges. Nothing is published and no binding runs. The row is checked
-    /// against the entity's invariants first ([`spindle_kernel::at_rest`]).
+    /// against the entity's invariants first ([`spindle_kernel::at_rest`]). The identity is keyed
+    /// in the one spelling a command's is ([`spindle_kernel::one_spelling`]): `1.0` as `1`.
     ///
     /// # Errors
     /// [`HostError::Unsupported`] for an entity the model does not declare or no running
@@ -1302,10 +1315,13 @@ impl Host {
     /// [`HostError::Store`], a [`StoreError::Conflict`], when the instance already exists, and
     /// any other store failure.
     pub fn establish(&mut self, entity: &str, identity: &Value, row: Row) -> Result<(), HostError> {
-        let owner = self.resting(entity, identity, &row)?;
+        // Keyed in the one spelling a command's identity is, so a command finds the row by any
+        // spelling of a number ESS reads as one value (`spindle_kernel::one_spelling`).
+        let identity = spindle_kernel::one_spelling(identity);
+        let owner = self.resting(entity, &identity, &row)?;
         store_of(&mut self.components, &owner)?.commit(&Change {
             entity: entity.to_owned(),
-            identity: identity.clone(),
+            identity,
             expected: None,
             row,
             events: Vec::new(),
@@ -1377,10 +1393,20 @@ impl Host {
 
     /// The events published after `after`, at most `limit`, in the order [`Host::published`]
     /// lists them, and the cursor after the last of them ([`Page`]); with `after` at the end,
-    /// none and the same cursor. Each component's store is read only after the position the
-    /// cursor marks for it ([`Store::events_after`]), so a read with the cursor at the end reads
-    /// no event, however many the stores hold. Where a store was replaced since the cursor was
-    /// taken, by a reset or because the host was opened again, it is read from its start once.
+    /// none and the same cursor, or, for a cursor taken before the host was opened again, a
+    /// cursor of this run at the same place. Each component's store is read only after the
+    /// position the cursor marks for it ([`Store::events_after`]), so a read with the cursor at
+    /// the end reads no event, however many the stores hold. Where a reset replaced a store since
+    /// the cursor was taken, it is read from its start once. A cursor taken before the host was
+    /// opened again reads each store whose log is the one it marks ([`Store::events_id`]) after
+    /// its position, whatever sequences this run's commands take, so on a fixed clock too; a
+    /// store of another log (a new memory store, a SQLite file a reset created again) is read
+    /// from its start. The cursor answered names each store's log as read after its events, so
+    /// a mark past a store's start always names one. A cursor of an earlier release names no
+    /// log, and is read as that release read it: every store from its start, the events up to
+    /// its last skipped by their commands' sequences. A cursor taken before `state move` names
+    /// the SQLite file's log, which the PostgreSQL copy does not keep: it reads the moved events
+    /// again.
     ///
     /// # Errors
     /// [`HostError::Cursor`] where `after` names a component this host does not run, and
@@ -1391,19 +1417,28 @@ impl Host {
             .iter()
             .map(|(name, component)| (name.clone(), component.store.generation()))
             .collect::<Vec<_>>();
-        let components = &mut self.components;
-        range::range(self.run, &stores, after, limit, |name, position, wanted| {
-            Ok(store_of(components, name)?.events_after(position, wanted)?)
-        })
+        let components = std::cell::RefCell::new(&mut self.components);
+        range::range(
+            self.run,
+            &stores,
+            after,
+            limit,
+            |name, position, wanted| {
+                Ok(store_of(&mut components.borrow_mut(), name)?.events_after(position, wanted)?)
+            },
+            |name| Ok(store_of(&mut components.borrow_mut(), name)?.events_id()?),
+        )
     }
 
     /// The cursor after the last event published, read without reading any event: each
     /// component's store answers only the position it is at ([`Store::events_head`]). A read after
     /// it ([`Host::published_after`]) answers every event published after this call, and none
-    /// before, as long as the cursor is read in this run and every store is the one it was taken
-    /// from; otherwise the stores are read from their start once, and the events of the commands
-    /// run before the last one this run ran, or, before the first, before the civil time of the
-    /// call, are skipped.
+    /// before. Read in a later run (after a restart), it answers what was committed after each
+    /// store's head, whatever sequences that run's commands take, and every event of a store
+    /// whose log is not the one it marks ([`Store::events_id`]). Where a reset in this run
+    /// replaced a store since, that store is read from its start once, and the events of the
+    /// commands run before the last one this run ran, or, before the first, before the civil
+    /// time of the call, are skipped.
     ///
     /// # Errors
     /// [`HostError::Store`] where a store cannot be read.
@@ -1412,7 +1447,9 @@ impl Host {
         let mut stores = Vec::with_capacity(self.components.len());
         for (name, component) in &mut self.components {
             let generation = component.store.generation();
-            stores.push((name.clone(), generation, component.store.events_head()?));
+            // The head before the log's id: a head past the start never comes with log 0.
+            let head = component.store.events_head()?;
+            stores.push((name.clone(), generation, component.store.events_id()?, head));
         }
         Ok(range::head(self.run, &stores, sequence))
     }
@@ -1909,6 +1946,10 @@ impl Host {
     /// The row `view` answers for the instance `identity` names; `None` when no instance has it,
     /// or when the view's filter does not hold for it.
     ///
+    /// The row, and every row a reference names, is read by its identity in the one spelling a
+    /// command keys it by ([`spindle_kernel::one_spelling`]): `1.0` and `1` read one row, which
+    /// answers its identity so.
+    ///
     /// The row is read from the store of the component that owns the view's source. A view's
     /// `consistency` changes nothing here: every component's store is in this process, so an
     /// `eventual` view reads the same store a `read_your_writes` one does.
@@ -1948,6 +1989,8 @@ impl Host {
             })?
             .facts;
         let entity = self.ir.entity(&declared.source).name.to_string();
+        // Read by the one spelling a command keys the row by: `1.0` and `1` name one row.
+        let identity = &spindle_kernel::one_spelling(identity);
         let stored = store_of(&mut self.components, &owner)?.load(&entity, identity)?;
         let Some(stored) = stored else {
             return Ok(None);
@@ -2808,6 +2851,9 @@ impl Far {
         let named = crate::view::references(ir, declared, identity, row)
             .into_iter()
             .map(|(via, entity, far)| {
+                // Loaded by the one spelling a command keys the row by, whatever spelling the
+                // referencing field holds (`spindle_kernel::one_spelling`).
+                let far = spindle_kernel::one_spelling(&far);
                 (via, entity, (entity.name.to_string(), far.to_string()), far)
             })
             .collect::<Vec<_>>();

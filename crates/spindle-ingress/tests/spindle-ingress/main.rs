@@ -37,6 +37,7 @@ mod refusal_payload;
 mod router;
 mod served;
 mod topology;
+mod unknown_refusal;
 mod unpublished_event;
 mod view_paging;
 mod view_parameters;

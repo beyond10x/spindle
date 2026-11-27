@@ -112,7 +112,10 @@ fn seed(ir: &EssIr, row: &SeedRow) -> Result<Seed, String> {
     )
     .map_err(|detail| format!("{} {identity}: {detail}", row.entity))?;
     let refused = |what: &str, why: String| format!("{} {identity}: {what}: {why}", row.entity);
+    // The identity in the one spelling a command's is keyed in, so a command finds the row by
+    // `1` or `1.0` of a `Decimal` identity (`spindle_kernel::one_spelling`).
     let held = integers(ir, &entity.identity.type_ref, identity)
+        .map(|held| spindle_kernel::one_spelling(&held))
         .map_err(|why| refused("the identity", why))?;
     let fields = row
         .fields

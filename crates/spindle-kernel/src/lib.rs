@@ -126,6 +126,17 @@ pub fn integers(
     typed::integers(ir, kind, value)
 }
 
+/// `identity` with every number in one spelling, whatever type the model declares it: an integral
+/// number within `i64` or `u64` as that integer (`1.0` as `1`), any other as the binary64
+/// `serde_json` reads. The kernel hands a store every identity a command reads or writes by so,
+/// as ESS reads the spellings of one number as one value; a caller that writes an instance
+/// outside a command (a world row, an established row) writes its identity so too, or a command
+/// does not find it by another spelling.
+#[must_use]
+pub fn one_spelling(identity: &Value) -> Value {
+    typed::spelled(identity).into_owned()
+}
+
 /// One event a command emitted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Event {
@@ -229,6 +240,9 @@ pub enum ExecuteError {
         command: String,
         /// What the model leaves unanswered.
         reason: String,
+        /// Where the outcome taken creates an instance under an identity it was supplied and an
+        /// instance already holds: that outcome and entity. `None` for every other refusal.
+        held: Option<HeldIdentity>,
     },
     /// The store could not read or commit.
     #[error(transparent)]
@@ -240,6 +254,17 @@ pub enum ExecuteError {
         /// The qualified name of the actor it was sent as.
         actor: String,
     },
+}
+
+/// The cause of an [`ExecuteError::Undeclared`] whose outcome creates an instance under an identity
+/// the request supplied and an instance already holds: `creates:` never replaces an instance, so
+/// ESS's interpreter describes no branch for the request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeldIdentity {
+    /// The name of the creating outcome, without its command.
+    pub outcome: String,
+    /// The qualified name of the entity whose instance holds the identity.
+    pub entity: String,
 }
 
 /// The tail of [`ExecuteError::Undecidable`]'s message: what left the guard open, or the facts it

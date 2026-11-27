@@ -91,11 +91,18 @@ pub enum Answered {
     },
     /// It was refused by no declared outcome.
     Undeclared,
+    /// It was refused as unavailable, a request no branch of the model describes, as ESS's
+    /// interpreter refuses a create on an identity an instance already holds.
+    Unavailable,
     /// Its actor may not send it.
     NotGranted,
     /// It did not run: the target answered an error.
     Failed,
 }
+
+/// How the detail of a [`TargetError::Unavailable`] begins where the request is one no branch of
+/// the model describes, in ESS's interpreter's words (`interpret::execute::Undetermined::Request`).
+const UNDESCRIBED: &str = "the request is not what the model declares: ";
 
 impl Answered {
     /// What `sent` answered.
@@ -109,6 +116,9 @@ impl Answered {
                 None => Self::Undeclared,
             },
             Err(TargetError::NotGranted { .. }) => Self::NotGranted,
+            Err(TargetError::Unavailable { detail, .. }) if detail.starts_with(UNDESCRIBED) => {
+                Self::Unavailable
+            }
             Err(_) => Self::Failed,
         }
     }
@@ -472,6 +482,20 @@ impl HostTarget {
                 )
             }
             Err(HostError::Execute { error, .. }) => match *error {
+                // ESS's interpreter describes no branch for a create on a held identity
+                // (`interpret::execute::create`) and answers the request as unavailable, in
+                // these words.
+                ExecuteError::Undeclared {
+                    held: Some(held), ..
+                } => Err(TargetError::unavailable(
+                    format!("invoking `{command}`"),
+                    format!(
+                        "{UNDESCRIBED}no branch the model allows is described by the given \
+                         values — `{command}/{}`: a supplied identity is already held by `{}`, \
+                         and creation never replaces it",
+                        held.outcome, held.entity
+                    ),
+                )),
                 ExecuteError::Undeclared { .. } => Ok(SemanticCommandResult::undeclared()),
                 ExecuteError::NotGranted { actor } => Err(TargetError::not_granted(Some(actor))),
                 ExecuteError::Unsupported { construct } => Err(TargetError::unsupported(

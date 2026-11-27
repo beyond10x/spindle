@@ -154,6 +154,10 @@ impl<S: Store> Store for CountingStore<S> {
     fn events_head(&mut self) -> Result<u64, StoreError> {
         self.inner.events_head()
     }
+
+    fn events_id(&mut self) -> Result<u64, StoreError> {
+        self.inner.events_id()
+    }
 }
 
 impl<S: Store> CountingStore<S> {

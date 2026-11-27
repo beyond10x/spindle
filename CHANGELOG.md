@@ -89,6 +89,15 @@ are Spindle's releases.
   synthesises from `ess/` is byte for byte the one 0.99.1 synthesised, and the observe types
   differ only in their header. Its UI change (an overlay reading its opener's params) does not
   reach Spindle, which builds none of ESS's UI crates (`story:ess-pin-0-99-2`).
+- The kernel runs an outcome whose `affects:` entry walks an input list
+  (`each: {in: input.<list>, as: <name>}`), as ESS's interpreter does: for each element, in list
+  order, the entry acts on the row the element names. With `sets:` it updates that row if held and
+  creates it in the entity's `initial` state if not; a `moves:` or `deletes:` entry acts only on a
+  held row. An element the entry's `where:` does not select is skipped, an element naming the
+  subject is skipped, `repeated: last_wins` keeps the last element naming a row, and a `Decimal`
+  identity written `1.0` names the row held as `1`. `admit`, `run` on stdin and the HTTP ingress
+  answer such a command, where the kernel refused the outcome as `unsupported` before it ran
+  (`story:affects-over-input-list`).
 
 ### Fixed
 
@@ -106,6 +115,62 @@ are Spindle's releases.
   is ordered by the instant it names, not by its text: `2026-01-01T10:00:00+02:00` is before
   `09:00Z`. A quantifier over a `Map` parameter stays refused
   (`story:view-filter-map-value-order`).
+- A command that creates an instance under an identity it was supplied and an instance already
+  holds, established by a scenario or created by an earlier command, is answered in `conform`, `run
+  --scenario` and `spindle_conformance::HostTarget` as ESS's interpreter answers it: unavailable,
+  a request no branch of the model describes, in ESS's words, where it was answered as reaching no
+  declared outcome. `run --scenario` prints `, unavailable` on such an act's line. In `conform`
+  and `run --scenario` a scenario whose create meets a held identity now ends `error`, as ESS's
+  runner counts an unavailable answer a `target_failure`, so a known-failures file that names such
+  a scenario no longer lets `spindle_conformance::Run::passed_with` pass.
+  `spindle_kernel::ExecuteError::Undeclared` gains the public field `held`, the creating outcome
+  and the entity (`spindle_kernel::HeldIdentity`), which breaks code that builds that variant or
+  destructures it without `..`; its kind and message do not change
+  (`story:create-on-held-identity-unavailable`).
+- A command names a `Decimal` or `Binary64` identity whatever its spelling: one sent as `1` finds
+  the row created as `1.0`, and the reverse, as ESS 0.99.2's interpreter reads both as one value,
+  where it answered that no row has the identity, or created a second row. The kernel keys every
+  identity a command reads or writes by in one spelling, whatever its declared type: an integral
+  number within 64 bits as the integer (`1.0`, `1e0` and `-0.0` as `1`, `1` and `0`), any other as
+  the binary64 it reads. A reset's world row and a row `Host::establish` writes are keyed the same
+  way (`spindle_kernel::one_spelling`), and so are the host's reads by identity: a view read by
+  identity (`Host::view`), a view field or filter read through a reference, and an instance's
+  history (`Host::history`, `GET /api/history?identity=`) find the row by either spelling. A
+  refusal for an identity no row has names it as the caller sent it. The identity a store scans reads `1`; a `Decimal` field keeps its spelling in
+  the row and the event payload. A durable row created with a `Decimal` or `Binary64` identity
+  spelled `1.0` or `1e0` before this change is keyed so and is no longer found; it is not
+  migrated (`story:decimal-identity-any-spelling`).
+- A command's `unknown_instance:` refusal whose error has a required field the outcome gives no
+  source is not served, as ESS's served application does not serve it: a request that selects it
+  answers `501` naming the outcome and the field, nothing is written, and `admit` and `run` list
+  the outcome as answered `501`; the command's other outcomes run. It answered the refusal
+  without that field, a body the published schema refuses. An `Optional` such field is still left
+  out (`story:unknown-instance-unsourced-unserved`).
+- A value the runtime mints for a declared error's field, `{generated: true}` or one its outcome
+  gives no source, no longer takes a draw from the sequence identities and other generated values
+  are minted from, as ESS's interpreter draws no tick for it: under a mint that answers ESS's
+  ticks, every value minted after such a refusal is the one ESS mints, where it ran one tick
+  ahead. `spindle_kernel::Mint` gains `error_uuid`, by default a random version 4 UUID; a seeded
+  mint (`run --mint-seed`, `Host::seeded`) answers it from a second sequence of its seed, so a
+  refusal no longer moves the identities minted after it (`story:error-payload-generated-fields`).
+- A `GET /api/events` cursor taken before a restart reads every event the restarted host
+  commits, once each, where on a fixed clock (`run --clock <at>` with `--state`) it skipped those
+  whose command took a sequence the cursor had passed, without an error; a cursor from
+  `published_head` read the events before the restart again. Each mark of a cursor now names the
+  log of events its store keeps (`spindle_kernel::Store::events_id` and `Reading::events_id`, `0`
+  by default: a memory store draws one at random when it is made, a SQLite or PostgreSQL store
+  reads it from the first event of its log, so nothing is written for it and a file of any
+  release has one; the wasm worker's store keeps the default). A cursor from another run reads
+  each store of the log it marks after the position it marks, as the history cursor does, so a
+  store that kept its writes goes on from them; a store of another log (a new memory store, a
+  SQLite file a reset created again) is read from its start; the rest of a write the cursor
+  answered in part is read once first. A cursor of an earlier release names no log and is read
+  as before: every store from its start, the events up to its last skipped by their commands'
+  sequences, so on a fixed clock it still skips the restarted host's first events. A cursor taken
+  before `state move` names the SQLite file's log, which the PostgreSQL copy does not keep, and
+  reads the moved events again. At the end, a cursor taken before a restart answers a cursor of
+  the new run at the same place, where the CLI reference said the same cursor. A cursor from the
+  same run reads as before (`story:events-cursor-across-restart`).
 
 ## [0.23.0] - 2026-11-27
 
