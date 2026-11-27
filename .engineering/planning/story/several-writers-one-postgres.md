@@ -72,7 +72,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: cited
   path: website/docs/status.md
-revision: 14
+revision: 16
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T09:56:32Z", actor: "human:operator", revision: 3}
 ---
@@ -105,8 +105,10 @@ write once it resumes, and exits. No write is lost or applied twice across a fai
 - `a_second_process_stands_by` (`spindle-cli` `postgres/replicas.rs`, PostgreSQL lane): a second
   `run` reads ready `503` with `standby: true`, answers a command `503` and writes nothing.
 - `a_killed_leader_leaves_the_standby_serving` (same): after SIGKILL of the leader, the standby
-  reads ready `200` within the lease plus one renew interval of the kill (with the test's 2 s
-  lease, renewed at a third of it, D7 A: within 2.67 s) and answers every later request.
+  prints its line that it took the lease within the lease plus one poll interval of the kill (with
+  the test's 2 s lease, polled at a third of it, D7 A: within 2.67 s), reads ready `200` within
+  10 s of the kill (it opens the stores and builds the host; the seed is skipped, D5 A), and
+  answers every later request.
 - `no_write_is_lost_across_a_failover` (same): half of a set of commands go to the leader, the
   leader is killed, the other half go to the new leader; the rows equal those one process leaves
   after the whole set.
@@ -140,7 +142,8 @@ Taken 2026-11-27 on the scoper's recommended option, each reversible.
 - D5 A: the seed runs only under the first token of the lease; on a takeover it is skipped with a
   log line.
 - D6 A: `spindle.observe.Readiness` gains `standby: Boolean`, and the types are regenerated.
-- D7 A: a `database_lease` setting in seconds, default 10, renewed at a third of that, expiry
+- D7 A: a `database_lease` setting in seconds, default 10, renewed by the leader and polled by a
+  standby at a third of that, expiry
   judged by the database's clock.
 - D8 A: `a_retried_request_lands_once` moves to `story:request-id-idempotency`, and the edge to
   that story becomes `informed_by`; answered A by the host operator on 2026-11-27.
