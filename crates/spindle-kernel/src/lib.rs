@@ -79,7 +79,7 @@ pub use execute::execute_reaching;
 pub use execute::{
     Invocation, at_rest, execute, execute_as, execute_at, execute_minting, execute_refusing,
 };
-pub use fit::{Fit, Misfit, Shape, Shapes};
+pub use fit::{Fit, Misfit, Model, Shape, Shapes};
 pub use mint::{Identity, Mint, Seeded, Uuid, UuidV4};
 #[cfg(feature = "postgres")]
 pub use postgres::{

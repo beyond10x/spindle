@@ -601,6 +601,7 @@ fn shapes(digest: &str, kind: Value) -> Shapes {
                 states: ["open".to_owned()].into(),
             },
         )]),
+        model: spindle_kernel::Model::default(),
     }
 }
 

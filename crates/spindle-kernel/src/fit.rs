@@ -6,17 +6,30 @@
 //! structure and every lifecycle state. A run on the store under another specification compares
 //! the recorded shapes with the new ones, for the entities that hold rows only, and refuses where
 //! the new specification cannot read a stored row ([`Misfit`]): a field removed while a row holds
-//! it, a field retyped while a row holds it (types compared by structure, so a named type
-//! redefined under the same name counts; a field that becomes optional keeps its rows), a
+//! a value of it, a field retyped while a row holds a value the new type does not read, a
 //! non-optional field added, or made required, while rows lack it, a lifecycle state removed
-//! while a row rests in it, or the entity removed. Nothing is migrated. This is Spindle's own rule over the recorded
-//! shapes, not ESS's: `ess-diff` 0.99.2 answers `unknown` for every entity field change.
+//! while a row rests in it, or the entity removed or moved to another component's store. Nothing
+//! is migrated.
+//!
+//! A change fits when every stored value reads under the new shape, judged by value where the
+//! shape alone would refuse a readable row (coordinator decision D). Types are compared by
+//! structure first: a named type is written out as its body, with a newtype's alphabet, prefix
+//! and invariants and a struct's invariants, so one redefined under the same name differs. The
+//! same structure, the field made optional, or made required (the rows lacking it counted apart)
+//! reads every row. Any other change reads each stored value under the new type as the kernel
+//! admits a command's value ([`crate::typed`]: an enum that gains a value, a struct that gains an
+//! optional member, a newtype whose prefix, alphabet or invariants every stored value meets),
+//! and misfits where one does not. Shapes read back from a record, or built without a model,
+//! judge by structure alone. This is Spindle's own rule over the recorded shapes, not ESS's:
+//! `ess-diff` 0.99.2 answers `unknown` for every entity field change.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::sync::Arc;
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::{ResolvedBody, ResolvedTypeRef};
+use ess_domain::entity::Invariant;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -30,6 +43,34 @@ pub struct Shapes {
     pub digest: String,
     /// Each entity's shape, by qualified name.
     pub entities: BTreeMap<String, Shape>,
+    /// The model the shapes were taken from, to read stored values by and to find the component
+    /// an entity moved to: not recorded and not compared.
+    #[serde(skip)]
+    pub model: Model,
+}
+
+/// The model a [`Shapes`] was taken from ([`Shapes::of`], [`Shapes::owned`]); none for shapes read
+/// back from a record or built by hand. Every two are equal: the model is no part of what a store
+/// records.
+#[derive(Clone, Default)]
+pub struct Model(Option<Arc<EssIr>>);
+
+impl PartialEq for Model {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for Model {}
+
+impl fmt::Debug for Model {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(if self.0.is_some() {
+            "Model(..)"
+        } else {
+            "Model(none)"
+        })
+    }
 }
 
 /// One entity's shape as a store records it.
@@ -93,6 +134,7 @@ impl Shapes {
                 .spec_digest
                 .to_string(),
             entities,
+            model: Model(Some(Arc::new(ir.clone()))),
         }
     }
 
@@ -113,37 +155,61 @@ impl Shapes {
             .chain(self.entities.keys())
             .collect();
         for entity in named {
-            let held = Held::of(store, entity)?;
+            let shape = self.entities.get(entity);
+            let was = recorded.entities.get(entity);
+            // The fields whose type changed so that the structure alone does not read every
+            // value: each stored value of them is read under the new type, where the model is
+            // at hand, and otherwise each row holding one misfits.
+            let reread: BTreeMap<&str, Option<&ResolvedTypeRef>> = match (shape, was) {
+                (Some(shape), Some(was)) => was
+                    .fields
+                    .iter()
+                    .filter_map(|(field, kind)| {
+                        let now = shape.fields.get(field)?;
+                        (!reads(now, kind))
+                            .then(|| (field.as_str(), self.model.field(entity, field)))
+                    })
+                    .collect(),
+                _ => BTreeMap::new(),
+            };
+            let held = Held::of(store, entity, self.model.ir(), &reread)?;
             if held.rows == 0 {
                 continue;
             }
-            let Some(shape) = self.entities.get(entity) else {
-                misfits.push(Misfit::Entity {
-                    entity: entity.clone(),
-                    rows: held.rows,
+            let Some(shape) = shape else {
+                misfits.push(match self.model.owner(entity) {
+                    Some(component) => Misfit::Moved {
+                        entity: entity.clone(),
+                        component,
+                        rows: held.rows,
+                    },
+                    None => Misfit::Entity {
+                        entity: entity.clone(),
+                        rows: held.rows,
+                    },
                 });
                 continue;
             };
-            let Some(was) = recorded.entities.get(entity) else {
+            let Some(was) = was else {
                 continue;
             };
-            for (field, kind) in &was.fields {
+            for field in was.fields.keys() {
                 let holding = held.fields.get(field).copied().unwrap_or(0);
                 if holding == 0 {
                     continue;
                 }
-                match shape.fields.get(field) {
-                    None => misfits.push(Misfit::Removed {
+                if !shape.fields.contains_key(field) {
+                    misfits.push(Misfit::Removed {
                         entity: entity.clone(),
                         field: field.clone(),
                         rows: holding,
-                    }),
-                    Some(now) if !reads(now, kind) => misfits.push(Misfit::Retyped {
+                    });
+                } else if held.unread.get(field).is_some_and(|unread| *unread > 0) {
+                    misfits.push(Misfit::Retyped {
                         entity: entity.clone(),
                         field: field.clone(),
                         rows: holding,
-                    }),
-                    Some(_) => {}
+                    });
                 }
             }
             for (field, kind) in &shape.fields {
@@ -208,6 +274,16 @@ pub enum Misfit {
         /// How many rows of it rest.
         rows: usize,
     },
+    /// The entity's domain is now owned by another component, while rows of it rest in this
+    /// store: they are not moved, and the other component's store does not hold them.
+    Moved {
+        /// The entity.
+        entity: String,
+        /// The component that owns its domain now.
+        component: String,
+        /// How many rows of it rest here.
+        rows: usize,
+    },
     /// A field is gone while rows hold it.
     Removed {
         /// The entity.
@@ -252,6 +328,7 @@ impl Misfit {
     pub fn entity(&self) -> &str {
         match self {
             Self::Entity { entity, .. }
+            | Self::Moved { entity, .. }
             | Self::Removed { entity, .. }
             | Self::Retyped { entity, .. }
             | Self::Required { entity, .. }
@@ -266,7 +343,7 @@ impl Misfit {
             Self::Removed { field, .. }
             | Self::Retyped { field, .. }
             | Self::Required { field, .. } => Some(field),
-            Self::Entity { .. } | Self::State { .. } => None,
+            Self::Entity { .. } | Self::Moved { .. } | Self::State { .. } => None,
         }
     }
 }
@@ -280,6 +357,15 @@ impl fmt::Display for Misfit {
                     "{entity}: the entity is removed; stored rows of it: {rows}"
                 )
             }
+            Self::Moved {
+                entity,
+                component,
+                rows,
+            } => write!(
+                f,
+                "{entity}: the entity moved to component {component}, whose store does not hold \
+                 these rows; stored rows of it here: {rows}"
+            ),
             Self::Removed {
                 entity,
                 field,
@@ -316,35 +402,90 @@ impl fmt::Display for Misfit {
     }
 }
 
+impl Model {
+    fn ir(&self) -> Option<&EssIr> {
+        self.0.as_deref()
+    }
+
+    /// The type of `entity`'s field `field` in the model.
+    fn field(&self, entity: &str, field: &str) -> Option<&ResolvedTypeRef> {
+        self.ir()?
+            .entities()
+            .values()
+            .find(|candidate| candidate.name.to_string() == entity)?
+            .fields
+            .iter()
+            .find(|candidate| candidate.name == field)
+            .map(|field| &field.type_ref)
+    }
+
+    /// The component that owns `entity`'s domain in the model, where the model declares the
+    /// entity.
+    fn owner(&self, entity: &str) -> Option<String> {
+        let ir = self.ir()?;
+        let domain = &ir
+            .entities()
+            .values()
+            .find(|candidate| candidate.name.to_string() == entity)?
+            .domain;
+        ir.components()
+            .values()
+            .find(|component| component.owns.contains(domain))
+            .map(|component| component.name.to_string())
+    }
+}
+
 /// What the rows of one entity hold: how many rest, how many hold each field (a value, not
-/// `null`), and how many rest in each state.
+/// `null`), how many rest in each state, and, of each field read again, how many hold a value
+/// its new type does not read.
 #[derive(Default)]
 struct Held {
     rows: usize,
     fields: BTreeMap<String, usize>,
     states: BTreeMap<String, usize>,
+    unread: BTreeMap<String, usize>,
 }
 
 impl Held {
-    fn of(store: &mut dyn Store, entity: &str) -> Result<Self, StoreError> {
+    /// Reads every row of `entity`; each value of a field `reread` names is read under its new
+    /// type in `ir`, and is unread where either is missing.
+    fn of(
+        store: &mut dyn Store,
+        entity: &str,
+        ir: Option<&EssIr>,
+        reread: &BTreeMap<&str, Option<&ResolvedTypeRef>>,
+    ) -> Result<Self, StoreError> {
         let mut held = Self::default();
         for (_, stored) in store.scan(entity)? {
             held.rows += 1;
             *held.states.entry(stored.row.state).or_default() += 1;
             for (field, value) in stored.row.fields {
-                if !value.is_null() {
-                    *held.fields.entry(field).or_default() += 1;
+                if value.is_null() {
+                    continue;
                 }
+                if let Some(now) = reread.get(field.as_str()) {
+                    let read = match (ir, now) {
+                        (Some(ir), Some(now)) => crate::typed::validate(ir, now, &value).is_ok(),
+                        _ => false,
+                    };
+                    if !read {
+                        *held.unread.entry(field.clone()).or_default() += 1;
+                    }
+                }
+                *held.fields.entry(field).or_default() += 1;
             }
         }
         Ok(held)
     }
 }
 
-/// Whether a field of type `now` reads a value stored as `was`: the same structure, or `was` made
-/// optional.
+/// Whether a field of type `now` reads every value stored as `was` by structure alone: the same
+/// structure, `was` made optional, or `was` made required (the rows lacking a value are
+/// [`Misfit::Required`], not a type change).
 fn reads(now: &Value, was: &Value) -> bool {
-    now == was || now.get("optional").is_some_and(|of| of == was)
+    now == was
+        || now.get("optional").is_some_and(|of| of == was)
+        || was.get("optional").is_some_and(|of| of == now)
 }
 
 fn optional(kind: &Value) -> bool {
@@ -369,13 +510,32 @@ fn structure(ir: &EssIr, kind: &ResolvedTypeRef, within: &mut Vec<String>) -> Va
             }
             within.push(named);
             let body = match &declared.body {
-                ResolvedBody::Newtype { of, .. } => json!({ "newtype": structure(ir, of, within) }),
-                ResolvedBody::Struct { fields, .. } => {
+                ResolvedBody::Newtype {
+                    of,
+                    alphabet,
+                    prefix,
+                    invariants,
+                } => {
+                    let mut body = serde_json::Map::new();
+                    body.insert("newtype".to_owned(), structure(ir, of, within));
+                    if let Some(alphabet) = alphabet {
+                        body.insert("alphabet".to_owned(), json!(alphabet));
+                    }
+                    if let Some(prefix) = prefix {
+                        body.insert("prefix".to_owned(), json!(prefix));
+                    }
+                    constrained(&mut body, invariants);
+                    Value::Object(body)
+                }
+                ResolvedBody::Struct { fields, invariants } => {
                     let fields: serde_json::Map<String, Value> = fields
                         .iter()
                         .map(|field| (field.name.clone(), structure(ir, &field.type_ref, within)))
                         .collect();
-                    json!({ "struct": fields })
+                    let mut body = serde_json::Map::new();
+                    body.insert("struct".to_owned(), Value::Object(fields));
+                    constrained(&mut body, invariants);
+                    Value::Object(body)
                 }
                 ResolvedBody::Enum { variants } => {
                     let names: BTreeSet<&str> = variants
@@ -400,5 +560,16 @@ fn structure(ir: &EssIr, kind: &ResolvedTypeRef, within: &mut Vec<String>) -> Va
             within.pop();
             body
         }
+    }
+}
+
+/// Adds `invariants`, as their authors wrote them, to a named type's `body`, where it has any.
+fn constrained(body: &mut serde_json::Map<String, Value>, invariants: &[Invariant]) {
+    if !invariants.is_empty() {
+        let statements: Vec<&str> = invariants
+            .iter()
+            .map(|invariant| invariant.statement.as_str())
+            .collect();
+        body.insert("invariants".to_owned(), json!(statements));
     }
 }

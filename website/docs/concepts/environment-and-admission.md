@@ -497,18 +497,27 @@ no published event: `GET /api/events` never answers it.
 
 `run` opens a store under a specification with another digest, such as a new version of the
 consumer's service, only where every stored row stays readable. It compares the recorded shapes
-with the new ones, for the entities that hold rows only, and a row does not fit when:
+with the new ones, for the entities that hold rows only. A change fits when every stored value
+reads under the new shape: types are compared by structure first, and where the structure alone
+would refuse, each stored value is read under the new type as `run` admits a command's value. A
+row does not fit when:
 
 - its entity is removed
-- a field it holds is removed
-- a field it holds changed type; types are compared by structure, so a named type redefined under
-  the same name counts, and a field made optional keeps its rows
+- its entity's domain moved to another component, whose store does not hold the row; the line
+  names that component
+- a field it holds a value of is removed (a field held only as `null` is not)
+- a field it holds a value of changed type so that the stored value no longer reads: an enum value
+  removed that a row holds, a struct member made required that a value lacks, a newtype prefix or
+  alphabet a value breaks, or a newtype or struct invariant a value breaks. Every row holding the
+  field is counted
 - a non-optional field is added, or a field is made required, that it lacks
 - the lifecycle state it rests in is removed
 
-Otherwise `run` records the new specification and starts: an optional field added, a new entity or
-state, or any change to an entity that holds no row. A store with the same digest starts without a
-check.
+Otherwise `run` records the new specification and starts. Examples are an optional field added, a
+field made optional, or made required where every row holds it, an enum value added, a struct
+member added as optional, a newtype prefix, alphabet or invariant every stored value meets, a new
+entity or state, and any change to an entity that holds no row. A store with the same digest
+starts without a check. An invariant added to the entity itself is not checked against the rows.
 
 Where a row does not fit, `run` exits 3 before listening, or before reading a stdin line, and
 prints on stdout the store and each entity and field (or state) that does not fit, with how many

@@ -34,6 +34,14 @@ types:
   - name: keep.shelf.Weight
     kind: newtype
     of: Integer
+  - name: keep.shelf.Code
+    kind: newtype
+    of: String
+  - name: keep.shelf.Place
+    kind: struct
+    fields:
+      - {name: room, type: String}
+      - {name: floor, type: Integer}
 entities:
   - name: keep.shelf.Book
     identity: {name: id, type: keep.shelf.BookId}
@@ -41,6 +49,8 @@ entities:
       - {name: title, type: String}
       - {name: weight, type: keep.shelf.Weight}
       - {name: note, type: Optional<String>}
+      - {name: code, type: Optional<keep.shelf.Code>}
+      - {name: place, type: Optional<keep.shelf.Place>}
     lifecycle: {initial: Shelved, states: [Shelved], terminal: [Shelved]}
   - name: keep.shelf.Shelf
     identity: {name: id, type: String}
@@ -185,6 +195,7 @@ fn a_removed_field_misfits_only_where_rows_hold_it() {
     let after = Shapes {
         digest: "another".to_owned(),
         entities: after,
+        model: spindle_kernel::Model::default(),
     };
     assert_eq!(
         misfits(&mut store, &after),
@@ -382,4 +393,215 @@ fn the_record_is_not_a_published_event() {
         .map(|committed| committed.event.name)
         .collect();
     assert_eq!(events, vec!["keep.shelf.Put".to_owned()]);
+}
+
+/// A store at `path` that recorded [`BEFORE`] and holds a book of each of `fields`, `b1` on.
+fn holding(path: &Path, fields: &[Value]) -> SqliteStore {
+    let mut store = open(path);
+    assert_eq!(
+        store.fit(&before()).expect("the store is checked"),
+        Fit::Fits { unrecorded: false }
+    );
+    for (index, fields) in fields.iter().enumerate() {
+        let mut row = json!({"title": "Dune", "weight": 3});
+        row.as_object_mut()
+            .expect("an object")
+            .extend(fields.as_object().expect("an object").clone());
+        put(&mut store, BOOK, &format!("b{}", index + 1), "Shelved", row);
+    }
+    store
+}
+
+/// `after` fits the rows of `store`, and is recorded.
+fn fits(store: &mut SqliteStore, after: &Shapes) {
+    assert_eq!(
+        store.fit(after).expect("checked"),
+        Fit::Fits { unrecorded: false },
+        "every stored value reads under the new specification"
+    );
+    assert_eq!(
+        store.recorded().expect("the record reads").as_ref(),
+        Some(after)
+    );
+}
+
+fn retyped(field: &str, rows: usize) -> Vec<Misfit> {
+    vec![Misfit::Retyped {
+        entity: BOOK.to_owned(),
+        field: field.to_owned(),
+        rows,
+    }]
+}
+
+const PLACE: &str = "      - {name: floor, type: Integer}\n";
+const CODE: &str = "  - name: keep.shelf.Code\n    kind: newtype\n    of: String\n";
+
+/// F2: a struct that gains an optional member reads every stored value of it.
+#[test]
+fn a_struct_that_gains_an_optional_member_fits_stored_rows() {
+    let scratch = scratch();
+    let mut store = holding(
+        &scratch.path().join("state.sqlite"),
+        &[json!({"place": {"room": "A", "floor": 1}})],
+    );
+    fits(
+        &mut store,
+        &changed(
+            PLACE,
+            &format!("{PLACE}      - {{name: bay, type: Optional<String>}}\n"),
+        ),
+    );
+}
+
+/// F2, the other side: a struct that gains a required member reads no stored value of it.
+#[test]
+fn a_struct_that_gains_a_required_member_misfits_rows_holding_it() {
+    let scratch = scratch();
+    let mut store = holding(
+        &scratch.path().join("state.sqlite"),
+        &[json!({"place": {"room": "A", "floor": 1}}), json!({})],
+    );
+    let after = changed(
+        PLACE,
+        &format!("{PLACE}      - {{name: bay, type: String}}\n"),
+    );
+    assert_eq!(misfits(&mut store, &after), retyped("place", 1));
+}
+
+/// F5: a newtype that gains a prefix every stored value starts with reads them all.
+#[test]
+fn a_newtype_that_gains_a_prefix_every_stored_value_has_fits() {
+    let scratch = scratch();
+    let mut store = holding(
+        &scratch.path().join("state.sqlite"),
+        &[json!({"code": "bk-1"}), json!({"code": "bk-22"})],
+    );
+    fits(
+        &mut store,
+        &changed(CODE, &format!("{CODE}    prefix: \"bk-\"\n")),
+    );
+}
+
+/// F5: a newtype that gains a prefix a stored value lacks, or an alphabet or an invariant a
+/// stored value breaks, misfits the rows holding the field.
+#[test]
+fn a_newtype_constraint_a_stored_value_breaks_misfits() {
+    let constraints = [
+        "    prefix: \"bk-\"\n",
+        "    alphabet: \"bk-0123456789\"\n",
+        "    invariants:\n      - 'value.count <= 4'\n",
+    ];
+    for constraint in constraints {
+        let scratch = scratch();
+        let mut store = holding(
+            &scratch.path().join("state.sqlite"),
+            &[json!({"code": "bk-1"}), json!({"code": "xy-12"}), json!({})],
+        );
+        let after = changed(CODE, &format!("{CODE}{constraint}"));
+        assert_eq!(
+            misfits(&mut store, &after),
+            retyped("code", 2),
+            "{constraint}"
+        );
+    }
+}
+
+/// F5: a struct that gains an invariant a stored value breaks misfits the rows holding it.
+#[test]
+fn a_struct_invariant_a_stored_value_breaks_misfits() {
+    let scratch = scratch();
+    let mut store = holding(
+        &scratch.path().join("state.sqlite"),
+        &[json!({"place": {"room": "A", "floor": -1}})],
+    );
+    let after = changed(
+        PLACE,
+        &format!("{PLACE}    invariants:\n      - 'floor >= 0'\n"),
+    );
+    assert_eq!(misfits(&mut store, &after), retyped("place", 1));
+}
+
+const TWO: &str = "format: ess/34
+system: keep
+version: v1
+summary: Books and safes kept in two durable stores.
+domains:
+  - keep.shelf
+  - keep.vault
+components:
+  - component: shelf
+    summary: Keeps one domain.
+    owns:
+      domains:
+        - keep.shelf
+  - component: archive
+    summary: Keeps the other.
+    owns:
+      domains:
+        - keep.vault
+";
+
+const VAULT: &str = "domain: keep.vault
+summary: Safes.
+entities:
+  - name: keep.vault.Safe
+    identity: {name: id, type: String}
+    fields:
+      - {name: label, type: String}
+    lifecycle: {initial: Locked, states: [Locked], terminal: [Locked]}
+";
+
+/// The model of [`BEFORE`] and [`VAULT`] under `system`.
+fn two(system: &str) -> spindle_spec::EssIr {
+    spindle_spec::compile(
+        &[
+            "system.yaml".to_owned(),
+            "domains/shelf.yaml".to_owned(),
+            "domains/vault.yaml".to_owned(),
+        ],
+        &[system.to_owned(), BEFORE.to_owned(), VAULT.to_owned()],
+    )
+    .unwrap_or_else(|error| panic!("the specification compiles: {error}\n{system}"))
+}
+
+/// F4: the component `shelf` stored books; its domain is now owned by `archive`. The books are
+/// not removed from the model: the misfit names the component they moved to.
+#[test]
+fn an_entity_whose_domain_moved_to_another_component_misfits_naming_it() {
+    let scratch = scratch();
+    let mut store = open(&scratch.path().join("state.sqlite"));
+    let before = Shapes::owned(&two(TWO), "shelf");
+    assert_eq!(
+        store.fit(&before).expect("checked"),
+        Fit::Fits { unrecorded: false }
+    );
+    put(
+        &mut store,
+        BOOK,
+        "b1",
+        "Shelved",
+        json!({"title": "Dune", "weight": 3}),
+    );
+    let swapped = TWO
+        .replace("        - keep.shelf\n", "        - keep.SWAP\n")
+        .replace("        - keep.vault\n", "        - keep.shelf\n")
+        .replace("        - keep.SWAP\n", "        - keep.vault\n");
+    let after = Shapes::owned(&two(&swapped), "shelf");
+    let Fit::Misfits(misfits) = store.fit(&after).expect("checked") else {
+        panic!("the move misfits")
+    };
+    assert_eq!(
+        misfits,
+        vec![Misfit::Moved {
+            entity: BOOK.to_owned(),
+            component: "archive".to_owned(),
+            rows: 1,
+        }]
+    );
+    let line = misfits[0].to_string();
+    assert!(
+        line.contains(BOOK) && line.contains("archive") && !line.contains("removed"),
+        "the line names the move: {line}"
+    );
+    assert_eq!(store.recorded().expect("the record reads"), Some(before));
 }
