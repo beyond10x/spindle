@@ -4,8 +4,13 @@
 //! group and reaps it when dropped, so a failing assertion never leaves a child running; every
 //! wait has a hard bound. Each process gets its own `TMPDIR` inside the case's directory, so the
 //! state directory it creates can be looked for after it ends.
+//!
+//! Each case starts its processes on a loopback host of its own (`127.53.0.<n>`, [`host_of`]) at
+//! ports it holds on `127.0.0.1` until it ends ([`ports`]): no other process can take a port
+//! between the case's choice and the process's bind, and a connect, which leaves from
+//! `127.0.0.1`, never reaches itself.
 
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -22,7 +27,18 @@ const TABLE: &str = "rally-table";
 const WEST: &str = "rally-player-west";
 const EAST: &str = "rally-player-east";
 const COMPONENTS: [&str; 3] = [TABLE, WEST, EAST];
-const MATCH_WITHIN: Duration = Duration::from_secs(120);
+/// The test runner kills a case at this age (`.config/nextest.toml`).
+const KILL: Duration = Duration::from_secs(60);
+/// How long the table may take to play a match once every process has started.
+const MATCH_WITHIN: Duration = Duration::from_secs(40);
+/// How long a player may take to end once the table has.
+const PEERS_END_WITHIN: Duration = Duration::from_secs(5);
+/// How long the slow peer starts after the others.
+const SLOW_START: Duration = Duration::from_secs(3);
+const _: () = assert!(
+    SLOW_START.as_secs() + MATCH_WITHIN.as_secs() + 2 * PEERS_END_WITHIN.as_secs() < KILL.as_secs(),
+    "a match is bounded below the runner's kill, so a slow one fails naming its bound"
+);
 const POLL: Duration = Duration::from_millis(20);
 
 fn root() -> PathBuf {
@@ -40,14 +56,56 @@ fn environment(name: &str) -> PathBuf {
     root().join("examples/environments").join(name)
 }
 
-fn free_addresses(count: usize) -> Vec<SocketAddr> {
-    let listeners = (0..count)
+/// Every case of this file, in order: the `n`-th listens on `127.53.0.<n>`.
+const CASES: [&str; 11] = [
+    "each_case_listens_on_a_loopback_host_of_its_own",
+    "three_processes_play_the_match_one_process_plays_at_the_tested_speed",
+    "three_processes_play_the_match_one_process_plays_on_a_fast_clock",
+    "a_player_exits_non_zero_when_the_table_dies_mid_match",
+    "the_table_exits_non_zero_when_both_players_die_mid_match",
+    "the_table_exits_non_zero_naming_a_player_that_dies_mid_match",
+    "sigterm_while_waiting_for_a_peer_ends_within_the_launchers_grace_and_leaves_no_state",
+    "sigterm_mid_match_stops_every_process_and_leaves_no_state",
+    "a_peer_slow_to_start_is_reached_within_the_connect_bound",
+    "a_peer_that_never_listens_ends_the_process_naming_it_within_the_bound",
+    "a_connection_that_opens_and_closes_before_the_table_does_not_end_a_player",
+];
+
+/// The loopback host the processes of `case` listen on.
+fn host_of(case: &str) -> Ipv4Addr {
+    let place = CASES
+        .iter()
+        .position(|listed| *listed == case)
+        .unwrap_or_else(|| panic!("{case} is not in CASES"));
+    Ipv4Addr::new(
+        127,
+        53,
+        0,
+        u8::try_from(place + 1).expect("fewer than 255 cases"),
+    )
+}
+
+/// The addresses one case hands its processes, each on the case's own host, at a port held on
+/// `127.0.0.1` for as long as this lives.
+struct Ports {
+    addresses: Vec<SocketAddr>,
+    _held: Vec<TcpListener>,
+}
+
+/// `count` addresses for the processes of `case`.
+fn ports(case: &str, count: usize) -> Ports {
+    let host = IpAddr::V4(host_of(case));
+    let held = (0..count)
         .map(|_| TcpListener::bind("127.0.0.1:0").expect("a loopback port"))
         .collect::<Vec<_>>();
-    listeners
+    let addresses = held
         .iter()
-        .map(|listener| listener.local_addr().expect("bound"))
-        .collect()
+        .map(|listener| SocketAddr::new(host, listener.local_addr().expect("bound").port()))
+        .collect();
+    Ports {
+        addresses,
+        _held: held,
+    }
 }
 
 /// One `b10x-spindle play --component` process, killed with its group and reaped on drop.
@@ -196,13 +254,13 @@ impl Drop for Proc {
     }
 }
 
-/// The three components, started at once on fresh loopback ports, the table last.
-fn three(dir: &Path, target_score: u32, speed: u32) -> (Proc, Proc, Proc) {
-    let addresses = free_addresses(3);
+/// The three components, started at once at `ports`, the table last.
+fn three(dir: &Path, ports: &Ports, target_score: u32, speed: u32) -> (Proc, Proc, Proc) {
+    let addresses = &ports.addresses;
     let peers_of = |me: &str| {
         COMPONENTS
             .iter()
-            .zip(&addresses)
+            .zip(addresses)
             .filter(|(other, _)| **other != me)
             .map(|(other, address)| (*other, *address))
             .collect::<Vec<_>>()
@@ -243,6 +301,32 @@ fn describe(status: Option<ExitStatus>) -> String {
             _ => format!("{status:?}"),
         },
     }
+}
+
+/// What a case prints when `what` ended with `status` after `took`: the bound it had, the time
+/// it took, and the console of every process in `procs`.
+fn missed(what: &str, status: Option<ExitStatus>, took: Duration, procs: &[&Proc]) -> String {
+    format!(
+        "{what}: {} after {took:.1?}, the bound {MATCH_WITHIN:?}\n{}",
+        describe(status),
+        consoles(procs)
+    )
+}
+
+/// The console of every process in `procs`, each under its name and how it ended.
+fn consoles(procs: &[&Proc]) -> String {
+    procs
+        .iter()
+        .map(|proc| {
+            format!(
+                "--- {} ({}) ---\n{}",
+                proc.name,
+                describe(proc.status),
+                proc.console()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn object(value: Value) -> Map<String, Value> {
@@ -307,22 +391,23 @@ fn is_subsequence(part: &[Value], whole: &[Value]) -> Option<usize> {
     None
 }
 
-fn same_match_as_one_process(speed: u32) {
+fn same_match_as_one_process(case: &str, speed: u32) {
     let target_score = 1;
     let reference = one_process_match(target_score);
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
-    let (mut table, mut west, mut east) = three(dir.path(), target_score, speed);
+    let ports = ports(case, 3);
+    let (mut table, mut west, mut east) = three(dir.path(), &ports, target_score, speed);
+    let started = Instant::now();
     let status = table.wait(MATCH_WITHIN);
-    let console = table.console();
+    let took = started.elapsed();
+    if status.is_some() {
+        let _ = (west.wait(PEERS_END_WITHIN), east.wait(PEERS_END_WITHIN));
+    }
     assert_eq!(
         status.and_then(|status| status.code()),
         Some(0),
-        "the table: {}\n{console}",
-        describe(status)
-    );
-    let _ = (
-        west.wait(Duration::from_secs(10)),
-        east.wait(Duration::from_secs(10)),
+        "{}",
+        missed("the table", status, took, &[&table, &west, &east])
     );
     let steps = table.views().iter().map(step).collect::<Vec<_>>();
     assert_eq!(
@@ -345,19 +430,81 @@ fn same_match_as_one_process(speed: u32) {
 }
 
 #[test]
+fn each_case_listens_on_a_loopback_host_of_its_own() {
+    let source = include_str!("adversary_processes.rs");
+    let mut cases = Vec::new();
+    for case in source.split("#[test]\nfn ").skip(1) {
+        let (name, body) = case.split_once('(').expect("a case's name");
+        let body = body.split("\n}\n").next().expect("a case's body");
+        assert!(
+            body.contains(&format!("\"{name}\"")),
+            "{name} asks for its ports under its own name"
+        );
+        cases.push(name);
+    }
+    let mut listed = CASES.to_vec();
+    listed.sort_unstable();
+    cases.sort_unstable();
+    assert_eq!(cases, listed, "CASES lists every case of this file");
+    let hosts = CASES.map(host_of);
+    for (case, host) in CASES.iter().zip(&hosts) {
+        assert!(
+            host.is_loopback() && *host != Ipv4Addr::LOCALHOST,
+            "{case} listens on {host}, which is not a loopback host of its own"
+        );
+        assert_eq!(
+            hosts.iter().filter(|other| *other == host).count(),
+            1,
+            "{case} shares {host}"
+        );
+    }
+
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let ports = ports("each_case_listens_on_a_loopback_host_of_its_own", 2);
+    let [listen, table] = ports.addresses[..] else {
+        panic!("two addresses");
+    };
+    assert!(
+        TcpListener::bind((Ipv4Addr::LOCALHOST, listen.port())).is_err(),
+        "the case holds 127.0.0.1:{}",
+        listen.port()
+    );
+    let mut west = Proc::spawn(dir.path(), WEST, listen, &[(TABLE, table)], 1, 50);
+    let line = format!("\"listening\":\"{listen}\"");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !west.console().contains(&line) {
+        assert!(
+            west.wait(Duration::ZERO).is_none() && Instant::now() < deadline,
+            "{WEST} at {listen}, with 127.0.0.1:{} held, printed no {line}: {}\n{}",
+            listen.port(),
+            describe(west.status),
+            west.console()
+        );
+        std::thread::sleep(POLL);
+    }
+}
+
+#[test]
 fn three_processes_play_the_match_one_process_plays_at_the_tested_speed() {
-    same_match_as_one_process(50);
+    same_match_as_one_process(
+        "three_processes_play_the_match_one_process_plays_at_the_tested_speed",
+        50,
+    );
 }
 
 #[test]
 fn three_processes_play_the_match_one_process_plays_on_a_fast_clock() {
-    same_match_as_one_process(1000);
+    same_match_as_one_process(
+        "three_processes_play_the_match_one_process_plays_on_a_fast_clock",
+        1000,
+    );
 }
 
 #[test]
 fn a_player_exits_non_zero_when_the_table_dies_mid_match() {
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
-    let (mut table, mut west, mut east) = three(dir.path(), 9, 50);
+    let ports = ports("a_player_exits_non_zero_when_the_table_dies_mid_match", 3);
+    let (mut table, mut west, mut east) = three(dir.path(), &ports, 9, 50);
     table.await_views(5, Duration::from_secs(60));
     assert!(
         table
@@ -384,7 +531,11 @@ fn a_player_exits_non_zero_when_the_table_dies_mid_match() {
 #[test]
 fn the_table_exits_non_zero_when_both_players_die_mid_match() {
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
-    let (mut table, mut west, mut east) = three(dir.path(), 9, 50);
+    let ports = ports(
+        "the_table_exits_non_zero_when_both_players_die_mid_match",
+        3,
+    );
+    let (mut table, mut west, mut east) = three(dir.path(), &ports, 9, 50);
     table.await_views(5, Duration::from_secs(60));
     west.signal(Signal::KILL);
     east.signal(Signal::KILL);
@@ -418,7 +569,11 @@ fn the_table_exits_non_zero_when_both_players_die_mid_match() {
 #[test]
 fn the_table_exits_non_zero_naming_a_player_that_dies_mid_match() {
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
-    let (mut table, mut west, _east) = three(dir.path(), 9, 50);
+    let ports = ports(
+        "the_table_exits_non_zero_naming_a_player_that_dies_mid_match",
+        3,
+    );
+    let (mut table, mut west, _east) = three(dir.path(), &ports, 9, 50);
     table.await_views(5, Duration::from_secs(60));
     west.signal(Signal::KILL);
     assert!(
@@ -439,7 +594,11 @@ fn the_table_exits_non_zero_naming_a_player_that_dies_mid_match() {
 #[test]
 fn sigterm_while_waiting_for_a_peer_ends_within_the_launchers_grace_and_leaves_no_state() {
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
-    let addresses = free_addresses(3);
+    let ports = ports(
+        "sigterm_while_waiting_for_a_peer_ends_within_the_launchers_grace_and_leaves_no_state",
+        3,
+    );
+    let addresses = &ports.addresses;
     let mut table = Proc::spawn(
         dir.path(),
         TABLE,
@@ -479,7 +638,11 @@ fn sigterm_while_waiting_for_a_peer_ends_within_the_launchers_grace_and_leaves_n
 #[test]
 fn sigterm_mid_match_stops_every_process_and_leaves_no_state() {
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
-    let (mut table, mut west, mut east) = three(dir.path(), 9, 50);
+    let ports = ports(
+        "sigterm_mid_match_stops_every_process_and_leaves_no_state",
+        3,
+    );
+    let (mut table, mut west, mut east) = three(dir.path(), &ports, 9, 50);
     table.await_views(5, Duration::from_secs(60));
     for proc in [&table, &west, &east] {
         proc.signal(Signal::TERM);
@@ -501,28 +664,40 @@ fn sigterm_mid_match_stops_every_process_and_leaves_no_state() {
 #[test]
 fn a_peer_slow_to_start_is_reached_within_the_connect_bound() {
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
-    let addresses = free_addresses(3);
+    let ports = ports(
+        "a_peer_slow_to_start_is_reached_within_the_connect_bound",
+        3,
+    );
+    let addresses = &ports.addresses;
     let peers_of = |me: &str| {
         COMPONENTS
             .iter()
-            .zip(&addresses)
+            .zip(addresses)
             .filter(|(other, _)| **other != me)
             .map(|(other, address)| (*other, *address))
             .collect::<Vec<_>>()
     };
     let mut table = Proc::spawn(dir.path(), TABLE, addresses[0], &peers_of(TABLE), 1, 50);
-    let _east = Proc::spawn(dir.path(), EAST, addresses[2], &peers_of(EAST), 1, 50);
-    std::thread::sleep(Duration::from_secs(3));
-    assert!(table.wait(Duration::ZERO).is_none(), "{}", table.console());
-    let _west = Proc::spawn(dir.path(), WEST, addresses[1], &peers_of(WEST), 1, 50);
+    let mut east = Proc::spawn(dir.path(), EAST, addresses[2], &peers_of(EAST), 1, 50);
+    std::thread::sleep(SLOW_START);
+    assert!(
+        table.wait(Duration::ZERO).is_none(),
+        "the table ended before west started {SLOW_START:?} after it:\n{}",
+        consoles(&[&table, &east])
+    );
+    let mut west = Proc::spawn(dir.path(), WEST, addresses[1], &peers_of(WEST), 1, 50);
+    let started = Instant::now();
     let status = table.wait(MATCH_WITHIN);
+    let took = started.elapsed();
+    if status.is_some() {
+        let _ = (west.wait(PEERS_END_WITHIN), east.wait(PEERS_END_WITHIN));
+    }
     let views = table.views();
     assert_eq!(
         status.and_then(|status| status.code()),
         Some(0),
-        "{}:\n{}",
-        describe(status),
-        table.console()
+        "{}",
+        missed("the table", status, took, &[&table, &west, &east])
     );
     assert!(
         views
@@ -536,7 +711,11 @@ fn a_peer_slow_to_start_is_reached_within_the_connect_bound() {
 #[test]
 fn a_peer_that_never_listens_ends_the_process_naming_it_within_the_bound() {
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
-    let addresses = free_addresses(2);
+    let ports = ports(
+        "a_peer_that_never_listens_ends_the_process_naming_it_within_the_bound",
+        2,
+    );
+    let addresses = &ports.addresses;
     let mut west = Proc::spawn(
         dir.path(),
         WEST,
@@ -560,7 +739,11 @@ fn a_peer_that_never_listens_ends_the_process_naming_it_within_the_bound() {
 fn a_connection_that_opens_and_closes_before_the_table_does_not_end_a_player() {
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
     let stand_in = TcpListener::bind("127.0.0.1:0").expect("a stand-in table");
-    let listen = free_addresses(1)[0];
+    let ports = ports(
+        "a_connection_that_opens_and_closes_before_the_table_does_not_end_a_player",
+        1,
+    );
+    let listen = ports.addresses[0];
     let mut west = Proc::spawn(
         dir.path(),
         WEST,

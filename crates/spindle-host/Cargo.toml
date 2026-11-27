@@ -33,6 +33,7 @@ spindle-spec = { path = "../spindle-spec" }
 tempfile = "3"
 
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dev-dependencies]
+rustix = { version = "1", features = ["net"] }
 spindle-kernel = { path = "../spindle-kernel", features = ["postgres"] }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]

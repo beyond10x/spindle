@@ -537,16 +537,41 @@ impl Host {
     /// `peer` is carried on it.
     ///
     /// # Errors
-    /// [`HostError::Peer`] when nothing listens there or the `hello` cannot be written;
-    /// [`HostError::Unsupported`] on a host of every component.
+    /// As [`Host::link`], and [`HostError::Peer`] when nothing listens there.
     pub fn connect(&mut self, peer: &str, address: SocketAddr) -> Result<(), HostError> {
+        self.remote.as_ref().ok_or_else(Remote::missing)?;
+        let stream = TcpStream::connect(address).map_err(|error| HostError::Peer {
+            peer: peer.to_owned(),
+            reason: format!("at {address} cannot be opened: {error}"),
+        })?;
+        self.link(peer, stream)
+    }
+
+    /// Makes `stream`, a connection this end opened, the link to `peer`, once, and says `hello`
+    /// on it; every event bound to `peer` is carried on it.
+    ///
+    /// A connection whose local and peer address are one reached itself, as a connect to a port
+    /// nothing listens on yet can, leaving from that same port: it is closed and links nothing,
+    /// so the caller tries again.
+    ///
+    /// # Errors
+    /// [`HostError::Peer`] when the connection reached itself or the `hello` cannot be written;
+    /// [`HostError::Unsupported`] on a host of every component.
+    pub fn link(&mut self, peer: &str, stream: TcpStream) -> Result<(), HostError> {
         let failed = |reason: String| HostError::Peer {
             peer: peer.to_owned(),
             reason,
         };
         let remote = self.remote.as_mut().ok_or_else(Remote::missing)?;
-        let stream = TcpStream::connect(address)
-            .map_err(|error| failed(format!("at {address} cannot be opened: {error}")))?;
+        let local = stream
+            .local_addr()
+            .map_err(|error| failed(error.to_string()))?;
+        if stream.peer_addr().is_ok_and(|address| address == local) {
+            let _ = stream.shutdown(Shutdown::Both);
+            return Err(failed(format!(
+                "at {local} reached itself: nothing listens there yet"
+            )));
+        }
         let mut link = Link::new(
             stream,
             Side::Opened,
