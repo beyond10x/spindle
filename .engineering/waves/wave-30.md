@@ -1,6 +1,6 @@
 # Wave 30
 
-**In progress.** Planned by the coordinator on the host operator's order of 2026-11-27, relaying the
+**Delivered.** Planned by the coordinator on the host operator's order of 2026-11-27, relaying the
 operator's words "make sure spindle is moving with its last planned features, must continue to be
 developed". Skill `aep:implementing` 0.26.0, wave mode. All stories serve `vision:spindle`.
 

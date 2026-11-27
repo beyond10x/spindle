@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-27T17:04:21Z",
+  "actor": "human:operator",
+  "artifact": "story:unknown-instance-unsourced-unserved",
+  "kind": "story",
+  "revision": 10,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "https://github.com/beyond10x/spindle/actions/runs/46032613125 (PR 99 Gate, PostgreSQL, macOS green on 2ebdd4e1; merged 861c5ca52e2ab9794605fb85ad238ced79353844)"
+  }
+}

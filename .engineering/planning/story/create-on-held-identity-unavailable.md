@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:create-on-held-identity-unavailable
 kind: story
-status: active
+status: implemented
 title: A create on a held identity is refused as unavailable
 relations:
 - serves: vision:spindle
@@ -23,10 +23,11 @@ scope:
   path: crates/spindle-kernel/src/lib.rs
 - confidence: cited
   path: crates/spindle-telemetry/tests/spindle-telemetry/catalogue.rs
-revision: 12
+revision: 13
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T09:51:59Z", actor: "human:operator", revision: 11, decided_on: {"recorded":{"review_outcome":8}}}
 - {from: "proposed", to: "active", at: "2026-11-27T09:51:59Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "active", to: "implemented", at: "2026-11-27T17:04:22Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"test_result":1,"review_outcome":9}}}
 ---
 # A create on a held identity is refused as unavailable
 
