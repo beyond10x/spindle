@@ -2,15 +2,16 @@
 format: aep.planning-md/3
 id: story:ess-099-path-types-and-wrapped-views
 kind: story
-status: active
+status: implemented
 title: Path variables of ESS 0.99 types, and view answers under one member, are served
 summary: 'run --http serves a path variable of a Uuid, Boolean, Decimal, Timestamp or Duration source or an unconstrained newtype of one, and a view body {<member>: array} or {<member>: single}'
 relations:
 - serves: vision:spindle
-revision: 5
+revision: 6
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-25T03:20:51Z", actor: "human:operator", revision: 3}
 - {from: "proposed", to: "active", at: "2026-11-25T03:20:54Z", actor: "human:operator", revision: 4}
+- {from: "active", to: "implemented", at: "2026-11-27T07:11:14Z", actor: "human:operator", revision: 6, decided_on: {"recorded":{"test_result":1}}}
 ---
 # Path variables of ESS 0.99 types, and view answers under one member, are served
 

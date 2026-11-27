@@ -2,11 +2,13 @@
 format: aep.planning-md/3
 id: story:slow-peer-link-flake
 kind: story
-status: draft
+status: archived
 title: A peer slow to start is reached within the connect bound on every CI run
 relations:
 - serves: vision:spindle
-revision: 1
+revision: 2
+transitions:
+- {from: "draft", to: "archived", at: "2026-11-27T07:11:15Z", actor: "human:operator", revision: 2}
 ---
 ## Outcome
 

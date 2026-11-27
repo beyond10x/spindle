@@ -6,6 +6,7 @@ status: draft
 title: The slow-peer connect test passes on a loaded runner
 relations:
 - serves: vision:spindle
+- informed_by: story:slow-peer-link-flake
 revision: 1
 ---
 # The slow-peer connect test passes on a loaded runner
