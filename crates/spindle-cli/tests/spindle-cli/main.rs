@@ -49,6 +49,7 @@ mod adversary_w30_u5;
 mod adversary_w30_u9;
 mod adversary_w31_u3;
 mod adversary_w31_u5;
+mod adversary_w31_u6;
 mod adversary_w31_u7;
 mod adversary_world;
 mod adversary_world_spec;

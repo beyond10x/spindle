@@ -1,0 +1,610 @@
+//! Adversary of wave 31 U6 (`story:several-writers-one-postgres`): several served `run`
+//! processes of one specification on one PostgreSQL store, each given `database_lease`, read
+//! against the story's own words and the documents the unit wrote. One leads and writes; the
+//! others stand by; a leader paused past its lease lands nothing once it resumes, answers the
+//! requests queued `503` and exits 1; a standby keeps standing by while the leader writes; and a
+//! `database_lease` that is a whole number above 0 is admitted.
+//!
+//! The fixture `tests/fixtures/ingress` serves `board` and `ledger`. Every case reaches a
+//! database, so each is ignored without `SPINDLE_TEST_DATABASE_URL`; `task check:postgres` runs
+//! them. A webhook, where one is used, is a stub on 127.0.0.1 run by this test.
+
+/// The PostgreSQL lane (`task check:postgres`).
+mod postgres {
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::{SocketAddr, TcpStream};
+    use std::path::{Path, PathBuf};
+    use std::process::{Child, Command, Stdio};
+    use std::sync::{Arc, Mutex, mpsc};
+    use std::time::{Duration, Instant};
+
+    use serde_json::{Value, json};
+
+    use crate::egress::{BINDING, SPEC, Webhook};
+
+    /// The lease every case runs with, in seconds: a standby polls every 667 ms, and a statement
+    /// on the lease waits at most 667 ms for a lock.
+    const LEASE: &str = "2";
+    const TOOK: &str = "took the lease of board";
+    const STARTUP: Duration = Duration::from_secs(60);
+    const ANSWER: Duration = Duration::from_secs(10);
+    const OPENED: &str = "tasks.board.TaskOpened";
+    const SETTINGS: [&str; 6] = [
+        "SPINDLE_SETTING_DATABASE_URL",
+        "SPINDLE_SETTING_DATABASE_CA",
+        "SPINDLE_SETTING_DATABASE_SCHEMA",
+        "SPINDLE_SETTING_DATABASE_POOL",
+        "SPINDLE_SETTING_DATABASE_CONNECTIONS",
+        "SPINDLE_SETTING_DATABASE_LEASE",
+    ];
+
+    fn root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    fn owner_url() -> String {
+        std::env::var("SPINDLE_TEST_DATABASE_URL")
+            .expect("SPINDLE_TEST_DATABASE_URL names a loopback PostgreSQL (task check:postgres)")
+    }
+
+    /// Runs `statements` as the test database's owner, one after another on one connection.
+    fn sql(statements: &[String]) {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        runtime.block_on(async {
+            let (client, connection) = tokio_postgres::connect(&owner_url(), tokio_postgres::NoTls)
+                .await
+                .expect("the test database accepts its owner");
+            let driver = tokio::spawn(connection);
+            for statement in statements {
+                client
+                    .batch_execute(statement)
+                    .await
+                    .unwrap_or_else(|error| panic!("{statement}: {error}"));
+            }
+            drop(client);
+            let _ = driver.await;
+        });
+    }
+
+    /// A schema of its own, created as the test database's owner.
+    fn schema() -> String {
+        let mut value = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("a clock after 1970")
+            .as_nanos()
+            ^ u128::from(std::process::id()) << 64;
+        let mut letters = String::new();
+        for _ in 0..12 {
+            letters.push(char::from(
+                b'a' + u8::try_from(value % 26).expect("below 26"),
+            ));
+            value /= 26;
+        }
+        let schema = format!("adv_w31_u6_{letters}");
+        sql(&[format!("CREATE SCHEMA {schema}")]);
+        schema
+    }
+
+    /// An environment document keeping both components' state in PostgreSQL.
+    fn environment(directory: &Path) -> PathBuf {
+        let text = "format = \"spindle-environment/1\"\nname = \"replicas\"\nos = \"linux\"\n\
+             arch = \"x86_64\"\n\n[provides]\n\"store.durable\" = [\"postgres\"]\n\
+             \"store.ephemeral\" = [\"memory\"]\n\"identity.mint\" = [\"uuid-v4\"]\n\
+             clock = [\"system\"]\ntimer = [\"tokio\"]\nchannel = [\"in-process\"]\n\
+             projection = [\"in-process\"]\n\"ingress.network\" = [\"http-loopback\"]\n\
+             \"external.*\" = [\"operator-prompt\"]\n";
+        let path = directory.join("replicas.toml");
+        std::fs::write(&path, text).expect("the environment is written");
+        path
+    }
+
+    /// `run` on the fixture with `environment`, its state in `schema`, a lease of `lease`.
+    fn run(environment: &Path, schema: &str, lease: &str) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"));
+        command
+            .current_dir(root())
+            .args(["run", SPEC, "--http", BINDING, "--environment"]);
+        command.arg(environment);
+        for variable in SETTINGS {
+            command.env_remove(variable);
+        }
+        command
+            .env("SPINDLE_SETTING_DATABASE_URL", owner_url())
+            .env("SPINDLE_SETTING_DATABASE_SCHEMA", schema)
+            .env("SPINDLE_SETTING_DATABASE_LEASE", lease);
+        command
+    }
+
+    fn call(address: SocketAddr, method: &str, path: &str, body: Option<&Value>) -> (u16, Value) {
+        let mut stream =
+            TcpStream::connect_timeout(&address, ANSWER).expect("the listener accepts");
+        stream
+            .set_read_timeout(Some(ANSWER))
+            .expect("a read timeout");
+        let body = body.map(Value::to_string).unwrap_or_default();
+        write!(
+            stream,
+            "{method} {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\
+             Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .expect("the request is written");
+        let mut answer = String::new();
+        let _ = stream.read_to_string(&mut answer);
+        status_and_body(&answer)
+    }
+
+    fn status_and_body(answer: &str) -> (u16, Value) {
+        let (head, text) = answer.split_once("\r\n\r\n").unwrap_or((answer, ""));
+        let status = head
+            .split(' ')
+            .nth(1)
+            .and_then(|status| status.parse().ok())
+            .unwrap_or(0);
+        (status, serde_json::from_str(text).unwrap_or(Value::Null))
+    }
+
+    /// A `run` process: its address, and every stderr line it printed.
+    struct Replica {
+        child: Child,
+        address: SocketAddr,
+        lines: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Drop for Replica {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    impl Replica {
+        /// Starts `command`: the replica once it listens, else every stderr line it printed and
+        /// how it exited.
+        fn try_start(mut command: Command) -> Result<Self, String> {
+            let mut child = command
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("b10x-spindle starts");
+            let stdout = child.stdout.take().expect("stdout is piped");
+            let stderr = child.stderr.take().expect("stderr is piped");
+            let (sender, receiver) = mpsc::channel();
+            std::thread::spawn(move || {
+                let mut reader = BufReader::new(stdout);
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                let _ = sender.send(line);
+                let _ = std::io::copy(&mut reader, &mut std::io::sink());
+            });
+            let lines = Arc::new(Mutex::new(Vec::new()));
+            let kept = Arc::clone(&lines);
+            std::thread::spawn(move || {
+                for line in BufReader::new(stderr).lines() {
+                    let Ok(line) = line else { break };
+                    eprintln!("{line}");
+                    kept.lock().expect("the lines").push(line);
+                }
+            });
+            let line = receiver.recv_timeout(STARTUP).unwrap_or_default();
+            let address = serde_json::from_str::<Value>(&line)
+                .ok()
+                .and_then(|ready| ready["listening"].as_str().map(str::to_owned))
+                .and_then(|address| address.parse().ok());
+            match address {
+                Some(address) => Ok(Self {
+                    child,
+                    address,
+                    lines,
+                }),
+                None => {
+                    let _ = child.kill();
+                    let status = child.wait();
+                    std::thread::sleep(Duration::from_millis(200));
+                    let printed = lines.lock().expect("the lines").join("\n");
+                    Err(format!("stdout {line:?}, {status:?}, stderr:\n{printed}"))
+                }
+            }
+        }
+
+        fn start(command: Command) -> Self {
+            Self::try_start(command).unwrap_or_else(|why| panic!("run did not listen: {why}"))
+        }
+
+        fn ready(&self) -> (u16, Value) {
+            call(self.address, "GET", "/__spindle/ready", None)
+        }
+
+        fn ready_by(&self, deadline: Instant) {
+            loop {
+                let (status, body) = self.ready();
+                if status == 200 {
+                    return;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "the run never read ready: {status} {body}: {}",
+                    self.printed()
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+
+        fn has_line(&self, text: &str) -> bool {
+            self.lines
+                .lock()
+                .expect("the lines")
+                .iter()
+                .any(|line| line.contains(text))
+        }
+
+        fn line_by(&self, text: &str, deadline: Instant) -> bool {
+            loop {
+                if self.has_line(text) {
+                    return true;
+                }
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+
+        fn printed(&self) -> String {
+            self.lines.lock().expect("the lines").join("\n")
+        }
+
+        fn signal(&self, signal: rustix::process::Signal) {
+            rustix::process::kill_process(rustix::process::Pid::from_child(&self.child), signal)
+                .expect("the signal is sent");
+        }
+
+        /// Whether the process still runs.
+        fn running(&mut self) -> bool {
+            self.child
+                .try_wait()
+                .expect("the run is waited on")
+                .is_none()
+        }
+
+        fn exit_within(&mut self, within: Duration) -> Option<i32> {
+            let deadline = Instant::now() + within;
+            loop {
+                if let Some(status) = self.child.try_wait().expect("the run is waited on") {
+                    return status.code();
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "the run did not exit within {within:?}: {}",
+                    self.printed()
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+
+        fn open(&self, id: &str) -> (u16, Value) {
+            call(
+                self.address,
+                "PUT",
+                &format!("/tasks/{id}"),
+                Some(&json!({"title": format!("task {id}")})),
+            )
+        }
+    }
+
+    /// A leader, ready, and a second process on the same store.
+    fn leader_and_standby(environment: &Path, schema: &str) -> (Replica, Replica) {
+        let leader = Replica::start(run(environment, schema, LEASE));
+        leader.ready_by(Instant::now() + ANSWER);
+        let standby = Replica::start(run(environment, schema, LEASE));
+        let (status, body) = standby.ready();
+        assert_eq!(status, 503, "{body}");
+        assert_eq!(body["standby"], true, "{body}");
+        (leader, standby)
+    }
+
+    /// Sends `PUT /tasks/{id}` to `address` on a thread, and answers the raw HTTP answer.
+    fn late_command(address: SocketAddr, id: &'static str) -> std::thread::JoinHandle<String> {
+        std::thread::spawn(move || {
+            let mut stream =
+                TcpStream::connect_timeout(&address, ANSWER).expect("the socket accepts");
+            stream
+                .set_read_timeout(Some(ANSWER))
+                .expect("a read timeout");
+            let body = json!({"title": format!("task {id}")}).to_string();
+            write!(
+                stream,
+                "PUT /tasks/{id} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\
+                 Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .expect("the command is written");
+            let mut answer = String::new();
+            let _ = stream.read_to_string(&mut answer);
+            answer
+        })
+    }
+
+    /// D4 A, `website/docs/concepts/environment-and-admission.md` § Several processes on one
+    /// store: "A leader that finds its lease taken answers the requests already queued `503`".
+    /// A command sent to a leader while it is paused past its lease, read once it resumes, is
+    /// answered `503`, not with the store's refusal of the write.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_resumed_leader_answers_its_queued_command_503() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = environment(directory.path());
+        let schema = schema();
+        let (mut leader, standby) = leader_and_standby(&environment, &schema);
+        let (status, answer) = leader.open("t1");
+        assert_eq!(status, 201, "{answer}");
+
+        leader.signal(rustix::process::Signal::STOP);
+        let paused = Instant::now();
+        assert!(
+            standby.line_by(TOOK, paused + Duration::from_secs(10)),
+            "the standby never took over: {}",
+            standby.printed()
+        );
+        standby.ready_by(paused + Duration::from_secs(15));
+        let (status, answer) = standby.open("t2");
+        assert_eq!(status, 201, "{answer}");
+
+        let late = late_command(leader.address, "t9");
+        std::thread::sleep(Duration::from_millis(300));
+        leader.signal(rustix::process::Signal::CONT);
+        let code = leader.exit_within(Duration::from_secs(10));
+        assert_eq!(code, Some(1), "{}", leader.printed());
+        let answer = late.join().expect("the late command ends");
+        let (status, body) = status_and_body(&answer);
+        assert_eq!(
+            status,
+            503,
+            "the command queued at the paused leader is answered 503: {answer}\n{}",
+            leader.printed()
+        );
+        assert_ne!(body, Value::Null, "{answer}");
+    }
+
+    /// The fence covers the old leader's posts as well as its writes: a leader paused past its
+    /// lease, while the new leader commits and posts `t2`, posts nothing once it resumes. Each
+    /// event the webhook accepted is posted once by a process holding its store's lease: `t2`
+    /// arrives once, from the new leader.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_resumed_leader_posts_no_event_the_new_leader_committed() {
+        let webhook = Webhook::start(200);
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment =
+            crate::egress::environment(directory.path(), "postgres", &webhook.url(), &[OPENED]);
+        let schema = schema();
+        let (mut leader, standby) = leader_and_standby(&environment, &schema);
+        let (status, answer) = leader.open("t1");
+        assert_eq!(status, 201, "{answer}");
+        accepted(&webhook, 1);
+        // The leader saves its cursor between two exchanges, every 50 ms.
+        std::thread::sleep(Duration::from_millis(500));
+
+        leader.signal(rustix::process::Signal::STOP);
+        let paused = Instant::now();
+        assert!(
+            standby.line_by(TOOK, paused + Duration::from_secs(10)),
+            "the standby never took over: {}",
+            standby.printed()
+        );
+        standby.ready_by(paused + Duration::from_secs(15));
+        let (status, answer) = standby.open("t2");
+        assert_eq!(status, 201, "{answer}");
+        accepted(&webhook, 2);
+
+        leader.signal(rustix::process::Signal::CONT);
+        let _ = leader.exit_within(Duration::from_secs(10));
+        std::thread::sleep(Duration::from_millis(500));
+        let posted: Vec<String> = crate::egress::named(&webhook.accepted())
+            .into_iter()
+            .map(|(_, task)| task)
+            .collect();
+        assert_eq!(
+            posted.iter().filter(|task| *task == "t2").count(),
+            1,
+            "t2, which the new leader committed, is posted once, by it: {posted:?}\n{}",
+            leader.printed()
+        );
+    }
+
+    /// A leader's write holds the lease row locked for its whole transaction (the fence reads it
+    /// with `get_for_update`), so a commit longer than a third of the lease holds a standby's
+    /// poll past its lock wait. The standby keeps standing by: it is still running, and reads
+    /// ready `503` with `standby: true`. The lock is taken here as the fence takes it, for
+    /// 1.5 s.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_standby_outlives_a_leader_commit_longer_than_a_third_of_the_lease() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = environment(directory.path());
+        let schema = schema();
+        let (leader, mut standby) = leader_and_standby(&environment, &schema);
+        let (status, answer) = leader.open("t1");
+        assert_eq!(status, 201, "{answer}");
+
+        let table = format!("{schema}.spindle_board_p_lease");
+        sql(&[
+            "BEGIN".to_owned(),
+            format!("SELECT body FROM {table} FOR UPDATE"),
+            "SELECT pg_sleep(1.5)".to_owned(),
+            "COMMIT".to_owned(),
+        ]);
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            standby.running(),
+            "the standby exited while the leader held the lease row for 1.5 s: {}",
+            standby.printed()
+        );
+        let (status, body) = standby.ready();
+        assert_eq!(status, 503, "{body}");
+        assert_eq!(body["standby"], true, "{body}");
+    }
+
+    /// The documents admit every whole number of seconds above 0 for `database_lease` ("A
+    /// `database_lease` that is not a whole number above 0 exits 1 before connecting"): a lease
+    /// of 10,000,000 s is one, and the run leads with it, or is refused naming the setting.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_long_lease_is_admitted_or_refused_by_name() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = environment(directory.path());
+        let schema = schema();
+        match Replica::try_start(run(&environment, &schema, "10000000")) {
+            Ok(leader) => leader.ready_by(Instant::now() + ANSWER),
+            Err(why) => assert!(
+                why.contains("database_lease"),
+                "a lease of 10000000 s is refused without naming database_lease: {why}"
+            ),
+        }
+    }
+
+    /// Two standbys race for one released lease: one of them leads, the other keeps standing
+    /// by, still running, and the store holds each write once.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn two_standbys_race_for_one_released_lease() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = environment(directory.path());
+        let schema = schema();
+        let (mut leader, first) = leader_and_standby(&environment, &schema);
+        let second = Replica::start(run(&environment, &schema, LEASE));
+        let (status, answer) = leader.open("t1");
+        assert_eq!(status, 201, "{answer}");
+        leader.signal(rustix::process::Signal::TERM);
+        assert_eq!(
+            leader.exit_within(ANSWER),
+            Some(143),
+            "{}",
+            leader.printed()
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (mut winner, mut loser) = loop {
+            if first.ready().0 == 200 {
+                break (first, second);
+            }
+            if second.ready().0 == 200 {
+                break (second, first);
+            }
+            assert!(Instant::now() < deadline, "no standby took over");
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        // Three of the loser's polls.
+        std::thread::sleep(Duration::from_secs(2));
+        assert!(loser.running(), "{}", loser.printed());
+        let (status, body) = loser.ready();
+        assert_eq!(status, 503, "{body}");
+        assert_eq!(body["standby"], true, "{body}");
+        assert!(!loser.has_line(TOOK), "{}", loser.printed());
+        assert!(winner.running(), "{}", winner.printed());
+        let (status, answer) = winner.open("t2");
+        assert_eq!(status, 201, "{answer}");
+        let (status, tasks) = call(winner.address, "GET", "/tasks", None);
+        assert_eq!(status, 200, "{tasks}");
+        assert_eq!(
+            tasks,
+            json!({"rows": [
+                {"task_id": "t1", "state": "Open", "title": "task t1"},
+                {"task_id": "t2", "state": "Open", "title": "task t2"},
+            ]})
+        );
+    }
+
+    /// D9: a lease "is also free once the holder's session ends". With a lease of 9 s a standby
+    /// polls every 3 s; a killed leader's lease, last renewed at most 3 s before the kill, runs out
+    /// no sooner than 6 s after it. The standby takes it within 5.5 s, so it took it because the
+    /// leader's session ended, not because its time ran out. (The unit's own case, with a lease of
+    /// 2 s and a bound of 5 s, passes either way.)
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_killed_leaders_lease_is_free_before_it_runs_out() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = environment(directory.path());
+        let schema = schema();
+        let mut leader = Replica::start(run(&environment, &schema, "9"));
+        leader.ready_by(Instant::now() + ANSWER);
+        let standby = Replica::start(run(&environment, &schema, "9"));
+        let (status, body) = standby.ready();
+        assert_eq!(status, 503, "{body}");
+        leader.child.kill().expect("SIGKILL is sent");
+        let _ = leader.child.wait();
+        let killed = Instant::now();
+        assert!(
+            standby.line_by(TOOK, killed + Duration::from_millis(5500)),
+            "the standby did not take the killed leader's lease within 5.5 s: {}",
+            standby.printed()
+        );
+        eprintln!("taken {:?} after the kill", killed.elapsed());
+    }
+
+    /// D5 A, as the story decided it: "the seed runs only under the first token of the lease; on a
+    /// takeover it is skipped with a log line." A leader killed after its seed ended, and a
+    /// process started once its session ended, takes the leases at their second token: it skips
+    /// the seed and logs that it did.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn the_seed_runs_only_under_the_first_token() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = environment(directory.path());
+        let seed = directory.path().join("seed.json");
+        std::fs::write(
+            &seed,
+            json!([{
+                "command": "tasks.board.OpenTask",
+                "input": {"task_id": "s1", "title": "seeded"},
+                "request_id": "seed-1",
+            }])
+            .to_string(),
+        )
+        .expect("the seed is written");
+        let schema = schema();
+        let seeded = |schema: &str| {
+            let mut command = run(&environment, schema, LEASE);
+            command.arg("--seed").arg(&seed);
+            command
+        };
+        let mut first = Replica::start(seeded(&schema));
+        assert!(
+            first.line_by("ended:", Instant::now() + ANSWER),
+            "{}",
+            first.printed()
+        );
+        first.child.kill().expect("SIGKILL is sent");
+        let _ = first.child.wait();
+        // The killed leader's session ends at once on loopback.
+        std::thread::sleep(Duration::from_secs(1));
+
+        let mut second = Replica::start(seeded(&schema));
+        std::thread::sleep(Duration::from_millis(1500));
+        assert!(
+            second.has_line("is not submitted") && !second.has_line("ended:"),
+            "the process leading under the second token skips the seed: {}",
+            second.printed()
+        );
+        assert!(second.running(), "{}", second.printed());
+        second.ready_by(Instant::now() + ANSWER);
+    }
+
+    /// Waits until `webhook` accepted `count` bodies, at most 30 s.
+    fn accepted(webhook: &Webhook, count: usize) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while webhook.accepted().len() < count {
+            assert!(
+                Instant::now() < deadline,
+                "the webhook accepted {} of {count} bodies within 30 s: {:?}",
+                webhook.accepted().len(),
+                webhook.received()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
