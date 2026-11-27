@@ -38,6 +38,14 @@
 //! the marker reads 0 entries done before the first is sent. The counts in the metrics go on
 //! across resets and never fall. A reset that gives a world loads that world alone, and the marker
 //! reads every entry done ([`Seeding::loaded`]).
+//!
+//! The state of the seed run under way is published on a [`SeedState`] the served surface reads
+//! beside this thread (`story:seed-readiness`): `GET /__spindle/seed` answers it, `running` with
+//! the entries left or `ended`, with that run's counts as its end line prints them, and
+//! `GET /__spindle/ready` answers `200` only once it reads `ended`. It reads `ended` once the last
+//! entry's submission has returned, and from the first request where the `--state` marker records
+//! every entry done; a reset with no world reads `running` from before it empties the stores until
+//! its seed run ends.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Seek, Write};
@@ -47,8 +55,10 @@ use anyhow::{Context, Result, bail};
 use ess_compiler::ir::{ResolvedCommand, ResolvedCondition};
 use serde_json::{Map, Value};
 use spindle_host::{Host, HostError, Report};
-use spindle_ingress::{Recorder, SeedCounts};
+use spindle_ingress::{Recorder, SeedCounts, SeedPhase, SeedProgress, SeedState};
 use spindle_spec::EssIr;
+
+use crate::log;
 
 /// One entry of a seed file.
 #[derive(Debug, Clone, PartialEq, serde::Deserialize)]
@@ -207,15 +217,18 @@ pub(crate) fn forget(state: &Path) {
     match std::fs::remove_file(&marker) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => eprintln!(
-            "b10x-spindle: the seed marker {} could not be removed after the reset, so a start \
-             with that seed may skip the entries it records done: {error}",
+        Err(error) => log::warn(format!(
+            "the seed marker {} could not be removed after the reset, so a start with that seed \
+             may skip the entries it records done: {error}",
             marker.display()
-        ),
+        ))
+        .field("error", error.to_string())
+        .write(),
     }
 }
 
-/// The seeding of a start: `seed`, its counts noted on `recorder`. With `state`, the `--state`
+/// The seeding of a start: `seed`, its counts noted on `recorder` and its state published on
+/// `published` ([`Seeding::step`]). With `state`, the `--state`
 /// directory, the marker there decides where it starts: with no marker, or one of another seed
 /// file on a state that holds no row ([`Host::rows`]), from its first entry; with one of this file,
 /// after the entries it records done, and with every one done it prints one line and sends
@@ -229,16 +242,18 @@ pub(crate) fn begin(
     state: Option<&Path>,
     host: &mut Host,
     recorder: Option<Recorder>,
+    published: SeedState,
 ) -> Result<Seeding> {
     let Some(state) = state else {
-        eprintln!(
-            "b10x-spindle: seed {}: {} entries, submitted one at a time once listening",
+        log::info(format!(
+            "seed {}: {} entries, submitted one at a time once listening",
             seed.path.display(),
             seed.len()
-        );
+        ))
+        .write();
         return Ok(Seeding::new(
             seed,
-            recorder,
+            (recorder, published),
             None,
             0,
             BTreeSet::new(),
@@ -248,14 +263,15 @@ pub(crate) fn begin(
     let marker = state.join(MARKER);
     let (from, rejected, ran) = match recorded(&marker)? {
         None => {
-            eprintln!(
-                "b10x-spindle: seed {} ({}): {} entries, submitted one at a time once listening; \
-                 {} records each entry done",
+            log::info(format!(
+                "seed {} ({}): {} entries, submitted one at a time once listening; {} records \
+                 each entry done",
                 seed.path.display(),
                 seed.digest,
                 seed.len(),
                 marker.display()
-            );
+            ))
+            .write();
             (0, BTreeSet::new(), false)
         }
         Some(recorded) if recorded.digest == seed.digest => {
@@ -268,14 +284,14 @@ pub(crate) fn begin(
                 .map(|place| place - 1)
                 .collect();
             if done == seed.len() && rejected.is_empty() {
-                eprintln!(
-                    "b10x-spindle: seed {} ({}) already ran on the state {}, as {} records: no \
-                     entry is sent",
+                log::info(format!(
+                    "seed {} ({}) already ran on the state {}, as {} records: no entry is sent",
                     seed.path.display(),
                     seed.digest,
                     state.display(),
                     marker.display()
-                );
+                ))
+                .write();
             } else {
                 let places: Vec<String> = rejected
                     .iter()
@@ -289,17 +305,17 @@ pub(crate) fn begin(
                         places.join(", ")
                     )
                 };
-                eprintln!(
-                    "b10x-spindle: seed {} ({}): {} entries, the first {done} sent on the state \
-                     {}, as {} records{again}; the {} after them are submitted one at a time once \
-                     listening",
+                log::info(format!(
+                    "seed {} ({}): {} entries, the first {done} sent on the state {}, as {} \
+                     records{again}; the {} after them are submitted one at a time once listening",
                     seed.path.display(),
                     seed.digest,
                     seed.len(),
                     state.display(),
                     marker.display(),
                     seed.len() - done
-                );
+                ))
+                .write();
             }
             let ran = done == seed.len() && rejected.is_empty();
             (done, rejected, ran)
@@ -322,20 +338,27 @@ pub(crate) fn begin(
                     marker.display()
                 );
             }
-            eprintln!(
-                "b10x-spindle: seed {} ({}): {} entries, submitted one at a time once listening; \
-                 the state {} was seeded from {} and holds no row, so this seed runs from its \
-                 first entry",
+            log::info(format!(
+                "seed {} ({}): {} entries, submitted one at a time once listening; the state {} \
+                 was seeded from {} and holds no row, so this seed runs from its first entry",
                 seed.path.display(),
                 seed.digest,
                 seed.len(),
                 state.display(),
                 recorded.digest
-            );
+            ))
+            .write();
             (0, BTreeSet::new(), false)
         }
     };
-    let seeding = Seeding::new(seed, recorder, Some(marker), from, rejected, ran);
+    let seeding = Seeding::new(
+        seed,
+        (recorder, published),
+        Some(marker),
+        from,
+        rejected,
+        ran,
+    );
     seeding
         .mark()
         .with_context(|| format!("writing the seed marker in {}", state.display()))?;
@@ -424,6 +447,13 @@ pub(crate) struct Seeding {
     /// What the seed runs a reset cut or saw end counted, before the one under way.
     earlier: SeedCounts,
     recorder: Option<Recorder>,
+    /// Where the state of the seed run under way is published, which `GET /__spindle/seed` and
+    /// `GET /__spindle/ready` read beside this thread (`story:seed-readiness`).
+    published: SeedState,
+    /// Whether a reset with no world is under way ([`Seeding::resetting`]): nothing is published
+    /// until [`Seeding::restart`] or [`Seeding::unreset`], so the run reads running from the reset
+    /// until its seed ends again.
+    holding: bool,
     ended: bool,
     /// How many entries of the seed run under way did not run: a host or execute error, never a
     /// declared outcome (`story:run-fails-on-rejected-line`).
@@ -451,13 +481,14 @@ enum Became {
 
 impl Seeding {
     /// `seed` about to be submitted from its entry `from` (counted from 0), the entries `rejected`
-    /// before it sent again first, its counts noted on `recorder` from now on and the entries done
-    /// written to `marker`. The request ids of the entries before `from` that were not rejected
-    /// are remembered, as if this start had sent them. With `ran`, every entry was done before
-    /// this start: the run has ended and prints no end line.
+    /// before it sent again first, its counts noted on the recorder from now on, its state
+    /// published on `published`, and the entries done written to `marker`. The request ids of the
+    /// entries before `from` that were not rejected are remembered, as if this start had sent
+    /// them. With `ran`, every entry was done before this start: the run has ended, reads ended
+    /// from the first request and prints no end line.
     fn new(
         seed: Seed,
-        recorder: Option<Recorder>,
+        (recorder, published): (Option<Recorder>, SeedState),
         marker: Option<PathBuf>,
         from: usize,
         rejected: BTreeSet<usize>,
@@ -478,6 +509,8 @@ impl Seeding {
             counts: SeedCounts::default(),
             earlier: SeedCounts::default(),
             recorder,
+            published,
+            holding: false,
             rejected: 0,
             failed: false,
             marker,
@@ -506,12 +539,14 @@ impl Seeding {
     /// entry again.
     fn marked(&self) {
         if let Err(error) = self.mark() {
-            eprintln!(
-                "b10x-spindle: seed {}: the marker {} could not be written, so a restart may send \
-                 the entries done since the last one written again: {error}",
+            log::warn(format!(
+                "seed {}: the marker {} could not be written, so a restart may send the entries \
+                 done since the last one written again: {error}",
                 self.seed.path.display(),
                 self.marker.as_deref().unwrap_or(Path::new("")).display()
-            );
+            ))
+            .field("error", error.to_string())
+            .write();
         }
     }
 
@@ -536,14 +571,16 @@ impl Seeding {
     pub(crate) fn cut(&mut self) {
         let left = self.retry.len() + self.seed.entries.len().saturating_sub(self.next);
         if left > 0 {
-            eprintln!(
-                "b10x-spindle: seed {}: a reset dropped the {left} entries not yet sent",
+            log::info(format!(
+                "seed {}: a reset dropped the {left} entries not yet sent",
                 self.seed.path.display()
-            );
+            ))
+            .write();
             self.retry.clear();
             self.next = self.seed.entries.len();
         }
         self.end();
+        self.publish();
     }
 
     /// Starts a new seed run from the first entry, as a start does: no request id remembered,
@@ -553,11 +590,12 @@ impl Seeding {
     /// marker reads 0 entries done before the first is sent, so a run stopped before that entry is
     /// done starts the seed from its first entry again.
     pub(crate) fn restart(&mut self) {
-        eprintln!(
-            "b10x-spindle: seed {}: {} entries, submitted again after a reset, before it answers",
+        log::info(format!(
+            "seed {}: {} entries, submitted again after a reset, before it answers",
             self.seed.path.display(),
             self.seed.len()
-        );
+        ))
+        .write();
         self.earlier = summed(self.earlier, self.noted());
         self.counts = SeedCounts::default();
         self.rejected = 0;
@@ -567,6 +605,26 @@ impl Seeding {
         self.marked();
         self.submitted.clear();
         self.ended = false;
+        self.holding = false;
+        self.publish();
+    }
+
+    /// Publishes the seed as running from its first entry, none sent, before a reset with no world
+    /// empties the stores, so no request reads the run ready while its stores are empty
+    /// (`story:seed-readiness`). Until [`Seeding::restart`] counts the new run, nothing else is
+    /// published: the run cut inside the reset ([`Seeding::cut`]) never reads ended. A reset that
+    /// fails publishes the run as it stood again ([`Seeding::unreset`]).
+    pub(crate) fn resetting(&mut self) {
+        self.published
+            .publish(SeedProgress::starting(count(self.seed.entries.len())));
+        self.holding = true;
+    }
+
+    /// Publishes the seed run as it stands, after a reset that [`Seeding::resetting`] announced
+    /// failed and emptied nothing.
+    pub(crate) fn unreset(&mut self) {
+        self.holding = false;
+        self.publish();
     }
 
     /// Submits every entry left to `host`, one after another, then prints the end line. Before
@@ -595,14 +653,49 @@ impl Seeding {
             refused,
         } = self.counts;
         let rejected = self.rejected;
-        eprintln!(
-            "b10x-spindle: seed {} ended: {sent} sent, {applied} applied, \
-             {already_there} already there, {refused} refused, {rejected} rejected",
-            self.seed.path.display()
-        );
+        let level = if rejected > 0 {
+            log::Level::Warn
+        } else {
+            log::Level::Info
+        };
+        log::line(
+            level,
+            format!(
+                "seed {} ended: {sent} sent, {applied} applied, {already_there} already there, \
+                 {refused} refused, {rejected} rejected",
+                self.seed.path.display()
+            ),
+        )
+        .write();
         if rejected > 0 {
             self.failed = true;
         }
+        self.publish();
+    }
+
+    /// Publishes the state of the seed run under way, read beside this thread by
+    /// `GET /__spindle/seed` and `GET /__spindle/ready`: ended only once its last entry's
+    /// submission has returned, so whatever that entry wrote is in place. Inside a reset with no
+    /// world it publishes nothing ([`Seeding::resetting`]).
+    fn publish(&self) {
+        if self.holding {
+            return;
+        }
+        let left = self.retry.len() + self.seed.entries.len().saturating_sub(self.next);
+        self.published.publish(SeedProgress {
+            phase: if self.ended {
+                SeedPhase::Ended
+            } else {
+                SeedPhase::Running
+            },
+            entries: count(self.seed.entries.len()),
+            left: count(left),
+            sent: self.counts.sent,
+            applied: self.counts.applied,
+            already_there: self.counts.already_there,
+            refused: self.counts.refused,
+            rejected: self.rejected,
+        });
     }
 
     /// Whether a seed run of this start ended having rejected an entry, so the run exits 1
@@ -641,7 +734,7 @@ impl Seeding {
         let became = if self.submitted.contains(&entry.request_id) {
             Became::AlreadyThere
         } else {
-            let became = submitted(host, entry);
+            let became = submitted(host, entry, &self.seed.digest);
             // Only an entry that left its effect in place answers for a later one with its id: a
             // refused or rejected entry left nothing, so a repeat of it is submitted again.
             if !matches!(became, Became::Refused(_) | Became::Rejected(_)) {
@@ -659,21 +752,29 @@ impl Seeding {
             Became::AlreadyThere => self.counts.already_there += 1,
             Became::Refused(error) => {
                 self.counts.refused += 1;
-                eprintln!(
-                    "b10x-spindle: seed {} entry {place}: {} (request id {}) refused: {error}",
+                log::warn(format!(
+                    "seed {} entry {place}: {} (request id {}) refused: {error}",
                     self.seed.path.display(),
                     entry.command,
                     entry.request_id
-                );
+                ))
+                .field("command", entry.command.as_str())
+                .field("request_id", entry.request_id.as_str())
+                .field("error", error)
+                .write();
             }
             Became::Rejected(error) => {
                 self.rejected += 1;
-                eprintln!(
-                    "b10x-spindle: seed {} entry {place}: {} (request id {}) rejected: {error}",
+                log::error(format!(
+                    "seed {} entry {place}: {} (request id {}) rejected: {error}",
                     self.seed.path.display(),
                     entry.command,
                     entry.request_id
-                );
+                ))
+                .field("command", entry.command.as_str())
+                .field("request_id", entry.request_id.as_str())
+                .field("error", error)
+                .write();
             }
         }
         self.marked();
@@ -693,12 +794,18 @@ impl Seeding {
     }
 
     /// Notes the counts of every seed run of this start on the recorder, where the run observes:
-    /// a counter, so a reset never makes one fall.
+    /// a counter, so a reset never makes one fall. Publishes the state of the run under way.
     fn note(&self) {
         if let Some(recorder) = &self.recorder {
             recorder.seeded(summed(self.earlier, self.noted()));
         }
+        self.publish();
     }
+}
+
+/// `entries` as a count.
+fn count(entries: usize) -> u64 {
+    u64::try_from(entries).unwrap_or(u64::MAX)
 }
 
 /// The counts `one` and `other` make together.
@@ -711,13 +818,24 @@ fn summed(one: SeedCounts, other: SeedCounts) -> SeedCounts {
     }
 }
 
-/// Submits `entry` to `host` as its actor and caller: what became of it.
-fn submitted(host: &mut Host, entry: &Entry) -> Became {
-    let submitted = host.submit_as(
+/// Submits `entry` of the seed with `digest` to `host` as its actor and caller, each event it
+/// commits recording the seed by that digest, that caller and the entry's `request_id` as its
+/// cause: what became of it.
+fn submitted(host: &mut Host, entry: &Entry, digest: &str) -> Became {
+    let submitted = host.submit_caused(
         &entry.command,
         entry.input.clone(),
         entry.actor.as_deref(),
         entry.caller.as_ref(),
+        &BTreeMap::new(),
+        spindle_kernel::Provenance::Seed {
+            digest: digest.to_owned(),
+            sender: spindle_kernel::Sender {
+                actor: entry.actor.clone(),
+                attributes: entry.caller.clone().unwrap_or_default(),
+                request: Some(entry.request_id.clone()),
+            },
+        },
     );
     match submitted {
         Ok(report) => {
@@ -748,15 +866,29 @@ fn submitted(host: &mut Host, entry: &Entry) -> Became {
 /// Prints each command an entry's events led to that did not run, or that the model refused.
 fn downstream(report: &Report) {
     for failed in &report.failed {
-        eprintln!(
-            "b10x-spindle: {} did not run {}, which a seed entry led to: {}",
+        let mut line = log::warn(format!(
+            "{} did not run {}, which a seed entry led to: {}",
             failed.component, failed.command, failed.error
-        );
+        ))
+        .field("component", failed.component.as_str())
+        .field("command", failed.command.as_str());
+        if let spindle_host::Cause::Delivered { binding } | spindle_host::Cause::Tick { binding } =
+            &failed.cause
+        {
+            line = line.field("binding", binding.as_str());
+        }
+        line.field("attempts", failed.attempts)
+            .field("error", failed.error.as_str())
+            .write();
     }
     for refused in &report.refused {
-        eprintln!(
-            "b10x-spindle: {} refused {} ({}), which a seed entry led to, with {}",
+        log::warn(format!(
+            "{} refused {} ({}), which a seed entry led to, with {}",
             refused.component, refused.command, refused.outcome, refused.error.name
-        );
+        ))
+        .field("component", refused.component.to_string())
+        .field("command", refused.command.to_string())
+        .field("error", refused.error.name.clone())
+        .write();
     }
 }

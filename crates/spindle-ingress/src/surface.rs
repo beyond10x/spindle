@@ -14,6 +14,8 @@ use ess_http::{
 use serde_json::{Map, Value};
 
 use crate::console::Console;
+use crate::health::SeedState;
+use crate::observe::metrics::SeriesMode;
 use crate::observe::topology::Routed;
 use crate::observe::{Recorder, Reserved};
 use crate::router::BODY_LIMIT;
@@ -1137,6 +1139,9 @@ pub struct Surface {
     /// The body `GET /api/served` answers, computed once the console routes are added
     /// ([`Surface::with_console`]); `None` without them.
     served: Option<Arc<str>>,
+    /// The run's seed, which `GET /__spindle/seed` and `GET /__spindle/ready` read
+    /// ([`Surface::with_seed`]); `None` for a run without one.
+    seed: Option<SeedState>,
 }
 
 /// The proxy's secret: never written by `Debug`, so no surface printed for a diagnosis shows it.
@@ -1456,6 +1461,7 @@ impl Surface {
             caller_secret: None,
             secret_required: false,
             served: None,
+            seed: None,
         })
     }
 
@@ -1465,7 +1471,17 @@ impl Surface {
     /// the one recorder. The recorder holds every route, each a `routes` edge of
     /// `GET /__spindle/topology`, also one answered `501`.
     #[must_use]
-    pub fn observing(mut self, capacity: usize) -> Self {
+    pub fn observing(self, capacity: usize) -> Self {
+        self.observing_series(capacity, SeriesMode::PerCommand)
+    }
+
+    /// This surface [`Surface::observing`] the last `capacity` requests, its metrics written as
+    /// `series` says: each label whose value comes from the specification its own series
+    /// ([`SeriesMode::PerCommand`]), or every one of them written empty and the series summed
+    /// ([`SeriesMode::Aggregated`]). The request log and the topology are the same in either
+    /// mode.
+    #[must_use]
+    pub fn observing_series(mut self, capacity: usize, series: SeriesMode) -> Self {
         let routes = self
             .routes
             .iter()
@@ -1479,7 +1495,7 @@ impl Surface {
                 },
             })
             .collect();
-        self.recorder = Some(Recorder::new(capacity).routing(routes));
+        self.recorder = Some(Recorder::new(capacity).routing(routes).with_series(series));
         self
     }
 
@@ -1503,9 +1519,30 @@ impl Surface {
         self.panel
     }
 
+    /// This surface answering `GET /__spindle/seed` with what the run's seed publishes on `seed`,
+    /// and `GET /__spindle/ready` `200` only once it reads ended, with or without a recorder
+    /// (`story:seed-readiness`). Without one both answer as a run without a seed: `{"state":
+    /// "none"}`, and ready.
+    #[must_use]
+    pub fn with_seed(mut self, seed: SeedState) -> Self {
+        self.seed = Some(seed);
+        self
+    }
+
+    /// The run's seed, where the surface was given one ([`Surface::with_seed`]).
+    pub fn seed(&self) -> Option<&SeedState> {
+        self.seed.as_ref()
+    }
+
     /// This surface with the [`Console`] routes added where `implementation`, what
     /// `ingress.network` is bound to, is [`HTTP_LOOPBACK`](crate::HTTP_LOOPBACK); for any other
     /// implementation the surface is returned as it is, and no console route exists.
+    ///
+    /// A surface never given this call has no console route either: each console path then
+    /// resolves as any other path, to a route that carries it or to `404`, whatever secret the
+    /// request carries. `run --console off` serves such a surface, as `run` does by default where
+    /// it listens off loopback (`exposed`, feature `listener`); it makes this call on a copy
+    /// first, so a route at a console path is refused there too.
     ///
     /// # Errors
     /// [`SurfaceError::Shadowed`] when a route the binding or ESS publishes has a path a console

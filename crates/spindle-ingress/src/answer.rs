@@ -11,7 +11,7 @@ use ess_http::{
 };
 use serde_json::{Map, Value, json};
 use spindle_host::{Failed, Host, HostError, Listed, Reader};
-use spindle_kernel::{DeclaredError, Event, ExecuteError};
+use spindle_kernel::{DeclaredError, Event, ExecuteError, Provenance, Sender};
 
 use crate::observe::{Answered, RefusedBound};
 use crate::surface::{Caller, ECHOED, Route, Unserved, may_read, may_run, same_value};
@@ -486,12 +486,22 @@ fn run(
     } else {
         Map::new()
     };
-    let answer = match host.submit_refusing(
+    // One request id per HTTP request: every event the command and what it leads to commit
+    // records it beside the caller (`story:events-record-their-caller`).
+    let cause = Provenance::Request(Sender {
+        actor: caller.map(|caller| caller.actor.clone()),
+        attributes: caller
+            .map(|caller| caller.attributes.clone())
+            .unwrap_or_default(),
+        request: Some(Sender::new_request()),
+    });
+    let answer = match host.submit_caused(
         command,
         input,
         caller.map(|caller| caller.actor.as_str()),
         caller.map(|caller| &caller.attributes),
         &route.refusing(),
+        cause,
     ) {
         Ok(report) => {
             let (answer, mut answered) = match report.ran.first() {

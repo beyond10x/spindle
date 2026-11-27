@@ -1,12 +1,12 @@
 {
   "format": "ess-types-report/3",
-  "source_digest": "768b49d0ee4e413744f98b60ca5d08125d3a9410aba380e215477e8525748e44",
+  "source_digest": "6aff9d3b13c9c43f883cc9c6dd02d69017932331d4e80fe81d143b23c09e58c5",
   "input": {
     "kind": "model",
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:8febbdf432c4e043f26574b762a66814a51585243cfc38e08ced8b3b318a4584",
-    "projection_digest": "6c9d2e8fdf153886199a7705dca31e33124be8ca857c0ea3e56a0d7116c1cec8"
+    "contract_digest": "slice-sha256/2:9ea2a2bb685b040574998e72535d5d21bdaec116bb6d5114c0a9dc6e1e792f44",
+    "projection_digest": "ca5ef53d5af5de64ba859ebf4afbbfa7c76fa764f58d460faa8a8f21f968a212"
   },
   "generator_version": "0.99.1",
   "target": "typescript",
@@ -16,9 +16,12 @@
   "roots": [
     "spindle.observe.Catalogue",
     "spindle.observe.Deployment",
+    "spindle.observe.Liveness",
     "spindle.observe.MetricFamilies",
+    "spindle.observe.Readiness",
     "spindle.observe.RequestLog",
     "spindle.observe.Sample",
+    "spindle.observe.SeedState",
     "spindle.observe.ServedOperations",
     "spindle.observe.StateChange",
     "spindle.observe.Topology"
@@ -41,12 +44,14 @@
     "spindle.observe.EdgeTraffic": "EdgeTraffic",
     "spindle.observe.ExternalAnswer": "ExternalAnswer",
     "spindle.observe.Histogram": "Histogram",
+    "spindle.observe.Liveness": "Liveness",
     "spindle.observe.MetricFamilies": "MetricFamilies",
     "spindle.observe.MetricFamily": "MetricFamily",
     "spindle.observe.MetricKind": "MetricKind",
     "spindle.observe.NodeKind": "NodeKind",
     "spindle.observe.OperationKind": "OperationKind",
     "spindle.observe.Payload": "Payload",
+    "spindle.observe.Readiness": "Readiness",
     "spindle.observe.RecentAnswer": "RecentAnswer",
     "spindle.observe.RefusedBound": "RefusedBound",
     "spindle.observe.RequestClass": "RequestClass",
@@ -56,6 +61,8 @@
     "spindle.observe.RequestTotals": "RequestTotals",
     "spindle.observe.ResourceReading": "ResourceReading",
     "spindle.observe.Sample": "Sample",
+    "spindle.observe.SeedState": "SeedState",
+    "spindle.observe.SeedStateKind": "SeedStateKind",
     "spindle.observe.ServedKind": "ServedKind",
     "spindle.observe.ServedOperation": "ServedOperation",
     "spindle.observe.ServedOperations": "ServedOperations",
@@ -531,6 +538,41 @@
       "detail": "model identity and wire mapping retained in source.schema.json"
     },
     {
+      "pointer": "/$defs/spindle.observe.Liveness/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/properties/bound_ms/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/properties/idle_ms/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/properties/live/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/title",
+      "rule": "title",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/x-ess-kind",
+      "rule": "x-ess-kind",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/x-ess-name",
+      "rule": "x-ess-name",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
       "pointer": "/$defs/spindle.observe.MetricFamilies/description",
       "rule": "description",
       "detail": "retained in source.schema.json; no decoder behavior inferred"
@@ -652,6 +694,41 @@
     },
     {
       "pointer": "/$defs/spindle.observe.Payload/x-ess-name",
+      "rule": "x-ess-name",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Readiness/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Readiness/properties/ready/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Readiness/properties/seed/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Readiness/properties/stopping/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Readiness/title",
+      "rule": "title",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Readiness/x-ess-kind",
+      "rule": "x-ess-kind",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Readiness/x-ess-name",
       "rule": "x-ess-name",
       "detail": "model identity and wire mapping retained in source.schema.json"
     },
@@ -997,6 +1074,81 @@
     },
     {
       "pointer": "/$defs/spindle.observe.Sample/x-ess-name",
+      "rule": "x-ess-name",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/already_there/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/applied/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/entries/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/left/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/refused/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/rejected/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/sent/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/title",
+      "rule": "title",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/x-ess-kind",
+      "rule": "x-ess-kind",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/x-ess-name",
+      "rule": "x-ess-name",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedStateKind/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedStateKind/title",
+      "rule": "title",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedStateKind/x-ess-kind",
+      "rule": "x-ess-kind",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedStateKind/x-ess-name",
       "rule": "x-ess-name",
       "detail": "model identity and wire mapping retained in source.schema.json"
     },
@@ -1583,6 +1735,46 @@
       "detail": "TypeScript number cannot retain arbitrary JSON numeric precision; validate representability before decoding"
     },
     {
+      "pointer": "/$defs/spindle.observe.Liveness",
+      "rule": "closed_object",
+      "detail": "TypeScript structural assignability does not enforce exact object keys; validate additionalProperties at runtime"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/properties/bound_ms",
+      "rule": "integer",
+      "detail": "TypeScript number does not enforce integrality"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/properties/bound_ms",
+      "rule": "json_number_precision",
+      "detail": "TypeScript number cannot retain arbitrary JSON numeric precision; validate representability before decoding"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/properties/bound_ms/minimum",
+      "rule": "minimum",
+      "detail": "validate this constraint against the source schema at runtime"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/properties/idle_ms",
+      "rule": "integer",
+      "detail": "TypeScript number does not enforce integrality"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/properties/idle_ms",
+      "rule": "json_number_precision",
+      "detail": "TypeScript number cannot retain arbitrary JSON numeric precision; validate representability before decoding"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/properties/idle_ms/minimum",
+      "rule": "minimum",
+      "detail": "validate this constraint against the source schema at runtime"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/x-ess-invariants",
+      "rule": "model_invariants",
+      "detail": "enforce the retained model invariant statements; structural codecs do not evaluate predicates"
+    },
+    {
       "pointer": "/$defs/spindle.observe.MetricFamilies",
       "rule": "closed_object",
       "detail": "TypeScript structural assignability does not enforce exact object keys; validate additionalProperties at runtime"
@@ -1601,6 +1793,11 @@
       "pointer": "/$defs/spindle.observe.Payload/x-ess-invariants",
       "rule": "model_invariants",
       "detail": "enforce the retained model invariant statements; structural codecs do not evaluate predicates"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Readiness",
+      "rule": "closed_object",
+      "detail": "TypeScript structural assignability does not enforce exact object keys; validate additionalProperties at runtime"
     },
     {
       "pointer": "/$defs/spindle.observe.RecentAnswer",
@@ -1941,6 +2138,81 @@
       "pointer": "/$defs/spindle.observe.Sample/x-ess-invariants",
       "rule": "model_invariants",
       "detail": "enforce the retained model invariant statements; structural codecs do not evaluate predicates"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState",
+      "rule": "closed_object",
+      "detail": "TypeScript structural assignability does not enforce exact object keys; validate additionalProperties at runtime"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/already_there",
+      "rule": "integer",
+      "detail": "TypeScript number does not enforce integrality"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/already_there",
+      "rule": "json_number_precision",
+      "detail": "TypeScript number cannot retain arbitrary JSON numeric precision; validate representability before decoding"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/applied",
+      "rule": "integer",
+      "detail": "TypeScript number does not enforce integrality"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/applied",
+      "rule": "json_number_precision",
+      "detail": "TypeScript number cannot retain arbitrary JSON numeric precision; validate representability before decoding"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/entries",
+      "rule": "integer",
+      "detail": "TypeScript number does not enforce integrality"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/entries",
+      "rule": "json_number_precision",
+      "detail": "TypeScript number cannot retain arbitrary JSON numeric precision; validate representability before decoding"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/left",
+      "rule": "integer",
+      "detail": "TypeScript number does not enforce integrality"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/left",
+      "rule": "json_number_precision",
+      "detail": "TypeScript number cannot retain arbitrary JSON numeric precision; validate representability before decoding"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/refused",
+      "rule": "integer",
+      "detail": "TypeScript number does not enforce integrality"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/refused",
+      "rule": "json_number_precision",
+      "detail": "TypeScript number cannot retain arbitrary JSON numeric precision; validate representability before decoding"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/rejected",
+      "rule": "integer",
+      "detail": "TypeScript number does not enforce integrality"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/rejected",
+      "rule": "json_number_precision",
+      "detail": "TypeScript number cannot retain arbitrary JSON numeric precision; validate representability before decoding"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/sent",
+      "rule": "integer",
+      "detail": "TypeScript number does not enforce integrality"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.SeedState/properties/sent",
+      "rule": "json_number_precision",
+      "detail": "TypeScript number cannot retain arbitrary JSON numeric precision; validate representability before decoding"
     },
     {
       "pointer": "/$defs/spindle.observe.ServedOperation",

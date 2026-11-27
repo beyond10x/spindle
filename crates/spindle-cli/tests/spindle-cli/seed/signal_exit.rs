@@ -1,7 +1,8 @@
 //! The serve loop's exit on SIGTERM or SIGINT (`story:serve-loop-signal-exit-answers`): once the
-//! signal arrives the loop takes no further exchange, a request still queued for it is answered
-//! `503`, and every answer already handed to the listener, a seeded reset's included, is written
-//! before the run exits.
+//! signal arrives the loop answers the requests queued for it up to the `--drain` bound
+//! (`story:health-and-graceful-drain`), a request still queued then is answered `503`, and every
+//! answer already handed to the listener, a seeded reset's included, is written before the run
+//! exits.
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -135,9 +136,11 @@ fn a_reset_taken_after_a_signal_is_answered_200() {
     assert!(role_ids(&restarted).is_empty(), "the grant was never sent");
 }
 
-/// The start's seed is held at its second entry and a reset is queued when SIGTERM arrives: the
-/// loop does not take it, the client reads `503`, and a restart on the state without `--seed`
-/// holds what the start's seed applied, so the reset did not empty it.
+/// The start's seed is held at its second entry and a reset is queued when SIGTERM arrives, on a
+/// run given `--drain 0`: the loop takes no queued request after the signal, the client reads
+/// `503`, and a restart on the state without `--seed` holds what the start's seed applied, so the
+/// reset did not empty it. With the default bound the queued reset is answered instead
+/// (`story:health-and-graceful-drain`, `seed::health::sigterm_answers_the_requests_in_flight`).
 #[test]
 fn a_request_queued_at_the_signal_reads_503() {
     let directory = scratch();
@@ -162,6 +165,8 @@ fn a_request_queued_at_the_signal_reads_503() {
         state,
         "--seed",
         &seed,
+        "--drain",
+        "0",
     ]);
     asked.recv_timeout(ANSWER).expect("the second entry asks");
     let answer = reset_later(served.address);

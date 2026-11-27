@@ -18,7 +18,8 @@ use spindle_channel::{
 };
 use spindle_kernel::{
     Change, Committed, Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, Mint,
-    NoExternals, Origin, Reading, Row, Scanned, Seeded, Store, StoreError, Stored, Uuid, UuidV4,
+    NoExternals, Origin, Provenance, Reading, Row, Scanned, Seeded, Store, StoreError, Stored,
+    Uuid, UuidV4,
 };
 use spindle_telemetry::{Counters, CountingStore, Retried, Sink};
 use spindle_timer::{BindingName, Clock, CompleteError, Instant, LifetimeError, Timer};
@@ -30,7 +31,7 @@ mod range;
 mod reader;
 mod rows;
 
-pub use range::{Cursor, Page};
+pub use range::{Cursor, History, HistoryCursor, Page, Revision};
 pub use reader::Reader;
 use rows::Counted;
 
@@ -248,6 +249,9 @@ pub enum HostError {
     /// No view has this name.
     #[error("no view {0}")]
     NoView(String),
+    /// No entity has this name ([`Host::history`]). Nothing was read.
+    #[error("no entity {0}")]
+    NoEntity(String),
     /// A view was read with parameter values it refuses ([`Host::list_with`]): one it does not
     /// declare, a required one left out, or one not of its declared type. Nothing was read.
     #[error("{view}: {detail}")]
@@ -437,6 +441,10 @@ impl Store for Tallied<'_> {
         self.store.attribute(origin);
     }
 
+    fn outcome(&mut self, outcome: &str) {
+        self.store.outcome(outcome);
+    }
+
     fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
         self.store.events_after(position, limit)
     }
@@ -617,6 +625,10 @@ impl Store for Routed<'_> {
         self.running.attribute(origin);
     }
 
+    fn outcome(&mut self, outcome: &str) {
+        self.running.outcome(outcome);
+    }
+
     fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
         self.running.events_after(position, limit)
     }
@@ -705,6 +717,10 @@ impl Store for Supplied {
         self.0.attribute(origin);
     }
 
+    fn outcome(&mut self, outcome: &str) {
+        self.0.outcome(outcome);
+    }
+
     fn commit_events(&mut self, events: &[Event], scanned: &[Scanned]) -> Result<(), StoreError> {
         self.0.commit_events(events, scanned)
     }
@@ -785,9 +801,11 @@ pub struct Host {
     /// routes, never from an envelope, so a peer's frame does not decide the policy.
     retrying: BTreeMap<String, Arc<Route>>,
     /// The qualified command whose run staged each envelope in flight between this host's own
-    /// components, by the publishing component and the envelope's id; taken when the envelope is
-    /// invoked ([`Failed::caused_by`]). Empty in a run split over processes.
-    staged_by: BTreeMap<(String, DeliveryId), String>,
+    /// components, by the publishing component and the envelope's id, with what the command the
+    /// envelope invokes records as its trigger ([`Provenance::Binding`]); taken when the envelope
+    /// is invoked ([`Failed::caused_by`]). Empty in a run split over processes, whose bound
+    /// commands record no trigger.
+    staged_by: BTreeMap<(String, DeliveryId), (String, Option<Provenance>)>,
 }
 
 impl std::fmt::Debug for Host {
@@ -1358,6 +1376,42 @@ impl Host {
         Ok(range::head(self.run, &stores, sequence))
     }
 
+    /// The committed events of the instance of `entity` (a qualified entity name) with
+    /// `identity` after `after`, oldest first, at most `limit` write by write, and the cursor
+    /// after them ([`History`]): every event of every write that wrote the instance, a group of
+    /// writes included (`affects:`, a set outcome), each with its position, its command's time,
+    /// the command, its outcome and its cause ([`Revision`]). Read from the store of the
+    /// component that owns the entity ([`Store::events_after`]), filtered by the instances each
+    /// write names ([`spindle_kernel::Committed::instances`]): a write a release before 0.23.0
+    /// stored names none, so it is in no history. An instance no command wrote reads empty.
+    ///
+    /// # Errors
+    /// [`HostError::NoEntity`] where the model declares no `entity`, and [`HostError::Store`]
+    /// where the store cannot be read.
+    pub fn history(
+        &mut self,
+        entity: &str,
+        identity: &Value,
+        after: &HistoryCursor,
+        limit: usize,
+    ) -> Result<History, HostError> {
+        let owner = holding(&self.ir, entity)?;
+        let generation = self
+            .components
+            .get(&owner)
+            .map(|component| component.store.generation())
+            .ok_or_else(|| HostError::Unsupported(format!("{owner} is not running")))?;
+        let store = store_of(&mut self.components, &owner)?;
+        range::history(
+            (self.run, generation),
+            after,
+            (entity, identity),
+            limit,
+            civil,
+            |position, wanted| Ok(store.events_after(position, wanted)?),
+        )
+    }
+
     /// How many events each command appended since the host started, by command and event,
     /// counted where a component's store commits them, as its `event.<Event>.appended` counter
     /// is: a set outcome that publishes an event once per changed row counts each row's, and an
@@ -1666,10 +1720,35 @@ impl Host {
         caller: Option<&Map<String, Value>>,
         refused: &BTreeMap<String, String>,
     ) -> Result<Report, HostError> {
+        let cause = Provenance::Request(spindle_kernel::Sender {
+            actor: actor.map(str::to_owned),
+            attributes: caller.cloned().unwrap_or_default(),
+            request: None,
+        });
+        self.submit_caused(command, input, actor, caller, refused, cause)
+    }
+
+    /// [`Host::submit_refusing`], each event the command commits recording `cause` as what caused
+    /// it ([`Origin::cause`]): the request or seed entry that sent it, with its caller and its
+    /// request id, which should name `actor` and `caller` as sent. Each command its events lead to
+    /// records the binding that carried the event, and `cause` as what caused the command that
+    /// published it ([`Provenance::Binding`]).
+    ///
+    /// # Errors
+    /// As [`Host::submit`].
+    pub fn submit_caused(
+        &mut self,
+        command: &str,
+        input: Map<String, Value>,
+        actor: Option<&str>,
+        caller: Option<&Map<String, Value>>,
+        refused: &BTreeMap<String, String>,
+        cause: Provenance,
+    ) -> Result<Report, HostError> {
         let component = accepting(&self.ir, command)
             .ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
         let mut report = Report::default();
-        match self.execute(&component, command, &input, actor, caller, refused)? {
+        match self.execute(&component, command, &input, actor, caller, refused, cause)? {
             Ok(Executed {
                 outcome,
                 error: Some(error),
@@ -1966,7 +2045,12 @@ impl Host {
     /// another component of this host owns from that component's store ([`Routed`],
     /// [`spindle_kernel::execute_reaching`]).
     ///
+    /// Its writes are attributed to the command and `cause` ([`Origin`]); each envelope it stages
+    /// between this host's own components keeps the command and what the command it invokes
+    /// records as its trigger ([`Provenance::trigger`]).
+    ///
     /// The outer error is the host's own; the inner one is the command's.
+    #[allow(clippy::too_many_arguments)]
     fn execute(
         &mut self,
         component: &str,
@@ -1975,6 +2059,7 @@ impl Host {
         actor: Option<&str>,
         caller: Option<&Map<String, Value>>,
         refused: &BTreeMap<String, String>,
+        cause: Provenance,
     ) -> Result<Result<Executed, ExecuteError>, HostError> {
         let reached: BTreeSet<String> = self.components.keys().cloned().collect();
         let mut held = None;
@@ -1991,9 +2076,11 @@ impl Host {
         let clock = &self.clock;
         let sequence = following(self.sequence.load(Ordering::SeqCst), clock.wall());
         self.sequence.store(sequence, Ordering::SeqCst);
+        let trigger = cause.trigger();
         held.store.attribute(Some(Origin {
             command: command.to_owned(),
             sequence,
+            cause: Some(cause),
         }));
         let mut routed = Routed {
             ir: &self.ir,
@@ -2054,8 +2141,10 @@ impl Host {
             if self.remote.is_none() {
                 let DeliveryId(after) = held.sender.next_delivery();
                 for id in first.0..after {
-                    self.staged_by
-                        .insert((component.to_owned(), DeliveryId(id)), command.to_owned());
+                    self.staged_by.insert(
+                        (component.to_owned(), DeliveryId(id)),
+                        (command.to_owned(), trigger.clone()),
+                    );
                 }
             }
             held.sender.mark_durable(held.position);
@@ -2086,7 +2175,7 @@ impl Host {
     /// from another process names none.
     fn invoke(&mut self, envelope: &Envelope, report: &mut Report) -> Result<(), HostError> {
         let retried = self.retrying.get(&envelope.binding).cloned();
-        let caused_by = self.staged_by.remove(&(envelope.from.clone(), envelope.id));
+        let staged = self.staged_by.remove(&(envelope.from.clone(), envelope.id));
         self.attempt(
             &envelope.to,
             &envelope.command.name,
@@ -2094,7 +2183,7 @@ impl Host {
             Cause::Delivered {
                 binding: envelope.binding.clone(),
             },
-            caused_by,
+            staged,
             retried.as_deref(),
             report,
         )
@@ -2102,7 +2191,9 @@ impl Host {
 
     /// Runs `command` once, or, when `retried` is the binding's route, again after each attempt
     /// the route answers with [`Failure::Retry`], up to [`RETRY_ATTEMPTS`] in all; reports the
-    /// attempt that took effect, or the last one, a refused or failed one as `caused_by`.
+    /// attempt that took effect, or the last one, a refused or failed one as caused by the command
+    /// `staged` names. Each attempt is attributed to `cause` ([`Provenance`]): a tick's binding, or
+    /// a delivery's binding and the trigger `staged` names, none known where nothing staged it.
     #[allow(clippy::too_many_arguments)]
     fn attempt(
         &mut self,
@@ -2110,10 +2201,21 @@ impl Host {
         command: &str,
         input: &Map<String, Value>,
         cause: Cause,
-        caused_by: Option<String>,
+        staged: Option<(String, Option<Provenance>)>,
         retried: Option<&Route>,
         report: &mut Report,
     ) -> Result<(), HostError> {
+        let (caused_by, trigger) = staged.unzip();
+        let provenance = match &cause {
+            Cause::Tick { binding } => Provenance::Tick {
+                binding: binding.clone(),
+            },
+            Cause::Delivered { binding } => Provenance::Binding {
+                binding: binding.clone(),
+                trigger: trigger.flatten().map(Box::new),
+            },
+            Cause::Submitted => Provenance::Request(spindle_kernel::Sender::default()),
+        };
         let sink = self
             .components
             .get(component)
@@ -2125,7 +2227,15 @@ impl Host {
             if let Some(route) = retried {
                 sink.retried(&route.binding, Retried::Attempted);
             }
-            let result = self.execute(component, command, input, None, None, &BTreeMap::new())?;
+            let result = self.execute(
+                component,
+                command,
+                input,
+                None,
+                None,
+                &BTreeMap::new(),
+                provenance.clone(),
+            )?;
             let refusal = match &result {
                 Ok(Executed { error: None, .. }) => None,
                 Ok(Executed { outcome, .. }) => Some(Some(outcome.as_str())),
@@ -2509,6 +2619,24 @@ fn readable<'ir>(ir: &'ir EssIr, view: &str) -> Result<(&'ir ResolvedView, Strin
 ///
 /// # Errors
 /// [`HostError::Unsupported`] where none does.
+/// The component whose store holds the instances of `entity`, a qualified entity name.
+fn holding(ir: &EssIr, entity: &str) -> Result<String, HostError> {
+    let declared = ir
+        .entities()
+        .values()
+        .find(|declared| declared.name.to_string() == entity)
+        .ok_or_else(|| HostError::NoEntity(entity.to_owned()))?;
+    owner_of(ir, declared)
+}
+
+/// The civil time a command attributed with `sequence` ran at ([`Origin::sequence`]: its civil
+/// time in microseconds, or one past the last command's), as RFC 3339 in UTC to the
+/// millisecond; `None` past the years RFC 3339 spells.
+fn civil(sequence: u64) -> Option<String> {
+    let at = std::time::SystemTime::UNIX_EPOCH.checked_add(Duration::from_micros(sequence))?;
+    crate::view::instant(at).map(ess_primitives::Rfc3339Instant::to_rfc3339)
+}
+
 fn owner_of(ir: &EssIr, entity: &ResolvedEntity) -> Result<String, HostError> {
     ir.components()
         .values()

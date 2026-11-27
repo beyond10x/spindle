@@ -70,6 +70,7 @@ fn runtime(document: &BTreeMap<String, Vec<String>>) -> spindle_capability::Envi
         provides: document.clone(),
         http: BTreeMap::new(),
         seed: None,
+        decisions: None,
     }
 }
 

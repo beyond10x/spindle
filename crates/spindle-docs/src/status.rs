@@ -443,9 +443,16 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "Seed at start",
-        "run --seed, or the environment's [seed] file, names a JSON array of commands, each with its input, actor, caller and request id, that a served run submits on every start after its stores open: checked against the specification before listening, then one at a time in the file's order beside the listener. Each counts as applied, already there (an existing_instance: outcome, or a request id an earlier applied or already-there entry carried), refused (a declared refusing outcome) or rejected (the host or the kernel refused it before an outcome); each is logged and the rest still run, the counts are in one log line and in /__spindle/metrics, and a seed that ends with a rejected entry stops the run with exit 1. On a --state directory, seed.json records the seed file's digest and how many entries are done: a restart with the same file sends only the entries not yet done, and one with another file exits 1 before listening unless the state holds no row; a store kept elsewhere records nothing, and every start sends the whole seed. A reset drops the entries not yet sent; with no world it submits the seed again before it answers, and with a world it loads that world alone and records every entry done.",
+        "run --seed, or the environment's [seed] file, names a JSON array of commands, each with its input, actor, caller and request id, that a served run submits on every start after its stores open: checked against the specification before listening, then one at a time in the file's order beside the listener. Each counts as applied, already there (an existing_instance: outcome, or a request id an earlier applied or already-there entry carried), refused (a declared refusing outcome) or rejected (the host or the kernel refused it before an outcome); each is logged and the rest still run, the counts are in one log line and in /__spindle/metrics, and a seed that ends with a rejected entry stops the run with exit 1. On a --state directory, seed.json records the seed file's digest and how many entries are done: a restart with the same file sends only the entries not yet done, and one with another file exits 1 before listening unless the state holds no row; a store kept elsewhere records nothing, and every start sends the whole seed. A reset drops the entries not yet sent; with no world it submits the seed again before it answers, and with a world it loads that world alone and records every entry done. GET /__spindle/seed answers whether the seed is running or ended with its counts, and GET /__spindle/ready answers 503 until it has ended and 200 from then on, with or without --observe, so a readiness probe needs no view row.",
         "/docs/concepts/environment-and-admission#a-seed-submitted-at-start",
         "crates/spindle-cli/tests/spindle-cli/seed.rs::a_second_run_on_one_state_applies_nothing_new",
+    ),
+    shipped(
+        "Execution",
+        "External causes bound to a decisions file",
+        "An environment binds external causes to decisions-file and names the file in a [decisions] table; run, on stdin or serving HTTP, answers them from it as from --decisions, which wins over the table. A cause bound to decisions-file with no file named, or to an implementation run does not provide (anything but operator-prompt, decisions-file and a declared [http.<name>] call), exits 1 before anything runs, naming the capability. A [decisions] table no external key binds is refused when the document is read, and play and deploy refuse one.",
+        "/docs/concepts/environment-and-admission#external-causes-answered-from-a-decisions-file",
+        "crates/spindle-cli/tests/spindle-cli/decisions.rs::an_environment_binding_external_to_a_decisions_file_answers_from_it",
     ),
     shipped(
         "Execution",
@@ -485,7 +492,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Conformance",
         "Scenario replay",
-        "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: an entity it arranges with setup is written into the store of the component that owns it, captures feed later steps, view asserts are checked, each act's line names the outcome its command took with its declared error, or its refusal, the first divergent step is named and ends the run, and a specification that declares no component replays as one implied component that owns every domain.",
+        "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: an entity it arranges with setup is written into the store of the component that owns it, captures feed later steps, view asserts are checked, each act's line names the outcome its command took with its declared error, or its refusal, the first divergent step is named and ends the run, an external cause the scenario does not force is answered by --decisions, and a specification that declares no component replays as one implied component that owns every domain.",
         "/docs/concepts/specification",
         "crates/spindle-conformance/tests/spindle-conformance/establish.rs::an_established_row_is_read_by_the_next_command",
     ),
