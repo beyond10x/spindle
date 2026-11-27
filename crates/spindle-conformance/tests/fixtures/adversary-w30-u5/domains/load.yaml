@@ -1,0 +1,45 @@
+domain: shelf.load
+summary: Crates a loader packs under an id the request sends.
+entities:
+  - name: shelf.load.Crate
+    identity:
+      name: crate_id
+      type: String
+    fields:
+      - name: label
+        type: String
+    lifecycle:
+      initial: Packed
+      states: [Packed]
+      terminal: [Packed]
+commands:
+  - name: shelf.load.PackCrate
+    input:
+      - name: crate_id
+        type: String
+      - name: label
+        type: String
+    outcomes:
+      - name: crated
+        creates: shelf.load.Crate
+        instance: crate_id
+        sets:
+          label: input.label
+        emits: [shelf.load.CratePacked]
+        payload:
+          shelf.load.CratePacked: {crate_id: input.crate_id}
+        summary: The crate is packed.
+events:
+  - name: shelf.load.CratePacked
+    fields:
+      - name: crate_id
+        type: String
+views:
+  - name: shelf.load.AllCrates
+    source: shelf.load.Crate
+    consistency: read_your_writes
+    fields:
+      - name: crate_id
+        type: String
+      - name: label
+        type: String
