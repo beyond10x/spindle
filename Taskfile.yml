@@ -47,7 +47,7 @@ tasks:
       - sh scripts/gate-scripts.adversary-test.sh
 
   check:the_release_binary_checks_refuse_what_they_must:
-    desc: scripts/release-linux-binary.sh, the release job's glibc floor, static and image checks, refuses a binary over the floor, one that is not static and an image not pinned by digest, on stub tools; and release.yml's target lists equal its build matrix
+    desc: scripts/release-linux-binary.sh, the release job's glibc floor, static, base image and Spindle image checks, refuses a binary over the floor, one that is not static, an image not pinned by digest, a Containerfile that is not pinned, numeric non-root and copy-only, an image that answers another version, runs as root or answers no request with the secret from outside the container, a manifest list without both architectures and an IMAGES line not pinned by digest, on stub tools; and release.yml's target lists equal its build matrix, its image rows are the gnu rows, and nothing pushes on a pull request
     cmds:
       - sh scripts/release-linux-binary.adversary-test.sh
 
