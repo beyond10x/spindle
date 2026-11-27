@@ -130,9 +130,11 @@ and 1.3. Each requires the other. A plain HTTP request on that port gets no HTTP
 `--tls-client-ca <FILE>`, given with both, requires every client, the proxy in front, to present
 a certificate the PEM CAs of that file signed (mTLS); a client without one, or with one another CA
 signed, fails the handshake. This holds on every route, `/__spindle/live` and `/__spindle/ready`
-included, so with a client CA a probe of the platform checks the process with `exec` or the port
-with `tcpSocket`, not with `httpGet`; with TLS alone an `httpGet` probe sets `scheme: HTTPS`. Off
-loopback mTLS adds to `--trusted-caller-header` and
+included. A platform's `httpGet` probe presents no client certificate, so with a client CA it
+cannot connect, and the probes are `tcpSocket` probes on the port, which show that the listener
+accepts but not what `/__spindle/live` or `/__spindle/ready` answer. The published image holds
+the binary alone, with no shell and no probe command, so an `exec` probe has nothing to run.
+With TLS alone an `httpGet` probe sets `scheme: HTTPS`. Off loopback mTLS adds to `--trusted-caller-header` and
 `--trusted-caller-secret`, which are still required. A file that cannot be read, a file holding
 no certificate or key, and a key that does not match the certificate exit 2 before anything
 listens, with one line naming the flag and the file. Each file is read once at start: a renewed

@@ -735,8 +735,8 @@ pub struct ListenerTls {
     /// Require every client, the proxy in front, to present a certificate one of the PEM CA
     /// certificates in `FILE` signed (mTLS): a client without one, or with one another CA
     /// signed, fails the handshake and gets no answer. This holds on every route,
-    /// `/__spindle/live` and `/__spindle/ready` included, so a platform probe checks the
-    /// process (`exec`) or the port (`tcpSocket`). Requires `--tls-cert` and `--tls-key`.
+    /// `/__spindle/live` and `/__spindle/ready` included: an `httpGet` probe cannot connect, so
+    /// the probes are `tcpSocket` probes on the port. Requires `--tls-cert` and `--tls-key`.
     /// Off loopback `--trusted-caller-header` and `--trusted-caller-secret` are still
     /// required. A file that cannot be read or holds no certificate exits 2 before listening.
     #[arg(
