@@ -65,6 +65,16 @@ are Spindle's releases.
   differ only in their header. Its UI change (an overlay reading its opener's params) does not
   reach Spindle, which builds none of ESS's UI crates (`story:ess-pin-0-99-2`).
 
+### Fixed
+
+- The kernel asks a decider for an external cause only where its answer changes the outcome. A
+  request ESS's interpreter answers the same under every forcing (a present-related refusal or the
+  wrong state, read after an external branch declared before the held-state check) is answered
+  with no decision on hand; before, a decider with no answer turned it into an error.
+  `DecideAdmission` answers `not-provided` for a refusing decision that binds an implementation
+  the environment does not provide, where it errored on a host decider with no answer for
+  `refused` (`story:look-ahead-asks-only-where-it-matters`).
+
 ## [0.23.0] - 2026-11-27
 
 ### Added
