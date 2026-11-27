@@ -174,13 +174,13 @@ Each request carries one event as `spindle-egress/1` JSON:
  "position": 42, "fields": {"order_id": "o-1"}}
 ```
 
-`position` is the position of the event's write in the component's store; it rises with each
-write. `fields` are the event's fields as published.
+`position` is the event's store position, its own place in the component's log; it rises with
+each event, the events of one write included. `fields` are the event's fields as published.
 
 | Case | What happens |
 |---|---|
 | order | one component's events reach a call in the order their commands committed |
-| a failure | a timeout, a failure or a status other than `2xx` is sent again after a pause that doubles up to 5 s, without end; the component's later events to that call wait for it |
+| a failure | a timeout, a failure or a status other than `2xx` is sent again after a pause that doubles up to 5 s, without end; the component's later events to that call wait for it. A `2xx` is decided on its status: its body is not read |
 | a restart | the position up to which the call answered `2xx` is kept in the component's store, and `run` on the same state posts the events after it |
 | at least once | an event answered just before the process is killed may be posted again |
 

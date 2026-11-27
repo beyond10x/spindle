@@ -19,7 +19,9 @@ are Spindle's releases.
   it. An egress naming an event no component publishes, or one of a component kept in `memory`,
   exits 3 before listening; a call named only by an egress is no longer refused as unused.
   `spindle_capability::Environment` gains `egress` and `egress_of`, `spindle_kernel::Store` gains
-  `egress_position` and `egress_posted` (`story:event-egress-webhook`).
+  `egress_position` and `egress_posted`, and `spindle_kernel::Reading` gains
+  `events_placed_after`, each event with its own store position, which an egress posts
+  (`story:event-egress-webhook`).
 
 - `run --stdin` reads JSON lines on stdin where a component is `reached_by: network`, instead of
   serving HTTP: every component runs in the one process on one store and the event bindings fire

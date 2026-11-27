@@ -1023,6 +1023,16 @@ impl<L: Log> Reading for SharedReading<L> {
     }
 
     /// Reads the feed through the store's own pool on a turn, as a scan does.
+    fn events_placed_after(
+        &self,
+        position: u64,
+        limit: usize,
+    ) -> Result<Vec<(u64, Committed)>, StoreError> {
+        let _turn = self.turns.take()?;
+        self.store.placed_after(position, limit)
+    }
+
+    /// Reads the feed through the store's own pool on a turn, as a scan does.
     fn events_head(&self) -> Result<u64, StoreError> {
         let _turn = self.turns.take()?;
         self.store.feed_end()
@@ -1231,7 +1241,8 @@ struct Group {
     outcome: Option<String>,
     /// The instances its `spindle.written` events name, by entity and identity text.
     instances: BTreeMap<(String, String), Value>,
-    events: Vec<crate::Event>,
+    /// Each event of a command, with its own feed position.
+    events: Vec<(u64, crate::Event)>,
 }
 
 impl<L: Log> LogStore<L> {
@@ -1246,6 +1257,20 @@ impl<L: Log> LogStore<L> {
     /// Where the read stops before the feed's end, a reset mark ([`RESET`]) past where it stopped
     /// forgets every event it read: the feed is then read again from the last mark.
     fn committed_after(&self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
+        Ok(self
+            .placed_after(position, limit)?
+            .into_iter()
+            .map(|(_, committed)| committed)
+            .collect())
+    }
+
+    /// [`LogStore::committed_after`], each event with its own feed position
+    /// ([`Reading::events_placed_after`]).
+    fn placed_after(
+        &self,
+        position: u64,
+        limit: usize,
+    ) -> Result<Vec<(u64, Committed)>, StoreError> {
         if limit == 0 {
             return Ok(Vec::new());
         }
@@ -1271,12 +1296,17 @@ impl<L: Log> LogStore<L> {
                     .into_iter()
                     .map(|((entity, _), identity)| (entity, identity))
                     .collect();
-                group.events.into_iter().map(move |event| Committed {
-                    position,
-                    origin: origin.clone(),
-                    outcome: outcome.clone(),
-                    instances: instances.clone(),
-                    event,
+                group.events.into_iter().map(move |(placed, event)| {
+                    (
+                        placed,
+                        Committed {
+                            position,
+                            origin: origin.clone(),
+                            outcome: outcome.clone(),
+                            instances: instances.clone(),
+                            event,
+                        },
+                    )
                 })
             })
             .collect())
@@ -1441,10 +1471,13 @@ impl<L: Log> LogStore<L> {
                         event.name, event.version, event.stream_type, event.stream_id
                     )));
                 };
-                group.events.push(crate::Event {
-                    name: event.name,
-                    payload,
-                });
+                group.events.push((
+                    event.global_seq,
+                    crate::Event {
+                        name: event.name,
+                        payload,
+                    },
+                ));
                 count += 1;
             }
             if !page.has_more {
@@ -2235,6 +2268,14 @@ impl Reading for SqliteReading {
 
     fn events_after(&self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
         self.with(|connection| connection.committed_after(position, limit))
+    }
+
+    fn events_placed_after(
+        &self,
+        position: u64,
+        limit: usize,
+    ) -> Result<Vec<(u64, Committed)>, StoreError> {
+        self.with(|connection| connection.placed_after(position, limit))
     }
 
     fn events_head(&self) -> Result<u64, StoreError> {

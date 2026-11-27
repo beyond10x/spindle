@@ -559,6 +559,27 @@ pub trait Reading: Send + Sync {
         Err(no_events())
     }
 
+    /// The events [`Reading::events_after`] answers, each with its own position in the store's
+    /// log, at most its write's position ([`Committed::position`]): what an egress posts as the
+    /// event's position. The SQLite and PostgreSQL stores answer each event's own feed position,
+    /// rising strictly from one event to the next, within a write too. This default, for a store
+    /// whose events have no position of their own, answers each at its write's, so the events of
+    /// one write share it.
+    ///
+    /// # Errors
+    /// As [`Reading::events_after`].
+    fn events_placed_after(
+        &self,
+        position: u64,
+        limit: usize,
+    ) -> Result<Vec<(u64, Committed)>, StoreError> {
+        Ok(self
+            .events_after(position, limit)?
+            .into_iter()
+            .map(|committed| (committed.position, committed))
+            .collect())
+    }
+
     /// A position at or past every write that committed an event so far, as
     /// [`Store::events_head`] answers it.
     ///

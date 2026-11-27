@@ -237,16 +237,18 @@ pub enum Command {
     /// A served run posts each published event the environment's `[egress]` table binds to an
     /// `[http.<name>]` call (`"<qualified event>" = "<name>"`, the call's method `POST`) to that
     /// call, beside the run's thread: one `spindle-egress/1` JSON body per event (`format`,
-    /// `event`, `component`, `position`, the position of its write in the component's store, and
-    /// `fields`, as published), with the call's URL, timeout, secret and `ca_file` as above. Each
-    /// component's events are posted in commit order, at least once: a post that fails or is
-    /// answered anything but `2xx` is sent again after a pause that doubles up to 5 s, without
-    /// end, and the component's later events to that call wait for it. The position up to which
-    /// they were answered `2xx` is saved in the component's store, and a restart on the same state
-    /// posts the events after it; an event answered just before a SIGKILL may be posted again.
-    /// An egress naming an event no component publishes, or one whose component keeps its state
-    /// in `memory`, exits 3 before listening; a run reading stdin refuses an `[egress]`. A reset
-    /// stops the posting while it empties the stores and goes on with the events after it.
+    /// `event`, `component`, `position`, the event's store position, rising from one event to the
+    /// next, and `fields`, as published), with the call's URL, timeout, secret and `ca_file` as
+    /// above. Each component's events are posted in commit order, at least once: a post that
+    /// fails or is answered anything but `2xx` is sent again after a pause that doubles up to 5 s,
+    /// without end, and the component's later events to that call wait for it; a `2xx` is decided
+    /// on the status alone, its body not read. The position up to which they were answered `2xx`
+    /// is saved in the component's store, and a restart on the same state posts the events after
+    /// it; an event answered just before a SIGKILL may be posted again. On a signal the posting
+    /// stops after the post under way. An egress naming an event no component publishes, or one
+    /// whose component keeps its state in `memory`, exits 3 before listening; a run reading stdin
+    /// refuses an `[egress]`. A reset stops the posting while it empties the stores and goes on
+    /// with the events after it.
     ///
     /// `POST /api/reset` may carry a world as its JSON body, each key optional: `{"rows":
     /// [{"entity", "identity", "state", "fields"}], "decisions": {...}, "mint": <seed>}`. Every

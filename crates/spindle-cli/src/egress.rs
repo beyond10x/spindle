@@ -3,17 +3,20 @@
 //! resumes after a restart (`story:event-egress-webhook`).
 //!
 //! Each POST carries one event as a `spindle-egress/1` JSON object ([`FORMAT`]): `format`,
-//! `event` (the qualified name), `component`, `position` (the position of its write in the
-//! component's store) and `fields` (the event's fields as published). The call is made as an
-//! external cause's is ([`Call`]): its URL, timeout, secret and `ca_file`, over verified TLS or
-//! `http://` on loopback only.
+//! `event` (the qualified name), `component`, `position` (the event's store position, its own
+//! place in the component's log, rising strictly from one event to the next, the events of one
+//! write included: [`spindle_kernel::Reading::events_placed_after`]) and `fields` (the event's
+//! fields as published). The call is made as an external cause's is ([`Call`]): its URL, timeout,
+//! secret and `ca_file`, over verified TLS or `http://` on loopback only, a post decided on the
+//! status alone ([`Call::post`]).
 //!
 //! One lane per component and call reads the component's committed events through a reading
-//! handle of its own ([`spindle_kernel::Reading::events_after`]), on a thread of its own, and
-//! posts those bound to its call in order. A post that fails, or that is answered anything but
-//! `2xx`, is sent again after a pause that doubles from [`FIRST_PAUSE`] up to [`BACKOFF_CAP`],
-//! without end, and the lane's later events wait for it. Once every bound event of a write was
-//! answered `2xx`, the write's position is the lane's cursor: the lane hands it to the run's
+//! handle of its own ([`spindle_kernel::Reading::events_placed_after`]), on a thread of its
+//! own, and posts those bound to its call in order. A post that fails, or that is answered
+//! anything but `2xx`, is sent again after a pause that doubles from [`FIRST_PAUSE`] up to
+//! [`BACKOFF_CAP`], without end, and the lane's later events wait for it. A stopped lane
+//! leaves after the post under way. Once every bound event of a write was answered `2xx`, the
+//! write's position is the lane's cursor: the lane hands it to the run's
 //! thread, which saves it in the component's own log ([`spindle_kernel::Store::egress_posted`],
 //! a reserved `spindle:log` stream that is no published event) between two exchanges, and once
 //! more as the run ends. A restart reads it back and posts the events after it, so an event
@@ -395,7 +398,7 @@ impl Delivery {
         };
         let mut unread = false;
         while !self.stop.load(Ordering::SeqCst) {
-            let page = match self.reading.events_after(cursor, PAGE) {
+            let page = match self.reading.events_placed_after(cursor, PAGE) {
                 Ok(page) => {
                     unread = false;
                     page
@@ -423,16 +426,19 @@ impl Delivery {
                 continue;
             }
             let mut posted = false;
-            for (index, committed) in page.iter().enumerate() {
+            for (index, (placed, committed)) in page.iter().enumerate() {
                 if self.events.contains(&committed.event.name) {
-                    if !self.post(&runtime, committed) {
+                    // A stopped lane leaves its page after the post under way: the rest is
+                    // posted after the next start, from the cursor saved.
+                    if self.stop.load(Ordering::SeqCst) || !self.post(&runtime, *placed, committed)
+                    {
                         return;
                     }
                     posted = true;
                 }
                 let last_of_write = page
                     .get(index + 1)
-                    .is_none_or(|next| next.position != committed.position);
+                    .is_none_or(|(_, next)| next.position != committed.position);
                 if last_of_write {
                     cursor = committed.position;
                     if posted {
@@ -448,13 +454,14 @@ impl Delivery {
         }
     }
 
-    /// Posts `committed` until the call answers `2xx`; `false` where the lane was stopped first.
-    fn post(&self, runtime: &tokio::runtime::Runtime, committed: &Committed) -> bool {
+    /// Posts `committed`, at its own store position `placed`, until the call answers `2xx`;
+    /// `false` where the lane was stopped first.
+    fn post(&self, runtime: &tokio::runtime::Runtime, placed: u64, committed: &Committed) -> bool {
         let body = serde_json::json!({
             "format": FORMAT,
             "event": committed.event.name,
             "component": self.component,
-            "position": committed.position,
+            "position": placed,
             "fields": committed.event.payload,
         })
         .to_string();
@@ -466,7 +473,7 @@ impl Delivery {
                     "{} of {} at position {} was not posted: {why}; posting it again in {} ms",
                     committed.event.name,
                     self.component,
-                    committed.position,
+                    placed,
                     pause.as_millis()
                 ))
                 .field("component", self.component.as_str())
