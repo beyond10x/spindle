@@ -1507,6 +1507,11 @@ impl Surface {
     /// `ingress.network` is bound to, is [`HTTP_LOOPBACK`](crate::HTTP_LOOPBACK); for any other
     /// implementation the surface is returned as it is, and no console route exists.
     ///
+    /// A surface never given this call has no console route either: each console path then
+    /// resolves as any other path, to a route that carries it or to `404`, whatever secret the
+    /// request carries. `run --console off` serves such a surface, as `run` does by default where
+    /// it listens off loopback (`exposed`, feature `listener`).
+    ///
     /// # Errors
     /// [`SurfaceError::Shadowed`] when a route the binding or ESS publishes has a path a console
     /// route also has, under any method: the console never shadows one.

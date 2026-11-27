@@ -69,6 +69,11 @@ run exit 1 after the last line. A stdin line `{"arrange": [<row>]}` writes rows 
 and a command's input may name what an earlier line answered, such as the identity line 1 minted,
 with `{"$line": 1, "pointer": "/events/0/payload/<field>"}`.
 
+Where `run` serves HTTP, it also serves the console routes `POST /api/reset`, `GET /api/events`,
+`GET /api/model` and `GET /api/served`. `--console off` (or `SPINDLE_SETTING_CONSOLE=off`)
+turns them off: each answers `404` as an unrouted path does, whatever secret the request carries.
+A run whose `--address` is off loopback serves them only with `--console on`.
+
 Where `run` serves HTTP, `--seed <file>` (or `[seed] file` in the environment document) submits a
 JSON array of commands, each with its input, actor, caller and request id, on every start: checked
 before listening, then one at a time in order beside the listener. An outcome declared

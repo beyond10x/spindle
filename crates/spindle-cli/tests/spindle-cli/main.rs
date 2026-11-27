@@ -49,6 +49,7 @@ mod clock_and_mint;
 mod concurrent_reads;
 mod conform;
 mod console;
+mod console_off;
 mod decisions;
 mod deletes;
 mod deploy;

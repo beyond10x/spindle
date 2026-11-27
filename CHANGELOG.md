@@ -6,6 +6,16 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- `run --console <on|off>` (or the setting `SPINDLE_SETTING_CONSOLE`) turns the console routes
+  (`POST /api/reset`, `GET /api/events`, `GET /api/model`, `GET /api/served`) on or off on every
+  listener. Off, each answers `404` as an unrouted path does, whatever secret the request carries,
+  and the routes the specification publishes and `/__spindle/` are served as before. Without
+  either, a run listening on loopback serves the console as before, and a run whose `--address`
+  is off loopback no longer serves it, where it answered every request carrying the proxy's
+  secret (`story:console-routes-off`).
+
 ## [0.22.0] - 2026-11-27
 
 ### Added
