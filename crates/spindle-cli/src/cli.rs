@@ -1,7 +1,7 @@
 //! The clap definitions of `b10x-spindle`.
 
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 use clap::builder::TypedValueParser as _;
 use clap::{Parser, Subcommand};
@@ -176,7 +176,8 @@ pub enum Command {
     /// answers `{"rows": [...]}`. Beside those it serves a model console's routes: `GET
     /// /api/model` (`{"ir", "subjects"}`, the IR as `ess specify compile --format json` prints it
     /// and each outcome's subject), `GET /api/events` (`{"events": [...]}`, every event published
-    /// so far, in order; with `?after=<cursor>&limit=<n>`, `{"events": [...], "next": <cursor>}`,
+    /// so far, in order, each `{"component", "command", "at", "event", "payload"}`, `at` the time
+    /// its command ran at; with `?after=<cursor>&limit=<n>`, `{"events": [...], "next": <cursor>}`,
     /// at most `n` events after the cursor in that order and the cursor after the last of them,
     /// either parameter optional: no `after` reads from the first event, `limit` is 100 by
     /// default and 1,000 at most, a larger one answered with 1,000, and a malformed `after` or
@@ -185,11 +186,13 @@ pub enum Command {
     /// before a restart, a cursor of the new run that reads on from the same place),
     /// `GET /api/served`
     /// (`{"operations": [...]}`, one row per command and view routed, `served` true or false and,
-    /// for one not served, the `reason` the startup line below prints) and `POST /api/reset`
-    /// (empties every store, `{"emptied": [...]}`); a
+    /// for one not served, the `reason` the startup line below prints), `POST /api/reset`
+    /// (empties every store, `{"emptied": [...]}`), and `GET /api/clock` and `POST /api/clock`
+    /// (`{"at": "<RFC 3339>"}`: where the `--clock` clock stands, and a step forward to that
+    /// instant, below); a
     /// route the binding or ESS publishes at one of those paths exits 1 before listening.
-    /// Commands and the reset run one at a time, in arrival order. Reads are answered beside
-    /// them, each on a thread of its own, from the state the last finished command left: a view,
+    /// Commands, the reset and the clock routes run one at a time, in arrival order. Reads are
+    /// answered beside them, each on a thread of its own, from the state the last finished command left: a view,
     /// `GET /api/model`, `GET /api/events`, `GET /api/served` and every `GET /__spindle/` route.
     ///
     /// A command or view this ingress cannot route (such as a view a binding answers other than
@@ -235,12 +238,15 @@ pub enum Command {
     /// listed and counted with the source `call`, or `unanswered` where its call failed.
     ///
     /// `POST /api/reset` may carry a world as its JSON body, each key optional: `{"rows":
-    /// [{"entity", "identity", "state", "fields"}], "decisions": {...}, "mint": <seed>}`. Every
+    /// [{"entity", "identity", "state", "fields"}], "decisions": {...}, "mint": <seed>, "clock":
+    /// "<RFC 3339>"}`. Every
     /// store is emptied, then each row, checked by ESS as a scenario's setup is, written where its
     /// entity rests. `decisions`, in the decisions file's shape, answers external causes before
     /// `--decisions` and `--answer-default` do, and `mint` seeds every identity and generated value
     /// minted, so the same requests mint the same identities; both hold until the next reset, and
-    /// a world without `mint` mints from `--mint-seed` again, from its first draw. A
+    /// a world without `mint` mints from `--mint-seed` again, from its first draw. `clock` moves
+    /// the `--clock` clock forward to that instant; on a run without `--clock` the reset is
+    /// refused `409`, and one before the clock's instant `400`, each emptying nothing. A
     /// world that does not validate is refused `400` and changes nothing.
     ///
     /// An event binding with `on_failure: retry` runs its command again at once after each
@@ -497,14 +503,21 @@ pub enum Command {
         /// Start the run on a manual clock standing at this RFC 3339 instant
         /// (`2026-02-01T00:00:00Z`, a fraction of a second and an offset read as given) instead of
         /// the system clock: every guard and view that reads `now`, and every generated
-        /// `Timestamp`, reads it. Reading stdin, a line's `"at": "<RFC 3339>"` moves the clock
+        /// `Timestamp`, reads it. The clock holds an instant to the millisecond: every instant
+        /// that sets it (this one, `"at"`, `POST /api/clock`, a reset world's `"clock"`) is
+        /// floored to the millisecond, and one before 1970-01-01T00:00:00Z is refused (here the
+        /// run exits 2). Reading stdin, a line's `"at": "<RFC 3339>"` moves the clock
         /// forward to that instant before its command runs; an instant before the clock's, or
         /// `"at"` on a run without `--clock`, rejects that line, and a rejected line leaves the
         /// clock where it stood.
-        /// Served over HTTP, and with `--scenario` (each replay's host; ESS's runner keeps its own
-        /// clock for the document), the clock stands at the instant for the whole run. No run
-        /// fires a periodic binding.
-        #[arg(long, value_name = "RFC3339", value_parser = instant)]
+        /// Served over HTTP, `POST /api/clock` with `{"at": "<RFC 3339>"}` moves the clock forward
+        /// to that instant between commands and answers `{"at"}`, and `GET /api/clock` answers
+        /// where it stands; an instant before the clock's is refused `409` and moves nothing, and
+        /// without `--clock` both answer `409`. A reset world's `"clock"` moves it as well. With
+        /// `--scenario` (each replay's host; ESS's runner keeps its own clock for the document),
+        /// the clock stands at the instant for the whole run. No run fires a periodic binding, and
+        /// moving the clock fires none.
+        #[arg(long, value_name = "RFC3339", value_parser = clock)]
         clock: Option<SystemTime>,
         /// Mint every identity and generated value from this seed, from the first command on:
         /// two runs given one seed and the same commands mint the same identities, and an
@@ -801,37 +814,23 @@ pub fn console_served(switch: Option<Switch>, address: std::net::IpAddr) -> bool
 
 /// The instant an RFC 3339 `date-time` names (`2026-02-01T00:00:00Z`, `2026-02-01T01:00:00+01:00`,
 /// `2026-02-01T00:00:00.5Z`), its offset and its fraction of a second included, read by ESS's own
-/// reader ([`ess_primitives::Rfc3339Instant`]): `--clock`, and a stdin line's `"at"`.
+/// reader ([`ess_primitives::Rfc3339Instant`]).
 ///
 /// # Errors
 /// A text that is no RFC 3339 `date-time`.
 pub fn instant(text: &str) -> Result<SystemTime, String> {
-    let parsed = ess_primitives::Rfc3339Instant::parse_rfc3339(text)
-        .ok_or_else(|| format!("not an RFC 3339 instant such as 2026-02-01T00:00:00Z: {text}"))?;
-    let seconds = parsed.epoch_seconds();
-    let nanos = nanos(&parsed.to_rfc3339());
-    let whole = Duration::from_secs(seconds.unsigned_abs());
-    let second = if seconds >= 0 {
-        UNIX_EPOCH + whole
-    } else {
-        UNIX_EPOCH - whole
-    };
-    Ok(second + Duration::from_nanos(nanos))
+    spindle_host::instant(text)
+        .ok_or_else(|| format!("not an RFC 3339 instant such as 2026-02-01T00:00:00Z: {text}"))
 }
 
-/// The nanoseconds of the fraction of a second `spelled` names, an instant as
-/// [`ess_primitives::Rfc3339Instant::to_rfc3339`] spells it: in UTC, its fraction's trailing zeros
-/// trimmed (`.5Z` is 500 000 000), 0 without a fraction. The fraction is the one part the instant
-/// answers only in its spelling.
-fn nanos(spelled: &str) -> u64 {
-    let Some((_, fraction)) = spelled.split_once('.') else {
-        return 0;
-    };
-    let digits = fraction.trim_end_matches('Z');
-    if digits.is_empty() || digits.len() > 9 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
-        return 0;
-    }
-    format!("{digits:0<9}").parse().unwrap_or(0)
+/// The instant an RFC 3339 `date-time` sets the clock to ([`spindle_host::clock_instant`]): as
+/// [`instant`] reads it, floored to the millisecond the run answers its clock in: `--clock`, and a
+/// stdin line's `"at"`.
+///
+/// # Errors
+/// A text that is no RFC 3339 `date-time`, or an instant before 1970-01-01T00:00:00Z.
+pub fn clock(text: &str) -> Result<SystemTime, String> {
+    spindle_host::clock_instant(text)
 }
 
 /// A JSON object, as `--fixed-caller` reads it.

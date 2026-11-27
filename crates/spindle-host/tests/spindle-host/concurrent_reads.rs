@@ -133,6 +133,7 @@ fn step(draw: &mut Draw, host: &mut Host) -> String {
                 rows,
                 answers: None,
                 mint: None,
+                clock: None,
             })
             .expect("the reset loads its world");
             return done;

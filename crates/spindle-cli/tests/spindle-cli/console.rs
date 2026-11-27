@@ -168,10 +168,24 @@ fn rows(served: &Served, view: &str) -> Vec<Value> {
 fn events(served: &Served) -> Vec<Value> {
     let (status, body) = exchange(served.address, "GET", "/api/events", None);
     assert_eq!(status, 200, "{body}");
+    // Each record carries its command's time on the system clock (`story:served-clock-steps`),
+    // which no expected record here spells: it is checked and left out.
     body["events"]
         .as_array()
         .unwrap_or_else(|| panic!("the events route answers events: {body}"))
-        .clone()
+        .iter()
+        .map(|record| {
+            let mut record = record.clone();
+            let at = record
+                .as_object_mut()
+                .and_then(|record| record.remove("at"));
+            assert!(
+                at.as_ref().is_some_and(Value::is_string),
+                "every record carries at: {body}"
+            );
+            record
+        })
+        .collect()
 }
 
 /// What `ess specify compile --format json` prints for the fixture.
