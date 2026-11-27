@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:event-egress-webhook
 kind: story
-status: proposed
+status: active
 title: Published events leave to a webhook, at least once and in commit order
 summary: Each published event the environment binds to an [http.<name>] call is POSTed at least once, in commit order per component store, and delivery resumes after a restart.
 tags:
@@ -62,9 +62,10 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 11
+revision: 12
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T11:41:53Z", actor: "human:operator", revision: 11}
+- {from: "proposed", to: "active", at: "2026-11-27T13:07:33Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"review_outcome":4}}}
 ---
 # Published events leave to a webhook, at least once and in commit order
 

@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:spindle-image-published
 kind: story
-status: proposed
+status: active
 title: The release publishes a Spindle image with its digest
 relations:
 - serves: vision:spindle
@@ -28,9 +28,10 @@ scope:
   path: scripts/release-linux-binary.sh
 - confidence: cited
   path: website/docs/getting-started.md
-revision: 16
+revision: 17
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T09:56:33Z", actor: "human:operator", revision: 6}
+- {from: "proposed", to: "active", at: "2026-11-27T13:07:32Z", actor: "human:operator", revision: 17, decided_on: {"recorded":{"review_outcome":4}}}
 ---
 # The release publishes a Spindle image with its digest
 

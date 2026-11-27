@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:dead-letters-kept-and-replayed
 kind: story
-status: proposed
+status: active
 title: A bound command that exhausts its attempts is kept as a dead letter and can be replayed
 summary: A bound or periodic command whose last attempt failed or was refused, not escalated, is kept with its input, survives a restart, is listed and can be replayed once.
 relations:
@@ -75,9 +75,10 @@ scope:
   path: website/docs/concepts/components-and-bindings.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 9
+revision: 10
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T11:41:53Z", actor: "human:operator", revision: 9}
+- {from: "proposed", to: "active", at: "2026-11-27T13:07:34Z", actor: "human:operator", revision: 10, decided_on: {"recorded":{"review_outcome":4}}}
 ---
 # A bound command that exhausts its attempts is kept as a dead letter and can be replayed
 

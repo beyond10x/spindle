@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:postgres-lane-kills-slow-tests
 kind: story
-status: proposed
+status: active
 title: The PostgreSQL lane kills a test at 60 s and ends within 2 minutes
 summary: task check:postgres runs under cargo-nextest with the repository slow-timeout, prints its ten slowest tests and fails over 120 s.
 relations:
@@ -15,9 +15,10 @@ scope:
   path: .github/workflows/ci.yml
 - confidence: cited
   path: Taskfile.yml
-revision: 3
+revision: 4
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T11:41:53Z", actor: "human:operator", revision: 3}
+- {from: "proposed", to: "active", at: "2026-11-27T13:07:32Z", actor: "human:operator", revision: 4, decided_on: {"recorded":{"review_outcome":4}}}
 ---
 # The PostgreSQL lane kills a test at 60 s and ends within 2 minutes
 

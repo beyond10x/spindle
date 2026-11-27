@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:spec-change-over-stored-rows
 kind: story
-status: proposed
+status: active
 title: A specification change over a durable store is refused when its stored rows do not fit
 summary: A run on a store an earlier specification wrote starts when its rows stay readable and otherwise exits 3 naming each entity and field.
 relations:
@@ -56,9 +56,10 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 15
+revision: 16
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T09:56:32Z", actor: "human:operator", revision: 3}
+- {from: "proposed", to: "active", at: "2026-11-27T13:07:33Z", actor: "human:operator", revision: 16, decided_on: {"recorded":{"review_outcome":4}}}
 ---
 # A specification change over a durable store is refused or migrated
 
