@@ -6,9 +6,11 @@
 //! ingress does not serve; `DiscardNote`, whose `input_absent:` branch the kernel does not
 //! run; and `WriteNote`, which runs. `tests/fixtures/unservable` holds only the first two.
 //! `tests/fixtures/retried` binds an event to a command with `on_failure: retry`, and the command
-//! it invokes fails. `tests/fixtures/list-parameter` declares `WriteNote`, which runs, `AllNotes`,
-//! which the host reads, and `NotesTagged`, whose `List<String>` parameter the query string
-//! carries as its key repeated once per element (`story:view-list-query-parameters`).
+//! it invokes fails. `tests/fixtures/stdin-bindings/bounded.yaml` binds an event to a command
+//! with a bounded retry, which the channel does not carry. `tests/fixtures/list-parameter`
+//! declares `WriteNote`, which runs, `AllNotes`, which the host reads, and `NotesTagged`, whose
+//! `List<String>` parameter the query string carries as its key repeated once per element
+//! (`story:view-list-query-parameters`).
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -22,7 +24,7 @@ use serde_json::{Value, json};
 const PARTIAL: &str = "crates/spindle-cli/tests/fixtures/partial";
 const UNSERVABLE: &str = "crates/spindle-cli/tests/fixtures/unservable";
 const RETRIED: &str = "crates/spindle-cli/tests/fixtures/retried";
-const ESCALATE: &str = "crates/spindle-cli/tests/fixtures/adversary_escalate";
+const BOUNDED: &str = "crates/spindle-cli/tests/fixtures/stdin-bindings/bounded.yaml";
 const INGRESS: &str = "crates/spindle-cli/tests/fixtures/ingress";
 const LIST_PARAMETER: &str = "crates/spindle-cli/tests/fixtures/list-parameter";
 const LAPTOP: &str = "examples/environments/laptop.toml";
@@ -493,20 +495,20 @@ fn retry_bindings_start_and_retry_without_drop_retries() {
 
 #[test]
 fn the_drop_retries_hint_is_given_only_for_a_retry_refusal() {
-    let (status, stdout, stderr) = refused(ESCALATE, &[]);
+    let (status, stdout, stderr) = refused(BOUNDED, &[]);
     assert!(!status.success(), "{status:?} {stdout} {stderr}");
     assert!(
-        stderr.contains("audit-note") && stderr.contains("Escalate"),
-        "the escalate binding is refused first, by name: {stderr}"
+        stderr.contains("file-ticket") && stderr.contains("bounded retry"),
+        "the bounded retry binding is refused, by name: {stderr}"
     );
     assert!(
         !stderr.contains("--drop-retries"),
-        "the flag does not lift an escalate refusal, so it is not offered: {stderr}"
+        "the flag does not lift a bounded retry's refusal, so it is not offered: {stderr}"
     );
-    let (status, stdout, stderr) = refused(ESCALATE, &["--drop-retries"]);
+    let (status, stdout, stderr) = refused(BOUNDED, &["--drop-retries"]);
     assert!(!status.success(), "{status:?} {stdout} {stderr}");
     assert!(
-        stderr.contains("audit-note") && !stderr.contains("--drop-retries runs"),
+        stderr.contains("file-ticket") && !stderr.contains("--drop-retries runs"),
         "{stderr}"
     );
 }

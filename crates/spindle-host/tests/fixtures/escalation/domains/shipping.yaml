@@ -1,0 +1,70 @@
+domain: depot.shipping
+summary: Shipments; the carrier may find the order cancelled, no address on file, the parcel too heavy, or itself not collecting.
+entities:
+  - name: depot.shipping.Shipment
+    identity:
+      name: order_id
+      type: String
+    fields: []
+    lifecycle:
+      initial: Shipped
+      states: [Shipped]
+      terminal: [Shipped]
+errors:
+  - name: depot.shipping.Cancelled
+    summary: The order was cancelled before it shipped.
+    fields: []
+  - name: depot.shipping.NoAddress
+    summary: No address is on file for the order.
+    fields: []
+  - name: depot.shipping.Oversize
+    summary: The parcel is too heavy for the carrier.
+    fields: []
+  - name: depot.shipping.Busy
+    summary: The carrier is not collecting now.
+    fields: []
+commands:
+  - name: depot.shipping.Ship
+    input:
+      - name: order_id
+        type: String
+    outcomes:
+      - name: cancelled
+        external: the order was cancelled before it shipped
+        error: depot.shipping.Cancelled
+        summary: Nothing to ship; trying again would find it cancelled too.
+      - name: no-address
+        external: no address is on file for the order
+        error: depot.shipping.NoAddress
+        summary: A person has to find the address.
+      - name: oversize
+        external: the parcel is too heavy for the carrier
+        error: depot.shipping.Oversize
+        summary: A person has to arrange another carrier.
+      - name: busy
+        external: the carrier is not collecting now
+        error: depot.shipping.Busy
+        summary: The carrier may collect later.
+      - name: shipped
+        creates: depot.shipping.Shipment
+        instance: order_id
+        emits: [depot.shipping.Shipped]
+        payload:
+          depot.shipping.Shipped: {order_id: input.order_id}
+        summary: The order ships.
+events:
+  - name: depot.shipping.Shipped
+    fields:
+      - name: order_id
+        type: String
+  - name: depot.shipping.ShipmentStuck
+    fields:
+      - name: order_id
+        type: String
+views:
+  - name: depot.shipping.Shipments
+    source: depot.shipping.Shipment
+    consistency: read_your_writes
+    fields:
+      - name: order_id
+        type: String

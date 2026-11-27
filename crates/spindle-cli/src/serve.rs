@@ -12,7 +12,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use ess_gen::http::Binding;
 use spindle_capability::{Capability, Environment};
-use spindle_host::{Cause, Clock, Host, HostError, ManualClock, Retries, SystemClock};
+use spindle_host::{
+    Cause, Clock, Escalated, Escalation, Host, HostError, ManualClock, Retries, SystemClock,
+};
 use spindle_ingress::console::{self, Worlds};
 use spindle_ingress::{
     Answer, Caller, Console, Exchange, Listener, Recorder, SeedState, Surface, Unfixed,
@@ -607,7 +609,9 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             exchange.respond(answer);
             continue;
         }
-        for failed in exchange.serve_with(&mut host, &worlds) {
+        let failures = exchange.serve_with(&mut host, &worlds);
+        let mut escalations = host.take_escalated();
+        for failed in failures {
             let bound = match &failed.cause {
                 Cause::Delivered { binding } | Cause::Tick { binding } => Some(binding.as_str()),
                 Cause::Submitted => None,
@@ -618,8 +622,22 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             } else {
                 String::new()
             };
+            // The escalation of this attempt, where its binding escalated it rather than drop it.
+            let escalated = escalations
+                .iter()
+                .position(|escalated| {
+                    escalated.outcome.is_none()
+                        && Some(escalated.binding.as_str()) == bound
+                        && escalated.component == failed.component
+                        && escalated.command == failed.command
+                })
+                .map(|at| escalations.remove(at));
+            let fate = match &escalated {
+                Some(escalated) => escalation(escalated),
+                None => "dropped".to_owned(),
+            };
             let mut line = log::warn(format!(
-                "{} did not run {} ({binding}), dropped{attempts}: {}",
+                "{} did not run {} ({binding}), {fate}{attempts}: {}",
                 failed.component, failed.command, failed.error
             ))
             .field("component", failed.component.as_str())
@@ -630,6 +648,20 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             line.field("attempts", failed.attempts)
                 .field("error", failed.error.as_str())
                 .write();
+        }
+        for escalated in escalations {
+            let refusal = escalated.outcome.as_deref().unwrap_or("a failure");
+            log::warn(format!(
+                "{} refused {} ({}) with {refusal}, {}",
+                escalated.component,
+                escalated.command,
+                escalated.binding,
+                escalation(&escalated)
+            ))
+            .field("component", escalated.component.as_str())
+            .field("command", escalated.command.as_str())
+            .field("binding", escalated.binding.as_str())
+            .write();
         }
     };
     // Every answer handed back is written, and each request still queued is answered 503, before
@@ -666,6 +698,18 @@ fn reported(surface: &Surface) -> Vec<(String, Option<&ess_http::Operation>)> {
             (line, operation)
         })
         .collect()
+}
+
+/// What a served run says an escalation did: published its event, or, unmet, published nothing,
+/// naming the binding, the event and what the command's input lacks.
+fn escalation(escalated: &Escalated) -> String {
+    match &escalated.escalation {
+        Escalation::Published(_) => format!("escalated into {}", escalated.event),
+        Escalation::Unmet(why) => format!(
+            "escalation into {} unmet, nothing published: {why}",
+            escalated.event
+        ),
+    }
 }
 
 /// How long the run waits, once it stops, for the answers it handed back to be written.

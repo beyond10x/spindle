@@ -43,8 +43,12 @@ pub struct Route {
     /// universal view of the table, and only [`Self::answer`] says what answers one refusal.
     pub on_failure: Failure,
     /// The policy chosen per refusal of the command (`on_refusal`), where the binding declares
-    /// one: each `drop` or an unbounded `retry`.
+    /// one: each `drop`, an unbounded `retry` or `escalate`.
     pub on_refusal: Option<ResolvedRefusalPolicy>,
+    /// The event an escalation publishes, where the binding escalates some failure (`on_failure:
+    /// {escalate: ...}`, or the `escalate:` entry of [`Self::on_refusal`]); [`Self::escalate`]
+    /// makes it. [`Self::to`] publishes it.
+    pub escalation: Option<String>,
     /// The binding's payload condition (`when.where`), decided by [`Self::holds`].
     condition: Option<ResolvedBindingCondition>,
     rules: Vec<Rule>,
@@ -117,6 +121,20 @@ pub enum RouteError {
         /// The components that hold it.
         found: Vec<String>,
     },
+    /// The binding escalates into an event that the component accepting its command, which
+    /// publishes the escalation, does not publish.
+    #[error(
+        "binding {binding}: it escalates into {event}, which {component}, the component that runs \
+         its command, does not publish"
+    )]
+    Unpublished {
+        /// The binding.
+        binding: String,
+        /// The escalation event.
+        event: String,
+        /// The component that accepts the binding's command.
+        component: String,
+    },
 }
 
 /// Why an event did not map onto its command.
@@ -151,6 +169,18 @@ pub enum MappingError {
         /// Why it is undecided.
         reason: String,
     },
+    /// The refused command's input does not make the binding's escalation event: it lacks a
+    /// required field of the event, or holds one that is no value of the field's type. Nothing is
+    /// published; ESS's interpreter fills a placeholder there, which a runtime does not.
+    #[error("binding {binding}: the escalation event {event} is unmet: {reason}")]
+    EscalationUnmet {
+        /// The binding.
+        binding: String,
+        /// The escalation event.
+        event: String,
+        /// What the input lacks.
+        reason: String,
+    },
 }
 
 impl Router {
@@ -158,10 +188,12 @@ impl Router {
     ///
     /// A periodic binding is the timer's and is skipped. A binding that uses anything the channel
     /// does not carry is refused whole, so a specification never runs with part of a binding:
-    /// a delivery context, a selection, a bounded retry, an escalation (universal or chosen per
-    /// refusal), or a mapping source other than `event.<field>` or a literal. A policy chosen per
-    /// refusal whose entries drop or retry without a bound is carried ([`Route::on_refusal`]), and
-    /// so is a `where` condition ([`Route::holds`]). A mapping
+    /// a delivery context, a selection, a bounded retry, or a mapping source other than
+    /// `event.<field>` or a literal. A policy chosen per refusal whose entries drop, retry without a
+    /// bound or escalate is carried ([`Route::on_refusal`]), and so are a universal escalation
+    /// ([`Route::escalate`]) and a `where` condition ([`Route::holds`]). A binding that escalates
+    /// into an event the component accepting its command does not publish is
+    /// [`RouteError::Unpublished`]. A mapping
     /// across a declared conversion is carried, its value checked when it is mapped, against a copy of
     /// `ir` this router holds; [`Self::from_shared`] holds no copy.
     pub fn from_ir(ir: &EssIr) -> Result<Self, RouteError> {
@@ -206,14 +238,34 @@ impl Router {
         Ok(Self { routes, publishes })
     }
 
-    /// These routes with every `on_failure: retry`, and every policy chosen per refusal, carried
-    /// as `on_failure: drop`: an envelope whose send fails is dropped, never sent again, and every
-    /// refusal answers [`Failure::Drop`].
+    /// These routes with every retry carried as a drop: `on_failure: retry` as `on_failure: drop`,
+    /// so an envelope whose send fails is dropped, never sent again, and each `retry` entry of a
+    /// policy chosen per refusal as `drop`. Every escalation is kept: a refusal the policy
+    /// escalates still answers [`Failure::Escalate`], and every other answers [`Failure::Drop`].
     #[must_use]
     pub fn dropping_retries(mut self) -> Self {
         for route in &mut self.routes {
-            if route.on_failure == Failure::Retry || route.on_refusal.is_some() {
+            if route.on_failure == Failure::Retry && route.on_refusal.is_none() {
                 route.on_failure = Failure::Drop;
+            }
+            let Some(policy) = &mut route.on_refusal else {
+                continue;
+            };
+            for action in policy
+                .refusals
+                .iter_mut()
+                .map(|rule| &mut rule.action)
+                .chain(std::iter::once(&mut policy.fallback))
+            {
+                if matches!(action, ResolvedRefusalAction::Retry { .. }) {
+                    *action = ResolvedRefusalAction::Drop;
+                }
+            }
+            route.on_failure = policy.fallback.word();
+            if policy
+                .actions()
+                .all(|action| *action == ResolvedRefusalAction::Drop)
+            {
                 route.on_refusal = None;
             }
         }
@@ -269,6 +321,70 @@ impl Route {
                 .any(|action| matches!(action, ResolvedRefusalAction::Retry { .. })),
             None => self.on_failure == Failure::Retry,
         }
+    }
+
+    /// The escalation event of an attempt with `input` that did not take effect, where
+    /// [`Self::answer`] answers it with [`Failure::Escalate`]; `None` where it answers otherwise.
+    ///
+    /// Its payload is each field of the event that `input` holds, as ESS's interpreter takes it
+    /// from the failed attempt's input (`interpret/bindings.rs`, `escalate`), checked against the
+    /// field's declared type in `ir`. An optional field `input` does not hold is left out; a
+    /// required one, or a value of another type, is [`MappingError::EscalationUnmet`], where the
+    /// interpreter fills a placeholder: the event is not published.
+    pub fn escalate(
+        &self,
+        ir: &EssIr,
+        refusal: Option<&str>,
+        input: &Map<String, Value>,
+    ) -> Option<Result<Event, MappingError>> {
+        let event = match &self.on_refusal {
+            Some(policy) => {
+                let outcome = refusal.and_then(|refusal| OutcomeName::new(refusal).ok());
+                match policy.select(outcome.as_ref()) {
+                    ResolvedRefusalAction::Escalate { emits } => emits.to_string(),
+                    _ => return None,
+                }
+            }
+            None if self.on_failure == Failure::Escalate => self.escalation.clone()?,
+            None => return None,
+        };
+        let unmet = |reason: String| MappingError::EscalationUnmet {
+            binding: self.binding.clone(),
+            event: event.clone(),
+            reason,
+        };
+        let Some(declared) = ir
+            .events()
+            .iter()
+            .find_map(|(name, declared)| (name.to_string() == event).then_some(declared))
+        else {
+            return Some(Err(unmet("the model declares no such event".to_owned())));
+        };
+        let mut fields = Map::new();
+        for field in &declared.fields {
+            match input.get(&field.name) {
+                Some(value) => {
+                    if let Err(reason) = spindle_kernel::admits(ir, &field.type_ref, value) {
+                        return Some(Err(unmet(format!(
+                            "the command input's {} is no value of the field: {reason}",
+                            field.name
+                        ))));
+                    }
+                    fields.insert(field.name.clone(), value.clone());
+                }
+                None if matches!(field.type_ref, ResolvedTypeRef::Optional { .. }) => {}
+                None => {
+                    return Some(Err(unmet(format!(
+                        "the command input has no field {}",
+                        field.name
+                    ))));
+                }
+            }
+        }
+        Some(Ok(Event {
+            name: event.clone(),
+            fields,
+        }))
     }
 
     /// Whether this binding runs for `event`: its `where` condition, decided on the payload before
@@ -376,22 +492,13 @@ impl Route {
         }
         if let Some(policy) = &binding.refusal_policy {
             for action in policy.actions() {
-                match action {
-                    ResolvedRefusalAction::Drop | ResolvedRefusalAction::Retry { bound: None } => {}
-                    ResolvedRefusalAction::Retry { bound: Some(_) } => {
-                        return Err(unsupported("a bounded retry in `on_refusal`".to_owned()));
-                    }
-                    ResolvedRefusalAction::Escalate { .. } => {
-                        return Err(unsupported("an escalation in `on_refusal`".to_owned()));
-                    }
+                if let ResolvedRefusalAction::Retry { bound: Some(_) } = action {
+                    return Err(unsupported("a bounded retry in `on_refusal`".to_owned()));
                 }
             }
         }
         if binding.retry.is_some() {
             return Err(unsupported("a bounded retry".to_owned()));
-        }
-        if binding.failure == Failure::Escalate {
-            return Err(unsupported("on_failure: escalate".to_owned()));
         }
         let rules = binding
             .mapping
@@ -419,6 +526,28 @@ impl Route {
                 .filter(|component| component.accepts.contains(&binding.command))
                 .map(|component| component.name.as_str().to_owned()),
         )?;
+        let escalations = binding
+            .refusal_policy
+            .iter()
+            .flat_map(ResolvedRefusalPolicy::actions)
+            .filter_map(|action| match action {
+                ResolvedRefusalAction::Escalate { emits } => Some(emits),
+                _ => None,
+            })
+            .chain(binding.escalation.as_ref())
+            .collect::<Vec<_>>();
+        for emits in &escalations {
+            let published = ir.components().values().any(|component| {
+                component.name.as_str() == to && component.publishes.contains(*emits)
+            });
+            if !published {
+                return Err(RouteError::Unpublished {
+                    binding: name,
+                    event: emits.to_string(),
+                    component: to,
+                });
+            }
+        }
         Ok(Some(Self {
             binding: name,
             event: event_name,
@@ -428,6 +557,7 @@ impl Route {
             delivery: binding.delivery,
             on_failure: binding.failure,
             on_refusal: binding.refusal_policy.clone(),
+            escalation: escalations.first().map(ToString::to_string),
             condition: binding.condition.clone(),
             rules,
         }))

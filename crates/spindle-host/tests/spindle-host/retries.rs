@@ -57,12 +57,6 @@ fn the_retry_bindings_are_named() {
 fn a_retry_binding_is_retried_by_default() {
     let (host, _state) = host(Retries::default());
     let mut host = host.expect("the host starts with a retry binding");
-    let loaded = spindle_spec::load(&fixture()).expect("the fixture compiles");
-    assert_eq!(
-        spindle_host::uncarried(&loaded.ir),
-        None,
-        "only escalate is not carried"
-    );
     let report = host
         .submit(
             "notes.pad.WriteNote",
@@ -74,6 +68,10 @@ fn a_retry_binding_is_retried_by_default() {
         report.failed[0].attempts,
         spindle_host::RETRY_ATTEMPTS,
         "the invocation the kernel does not run is retried to the limit, then given up"
+    );
+    assert!(
+        report.escalated.is_empty(),
+        "a retry that gives up escalates nothing: {report:?}"
     );
 }
 
