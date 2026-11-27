@@ -1,0 +1,59 @@
+format: ess/34
+system: depot
+version: v1
+summary: A depot that ships each placed order, dropping a shipment whose order was cancelled, escalating one with no address or too heavy to carry, and trying again on any other refusal; a stuck shipment flags its order.
+domains:
+  - depot.orders
+  - depot.shipping
+components:
+  - component: orders
+    summary: Takes orders and flags the stuck ones.
+    owns:
+      domains:
+        - depot.orders
+    accepts:
+      commands:
+        - depot.orders.PlaceOrder
+        - depot.orders.FlagOrder
+    publishes:
+      events:
+        - depot.orders.OrderPlaced
+        - depot.orders.OrderFlagged
+    reached_by: in_process
+  - component: shipping
+    summary: Ships orders, and says when a shipment is stuck.
+    owns:
+      domains:
+        - depot.shipping
+    accepts:
+      commands:
+        - depot.shipping.Ship
+    publishes:
+      events:
+        - depot.shipping.Shipped
+        - depot.shipping.ShipmentStuck
+    reached_by: in_process
+bindings:
+  - id: ship-on-order
+    when:
+      event: depot.orders.OrderPlaced
+    invoke:
+      command: depot.shipping.Ship
+    mapping:
+      order_id: event.order_id
+    delivery: at_most_once
+    on_failure:
+      drop: [cancelled]
+      escalate:
+        emits: depot.shipping.ShipmentStuck
+        outcomes: [no-address, oversize]
+      retry: {except: [cancelled, no-address, oversize]}
+  - id: flag-stuck
+    when:
+      event: depot.shipping.ShipmentStuck
+    invoke:
+      command: depot.orders.FlagOrder
+    mapping:
+      order_id: event.order_id
+    delivery: at_most_once
+    on_failure: drop

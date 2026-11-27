@@ -116,8 +116,12 @@ pub enum Command {
     /// binding maps an emitted event to runs in the same step, sent as no actor, and prints its
     /// result on a line of its own after the line's, with `"caused_by": {"line": <n>, "binding":
     /// "<id>"}` and `"attempts"`; the events it emits fire bindings in turn. A specification that
-    /// declares no component routes them as one implied component. A binding a served run would
-    /// refuse (such as `on_failure: escalate`) exits 1 before any line is read.
+    /// declares no component routes them as one implied component. A bound command whose binding
+    /// escalates its last attempt carries `"escalated": {"event": "<event>", "payload": {...}}` on
+    /// its line, and the event fires the bindings that listen for it; where the command's input
+    /// lacks a required field of the event, nothing is published and the line carries
+    /// `"escalated": {"event": "<event>", "unmet": "<why>"}`. A binding a served run would refuse
+    /// (such as a bounded `retry:`) exits 1 before any line is read.
     ///
     /// A line whose result is a failure was rejected: it is not JSON, names no declared command,
     /// its input is not admitted, its external cause is unanswered, or the kernel refused it
@@ -238,8 +242,16 @@ pub enum Command {
     /// world that does not validate is refused `400` and changes nothing.
     ///
     /// An event binding with `on_failure: retry` runs its command again at once after each
-    /// attempt that fails, up to 5 attempts, unless `--drop-retries` is given, served or on stdin;
-    /// one with `on_failure: escalate` exits 1 before listening or reading stdin.
+    /// attempt that fails, up to 5 attempts, unless `--drop-retries` is given, served or on stdin.
+    /// One whose policy escalates a failure (`on_failure: {escalate: {emits: <event>}}`, or an
+    /// `escalate:` entry beside `drop:` and `retry:` for the refusals it names) invokes its command
+    /// no further once an attempt is answered so: the component that ran the command publishes the
+    /// escalation event once, each field of it from the command's input, an optional field the
+    /// input lacks left out; a required field the input lacks publishes nothing and the escalation
+    /// is unmet. `--drop-retries` keeps every escalation. An escalation event goes to the outbox,
+    /// is not in the event history, and is lost if the process stops before it is delivered. A
+    /// binding that escalates into an event the component running its command does not publish
+    /// exits 1 before listening or reading stdin, naming the binding, the event and the component.
     Run {
         /// The specification directory.
         spec: PathBuf,

@@ -182,6 +182,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "crates/spindle-host/tests/spindle-host/retry.rs::a_failing_invocation_is_retried_until_it_succeeds",
     ),
     shipped(
+        "Bindings",
+        "Escalation on failure",
+        "A binding whose on_failure escalates, for every failure or for the refusals an escalate entry names beside drop and retry, invokes its command no further once an attempt is answered so: the component that ran it publishes the escalation event once from the command's input, served, on stdin and in conform, and the bindings that listen for it run. A required event field the input lacks publishes nothing and is reported unmet; an optional one is left out. The event goes to the outbox and is not in the event history. --drop-retries keeps every escalation.",
+        "/docs/concepts/components-and-bindings",
+        "crates/spindle-conformance/tests/spindle-conformance/escalation.rs::an_escalated_refusal_emits_the_named_event_and_invokes_nothing",
+    ),
+    shipped(
         "Rally",
         "Every component in one process",
         "b10x-spindle play runs the three rally components in one process with in-process channels until a side wins.",

@@ -21,7 +21,8 @@ use ess_primitives::node::Node;
 use serde_json::{Map, Value};
 use spindle_capability::Environment;
 use spindle_host::{
-    Answers, Cause, Clock, Host, HostError, Placements, RETRY_ATTEMPTS, Refusal, SystemClock,
+    Answers, Cause, Clock, Escalation, Host, HostError, Placements, RETRY_ATTEMPTS, Refusal,
+    SystemClock,
 };
 use spindle_kernel::{Decider, ExecuteError, External};
 
@@ -50,7 +51,9 @@ type Forcing = Arc<Mutex<Option<(String, String)>>>;
 /// ([`Host::establish`]), checked by ESS first, as ESS's interpreter establishes it. Fixture
 /// values and redelivery are unsupported, each with its reason, and so is a send whose
 /// `on_failure: retry` binding gave up after [`RETRY_ATTEMPTS`](spindle_host::RETRY_ATTEMPTS), as
-/// ESS's interpreter answers a retry that exceeds its execution budget.
+/// ESS's interpreter answers a retry that exceeds its execution budget. An escalation event a
+/// binding published is observed among the send's events; a send whose escalation was unmet
+/// ([`Escalation::Unmet`]) is unsupported, since ESS's interpreter fills a placeholder there.
 pub struct HostTarget {
     ir: Arc<EssIr>,
     /// The admission of `ir` on the environment, made once and shared by every host opened.
@@ -318,6 +321,23 @@ impl HostTarget {
                     ),
                 ));
             }
+            if let Some((escalated, why)) =
+                report
+                    .escalated
+                    .iter()
+                    .find_map(|escalated| match &escalated.escalation {
+                        Escalation::Unmet(why) => Some((escalated, why)),
+                        Escalation::Published(_) => None,
+                    })
+            {
+                return Err(TargetError::unsupported(
+                    format!("binding `{}`", escalated.binding),
+                    format!(
+                        "{why}; ESS's interpreter publishes the escalation with a placeholder for \
+                         each field the input lacks, and this host publishes nothing"
+                    ),
+                ));
+            }
         }
         match submitted {
             Ok(report) => {
@@ -352,6 +372,15 @@ impl HostTarget {
                 for ran in &report.ran {
                     for event in &ran.executed.events {
                         running.events.push(observed(event, &request)?);
+                    }
+                }
+                for escalated in &report.escalated {
+                    if let Escalation::Published(payload) = &escalated.escalation {
+                        let event = spindle_kernel::Event {
+                            name: escalated.event.clone(),
+                            payload: payload.clone(),
+                        };
+                        running.events.push(observed(&event, &request)?);
                     }
                 }
                 Ok(result)

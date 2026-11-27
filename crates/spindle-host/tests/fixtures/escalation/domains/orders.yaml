@@ -1,0 +1,69 @@
+domain: depot.orders
+summary: Orders, each placed once and flagged when its shipment is stuck.
+entities:
+  - name: depot.orders.Order
+    identity:
+      name: order_id
+      type: String
+    fields: []
+    lifecycle:
+      initial: Placed
+      states: [Placed]
+      terminal: [Placed]
+  - name: depot.orders.Flag
+    identity:
+      name: order_id
+      type: String
+    fields: []
+    lifecycle:
+      initial: Raised
+      states: [Raised]
+      terminal: [Raised]
+errors: []
+commands:
+  - name: depot.orders.PlaceOrder
+    input:
+      - name: order_id
+        type: String
+    outcomes:
+      - name: placed
+        creates: depot.orders.Order
+        instance: order_id
+        emits: [depot.orders.OrderPlaced]
+        payload:
+          depot.orders.OrderPlaced: {order_id: input.order_id}
+        summary: The order is placed.
+  - name: depot.orders.FlagOrder
+    input:
+      - name: order_id
+        type: String
+    outcomes:
+      - name: flagged
+        creates: depot.orders.Flag
+        instance: order_id
+        emits: [depot.orders.OrderFlagged]
+        payload:
+          depot.orders.OrderFlagged: {order_id: input.order_id}
+        summary: The order is flagged for a person to look at.
+events:
+  - name: depot.orders.OrderPlaced
+    fields:
+      - name: order_id
+        type: String
+  - name: depot.orders.OrderFlagged
+    fields:
+      - name: order_id
+        type: String
+views:
+  - name: depot.orders.Orders
+    source: depot.orders.Order
+    consistency: read_your_writes
+    fields:
+      - name: order_id
+        type: String
+  - name: depot.orders.Flags
+    source: depot.orders.Flag
+    consistency: read_your_writes
+    fields:
+      - name: order_id
+        type: String

@@ -58,6 +58,7 @@ mod decisions;
 mod deletes;
 mod deploy;
 mod error_object_bodies;
+mod escalation;
 mod fixed_caller;
 mod fixed_callers;
 mod form_query;

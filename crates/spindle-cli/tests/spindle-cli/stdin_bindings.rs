@@ -11,7 +11,8 @@
 //! filing's invariant (`copies <= 9`) beyond nine copies, which the kernel rejects.
 //! `ArchiveFiling` answers `archived` only where a filing is stored. `in-process.yaml` and
 //! `network.yaml` differ only in the component's `reached_by`; `implied.yaml` declares no
-//! component and `escalate.yaml` a binding that escalates a failure.
+//! component and `bounded.yaml` a binding that retries a failure at most three times, which the
+//! channel does not carry.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -26,7 +27,7 @@ use spindle_kernel::Store;
 const IN_PROCESS: &str = "crates/spindle-cli/tests/fixtures/stdin-bindings/in-process.yaml";
 const NETWORK: &str = "crates/spindle-cli/tests/fixtures/stdin-bindings/network.yaml";
 const IMPLIED: &str = "crates/spindle-cli/tests/fixtures/stdin-bindings/implied.yaml";
-const ESCALATE: &str = "crates/spindle-cli/tests/fixtures/stdin-bindings/escalate.yaml";
+const BOUNDED: &str = "crates/spindle-cli/tests/fixtures/stdin-bindings/bounded.yaml";
 const MEMORY: &str = "crates/spindle-cli/tests/fixtures/memory.toml";
 const LAPTOP: &str = "examples/environments/laptop.toml";
 
@@ -185,12 +186,12 @@ fn a_rejected_bound_command_is_printed_and_fails_the_run() {
     );
 }
 
-/// A binding the served run's router refuses (`on_failure: escalate`) stops the run before any
-/// line is read, naming the binding, as a served run refuses it.
+/// A binding the served run's router refuses (a bounded retry) stops the run before any line is
+/// read, naming the binding, as a served run refuses it.
 #[test]
 fn a_binding_the_router_refuses_stops_the_run_before_stdin() {
     let output = run(
-        &["run", ESCALATE, "--environment", MEMORY],
+        &["run", BOUNDED, "--environment", MEMORY],
         &lines(&[open("t-5", 1)]),
     );
     assert_eq!(output.status.code(), Some(1), "{output:?}");
@@ -201,8 +202,8 @@ fn a_binding_the_router_refuses_stops_the_run_before_stdin() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains(BINDING),
-        "stderr names the binding: {stderr}"
+        stderr.contains(BINDING) && stderr.contains("bounded retry"),
+        "stderr names the binding and the construct: {stderr}"
     );
 }
 
