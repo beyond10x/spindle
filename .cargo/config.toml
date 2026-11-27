@@ -1,5 +1,5 @@
 [env]
-ESS_TOOLCHAIN = "0.99.1"
+ESS_TOOLCHAIN = "0.99.2"
 
 [target.wasm32-unknown-unknown]
 runner = "wasm-bindgen-test-runner"

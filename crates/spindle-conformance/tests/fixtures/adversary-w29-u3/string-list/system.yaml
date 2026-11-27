@@ -1,0 +1,19 @@
+format: ess/34
+system: shelf
+version: v1
+summary: Boxes packed with a list of labels, refused when one label is blank once trimmed.
+domains:
+  - shelf.box
+components:
+  - component: packer
+    summary: Packs boxes.
+    owns:
+      domains:
+        - shelf.box
+    accepts:
+      commands:
+        - shelf.box.PackBox
+    publishes:
+      events:
+        - shelf.box.BoxPacked
+    reached_by: in_process
