@@ -32,7 +32,7 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/main.rs
 - confidence: cited
   path: website/docs/concepts/specification.md
-revision: 11
+revision: 13
 ---
 # An `affects:` entry over an input list runs once per element
 
@@ -75,13 +75,16 @@ an `affects:` filter, and `affects:` beside a creating or missing subject).
 - `admit_lists_no_refusal_for_an_affects_entry_over_an_input_list`: `admit` on the
   `outcome-scoped-refusal-effects` fixture lists its `swept` outcome as served.
 - `stdin_runs_an_affects_entry_over_an_input_list`: on the `outcome-scoped-refusal-effects`
-  fixture, a stdin line that selects `swept` answers `swept`, and afterwards each held tag the
-  input listed rests in `Swept` and every other tag where it was, read back by a following line.
+  fixture, a stdin line that selects `swept` answers `swept`. Following lines send a new command
+  `bay.lot.SweepTag` (added to `lot.yaml`, with a `wrong-state` outcome for a tag already in
+  `Swept`) for each tag: every held tag the input listed answers `wrong-state`, every other
+  tag answers as a `Live` one.
 - `http_serves_an_affects_entry_over_an_input_list`: on a new fixture
   `crates/spindle-cli/tests/fixtures/affects-each-network/`, whose component is
-  `reached_by: network`, one HTTP request that selects the entry's outcome answers it, and
-  `GET /api/history?entity=<affected entity>&identity=<id>` for each element answers the write
-  that created or moved that row.
+  `reached_by: network` and whose `affects:` entry publishes an event for each row it writes,
+  one HTTP request that selects the entry's outcome answers it, and
+  `GET /api/history?entity=<affected entity>&identity=<id>` for each element answers the event
+  of the write that created or moved that row.
 - `an_outcome_with_secondary_effects_refuses_only_the_request_that_selects_it`
   (`crates/spindle-cli/tests/spindle-cli/outcome_scoped_refusal.rs:568`) keeps testing an
   outcome-scoped refusal on stdin, on a new outcome of `CloseLot` with `compensates: true`, which
@@ -108,8 +111,8 @@ Derived 2026-11-27 by `story-scoper` against `plan/wave-30` (cbf7ec1e). Every li
 - **Parity target:** ESS 0.99.2 `crates/verify/ess-conformance/src/interpret/execute/set_effects.rs` `apply`, `carry_out`, `elements`, `ElementFacts` (unchanged since 0.99.1) — cited
 - **Also likely:** `crates/spindle-kernel/src/facts.rs` — inferred: a rebinding fact source for `<binder>.<member>` → `<list>.<index>.<member>`; input lists already bind at `<path>.<index>` (`facts.rs:203-216`). It may instead live in `execute/affects.rs`
 - **Also likely:** `crates/spindle-kernel/src/execute.rs` — inferred: doc comment at `:87` at most; the call sites `:1968` and `execute/delete.rs:38` keep their signature
-- **Tests (new):** `crates/spindle-kernel/tests/spindle-kernel/affects_each.rs` plus a line in `tests/spindle-kernel/main.rs`, and a new fixture `crates/spindle-kernel/tests/fixtures/affects-each/` (format at least ess/27; ess/35 if `repeated:` is covered) — inferred. Named tests: `an_affects_entry_over_an_input_list_creates_one_row_per_element`, `an_affects_entry_over_an_empty_input_list_creates_no_row`, `an_affects_entry_over_an_input_list_updates_the_rows_it_names`, `an_affects_entry_over_an_input_list_moves_only_held_rows`, `an_element_its_filter_does_not_select_is_skipped`, `an_element_naming_the_subject_is_skipped`, `affects_over_an_input_list_agrees_with_the_interpreter` (with `ess_conformance::interpret`, like `secondary_effects.rs:392`). In-process stores, each expected under 1 s, not measured
-- **Tests (cli):** `admit_lists_no_refusal_for_an_affects_entry_over_an_input_list` and `run_answers_an_affects_entry_over_an_input_list_on_stdin_and_http` in `outcome_scoped_refusal.rs` — inferred. Each starts the binary, a few seconds each, not measured; well under the 60 s per test and the 120 s step
+- **Tests (new):** `crates/spindle-kernel/tests/spindle-kernel/affects_each.rs` plus a line in `tests/spindle-kernel/main.rs`, and a new fixture `crates/spindle-kernel/tests/fixtures/affects-each/` (format at least ess/27; ess/35 for `repeated:`) — inferred. Named tests: `an_affects_entry_over_an_input_list_creates_one_row_per_element`, `an_affects_entry_over_an_empty_input_list_creates_no_row`, `an_affects_entry_over_an_input_list_updates_the_rows_it_names`, `an_affects_entry_over_an_input_list_moves_only_held_rows`, `an_affects_entry_over_an_input_list_deletes_only_held_rows`, `an_element_its_filter_does_not_select_is_skipped`, `an_element_naming_the_subject_is_skipped`, `affects_over_an_input_list_agrees_with_the_interpreter` (with `ess_conformance::interpret`, like `secondary_effects.rs:392`). In-process stores, each expected under 1 s, not measured
+- **Tests (cli):** `admit_lists_no_refusal_for_an_affects_entry_over_an_input_list`, `stdin_runs_an_affects_entry_over_an_input_list` (with the new `bay.lot.SweepTag` in the fixture `lot.yaml`) and `http_serves_an_affects_entry_over_an_input_list` (on the new fixture `affects-each-network/`), all three in `outcome_scoped_refusal.rs`, so the `spindle-cli` test `main.rs` gains no line — inferred. Each starts the binary, a few seconds each, not measured; well under the 60 s per test and the 120 s step
 - **Documents:** `website/docs/concepts/specification.md:124-125` (names `each:` as the refused example), `CHANGELOG.md` `[Unreleased]` — cited
 - **Confidence:** high for the kernel surface (the story and the tree name both refusal sites); medium for where the tests and the fixture land
 - **Would collide with:** `supported.rs` (wave 29 changes it; wave 30 U3 changes `unfilled_error_field`, a different hunk); `execute/affects.rs` with U5, which adds a field to `ExecuteError::Undeclared` at `:240` that every `Undeclared` constructor in U11's rewritten `Run::affect` sets, so U11 merges after U5; `execute.rs` (U3, U4, U5, U6) at most a doc comment at `:87`, near no other unit's hunk; `website/docs/concepts/specification.md` with U1 (`:168-173`, U11 at `:124-125`); the `spindle-kernel` test `main.rs` module list (U3, U6); `CHANGELOG.md` `[Unreleased]` (every unit). `facts.rs` and the cli refusal fixture are named by no other wave-29 or wave-30 surface
