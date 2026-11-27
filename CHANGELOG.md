@@ -64,6 +64,16 @@ are Spindle's releases.
   differ only in their header. Its UI change (an overlay reading its opener's params) does not
   reach Spindle, which builds none of ESS's UI crates (`story:ess-pin-0-99-2`).
 
+### Fixed
+
+- A view filter that quantifies over a `Map` field of the row with `exists` or `forall`
+  (`exists v in stamps: v > "2026-01-01T09:00:00Z"`) is answered with the rows ESS's interpreter
+  answers, where the host refused the view whole as `unsupported`. The values are walked in key
+  order and each is typed by the map's value type, so a `Timestamp` value, or a newtype over one,
+  is ordered by the instant it names, not by its text: `2026-01-01T10:00:00+02:00` is before
+  `09:00Z`. A quantifier over a `Map` parameter stays refused
+  (`story:view-filter-map-value-order`).
+
 ## [0.23.0] - 2026-11-27
 
 ### Added

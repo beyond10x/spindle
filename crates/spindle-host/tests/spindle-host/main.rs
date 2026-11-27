@@ -95,5 +95,7 @@ mod telemetry;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod text_filters;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod view_filter_map;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod views;
 mod wasm;

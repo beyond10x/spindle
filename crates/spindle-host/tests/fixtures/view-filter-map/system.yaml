@@ -1,0 +1,19 @@
+format: ess/34
+system: org
+version: v1
+summary: Entries a ledger keeps, each with stamps by name, read by views whose filters quantify over the stamps.
+domains:
+  - org.ledger
+components:
+  - component: ledger
+    summary: Adds entries.
+    owns:
+      domains:
+        - org.ledger
+    accepts:
+      commands:
+        - org.ledger.AddEntry
+    publishes:
+      events:
+        - org.ledger.EntryAdded
+    reached_by: in_process
