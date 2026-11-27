@@ -288,6 +288,15 @@ impl Link {
 
 type Shared = Arc<Mutex<Link>>;
 
+/// Closes `stream` with a reset (`SO_LINGER` 0) rather than a `FIN`: a connection that reached
+/// itself and closed with a `FIN` stays in `TIME_WAIT` on its own address for a minute, longer
+/// than a component waits for its peers, and the peer that starts there later cannot listen.
+fn close_with_reset(stream: TcpStream) {
+    #[cfg(unix)]
+    let _ = rustix::net::sockopt::set_socket_linger(&stream, Some(Duration::ZERO));
+    drop(stream);
+}
+
 fn held(link: &Shared) -> MutexGuard<'_, Link> {
     link.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
@@ -537,16 +546,41 @@ impl Host {
     /// `peer` is carried on it.
     ///
     /// # Errors
-    /// [`HostError::Peer`] when nothing listens there or the `hello` cannot be written;
-    /// [`HostError::Unsupported`] on a host of every component.
+    /// As [`Host::link`], and [`HostError::Peer`] when nothing listens there.
     pub fn connect(&mut self, peer: &str, address: SocketAddr) -> Result<(), HostError> {
+        self.remote.as_ref().ok_or_else(Remote::missing)?;
+        let stream = TcpStream::connect(address).map_err(|error| HostError::Peer {
+            peer: peer.to_owned(),
+            reason: format!("at {address} cannot be opened: {error}"),
+        })?;
+        self.link(peer, stream)
+    }
+
+    /// Makes `stream`, a connection this end opened, the link to `peer`, once, and says `hello`
+    /// on it; every event bound to `peer` is carried on it.
+    ///
+    /// A connection whose local and peer address are one reached itself, as a connect to a port
+    /// nothing listens on yet can, leaving from that same port: it is closed with a reset and
+    /// links nothing, so the caller tries again, and the peer can listen on that port at once.
+    ///
+    /// # Errors
+    /// [`HostError::Peer`] when the connection reached itself or the `hello` cannot be written;
+    /// [`HostError::Unsupported`] on a host of every component.
+    pub fn link(&mut self, peer: &str, stream: TcpStream) -> Result<(), HostError> {
         let failed = |reason: String| HostError::Peer {
             peer: peer.to_owned(),
             reason,
         };
         let remote = self.remote.as_mut().ok_or_else(Remote::missing)?;
-        let stream = TcpStream::connect(address)
-            .map_err(|error| failed(format!("at {address} cannot be opened: {error}")))?;
+        let local = stream
+            .local_addr()
+            .map_err(|error| failed(error.to_string()))?;
+        if stream.peer_addr().is_ok_and(|address| address == local) {
+            close_with_reset(stream);
+            return Err(failed(format!(
+                "at {local} reached itself: nothing listens there yet"
+            )));
+        }
         let mut link = Link::new(
             stream,
             Side::Opened,

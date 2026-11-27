@@ -28,6 +28,9 @@ spindle-kernel = { path = "../spindle-kernel", default-features = false }
 spindle-telemetry = { path = "../spindle-telemetry" }
 spindle-timer = { path = "../spindle-timer" }
 
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["net"] }
+
 [dev-dependencies]
 spindle-spec = { path = "../spindle-spec" }
 tempfile = "3"
