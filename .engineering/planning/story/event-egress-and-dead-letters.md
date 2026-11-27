@@ -11,7 +11,7 @@ relations:
 - serves: vision:spindle
 - decomposes: epic:production-service
 - informed_by: story:committed-events-survive-restart
-revision: 3
+revision: 6
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T09:56:32Z", actor: "human:operator", revision: 3}
 ---
@@ -49,8 +49,13 @@ environment names the broker or webhook; a specification names neither (AGENTS.m
 
 ## Decided when scoped
 
-- Which brokers, the capability key the environment binds, and whether egress and dead letters
-  are two stories.
+Taken 2026-11-27 on the scoper's recommended option, each reversible.
+
+- D1 A: split into `story:event-egress-webhook` (the scoper's D2, D3, D4, D7) and
+  `story:dead-letters-kept-and-replayed` (D3, D5, D6, D8); each holds its own Outcome, Acceptance,
+  Scope and decisions, and the scope entries are recorded there, not here. Put to the operator,
+  and this default stands until answered. Not taken: B, one story. This story is to be retired;
+  the store refuses `proposed -> archived`, so it stays `proposed` until the coordinator moves it.
 
 ## Needs the owner's acceptance
 
@@ -67,3 +72,26 @@ accepts the outbound connection a run makes on its own. It builds on
 
 Not taken: B (A plus a broker client, a new dependency), C (dead letters only, no egress), D
 (defer).
+
+## Scope
+
+Derived 2026-11-27 by `story-scoper` against `plan/wave-31` (8eaea47a). Every line is **cited** (read from the story or the tree) or **inferred** (a reading that could be wrong).
+
+- **Primary surface:** `crates/spindle-cli` (served run: egress thread, dead-letter log line) — cited
+- **Files:** `crates/spindle-cli/src/serve.rs:612-650` (the failure loop, "dropped" at `:637`) — cited
+- **Files:** `crates/spindle-cli/src/calls.rs:171-419` (`Call::send`, `exchange`, `client`, `file_roots`, `platform_roots`: the TLS client to reuse) — cited
+- **Files:** `crates/spindle-host/src/host.rs:77-97` (`Failed`, no input), `:2242-2380` (`Host::attempt`, where a dead letter is recorded) — cited
+- **Files:** `crates/spindle-kernel/src/sqlite.rs:93-108` (reserved `spindle:log` streams), `:1269-1360` (`groups_after`, skip at `:1351`) — cited
+- **Files:** `ess/domains/observe.yaml` (a `DeadLetter` type and list root beside `RefusedBound`, `:825`) — cited
+- **Symbols:** `Host::attempt`, `Failed`, `RefusedCommand`, `Escalated`, `LogStore::groups_after`, `MARKS`, `RESET`, `PUBLISHED`, `Reading::events_after`, `Call::send`, `Calls::bind` — cited
+- **Also likely:** `crates/spindle-kernel/src/store.rs` (`Store` methods for cursor and dead letters, default `Unsupported`), `crates/spindle-kernel/src/contract.rs`, `crates/spindle-kernel/src/lib.rs` — inferred
+- **Also likely:** `crates/spindle-host/src/host/reader.rs`, `crates/spindle-host/src/lib.rs` (list beside the host's thread; `DeadLetter` re-export) — inferred
+- **Also likely:** `crates/spindle-capability/src/environment.rs` (an `[egress]` table naming `[http.<name>]` calls) — inferred
+- **Also likely:** `crates/spindle-cli/src/egress.rs` (new), `crates/spindle-cli/src/main.rs` (bind beside `Calls::bind`, `:713`), `crates/spindle-cli/src/cli.rs` (help of `run`) and the generated `website/docs/reference/cli.md` — inferred
+- **Also likely:** `crates/spindle-ingress/src/console.rs`, `crates/spindle-ingress/src/router.rs` (console routes to list and replay) — inferred
+- **Also likely (generated, model first):** `ess/domains/console.yaml`, `Taskfile.yml` (`OBSERVE_ROOTS`, fixture check), `ess/generated/jsonschema`, `crates/spindle-observe-api`, `ui/src/api/generated`, `ess/fixtures/observe` — inferred
+- **Tests:** `crates/spindle-cli/tests/spindle-cli/{main,egress,dead_letters,postgres}.rs`, `crates/spindle-host/tests/spindle-host/{main,dead_letters}.rs`, `crates/spindle-kernel/tests/spindle-kernel/{main,log_streams,postgres}.rs`, `crates/spindle-capability/tests/spindle-capability/main.rs` — inferred
+- **Documents:** `docs/design/spindle.md` § 11, `README.md`, `CHANGELOG.md`, `website/docs/concepts/environment-and-admission.md`, `website/docs/concepts/components-and-bindings.md` — inferred
+- **Confidence:** medium. The defect site and the reuse sites are read from the tree; where the cursor and dead letters persist, and the replay surface, depend on decisions still open
+- **Would collide with:** any unit changing `Host::attempt` or `Failed` in `spindle-host`; the reserved-stream handling and `groups_after` in `spindle-kernel/src/sqlite.rs`; the console routes and serve loop of `spindle-ingress` and `spindle-cli`; `run`'s help in `cli.rs`
+- **Safety fact:** `groups_after` treats every feed event outside the `spindle:entity` streams, `RESET`, the `PUBLISHED` end and `MARKS` as a published domain event (`crates/spindle-kernel/src/sqlite.rs:1283-1360`). A cursor or dead-letter stream must be skipped at `:1351`, or it shows in `GET /api/events` and `events_after` and is posted to the webhook itself. Step 2, unproven

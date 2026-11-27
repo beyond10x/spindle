@@ -8,7 +8,7 @@ summary: A request id seen before, across restarts and replicas, is answered wit
 relations:
 - serves: vision:spindle
 - informed_by: story:seed-at-start
-revision: 1
+revision: 2
 ---
 # A request id seen before is answered without a second write
 
@@ -42,6 +42,8 @@ today. Found by two reviews of `0.19.0..0.19.1`.
   request id, write it once.
 - `a_request_id_with_another_command_is_refused`: a request id seen with another command, input,
   actor or caller is refused by name, not answered with the first answer.
+- `a_retried_request_lands_once`: a request id sent to two `run` processes on one PostgreSQL store
+  writes once. Moved from `story:several-writers-one-postgres` (its D8 A, 2026-11-27).
 
 ## Not covered
 
