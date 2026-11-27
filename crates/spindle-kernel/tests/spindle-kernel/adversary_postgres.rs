@@ -62,12 +62,24 @@ fn sql(url: &str, statement: &str) {
     });
 }
 
-/// Created once per test process: cases running in parallel on a fresh database race their
-/// `CREATE SCHEMA IF NOT EXISTS` into a unique violation.
+/// The PostgreSQL advisory lock a case holds while it creates the schema: cases running side by
+/// side on a fresh database race their `CREATE SCHEMA IF NOT EXISTS` into a unique violation
+/// (`pg_namespace_nspname_index`), and under cargo-nextest each case is a process of its own.
+const SCHEMA_LOCK: i64 = 5_312_021_918;
+
+/// Created once per test process, under [`SCHEMA_LOCK`] across processes.
 static SCHEMA_CREATED: Once = Once::new();
 
 fn database() -> Database {
-    SCHEMA_CREATED.call_once(|| sql(&url(), &format!("CREATE SCHEMA IF NOT EXISTS {SCHEMA}")));
+    SCHEMA_CREATED.call_once(|| {
+        sql(
+            &url(),
+            &format!(
+                "BEGIN; SELECT pg_advisory_xact_lock({SCHEMA_LOCK}); \
+                 CREATE SCHEMA IF NOT EXISTS {SCHEMA}; COMMIT"
+            ),
+        );
+    });
     let mut database = Database::new(url());
     database.schema = SCHEMA.to_owned();
     database
