@@ -6,6 +6,18 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- Every event a store commits records what caused its command, read back with it
+  (`Store::events_after`, `Origin::cause`, `spindle_kernel::Provenance`): a request's caller,
+  its actor, its attributes and the request id the ingress mints for each HTTP request; a seed
+  entry's actor, caller and `request_id`; a tick's binding; or the binding that ran it with what
+  caused the command whose event it carried, recorded as not known in a run split over
+  processes. The memory, SQLite, PostgreSQL and IndexedDB stores keep it, SQLite and PostgreSQL
+  in each write's `spindle.written` origin and as the append's actor; an origin written before
+  this release reads back with no cause, without a migration. `Host::submit_caused` sends a
+  command with its cause (`story:events-record-their-caller`).
+
 ## [0.22.0] - 2026-11-27
 
 ### Added

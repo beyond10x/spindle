@@ -106,6 +106,7 @@ fn long(events: usize) -> Host {
         board.attribute(Some(Origin {
             command: "tasks.board.OpenTask".to_owned(),
             sequence: u64::try_from(index).expect("an index fits") + 1,
+            cause: None,
         }));
         board
             .commit_events(

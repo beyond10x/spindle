@@ -21,10 +21,13 @@
 //! entity's stream holds one.
 //!
 //! A write attributed to a command ([`Store::attribute`]) names it in each of its `spindle.written`
-//! events too (`"origin": {"command", "sequence"}`). The events the commands committed are read
-//! back from the tenant's feed past a position ([`Store::events_after`]), each at the feed
-//! position of its append group's last event and attributed as its group's `spindle.written`
-//! events name.
+//! events too (`"origin": {"command", "sequence", "cause"}`), the cause being what caused the
+//! command ([`crate::Provenance`]: a request's or seed entry's caller with the request's id, a
+//! tick, or a binding), and the append's actor is that caller's actor; an origin a release before
+//! 0.23.0 wrote names no cause. Each append keeps a request id of its own. The events the
+//! commands committed are read back from the tenant's feed past a position
+//! ([`Store::events_after`]), each at the feed position of its append group's last event and
+//! attributed as its group's `spindle.written` events name.
 //!
 //! The encoding is the store's, not SQLite's: [`LogStore`] keeps it on any eventlog event store
 //! that appends groups and answers the tenant's whole log ([`Log`]), and the PostgreSQL store
@@ -50,8 +53,8 @@ use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::store::{
-    Change, Committed, Origin, Position, Reading, Removal, Row, Scan, Scanned, Store, StoreError,
-    Stored, Write, first_writes, identity_from_key, moved,
+    Change, Committed, Origin, Position, Provenance, Reading, Removal, Row, Scan, Scanned, Store,
+    StoreError, Stored, Write, first_writes, identity_from_key, moved,
 };
 
 /// The table prefix Spindle's events are kept under.
@@ -71,6 +74,9 @@ pub(crate) const WRITTEN_SCHEMA: u32 = 2;
 /// ([`Store::attribute`]): `{"command": <qualified name>, "sequence": <n>}`. A write attributed
 /// to none, and every write of a release before it, carries none.
 const ORIGIN: &str = "origin";
+/// The field of an origin naming what caused its command ([`Origin::cause`], [`Provenance`]); an
+/// origin a release before 0.23.0 wrote carries none.
+const CAUSE: &str = "cause";
 /// The stream of the events a command committed with no row ([`Store::commit_events`]): each
 /// such write appends them, then one [`PUBLISHED_END`] event naming the command under
 /// [`ORIGIN`]. Of the stream type [`MARKS`] is of, which a scan and a state move count as no
@@ -91,7 +97,8 @@ pub(crate) const ENTITY: &str = "spindle:entity";
 /// it before it copies such a write into a PostgreSQL store. A scan of a marked log reads the
 /// whole log.
 pub(crate) const MARKS: (&str, &str) = ("spindle:log", "unnamed-writes");
-/// Who records the change: the runtime itself.
+/// Who records the change: the runtime itself, the actor of an append whose cause names no actor
+/// ([`LogStore::attributed`]).
 const ACTOR: &str = "spindle-kernel";
 /// The schema version of every event Spindle appends but `spindle.written` ([`WRITTEN_SCHEMA`]).
 const SCHEMA: u32 = 1;
@@ -627,7 +634,7 @@ impl<L: Log> Store for LogStore<L> {
         let entries: Vec<&Vec<NewEvent>> = appends.iter().map(|append| &append.events).collect();
         let group = AppendGroup {
             tenant: self.tenant.clone(),
-            meta: meta(request_hash(&entries).map_err(backend)?),
+            meta: self.attributed(request_hash(&entries).map_err(backend)?),
             appends,
         };
         match self.call(self.log.append_group(&group)) {
@@ -775,6 +782,24 @@ impl<L: Log> Store for LogStore<L> {
 }
 
 impl<L: Log> LogStore<L> {
+    /// What an append records about the command it is for ([`meta`]), its actor the actor of the
+    /// caller its writes are attributed to ([`Provenance::sender`]) where the cause names one.
+    /// The request id stays fresh for each append: a read of the feed tells one write from the
+    /// next by it ([`LogStore::groups_after`]).
+    fn attributed(&self, request_hash: String) -> CommandMeta {
+        let mut meta = meta(request_hash);
+        if let Some(actor) = self
+            .origin
+            .as_ref()
+            .and_then(|origin| origin.cause.as_ref())
+            .and_then(Provenance::sender)
+            .and_then(|sender| sender.actor.clone())
+        {
+            meta.actor = actor;
+        }
+        meta
+    }
+
     /// Appends `appends` as one append group.
     fn append(&self, appends: Vec<StreamAppend>) -> Result<(), EventLogError> {
         let entries: Vec<&Vec<NewEvent>> = appends.iter().map(|append| &append.events).collect();
@@ -782,7 +807,7 @@ impl<L: Log> LogStore<L> {
             request_hash(&entries).map_err(|error| EventLogError::Backend(error.to_string()))?;
         let group = AppendGroup {
             tenant: self.tenant.clone(),
-            meta: meta(hash),
+            meta: self.attributed(hash),
             appends,
         };
         let landed = self.call(self.log.append_group(&group))?;
@@ -1268,17 +1293,29 @@ impl<L: Log> LogStore<L> {
     }
 }
 
-/// What a body names `origin` as, under [`ORIGIN`].
+/// What a body names `origin` as, under [`ORIGIN`]: `{"command", "sequence"}`, and `"cause"`
+/// ([`Provenance`]) where the origin names one.
 fn origin_body(origin: &Origin) -> Value {
-    serde_json::json!({"command": origin.command, "sequence": origin.sequence})
+    let mut body = serde_json::json!({"command": origin.command, "sequence": origin.sequence});
+    if let (Some(cause), Value::Object(fields)) = (&origin.cause, &mut body)
+        && let Ok(cause) = serde_json::to_value(cause)
+    {
+        fields.insert(CAUSE.to_owned(), cause);
+    }
+    body
 }
 
-/// The command a `spindle.written` event's body names under [`ORIGIN`], if it names one.
+/// The command a `spindle.written` event's body names under [`ORIGIN`], if it names one, with
+/// its cause; an origin a release before 0.23.0 wrote, `{"command", "sequence"}` only, names no
+/// cause.
 fn origin_of(body: &Value) -> Option<Origin> {
     let origin = body.get(ORIGIN)?;
     Some(Origin {
         command: origin.get("command")?.as_str()?.to_owned(),
         sequence: origin.get("sequence")?.as_u64()?,
+        cause: origin
+            .get(CAUSE)
+            .and_then(|cause| serde_json::from_value(cause.clone()).ok()),
     })
 }
 
@@ -2224,6 +2261,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::store::Sender;
 
     const TASK: &str = "a.Task";
 
@@ -2412,6 +2450,94 @@ mod tests {
             .runtime
             .block_on(store.log.append_group(&group))
             .expect("appended");
+    }
+
+    /// A write as the store of 0.22.0 appended it, attributed to `command`: its
+    /// `spindle.written` event's origin names the command and its sequence only, and its
+    /// instance's stream carries one event of the command before the row.
+    fn write_as_released(store: &SqliteStore, identity: &str, command: &str, sequence: u64) {
+        let appends = vec![
+            StreamAppend {
+                stream: store.entity_stream(TASK).expect("a stream id"),
+                expected: Expected::Any,
+                events: vec![
+                    NewEvent::new(
+                        WRITTEN,
+                        WRITTEN_SCHEMA,
+                        json!({
+                            "rows": {json!(identity).to_string(): 2},
+                            "removed": {},
+                            "origin": {"command": command, "sequence": sequence},
+                        }),
+                    )
+                    .expect("an event"),
+                ],
+            },
+            StreamAppend {
+                stream: store.stream(TASK, &json!(identity)).expect("a stream id"),
+                expected: Expected::NoStream,
+                events: vec![
+                    NewEvent::new("a.Opened", SCHEMA, json!({"id": identity})).expect("an event"),
+                    row_event(&change(identity, None, "Old").row).expect("a row"),
+                ],
+            },
+        ];
+        let entries: Vec<&Vec<NewEvent>> = appends.iter().map(|append| &append.events).collect();
+        let group = AppendGroup {
+            tenant: store.tenant.clone(),
+            meta: meta(request_hash(&entries).expect("a hash")),
+            appends,
+        };
+        store
+            .runtime
+            .block_on(store.log.append_group(&group))
+            .expect("appended");
+    }
+
+    /// `story:events-record-their-caller` (D3 A): an origin 0.22.0 wrote, `{"command",
+    /// "sequence"}` only, reads back with its command and sequence and no cause, beside a write
+    /// of this release that names its caller; nothing is migrated.
+    #[test]
+    fn a_store_written_before_reads_back_no_caller() {
+        let mut store = store();
+        write_as_released(&store, "old", "a.Open", 7);
+        let cause = Provenance::Request(Sender {
+            actor: Some("a.Owner".to_owned()),
+            attributes: serde_json::Map::new(),
+            request: Some("r-1".to_owned()),
+        });
+        store.attribute(Some(Origin {
+            command: "a.Open".to_owned(),
+            sequence: 8,
+            cause: Some(cause.clone()),
+        }));
+        let mut opened = change("new", None, "Open");
+        opened.events = vec![crate::Event {
+            name: "a.Opened".to_owned(),
+            payload: serde_json::Map::from_iter([("id".to_owned(), json!("new"))]),
+        }];
+        store.commit(&opened).expect("a write after the upgrade");
+        let origins: Vec<Option<Origin>> = store
+            .events_after(0, usize::MAX)
+            .expect("the events read")
+            .into_iter()
+            .map(|committed| committed.origin)
+            .collect();
+        assert_eq!(
+            origins,
+            [
+                Some(Origin {
+                    command: "a.Open".to_owned(),
+                    sequence: 7,
+                    cause: None,
+                }),
+                Some(Origin {
+                    command: "a.Open".to_owned(),
+                    sequence: 8,
+                    cause: Some(cause),
+                }),
+            ]
+        );
     }
 
     #[test]

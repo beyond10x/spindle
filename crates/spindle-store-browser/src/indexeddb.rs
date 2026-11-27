@@ -8,8 +8,8 @@ use js_sys::{Array, Promise, Reflect};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use spindle_kernel::{
-    Change, Committed, EVERY_INSTANCE, Event, Origin, Removal, Row, Scan, Scanned, Store,
-    StoreError, Stored, Write, whole_writes,
+    Change, Committed, EVERY_INSTANCE, Event, Origin, Provenance, Removal, Row, Scan, Scanned,
+    Store, StoreError, Stored, Write, whole_writes,
 };
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
@@ -54,6 +54,10 @@ struct Recorded {
     command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sequence: Option<u64>,
+    /// What caused the command ([`Origin::cause`]); none on an event a release before 0.23.0
+    /// recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cause: Option<Provenance>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     reset: bool,
 }
@@ -64,6 +68,7 @@ impl Recorded {
         Some(Origin {
             command: self.command.clone()?,
             sequence: self.sequence?,
+            cause: self.cause.clone(),
         })
     }
 }
@@ -493,6 +498,7 @@ impl Shared {
                         payload: event.payload.clone(),
                         command: self.origin.as_ref().map(|origin| origin.command.clone()),
                         sequence: self.origin.as_ref().map(|origin| origin.sequence),
+                        cause: self.origin.as_ref().and_then(|origin| origin.cause.clone()),
                         reset: false,
                     })
                 })
@@ -724,6 +730,10 @@ impl Store for BrowserStore {
                 payload: event.payload.clone(),
                 command: shared.origin.as_ref().map(|origin| origin.command.clone()),
                 sequence: shared.origin.as_ref().map(|origin| origin.sequence),
+                cause: shared
+                    .origin
+                    .as_ref()
+                    .and_then(|origin| origin.cause.clone()),
                 reset: false,
             })
             .collect::<Vec<_>>();
@@ -744,6 +754,7 @@ impl Store for BrowserStore {
             payload: Map::new(),
             command: None,
             sequence: None,
+            cause: None,
             reset: true,
         }])?;
         shared.events.clear();

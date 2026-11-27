@@ -1,0 +1,136 @@
+domain: notes.records
+summary: A record an editor writes, revises in place, pairs with another and publishes.
+actors:
+  - name: notes.records.Editor
+    attributes:
+      - name: editor_id
+        type: String
+    may:
+      - notes.records.WriteRecord
+      - notes.records.ReviseRecord
+      - notes.records.PairRecords
+      - notes.records.PublishRecord
+entities:
+  - name: notes.records.Record
+    identity:
+      name: record_id
+      type: String
+    fields:
+      - name: key
+        type: String
+      - name: text
+        type: String
+    lifecycle:
+      initial: Draft
+      states: [Draft]
+      terminal: [Draft]
+errors:
+  - name: notes.records.NoSuchRecord
+    summary: No record carries the id.
+    fields: []
+commands:
+  - name: notes.records.WriteRecord
+    input:
+      - name: record_id
+        type: String
+      - name: text
+        type: String
+    outcomes:
+      - name: written
+        creates: notes.records.Record
+        instance: record_id
+        sets:
+          key: input.record_id
+          text: input.text
+        emits: [notes.records.RecordWritten]
+        payload:
+          notes.records.RecordWritten: {record_id: input.record_id, text: input.text}
+        summary: The record is written.
+  - name: notes.records.ReviseRecord
+    input:
+      - name: record_id
+        type: String
+      - name: text
+        type: String
+    outcomes:
+      - name: no-such-record
+        unknown_instance: true
+        error: notes.records.NoSuchRecord
+        summary: No record carries the id.
+      - name: revised
+        updates: notes.records.Record
+        instance: record_id
+        sets:
+          text: input.text
+        emits: [notes.records.RecordRevised]
+        payload:
+          notes.records.RecordRevised: {record_id: input.record_id, text: input.text}
+        summary: The record's text is replaced in place.
+  - name: notes.records.PairRecords
+    input:
+      - name: record_id
+        type: String
+      - name: other_id
+        type: String
+      - name: text
+        type: String
+    outcomes:
+      - name: no-such-record
+        unknown_instance: true
+        error: notes.records.NoSuchRecord
+        summary: No record carries the id.
+      - name: paired
+        updates: notes.records.Record
+        instance: record_id
+        sets:
+          text: input.text
+        affects:
+          - entity: notes.records.Record
+            where: key == input.other_id
+            sets:
+              text: input.text
+        emits: [notes.records.RecordsPaired]
+        payload:
+          notes.records.RecordsPaired: {record_id: input.record_id, other_id: input.other_id}
+        summary: The record and the record the other id names take one text together.
+  - name: notes.records.PublishRecord
+    input:
+      - name: record_id
+        type: String
+    outcomes:
+      - name: no-such-record
+        unknown_instance: true
+        error: notes.records.NoSuchRecord
+        summary: No record carries the id.
+      - name: published
+        updates: notes.records.Record
+        instance: record_id
+        sets:
+          key: input.record_id
+        emits: [notes.records.RecordPublished]
+        payload:
+          notes.records.RecordPublished: {record_id: input.record_id}
+        summary: The record is published.
+events:
+  - name: notes.records.RecordWritten
+    fields:
+      - name: record_id
+        type: String
+      - name: text
+        type: String
+  - name: notes.records.RecordRevised
+    fields:
+      - name: record_id
+        type: String
+      - name: text
+        type: String
+  - name: notes.records.RecordsPaired
+    fields:
+      - name: record_id
+        type: String
+      - name: other_id
+        type: String
+  - name: notes.records.RecordPublished
+    fields:
+      - name: record_id
+        type: String

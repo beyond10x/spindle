@@ -18,7 +18,8 @@ use spindle_channel::{
 };
 use spindle_kernel::{
     Change, Committed, Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, Mint,
-    NoExternals, Origin, Reading, Row, Scanned, Seeded, Store, StoreError, Stored, Uuid, UuidV4,
+    NoExternals, Origin, Provenance, Reading, Row, Scanned, Seeded, Store, StoreError, Stored,
+    Uuid, UuidV4,
 };
 use spindle_telemetry::{Counters, CountingStore, Retried, Sink};
 use spindle_timer::{BindingName, Clock, CompleteError, Instant, LifetimeError, Timer};
@@ -785,9 +786,11 @@ pub struct Host {
     /// routes, never from an envelope, so a peer's frame does not decide the policy.
     retrying: BTreeMap<String, Arc<Route>>,
     /// The qualified command whose run staged each envelope in flight between this host's own
-    /// components, by the publishing component and the envelope's id; taken when the envelope is
-    /// invoked ([`Failed::caused_by`]). Empty in a run split over processes.
-    staged_by: BTreeMap<(String, DeliveryId), String>,
+    /// components, by the publishing component and the envelope's id, with what the command the
+    /// envelope invokes records as its trigger ([`Provenance::Binding`]); taken when the envelope
+    /// is invoked ([`Failed::caused_by`]). Empty in a run split over processes, whose bound
+    /// commands record no trigger.
+    staged_by: BTreeMap<(String, DeliveryId), (String, Option<Provenance>)>,
 }
 
 impl std::fmt::Debug for Host {
@@ -1666,10 +1669,35 @@ impl Host {
         caller: Option<&Map<String, Value>>,
         refused: &BTreeMap<String, String>,
     ) -> Result<Report, HostError> {
+        let cause = Provenance::Request(spindle_kernel::Sender {
+            actor: actor.map(str::to_owned),
+            attributes: caller.cloned().unwrap_or_default(),
+            request: None,
+        });
+        self.submit_caused(command, input, actor, caller, refused, cause)
+    }
+
+    /// [`Host::submit_refusing`], each event the command commits recording `cause` as what caused
+    /// it ([`Origin::cause`]): the request or seed entry that sent it, with its caller and its
+    /// request id, which should name `actor` and `caller` as sent. Each command its events lead to
+    /// records the binding that carried the event, and `cause` as what caused the command that
+    /// published it ([`Provenance::Binding`]).
+    ///
+    /// # Errors
+    /// As [`Host::submit`].
+    pub fn submit_caused(
+        &mut self,
+        command: &str,
+        input: Map<String, Value>,
+        actor: Option<&str>,
+        caller: Option<&Map<String, Value>>,
+        refused: &BTreeMap<String, String>,
+        cause: Provenance,
+    ) -> Result<Report, HostError> {
         let component = accepting(&self.ir, command)
             .ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
         let mut report = Report::default();
-        match self.execute(&component, command, &input, actor, caller, refused)? {
+        match self.execute(&component, command, &input, actor, caller, refused, cause)? {
             Ok(Executed {
                 outcome,
                 error: Some(error),
@@ -1966,7 +1994,12 @@ impl Host {
     /// another component of this host owns from that component's store ([`Routed`],
     /// [`spindle_kernel::execute_reaching`]).
     ///
+    /// Its writes are attributed to the command and `cause` ([`Origin`]); each envelope it stages
+    /// between this host's own components keeps the command and what the command it invokes
+    /// records as its trigger ([`Provenance::trigger`]).
+    ///
     /// The outer error is the host's own; the inner one is the command's.
+    #[allow(clippy::too_many_arguments)]
     fn execute(
         &mut self,
         component: &str,
@@ -1975,6 +2008,7 @@ impl Host {
         actor: Option<&str>,
         caller: Option<&Map<String, Value>>,
         refused: &BTreeMap<String, String>,
+        cause: Provenance,
     ) -> Result<Result<Executed, ExecuteError>, HostError> {
         let reached: BTreeSet<String> = self.components.keys().cloned().collect();
         let mut held = None;
@@ -1991,9 +2025,11 @@ impl Host {
         let clock = &self.clock;
         let sequence = following(self.sequence.load(Ordering::SeqCst), clock.wall());
         self.sequence.store(sequence, Ordering::SeqCst);
+        let trigger = cause.trigger();
         held.store.attribute(Some(Origin {
             command: command.to_owned(),
             sequence,
+            cause: Some(cause),
         }));
         let mut routed = Routed {
             ir: &self.ir,
@@ -2054,8 +2090,10 @@ impl Host {
             if self.remote.is_none() {
                 let DeliveryId(after) = held.sender.next_delivery();
                 for id in first.0..after {
-                    self.staged_by
-                        .insert((component.to_owned(), DeliveryId(id)), command.to_owned());
+                    self.staged_by.insert(
+                        (component.to_owned(), DeliveryId(id)),
+                        (command.to_owned(), trigger.clone()),
+                    );
                 }
             }
             held.sender.mark_durable(held.position);
@@ -2086,7 +2124,7 @@ impl Host {
     /// from another process names none.
     fn invoke(&mut self, envelope: &Envelope, report: &mut Report) -> Result<(), HostError> {
         let retried = self.retrying.get(&envelope.binding).cloned();
-        let caused_by = self.staged_by.remove(&(envelope.from.clone(), envelope.id));
+        let staged = self.staged_by.remove(&(envelope.from.clone(), envelope.id));
         self.attempt(
             &envelope.to,
             &envelope.command.name,
@@ -2094,7 +2132,7 @@ impl Host {
             Cause::Delivered {
                 binding: envelope.binding.clone(),
             },
-            caused_by,
+            staged,
             retried.as_deref(),
             report,
         )
@@ -2102,7 +2140,9 @@ impl Host {
 
     /// Runs `command` once, or, when `retried` is the binding's route, again after each attempt
     /// the route answers with [`Failure::Retry`], up to [`RETRY_ATTEMPTS`] in all; reports the
-    /// attempt that took effect, or the last one, a refused or failed one as `caused_by`.
+    /// attempt that took effect, or the last one, a refused or failed one as caused by the command
+    /// `staged` names. Each attempt is attributed to `cause` ([`Provenance`]): a tick's binding, or
+    /// a delivery's binding and the trigger `staged` names, none known where nothing staged it.
     #[allow(clippy::too_many_arguments)]
     fn attempt(
         &mut self,
@@ -2110,10 +2150,21 @@ impl Host {
         command: &str,
         input: &Map<String, Value>,
         cause: Cause,
-        caused_by: Option<String>,
+        staged: Option<(String, Option<Provenance>)>,
         retried: Option<&Route>,
         report: &mut Report,
     ) -> Result<(), HostError> {
+        let (caused_by, trigger) = staged.unzip();
+        let provenance = match &cause {
+            Cause::Tick { binding } => Provenance::Tick {
+                binding: binding.clone(),
+            },
+            Cause::Delivered { binding } => Provenance::Binding {
+                binding: binding.clone(),
+                trigger: trigger.flatten().map(Box::new),
+            },
+            Cause::Submitted => Provenance::Request(spindle_kernel::Sender::default()),
+        };
         let sink = self
             .components
             .get(component)
@@ -2125,7 +2176,15 @@ impl Host {
             if let Some(route) = retried {
                 sink.retried(&route.binding, Retried::Attempted);
             }
-            let result = self.execute(component, command, input, None, None, &BTreeMap::new())?;
+            let result = self.execute(
+                component,
+                command,
+                input,
+                None,
+                None,
+                &BTreeMap::new(),
+                provenance.clone(),
+            )?;
             let refusal = match &result {
                 Ok(Executed { error: None, .. }) => None,
                 Ok(Executed { outcome, .. }) => Some(Some(outcome.as_str())),

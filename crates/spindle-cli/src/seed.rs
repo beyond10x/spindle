@@ -711,13 +711,20 @@ fn summed(one: SeedCounts, other: SeedCounts) -> SeedCounts {
     }
 }
 
-/// Submits `entry` to `host` as its actor and caller: what became of it.
+/// Submits `entry` to `host` as its actor and caller, each event it commits recording the seed,
+/// that caller and the entry's `request_id` as its cause: what became of it.
 fn submitted(host: &mut Host, entry: &Entry) -> Became {
-    let submitted = host.submit_as(
+    let submitted = host.submit_caused(
         &entry.command,
         entry.input.clone(),
         entry.actor.as_deref(),
         entry.caller.as_ref(),
+        &BTreeMap::new(),
+        spindle_kernel::Provenance::Seed(spindle_kernel::Sender {
+            actor: entry.actor.clone(),
+            attributes: entry.caller.clone().unwrap_or_default(),
+            request: Some(entry.request_id.clone()),
+        }),
     );
     match submitted {
         Ok(report) => {

@@ -1,0 +1,30 @@
+domain: notes.archive
+summary: A copy of each published record, kept once.
+entities:
+  - name: notes.archive.Copy
+    identity:
+      name: record_id
+      type: String
+    fields: []
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+commands:
+  - name: notes.archive.KeepCopy
+    input:
+      - name: record_id
+        type: String
+    outcomes:
+      - name: kept
+        creates: notes.archive.Copy
+        instance: record_id
+        emits: [notes.archive.CopyKept]
+        payload:
+          notes.archive.CopyKept: {record_id: input.record_id}
+        summary: The copy is kept.
+events:
+  - name: notes.archive.CopyKept
+    fields:
+      - name: record_id
+        type: String

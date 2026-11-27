@@ -49,6 +49,8 @@ mod console;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod cross_component_reads;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod event_caller;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod events_range;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod filter_through;

@@ -147,6 +147,80 @@ pub struct Origin {
     /// of every component in one order, so the events of its components' stores merge back into
     /// the order it published them.
     pub sequence: u64,
+    /// What caused the command: the caller of the request or seed entry that sent it, or the
+    /// binding that ran it. `None` where the writer named no cause, and for every write a release
+    /// before 0.23.0 stored, which stored none.
+    pub cause: Option<Provenance>,
+}
+
+/// What caused a command, as the events it committed record it ([`Origin::cause`]).
+///
+/// Stored as JSON, tagged by `kind`: `{"kind": "request", "actor", "attributes", "request"}`,
+/// `{"kind": "seed", ...}` alike, `{"kind": "tick", "binding"}` and `{"kind": "binding",
+/// "binding", "trigger"}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Provenance {
+    /// A request sent it: an HTTP request, a line a run read, a call of the host.
+    Request(Sender),
+    /// An entry of the seed a run submits at its start sent it.
+    Seed(Sender),
+    /// A periodic binding fell due.
+    Tick {
+        /// The binding.
+        binding: String,
+    },
+    /// An event binding carried it from the command that published the event.
+    Binding {
+        /// The binding.
+        binding: String,
+        /// What caused the command whose event the binding carried, followed back past every
+        /// binding to the request, seed entry or tick that started the chain, so never itself a
+        /// binding's; `None` where it is not known: in a run split over processes, the event
+        /// came from another process.
+        trigger: Option<Box<Provenance>>,
+    },
+}
+
+impl Provenance {
+    /// What a binding's command that an event of a command caused by this carried records as its
+    /// trigger: this, or, for a binding's command, its own trigger.
+    pub fn trigger(&self) -> Option<Provenance> {
+        match self {
+            Self::Binding { trigger, .. } => trigger.as_deref().cloned(),
+            other => Some(other.clone()),
+        }
+    }
+
+    /// The caller this names: a request's or seed entry's, or a binding's trigger's.
+    pub fn sender(&self) -> Option<&Sender> {
+        match self {
+            Self::Request(sender) | Self::Seed(sender) => Some(sender),
+            Self::Tick { .. } => None,
+            Self::Binding { trigger, .. } => trigger.as_deref().and_then(Self::sender),
+        }
+    }
+}
+
+/// Who sent a request or a seed entry ([`Provenance`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Sender {
+    /// The actor it was sent as, by qualified name; `None` for no actor.
+    pub actor: Option<String>,
+    /// The caller's attributes, as sent; empty for none.
+    #[serde(default)]
+    pub attributes: serde_json::Map<String, Value>,
+    /// The request's id: the one an ingress minted for an HTTP request, or a seed entry's
+    /// `request_id`; `None` where the request carried none.
+    pub request: Option<String>,
+}
+
+impl Sender {
+    /// A request id no other request carries: a random version 4 UUID, as text. What an ingress
+    /// mints for each HTTP request it answers.
+    pub fn new_request() -> String {
+        uuid::Uuid::new_v4().to_string()
+    }
 }
 
 /// One event a store committed, as [`Store::events_after`] answers it.

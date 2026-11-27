@@ -1,0 +1,48 @@
+format: ess/34
+system: notes
+version: v1
+summary: Records an editor writes, revises in place and pairs, each published record copied to an archive.
+domains:
+  - notes.records
+  - notes.archive
+components:
+  - component: desk
+    summary: Writes, revises, pairs and publishes records for the editor sending each command.
+    owns:
+      domains:
+        - notes.records
+    accepts:
+      commands:
+        - notes.records.WriteRecord
+        - notes.records.ReviseRecord
+        - notes.records.PairRecords
+        - notes.records.PublishRecord
+    publishes:
+      events:
+        - notes.records.RecordWritten
+        - notes.records.RecordRevised
+        - notes.records.RecordsPaired
+        - notes.records.RecordPublished
+    reached_by: network
+  - component: archive
+    summary: Keeps a copy of each published record; only a binding reaches it.
+    owns:
+      domains:
+        - notes.archive
+    accepts:
+      commands:
+        - notes.archive.KeepCopy
+    publishes:
+      events:
+        - notes.archive.CopyKept
+    reached_by: in_process
+bindings:
+  - id: keep-copy
+    when:
+      event: notes.records.RecordPublished
+    invoke:
+      command: notes.archive.KeepCopy
+    mapping:
+      record_id: event.record_id
+    delivery: at_most_once
+    on_failure: drop
