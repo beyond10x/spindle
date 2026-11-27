@@ -257,11 +257,12 @@ struct Asked {
 /// first without one), at most `limit` write by write ([`EVENTS_LIMIT_DEFAULT`] without one, and
 /// at most [`EVENTS_LIMIT_MOST`]), and the cursor after the last of them ([`Host::history`]).
 /// Each event is `{"position", "at", "command", "outcome", "caller", "cause", "event",
-/// "payload"}` ([`revision`]). The identity is read as JSON where it is JSON, and as text
-/// otherwise: `identity=t1` and `identity=%22t1%22` both name `"t1"`,
-/// `identity=7` names `7`. A query that leaves out `entity` or `identity`, names no entity of
-/// the model, gives a parameter twice, or a malformed `after` or `limit` is refused `400` naming
-/// the parameter, never its value; a store that cannot be read `500`.
+/// "payload"}` ([`revision`]). The identity is read as the entity's identity field is
+/// ([`identified`]): `identity=t1` and `identity=%22t1%22` both name `"t1"`; `identity=7` names
+/// `"7"` where the identity is a `String` and `7` where it is an `Integer`. A query that leaves
+/// out `entity` or `identity`, names no entity of the model, gives a parameter twice, or a
+/// malformed `after` or `limit` is refused `400` naming the parameter, never its value; a store
+/// that cannot be read `500`.
 pub fn history_queried(host: &mut Host, query: &str) -> Answer {
     match history_asked(host.ir(), query) {
         Ok(asked) => {
@@ -313,20 +314,20 @@ fn history_asked(ir: &EssIr, query: &str) -> Result<Asked, String> {
             ));
         }
     };
-    if !ir
+    let Some(declared) = ir
         .entities()
         .values()
-        .any(|declared| declared.name.to_string() == entity)
-    {
+        .find(|declared| declared.name.to_string() == entity)
+    else {
         return Err(format!(
             "query.{ENTITY}: expected an entity the model declares"
         ));
-    }
+    };
     let identity = match one(IDENTITY, &identity)? {
-        Some(raw) => {
-            let text = decoded(IDENTITY, raw)?;
-            serde_json::from_str::<Value>(&text).unwrap_or(Value::String(text))
-        }
+        Some(raw) => identified(
+            ess_gen::http::scalar(ir, &declared.identity.type_ref),
+            decoded(IDENTITY, raw)?,
+        ),
         None => return Err(format!("query.{IDENTITY}: expected an instance's identity")),
     };
     let after = match one(AFTER, &after)? {
@@ -345,6 +346,20 @@ fn history_asked(ir: &EssIr, query: &str) -> Result<Asked, String> {
         after,
         limit,
     })
+}
+
+/// The identity the decoded `text` of [`IDENTITY`] names, read as the entity's identity field
+/// is (`flat`, [`ess_gen::http::scalar`]): a quoted JSON string is the text it quotes; otherwise
+/// a `String` identity, or a newtype of one, is the text as given, digits included, and any
+/// other the JSON value `text` spells (`42` a number), or the text where it spells none.
+fn identified(flat: Option<ess_gen::http::Flat>, text: String) -> Value {
+    if let Ok(quoted @ Value::String(_)) = serde_json::from_str::<Value>(&text) {
+        return quoted;
+    }
+    match flat {
+        Some(ess_gen::http::Flat::String) => Value::String(text),
+        _ => serde_json::from_str::<Value>(&text).unwrap_or(Value::String(text)),
+    }
 }
 
 /// The limit `raw`, a value of [`LIMIT`], names: a whole number from 1, at most

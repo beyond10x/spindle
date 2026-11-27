@@ -1170,11 +1170,14 @@ fn the_store_names_the_instances_each_write_wrote(store: &mut dyn Store) {
 fn an_event_records_the_caller_of_its_request(store: &mut dyn Store) {
     let case = "an_event_records_the_caller_of_its_request";
     let request = Provenance::Request(requested("req-1"));
-    let seed = Provenance::Seed(Sender {
-        actor: None,
-        attributes: Map::new(),
-        request: Some("seed-entry-1".to_owned()),
-    });
+    let seed = Provenance::Seed {
+        digest: "sha256:5eed".to_owned(),
+        sender: Sender {
+            actor: None,
+            attributes: Map::new(),
+            request: Some("seed-entry-1".to_owned()),
+        },
+    };
     let bound = Provenance::Binding {
         binding: "contract-follow".to_owned(),
         trigger: Some(Box::new(request.clone())),

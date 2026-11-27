@@ -392,10 +392,11 @@ const HISTORY_READ: usize = 256;
 ///
 /// It holds the position of the last write of the instance's store the page read past, the
 /// store it was taken from (the host's run and the store's generation) and the sequence of that
-/// write's command. A read from the same store reads only after that position. Where the store
-/// was replaced since (a reset, a restart), the store is read from its start and every event of
-/// a command whose sequence is not after the cursor's is skipped, so a cursor taken before a
-/// restart resumes after its last event as long as the civil time does not go back.
+/// write's command. A read from the same store, or from the store of a later run (a restart),
+/// reads only after that position, whatever sequences the later run's commands take: a store
+/// that keeps its writes across a restart (SQLite, PostgreSQL) goes on from the positions it
+/// kept. Where this run replaced the store since (a reset), the store is read from its start and
+/// every event of a command whose sequence is not after the cursor's is skipped.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryCursor {
     run: u64,
@@ -509,15 +510,17 @@ pub(super) fn history(
     at: impl Fn(u64) -> Option<String>,
     mut read: impl FnMut(u64, usize) -> Result<Vec<Committed>, HostError>,
 ) -> Result<History, HostError> {
-    let same = after.run == run && after.generation == generation;
-    // Read from the store's start where it is not the one the cursor marks, skipping what the
-    // cursor answered by its command's sequence.
-    let (mut position, skipped) = if same {
+    let same_run = after.run == run;
+    // Read after the cursor's position from the store it marks, and from a store of another run
+    // (a restart), whose positions go on from the ones it kept: its commands' sequences may repeat
+    // the earlier run's on a fixed clock. A store this run replaced (a reset) is read from its start,
+    // skipping what the cursor answered by its command's sequence, which grows within a run.
+    let (mut position, skipped) = if !same_run || after.generation == generation {
         (after.position, 0)
     } else {
         (0, after.sequence)
     };
-    let mut sequence = after.sequence;
+    let mut sequence = if same_run { after.sequence } else { 0 };
     let mut events = Vec::new();
     'read: while events.len() < limit {
         let committed = read(position, HISTORY_READ)?;

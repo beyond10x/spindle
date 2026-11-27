@@ -79,11 +79,14 @@ fn the_append_records_the_actor_of_its_cause() {
         store.commit(&change("t1", "A")).expect("A commits");
         store.attribute(caused(
             2,
-            Some(Provenance::Seed(Sender {
-                actor: Some("adversary.tasks.Operator".to_owned()),
-                attributes: Map::new(),
-                request: Some("seed-1".to_owned()),
-            })),
+            Some(Provenance::Seed {
+                digest: "sha256:5eed".to_owned(),
+                sender: Sender {
+                    actor: Some("adversary.tasks.Operator".to_owned()),
+                    attributes: Map::new(),
+                    request: Some("seed-1".to_owned()),
+                },
+            }),
         ));
         store.commit(&change("t2", "B")).expect("B commits");
         store.attribute(caused(

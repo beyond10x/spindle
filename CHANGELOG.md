@@ -10,10 +10,10 @@ are Spindle's releases.
 
 - Every event a store commits records what caused its command, read back with it
   (`Store::events_after`, `Origin::cause`, `spindle_kernel::Provenance`): a request's caller,
-  its actor, its attributes and the request id the ingress mints for each HTTP request; a seed
-  entry's actor, caller and `request_id`; a tick's binding; or the binding that ran it with what
-  caused the command whose event it carried, recorded as not known in a run split over
-  processes. The memory, SQLite, PostgreSQL and IndexedDB stores keep it, SQLite and PostgreSQL
+  its actor, its attributes and the request id the ingress mints for each HTTP request; the
+  seed's digest, never its path, with a seed entry's actor, caller and `request_id`; a tick's
+  binding; or the binding that ran it with what caused the command whose event it carried,
+  recorded as not known in a run split over processes. The memory, SQLite, PostgreSQL and IndexedDB stores keep it, SQLite and PostgreSQL
   in each write's `spindle.written` origin and as the append's actor; an origin written before
   this release reads back with no cause, without a migration. `Host::submit_caused` sends a
   command with its cause (`story:events-record-their-caller`).
@@ -24,7 +24,18 @@ are Spindle's releases.
   `affects:` group included, and the events it published are that instance's (`Host::history`,
   `Reader::history`, `Committed::instances`); the request log keeps the cursor and elides the
   entity and identity. A write stored before this release names no instance, so its events are in
-  no history; an instance no command changed reads an empty page (`story:entity-event-history`).
+  no history; an instance no command changed reads an empty page. The identity is read as the
+  entity's identity field is: `identity=42` names the text `"42"` of a `String` identity and the
+  number `42` of an `Integer` one, and a quoted `identity=%2242%22` the text. A cursor taken
+  before a restart reads on after its store position, whatever sequences the restarted run's
+  commands take (`story:entity-event-history`).
+
+### Changed
+
+- `spindle_kernel::Origin` has a new public field `cause`, and `spindle_kernel::Committed` the
+  new public fields `outcome` and `instances`: a crate that builds either as a struct literal
+  now names them (`cause: None`, `outcome: None`, `instances: Vec::new()` for what it built
+  before) (`story:events-record-their-caller`, `story:entity-event-history`).
 
 ## [0.22.0] - 2026-11-27
 

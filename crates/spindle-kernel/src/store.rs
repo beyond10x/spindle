@@ -156,15 +156,21 @@ pub struct Origin {
 /// What caused a command, as the events it committed record it ([`Origin::cause`]).
 ///
 /// Stored as JSON, tagged by `kind`: `{"kind": "request", "actor", "attributes", "request"}`,
-/// `{"kind": "seed", ...}` alike, `{"kind": "tick", "binding"}` and `{"kind": "binding",
-/// "binding", "trigger"}`.
+/// `{"kind": "seed", "digest", "actor", "attributes", "request"}`, `{"kind": "tick", "binding"}`
+/// and `{"kind": "binding", "binding", "trigger"}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Provenance {
     /// A request sent it: an HTTP request, a line a run read, a call of the host.
     Request(Sender),
     /// An entry of the seed a run submits at its start sent it.
-    Seed(Sender),
+    Seed {
+        /// The seed: `sha256:` and the hexadecimal SHA-256 of its file's bytes, never its path.
+        digest: String,
+        /// The entry's actor, caller and `request_id`.
+        #[serde(flatten)]
+        sender: Sender,
+    },
     /// A periodic binding fell due.
     Tick {
         /// The binding.
@@ -195,7 +201,7 @@ impl Provenance {
     /// The caller this names: a request's or seed entry's, or a binding's trigger's.
     pub fn sender(&self) -> Option<&Sender> {
         match self {
-            Self::Request(sender) | Self::Seed(sender) => Some(sender),
+            Self::Request(sender) | Self::Seed { sender, .. } => Some(sender),
             Self::Tick { .. } => None,
             Self::Binding { trigger, .. } => trigger.as_deref().and_then(Self::sender),
         }
