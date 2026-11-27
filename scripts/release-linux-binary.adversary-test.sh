@@ -635,5 +635,119 @@ cases=$((cases + 1))
 sed -n '/^  pull_request:$/,/^[a-z]/p' "$workflow" | grep -Fqx '      - Containerfile' ||
     fail "release.yml: a pull request that changes the Containerfile does not run the image jobs"
 
+# --- adversary_w31_U2 ------------------------------------------------------------------------
+# Cases of wave 31's adversary on story:spindle-image-published.
+
+# A setuid or setgid binary owned by root (COPY's default owner) runs as UID 0 under any USER: the
+# kernel honours the bit, since docker run sets no no-new-privileges by default.
+for mode in 4555 2555 6555 u+s; do
+    recipe "FROM $base" "COPY --chmod=$mode b10x-spindle /b10x-spindle" 'USER 65532:65532' 'ENTRYPOINT ["/b10x-spindle"]'
+    expect refuse "adversary_w31_U2: COPY --chmod=$mode makes the entrypoint setuid or setgid root" \
+        containerfile "$work/Containerfile"
+done
+
+# Docker reads an escape followed by spaces or tabs as a line continuation
+# (lineContinuationRegex `\\[ \t]*$` in BuildKit's Dockerfile parser), so the check's "no
+# continuation line" holds only where the backslash is the line's last byte.
+for trailing in ' ' '	'; do
+    good_recipe
+    printf 'LABEL a=b \\%s\n' "$trailing" >>"$work/Containerfile"
+    expect refuse "adversary_w31_U2: a continuation line whose backslash is followed by whitespace" \
+        containerfile "$work/Containerfile"
+done
+
+# FROM with a flag before a pinned image: refused only by the check for a space in FROM's
+# argument, which no other case reaches (a stage name also breaks the digest's length).
+recipe "FROM --platform=linux/amd64 $base" 'COPY b10x-spindle /b10x-spindle' 'USER 65532' 'ENTRYPOINT ["/b10x-spindle"]'
+expect refuse "adversary_w31_U2: FROM with --platform before a pinned image" containerfile "$work/Containerfile"
+
+# A user with two colons: refused only by numeric_user's `*:*:*`, which no other case reaches.
+for user in 65532:65532:65532 65532:65532:0; do
+    recipe "FROM $base" 'COPY b10x-spindle /b10x-spindle' "USER $user" 'ENTRYPOINT ["/b10x-spindle"]'
+    expect refuse "adversary_w31_U2: USER '$user'" containerfile "$work/Containerfile"
+    printf '%s\n' "$user" >"$work/rec/user-out"
+    expect refuse "adversary_w31_U2: the image runs as '$user'" image-user "$checked"
+done
+
+# A third entry whose digest is not sha256 is not counted, so a list of three entries passes as two.
+printf '%s\n' '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"sha256:0000000000000000000000000000000000000000000000000000000000000001","size":1,"platform":{"os":"linux","architecture":"amd64"}},{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"sha256:0000000000000000000000000000000000000000000000000000000000000002","size":1,"platform":{"os":"linux","architecture":"arm64"}},{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003","size":1}]}' >"$work/rec/raw"
+echo 0 >"$work/rec/raw-status"
+expect refuse "adversary_w31_U2: a third entry with a sha512 digest and no platform" manifest-list "$listed"
+
+# images-line with an empty version: the line `<repository>:@sha256:<digest>` names no tag.
+printf '%s:@sha256:%s\n' "$repository" "$hex" >"$work/IMAGES"
+expect refuse "adversary_w31_U2: IMAGES with an empty version" images-line "$work/IMAGES" "$repository" ""
+
+# The image job's `if` starts with !cancelled(), so no implicit success() guards it: the gate's
+# success is its only guard against pushing a commit the gate did not pass, and a skipped gate is
+# accepted only on a pull request.
+image_if=$(job image | sed -n 's/^    if: //p')
+cases=$((cases + 1))
+case $image_if in
+    *"needs.gate.result == 'success'"*) ;;
+    *) fail "adversary_w31_U2: the image job runs without a green gate: $image_if" ;;
+esac
+cases=$((cases + 1))
+skipped=$(printf '%s' "$image_if" | grep -o "needs.gate.result == 'skipped'" | grep -c '' || true)
+paired=$(printf '%s' "$image_if" | grep -o "github.event_name == 'pull_request' && needs.gate.result == 'skipped'" | grep -c '' || true)
+[ "$skipped" -eq "$paired" ] ||
+    fail "adversary_w31_U2: the image job accepts a skipped gate outside a pull request: $image_if"
+
+# The step of image-manifest that refuses a tag already in ghcr.io, run under bash with a docker
+# stub: the tag exists, the tag is not found, and the registry cannot be asked.
+tag_step=$work/tag-step.sh
+job image-manifest | awk '
+    /^      - name: Tag the manifest list/ { found = 1; next }
+    found && /^        run: \|$/ { body = 1; next }
+    body && /^          / { print substr($0, 11); next }
+    body { exit }
+' >"$tag_step"
+mkdir -p "$work/tagtools"
+printf '#!%s\ndir=%s\n' "$shell" "$work/tagstep" >"$work/tagtools/docker"
+cat >>"$work/tagtools/docker" <<'STUB'
+printf '%s\n' "$*" >>"$dir/docker-log"
+case "$*" in
+    "buildx imagetools create"*) exit 1 ;;
+    "buildx imagetools inspect "*" "*) exit 1 ;;
+    "buildx imagetools inspect "*)
+        case $(cat "$dir/inspect-mode") in
+            exists) echo "Name: $4"; exit 0 ;;
+            missing) echo "ERROR: $4: not found" >&2; exit 1 ;;
+            unreachable) echo "ERROR: failed to do request: Head \"https://ghcr.io/v2/manifests\": dial tcp: i/o timeout" >&2; exit 1 ;;
+        esac
+        ;;
+esac
+exit 1
+STUB
+chmod 755 "$work/tagtools/docker"
+tag_run() {
+    rm -rf "$work/tagstep"
+    mkdir -p "$work/tagstep/digests"
+    printf 'sha256:%064d\n' 1 >"$work/tagstep/digests/x86_64-unknown-linux-gnu"
+    printf 'sha256:%064d\n' 2 >"$work/tagstep/digests/aarch64-unknown-linux-gnu"
+    printf '%s\n' "$1" >"$work/tagstep/inspect-mode"
+    : >"$work/tagstep/docker-log"
+    (cd "$work/tagstep" && PATH="$work/tagtools:$PATH" IMAGE=ghcr.io/beyond10x/spindle VERSION=0.26.0 \
+        GITHUB_STEP_SUMMARY="$work/tagstep/summary" GITHUB_REPOSITORY=beyond10x/spindle \
+        bash "$tag_step" >"$work/tagstep/out" 2>"$work/tagstep/err") || true
+}
+cases=$((cases + 1))
+if [ ! -s "$tag_step" ]; then
+    fail "adversary_w31_U2: image-manifest has no step 'Tag the manifest list' with a run block"
+else
+    tag_run exists
+    grep -Fqx "buildx imagetools inspect ghcr.io/beyond10x/spindle:0.26.0" "$work/tagstep/docker-log" &&
+        ! grep -q 'imagetools create' "$work/tagstep/docker-log" ||
+        fail "adversary_w31_U2: image-manifest tags a version already in ghcr.io: $(tr '\n' ';' <"$work/tagstep/docker-log")"
+    cases=$((cases + 1))
+    tag_run missing
+    grep -q 'imagetools create --tag ghcr.io/beyond10x/spindle:0.26.0 ' "$work/tagstep/docker-log" ||
+        fail "adversary_w31_U2: image-manifest does not tag a version ghcr.io does not hold: $(tr '\n' ';' <"$work/tagstep/docker-log") $(cat "$work/tagstep/err")"
+    cases=$((cases + 1))
+    tag_run unreachable
+    ! grep -q 'imagetools create' "$work/tagstep/docker-log" ||
+        fail "adversary_w31_U2: image-manifest tags the version when ghcr.io cannot say whether it holds it (inspect failed with a timeout, not 'not found'): $(tr '\n' ';' <"$work/tagstep/docker-log")"
+fi
+
 echo "release-linux-binary-adversary: $cases cases, $failures failed"
 [ "$failures" -eq 0 ]
