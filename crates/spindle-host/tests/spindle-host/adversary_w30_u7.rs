@@ -1,7 +1,9 @@
 //! Adversary, wave 30 unit U7 (`story:events-cursor-across-restart`): an events cursor of
 //! another run against a new memory store that already reached the positions the cursor marks,
 //! a reset on either side of a restart, a cursor from two runs back, an idle read after a
-//! restart, and the "same cursor" an idle read answers.
+//! restart, and the "same cursor" an idle read answers. Round 2: the id of each store's log of
+//! events (`Store::events_id`), a mark taken on an empty store, a log a state move copies, and a
+//! cursor of an earlier release.
 //!
 //! The console fixture declares two components: `board`, which a request reaches, and `ledger`,
 //! which only a binding reaches.
@@ -12,7 +14,8 @@ use std::time::{Duration, SystemTime};
 
 use serde_json::{Map, Value, json};
 use spindle_capability::Environment;
-use spindle_host::{Cursor, Host, ManualClock, Published};
+use spindle_host::{Cursor, Host, ManualClock, Published, Stores};
+use spindle_kernel::{Event, MemoryStore, Origin, SqliteStore, Store};
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -381,5 +384,286 @@ fn paged_beside(host: &Host, after: &Cursor, limit: usize) -> (Vec<Published>, C
         }
         events.extend(page.events);
         cursor = page.next;
+    }
+}
+
+/// One write on `store`: `events` events `TaskOpened`, task ids `<prefix>-0` on, attributed to
+/// one `OpenTask` command at `sequence`.
+fn one_write(store: &mut dyn Store, prefix: &str, events: usize, sequence: u64) {
+    store.attribute(Some(Origin {
+        command: "tasks.board.OpenTask".to_owned(),
+        sequence,
+        cause: None,
+    }));
+    let written = (0..events)
+        .map(|index| Event {
+            name: "tasks.board.TaskOpened".to_owned(),
+            payload: object(json!({"task_id": format!("{prefix}-{index}"), "title": "Old"})),
+        })
+        .collect::<Vec<_>>();
+    store
+        .commit_events(&written, &[])
+        .expect("the store records the write");
+    store.attribute(None);
+}
+
+/// The civil time `at` in microseconds, the sequence a command run at it takes.
+fn micros(at: SystemTime) -> u64 {
+    u64::try_from(
+        at.duration_since(SystemTime::UNIX_EPOCH)
+            .expect("after the epoch")
+            .as_micros(),
+    )
+    .expect("the time fits")
+}
+
+/// A host on `board` and a SQLite ledger under `state`, on a clock standing at `at`.
+fn supplied(state: &Path, board: Box<dyn Store>, at: SystemTime) -> Host {
+    let ledger = SqliteStore::open(&state.join("ledger.sqlite")).expect("SQLite opens");
+    let given: Stores = [
+        ("board".to_owned(), board),
+        ("ledger".to_owned(), Box::new(ledger) as Box<dyn Store>),
+    ]
+    .into_iter()
+    .collect();
+    Host::supplied(
+        tasks(),
+        &bound("elsewhere"),
+        Arc::new(ManualClock::at(at)),
+        None,
+        given,
+    )
+    .expect("the host on the given stores opens")
+}
+
+/// The id of a SQLite store's log: `0` while it holds no event, then not `0`, the same once the
+/// file is opened again, through its reading handle and past a reset that empties it in place;
+/// another file holding the same events has another id.
+#[test]
+fn a_sqlite_log_id_is_kept_by_its_file_and_differs_between_files() {
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
+    let first = state.path().join("first.sqlite");
+    let mut store = SqliteStore::open(&first).expect("SQLite opens");
+    assert_eq!(store.events_id().expect("the id reads"), 0, "an empty log");
+    one_write(&mut store, "w", 2, 7);
+    let id = store.events_id().expect("the id reads");
+    assert_ne!(id, 0, "a log with an event names itself");
+    let reading = store
+        .reading()
+        .expect("a SQLite store has a reading handle");
+    assert_eq!(reading.events_id().expect("the id reads beside"), id);
+    one_write(&mut store, "x", 1, 8);
+    assert_eq!(
+        store.events_id().expect("the id reads"),
+        id,
+        "a later write"
+    );
+    store.forget_events().expect("the events are forgotten");
+    assert_eq!(
+        store.events_id().expect("the id reads"),
+        id,
+        "a reset in place"
+    );
+    drop(reading);
+    drop(store);
+    let mut again = SqliteStore::open(&first).expect("SQLite opens again");
+    assert_eq!(again.events_id().expect("the id reads"), id, "opened again");
+
+    let mut other = SqliteStore::open(&state.path().join("other.sqlite")).expect("SQLite opens");
+    one_write(&mut other, "w", 2, 7);
+    let other_id = other.events_id().expect("the id reads");
+    assert_ne!(other_id, 0);
+    assert_ne!(other_id, id, "another file holding the same events");
+}
+
+/// The id of a memory store's log: never `0`, the same through its reading handle and past a
+/// reset in place, another for another store.
+#[test]
+fn a_memory_log_id_is_kept_by_its_store_and_differs_between_stores() {
+    let mut store = MemoryStore::default();
+    let id = store.events_id().expect("the id reads");
+    assert_ne!(id, 0, "an empty memory store names its log");
+    one_write(&mut store, "w", 1, 7);
+    assert_eq!(store.events_id().expect("the id reads"), id);
+    let reading = store
+        .reading()
+        .expect("a memory store has a reading handle");
+    assert_eq!(reading.events_id().expect("the id reads beside"), id);
+    store.forget_events().expect("the events are forgotten");
+    assert_eq!(
+        store.events_id().expect("the id reads"),
+        id,
+        "a reset in place"
+    );
+    let mut other = MemoryStore::default();
+    assert_ne!(other.events_id().expect("the id reads"), id);
+}
+
+/// On SQLite with a fixed clock, a cursor taken while `ledger` held no event (its mark names no
+/// log, at position 0), the end and the head cursor, reads after a restart the ledger's first
+/// events and the board's new ones, once each.
+#[test]
+fn a_mark_taken_on_an_empty_store_reads_its_first_events_after_a_restart() {
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
+    let sqlite = laptop();
+    let mut first = open(state.path(), &sqlite, first_run());
+    submit(
+        &mut first,
+        "tasks.board.OpenTask",
+        json!({"task_id": "t1", "title": "First"}),
+    );
+    let (before, end) = paged(&mut first, &Cursor::start(), 100);
+    assert_eq!(ids(&before), [json!("t1")], "the ledger is empty");
+    let head = first.published_head().expect("the head reads");
+    let (end, head) = (end.to_string(), head.to_string());
+    drop(first);
+
+    let mut second = open(state.path(), &sqlite, first_run());
+    submit(
+        &mut second,
+        "tasks.board.CloseTask",
+        json!({"task_id": "t1"}),
+    );
+    let whole = second.published().expect("the whole list reads");
+    let since = whole[1..].to_vec();
+    assert_eq!(
+        since
+            .iter()
+            .map(|event| event.component.as_str())
+            .collect::<Vec<_>>(),
+        ["board", "ledger"],
+        "{whole:?}"
+    );
+    for (form, text) in [("end", &end), ("head", &head)] {
+        let cursor = Cursor::parse(text).expect("the cursor reads after the restart");
+        for limit in [1, 100] {
+            let (events, _) = paged(&mut second, &cursor, limit);
+            assert_eq!(events, since, "the {form} cursor, limit {limit}");
+            let (beside, _) = paged_beside(&second, &cursor, limit);
+            assert_eq!(beside, since, "the {form} cursor, limit {limit}, beside");
+        }
+    }
+}
+
+/// `POST /api/reset` on SQLite with `--state`, then a read in the same run while the new file is
+/// still empty (its mark names no log), then writes and a restart: the cursor of that read
+/// reads every event committed after it, before and after the restart, once each.
+#[test]
+fn a_cursor_taken_on_a_file_a_reset_emptied_reads_on_after_a_restart() {
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
+    let sqlite = laptop();
+    let mut first = open(state.path(), &sqlite, first_run());
+    script(&mut first);
+    let (_, end) = paged(&mut first, &Cursor::start(), 100);
+    first.reset().expect("the reset empties every store");
+    let (none, emptied) = paged(&mut first, &end, 100);
+    assert_eq!(
+        ids(&none),
+        Vec::<Value>::new(),
+        "nothing after the reset yet"
+    );
+    let text = emptied.to_string();
+    longer_script(&mut first);
+    drop(first);
+
+    let mut second = open(state.path(), &sqlite, later_run(1));
+    submit(
+        &mut second,
+        "tasks.board.OpenTask",
+        json!({"task_id": "t9", "title": "After"}),
+    );
+    let whole = second.published().expect("the whole list reads");
+    assert_eq!(whole.len(), 10, "{whole:?}");
+    let cursor = Cursor::parse(&text).expect("the cursor reads after the restart");
+    for limit in [1, 100] {
+        let (events, _) = paged(&mut second, &cursor, limit);
+        assert_eq!(ids(&events), ids(&whole), "limit {limit}");
+    }
+}
+
+/// `state move` copies a log into PostgreSQL with new event ids, the commands' origins kept
+/// (`state_move.rs`: "actor, subject, request, trace, cause and `occurred_at` are kept"), so the
+/// copy names another log. Stood in for here by a second SQLite file holding the same write at
+/// the same command sequence: a cursor at the end of the first, read on the copy by a later run
+/// on a clock that moved forward, has answered every event the copy holds, and answers none of
+/// them again; the next command's events are answered once.
+#[test]
+fn a_cursor_from_before_a_state_move_answers_no_moved_event_again() {
+    const EVENTS: usize = 3;
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
+    let (from, to) = (state.path().join("from"), state.path().join("to"));
+    std::fs::create_dir_all(&from).expect("a directory");
+    std::fs::create_dir_all(&to).expect("a directory");
+    let sequence = micros(first_run());
+
+    let mut board = SqliteStore::open(&from.join("board.sqlite")).expect("SQLite opens");
+    one_write(&mut board, "w", EVENTS, sequence);
+    let mut first = supplied(&from, Box::new(board), first_run());
+    let (before, end) = paged(&mut first, &Cursor::start(), 100);
+    assert_eq!(before.len(), EVENTS, "{before:?}");
+    let text = end.to_string();
+    drop(first);
+
+    let mut moved = SqliteStore::open(&to.join("board.sqlite")).expect("SQLite opens");
+    one_write(&mut moved, "w", EVENTS, sequence);
+    let mut second = supplied(&to, Box::new(moved), later_run(1));
+    assert_eq!(
+        second.published().expect("the copy reads"),
+        before,
+        "the copy holds the same events"
+    );
+    let cursor = Cursor::parse(&text).expect("the cursor reads on the copy");
+    let page = second
+        .published_after(&cursor, 100)
+        .expect("the idle page reads");
+    assert_eq!(
+        ids(&page.events),
+        Vec::<Value>::new(),
+        "every event the copy holds was answered before the move"
+    );
+    submit(
+        &mut second,
+        "tasks.board.OpenTask",
+        json!({"task_id": "t9", "title": "After"}),
+    );
+    let (events, _) = paged(&mut second, &cursor, 100);
+    assert_eq!(ids(&events), [json!("t9")], "{events:?}");
+}
+
+/// `cursor` as 0.23.0 wrote it: each mark without the id of its store's log.
+fn as_released(cursor: &Cursor) -> String {
+    use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let bytes = URL_SAFE_NO_PAD
+        .decode(cursor.to_string())
+        .expect("a cursor is base64");
+    let mut value = serde_json::from_slice::<Value>(&bytes).expect("a cursor is JSON");
+    for mark in value[3].as_array_mut().expect("the marks are a list") {
+        mark.as_array_mut().expect("a mark is a list").truncate(5);
+    }
+    URL_SAFE_NO_PAD.encode(value.to_string())
+}
+
+/// A cursor 0.23.0 gave (marks without a log id), held across an upgrade and a restart onto new
+/// memory stores, on a clock that moved forward: 0.23.0 read such a store from its start and
+/// skipped by the sequences; read where the new store already reached the marked positions,
+/// every event of the new run is answered.
+#[test]
+fn a_released_cursor_reads_every_event_of_a_new_memory_store_past_its_mark() {
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
+    let memory = bound("memory");
+    let mut first = open(state.path(), &memory, first_run());
+    script(&mut first);
+    let (_, end) = paged(&mut first, &Cursor::start(), 100);
+    let text = as_released(&end);
+    drop(first);
+
+    let mut second = open(state.path(), &memory, later_run(1));
+    longer_script(&mut second);
+    let whole = second.published().expect("the second host's list reads");
+    let cursor = Cursor::parse(&text).expect("a released cursor reads");
+    for limit in [1, 100] {
+        let (events, _) = paged(&mut second, &cursor, limit);
+        assert_eq!(ids(&events), ids(&whole), "limit {limit}");
     }
 }
