@@ -70,10 +70,13 @@ and a command's input may name what an earlier line answered, such as the identi
 with `{"$line": 1, "pointer": "/events/0/payload/<field>"}`.
 
 Where `run` serves HTTP, it also serves the console routes `POST /api/reset`, `GET /api/events`,
-`GET /api/model` and `GET /api/served`. `--console off` (or `SPINDLE_SETTING_CONSOLE=off`)
-turns them off: each answers `404` as an unrouted path does, whatever secret the request carries.
-A run whose `--address` is off loopback serves them only with `--console on`. A route the
-specification publishes at a console path exits 1 before listening, the console on or off.
+`GET /api/model`, `GET /api/served`, `GET /api/history` and `GET` and `POST /api/clock`. With
+`--clock`, `POST /api/clock` `{"at": "<RFC 3339>"}` moves the run's clock forward between
+commands, and every record of `GET /api/events` carries its command's `at`. `--console off` (or
+`SPINDLE_SETTING_CONSOLE=off`) turns them off: each answers `404` as an unrouted path does,
+whatever secret the request carries. A run whose `--address` is off loopback serves them only
+with `--console on`. A route the specification publishes at a console path exits 1 before
+listening, the console on or off.
 
 Where `run` serves HTTP, `--seed <file>` (or `[seed] file` in the environment document) submits a
 JSON array of commands, each with its input, actor, caller and request id, on every start: checked

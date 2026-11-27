@@ -45,8 +45,10 @@
 //! `ess specify compile --format json` prints it and each outcome's subject; `GET /api/events`,
 //! every event published so far, in order, read from the stores that committed them, or with
 //! `?after=<cursor>&limit=<n>` a range of them and the cursor after it
-//! ([`console::events_queried`]); and
-//! `POST /api/reset`, which empties every store of the run. A route the binding or ESS publishes
+//! ([`console::events_queried`]), each event with its command's `at`;
+//! `POST /api/reset`, which empties every store of the run; and `GET /api/clock` and
+//! `POST /api/clock`, which read and step forward the host's stepping clock, answered on the
+//! host's thread ([`console::clock`], [`console::step`]). A route the binding or ESS publishes
 //! at one of those paths is refused at startup.
 //!
 //! Paths under `/__spindle/` are the run's own ([`Reserved`]): [`Surface::resolve`] matches them

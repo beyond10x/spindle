@@ -1652,23 +1652,33 @@ impl Surface {
     /// routes are declared or held in, and otherwise the first. A path no route of `method`
     /// matches answers the methods of the routes that do, sorted and each once, as ESS's served
     /// application names them in `Allow`. A console route, where the surface has
-    /// them, is matched exactly; no other route shares its path ([`Surface::with_console`]). A
+    /// them, is matched exactly by path and method, and a console path under another method
+    /// answers every method the console serves there (`GET, POST` at `/api/clock`); no other route
+    /// shares its path ([`Surface::with_console`]). A
     /// path under the reserved prefix `/__spindle/` is matched before either, with or without a
     /// recorder, so that it never reaches a route of the specification.
     pub fn resolve(&self, method: &str, path: &str) -> Resolved<'_> {
         if let Some(reserved) = Reserved::of(path) {
             return Resolved::Reserved(reserved);
         }
-        if self.console
-            && let Some(console) = Console::ALL
+        if self.console {
+            let mut at_path = Console::ALL
                 .into_iter()
-                .find(|console| console.path() == path)
-        {
-            return if console.method().as_str().to_uppercase() == method {
-                Resolved::Console(console)
-            } else {
-                Resolved::WrongMethod(vec![console.method()])
-            };
+                .filter(|console| console.path() == path)
+                .peekable();
+            if at_path.peek().is_some() {
+                let mut methods = Vec::new();
+                for console in at_path {
+                    if console.method().as_str().to_uppercase() == method {
+                        return Resolved::Console(console);
+                    }
+                    methods.push(console.method());
+                }
+                // As every other path: sorted, each method once.
+                methods.sort_unstable_by_key(|method| method.as_str());
+                methods.dedup();
+                return Resolved::WrongMethod(methods);
+            }
         }
         let mut served = Vec::new();
         let mut matched = Vec::new();

@@ -1,6 +1,7 @@
 //! The routes a generic model console reads, served beside the routes ESS publishes where
-//! `ingress.network` is bound to `http-loopback`: the model, the events published so far, and a
-//! reset of every store, which may load a world.
+//! `ingress.network` is bound to `http-loopback`: the model, the events published so far, a
+//! reset of every store, which may load a world, and the host's stepping clock, read and moved
+//! forward.
 
 use ess_compiler::EssIr;
 use ess_http::{Method, Operation};
@@ -28,23 +29,29 @@ pub enum Console {
     /// `GET /api/history`: the committed events of one entity instance, oldest first, paged
     /// ([`history_queried`]).
     History,
+    /// `GET /api/clock`: the civil time the host's stepping clock stands at ([`clock`]).
+    Clock,
+    /// `POST /api/clock`: moves the host's stepping clock forward ([`step`]).
+    Step,
 }
 
 impl Console {
-    /// Every console route.
-    pub const ALL: [Self; 5] = [
+    /// Every console route. [`Console::Clock`] and [`Console::Step`] share one path.
+    pub const ALL: [Self; 7] = [
         Self::Model,
         Self::Events,
         Self::Reset,
         Self::Served,
         Self::History,
+        Self::Clock,
+        Self::Step,
     ];
 
     /// The method it answers.
     pub fn method(self) -> Method {
         match self {
-            Self::Model | Self::Events | Self::Served | Self::History => Method::Get,
-            Self::Reset => Method::Post,
+            Self::Model | Self::Events | Self::Served | Self::History | Self::Clock => Method::Get,
+            Self::Reset | Self::Step => Method::Post,
         }
     }
 
@@ -56,6 +63,7 @@ impl Console {
             Self::Reset => "/api/reset",
             Self::Served => "/api/served",
             Self::History => "/api/history",
+            Self::Clock | Self::Step => "/api/clock",
         }
     }
 }
@@ -100,7 +108,8 @@ pub fn model(ir: &EssIr) -> String {
 }
 
 /// What `GET /api/events` answers: `200` with `{"events": [...]}`, each event the host published
-/// as `{"component", "command", "event", "payload"}`, in the order published, read from the
+/// as `{"component", "command", "at", "event", "payload"}`, `at` its command's time
+/// ([`Published::at`]), in the order published, read from the
 /// stores that committed them ([`Host::published`]); `500` naming why where a store cannot be
 /// read.
 pub fn events(host: &mut Host) -> Answer {
@@ -453,7 +462,10 @@ fn answered(published: Result<Vec<Published>, HostError>) -> Answer {
     }
 }
 
-/// `200` with `{"events": [...]}`, each of `published` in order.
+/// `200` with `{"events": [...]}`, each of `published` in order as `{"component", "command",
+/// "at", "event", "payload"}`: `at` its command's time, RFC 3339 in UTC to the millisecond, as
+/// `GET /api/history` writes it ([`Published::at`]), or `null` for an event its store holds no
+/// command for.
 fn listed(published: &[Published]) -> Answer {
     let events = published
         .iter()
@@ -461,6 +473,7 @@ fn listed(published: &[Published]) -> Answer {
             json!({
                 "component": published.component,
                 "command": published.command,
+                "at": published.at,
                 "event": published.event.name,
                 "payload": published.event.payload,
             })
@@ -523,8 +536,10 @@ pub fn carries_world(body: &[u8]) -> bool {
 ///
 /// A body empty or all whitespace loads no world. Any other body is read as JSON by `worlds`; a
 /// body that is not JSON, a run with no `worlds`, and a world `worlds` or the host refuses are
-/// refused `400` before any store is emptied. A store that could not be emptied or written is
-/// refused `500`, naming why.
+/// refused `400` before any store is emptied, a world whose `clock` is before the host's clock
+/// included. A world that carries `clock` on a host without a stepping clock
+/// ([`Host::stepping`]) is refused `409`, before any store is emptied. A store that could not be
+/// emptied or written is refused `500`, naming why.
 pub fn reset(host: &mut Host, body: &[u8], worlds: Option<Worlds<'_>>) -> Answer {
     let world = if carries_world(body) {
         let read = serde_json::from_slice::<Value>(body)
@@ -547,6 +562,56 @@ pub fn reset(host: &mut Host, body: &[u8], worlds: Option<Worlds<'_>>) -> Answer
             headers: Vec::new(),
         },
         Err(error @ HostError::World(_)) => Answer::refusal(400, error.to_string()),
+        Err(error @ HostError::Clock(_)) => Answer::refusal(409, error.to_string()),
+        Err(error) => Answer::refusal(500, error.to_string()),
+    }
+}
+
+/// The refusal of a `POST /api/clock` body that is not `{"at": <text>}`.
+const STEP_BODY: &str = "expected the body {\"at\": \"<RFC 3339>\"}";
+
+/// What `GET /api/clock` answers on the host's thread: `200` with `{"at": <RFC 3339>}`, the civil
+/// time the host's stepping clock stands at, in UTC to the millisecond ([`Host::clock_at`]);
+/// `409` on a host without one ([`Host::stepping`]): a run without `--clock`, an embedded host.
+pub fn clock(host: &Host) -> Answer {
+    stands(host.clock_at())
+}
+
+/// What `POST /api/clock` answers on the host's thread once the host's stepping clock moved
+/// forward to the instant `body` names, `{"at": <RFC 3339>}` ([`Host::step_clock`]): `200` with
+/// `{"at"}`, where the clock stands then, as [`clock`] answers it. A host without a stepping
+/// clock refuses `409` whatever the body; otherwise a body that is not that object or names no
+/// RFC 3339 instant is refused `400`, and an instant before the clock's `409`, the clock left
+/// where it stood.
+pub fn step(host: &mut Host, body: &[u8]) -> Answer {
+    if let Err(error) = host.clock_at() {
+        return stands(Err(error));
+    }
+    let asked = match serde_json::from_slice::<Value>(body) {
+        Ok(Value::Object(fields)) if fields.len() == 1 => match fields.get("at") {
+            Some(Value::String(at)) => spindle_host::instant(at).ok_or_else(|| {
+                "at: expected an RFC 3339 instant such as 2026-02-01T00:00:00Z".to_owned()
+            }),
+            _ => Err(STEP_BODY.to_owned()),
+        },
+        _ => Err(STEP_BODY.to_owned()),
+    };
+    match asked {
+        Ok(at) => stands(host.step_clock(at)),
+        Err(why) => Answer::refusal(400, why),
+    }
+}
+
+/// `200` with `{"at"}` for the civil time `stands`; `409` for a clock that does not step.
+fn stands(stands: Result<std::time::SystemTime, HostError>) -> Answer {
+    match stands.map(spindle_host::rfc3339) {
+        Ok(Some(at)) => Answer {
+            status: 200,
+            body: Some(json!({"at": at})),
+            headers: Vec::new(),
+        },
+        Ok(None) => Answer::refusal(500, "the clock stands past the years RFC 3339 spells"),
+        Err(error @ HostError::Clock(_)) => Answer::refusal(409, error.to_string()),
         Err(error) => Answer::refusal(500, error.to_string()),
     }
 }

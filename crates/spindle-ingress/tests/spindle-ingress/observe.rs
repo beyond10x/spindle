@@ -680,8 +680,15 @@ fn a_refused_bound_command_is_listed_with_its_cause() {
             "attempts": 1,
         }])
     );
-    let (status, events) = send(ledger.address, "GET", "/api/events");
+    let (status, mut events) = send(ledger.address, "GET", "/api/events");
     assert_eq!(status, 200, "{events}");
+    // Each record carries its command's time on the system clock (`story:served-clock-steps`).
+    for record in events["events"].as_array_mut().into_iter().flatten() {
+        let at = record
+            .as_object_mut()
+            .and_then(|record| record.remove("at"));
+        assert!(at.as_ref().is_some_and(Value::is_string), "{at:?}");
+    }
     assert_eq!(
         events["events"],
         serde_json::json!([{

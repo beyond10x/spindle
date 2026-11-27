@@ -232,6 +232,10 @@ fn answered(keyed: &Keyed, last: Option<&Key>) -> bool {
 /// `committed`, an event of `component`'s store read after the event whose key carried
 /// `sequence` and `ordinal`, with where it stands; `sequence` and `ordinal` become its key's.
 fn placed(component: &str, sequence: &mut u64, ordinal: &mut u64, committed: Committed) -> Keyed {
+    let at = committed
+        .origin
+        .as_ref()
+        .and_then(|origin| super::civil(origin.sequence));
     let command = match committed.origin {
         Some(origin) => {
             if origin.sequence > *sequence {
@@ -253,6 +257,7 @@ fn placed(component: &str, sequence: &mut u64, ordinal: &mut u64, committed: Com
         published: Published {
             component: component.to_owned(),
             command,
+            at,
             event: committed.event,
         },
     }

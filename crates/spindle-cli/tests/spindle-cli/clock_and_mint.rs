@@ -9,6 +9,10 @@
 //! 2026-06-01T00:00:00Z: early on February 1st 2026, late on the system clock of any day the test
 //! runs on. The mint cases run `tests/fixtures/mint` of the kernel on stdin and
 //! `tests/fixtures/served-world` over HTTP.
+//!
+//! A served run with `--clock` steps its clock (`story:served-clock-steps`): `POST /api/clock`
+//! `{"at"}` and a reset world's `"clock"` move it forward between commands, `GET /api/clock`
+//! answers where it stands, and every record of `GET /api/events` carries its command's `at`.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -327,13 +331,24 @@ fn route(spec: &str, id: &str) -> (String, String) {
 
 /// One HTTP/1.1 exchange on its own connection, `body` sent as is: the status and the JSON body.
 fn exchange(address: SocketAddr, method: &str, path: &str, body: &str) -> (u16, Value) {
+    exchange_with(address, method, path, "", body)
+}
+
+/// [`exchange`], `head` the header lines written after `Host`, each ending in `\r\n`.
+fn exchange_with(
+    address: SocketAddr,
+    method: &str,
+    path: &str,
+    head: &str,
+    body: &str,
+) -> (u16, Value) {
     let mut stream = TcpStream::connect_timeout(&address, ANSWER).expect("the listener accepts");
     stream
         .set_read_timeout(Some(ANSWER))
         .expect("a read timeout");
     write!(
         stream,
-        "{method} {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        "{method} {path} HTTP/1.1\r\nHost: {address}\r\n{head}Connection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
         body.len()
     )
     .expect("the request is written");
@@ -429,5 +444,184 @@ fn a_plain_reset_mints_from_the_run_seed_again() {
         [add(&served, "One"), add(&served, "Two")],
         first,
         "and so does every plain reset"
+    );
+}
+
+const FEBRUARY: &str = "2026-02-01T00:00:00Z";
+const MARCH: &str = "2026-03-01T00:00:00Z";
+const JULY: &str = "2026-07-01T00:00:00Z";
+const CLOCK_PATH: &str = "/api/clock";
+
+/// Books `booking` on a served `clock-served` run: the outcome.
+fn booked(served: &Served, booking: &str) -> Value {
+    let (status, answer) = call(
+        served,
+        BOOK,
+        &json!({"booking_id": booking, "deadline": DEADLINE}),
+    );
+    assert!((200..300).contains(&status), "{status} {answer}");
+    answer["outcome"].clone()
+}
+
+/// `POST /api/clock` to `at`: the status and the answer.
+fn step(served: &Served, at: &str) -> (u16, Value) {
+    exchange(
+        served.address,
+        "POST",
+        CLOCK_PATH,
+        &json!({"at": at}).to_string(),
+    )
+}
+
+/// `GET /api/clock`: the status and the answer.
+fn clock(served: &Served) -> (u16, Value) {
+    exchange(served.address, "GET", CLOCK_PATH, "")
+}
+
+/// `POST /api/reset` with `world`: the status and the answer.
+fn reset_answer(served: &Served, world: &Value) -> (u16, Value) {
+    exchange(served.address, "POST", "/api/reset", &world.to_string())
+}
+
+/// The events `GET /api/events` answers.
+fn events(served: &Served) -> Vec<Value> {
+    let (status, answer) = exchange(served.address, "GET", "/api/events", "");
+    assert_eq!(status, 200, "{answer}");
+    answer["events"]
+        .as_array()
+        .unwrap_or_else(|| panic!("events: {answer}"))
+        .clone()
+}
+
+#[test]
+fn a_served_clock_moves_forward_and_a_guard_reads_it() {
+    let served = serve(CLOCK_SERVED, &["--clock", FEBRUARY]);
+    assert_eq!(booked(&served, "b1"), "early");
+    assert_eq!(step(&served, JULY), (200, json!({"at": JULY})));
+    assert_eq!(
+        booked(&served, "b2"),
+        "late",
+        "the guard reads the stepped clock, past the deadline"
+    );
+}
+
+#[test]
+fn a_served_clock_refuses_to_move_back() {
+    let served = serve(CLOCK_SERVED, &["--clock", FEBRUARY]);
+    assert_eq!(step(&served, JULY), (200, json!({"at": JULY})));
+    let (status, answer) = step(&served, MARCH);
+    assert_eq!(status, 409, "{answer}");
+    assert!(answer["refused"].is_string(), "{answer}");
+    assert_eq!(
+        clock(&served),
+        (200, json!({"at": JULY})),
+        "the clock stands where it stood"
+    );
+    assert_eq!(booked(&served, "b1"), "late");
+}
+
+#[test]
+fn a_served_run_without_clock_refuses_to_step() {
+    let served = serve(CLOCK_SERVED, &[]);
+    assert_eq!(booked(&served, "b1"), "late");
+    let (status, answer) = step(&served, JULY);
+    assert_eq!(status, 409, "POST {CLOCK_PATH}: {answer}");
+    assert!(answer["refused"].is_string(), "{answer}");
+    let (status, answer) = clock(&served);
+    assert_eq!(status, 409, "GET {CLOCK_PATH}: {answer}");
+    assert!(answer["refused"].is_string(), "{answer}");
+    let (status, answer) = reset_answer(&served, &json!({"clock": JULY}));
+    assert_eq!(status, 409, "a reset world carrying clock: {answer}");
+    let events = events(&served);
+    assert_eq!(events.len(), 1, "the reset emptied nothing: {events:?}");
+    assert_eq!(events[0]["payload"]["booking_id"], "b1", "{events:?}");
+}
+
+#[test]
+fn a_reset_world_moves_the_clock() {
+    let served = serve(CLOCK_SERVED, &["--clock", FEBRUARY]);
+    assert_eq!(booked(&served, "b1"), "early");
+    let (status, answer) = reset_answer(&served, &json!({"clock": JULY}));
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(clock(&served), (200, json!({"at": JULY})));
+    assert!(events(&served).is_empty(), "the reset emptied the stores");
+    assert_eq!(booked(&served, "b2"), "late");
+
+    let (status, answer) = reset_answer(&served, &json!({"clock": MARCH}));
+    assert_eq!(status, 400, "an earlier clock refuses the reset: {answer}");
+    assert!(answer["refused"].is_string(), "{answer}");
+    let events = events(&served);
+    assert_eq!(
+        events.len(),
+        1,
+        "the refused reset emptied nothing: {events:?}"
+    );
+    assert_eq!(events[0]["payload"]["booking_id"], "b2", "{events:?}");
+    assert_eq!(clock(&served), (200, json!({"at": JULY})));
+}
+
+#[test]
+fn every_event_record_carries_at() {
+    let served = serve(CLOCK_SERVED, &["--clock", FEBRUARY]);
+    assert_eq!(booked(&served, "b1"), "early");
+    assert_eq!(step(&served, JULY), (200, json!({"at": JULY})));
+    assert_eq!(booked(&served, "b2"), "late");
+
+    let unpaged = events(&served);
+    assert_eq!(unpaged.len(), 2, "{unpaged:?}");
+    assert_eq!(unpaged[0]["at"], FEBRUARY, "{unpaged:?}");
+    assert_eq!(unpaged[1]["at"], JULY, "{unpaged:?}");
+
+    let (status, first) = exchange(served.address, "GET", "/api/events?limit=1", "");
+    assert_eq!(status, 200, "{first}");
+    assert_eq!(first["events"][0]["at"], FEBRUARY, "{first}");
+    let next = first["next"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a cursor: {first}"));
+    let (status, page) = exchange(
+        served.address,
+        "GET",
+        &format!("/api/events?after={next}"),
+        "",
+    );
+    assert_eq!(status, 200, "{page}");
+    assert_eq!(page["events"].as_array().map(Vec::len), Some(1), "{page}");
+    assert_eq!(page["events"][0]["at"], JULY, "{page}");
+    assert_eq!(page["events"][0]["payload"]["booking_id"], "b2", "{page}");
+}
+
+#[test]
+fn the_clock_route_needs_the_proxy_secret() {
+    const SECRET: &str = "served-clock-proxy-token-5e2a";
+    let directory = scratch();
+    let path = directory.path().join("proxy-secret");
+    std::fs::write(&path, format!("{SECRET}\n")).expect("the secret file is written");
+    let path = path.to_str().expect("a UTF-8 path");
+    let served = serve(
+        CLOCK_SERVED,
+        &[
+            "--clock",
+            FEBRUARY,
+            "--trusted-caller-header",
+            "X-Spindle-Caller",
+            "--trusted-caller-secret",
+            path,
+        ],
+    );
+    let body = json!({"at": JULY}).to_string();
+    let (status, answer) = exchange(served.address, "POST", CLOCK_PATH, &body);
+    assert_eq!(status, 403, "POST without the secret: {answer}");
+    let (status, answer) = exchange(served.address, "GET", CLOCK_PATH, "");
+    assert_eq!(status, 403, "GET without the secret: {answer}");
+    let secret = format!("Spindle-Proxy-Secret: {SECRET}\r\n");
+    assert_eq!(
+        exchange_with(served.address, "GET", CLOCK_PATH, &secret, ""),
+        (200, json!({"at": FEBRUARY})),
+        "the refused step moved nothing"
+    );
+    assert_eq!(
+        exchange_with(served.address, "POST", CLOCK_PATH, &secret, &body),
+        (200, json!({"at": JULY})),
+        "with the secret the route steps"
     );
 }

@@ -174,6 +174,16 @@ fn console_answers(served: &Served) -> Vec<(Console, u16, Value)> {
         .collect()
 }
 
+/// The status a served console route answers here: `409` for both methods of `/api/clock`, which
+/// a run without `--clock` serves and refuses to step (`story:served-clock-steps`), `200` for
+/// every other.
+fn served_status(console: Console) -> u16 {
+    match console {
+        Console::Clock | Console::Step => 409,
+        _ => 200,
+    }
+}
+
 fn unrouted(path: &str) -> Value {
     json!({"refused": format!("no route serves {path}")})
 }
@@ -200,7 +210,8 @@ fn off_loopback_the_run_itself_serves_no_console_route_by_default() {
     let flagged = serve(TRUSTED, &[address[0], address[1], "--console", "on"], None);
     for (console, status, answer) in console_answers(&flagged) {
         assert_eq!(
-            status, 200,
+            status,
+            served_status(console),
             "--console on off loopback, {console}: {answer}"
         );
     }
@@ -208,7 +219,11 @@ fn off_loopback_the_run_itself_serves_no_console_route_by_default() {
 
     let set = serve(TRUSTED, &address, Some("on"));
     for (console, status, answer) in console_answers(&set) {
-        assert_eq!(status, 200, "setting on off loopback, {console}: {answer}");
+        assert_eq!(
+            status,
+            served_status(console),
+            "setting on off loopback, {console}: {answer}"
+        );
     }
     drop(set);
 

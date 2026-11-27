@@ -120,9 +120,9 @@ and `::1`, is served only behind an authenticating proxy: it requires `--trusted
 with `--trusted-caller-secret`, and without both `run` exits 2 before listening. `--fixed-actor`
 is not enough, since it proves nobody. On such an address every request that does not carry the
 proxy's secret is refused `403` `{"refused": "not granted", "actor": null}` before anything of it
-is read: every command and view, `GET /api/model`, `GET /api/events`, `POST /api/reset` and every
-route under `/__spindle/`, and also a path no route has, a method a route does not take and a
-body of any size. On a loopback address `run` answers exactly as without `--address`.
+is read: every command and view, `GET /api/model`, `GET /api/events`, `POST /api/reset`,
+`GET` and `POST /api/clock` and every route under `/__spindle/`, and also a path no route has, a
+method a route does not take and a body of any size. On a loopback address `run` answers exactly as without `--address`.
 
 What is served is what ESS derives: each command the component accepts and, for a
 `reached_by: network` component, each view of a domain it owns. Each is served exactly where

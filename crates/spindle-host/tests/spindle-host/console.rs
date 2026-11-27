@@ -195,6 +195,35 @@ fn a_reset_empties_every_store_and_the_published_events() {
     });
 }
 
+/// Each event published carries its command's time, read from the sequence the host attributed
+/// the command with, to the millisecond (`story:served-clock-steps`): on the whole list, on a
+/// range after a cursor and through a reader.
+#[test]
+fn a_published_event_carries_its_command_time() {
+    // 2026-02-01T00:00:00.123Z.
+    let at = std::time::UNIX_EPOCH + std::time::Duration::from_millis(1_769_904_000_123);
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
+    let loaded = spindle_spec::load(&fixture()).expect("the fixture compiles");
+    let mut host = Host::new(
+        loaded.ir,
+        &in_memory(),
+        Arc::new(ManualClock::at(at)),
+        state.path(),
+    )
+    .expect("the host starts");
+    open(&mut host, "t1", "First");
+    let expected = Some("2026-02-01T00:00:00.123Z".to_owned());
+    let published = host.published().expect("the events read");
+    assert_eq!(published.len(), 1, "{published:?}");
+    assert_eq!(published[0].at, expected, "{published:?}");
+    let page = host
+        .published_after(&spindle_host::Cursor::start(), 10)
+        .expect("the range reads");
+    assert_eq!(page.events[0].at, expected, "{page:?}");
+    let read = host.reader().published().expect("the reader reads");
+    assert_eq!(read[0].at, expected, "{read:?}");
+}
+
 #[test]
 fn without_a_reset_an_open_task_cannot_be_opened_again() {
     on_every_store(|name, host| {

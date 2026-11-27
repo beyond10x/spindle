@@ -281,6 +281,7 @@ fn adversary_rows_rally_on_sqlite_counts_what_each_file_scans_through_ticks_bind
         }],
         answers: None,
         mint: None,
+        clock: None,
     })
     .expect("the reset to a world");
     holds_what_each_file_scans(&mut host, &state, "after a reset to a world of one match");

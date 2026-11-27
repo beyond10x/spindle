@@ -14,9 +14,12 @@ use std::thread;
 use std::time::Duration;
 
 use ess_compiler::EssIr;
+use ess_http::Method;
 use spindle_capability::Environment;
 use spindle_host::{Host, ManualClock};
-use spindle_ingress::{HTTP_LOOPBACK, Listener, Request, Response, Surface};
+use spindle_ingress::{
+    Console, HTTP_LOOPBACK, Listener, Request, Resolved, Response, Surface, SurfaceError,
+};
 
 const COMPONENT: &str = "desk";
 
@@ -61,8 +64,12 @@ fn surface(ir: &EssIr) -> Surface {
         .unwrap_or_else(|refused| panic!("the desk surface is served: {refused}"))
 }
 
+/// A host on a clock standing at one instant, 2026-02-01T00:00:00Z, the same for every host: each
+/// record of `GET /api/events` carries its command's time (`story:served-clock-steps`), so two
+/// hosts answer one body only on one clock.
 fn host(ir: EssIr, state: &Path) -> Host {
-    Host::new(ir, &in_memory(), Arc::new(ManualClock::new()), state)
+    let at = std::time::UNIX_EPOCH + Duration::from_secs(1_769_904_000);
+    Host::new(ir, &in_memory(), Arc::new(ManualClock::at(at)), state)
         .unwrap_or_else(|error| panic!("the host admits the desk: {error}"))
 }
 
@@ -265,4 +272,61 @@ fn the_router_answers_without_a_listener() {
             .all(|answer| answer.allow.is_some()),
         "every 405 names what the path answers: {answers:?}"
     );
+}
+
+/// `GET /api/clock` and `POST /api/clock` are two console routes on one path
+/// (`story:served-clock-steps`): each method resolves to its own, another answers `405` naming
+/// both, and a route the binding serves at the path is refused as shadowed.
+#[test]
+fn get_and_post_share_the_clock_path() {
+    let ir = ir();
+    let served = surface(&ir);
+    assert_eq!(
+        served.resolve("GET", "/api/clock"),
+        Resolved::Console(Console::Clock)
+    );
+    assert_eq!(
+        served.resolve("POST", "/api/clock"),
+        Resolved::Console(Console::Step)
+    );
+    assert_eq!(
+        served.resolve("PUT", "/api/clock"),
+        Resolved::WrongMethod(vec![Method::Get, Method::Post])
+    );
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let mut host = host(ir.clone(), state.path());
+    let routed = spindle_ingress::route(
+        &served,
+        &mut host,
+        Request {
+            method: "PUT".to_owned(),
+            path: "/api/clock".to_owned(),
+            query: String::new(),
+            content_type: None,
+            body: Vec::new(),
+        },
+    );
+    assert_eq!(routed.response.status, 405, "{:?}", routed.response);
+    assert_eq!(routed.response.allow.as_deref(), Some("GET, POST"));
+
+    let text = format!(
+        "type: ess-http/1\nspecification:\n  system: study\n  version: v1\n  source_digest: \
+         sha256:{}\nroutes:\n  - view: study.desk.AllDesks\n    method: get\n    path: /api/clock\n",
+        ir.source_digest()
+    );
+    let spec = ess_http::HttpSpec::from_yaml(&text).expect("the binding parses");
+    let http = ess_http::compile(&spec, &ir, &ess_gen::http::derived(&ir))
+        .unwrap_or_else(|refused| panic!("ESS refuses the binding: {refused}"));
+    let binding = ess_gen::http::Binding::new(http)
+        .unwrap_or_else(|refused| panic!("not servable: {refused}"));
+    let shadowed = Surface::new(&ir, &[COMPONENT.to_owned()], Some(&binding))
+        .expect("the binding's surface")
+        .with_console(HTTP_LOOPBACK);
+    match shadowed {
+        Err(SurfaceError::Shadowed { console, path, .. }) => {
+            assert_eq!(console.path(), "/api/clock");
+            assert_eq!(path, "/api/clock");
+        }
+        other => panic!("a route at /api/clock is refused as shadowed: {other:?}"),
+    }
 }

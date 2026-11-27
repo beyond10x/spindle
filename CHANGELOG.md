@@ -8,6 +8,16 @@ are Spindle's releases.
 
 ### Added
 
+- A served `run --clock` steps its clock: `POST /api/clock` `{"at": "<RFC 3339>"}` moves it
+  forward to that instant between commands and answers `{"at"}`, `GET /api/clock` answers where
+  it stands, and a reset world may carry `"clock"` to move it there. An instant before the
+  clock's is refused (`409` on the route, `400` on a reset, which then empties nothing); without
+  `--clock`, and on an embedded or Node host, both methods and a reset world carrying `clock`
+  answer `409`. Every record of `GET /api/events` carries `at`, the time its command ran, as
+  `GET /api/history` does. The route takes the proxy secret as every `/api/*` route does, and a
+  specification route at `/api/clock` is refused at start. `spindle_host::Published` gains `at`,
+  `spindle_host::World` gains `clock`, `spindle_ingress::Console` gains `Clock` and `Step`
+  (`story:served-clock-steps`).
 - `run --stdin` reads JSON lines on stdin where a component is `reached_by: network`, instead of
   serving HTTP: every component runs in the one process on one store and the event bindings fire
   as on any other stdin run. Given with a flag only a served run reads (`--http`, `--port`,

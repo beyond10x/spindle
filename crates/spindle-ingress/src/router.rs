@@ -289,8 +289,9 @@ impl Pending {
     /// owning store it reads ([`Reader::reads`]), `GET /api/model`, `GET /api/served`,
     /// `GET /api/events` and `GET /api/history` where every store gives a reading handle
     /// ([`Reader::reads_events`]), and on an observing surface the metrics and the topology. A
-    /// command, `POST /api/reset` and a view read on the host's thread only are answered there, one
-    /// at a time in arrival order.
+    /// command, `POST /api/reset`, both methods of `/api/clock` and a view read on the host's
+    /// thread only are answered there, one at a time in arrival order, so a step of the clock
+    /// falls between two commands.
     #[cfg_attr(not(feature = "listener"), allow(dead_code))]
     pub(crate) fn reads(&self, reader: &Reader) -> bool {
         match &self.asked {
@@ -300,7 +301,7 @@ impl Pending {
             },
             Asked::Console(Console::Model | Console::Served) => true,
             Asked::Console(Console::Events | Console::History) => reader.reads_events(),
-            Asked::Console(Console::Reset) => false,
+            Asked::Console(Console::Reset | Console::Clock | Console::Step) => false,
             Asked::Hosted(_) => self.recorder.is_some(),
         }
     }
@@ -349,7 +350,10 @@ impl Pending {
                 crate::observe::read_hosted(*reserved, recorder, reader),
                 Answered::ingress(),
             )),
-            (Asked::Console(Console::Reset) | Asked::Hosted(_), _) => None,
+            (
+                Asked::Console(Console::Reset | Console::Clock | Console::Step) | Asked::Hosted(_),
+                _,
+            ) => None,
         };
         read.ok_or_else(|| Box::new(self))
     }
@@ -437,6 +441,16 @@ impl Pending {
                 }
                 (answer.into(), Vec::new(), Answered::ingress())
             }
+            Asked::Console(Console::Clock) => (
+                crate::console::clock(host).into(),
+                Vec::new(),
+                Answered::ingress(),
+            ),
+            Asked::Console(Console::Step) => (
+                crate::console::step(host, &self.body).into(),
+                Vec::new(),
+                Answered::ingress(),
+            ),
             Asked::Hosted(reserved) => (
                 match &self.recorder {
                     Some(recorder) => crate::observe::hosted(*reserved, recorder, host),
