@@ -1,0 +1,843 @@
+//! Adversary cases for `run --caller-token <FILE>` (wave 31 U4, `story:verified-caller-token`):
+//! the bearer header read once and only there, the token's header and claims beyond the cases the
+//! unit lists, the mapping's leeway, keys the set lists for encryption or for another algorithm,
+//! the key set's refresh (a failed one, and one that removes every key), the fetch's bounds (a
+//! huge, a silent, an unusable set) and the mapping's bounds at start.
+//!
+//! Every key is made here with `rcgen` (P-256), every token signed here, and every key set served
+//! by a listener on loopback inside this test; no key is written to the tree.
+
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use serde_json::{Value, json};
+
+const SPEC: &str = "crates/spindle-cli/tests/fixtures/trusted-caller";
+const LAPTOP: &str = "examples/environments/laptop.toml";
+const COMPONENT: &str = "front";
+const ISSUER: &str = "https://issuer.test";
+const AUDIENCE: &str = "porch";
+const LOG: &str = "porch.visit.VisitLog";
+const PERSON: &str = "0f1e2d3c-4b5a-4968-8776-a5b4c3d2e1f0";
+
+/// The headers of one request, each name with its value, in order.
+type Headers = Vec<(&'static str, String)>;
+
+const STARTUP: Duration = Duration::from_secs(50);
+const ANSWER: Duration = Duration::from_secs(10);
+
+/// The top keys of a mapping the unit's own cases use: ES256, no leeway, a refresh every 300 s.
+const PLAIN: &str = "algorithms = [\"ES256\"]\nleeway_seconds = 0\nrefresh_seconds = 300";
+
+fn root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+fn route(operation: &str) -> (String, String) {
+    let ir = spindle_spec::load(&root().join(SPEC))
+        .expect("the trusted-caller fixture compiles")
+        .ir;
+    let surface = spindle_ingress::Surface::new(&ir, &[COMPONENT.to_owned()], None)
+        .expect("the fixture's surface is routed");
+    let route = surface
+        .routes()
+        .iter()
+        .find(|route| route.operation.name() == operation)
+        .unwrap_or_else(|| panic!("a route for {operation}"));
+    (route.method.as_str().to_uppercase(), route.path.clone())
+}
+
+fn base64url(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut text = String::new();
+    for chunk in bytes.chunks(3) {
+        let group = chunk.iter().enumerate().fold(0u32, |group, (at, byte)| {
+            group | (u32::from(*byte) << (16 - 8 * at))
+        });
+        for at in 0..=chunk.len() {
+            let index = (group >> (18 - 6 * at)) & 0x3f;
+            text.push(char::from(ALPHABET[index as usize]));
+        }
+    }
+    text
+}
+
+struct Signer {
+    kid: String,
+    key: rcgen::KeyPair,
+}
+
+impl Signer {
+    fn new(kid: &str) -> Self {
+        Self {
+            kid: kid.to_owned(),
+            key: rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).expect("a P-256 key"),
+        }
+    }
+
+    /// The public key as a JWK, `extra` members added or replaced.
+    fn jwk_with(&self, extra: &Value) -> Value {
+        let point = self.key.public_key_raw();
+        let mut jwk = json!({
+            "kty": "EC",
+            "crv": "P-256",
+            "use": "sig",
+            "alg": "ES256",
+            "kid": self.kid,
+            "x": base64url(&point[1..33]),
+            "y": base64url(&point[33..]),
+        });
+        for (name, value) in extra.as_object().expect("an object") {
+            jwk[name] = value.clone();
+        }
+        jwk
+    }
+
+    fn jwk(&self) -> Value {
+        self.jwk_with(&json!({}))
+    }
+
+    fn header(&self) -> jsonwebtoken::Header {
+        let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::ES256);
+        header.kid = Some(self.kid.clone());
+        header
+    }
+
+    fn sign_header(&self, header: &jsonwebtoken::Header, claims: &Value) -> String {
+        let key = jsonwebtoken::EncodingKey::from_ec_der(&self.key.serialize_der());
+        jsonwebtoken::encode(header, claims, &key).expect("the token is signed")
+    }
+
+    fn sign(&self, claims: &Value) -> String {
+        self.sign_header(&self.header(), claims)
+    }
+}
+
+fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("after the epoch")
+        .as_secs()
+}
+
+fn claims(role: &str) -> Value {
+    json!({
+        "iss": ISSUER,
+        "aud": AUDIENCE,
+        "exp": now() + 3600,
+        "iat": now(),
+        "role": role,
+        "sub": PERSON,
+    })
+}
+
+/// What the key set listener answers.
+#[derive(Clone)]
+enum Answering {
+    /// `200` with `{"keys": [..]}`.
+    Keys(Vec<Value>),
+    /// `200` with this body as it is.
+    Body(String),
+    /// This status, no body.
+    Status(u16),
+    /// Nothing: the connection is held open and never answered.
+    Silent,
+}
+
+struct Jwks {
+    address: SocketAddr,
+    answering: Arc<Mutex<Answering>>,
+}
+
+impl Jwks {
+    fn serving(answering: Answering) -> Self {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("the key set binds");
+        let address = listener.local_addr().expect("its address");
+        let answering = Arc::new(Mutex::new(answering));
+        let served = Arc::clone(&answering);
+        std::thread::spawn(move || {
+            let mut held = Vec::new();
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let _ = stream.set_read_timeout(Some(ANSWER));
+                let mut reader = BufReader::new(&stream);
+                let mut line = String::new();
+                while reader.read_line(&mut line).is_ok_and(|read| read > 0) {
+                    if line == "\r\n" {
+                        break;
+                    }
+                    line.clear();
+                }
+                let now = served.lock().expect("the answer").clone();
+                let (status, body) = match now {
+                    Answering::Keys(keys) => (200, json!({"keys": keys}).to_string()),
+                    Answering::Body(body) => (200, body),
+                    Answering::Status(status) => (status, String::new()),
+                    Answering::Silent => {
+                        held.push(stream);
+                        continue;
+                    }
+                };
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        Self { address, answering }
+    }
+
+    fn url(&self) -> String {
+        format!("http://{}/jwks", self.address)
+    }
+
+    fn answer(&self, answering: Answering) {
+        *self.answering.lock().expect("the answer") = answering;
+    }
+}
+
+struct Mapping {
+    _directory: tempfile::TempDir,
+    path: String,
+}
+
+impl Mapping {
+    /// A mapping whose key set is at `jwks`, its top keys `top`, `tail` added at its end.
+    fn with(jwks: &str, top: &str, tail: &str) -> Self {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let path = directory.path().join("caller-token.toml");
+        std::fs::write(
+            &path,
+            format!(
+                r#"issuer = "{ISSUER}"
+audience = "{AUDIENCE}"
+jwks = "{jwks}"
+{top}
+
+[actor]
+claim = "role"
+
+[actor.values]
+member = "porch.visit.Member"
+auditor = "porch.visit.Auditor"
+
+[attributes."porch.visit.Member"]
+person_id = "sub"
+{tail}
+"#
+            ),
+        )
+        .expect("the mapping is written");
+        let path = path.to_str().expect("a UTF-8 path").to_owned();
+        Self {
+            _directory: directory,
+            path,
+        }
+    }
+
+    fn new(jwks: &str, top: &str) -> Self {
+        Self::with(jwks, top, "")
+    }
+}
+
+/// A running `run`, its stderr read as it is written; stopped when dropped.
+struct Served {
+    child: Child,
+    address: SocketAddr,
+    stderr: Arc<Mutex<String>>,
+}
+
+impl Drop for Served {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[derive(Debug)]
+struct Stopped {
+    code: Option<i32>,
+    stdout: String,
+    stderr: String,
+}
+
+impl Stopped {
+    fn line_with(&self, needles: &[&str]) -> &str {
+        self.stderr
+            .lines()
+            .find(|line| needles.iter().all(|needle| line.contains(needle)))
+            .unwrap_or_else(|| panic!("no line names all of {needles:?}: {self:?}"))
+    }
+}
+
+fn serve(arguments: &[&str]) -> Result<Served, Stopped> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+        .current_dir(root())
+        .args(["run", SPEC, "--environment", LAPTOP])
+        .args(arguments)
+        .env_remove("SPINDLE_SETTING_CONSOLE")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("b10x-spindle starts");
+    let stderr = child.stderr.take().expect("stderr is piped");
+    let written = Arc::new(Mutex::new(String::new()));
+    let appended = Arc::clone(&written);
+    let (ended, stderr_ended) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stderr);
+        let mut line = String::new();
+        while reader.read_line(&mut line).is_ok_and(|read| read > 0) {
+            appended.lock().expect("stderr").push_str(&line);
+            line.clear();
+        }
+        let _ = ended.send(());
+    });
+    let stdout = child.stdout.take().expect("stdout is piped");
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        let _ = reader.read_line(&mut line);
+        let mut rest = String::new();
+        if line.is_empty() {
+            let _ = reader.read_to_string(&mut rest);
+        }
+        let _ = sender.send((line, rest));
+    });
+    let Ok((line, rest)) = receiver.recv_timeout(STARTUP) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!("run printed no line within {STARTUP:?}");
+    };
+    if line.is_empty() {
+        let status = child.wait().expect("the run is reaped");
+        let _ = stderr_ended.recv_timeout(ANSWER);
+        let stderr = written.lock().expect("stderr").clone();
+        return Err(Stopped {
+            code: status.code(),
+            stdout: rest,
+            stderr,
+        });
+    }
+    let ready: Value = serde_json::from_str(&line)
+        .unwrap_or_else(|error| panic!("run's first line {line:?} is not JSON ({error})"));
+    let address = ready["listening"]
+        .as_str()
+        .and_then(|address| address.parse().ok())
+        .unwrap_or_else(|| panic!("run's first line names no address: {ready}"));
+    Ok(Served {
+        child,
+        address,
+        stderr: written,
+    })
+}
+
+fn token_run(mapping: &Mapping) -> Served {
+    serve(&["--caller-token", mapping.path.as_str()])
+        .unwrap_or_else(|stopped| panic!("run stopped before listening: {stopped:?}"))
+}
+
+fn stops(arguments: &[&str]) -> Stopped {
+    match serve(arguments) {
+        Ok(served) => {
+            drop(served);
+            panic!("run listened with {arguments:?}");
+        }
+        Err(stopped) => stopped,
+    }
+}
+
+/// One exchange: `method` `path` with `headers` as given, every one of them, in order.
+fn exchange(
+    address: SocketAddr,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: Option<&Value>,
+) -> (u16, Value) {
+    let body = body.map(Value::to_string).unwrap_or_default();
+    let extra: String = headers
+        .iter()
+        .map(|(name, value)| format!("{name}: {value}\r\n"))
+        .collect();
+    let text = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n{extra}Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    let mut stream = TcpStream::connect_timeout(&address, ANSWER).expect("the listener accepts");
+    stream
+        .set_read_timeout(Some(ANSWER))
+        .expect("a read timeout");
+    stream
+        .write_all(text.as_bytes())
+        .expect("the request is written");
+    let mut answer = Vec::new();
+    stream
+        .read_to_end(&mut answer)
+        .expect("the answer is read before the timeout");
+    let answer = String::from_utf8_lossy(&answer).into_owned();
+    let (head, body) = answer
+        .split_once("\r\n\r\n")
+        .unwrap_or_else(|| panic!("an answer with a head: {answer:?}"));
+    let status = head
+        .split(' ')
+        .nth(1)
+        .and_then(|status| status.parse().ok())
+        .unwrap_or_else(|| panic!("a status line: {head:?}"));
+    let body = if body.trim().is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_str(body).unwrap_or_else(|_| json!(body))
+    };
+    (status, body)
+}
+
+/// `GET VisitLog` with `headers`, and `?query` where given.
+fn read_log(served: &Served, headers: &[(&str, &str)], query: Option<&str>) -> (u16, Value) {
+    let (method, path) = route(LOG);
+    let path = match query {
+        Some(query) => format!("{path}?{query}"),
+        None => path,
+    };
+    exchange(served.address, &method, &path, headers, None)
+}
+
+fn with_token(served: &Served, token: &str) -> (u16, Value) {
+    let authorization = format!("Bearer {token}");
+    read_log(served, &[("Authorization", &authorization)], None)
+}
+
+fn answers_within(served: &Served, token: &str, status: u16, within: Duration) -> bool {
+    let until = Instant::now() + within;
+    loop {
+        if with_token(served, token).0 == status {
+            return true;
+        }
+        if Instant::now() >= until {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+#[test]
+fn the_bearer_token_is_read_once_from_authorization_and_nowhere_else() {
+    let signer = Signer::new("k1");
+    let jwks = Jwks::serving(Answering::Keys(vec![signer.jwk()]));
+    let mapping = Mapping::new(&jwks.url(), PLAIN);
+    let served = token_run(&mapping);
+    let auditor = signer.sign(&claims("auditor"));
+
+    assert_eq!(with_token(&served, &auditor).0, 200, "the token verifies");
+    for scheme in ["bearer", "BEARER", "bEaReR"] {
+        let value = format!("{scheme} {auditor}");
+        let (status, body) = read_log(&served, &[("Authorization", &value)], None);
+        assert_eq!(
+            status, 200,
+            "the scheme {scheme} is read in any case: {body}"
+        );
+    }
+
+    let bearer = format!("Bearer {auditor}");
+    let refused: Vec<(&str, Headers, Option<String>)> = vec![
+        (
+            "the same valid token twice",
+            vec![
+                ("Authorization", bearer.clone()),
+                ("Authorization", bearer.clone()),
+            ],
+            None,
+        ),
+        (
+            "a valid token beside a second header",
+            vec![
+                ("Authorization", bearer.clone()),
+                ("Authorization", "Bearer x".to_owned()),
+            ],
+            None,
+        ),
+        (
+            "the token in the query string",
+            Vec::new(),
+            Some(format!("access_token={auditor}")),
+        ),
+        (
+            "the token in a cookie",
+            vec![("Cookie", format!("access_token={auditor}"))],
+            None,
+        ),
+        (
+            "the token under another scheme",
+            vec![("Authorization", format!("Basic {auditor}"))],
+            None,
+        ),
+        (
+            "the token without a scheme",
+            vec![("Authorization", auditor.clone())],
+            None,
+        ),
+        (
+            "the scheme run into the token",
+            vec![("Authorization", format!("Bearer{auditor}"))],
+            None,
+        ),
+        (
+            "the scheme alone",
+            vec![("Authorization", "Bearer".to_owned())],
+            None,
+        ),
+        (
+            "the token in another header",
+            vec![("X-Access-Token", auditor.clone())],
+            None,
+        ),
+    ];
+    for (case, headers, query) in &refused {
+        let headers: Vec<(&str, &str)> = headers
+            .iter()
+            .map(|(name, value)| (*name, value.as_str()))
+            .collect();
+        let (status, body) = read_log(&served, &headers, query.as_deref());
+        assert_eq!(status, 401, "{case}: {body}");
+        assert_eq!(body, json!({"refused": "unauthenticated"}), "{case}");
+    }
+}
+
+#[test]
+fn a_token_whose_header_or_claims_fail_is_refused_beyond_the_listed_cases() {
+    let signer = Signer::new("k1");
+    let jwks = Jwks::serving(Answering::Keys(vec![signer.jwk()]));
+    let mapping = Mapping::new(&jwks.url(), PLAIN);
+    let served = token_run(&mapping);
+
+    let mut no_kid = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::ES256);
+    no_kid.kid = None;
+    let by_public_point = {
+        let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256);
+        header.kid = Some("k1".to_owned());
+        jsonwebtoken::encode(
+            &header,
+            &claims("auditor"),
+            &jsonwebtoken::EncodingKey::from_secret(signer.key.public_key_raw()),
+        )
+        .expect("signed with the public point as secret")
+    };
+    let by_public_pem = {
+        let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256);
+        header.kid = Some("k1".to_owned());
+        jsonwebtoken::encode(
+            &header,
+            &claims("auditor"),
+            &jsonwebtoken::EncodingKey::from_secret(signer.key.public_key_pem().as_bytes()),
+        )
+        .expect("signed with the public key's PEM as secret")
+    };
+    let swapped = {
+        let auditor = signer.sign(&claims("auditor"));
+        let member = signer.sign(&claims("member"));
+        let auditor: Vec<&str> = auditor.split('.').collect();
+        let member: Vec<&str> = member.split('.').collect();
+        format!("{}.{}.{}", auditor[0], member[1], auditor[2])
+    };
+    let without = |claim: &str| {
+        let mut claims = claims("auditor");
+        claims.as_object_mut().expect("an object").remove(claim);
+        signer.sign(&claims)
+    };
+    let changed = |claim: &str, value: Value| {
+        let mut claims = claims("auditor");
+        claims[claim] = value;
+        signer.sign(&claims)
+    };
+    let refused = [
+        ("no kid", signer.sign_header(&no_kid, &claims("auditor"))),
+        ("HS256 keyed with the public point", by_public_point),
+        ("HS256 keyed with the public key's PEM", by_public_pem),
+        ("a signature over another payload", swapped),
+        ("no exp", without("exp")),
+        ("no iss", without("iss")),
+        ("no aud", without("aud")),
+        ("nbf ten minutes ahead", changed("nbf", json!(now() + 600))),
+        (
+            "exp as a string",
+            changed("exp", json!((now() + 3600).to_string())),
+        ),
+        (
+            "aud an array without the audience",
+            changed("aud", json!(["other", "porch2"])),
+        ),
+        ("aud an empty array", changed("aud", json!([]))),
+        (
+            "iss with a trailing slash",
+            changed("iss", json!(format!("{ISSUER}/"))),
+        ),
+    ];
+    for (case, token) in &refused {
+        let (status, body) = with_token(&served, token);
+        assert_eq!(status, 401, "{case}: {body}");
+    }
+
+    let (status, body) = with_token(&served, &changed("aud", json!(["other", AUDIENCE])));
+    assert_eq!(
+        status, 200,
+        "an aud array naming the audience verifies: {body}"
+    );
+
+    for (case, role) in [
+        ("a role claim that is an array", json!(["auditor"])),
+        ("a role claim that is a number", json!(1)),
+        ("a role claim that is an object", json!({"auditor": true})),
+        ("a role claim in another case", json!("Auditor")),
+    ] {
+        let mut claims = claims("auditor");
+        claims["role"] = role;
+        let (status, body) = with_token(&served, &signer.sign(&claims));
+        assert_eq!(status, 403, "{case}: {body}");
+        assert_eq!(
+            body,
+            json!({"refused": "not granted", "actor": null}),
+            "{case}"
+        );
+    }
+}
+
+#[test]
+fn the_mapping_leeway_bounds_exp_and_nbf() {
+    let signer = Signer::new("k1");
+    let jwks = Jwks::serving(Answering::Keys(vec![signer.jwk()]));
+    let mapping = Mapping::new(
+        &jwks.url(),
+        "algorithms = [\"ES256\"]\nleeway_seconds = 120\nrefresh_seconds = 300",
+    );
+    let served = token_run(&mapping);
+    let at = |claim: &str, value: u64| {
+        let mut claims = claims("auditor");
+        claims[claim] = json!(value);
+        signer.sign(&claims)
+    };
+    for (case, token, status) in [
+        (
+            "exp 90 s past, within the leeway",
+            at("exp", now() - 90),
+            200,
+        ),
+        (
+            "exp 200 s past, beyond the leeway",
+            at("exp", now() - 200),
+            401,
+        ),
+        (
+            "nbf 90 s ahead, within the leeway",
+            at("nbf", now() + 90),
+            200,
+        ),
+        (
+            "nbf 200 s ahead, beyond the leeway",
+            at("nbf", now() + 200),
+            401,
+        ),
+    ] {
+        let (answered, body) = with_token(&served, &token);
+        assert_eq!(answered, status, "{case}: {body}");
+    }
+}
+
+#[test]
+fn a_key_for_encryption_or_for_another_algorithm_verifies_nothing() {
+    let signer = Signer::new("k1");
+    let encrypting = Signer::new("enc");
+    let other_alg = Signer::new("es384");
+    let no_use = Signer::new("bare");
+    let jwks = Jwks::serving(Answering::Keys(vec![
+        signer.jwk(),
+        encrypting.jwk_with(&json!({"use": "enc"})),
+        other_alg.jwk_with(&json!({"alg": "ES384"})),
+        no_use.jwk_with(&json!({"use": null, "alg": null})),
+    ]));
+    let mapping = Mapping::new(
+        &jwks.url(),
+        "algorithms = [\"ES256\", \"ES384\"]\nleeway_seconds = 0",
+    );
+    let served = token_run(&mapping);
+
+    assert_eq!(with_token(&served, &signer.sign(&claims("auditor"))).0, 200);
+    assert_eq!(
+        with_token(&served, &no_use.sign(&claims("auditor"))).0,
+        200,
+        "a P-256 key naming no use and no algorithm verifies an ES256 token"
+    );
+    for (case, key) in [
+        ("a key listed for encryption", &encrypting),
+        ("a P-256 key naming ES384", &other_alg),
+    ] {
+        let (status, body) = with_token(&served, &key.sign(&claims("auditor")));
+        assert_eq!(status, 401, "{case}: {body}");
+    }
+}
+
+#[test]
+fn a_refresh_that_fails_keeps_the_keys_and_warns_naming_the_url() {
+    let signer = Signer::new("k1");
+    let jwks = Jwks::serving(Answering::Keys(vec![signer.jwk()]));
+    let mapping = Mapping::new(&jwks.url(), "algorithms = [\"ES256\"]\nrefresh_seconds = 1");
+    let served = token_run(&mapping);
+    let auditor = signer.sign(&claims("auditor"));
+    assert_eq!(with_token(&served, &auditor).0, 200);
+
+    jwks.answer(Answering::Status(500));
+    let until = Instant::now() + Duration::from_secs(15);
+    while !served
+        .stderr
+        .lock()
+        .expect("stderr")
+        .lines()
+        .any(|line| line.contains(&jwks.url()) && line.contains("could not be refreshed"))
+    {
+        assert!(
+            Instant::now() < until,
+            "no warning names the key set within 15 s: {}",
+            served.stderr.lock().expect("stderr")
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert_eq!(
+        with_token(&served, &auditor).0,
+        200,
+        "the keys fetched last still verify"
+    );
+    let written = served.stderr.lock().expect("stderr").clone();
+    assert!(
+        !written.contains(&auditor),
+        "no token is printed: {written}"
+    );
+}
+
+/// Acceptance `keys_rotate_without_a_restart`: "a removed key no longer does". An issuer that
+/// removes its only key publishes a set with no key; the run treats that as a failed refresh and
+/// keeps verifying the removed key for as long as it runs.
+#[test]
+fn a_key_removed_by_emptying_the_set_no_longer_verifies() {
+    let signer = Signer::new("k1");
+    let jwks = Jwks::serving(Answering::Keys(vec![signer.jwk()]));
+    let mapping = Mapping::new(&jwks.url(), "algorithms = [\"ES256\"]\nrefresh_seconds = 1");
+    let served = token_run(&mapping);
+    let auditor = signer.sign(&claims("auditor"));
+    assert_eq!(with_token(&served, &auditor).0, 200);
+
+    jwks.answer(Answering::Keys(Vec::new()));
+    assert!(
+        answers_within(&served, &auditor, 401, Duration::from_secs(8)),
+        "a key the issuer removed from its set, leaving it empty, still verifies: {}",
+        served.stderr.lock().expect("stderr")
+    );
+}
+
+#[test]
+fn a_key_set_too_large_too_slow_or_without_a_usable_key_stops_the_run() {
+    let signer = Signer::new("k1");
+    let padding = "x".repeat(1024 * 1024 + 16);
+    let huge = Jwks::serving(Answering::Body(
+        json!({"keys": [signer.jwk()], "padding": padding}).to_string(),
+    ));
+    let mapping = Mapping::new(&huge.url(), PLAIN);
+    let stopped = stops(&["--caller-token", &mapping.path]);
+    assert_eq!(stopped.code, Some(1), "a key set over 1 MiB: {stopped:?}");
+    assert!(stopped.stdout.is_empty(), "{stopped:?}");
+    stopped.line_with(&[&huge.url()]);
+
+    let unusable = Jwks::serving(Answering::Keys(vec![
+        signer.jwk_with(&json!({"use": "enc"})),
+        signer.jwk_with(&json!({"kid": null})),
+        json!({"kty": "oct", "kid": "secret", "k": base64url(b"shared")}),
+    ]));
+    let mapping = Mapping::new(&unusable.url(), PLAIN);
+    let stopped = stops(&["--caller-token", &mapping.path]);
+    assert_eq!(
+        stopped.code,
+        Some(1),
+        "a key set with no usable key: {stopped:?}"
+    );
+    stopped.line_with(&[&unusable.url()]);
+
+    let silent = Jwks::serving(Answering::Silent);
+    let mapping = Mapping::new(&silent.url(), PLAIN);
+    let started = Instant::now();
+    let stopped = stops(&["--caller-token", &mapping.path]);
+    assert_eq!(
+        stopped.code,
+        Some(1),
+        "a key set that never answers: {stopped:?}"
+    );
+    stopped.line_with(&[&silent.url()]);
+    assert!(
+        started.elapsed() < Duration::from_secs(40),
+        "the fetch is bounded: {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn a_mapping_out_of_bounds_exits_1_before_listening() {
+    let signer = Signer::new("k1");
+    let jwks = Jwks::serving(Answering::Keys(vec![signer.jwk()]));
+    let url = jwks.url();
+    let cases: Vec<(&str, Mapping, &str)> = vec![
+        (
+            "a leeway over 300 s",
+            Mapping::new(&url, "algorithms = [\"ES256\"]\nleeway_seconds = 301"),
+            "leeway_seconds",
+        ),
+        (
+            "a refresh of 0 s",
+            Mapping::new(&url, "algorithms = [\"ES256\"]\nrefresh_seconds = 0"),
+            "refresh_seconds",
+        ),
+        (
+            "a refresh over a day",
+            Mapping::new(&url, "algorithms = [\"ES256\"]\nrefresh_seconds = 86401"),
+            "refresh_seconds",
+        ),
+        (
+            "a symmetric algorithm",
+            Mapping::new(&url, "algorithms = [\"ES256\", \"HS256\"]"),
+            "HS256",
+        ),
+        (
+            "http to a host off loopback",
+            Mapping::new("http://192.0.2.1/jwks", PLAIN),
+            "http://192.0.2.1/jwks",
+        ),
+        (
+            "attributes for an actor no role maps to",
+            Mapping::with(
+                &url,
+                PLAIN,
+                "\n[attributes.\"porch.visit.Ghost\"]\nx = \"sub\"",
+            ),
+            "porch.visit.Ghost",
+        ),
+    ];
+    for (case, mapping, named) in &cases {
+        let stopped = stops(&["--caller-token", &mapping.path]);
+        assert_eq!(stopped.code, Some(1), "{case}: {stopped:?}");
+        assert!(stopped.stdout.is_empty(), "{case}: {stopped:?}");
+        stopped.line_with(&["--caller-token", named]);
+    }
+
+    let mapping = Mapping::new(&url, PLAIN);
+    let stopped = stops(&[
+        "--caller-token",
+        &mapping.path,
+        "--fixed-actor",
+        "porch.visit.Auditor",
+    ]);
+    assert_eq!(stopped.code, Some(1), "with --fixed-actor: {stopped:?}");
+    stopped.line_with(&["--caller-token", "--fixed-actor"]);
+}
