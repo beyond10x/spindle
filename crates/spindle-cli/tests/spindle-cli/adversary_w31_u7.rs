@@ -1058,9 +1058,9 @@ fn a_kill_between_the_two_events_of_one_write_posts_both_again_in_order() {
     );
 }
 
-/// F2: `position` is what tells two posts of one component apart. A reset on SQLite starts a new
-/// file, so the first event after it is posted at the position an earlier, different event was:
-/// a consumer that drops a post it already has by component and position drops it.
+/// F2, decision D2: component, log and position name one event. A reset on SQLite starts a new
+/// file, so the first event after it is posted at the position an earlier, different event was;
+/// its `log` tells the two apart.
 #[test]
 fn an_event_after_a_reset_is_not_posted_at_an_earlier_event_s_position() {
     let stub = Stub::start(|_, _| Reply::Status(200));
@@ -1076,9 +1076,9 @@ fn an_event_after_a_reset_is_not_posted_at_an_earlier_event_s_position() {
     assert_eq!(named(&accepted), [pair(OPENED, "t1"), pair(OPENED, "t2")]);
     let positions = positions(&accepted);
     assert_ne!(
-        (&accepted[0]["component"], positions[0]),
-        (&accepted[1]["component"], positions[1]),
-        "t1 and t2 are posted as one component and position: {accepted:#?}"
+        (&accepted[0]["component"], &accepted[0]["log"], positions[0]),
+        (&accepted[1]["component"], &accepted[1]["log"], positions[1]),
+        "t1 and t2 are posted as one component, log and position: {accepted:#?}"
     );
 }
 
@@ -1145,8 +1145,9 @@ mod postgres {
     use std::time::Duration;
 
     use super::{
-        NOTE_COUNTED, NOTE_OPENED, NOTES, NOTES_HTTP, Reply, Stub, environment, listening, named,
-        note, pair, positions, scratch,
+        BINDING, NOTE_COUNTED, NOTE_OPENED, NOTES, NOTES_HTTP, OPENED, Reply, SPEC, Stub,
+        environment, exchange, listening, log_of, named, note, open, pair, positions, scratch,
+        terminated,
     };
 
     fn owner_url() -> String {
@@ -1231,4 +1232,136 @@ mod postgres {
             "{positions:?}"
         );
     }
+
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn the_log_is_kept_across_a_reset_and_a_restart_on_postgres() {
+        let stub = Stub::start(|_, _| Reply::Status(200));
+        let directory = scratch();
+        let sqlite = environment(directory.path(), &stub.url(), &[OPENED], "POST", 2000);
+        let text = std::fs::read_to_string(&sqlite).expect("the environment reads");
+        let kept = directory.path().join("postgres.toml");
+        std::fs::write(
+            &kept,
+            text.replace(
+                "\"store.durable\" = [\"sqlite\"]",
+                "\"store.durable\" = [\"postgres\"]",
+            ),
+        )
+        .expect("the environment is written");
+        let schema = schema();
+        let command = || {
+            let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_b10x-spindle"));
+            command
+                .args(["run", SPEC, "--http", BINDING, "--environment"])
+                .arg(&kept)
+                .env("SPINDLE_SETTING_DATABASE_URL", owner_url())
+                .env("SPINDLE_SETTING_DATABASE_SCHEMA", &schema)
+                .env_remove("SPINDLE_SETTING_DATABASE_CA")
+                .env_remove("SPINDLE_SETTING_DATABASE_POOL")
+                .env_remove("SPINDLE_SETTING_DATABASE_CONNECTIONS");
+            command
+        };
+        let served = listening(command());
+        open(&served, "t1");
+        stub.wait_accepted(1, Duration::from_secs(20));
+        let (status, answer) = exchange(served.address, "POST", "/api/reset", None);
+        assert_eq!(status, 200, "{answer}");
+        open(&served, "t2");
+        stub.wait_accepted(2, Duration::from_secs(20));
+        assert_eq!(terminated(served).1, Some(143));
+
+        let again = listening(command());
+        open(&again, "t3");
+        let accepted = stub.wait_accepted(3, Duration::from_secs(20));
+        assert_eq!(
+            named(&accepted),
+            [pair(OPENED, "t1"), pair(OPENED, "t2"), pair(OPENED, "t3")]
+        );
+        let logs: Vec<u64> = accepted.iter().map(log_of).collect();
+        assert!(
+            logs.windows(2).all(|pair| pair[0] == pair[1]),
+            "{accepted:#?}"
+        );
+        let positions = positions(&accepted);
+        assert!(
+            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            "{positions:?}"
+        );
+    }
+}
+
+// Round 3: decision D2, `log` in each body (d2cdde70).
+
+/// The `log` of a body: a number other than 0.
+fn log_of(body: &Value) -> u64 {
+    body["log"]
+        .as_u64()
+        .filter(|log| *log != 0)
+        .unwrap_or_else(|| panic!("the body names its log as a number other than 0: {body}"))
+}
+
+/// G1: every body carries exactly `format`, `event`, `component`, `log`, `position` and `fields`;
+/// the log stays one across a restart without a reset, and positions go on rising in it.
+#[test]
+fn the_log_is_named_in_each_body_and_kept_across_a_restart() {
+    let stub = Stub::start(|_, _| Reply::Status(200));
+    let directory = scratch();
+    let state = directory.path().join("state");
+    let environment = environment(directory.path(), &stub.url(), &[OPENED], "POST", 2000);
+    let served = tasks(&environment, &state);
+    open(&served, "t1");
+    stub.wait_accepted(1, Duration::from_secs(10));
+    assert_eq!(terminated(served).1, Some(143));
+
+    let again = tasks(&environment, &state);
+    open(&again, "t2");
+    let accepted = stub.wait_accepted(2, Duration::from_secs(10));
+    assert_eq!(named(&accepted), [pair(OPENED, "t1"), pair(OPENED, "t2")]);
+    for body in &accepted {
+        let mut keys: Vec<&str> = body
+            .as_object()
+            .expect("a JSON object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            ["component", "event", "fields", "format", "log", "position"],
+            "{body}"
+        );
+    }
+    assert_eq!(log_of(&accepted[0]), log_of(&accepted[1]), "{accepted:#?}");
+    let positions = positions(&accepted);
+    assert!(positions[0] < positions[1], "{positions:?}");
+}
+
+/// G1: a reset on SQLite creates the file again: the log changes with it, and the new log is kept
+/// across a restart after the reset.
+#[test]
+fn the_log_changes_on_a_sqlite_reset_and_is_kept_after_it() {
+    let stub = Stub::start(|_, _| Reply::Status(200));
+    let directory = scratch();
+    let state = directory.path().join("state");
+    let environment = environment(directory.path(), &stub.url(), &[OPENED], "POST", 2000);
+    let served = tasks(&environment, &state);
+    open(&served, "t1");
+    stub.wait_accepted(1, Duration::from_secs(10));
+    let (status, answer) = exchange(served.address, "POST", "/api/reset", None);
+    assert_eq!(status, 200, "{answer}");
+    open(&served, "t2");
+    stub.wait_accepted(2, Duration::from_secs(10));
+    assert_eq!(terminated(served).1, Some(143));
+
+    let again = tasks(&environment, &state);
+    open(&again, "t3");
+    let accepted = stub.wait_accepted(3, Duration::from_secs(10));
+    assert_eq!(
+        named(&accepted),
+        [pair(OPENED, "t1"), pair(OPENED, "t2"), pair(OPENED, "t3")]
+    );
+    let logs: Vec<u64> = accepted.iter().map(log_of).collect();
+    assert_ne!(logs[0], logs[1], "the reset made a new log: {accepted:#?}");
+    assert_eq!(logs[1], logs[2], "the restart keeps it: {accepted:#?}");
 }
