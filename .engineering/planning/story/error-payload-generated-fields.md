@@ -22,22 +22,22 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/generated.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/spindle-kernel/mint.rs
-revision: 9
+revision: 11
 ---
 # A generated field in an error payload is minted as ESS mints it
 
 ## Outcome
 
-The kernel mints `{generated: true}` in a declared error's payload (`a_generated_error_field_is_minted`, wave 3). ESS 0.86.0's interpreter mints none there (`declared_error`), so it draws no tick. Under a mint that answers ESS's tick UUIDs, every draw after such a refusal runs one tick ahead of ESS. Found while fixing the draw order for generated Booleans (wave 5). Pre-existing.
+The kernel mints `{generated: true}` in a declared error's payload (`a_generated_error_field_is_minted`, wave 3). ESS 0.99.1's interpreter mints none there (`declared_error`), so it draws no tick. Under a mint that answers ESS's tick UUIDs, every draw after such a refusal runs one tick ahead of ESS. Found while fixing the draw order for generated Booleans (wave 5). Pre-existing.
 
 ## Acceptance
 
-- `an_error_payload_draws_as_ess_draws` — a command refused with a declared error whose payload
+- `an_error_payload_draws_as_ess_draws`: a command refused with a declared error whose payload
   marks a field generated, followed by a creation that mints: the minted values equal ESS's
   interpreter for the same sequence under the tick mint.
-- `an_unsourced_error_field_draws_as_ess_draws` — the same with an error field that has no source.
-- `a_seeded_mint_answers_error_values_from_its_seed` — two runs on one seed answer the same error
-  values, and the minted identities after them equal a run without the refusal.
+- `an_unsourced_error_field_draws_as_ess_draws`: the same with an error field that has no source.
+- `a_seeded_mint_answers_error_values_from_its_seed`: under a seeded mint, the identities minted
+  after a refused command equal those of the same run without the refusal.
 
 ## Scope
 

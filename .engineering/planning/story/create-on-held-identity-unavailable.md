@@ -17,13 +17,13 @@ scope:
   path: crates/spindle-conformance/tests/spindle-conformance/adversary_establish.rs
 - confidence: cited
   path: crates/spindle-kernel/src/execute.rs
-- confidence: inferred
+- confidence: cited
   path: crates/spindle-kernel/src/execute/affects.rs
 - confidence: inferred
   path: crates/spindle-kernel/src/lib.rs
 - confidence: inferred
   path: crates/spindle-telemetry/tests/spindle-telemetry/catalogue.rs
-revision: 5
+revision: 8
 ---
 # A create on a held identity is refused as unavailable
 
@@ -39,6 +39,9 @@ target maps to an undeclared result (`crates/spindle-conformance/src/target.rs`)
 - `adversary_establish.rs::a_create_on_an_established_identity_answers_as_the_interpreter` runs
   (its `#[ignore]` is removed) and passes.
 - `a_second_create_on_one_identity_answers_as_the_interpreter` — two creates, no establish step.
+- `a_replay_that_diverges_on_a_held_identity_prints_unavailable`: `spindle replay` on a scenario
+  whose create meets a held identity and whose expected answer differs prints the divergent line
+  ending `, unavailable`.
 
 ## Origin
 
@@ -53,6 +56,10 @@ Derived 2026-11-27 by `story-scoper`. Every line is **cited** (read from the sto
   `crates/spindle-conformance` (its answer to the runner) — cited
 - **Files:** `crates/spindle-kernel/src/execute.rs:2076-2136` (`creation_identity`; the refusal of a
   supplied identity already held at `:2107-2114`) — cited
+- **Files:** `crates/spindle-kernel/src/execute.rs:826` (`Run::select`) and `:1837`
+  (`Run::wrong_state`), and `crates/spindle-kernel/src/execute/affects.rs:240`: the other
+  constructors of `ExecuteError::Undeclared`, which gain the new field as `None` (one line each);
+  `:826` sits in the hunk U4 rewrites, so U5 merges after U4 — cited (`git grep -n "Undeclared *{"`)
 - **Files:** `crates/spindle-conformance/src/target.rs:377-378` (`ExecuteError::Undeclared` mapped to
   `SemanticCommandResult::undeclared()`), and `Answered` at `:79-105` — cited
 - **Files:** `crates/spindle-conformance/tests/spindle-conformance/adversary_establish.rs:174-205`

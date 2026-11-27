@@ -32,11 +32,11 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/decimal_identity.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/spindle-kernel/main.rs
-revision: 7
+revision: 9
 ---
 ## Outcome
 
-A command names a `Decimal` identity whatever its spelling, as ESS 0.99.1's interpreter does: a row
+A command names a `Decimal` or `Binary64` identity whatever its spelling, as ESS 0.99.1's interpreter does: a row
 created with `1.0` is found by a command with `1`, and the other way round. Today the kernel keys a
 row by the identity's JSON text and rewrites only `Integer` values
 (`crates/spindle-kernel/src/typed.rs:52`), so the two spellings are two rows in Spindle and one in
@@ -55,6 +55,10 @@ Found by the wave 27 U5 adversary; red on the base c61a59650, so pre-existing.
   between the two commands.
 - `a_world_row_with_a_decimal_identity_is_found_whatever_its_spelling`: a world row seeded as `1.0`
   is found by a command naming `1`, and the reverse.
+- `a_binary64_identity_names_one_row_whatever_its_spelling`: a `Binary64` identity created as
+  `1.0` is found by a command naming `1`, and the reverse; the kernel answers as the interpreter.
+- `an_established_decimal_identity_is_found_whatever_its_spelling`: a row established through
+  `Host::establish` with identity `1.0` is found by a command naming `1.0` and by one naming `1`.
 
 ## Not covered
 

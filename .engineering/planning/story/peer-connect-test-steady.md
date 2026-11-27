@@ -16,7 +16,11 @@ scope:
   path: crates/spindle-host/Cargo.toml
 - confidence: inferred
   path: crates/spindle-host/src/host/component.rs
-revision: 6
+- confidence: inferred
+  path: crates/spindle-host/tests/spindle-host/connect.rs
+- confidence: inferred
+  path: crates/spindle-host/tests/spindle-host/main.rs
+revision: 8
 ---
 # The slow-peer connect test passes on a loaded runner
 
@@ -36,14 +40,17 @@ loaded CI runner and on a loaded workstation, or say in their failure which boun
 
 ## Acceptance
 
-1. `a_case_listens_on_a_loopback_host_no_other_process_holds`: with `127.0.0.1:P` held by the test,
-   a peer started at `127.a.b.c:P` prints its listening line.
-2. `a_connection_that_reached_itself_is_no_link`: a connection whose local and peer address are
-   equal is refused by `Host::connect`, which retries.
+1. `each_case_listens_on_a_loopback_host_of_its_own`: every case of the two tests the Outcome names
+   starts its peers on a loopback host (`127.a.b.c`) that no other case uses; with `127.0.0.1:P`
+   held by the test, a peer started at `127.a.b.c:P` prints its listening line.
+2. `a_connection_that_reached_itself_is_no_link` (new module
+   `crates/spindle-host/tests/spindle-host/connect.rs`): a connection whose local and peer address
+   are equal is refused by `Host::connect`, which retries.
 3. The two tests the Outcome names bound their match below the 60 s kill, and a failure prints the
    bound, the measured time and the console of every process.
-4. The two tests pass 20 runs in a row under load on the workstation; this run is manual and stays
-   out of the gate.
+4. The two tests pass 20 runs in a row on the workstation while its load average is at least 40
+   (the failures in Why were at 45). The run count, the load and the result are recorded as
+   `test_result` evidence on this story. This run is manual and stays out of the gate.
 
 ## Scope
 

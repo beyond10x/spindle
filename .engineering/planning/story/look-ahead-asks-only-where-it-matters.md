@@ -14,7 +14,7 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/adversary_look_ahead.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/spindle-kernel/deployment.rs
-revision: 6
+revision: 7
 ---
 ## Outcome
 
@@ -64,3 +64,7 @@ Derived 2026-11-27 by `story-scoper`. Every line is **cited** (read from the sto
 - **Would collide with:** any unit editing `crates/spindle-kernel/src/execute.rs`, above all `Run::unknown_instance`/`not_found` (:1782-1810, called from `look_ahead`) and `missing_reference`/`reference` (:1474-1513)
 - **Safety fact:** every branch the kernel could select under any forcing is in `passed` plus the unforced selection (`select_ahead` :1636-1680), so where all of them answer alike, asking changes nothing; the change only removes decider questions, never adds one, and the existing tests that pin asks expect none (`deployment.rs:147`, `:240`, `adversary_admission.rs:169`, `:353`) — step 3, unproven
 - **Safety fact:** own-spec reach: `DecideAdmission` (`ess/domains/deployment.yaml:232`) reads `environment_id` through a stored reference and declares `refused` (external) after `not-provided`/`missing-provided`; the current look-ahead asks `refused` before those refusals are read, so the host decider (`spindle-host/src/decisions.rs:234`) errors on a request ESS answers `not-provided` — step 3, unproven
+
+## Decided when scoped
+
+None. The scoper named no decision; the Outcome and Acceptance stand as drafted.

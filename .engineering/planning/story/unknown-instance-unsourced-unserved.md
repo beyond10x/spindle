@@ -29,23 +29,28 @@ scope:
   path: crates/spindle-kernel/src/supported.rs
 - confidence: cited
   path: crates/spindle-kernel/tests/spindle-kernel/error_fields.rs
-revision: 5
+revision: 7
 ---
 # An unknown-instance refusal with unsourced fields is not served
 
 ## Outcome
 
 A command whose explicit `unknown_instance:` branch answers an error with a field the specification
-gives no source is treated as ESS 0.87.0's served application treats it: it does not serve that
+gives no source is treated as ESS's served application treats it (read at ESS 0.87.0): it does not serve that
 answer (`ess-synth` `determined.rs`, "the fields of error ... which the specification gives no
 source"). Today spindle answers such a refusal with the field left out, a body the published schema
 refuses (`ess-gen` `openapi.rs:2519-2575` requires the full payload on that branch).
 
 ## Acceptance
 
-- `an_unknown_instance_refusal_with_an_unsourced_field_is_not_served`: the route (or, with
-  `story:outcome-scoped-refusal`, that outcome) answers 501 naming the field; nothing is written.
+- `an_unknown_instance_refusal_with_an_unsourced_field_is_not_served`: a request that selects the
+  `unknown_instance:` outcome whose error leaves a required field unsourced answers 501 naming that
+  outcome and the field; nothing is written.
+- `the_other_outcomes_of_that_route_are_still_served`: on the same route, a request that selects
+  another outcome answers as it does today.
 - `an_unknown_instance_refusal_whose_fields_all_have_sources_is_served`: answers the full payload.
+- `an_optional_unsourced_field_of_an_unknown_instance_refusal_is_left_out`: the refusal is served
+  and its payload has no key for that field.
 
 ## Origin
 

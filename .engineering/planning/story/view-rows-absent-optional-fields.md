@@ -19,24 +19,28 @@ scope:
   path: crates/spindle-host/src/view.rs
 - confidence: inferred
   path: crates/spindle-host/tests/spindle-host/views.rs
-revision: 8
+revision: 11
 ---
 # A view row shows an optional field never written as ESS does
 
 ## Outcome
 
-A view row whose source row never wrote an `Optional` field answers that field as ESS 0.86.0's
-interpreter does: ESS's view rows carry it as `null`, spindle's leave it out unless the field's
-presence is `null_when_absent` (`crates/spindle-host/src/view.rs`, `project`). Replayed scenarios
-and served views then disagree with ESS on the same state.
+A view row read through the conformance target (`HostTarget::query_view`) whose source row never
+wrote an `Optional` field answers that field as ESS 0.99.1's interpreter does: `null` unless the
+field's presence is `omitted_when_absent`. Today spindle leaves the field out unless its presence is
+`null_when_absent` (`crates/spindle-host/src/view.rs`, `project`), so replayed scenarios disagree
+with ESS on the same state. Served views keep ESS's published contract, which declares such a field
+optional and not nullable (decision D1 A).
 
 ## Acceptance
 
-- `an_optional_field_never_written_is_answered_as_ess_answers_it` — an entity created without its
-  optional field, read through a view that projects it: the row equals ESS's interpreter's row for
-  the same steps, key present or absent as ESS has it.
-- `view_rows_agree_with_the_interpreter_on_absent_fields` — for a scenario with written and
-  unwritten optional fields, every view row equals the interpreter's.
+- `an_optional_field_never_written_is_answered_as_ess_answers_it`: an entity created without its
+  optional field, read through `HostTarget::query_view` with a view that projects it: the row
+  equals ESS's interpreter's row for the same steps, key present or absent as ESS has it.
+- `view_rows_agree_with_the_interpreter_on_absent_fields`: for a scenario with written and
+  unwritten optional fields, every row `HostTarget::query_view` answers equals the interpreter's.
+- `a_served_view_row_still_leaves_an_unwritten_optional_field_out`: the same entity read through a
+  served view (`Host::listed_with`) answers its row without the field.
 
 ## Origin
 
@@ -94,5 +98,4 @@ Taken 2026-11-27 on the scoper's recommended option, each reversible, unless not
 - D1 A: only the conformance target (`HostTarget::query_view`) answers an `Optional` field
   never written as ESS's interpreter does (`null` unless `omitted_when_absent`, `null` through a
   reference naming no row, a stored `null` kept); served views keep ESS's published contract,
-  which declares such a field optional and not nullable. The gap between ESS's interpreter and its
-  published contract is reported to ESS.
+  which declares such a field optional and not nullable.

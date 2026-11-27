@@ -58,27 +58,37 @@ of each `depends_on` the first. Each unit is built by one `aep:implementor` and 
 Each story's `## Scope` holds its surface. Shared between units, each on separate hunks and resolved
 by the coordinator at merge:
 
-- `crates/spindle-kernel/src/execute.rs`: U3 the error path (`error_of`, `unsourced_error_fields`,
-  doc only), U4 `look_ahead`, `select_ahead`, `ahead_answer` (`:1580-1712`), U5
-  `creation_identity` (`:2076-2136`), U6 `reaching` (`:271-345`).
+- `crates/spindle-kernel/src/execute.rs`: U3 code in `declared_error`, `error_of` and the
+  `Unsourced::Minted` arm of `unsourced_error_fields` (`:2382-2400`), plus a doc comment; U4
+  `look_ahead`, `select_ahead`, `ahead_answer` (`:1580-1712`), `Run::select` (`:787-798`) and the
+  lines its Scope names; U5 `creation_identity` (`:2076-2136`) and one line in each other
+  constructor of `ExecuteError::Undeclared` (`:826` in U4's `Run::select` hunk, `:1837`); U6
+  `reaching` (`:271-345`).
 - `crates/spindle-kernel/src/lib.rs`: U5 the field on `ExecuteError::Undeclared`, U6 a re-export.
 - `crates/spindle-kernel/src/supported.rs`: U3 only (`unfilled_error_field`).
+- `crates/spindle-kernel/src/values.rs`: U3 only (`Sources::generated`, `:433`).
 - `crates/spindle-conformance/src/target.rs`: U2 `query_view` (`:461`), U5 the undeclared mapping
   (`:377-378`).
 - `crates/spindle-host/src/view.rs`: U1 the filter admission; U2 at most a doc comment of
   `project`.
-- `crates/spindle-host/src/host.rs`: U6 `Host::establish` (`:1271-1281`); U7 the doc comments of
-  `published_after` and `published_head` (`:1338-1368`).
+- `crates/spindle-host/src/host.rs`: U1 the doc comment of the host's read method (`:1974-1977`);
+  U6 `Host::establish` (`:1271-1281`); U7 the doc comments of `published_after` and
+  `published_head` (`:1338-1368`).
 - `crates/spindle-host/src/host/component.rs`: U8 only (`Host::connect`).
 - `crates/spindle-cli/src/main.rs`, `crates/spindle-cli/src/cli.rs` with the generated
   `website/docs/reference/cli.md`: U9 only (`--stdin`).
 - `crates/spindle-cli/src/replay.rs`: U5 only (`, unavailable`).
 - The test `main.rs` module lists of `spindle-kernel` (U3, U6), `spindle-conformance` (U2),
-  `spindle-ingress` (U3), `spindle-cli` (U9); `README.md` (U3); `CHANGELOG.md` `[Unreleased]`
-  (every unit).
+  `spindle-ingress` (U3), `spindle-cli` (U9), `spindle-host` (U1, U8); `README.md` (U3);
+  `CHANGELOG.md` `[Unreleased]` (every unit).
 
-Merge order: U10, U8, U7, U1, U2, U4, U3, U5, U6, U9. The `execute.rs` units merge U4, U3, U5, U6;
-U6 last of them, as its wrapper sits at the entry of every command.
+Wave 29 changes `spindle-host`, `spindle-cli` `cli.rs` and `lines.rs`, `spindle-conformance`
+`target.rs`, and `spindle-kernel` `supported.rs` and `values.rs`. Wave 30 forks after wave 29
+merges, so the line numbers above, taken before wave 29, may move.
+
+Merge order: U10, U8, U7, U1, U2, U4, U3, U5, U6, U9. The `execute.rs` units merge U4, U3, U5, U6:
+U5 after U4 because of the shared line in `Run::select`, and U6 last, as its wrapper sits at the
+entry of every command.
 
 ## Exit
 

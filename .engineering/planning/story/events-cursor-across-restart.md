@@ -16,7 +16,7 @@ scope:
   path: crates/spindle-host/src/host/range.rs
 - confidence: inferred
   path: crates/spindle-host/tests/spindle-host/events_range.rs
-revision: 6
+revision: 7
 ---
 ## Outcome
 
@@ -56,7 +56,7 @@ Derived 2026-11-27 by `story-scoper`. Every line is **cited** (read from the sto
 - **Also likely:** `crates/spindle-host/src/host.rs` doc comments of `published_after` :1338-1346 and `published_head` :1360-1368 ("because the host was opened again, it is read from its start once" goes out of date); no code change on the D2 default — inferred
 - **Not changed:** `crates/spindle-host/src/host/reader.rs` `Reader::published_after` :161 and `published_head` :191 call `range::range` and `range::head` and get the fix through them; `crates/spindle-ingress/src/console.rs` (`GET /api/events`) is unchanged — cited
 - **Documents:** `CHANGELOG.md` gets one `Fixed` entry under `[Unreleased]` — inferred; `website/docs/reference/cli.md:107` already promises "the cursor ... still resumes after a restart", and the fix makes that true, so it stays as it is — cited
-- **Tests to add:** `an_events_cursor_from_before_a_restart_reads_the_events_after_it` (story's acceptance: SQLite, `ManualClock::at(<fixed instant>)` on both opens, `script`, cursor, restart, one command, read: exactly its events, once each, in order); `a_cursor_from_another_run_reads_a_new_memory_store_from_its_start` (guards D2: memory, fixed clock, the cursor from the first host reads the second host's events); optional `a_head_cursor_from_before_a_restart_reads_the_events_after_it` (`published_head` has the same flaw through `range::head`). Each test runs under the 60 s limit and the test step stays under 120 s. Every test in this file loads the console fixture with `spindle_spec::load`, so the implementor times each new test and names any over 5 s. The existing tests in `events_range.rs` and `postgres.rs:190` must stay green — inferred
+- **Tests to add:** `an_events_cursor_from_before_a_restart_reads_the_events_after_it` (story's acceptance: SQLite, `ManualClock::at(<fixed instant>)` on both opens, `script`, cursor, restart, one command, read: exactly its events, once each, in order); `a_cursor_from_another_run_reads_a_new_memory_store_from_its_start` (guards D2: memory, fixed clock, the cursor from the first host reads the second host's events); `a_head_cursor_from_before_a_restart_reads_the_events_after_it` (`published_head` has the same flaw through `range::head`). Each test runs under the 60 s limit and the test step stays under 120 s. Every test in this file loads the console fixture with `spindle_spec::load`, so the implementor times each new test and names any over 5 s. The existing tests in `events_range.rs` and `postgres.rs:190` must stay green — inferred
 - **Confidence:** high — the story names the file and the function; the flaw was walked through the tree's code
 - **Would collide with:** any unit touching the cursor in `spindle-host/src/host/range.rs` or `tests/spindle-host/events_range.rs`; `CHANGELOG.md` `[Unreleased]` (every unit of the wave); the doc comments of `published_after`/`published_head` in `spindle-host/src/host.rs`, a file wave 29 also changes (escalating bindings)
 - **Safety fact:** within one run, command sequences only grow (`following`, `host.rs:2381`), so key order matches each store's order. The change is limited to a cursor whose `run` differs from the host's (`range.rs:284`), so a cursor from the same run takes today's path — step 3 (walked `range` for the same-run case and the fixed-clock restart case), unproven
