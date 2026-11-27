@@ -841,3 +841,281 @@ fn a_mapping_out_of_bounds_exits_1_before_listening() {
     assert_eq!(stopped.code, Some(1), "with --fixed-actor: {stopped:?}");
     stopped.line_with(&["--caller-token", "--fixed-actor"]);
 }
+
+// Round 2: the correction round's F1 (a refresh that parses replaces the keys), F2 (a token that
+// maps to no caller reads none of the run's own routes but the probes) and F3 (the mapping is
+// checked against the specification at start).
+
+const RECORD_VISIT: &str = "porch.visit.RecordVisit";
+const A_VISIT: &str = "7d4f0b36-5e8c-4a9d-9f3b-4c5d6e7f8091";
+
+fn token_run_with(mapping: &Mapping, extra: &[&str]) -> Served {
+    let mut arguments = vec!["--caller-token", mapping.path.as_str()];
+    arguments.extend_from_slice(extra);
+    serve(&arguments).unwrap_or_else(|stopped| panic!("run stopped before listening: {stopped:?}"))
+}
+
+/// `GET path` with `token` as its bearer token.
+fn get_as(served: &Served, path: &str, token: &str) -> (u16, Value) {
+    let authorization = format!("Bearer {token}");
+    exchange(
+        served.address,
+        "GET",
+        path,
+        &[("Authorization", &authorization)],
+        None,
+    )
+}
+
+/// The lines of the run's stderr holding `needle` so far.
+fn warned(served: &Served, needle: &str) -> usize {
+    served
+        .stderr
+        .lock()
+        .expect("stderr")
+        .lines()
+        .filter(|line| line.contains(needle))
+        .count()
+}
+
+/// Waits at most 8 s for a line holding `needle` beyond the `before` there were.
+fn warns_again(served: &Served, needle: &str, before: usize) -> bool {
+    let until = Instant::now() + Duration::from_secs(8);
+    while warned(served, needle) <= before {
+        if Instant::now() >= until {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    true
+}
+
+#[test]
+fn a_key_set_that_empties_breaks_and_refills_revokes_and_restores_its_keys() {
+    let first = Signer::new("k1");
+    let jwks = Jwks::serving(Answering::Keys(vec![first.jwk()]));
+    let mapping = Mapping::new(&jwks.url(), "algorithms = [\"ES256\"]\nrefresh_seconds = 1");
+    let served = token_run(&mapping);
+    let by_first = first.sign(&claims("auditor"));
+    assert_eq!(with_token(&served, &by_first).0, 200);
+
+    jwks.answer(Answering::Keys(Vec::new()));
+    assert!(
+        answers_within(&served, &by_first, 401, Duration::from_secs(8)),
+        "an emptied set revokes the key"
+    );
+    assert!(
+        warned(&served, "was refreshed") > 0 && warned(&served, &jwks.url()) > 0,
+        "the empty refresh warns naming the key set: {}",
+        served.stderr.lock().expect("stderr")
+    );
+
+    let failed = "could not be refreshed";
+    let before = warned(&served, failed);
+    jwks.answer(Answering::Body("<html>not a key set</html>".to_owned()));
+    assert!(
+        warns_again(&served, failed, before),
+        "an unparseable refresh warns"
+    );
+    assert_eq!(
+        with_token(&served, &by_first).0,
+        401,
+        "an unparseable refresh after an empty one keeps the empty set"
+    );
+
+    jwks.answer(Answering::Keys(vec![first.jwk()]));
+    assert!(
+        answers_within(&served, &by_first, 200, Duration::from_secs(8)),
+        "a refilled set verifies the key again"
+    );
+    let before = warned(&served, failed);
+    jwks.answer(Answering::Body(r#"{"keys": "none"}"#.to_owned()));
+    assert!(
+        warns_again(&served, failed, before),
+        "a set that is no JWKS warns"
+    );
+    assert_eq!(
+        with_token(&served, &by_first).0,
+        200,
+        "a refresh that is no JWKS keeps the usable set"
+    );
+
+    let reissued = Signer::new("k1");
+    jwks.answer(Answering::Keys(vec![reissued.jwk()]));
+    let by_reissued = reissued.sign(&claims("auditor"));
+    assert!(
+        answers_within(&served, &by_reissued, 200, Duration::from_secs(8)),
+        "the kid k1 reappearing with another key verifies that key"
+    );
+    assert_eq!(
+        with_token(&served, &by_first).0,
+        401,
+        "the kid k1 reappearing does not verify the key it named before"
+    );
+}
+
+#[test]
+fn the_runs_own_routes_refuse_a_bad_token_401_before_an_unmapped_one_403() {
+    let signer = Signer::new("k1");
+    let stranger_key = Signer::new("k1");
+    let jwks = Jwks::serving(Answering::Keys(vec![signer.jwk()]));
+    let mapping = Mapping::new(&jwks.url(), PLAIN);
+    let served = token_run_with(&mapping, &["--observe"]);
+    let unmapped = signer.sign(&claims("stranger"));
+    let unmapped_by_stranger = stranger_key.sign(&claims("stranger"));
+    let mut expired = claims("stranger");
+    expired["exp"] = json!(now() - 3600);
+    let expired = signer.sign(&expired);
+    let not_granted = json!({"refused": "not granted", "actor": null});
+
+    for path in [
+        "/__spindle/requests",
+        "/__spindle/metrics",
+        "/__spindle/topology",
+        "/__spindle/other",
+    ] {
+        for (case, token) in [
+            ("an unmapped claim under another key", &unmapped_by_stranger),
+            ("an unmapped claim, expired", &expired),
+        ] {
+            let (status, body) = get_as(&served, path, token);
+            assert_eq!(status, 401, "{path}, {case}: {body}");
+        }
+        let (status, body) = get_as(&served, path, &unmapped);
+        assert_eq!(status, 403, "{path}: {body}");
+        assert_eq!(body, not_granted, "{path}");
+    }
+    for probe in ["/__spindle/live", "/__spindle/ready", "/__spindle/seed"] {
+        for token in [&unmapped, &unmapped_by_stranger, &expired] {
+            let (status, body) = get_as(&served, probe, token);
+            assert_eq!(status, 200, "{probe} answers whatever the token: {body}");
+        }
+    }
+
+    let (method, path) = route(RECORD_VISIT);
+    let bearer = format!("Bearer {unmapped}");
+    let (status, body) = exchange(
+        served.address,
+        &method,
+        &path,
+        &[("Authorization", &bearer)],
+        Some(&json!({"visit_id": A_VISIT})),
+    );
+    assert_eq!(status, 403, "{body}");
+    assert_eq!(body, not_granted);
+
+    for role in ["auditor", "member"] {
+        let mapped = signer.sign(&claims(role));
+        for path in [
+            "/__spindle/requests",
+            "/__spindle/metrics",
+            "/__spindle/topology",
+        ] {
+            let (status, body) = get_as(&served, path, &mapped);
+            assert_eq!(status, 200, "a {role} token reads {path}: {body}");
+        }
+    }
+    let (_, log) = get_as(
+        &served,
+        "/__spindle/requests",
+        &signer.sign(&claims("auditor")),
+    );
+    assert_eq!(
+        log["recorded"], 1,
+        "only the command's 403 is recorded, no answer under /__spindle/: {log}"
+    );
+}
+
+/// F2 says a token that maps to no caller reads none of the run's own routes. A token whose role
+/// maps to `Member` but which carries no `sub`, or a `sub` that is no `PersonId`, is no caller of
+/// the model: a command answers it `403` naming no actor. Under `/__spindle/` it still reads the
+/// request log, the metrics and the topology.
+#[test]
+fn a_token_whose_caller_does_not_bind_reads_none_of_the_runs_own_routes() {
+    let signer = Signer::new("k1");
+    let jwks = Jwks::serving(Answering::Keys(vec![signer.jwk()]));
+    let mapping = Mapping::new(&jwks.url(), PLAIN);
+    let served = token_run_with(&mapping, &["--observe"]);
+    let not_granted = json!({"refused": "not granted", "actor": null});
+    let mut no_sub = claims("member");
+    no_sub.as_object_mut().expect("an object").remove("sub");
+    let mut wrong_sub = claims("member");
+    wrong_sub["sub"] = json!(7);
+
+    for (case, claims) in [("no sub", no_sub), ("a sub of the wrong type", wrong_sub)] {
+        let token = signer.sign(&claims);
+        let (method, path) = route(RECORD_VISIT);
+        let bearer = format!("Bearer {token}");
+        let (status, body) = exchange(
+            served.address,
+            &method,
+            &path,
+            &[("Authorization", &bearer)],
+            Some(&json!({"visit_id": A_VISIT})),
+        );
+        assert_eq!(status, 403, "{case}, a command: {body}");
+        assert_eq!(body, not_granted, "{case}: a command reads it as no caller");
+        for path in [
+            "/__spindle/requests",
+            "/__spindle/metrics",
+            "/__spindle/topology",
+        ] {
+            let (status, body) = get_as(&served, path, &token);
+            assert_eq!(
+                status, 403,
+                "{case}: {path} answers a token of no caller: {body}"
+            );
+            assert_eq!(body, not_granted, "{case}: {path}");
+        }
+    }
+}
+
+#[test]
+fn a_mapping_naming_another_actors_attribute_or_an_unqualified_actor_exits_1() {
+    let signer = Signer::new("k1");
+    let jwks = Jwks::serving(Answering::Keys(vec![signer.jwk()]));
+    let url = jwks.url();
+    let table = |values: &str, attributes: &str| {
+        format!(
+            "issuer = \"{ISSUER}\"\naudience = \"{AUDIENCE}\"\njwks = \"{url}\"\n{PLAIN}\n\n\
+             [actor]\nclaim = \"role\"\n\n[actor.values]\n{values}\n\n{attributes}\n"
+        )
+    };
+    let cases = [
+        (
+            "the member's attribute mapped for the auditor",
+            table(
+                "member = \"porch.visit.Member\"\nauditor = \"porch.visit.Auditor\"",
+                "[attributes.\"porch.visit.Auditor\"]\nperson_id = \"sub\"",
+            ),
+            vec!["porch.visit.Auditor", "person_id"],
+        ),
+        (
+            "an actor named without its domain",
+            table("member = \"Member\"", ""),
+            vec!["Member"],
+        ),
+        (
+            "an actor named in another case",
+            table("member = \"porch.visit.member\"", ""),
+            vec!["porch.visit.member"],
+        ),
+        (
+            "a domain named as an actor",
+            table("member = \"porch.visit\"", ""),
+            vec!["porch.visit"],
+        ),
+    ];
+    let mapping = Mapping::new(&url, PLAIN);
+    for (at, (case, text, named)) in cases.into_iter().enumerate() {
+        let path = Path::new(&mapping.path).with_file_name(format!("mapping-{at}.toml"));
+        std::fs::write(&path, text).expect("the mapping is written");
+        let path = path.to_str().expect("a UTF-8 path").to_owned();
+        let stopped = stops(&["--caller-token", &path]);
+        assert_eq!(stopped.code, Some(1), "{case}: {stopped:?}");
+        assert!(stopped.stdout.is_empty(), "{case}: {stopped:?}");
+        let mut needles = vec!["--caller-token", path.as_str()];
+        needles.extend(named);
+        stopped.line_with(&needles);
+    }
+}
