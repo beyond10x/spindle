@@ -374,6 +374,19 @@ pub(crate) fn unfilled(error: &str, field: &ResolvedField) -> String {
     )
 }
 
+/// The refusal of the required error field `field` of `error` that an `unknown_instance:`
+/// refusal gives no source ([`spindle_capability::mint::Unsourced::Unanswered`]): no row exists
+/// to read it from, and ESS's served application does not serve such a refusal.
+pub(crate) fn unanswered(error: &str, field: &ResolvedField) -> String {
+    format!(
+        "the required error field `{error}.{}` of type `{}` of a refusal of an unknown instance, \
+         which the outcome gives no source and no row exists to hold; ESS's served application \
+         does not serve such a refusal, so give the field a source (`payload:`) or make it \
+         `Optional`",
+        field.name, field.type_ref
+    )
+}
+
 /// The value one [`Minted`] shape takes, the UUID it needs drawn from `uuid` and the time from
 /// `now`; the reason where `now` is a time RFC 3339 does not spell (before the Unix epoch's
 /// representable range or past year 9999).

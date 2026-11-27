@@ -196,8 +196,10 @@ pub enum Unsourced<'ir> {
     Minted(Choice),
     /// Nothing fills it: a required field no row holds, of a type the runtime does not mint.
     Unfilled,
-    /// Left out: the refusal answers an identity no record carries (`unknown_instance:`), and an
-    /// instance that does not exist has nothing for the error to describe.
+    /// Nothing fills it: a required field of a refusal that answers an identity no record carries
+    /// (`unknown_instance:`), which has no row to read it from. ESS's served application does not
+    /// serve such a refusal (`ess-synth` `determined.rs`, the fields of an error the
+    /// specification gives no source), so the kernel refuses the outcome by name.
     Unanswered,
 }
 
@@ -214,8 +216,8 @@ pub enum Unsourced<'ir> {
 /// (`ess-synth` `determined::outcome`, `reads_held`). ESS's interpreter leaves every other field
 /// to the implementation (`interpret::execute::declared_error`, a generated value of its type),
 /// so it is minted by the rule for generated fields, an `Optional` one left absent. An
-/// `unknown_instance:` refusal leaves each one out ([`Unsourced::Unanswered`]). Empty for an
-/// outcome that reports no error.
+/// `unknown_instance:` refusal leaves an `Optional` one absent and fills no required one
+/// ([`Unsourced::Unanswered`]). Empty for an outcome that reports no error.
 pub fn unsourced<'ir>(
     ir: &'ir EssIr,
     command: &'ir ResolvedCommand,
@@ -245,8 +247,8 @@ pub fn unsourced<'ir>(
         .map(|field| {
             let fill = match held.and_then(|entity| held_field(entity, field)) {
                 Some(fill) => fill,
-                None if unknown => Unsourced::Unanswered,
                 None if absent(&field.type_ref, false) => Unsourced::Absent,
+                None if unknown => Unsourced::Unanswered,
                 None => generated(ir, &field.type_ref, false)
                     .map_or(Unsourced::Unfilled, Unsourced::Minted),
             };

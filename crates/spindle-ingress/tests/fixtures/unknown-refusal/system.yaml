@@ -1,0 +1,25 @@
+format: ess/34
+system: study
+version: v1
+summary: Bins a store room opens, fills, seals and labels, each refusing an unknown bin with what its error names.
+domains:
+  - study.bin
+components:
+  - component: bin
+    summary: Opens, fills, seals and labels bins.
+    owns:
+      domains:
+        - study.bin
+    accepts:
+      commands:
+        - study.bin.OpenBin
+        - study.bin.FillBin
+        - study.bin.SealBin
+        - study.bin.LabelBin
+    publishes:
+      events:
+        - study.bin.BinOpened
+        - study.bin.BinFilled
+        - study.bin.BinSealed
+        - study.bin.BinLabelled
+    reached_by: network

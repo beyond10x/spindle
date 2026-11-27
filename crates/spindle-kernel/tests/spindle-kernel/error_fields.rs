@@ -147,8 +147,9 @@ fn object(value: Value) -> Map<String, Value> {
 
 /// ESS's served application reads an unsourced error field from the addressed row for every
 /// refusal without a subject of its own in a subject-guarded command, the default branch among
-/// them (`ess-synth` `determined::outcome`, `reads_held`), and leaves an `unknown_instance:`
-/// refusal's unsourced fields out: there is no row to describe.
+/// them (`ess-synth` `determined::outcome`, `reads_held`), and does not serve an
+/// `unknown_instance:` refusal whose required error field has no source: there is no row to read
+/// it from (story:unknown-instance-unsourced-unserved).
 #[test]
 fn a_default_refusal_of_a_subject_guarded_command_reads_its_field_from_the_row() {
     let ir = loans();
@@ -173,11 +174,28 @@ fn a_default_refusal_of_a_subject_guarded_command_reads_its_field_from_the_row()
         "the keeper is read from the lent book, not minted"
     );
 
-    let unknown = send("study.loan.LendBook", json!({"book_id": "b9"}));
-    assert_eq!(unknown.outcome, "no-such-book");
-    assert_eq!(
-        unknown.error.map(|error| error.fields),
-        Some(Map::new()),
-        "an unknown book is described by nothing"
-    );
+    match send_unknown(&ir, &mut store) {
+        Err(ExecuteError::Unsupported { construct }) => assert!(
+            construct.contains("study.loan.NoSuchBook.book_id")
+                && construct.contains("study.loan.LendBook/no-such-book"),
+            "{construct}"
+        ),
+        other => panic!(
+            "an unknown book's refusal, whose required `book_id` has no source, is not served: \
+             {other:?}"
+        ),
+    }
+}
+
+fn send_unknown(
+    ir: &spindle_spec::EssIr,
+    store: &mut MemoryStore,
+) -> Result<spindle_kernel::Executed, ExecuteError> {
+    execute(
+        ir,
+        store,
+        &mut NoExternals,
+        "study.loan.LendBook",
+        &object(json!({"book_id": "b9"})),
+    )
 }

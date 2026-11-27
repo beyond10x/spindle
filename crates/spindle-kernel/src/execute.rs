@@ -2355,7 +2355,9 @@ impl<'a, 'ir> Run<'a, 'ir> {
     /// as ESS's interpreter leaves it to the implementation; an `Optional` one no row fills stays
     /// absent. Without a row (the unknown-instance arm of `wrong_state:`) a field the row would
     /// fill is left out: an instance that does not exist has nothing to describe. With `mint`
-    /// false a field that would be minted is left out too.
+    /// false a field that would be minted is left out too. A required field of an
+    /// `unknown_instance:` refusal ([`Unsourced::Unanswered`]) is not reached: the outcome is
+    /// refused by name before it runs ([`Self::runs`]).
     fn unsourced_error_fields(
         &self,
         outcome: &ResolvedOutcome,
