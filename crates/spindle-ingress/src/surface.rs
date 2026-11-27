@@ -14,6 +14,7 @@ use ess_http::{
 use serde_json::{Map, Value};
 
 use crate::console::Console;
+use crate::health::SeedState;
 use crate::observe::metrics::SeriesMode;
 use crate::observe::topology::Routed;
 use crate::observe::{Recorder, Reserved};
@@ -1138,6 +1139,9 @@ pub struct Surface {
     /// The body `GET /api/served` answers, computed once the console routes are added
     /// ([`Surface::with_console`]); `None` without them.
     served: Option<Arc<str>>,
+    /// The run's seed, which `GET /__spindle/seed` and `GET /__spindle/ready` read
+    /// ([`Surface::with_seed`]); `None` for a run without one.
+    seed: Option<SeedState>,
 }
 
 /// The proxy's secret: never written by `Debug`, so no surface printed for a diagnosis shows it.
@@ -1457,6 +1461,7 @@ impl Surface {
             caller_secret: None,
             secret_required: false,
             served: None,
+            seed: None,
         })
     }
 
@@ -1512,6 +1517,21 @@ impl Surface {
     /// The panel page, where the surface was given one ([`Surface::with_panel`]).
     pub fn panel(&self) -> Option<&'static str> {
         self.panel
+    }
+
+    /// This surface answering `GET /__spindle/seed` with what the run's seed publishes on `seed`,
+    /// and `GET /__spindle/ready` `200` only once it reads ended, with or without a recorder
+    /// (`story:seed-readiness`). Without one both answer as a run without a seed: `{"state":
+    /// "none"}`, and ready.
+    #[must_use]
+    pub fn with_seed(mut self, seed: SeedState) -> Self {
+        self.seed = Some(seed);
+        self
+    }
+
+    /// The run's seed, where the surface was given one ([`Surface::with_seed`]).
+    pub fn seed(&self) -> Option<&SeedState> {
+        self.seed.as_ref()
     }
 
     /// This surface with the [`Console`] routes added where `implementation`, what

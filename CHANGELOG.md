@@ -54,6 +54,22 @@ are Spindle's releases.
   number `42` of an `Integer` one, and a quoted `identity=%2242%22` the text. A cursor taken
   before a restart reads on after its store position, whatever sequences the restarted run's
   commands take (`story:entity-event-history`).
+- A served `run` answers `GET /__spindle/seed` with the state of its seed, `{"state": "none"}`
+  without one, otherwise `running` or `ended` with the entries left and the end line's counts, and
+  `GET /__spindle/ready` `503` while the seed runs and `200` once it has ended, so a container
+  healthcheck or a readiness probe needs no view row. Both answer without `--observe` and without
+  waiting for a command; the seed reads `ended` only once its last entry's command has returned,
+  from the first request where `--state` records every entry done, and `running` again while a
+  reset's seed runs. On a `--trusted-caller-header` run both require the proxy's secret, as every
+  `/__spindle/` route does (`story:seed-readiness`).
+- A served `run` answers `GET /__spindle/live` `200` while its thread answers a request it took
+  or has asked for one within 60 s, and `503` once it has done neither, and drains on SIGTERM or
+  SIGINT: `GET /__spindle/ready` reads `503` as the signal arrives, each request arriving from then
+  on is answered `503` at once, the command under way finishes, and the requests already waiting
+  are answered with their outcomes for up to `run --drain <seconds>`, 20 by default, before the run
+  exits 143 or 130; a reset among them is answered `503` and empties nothing. Before, every
+  request still waiting at the signal was answered `503`; `--drain 0` keeps that
+  (`story:health-and-graceful-drain`).
 
 ### Changed
 

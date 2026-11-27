@@ -7,19 +7,21 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use ess_gen::http::Binding;
 use spindle_capability::{Capability, Environment};
 use spindle_host::{Cause, Clock, Host, HostError, ManualClock, Retries, SystemClock};
 use spindle_ingress::console::{self, Worlds};
-use spindle_ingress::{Answer, Caller, Console, Exchange, Listener, Recorder, Surface, Unfixed};
+use spindle_ingress::{
+    Answer, Caller, Console, Exchange, Listener, Recorder, SeedState, Surface, Unfixed,
+};
 use spindle_spec::EssIr;
 
 use crate::decisions::{self, Run};
 use crate::seed::Seeding;
-use crate::{REFUSED, SIGNAL_POLL, SIGNALLED, signals};
+use crate::{REFUSED, SIGNAL_POLL, SIGNALLED, signals, stopping_on};
 
 /// The components of `ir` that require `ingress.network` when each runs on its own.
 pub(crate) fn networked(ir: &EssIr) -> Vec<String> {
@@ -126,6 +128,9 @@ pub(crate) struct Serving<'a> {
     /// submitted once listening, one between each two exchanges ([`crate::seed::Seeding`]), and
     /// again, all before the answer, after each reset with no world ([`reset_seeded`]).
     pub seed: Option<crate::seed::Seed>,
+    /// `--drain`: how long, once a signal arrives, the run goes on answering the requests already
+    /// waiting for it.
+    pub drain: Duration,
     /// `--clock`: the host runs on a manual clock standing at this instant, never moved; the
     /// system clock without it.
     pub clock: Option<std::time::SystemTime>,
@@ -270,12 +275,22 @@ fn carried(caller: &Caller) -> String {
 /// then submits them again, all of them, before it answers, and one that gives a world does not
 /// ([`reset_seeded`]). A signal stops a reset's seed between two entries, and the reset still
 /// answers. Once a seed run ends having rejected an entry ([`Seeding::failed`]), the run exits 1
-/// (`story:run-fails-on-rejected-line`).
+/// (`story:run-fails-on-rejected-line`). The seed's state is answered beside this thread, with or
+/// without `--observe`: `GET /__spindle/seed` and `GET /__spindle/ready`, `200` only once the seed
+/// run under way has ended, and from the first request on a run without a seed
+/// ([`Surface::with_seed`], `story:seed-readiness`).
 ///
-/// Once a signal arrives, or a seed that rejected an entry ends, the loop takes no further
-/// exchange: the one it is answering is answered, every answer handed back is written, each
-/// request still queued is answered `503`, and only then does the run exit ([`Listener::close`],
-/// `story:serve-loop-signal-exit-answers`).
+/// Once a signal arrives the run drains (`story:health-and-graceful-drain`): the listener's
+/// stopping flag is set by the signal itself ([`Listener::stopping`]), so `GET /__spindle/ready`
+/// answers `503` and every request that arrives from then on is answered `503` at once, while this
+/// thread finishes the exchange it is answering; it then answers the exchanges already queued, in
+/// arrival order, until none is left or `serving.drain` has passed since it finished (a bound past
+/// what the clock can name sets no deadline). A reset it takes in the drain is answered `503`, the
+/// stores left as they are. Once that is done, or a seed that rejected an entry ends, the loop
+/// takes no further exchange: every answer handed back is written, each request still queued is
+/// answered `503`, and only then does the run exit ([`Listener::close`],
+/// `story:serve-loop-signal-exit-answers`). `GET /__spindle/live` answers `200` while this thread
+/// answers an exchange it took or asks the listener for one within [`spindle_ingress::LIVENESS`].
 pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     for caller in &serving.callers {
         fixed(&ir, caller)?;
@@ -385,6 +400,16 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         (Some(capacity), None) => surface.observing_series(capacity, serving.observe_series),
         (None, _) => surface,
     };
+    // The seed's state, published by `Seeding` on this thread and answered by the listener at
+    // `GET /__spindle/seed` and `GET /__spindle/ready`, with or without `--observe`.
+    let published = serving
+        .seed
+        .as_ref()
+        .map(|seed| SeedState::new(u64::try_from(seed.len()).unwrap_or(u64::MAX)));
+    let surface = match &published {
+        Some(published) => surface.with_seed(published.clone()),
+        None => surface,
+    };
     for line in surface.report() {
         eprintln!("b10x-spindle: {line}");
     }
@@ -441,17 +466,21 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     }
     // Where a `--state` records the seed applied to it (`seed.json`), a seed it does not record
     // stops the run here, before listening.
-    let mut seeding = match serving.seed {
-        Some(seed) => Some(crate::seed::begin(
+    let mut seeding = match (serving.seed, published) {
+        (Some(seed), Some(published)) => Some(crate::seed::begin(
             seed,
             serving.state,
             &mut host,
             recorder.clone(),
+            published,
         )?),
-        None => None,
+        _ => None,
     };
     let listener = Listener::bind_reading_on(serving.address, serving.port, surface, host.reader())
         .context("binding the HTTP listener")?;
+    // The signal itself stops the listener taking work, while a command may hold this thread.
+    let stopping = listener.stopping();
+    stopping_on(&stopping)?;
     let worlds = |ir: &EssIr, body: &serde_json::Value| {
         crate::world::read(ir, body, |table| {
             decisions::deciding(&answers, Some(table), recorder.as_ref()).boxed()
@@ -477,13 +506,28 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             ExitCode::from(SIGNALLED.saturating_add(signal))
         })
     };
+    // Once a signal arrived: the exit status it asks for, and until when the exchanges already
+    // queued are taken (`story:health-and-graceful-drain`). A bound past what the clock can name
+    // sets no deadline: the drain then ends once no exchange is queued.
+    let mut draining: Option<(ExitCode, Option<Instant>)> = None;
     // The signal is checked wherever the loop would otherwise take more work: before a seed
-    // entry, before the wait for an exchange, and on an exchange that arrived with the signal.
+    // entry, and before the wait for an exchange. From then on the loop takes only the exchanges
+    // already queued, none once the drain bound has passed, and sends no seed entry.
     let code = loop {
-        if let Some(code) = signal_exit() {
-            break code;
+        match draining {
+            Some((code, Some(until))) if Instant::now() >= until => break code,
+            Some(_) => {}
+            None => {
+                if let Some(code) = signal_exit() {
+                    stopping.store(true, Ordering::SeqCst);
+                    draining = Some((code, Instant::now().checked_add(serving.drain)));
+                    continue;
+                }
+            }
         }
-        if let Some(seeding) = seeding.as_mut() {
+        if draining.is_none()
+            && let Some(seeding) = seeding.as_mut()
+        {
             seeding.step(&mut host);
             if seeding.failed() {
                 eprintln!(
@@ -492,21 +536,29 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
                 );
                 break ExitCode::FAILURE;
             }
-            if let Some(code) = signal_exit() {
-                break code;
+            if signal_exit().is_some() {
+                continue;
             }
         }
-        let wait = if seeding.as_ref().is_some_and(Seeding::pending) {
+        let wait = if draining.is_some() || seeding.as_ref().is_some_and(Seeding::pending) {
             Duration::ZERO
         } else {
             SIGNAL_POLL
         };
         let Some(exchange) = listener.next(wait) else {
-            continue;
+            match draining {
+                Some((code, _)) => break code,
+                None => continue,
+            }
         };
-        if let Some(code) = signal_exit() {
+        if exchange.console() == Some(Console::Reset)
+            && (draining.is_some() || stopping.load(Ordering::SeqCst))
+        {
+            // A reset is no command the drain finishes: it would empty the stores of a run that is
+            // stopping, so it is refused as a request queued past the drain is, the stores left as
+            // they are (`story:health-and-graceful-drain`).
             exchange.respond(Answer::refusal(503, "the run is stopping on a signal"));
-            break code;
+            continue;
         }
         if exchange.console() == Some(Console::Reset)
             && let Some(seeding) = seeding.as_mut()
@@ -554,7 +606,8 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         }
     };
     // Every answer handed back is written, and each request still queued is answered 503, before
-    // the run exits.
+    // the run exits; readiness reads 503 meanwhile.
+    stopping.store(true, Ordering::SeqCst);
     listener.close(CLOSE_GRACE);
     Ok(code)
 }
@@ -583,7 +636,16 @@ fn reset_seeded(
     recorder: Option<&Recorder>,
     stopped: impl Fn() -> bool,
 ) {
+    let plain = !console::carries_world(exchange.body());
+    if plain {
+        // No request reads the run ready while the reset empties its stores and seeds them again
+        // (`story:seed-readiness`).
+        seeding.resetting();
+    }
     let answer = console::reset(host, exchange.body(), Some(worlds));
+    if answer.status != 200 && plain {
+        seeding.unreset();
+    }
     if answer.status == 200 {
         if let Some(recorder) = recorder {
             recorder.count_reset();

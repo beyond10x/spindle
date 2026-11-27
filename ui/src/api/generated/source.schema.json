@@ -471,6 +471,39 @@
       "x-ess-kind": "struct",
       "x-ess-name": "spindle.observe.Histogram"
     },
+    "spindle.observe.Liveness": {
+      "additionalProperties": false,
+      "description": "The answer of `GET /__spindle/live`, with or without `--observe` and without the host's thread, beside its status: `200` while the run's thread answers a request it took from the listener, however long that takes, or asked for one within the bound; `503` once it holds none and has asked for none within the bound. The bound of a served run is 60 s.",
+      "properties": {
+        "bound_ms": {
+          "description": "The bound, in milliseconds.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "idle_ms": {
+          "description": "Milliseconds since the run's thread last asked for a request.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "live": {
+          "description": "Whether the status is `200`.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "live",
+        "idle_ms",
+        "bound_ms"
+      ],
+      "title": "Liveness",
+      "type": "object",
+      "x-ess-invariants": [
+        "idle_ms >= 0",
+        "bound_ms >= 0"
+      ],
+      "x-ess-kind": "struct",
+      "x-ess-name": "spindle.observe.Liveness"
+    },
     "spindle.observe.MetricFamilies": {
       "additionalProperties": false,
       "description": "Every metric family a served run exposes when it observes its ingress.",
@@ -572,6 +605,33 @@
       ],
       "x-ess-kind": "newtype",
       "x-ess-name": "spindle.observe.Payload"
+    },
+    "spindle.observe.Readiness": {
+      "additionalProperties": false,
+      "description": "The answer of `GET /__spindle/ready`, with or without `--observe` and without the host's thread, beside its status: `200` where the run has no seed or its seed run has ended, a declared refusal among its entries included, and the run is not stopping; `503` while the seed runs and from the moment SIGINT or SIGTERM arrives. A probe reading `200` reads every view holding what the seed's last entry wrote.",
+      "properties": {
+        "ready": {
+          "description": "Whether the status is `200`.",
+          "type": "boolean"
+        },
+        "seed": {
+          "$ref": "#/$defs/spindle.observe.SeedStateKind",
+          "description": "The `state` `GET /__spindle/seed` answers."
+        },
+        "stopping": {
+          "description": "Whether the run is stopping on a signal: it answers each request that arrives `503` at once, and the requests already waiting for up to `--drain` seconds.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ready",
+        "seed",
+        "stopping"
+      ],
+      "title": "Readiness",
+      "type": "object",
+      "x-ess-kind": "struct",
+      "x-ess-name": "spindle.observe.Readiness"
     },
     "spindle.observe.RecentAnswer": {
       "additionalProperties": false,
@@ -784,7 +844,7 @@
           "type": "string"
         },
         "query": {
-          "description": "The query string of a console request (`/api/model`, `/api/events`, `/api/reset`), absent where it carried none and for every other request. Each pair is kept in order, empty pairs dropped: `after` and `limit` by name, the value of `after` where the request was answered `200` (a cursor `GET /api/events` answered) and the value of `limit` where it is digits; every other name and value is written `…`. At most 2,048 bytes, as the path, cut with `…` where longer.",
+          "description": "The query string of a console request (`/api/model`, `/api/events`, `/api/history`, `/api/reset`), absent where it carried none and for every other request. Each pair is kept in order, empty pairs dropped: `after` and `limit` by name, the value of `after` where the request was answered `200` (a cursor `GET /api/events` or `GET /api/history` answered) and the value of `limit` where it is digits; every other name and value is written `…`. At most 2,048 bytes, as the path, cut with `…` where longer.",
           "type": "string"
         },
         "reason": {
@@ -996,6 +1056,62 @@
       ],
       "x-ess-kind": "struct",
       "x-ess-name": "spindle.observe.Sample"
+    },
+    "spindle.observe.SeedState": {
+      "additionalProperties": false,
+      "description": "The answer of `GET /__spindle/seed`, with or without `--observe` and without the host's thread: the state of the seed run under way, or of the last one, and its counts, that run's alone, as the seed's end line prints them. A reset with no world starts a new seed run, which reads `running` from before the reset empties the stores, with its own counts, until it ends. On a run without a seed only `state` is given, `none`.",
+      "properties": {
+        "already_there": {
+          "description": "Entries an outcome declared `existing_instance:` answered, or whose request id an earlier applied or already-there entry carried.",
+          "type": "integer"
+        },
+        "applied": {
+          "description": "Entries whose outcome took effect.",
+          "type": "integer"
+        },
+        "entries": {
+          "description": "The entries of the seed file.",
+          "type": "integer"
+        },
+        "left": {
+          "description": "The entries of this run not yet done: not yet sent, or recorded rejected by the state and sent again first. 0 once it has ended.",
+          "type": "integer"
+        },
+        "refused": {
+          "description": "Entries a declared refusing outcome answered.",
+          "type": "integer"
+        },
+        "rejected": {
+          "description": "Entries that did not run: the host or the kernel refused them before an outcome. A seed run that ends with one stops the run with exit 1.",
+          "type": "integer"
+        },
+        "sent": {
+          "description": "Entries this run sent; each is then counted once in one of the four below.",
+          "type": "integer"
+        },
+        "state": {
+          "$ref": "#/$defs/spindle.observe.SeedStateKind"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "title": "SeedState",
+      "type": "object",
+      "x-ess-kind": "struct",
+      "x-ess-name": "spindle.observe.SeedState"
+    },
+    "spindle.observe.SeedStateKind": {
+      "description": "Where a served run's seed is. `none`: the run has no seed. `running`: an entry of the seed run under way is left, or the last one's submission has not returned. `ended`: the last entry's submission has returned, so whatever it wrote is in place, whatever each entry became; also from the first request of a start whose `--state` records every entry done.",
+      "enum": [
+        "none",
+        "running",
+        "ended"
+      ],
+      "title": "SeedStateKind",
+      "type": "string",
+      "x-ess-kind": "enum",
+      "x-ess-name": "spindle.observe.SeedStateKind"
     },
     "spindle.observe.ServedKind": {
       "description": "What one operation of the model a served run routes is.",
@@ -1385,8 +1501,8 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-ess-provenance": {
-    "contract_digest": "slice-sha256/2:8febbdf432c4e043f26574b762a66814a51585243cfc38e08ced8b3b318a4584",
-    "source_digest": "768b49d0ee4e413744f98b60ca5d08125d3a9410aba380e215477e8525748e44",
+    "contract_digest": "slice-sha256/2:9ea2a2bb685b040574998e72535d5d21bdaec116bb6d5114c0a9dc6e1e792f44",
+    "source_digest": "6aff9d3b13c9c43f883cc9c6dd02d69017932331d4e80fe81d143b23c09e58c5",
     "specification_version": "v1",
     "system": "spindle"
   }

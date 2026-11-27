@@ -1225,7 +1225,10 @@ fn a_run_without_a_seed_resets_as_before() {
 mod adversary_w25_reseed;
 mod adversary_w25_reseed_r2;
 mod adversary_w27_u2;
+mod adversary_w28_u4;
 mod caller;
 mod durable;
+mod health;
+mod readiness;
 mod rejected;
 mod signal_exit;
