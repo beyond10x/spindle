@@ -259,7 +259,12 @@ Agents start at [`AGENTS.md`](AGENTS.md).
 Binaries for Linux and macOS (x86_64 and aarch64 each) are attached to each
 [GitHub release](https://github.com/beyond10x/spindle/releases) with a `SHA256SUMS` file. The Linux
 binaries need glibc 2.17 or newer; `x86_64-unknown-linux-musl` is a static build for hosts without
-glibc. Changes
+glibc. Each release also publishes the image `ghcr.io/beyond10x/spindle:<version>`, one manifest
+list for `linux/amd64` and `linux/arm64`: the release's gnu binary on `gcr.io/distroless/cc-debian12`
+(no shell), run as UID 65532, with `b10x-spindle` as the entrypoint. The release's `IMAGES` asset,
+listed in `SHA256SUMS`, names that list by digest (`ghcr.io/beyond10x/spindle:<version>@sha256:<digest>`);
+pull it by that line. A container port reaches `run` only on an address off loopback
+(`--address 0.0.0.0`), which needs `--trusted-caller-header` and `--trusted-caller-secret`. Changes
 are in [`CHANGELOG.md`](CHANGELOG.md), and the release steps in
 [`AGENTS.md`](AGENTS.md#cutting-a-release).
 

@@ -62,6 +62,18 @@ are Spindle's releases.
   row's identity is the top-level input field ESS reads. The day ESS accepts the guard the test
   fails and the kernel's read follows the path (`nested_related_via_is_rejected_at_load`,
   `story:related-via-nested-input`).
+- Each release publishes the image `ghcr.io/beyond10x/spindle:<version>`, one manifest list for
+  `linux/amd64` and `linux/arm64`: the release's gnu binary on `gcr.io/distroless/cc-debian12`
+  pinned by digest, run as UID 65532 with `b10x-spindle` as the entrypoint, from the new
+  `Containerfile`. On a runner of each architecture the release workflow refuses the image unless
+  it answers the release's `--version`, runs as a numeric user other than root, and answers a
+  request sent with the trusted caller secret from outside the container to a `run` on `0.0.0.0`,
+  before a job of its own pushes that same image by digest; a version tag already in `ghcr.io` is
+  left as it is where it lists the two checked images and refused, never moved, otherwise. The
+  release's `IMAGES` asset, listed in `SHA256SUMS`, names the manifest list by digest, and the job
+  summary prints it. A pull request that changes the workflow builds and checks both images and
+  pushes nothing; a backfilled tag cut before the image existed publishes its assets without
+  `IMAGES` (`story:spindle-image-published`).
 
 ### Changed
 
