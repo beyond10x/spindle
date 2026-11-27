@@ -457,7 +457,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "Caller proven by a verified token",
-        "run --caller-token names a TOML mapping, and the run verifies each request's bearer token itself: its signature against the issuer's key set (JWKS), fetched before listening and refreshed on a period so a rotated key verifies without a restart, its issuer, audience and expiry; the claims are mapped to an actor and its attributes. A request without a valid token answers 401 before anything is read and is neither recorded nor counted, and one whose claims map to no caller of the model answers 403 not granted. Only the live, ready and seed probes answer without a token, the console routes are off, and off loopback the run is served only over TLS.",
+        "run --caller-token names a TOML mapping, and the run verifies each request's bearer token itself: its signature against the issuer's key set (JWKS), fetched before listening and refreshed on a period so a rotated key verifies without a restart, its issuer, audience and expiry; the claims are mapped to an actor and its attributes. A request without a valid token answers 401 before anything is read and is neither recorded nor counted, and one whose claims map to no caller of the model answers 403 not granted. Only the live, ready and seed probes answer without a token, the run's other own routes need a token that maps to a caller, the console routes are off, and off loopback the run is served only over TLS.",
         "/docs/concepts/capabilities",
         "crates/spindle-cli/tests/spindle-cli/caller_token.rs::a_request_with_a_valid_token_runs_as_its_mapped_caller",
     ),

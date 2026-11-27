@@ -19,9 +19,12 @@
 //! to a caller ([`Verifier::mapped`]); one whose role claim the mapping does not name maps to
 //! none, and the listener answers it as a request authenticated as no caller.
 //!
-//! The key set is fetched before the run listens; one that cannot be fetched, or lists no key a
-//! token could be verified with, stops the run. A thread of its own fetches it again every
-//! `refresh_seconds`; a failed refresh keeps the last set fetched and writes one warning line.
+//! The mapping is checked against the model first: an actor or attribute the specification does
+//! not declare stops the run. The key set is fetched before the run listens; one that cannot be
+//! fetched, or lists no key a token could be verified with, stops the run. A thread of its own
+//! fetches it again every `refresh_seconds`: a set it fetches replaces the keys, one listing no
+//! usable key too, which then refuses every token and writes a warning line; a refresh that fails
+//! keeps the last set fetched and writes one warning line.
 //! No token or claim is ever printed.
 
 use std::collections::BTreeMap;
@@ -31,6 +34,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use ess_compiler::EssIr;
 use http_body_util::{BodyExt, Empty, Limited};
 use hyper::body::Bytes;
 use hyper::header::{ACCEPT, HOST};
@@ -306,6 +310,51 @@ impl Mapping {
         })
     }
 
+    /// Refuses a mapping that names what the model `ir` does not declare: an actor a role maps to,
+    /// or an attribute of an actor (`story:verified-caller-token`, F3), so no token maps to a
+    /// caller the model could never bind.
+    ///
+    /// # Errors
+    /// The first such actor or attribute, the message naming the file.
+    pub(crate) fn check(&self, ir: &EssIr) -> Result<()> {
+        let declared = |actor: &str| {
+            ir.actors()
+                .iter()
+                .find_map(|(name, declared)| (name.to_string() == actor).then_some(declared))
+        };
+        for (role, actor) in &self.actors {
+            if declared(actor).is_none() {
+                bail!(
+                    "{}: [actor.values] maps {role} to the actor {actor}, which the specification \
+                     does not declare",
+                    self.label
+                );
+            }
+        }
+        for (actor, attributes) in &self.attributes {
+            let Some(declared) = declared(actor) else {
+                bail!(
+                    "{}: [attributes.\"{actor}\"] names an actor the specification does not \
+                     declare",
+                    self.label
+                );
+            };
+            if let Some(attribute) = attributes.keys().find(|attribute| {
+                !declared
+                    .attributes
+                    .iter()
+                    .any(|field| field.name.as_str() == attribute.as_str())
+            }) {
+                bail!(
+                    "{}: [attributes.\"{actor}\"] maps the attribute {attribute}, which the actor \
+                     {actor} does not declare",
+                    self.label
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// The caller `claims` map to: the actor its role claim's value names, each attribute of it
     /// from the claim the mapping names, an absent claim left out. `None` where the role claim is
     /// absent, not a string, or a value the mapping does not name.
@@ -387,28 +436,31 @@ struct Keys(Vec<Key>);
 
 impl Keys {
     /// The keys of the JWKS `body`: every key of `keys` a token may name; one that does not
-    /// parse, or that [`Key::of`] leaves out, is skipped.
+    /// parse, or that [`Key::of`] leaves out, is skipped, so the set may hold none
+    /// ([`Keys::unusable`]).
     ///
     /// # Errors
-    /// A body that is not a JSON object with a `keys` array, or one listing no key a token may
-    /// name.
+    /// A body that is not a JSON object with a `keys` array.
     fn read(body: &[u8]) -> Result<Self, String> {
         let set: Value = serde_json::from_slice(body)
             .map_err(|error| format!("its answer is not JSON: {error}"))?;
         let Some(listed) = set.get("keys").and_then(Value::as_array) else {
             return Err("its answer is no JWKS, a JSON object with a keys array".to_owned());
         };
-        let keys: Vec<Key> = listed
-            .iter()
-            .filter_map(|jwk| serde_json::from_value::<Jwk>(jwk.clone()).ok())
-            .filter_map(|jwk| Key::of(&jwk))
-            .collect();
-        if keys.is_empty() {
-            return Err(
-                "it lists no signing key with a key id (kid) this build verifies".to_owned(),
-            );
-        }
-        Ok(Self(keys))
+        Ok(Self(
+            listed
+                .iter()
+                .filter_map(|jwk| serde_json::from_value::<Jwk>(jwk.clone()).ok())
+                .filter_map(|jwk| Key::of(&jwk))
+                .collect(),
+        ))
+    }
+
+    /// Why no token can verify against this set, where it lists no key a token may name.
+    fn unusable(&self) -> Option<&'static str> {
+        self.0
+            .is_empty()
+            .then_some("it lists no signing key with a key id (kid) this build verifies")
     }
 }
 
@@ -519,22 +571,35 @@ pub(crate) struct Verifier {
 }
 
 impl Verifier {
-    /// The verifier of the mapping file at `path`, its key set fetched now and again every
-    /// `refresh_seconds` on a thread of its own.
+    /// The verifier of the mapping file at `path`, checked against the model `ir`
+    /// ([`Mapping::check`]), its key set fetched now and again every `refresh_seconds` on a thread
+    /// of its own.
+    ///
+    /// A refresh whose answer is a JWKS replaces the keys, also one that lists no key a token may
+    /// name, after which every token is refused until a refresh lists one, with a warning line
+    /// naming the URL: an issuer that removes its last key revokes it. A refresh that fails, or
+    /// whose answer is no JWKS, keeps the keys fetched last and writes a warning line.
     ///
     /// # Errors
-    /// A mapping file [`Mapping::read`] refuses, or a key set that cannot be fetched now, the
-    /// message naming its URL.
-    pub(crate) fn start(path: &Path) -> Result<Arc<Self>> {
+    /// A mapping file [`Mapping::read`] or [`Mapping::check`] refuses, or a key set that cannot be
+    /// fetched now or lists no key a token may name, the message naming its URL.
+    pub(crate) fn start(path: &Path, ir: &EssIr) -> Result<Arc<Self>> {
         let mapping = Mapping::read(path)?;
+        mapping.check(ir)?;
         let fetcher = Fetcher::new(&mapping)?;
-        let keys = fetcher.fetch().map_err(|why| {
-            anyhow::anyhow!(
-                "{}: the key set at {} could not be fetched: {why}",
-                mapping.label,
-                mapping.jwks.text
-            )
-        })?;
+        let keys = fetcher
+            .fetch()
+            .and_then(|keys| match keys.unusable() {
+                Some(why) => Err(why.to_owned()),
+                None => Ok(keys),
+            })
+            .map_err(|why| {
+                anyhow::anyhow!(
+                    "{}: the key set at {} could not be fetched: {why}",
+                    mapping.label,
+                    mapping.jwks.text
+                )
+            })?;
         let verifier = Arc::new(Self {
             mapping,
             keys: RwLock::new(keys),
@@ -547,6 +612,14 @@ impl Verifier {
                     std::thread::sleep(refreshed.mapping.refresh);
                     match fetcher.fetch() {
                         Ok(keys) => {
+                            if let Some(why) = keys.unusable() {
+                                log::warn(format!(
+                                    "{}: the key set at {} was refreshed, and {why}: every token \
+                                     is refused until a refresh lists one",
+                                    refreshed.mapping.label, refreshed.mapping.jwks.text
+                                ))
+                                .write();
+                            }
                             *refreshed
                                 .keys
                                 .write()

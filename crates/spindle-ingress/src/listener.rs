@@ -685,6 +685,13 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         }
         _ => None,
     };
+    // The run's own routes but the probes are operator tooling: a token that verifies and maps to
+    // no caller reads none of them, refused as a request authenticated as no caller and, as every
+    // answer under the prefix, neither recorded nor counted (`story:verified-caller-token`, F2).
+    let unmapped = verified.as_ref().is_some_and(Option::is_none);
+    if unmapped && reserved.is_some() {
+        return (Answer::not_proven().into(), None);
+    }
     // On a surface whose requests prove their caller, the run's own routes are operator tooling
     // behind the proxy: they answer the proxy's secret alone.
     let unproxied = served
@@ -760,7 +767,7 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
     let refused = |answer: Answer| -> (Reply, Option<Note>) {
         (answer.into(), Some(noted(&asked, Answered::ingress())))
     };
-    if matches!(asked, Asked::Console(_)) && unproxied {
+    if matches!(asked, Asked::Console(_)) && (unproxied || unmapped) {
         return refused(Answer::not_proven());
     }
     if request.headers().contains_key(TRANSFER_ENCODING) {

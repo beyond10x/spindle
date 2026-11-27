@@ -1450,9 +1450,12 @@ impl Surface {
     /// `/__spindle/ready` and `/__spindle/seed`, the probes, answer without one. A token that
     /// verifies and maps to no caller of the model answers the standard refusal for a request
     /// authenticated as no caller, `403` `{"refused": "not granted", "actor": null}`, on a
-    /// command or view, and nothing is read or written. Off loopback such a surface is served
-    /// only over TLS (`Listener::bind_reading_on_tls`). A request [`crate::route`] answers carries
-    /// no header, so there every request but the probes is refused `401`.
+    /// command or view, and nothing is read or written; one that maps to no caller at all is
+    /// refused so on every route under `/__spindle/` but the probes and on the console routes,
+    /// reading nothing they hold, and under `/__spindle/` it is not recorded. Off loopback such a
+    /// surface is served only over TLS (`Listener::bind_reading_on_tls`). A request
+    /// [`crate::route`] answers carries no header, so there every request but the probes is
+    /// refused `401`.
     ///
     /// # Errors
     /// As [`Surface::new`].

@@ -193,6 +193,12 @@ struct Mapping {
 
 impl Mapping {
     fn new(jwks: &str, refresh: u64) -> Self {
+        Self::with(jwks, refresh, "", "")
+    }
+
+    /// [`Mapping::new`], `values` added to `[actor.values]` and `attributes` to the member's
+    /// `[attributes]` table.
+    fn with(jwks: &str, refresh: u64, values: &str, attributes: &str) -> Self {
         let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
         let path = directory.path().join("caller-token.toml");
         std::fs::write(
@@ -211,10 +217,11 @@ claim = "role"
 [actor.values]
 member = "porch.visit.Member"
 auditor = "porch.visit.Auditor"
-ghost = "porch.visit.Ghost"
+{values}
 
 [attributes."porch.visit.Member"]
 person_id = "sub"
+{attributes}
 "#
             ),
         )
@@ -551,10 +558,6 @@ fn a_claim_that_maps_to_no_caller_of_the_model_is_refused() {
             "a role the mapping does not name",
             claims("stranger", Some(PERSON)),
         ),
-        (
-            "a role mapped to an undeclared actor",
-            claims("ghost", Some(PERSON)),
-        ),
         ("no role claim", unnamed),
         ("a required attribute left out", claims("member", None)),
         ("an attribute of the wrong type", {
@@ -803,4 +806,77 @@ fn the_console_routes_are_off_on_a_token_run() {
         Some(&json!({})),
     );
     assert_eq!(status, 404, "no reset on a token run: {body}");
+}
+
+/// F2 of the correction round: a token that verifies and maps to no caller of the mapping reads
+/// none of the run's own routes but the probes; it is answered `403` "not granted" naming no
+/// actor, and is neither recorded nor counted.
+#[test]
+fn a_token_mapping_to_no_caller_reads_none_of_the_runs_own_routes() {
+    let signer = Signer::new("k1");
+    let jwks = Jwks::serving(vec![signer.jwk()]);
+    let mapping = Mapping::new(&jwks.url(), 300);
+    let served = token_run(&mapping, &["--observe"]);
+    let stranger = signer.sign(&claims("stranger", Some(PERSON)));
+
+    for path in [
+        "/__spindle/requests",
+        "/__spindle/metrics",
+        "/__spindle/topology",
+        "/__spindle/ui",
+        "/__spindle/other",
+    ] {
+        let (status, _, body) = get_with(served.address, "GET", path, Some(&stranger), None);
+        assert_eq!(status, 403, "{path}: {body}");
+        assert_eq!(
+            body,
+            not_proven(),
+            "{path}: nothing the route holds is answered"
+        );
+    }
+    for probe in ["/__spindle/live", "/__spindle/ready", "/__spindle/seed"] {
+        let (status, _, body) = get_with(served.address, "GET", probe, Some(&stranger), None);
+        assert_eq!(status, 200, "{probe}: {body}");
+    }
+    let auditor = signer.sign(&claims("auditor", None));
+    let (status, _, log) = get_with(
+        served.address,
+        "GET",
+        "/__spindle/requests",
+        Some(&auditor),
+        None,
+    );
+    assert_eq!(
+        status, 200,
+        "a token mapped to a caller reads the log: {log}"
+    );
+    assert_eq!(log["recorded"], 0, "no refusal is recorded: {log}");
+}
+
+/// F3 of the correction round: a mapping naming an actor, or an attribute of an actor, the
+/// specification does not declare exits 1 before listening, the line naming `--caller-token`,
+/// the file and what it names.
+#[test]
+fn a_mapping_naming_what_the_model_does_not_declare_exits_1() {
+    let signer = Signer::new("k1");
+    let jwks = Jwks::serving(vec![signer.jwk()]);
+    for (case, mapping, named) in [
+        (
+            "a role mapped to an undeclared actor",
+            Mapping::with(&jwks.url(), 300, "ghost = \"porch.visit.Ghost\"", ""),
+            "porch.visit.Ghost",
+        ),
+        (
+            "an attribute the actor does not declare",
+            Mapping::with(&jwks.url(), 300, "", "rank = \"rank\""),
+            "rank",
+        ),
+    ] {
+        let Err(stopped) = serve(&["--caller-token", &mapping.path]) else {
+            panic!("{case}: run listened");
+        };
+        assert_eq!(stopped.code, Some(1), "{case}: {stopped:?}");
+        assert!(stopped.stdout.is_empty(), "{case}: {stopped:?}");
+        stopped.line_with(&["--caller-token", &mapping.path, named]);
+    }
 }

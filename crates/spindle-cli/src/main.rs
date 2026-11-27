@@ -856,7 +856,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         // The key set is fetched now, before anything listens: a run that cannot fetch it
         // exits 1 (`story:verified-caller-token`, D5 A).
         let tokens = caller_token
-            .map(|path| token::Verifier::start(path).map(|verifier| (path, verifier)))
+            .map(|path| token::Verifier::start(path, &loaded.ir).map(|verifier| (path, verifier)))
             .transpose()?;
         let address = address.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
         return serve::serve(

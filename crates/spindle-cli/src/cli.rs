@@ -421,12 +421,17 @@ pub enum Command {
         /// recorded nor counted; one whose claims map to no caller of the model is refused `403`
         /// `{"refused": "not granted", "actor": null}` and writes nothing. Only
         /// `/__spindle/live`, `/__spindle/ready` and `/__spindle/seed` answer without a token;
-        /// the console routes are off, and `--console on` exits 2. The key set is fetched before
-        /// listening, and a run that cannot fetch it exits 1; it is fetched again every
-        /// `refresh_seconds`, a failed refresh keeping the last set and writing one warning
-        /// line. No token or claim is printed. Given with `--trusted-caller-header` or
-        /// `--fixed-actor`, `run` exits 1; off loopback it requires `--tls-cert` and
-        /// `--tls-key`, and without them exits 2. Only where `run` serves HTTP.
+        /// every other route under `/__spindle/` needs a token that maps to a caller, and
+        /// answers one that maps to none `403` the same way, unrecorded. The console routes are
+        /// off, and `--console on` exits 2. A role mapped to an actor, or an attribute, the
+        /// specification does not declare exits 1 before listening. The key set is fetched
+        /// before listening, and a run that cannot fetch it, or whose set lists no usable key,
+        /// exits 1; it is fetched again every `refresh_seconds`: a set fetched replaces the keys,
+        /// one listing no usable key too (every token is then refused, with a warning line), and
+        /// a failed refresh keeps the last set and writes one warning line. No token or claim is
+        /// printed. Given with `--trusted-caller-header` or `--fixed-actor`, `run` exits 1; off
+        /// loopback it requires `--tls-cert` and `--tls-key`, and without them exits 2. Only where
+        /// `run` serves HTTP.
         #[arg(long, value_name = "FILE", conflicts_with = "scenario")]
         caller_token: Option<PathBuf>,
         /// Record every request the listener answers outside `/__spindle/`, timed from its head
