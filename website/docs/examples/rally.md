@@ -3,7 +3,7 @@ title: Rally
 sidebar_position: 1
 description: The rally example, a two-player paddle-and-ball game written as an ESS system of three components that talk only through bindings.
 lede: Three components, one periodic binding and four event bindings play a match to a winner, with no game code outside the specification.
-source: examples/rally/ess, crates/spindle-host/tests/spindle-host/rally.rs, crates/spindle-host/src/rally.rs, crates/spindle-cli/tests/spindle-cli/play.rs, crates/spindle-cli/tests/spindle-cli/processes.rs, crates/spindle-cli/tests/spindle-cli/adversary_processes.rs, crates/spindle-host/src/host/component.rs, crates/spindle-qemu/tests/spindle-qemu/rally.rs, crates/spindle-firecracker/tests/spindle-firecracker/rally.rs, examples/rally/placement.toml, docs/design/spindle.md §13
+source: examples/rally/ess, crates/spindle-cli/tests/spindle-cli/rally_page.rs, crates/spindle-host/tests/spindle-host/rally.rs, crates/spindle-host/src/rally.rs, crates/spindle-cli/tests/spindle-cli/play.rs, crates/spindle-cli/tests/spindle-cli/processes.rs, crates/spindle-cli/tests/spindle-cli/adversary_processes.rs, crates/spindle-host/src/host/component.rs, crates/spindle-qemu/tests/spindle-qemu/rally.rs, crates/spindle-firecracker/tests/spindle-firecracker/rally.rs, examples/rally/placement.toml, docs/design/spindle.md §13
 ---
 
 Rally is an original two-player paddle-and-ball game, written as an ESS system in
@@ -55,8 +55,11 @@ frames of a real run.
 
 ## Drive it by hand
 
-`run` admits the whole system and executes commands read as JSON lines on stdin, one JSON result
-per line. It runs commands only: no timer, no channel, so bindings do not fire.
+`run --stdin` admits the whole system and executes commands read as JSON lines on stdin, one JSON
+result per line. The table is `reached_by: network`, so without `--stdin` `run` serves it over HTTP
+instead. Every component runs in the one process on one store. After a command's line come the
+commands its events invoke through the four event bindings, each on a line of its own with
+`"caused_by": {"line": <n>, "binding": "<id>"}`. No timer runs, so `tick` does not fire.
 
 `requests.jsonl` opens a match, ticks once, and opens the same match again:
 
@@ -67,14 +70,22 @@ per line. It runs commands only: no timer, no channel, so bindings do not fire.
 ```
 
 ```console
-$ b10x-spindle run examples/rally/ess --environment examples/environments/laptop.toml --state rally.sqlite < requests.jsonl
+$ b10x-spindle run examples/rally/ess --environment examples/environments/laptop.toml --stdin --state rally.sqlite < requests.jsonl
 {"command":"rally.table.OpenMatch","events":[{"event":"rally.table.BallMoved","payload":{"ball_x":8,"ball_y":4,"east_paddle_y":4,"heading_x":"West","heading_y":"Up","match_id":"m1","west_paddle_y":4}}],"outcome":"opened"}
+{"attempts":1,"caused_by":{"binding":"east-watches","line":1},"command":"rally.east.ObserveBall","events":[{"event":"rally.east.BallSeen","payload":{"ball_x":8,"ball_y":4,"match_id":"m1","paddle_y":4}}],"outcome":"first-sight"}
+{"attempts":1,"caused_by":{"binding":"west-watches","line":1},"command":"rally.west.ObserveBall","events":[{"event":"rally.west.BallSeen","payload":{"ball_x":8,"ball_y":4,"match_id":"m1","paddle_y":4}}],"outcome":"first-sight"}
 {"command":"rally.table.Tick","events":[{"event":"rally.table.BallMoved","payload":{"ball_x":8,"ball_y":4,"east_paddle_y":4,"heading_x":"West","heading_y":"Up","match_id":"m1","west_paddle_y":4}}],"outcome":"served"}
+{"attempts":1,"caused_by":{"binding":"east-watches","line":2},"command":"rally.east.ObserveBall","events":[{"event":"rally.east.BallSeen","payload":{"ball_x":8,"ball_y":4,"match_id":"m1","paddle_y":4}}],"outcome":"hold"}
+{"attempts":1,"caused_by":{"binding":"west-watches","line":2},"command":"rally.west.ObserveBall","events":[{"event":"rally.west.BallSeen","payload":{"ball_x":8,"ball_y":4,"match_id":"m1","paddle_y":4}}],"outcome":"hold"}
 {"command":"rally.table.OpenMatch","failure":{"kind":"undeclared","message":"rally.table.OpenMatch: a `rally.table.Match` already has the identity \"m1\", and `creates:` never replaces an instance"}}
 ```
 
+Each `BallMoved` invokes `ObserveBall` on both players, east first. The ball is level with both
+paddles, so neither asks to move, and `west-moves` and `east-moves` do not fire.
+
 The third line is a failure, not a declared outcome. `OpenMatch` declares no outcome for a match
-that already exists, and `creates:` never replaces an instance.
+that already exists, and `creates:` never replaces an instance. After the last line `run` names
+line 3 on stderr as rejected and exits 1.
 
 `store.durable` is bound to `sqlite` on the laptop environment, so `run` needs `--state`.
 

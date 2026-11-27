@@ -107,7 +107,7 @@ anything listens.
 
 Where a component requires `ingress.network` and the environment binds it to `http-loopback`,
 `b10x-spindle run` runs every component in one process. It serves those components over HTTP on
-`127.0.0.1` instead of reading stdin. Any other binding, such as `http` in `microvm.toml`, is
+`127.0.0.1` instead of reading stdin, unless `--stdin` is given. Any other binding, such as `http` in `microvm.toml`, is
 refused before anything listens. Once listening it prints
 `{"listening": "127.0.0.1:<port>", "components": [...]}`. `--port` picks the port, and its
 default, `0`, lets the system choose one. It serves until SIGINT or SIGTERM.

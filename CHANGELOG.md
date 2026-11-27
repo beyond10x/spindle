@@ -8,6 +8,14 @@ are Spindle's releases.
 
 ### Added
 
+- `run --stdin` reads JSON lines on stdin where a component is `reached_by: network`, instead of
+  serving HTTP: every component runs in the one process on one store and the event bindings fire
+  as on any other stdin run. Given with a flag only a served run reads (`--http`, `--port`,
+  `--address`, `--fixed-actor`, `--fixed-caller`, `--trusted-caller-header`,
+  `--trusted-caller-secret`, `--observe`, `--observe-requests`, `--observe-series`, `--seed`,
+  `--drain`, `--log-format json`), it exits 2 before anything is loaded. The rally page's "Drive it
+  by hand" now runs as written, where its command served HTTP and never read its lines; its output
+  shows the `ObserveBall` commands each `BallMoved` invokes (`story:rally-example-reads-stdin`).
 - An event binding whose `on_failure` escalates runs, where `run` exited 1 before listening or
   reading stdin: universal (`on_failure: {escalate: {emits: <event>}}`) or chosen per refusal
   (`escalate: {emits: <event>, outcomes: [...]}` beside `drop:` and `retry:`). An attempt the
