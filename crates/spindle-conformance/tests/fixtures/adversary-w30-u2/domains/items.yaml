@@ -1,0 +1,191 @@
+domain: stack.items
+summary: A rack may carry a kind and tags; an item may carry a note, tags, a cover, a rank and the rack it is on, each written only where its command was given one.
+types:
+  - name: stack.items.RackId
+    kind: newtype
+    of: String
+  - name: stack.items.Cover
+    kind: struct
+    fields:
+      - name: title
+        type: String
+      - name: colour
+        type: Optional<String>
+  - name: stack.items.ItemRow
+    kind: struct
+    fields:
+      - name: item_id
+        type: String
+      - name: note
+        type: Optional<String>
+        presence: omitted_when_absent
+      - name: rank
+        type: Optional<Integer>
+        presence: null_when_absent
+      - name: tags
+        type: Optional<List<String>>
+entities:
+  - name: stack.items.Rack
+    identity:
+      name: rack_id
+      type: stack.items.RackId
+    fields:
+      - name: kind
+        type: Optional<String>
+        presence: omitted_when_absent
+      - name: tags
+        type: Optional<List<String>>
+    lifecycle:
+      initial: Standing
+      states: [Standing]
+      terminal: [Standing]
+  - name: stack.items.Item
+    identity:
+      name: item_id
+      type: String
+    fields:
+      - name: note
+        type: Optional<String>
+      - name: tags
+        type: Optional<List<String>>
+      - name: cover
+        type: Optional<stack.items.Cover>
+      - name: rank
+        type: Optional<Integer>
+      - name: rack_id
+        type: Optional<stack.items.RackId>
+    relations:
+      - {name: rack, kind: references, target: stack.items.Rack, cardinality: one, via: rack_id}
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+commands:
+  - name: stack.items.AddRack
+    input:
+      - name: rack_id
+        type: stack.items.RackId
+      - name: kind
+        type: Optional<String>
+      - name: tags
+        type: Optional<List<String>>
+    outcomes:
+      - name: added
+        creates: stack.items.Rack
+        instance: rack_id
+        sets:
+          kind: input.kind
+          tags: input.tags
+        emits: [stack.items.RackAdded]
+        payload:
+          stack.items.RackAdded: {rack_id: input.rack_id}
+        summary: The rack stands with what it was given.
+  - name: stack.items.AddItem
+    input:
+      - name: item_id
+        type: String
+      - name: note
+        type: Optional<String>
+      - name: tags
+        type: Optional<List<String>>
+      - name: cover
+        type: Optional<stack.items.Cover>
+      - name: rank
+        type: Optional<Integer>
+      - name: rack_id
+        type: Optional<stack.items.RackId>
+    outcomes:
+      - name: added
+        creates: stack.items.Item
+        instance: item_id
+        sets:
+          note: input.note
+          tags: input.tags
+          cover: input.cover
+          rank: input.rank
+          rack_id: input.rack_id
+        emits: [stack.items.ItemAdded]
+        payload:
+          stack.items.ItemAdded: {item_id: input.item_id}
+        summary: The item is kept with what it was given.
+events:
+  - name: stack.items.RackAdded
+    fields:
+      - name: rack_id
+        type: stack.items.RackId
+  - name: stack.items.ItemAdded
+    fields:
+      - name: item_id
+        type: String
+views:
+  - name: stack.items.Items
+    source: stack.items.Item
+    consistency: read_your_writes
+    fields:
+      - {name: item_id, type: String}
+      - {name: note, type: Optional<String>}
+      - {name: tags, type: Optional<List<String>>}
+      - {name: cover, type: Optional<stack.items.Cover>}
+      - {name: rank, type: Optional<Integer>}
+      - {name: rack_id, type: Optional<stack.items.RackId>}
+      - name: rack_kind
+        type: Optional<String>
+        field: {related: {via: rack_id, field: kind}}
+      - name: rack_tags
+        type: Optional<List<String>>
+        field: {related: {via: rack_id, field: tags}}
+      - name: rack_ref
+        type: Optional<stack.items.RackId>
+        field: {related: {via: rack_id, field: rack_id}}
+  - name: stack.items.Ranked
+    source: stack.items.Item
+    consistency: read_your_writes
+    order_by: [rank desc]
+    fields:
+      - {name: item_id, type: String}
+      - {name: rank, type: Optional<Integer>}
+      - {name: note, type: Optional<String>}
+  - name: stack.items.Except
+    source: stack.items.Item
+    consistency: read_your_writes
+    params:
+      - {name: skip, type: String}
+    filter: item_id != param.skip
+    fields:
+      - {name: item_id, type: String}
+      - {name: note, type: Optional<String>}
+      - {name: cover, type: Optional<stack.items.Cover>}
+  - name: stack.items.Shaped
+    source: stack.items.Item
+    consistency: read_your_writes
+    shape: stack.items.ItemRow
+  - name: stack.items.Renamed
+    source: stack.items.Item
+    consistency: read_your_writes
+    fields:
+      - {name: item_id, type: String, wire: itemId}
+      - {name: note, type: Optional<String>, wire: memo}
+      - {name: echo, type: Optional<String>, expr: "note"}
+      - name: rack_kind
+        type: Optional<String>
+        wire: rackKind
+        field: {related: {via: rack_id, field: kind}}
+  - name: stack.items.PerNote
+    source: stack.items.Item
+    consistency: read_your_writes
+    group_by: [note]
+    fields:
+      - {name: note, type: Optional<String>}
+      - {name: items, type: Integer, aggregate: {count: {}}}
+  - name: stack.items.Paged
+    source: stack.items.Item
+    consistency: read_your_writes
+    order_by: [item_id]
+    paging: {page: page, size: size, total: true}
+    params:
+      - {name: page, type: Integer}
+      - {name: size, type: Integer}
+    fields:
+      - {name: item_id, type: String}
+      - {name: note, type: Optional<String>}
+      - {name: tags, type: Optional<List<String>>}
