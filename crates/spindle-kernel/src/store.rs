@@ -6,6 +6,7 @@
 //! [`Store::commit_all`]. A store never decides anything; it holds rows and the events that
 //! changed them.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::{Arc, PoisonError, RwLock};
 
@@ -683,6 +684,102 @@ fn key(entity: &str, identity: &Value) -> (String, String) {
 pub(crate) fn identity_from_key(text: &str) -> Result<Value, StoreError> {
     serde_json::from_str(text)
         .map_err(|error| StoreError::Backend(format!("a stored identity {text}: {error}")))
+}
+
+/// A store whose every identity a command hands it is written in one spelling first
+/// ([`crate::typed::spelled`]): what [`Store::load`], [`Store::commit`], [`Store::remove`] and
+/// [`Store::commit_all`] are given. Every other method is handed on as it is, so the store it
+/// wraps answers as it would; what it reads back it keyed in that spelling already.
+pub(crate) struct Spelled<'a>(pub(crate) &'a mut dyn Store);
+
+impl Spelled<'_> {
+    /// `change` with its identity in the one spelling; borrowed where it is so already.
+    fn change(change: &Change) -> Cow<'_, Change> {
+        match crate::typed::spelled(&change.identity) {
+            Cow::Borrowed(_) => Cow::Borrowed(change),
+            Cow::Owned(identity) => Cow::Owned(Change {
+                identity,
+                ..change.clone()
+            }),
+        }
+    }
+
+    /// `removal` with its identity in the one spelling; borrowed where it is so already.
+    fn removal(removal: &Removal) -> Cow<'_, Removal> {
+        match crate::typed::spelled(&removal.identity) {
+            Cow::Borrowed(_) => Cow::Borrowed(removal),
+            Cow::Owned(identity) => Cow::Owned(Removal {
+                identity,
+                ..removal.clone()
+            }),
+        }
+    }
+}
+
+impl Store for Spelled<'_> {
+    fn load(&mut self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
+        self.0.load(entity, &crate::typed::spelled(identity))
+    }
+
+    fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
+        self.0.commit(&Self::change(change))
+    }
+
+    fn remove(&mut self, removal: &Removal) -> Result<(), StoreError> {
+        self.0.remove(&Self::removal(removal))
+    }
+
+    fn commit_all(&mut self, writes: &[Write]) -> Result<(), StoreError> {
+        let spelled =
+            |write: &Write| matches!(crate::typed::spelled(write.instance().1), Cow::Borrowed(_));
+        if writes.iter().all(spelled) {
+            return self.0.commit_all(writes);
+        }
+        let writes = writes
+            .iter()
+            .map(|write| match write {
+                Write::Commit(change) => Write::Commit(Self::change(change).into_owned()),
+                Write::Remove(removal) => Write::Remove(Self::removal(removal).into_owned()),
+            })
+            .collect::<Vec<_>>();
+        self.0.commit_all(&writes)
+    }
+
+    fn scan(&mut self, entity: &str) -> Result<Scan, StoreError> {
+        self.0.scan(entity)
+    }
+
+    fn counts(&mut self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
+        self.0.counts(entities)
+    }
+
+    fn reading(&mut self) -> Option<Arc<dyn Reading>> {
+        self.0.reading()
+    }
+
+    fn attribute(&mut self, origin: Option<Origin>) {
+        self.0.attribute(origin);
+    }
+
+    fn outcome(&mut self, outcome: &str) {
+        self.0.outcome(outcome);
+    }
+
+    fn commit_events(&mut self, events: &[Event], scanned: &[Scanned]) -> Result<(), StoreError> {
+        self.0.commit_events(events, scanned)
+    }
+
+    fn forget_events(&mut self) -> Result<(), StoreError> {
+        self.0.forget_events()
+    }
+
+    fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
+        self.0.events_after(position, limit)
+    }
+
+    fn events_head(&mut self) -> Result<u64, StoreError> {
+        self.0.events_head()
+    }
 }
 
 /// Instances held only while the process runs: `store.ephemeral`, or `store.durable` bound to

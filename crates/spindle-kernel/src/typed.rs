@@ -7,6 +7,8 @@
 //! an enum its variants, a union its tag. Every invariant must be true of the value; one the value
 //! leaves unknown is refused too.
 
+use std::borrow::Cow;
+
 use ess_compiler::EssIr;
 use ess_compiler::ir::{ResolvedBody, ResolvedField, ResolvedTypeRef};
 use ess_domain::QualifiedName;
@@ -113,6 +115,80 @@ fn integral(
         },
         _ => Ok(value.clone()),
     }
+}
+
+/// `identity` with every number in one spelling, whatever type the model declares it: an integral
+/// number within `i64` or `u64` as that integer (`1.0`, `1e0` and `-0.0` as `1`, `1` and `0`),
+/// any other as the binary64 `serde_json` reads (`5e-1` as `0.5`). ESS keys an instance by the
+/// value it reads and compares numbers by their exact value whatever their declared type
+/// (`Number`), so the spellings of one number name one instance; a store keys an instance by its
+/// identity's JSON text, so the kernel hands it every identity so. Borrowed where nothing changes.
+pub(crate) fn spelled(identity: &Value) -> Cow<'_, Value> {
+    match identity {
+        Value::Number(number) => match one_number(number) {
+            Some(number) => Cow::Owned(Value::Number(number)),
+            None => Cow::Borrowed(identity),
+        },
+        Value::Array(elements) => {
+            let respelled: Vec<Cow<'_, Value>> = elements.iter().map(spelled).collect();
+            if respelled
+                .iter()
+                .all(|element| matches!(element, Cow::Borrowed(_)))
+            {
+                Cow::Borrowed(identity)
+            } else {
+                Cow::Owned(Value::Array(
+                    respelled.into_iter().map(Cow::into_owned).collect(),
+                ))
+            }
+        }
+        Value::Object(members) => {
+            let respelled: Vec<(&String, Cow<'_, Value>)> = members
+                .iter()
+                .map(|(name, member)| (name, spelled(member)))
+                .collect();
+            if respelled
+                .iter()
+                .all(|(_, member)| matches!(member, Cow::Borrowed(_)))
+            {
+                Cow::Borrowed(identity)
+            } else {
+                Cow::Owned(Value::Object(
+                    respelled
+                        .into_iter()
+                        .map(|(name, member)| (name.clone(), member.into_owned()))
+                        .collect(),
+                ))
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::String(_) => Cow::Borrowed(identity),
+    }
+}
+
+/// `number` in its one spelling where that differs from how it is held: a binary64 that is an
+/// integer within `i64` or `u64` as that integer, negative zero as `0`. `None` for an integer
+/// already, and for any other binary64, which is its own one spelling.
+fn one_number(number: &serde_json::Number) -> Option<serde_json::Number> {
+    /// 2^63 and 2^64, exact as binary64.
+    const I64_END: f64 = 9_223_372_036_854_775_808.0;
+    const U64_END: f64 = 18_446_744_073_709_551_616.0;
+    if number.is_i64() || number.is_u64() {
+        return None;
+    }
+    let float = number.as_f64()?;
+    if float.fract() != 0.0 || !float.is_finite() {
+        return None;
+    }
+    if (-I64_END..I64_END).contains(&float) {
+        // Integral and within range, so the conversion is exact.
+        #[allow(clippy::cast_possible_truncation)]
+        return Some(serde_json::Number::from(float as i64));
+    }
+    if (0.0..U64_END).contains(&float) {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        return Some(serde_json::Number::from(float as u64));
+    }
+    None
 }
 
 fn check(ir: &EssIr, kind: &ResolvedTypeRef, value: &Value, depth: usize) -> Result<(), String> {

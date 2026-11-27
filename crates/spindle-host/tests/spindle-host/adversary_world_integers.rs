@@ -5,13 +5,16 @@
 //!
 //! The model, inline: shelves with an `Integer` identity, and books that reference a shelf by an
 //! `Integer`, with `Integer`, `Decimal`, `Optional<Integer>`, `List<Integer>`, struct and
-//! `Timestamp` fields.
+//! `Timestamp` fields; and scales with a `Decimal` identity (`story:decimal-identity-any-spelling`:
+//! `1` and `1.0` of a `Decimal` identity name one instance too).
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 use spindle_capability::Environment;
 use spindle_host::{Answers, Host, ManualClock};
+use spindle_kernel::Row;
 
 const SYSTEM: &str = r"format: ess/34
 system: probe
@@ -30,11 +33,13 @@ components:
         - probe.ints.AddShelf
         - probe.ints.RenameShelf
         - probe.ints.AddBook
+        - probe.ints.NoteScale
     publishes:
       events:
         - probe.ints.ShelfAdded
         - probe.ints.ShelfRenamed
         - probe.ints.BookAdded
+        - probe.ints.ScaleNoted
     reached_by: in_process
 ";
 
@@ -83,7 +88,34 @@ entities:
       initial: Kept
       states: [Kept]
       terminal: [Kept]
+  - name: probe.ints.Scale
+    identity:
+      name: grams
+      type: Decimal
+    fields:
+      - name: note
+        type: Optional<String>
+    lifecycle:
+      initial: Set
+      states: [Set]
+      terminal: [Set]
 commands:
+  - name: probe.ints.NoteScale
+    input:
+      - name: grams
+        type: Decimal
+      - name: note
+        type: String
+    outcomes:
+      - name: noted
+        updates: probe.ints.Scale
+        instance: grams
+        sets:
+          note: input.note
+        emits: [probe.ints.ScaleNoted]
+        payload:
+          probe.ints.ScaleNoted: {grams: input.grams}
+        summary: The scale at the weight is noted.
   - name: probe.ints.AddShelf
     input:
       - name: shelf_id
@@ -163,7 +195,19 @@ events:
     fields:
       - name: book_id
         type: String
+  - name: probe.ints.ScaleNoted
+    fields:
+      - name: grams
+        type: Decimal
 views:
+  - name: probe.ints.Scales
+    source: probe.ints.Scale
+    consistency: read_your_writes
+    fields:
+      - name: grams
+        type: Decimal
+      - name: note
+        type: Optional<String>
   - name: probe.ints.Shelves
     source: probe.ints.Shelf
     consistency: read_your_writes
@@ -411,4 +455,73 @@ fn a_filter_keeps_a_world_integer_in_either_spelling() {
     let kept = listed(&mut opened.host, "probe.ints.OnePage");
     let ids: Vec<&Value> = kept.iter().map(|row| &row["book_id"]).collect();
     assert_eq!(ids, [&json!("b1"), &json!("b2")], "{kept:?}");
+}
+
+const SCALES: &str = "probe.ints.Scales";
+
+/// `NoteScale` for the scale named `grams`, on `host`, and every scale listed after it.
+fn note_scale(host: &mut Host, grams: Value) -> (Result<(), String>, Vec<Map<String, Value>>) {
+    let noted = host
+        .submit(
+            "probe.ints.NoteScale",
+            object(json!({"grams": grams, "note": "seen"})),
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+    (noted, listed(host, SCALES))
+}
+
+/// A world row whose `Decimal` identity is written `1.0` is found by a command naming `1`, and
+/// one written `1` by a command naming `1.0`: ESS reads the two as one instance
+/// (story:decimal-identity-any-spelling).
+#[test]
+fn a_world_row_with_a_decimal_identity_is_found_whatever_its_spelling() {
+    for (seeded, named) in [(json!(1.0), json!(1)), (json!(1), json!(1.0))] {
+        let mut opened = host();
+        reset(
+            &mut opened.host,
+            &json!({"rows": [{"entity": "probe.ints.Scale", "identity": seeded, "state": "Set",
+                              "fields": {}}]}),
+        )
+        .unwrap_or_else(|why| panic!("the world loads: {why}"));
+        let (noted, scales) = note_scale(&mut opened.host, named.clone());
+        assert!(
+            noted.is_ok(),
+            "seeded {seeded}, named {named}: {noted:?}; {scales:?}"
+        );
+        assert_eq!(scales.len(), 1, "one scale: {scales:?}");
+        assert_eq!(
+            scales[0].get("note"),
+            Some(&json!("seen")),
+            "seeded {seeded}, named {named}: {scales:?}"
+        );
+    }
+}
+
+/// A row established through `Host::establish` with the identity `1.0` is found by a command
+/// naming `1.0` and by one naming `1` (story:decimal-identity-any-spelling).
+#[test]
+fn an_established_decimal_identity_is_found_whatever_its_spelling() {
+    for named in [json!(1.0), json!(1)] {
+        let mut opened = host();
+        opened
+            .host
+            .establish(
+                "probe.ints.Scale",
+                &json!(1.0),
+                Row {
+                    state: "Set".to_owned(),
+                    fields: BTreeMap::new(),
+                },
+            )
+            .unwrap_or_else(|error| panic!("the scale is established: {error}"));
+        let (noted, scales) = note_scale(&mut opened.host, named.clone());
+        assert!(noted.is_ok(), "named {named}: {noted:?}; {scales:?}");
+        assert_eq!(scales.len(), 1, "one scale: {scales:?}");
+        assert_eq!(
+            scales[0].get("note"),
+            Some(&json!("seen")),
+            "named {named}: {scales:?}"
+        );
+    }
 }

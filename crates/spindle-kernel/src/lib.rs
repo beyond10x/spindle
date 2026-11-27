@@ -126,6 +126,17 @@ pub fn integers(
     typed::integers(ir, kind, value)
 }
 
+/// `identity` with every number in one spelling, whatever type the model declares it: an integral
+/// number within `i64` or `u64` as that integer (`1.0` as `1`), any other as the binary64
+/// `serde_json` reads. The kernel hands a store every identity a command reads or writes by so,
+/// as ESS reads the spellings of one number as one value; a caller that writes an instance
+/// outside a command (a world row, an established row) writes its identity so too, or a command
+/// does not find it by another spelling.
+#[must_use]
+pub fn one_spelling(identity: &Value) -> Value {
+    typed::spelled(identity).into_owned()
+}
+
 /// One event a command emitted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Event {
