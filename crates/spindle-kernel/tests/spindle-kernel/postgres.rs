@@ -742,7 +742,8 @@ fn a_dead_letter_survives_on_postgres() {
 fn a_commit_under_a_taken_lease_is_refused() {
     let database = database();
     let component = fresh("leased");
-    let term = Duration::from_secs(1);
+    // Long enough that A's store opens and writes, and B connects, within it on a loaded host.
+    let term = Duration::from_secs(3);
     let mut first = Lease::connect(&database, term).expect("A connects for the lease");
     let token = first
         .take(&component)

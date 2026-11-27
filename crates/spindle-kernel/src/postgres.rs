@@ -177,17 +177,10 @@ impl LogStore<PostgresEventStore> {
         let config = config(database, &prefix)?;
         let place = place(database, &prefix);
         let leased = held().get(&place).copied();
-        let mut options = PoolOptions {
+        let options = PoolOptions {
             max_connections: database.pool,
             ..PoolOptions::default()
         };
-        // Under a lease a transaction ends within the lease: eventlog sets each session's
-        // `idle_in_transaction_session_timeout` to it, so the server ends the transaction of a
-        // process paused inside a write, and the locks it holds (its lease row among them), before
-        // another process may take the lease, rather than after the default 10 s.
-        if let Some(leased) = leased {
-            options.transaction_timeout = options.transaction_timeout.min(leased.term);
-        }
         let runtime = runtime()?;
         let log = if database.ca.is_some() {
             let connections = database.connections.ok_or_else(|| {
@@ -414,6 +407,32 @@ pub struct Lease {
     /// Why the last statement could not reach the database, while the connection cannot be made
     /// or was closed ([`Lease::trouble`]).
     trouble: Option<String>,
+    /// What takes did to the sessions of a process holding a lease row past the lease's end, not
+    /// yet asked for ([`Lease::endings`]).
+    endings: Vec<Ending>,
+}
+
+/// What a take did where the lease had run out by its committed row while a session of another
+/// process still held that row locked, inside a write paused or held up past the lease
+/// ([`Lease::take`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Ending {
+    /// The server ended `sessions` sessions holding the lease row of `component`'s tables, and
+    /// with them their transactions and every lock they held: the next take finds the row free.
+    Ended {
+        /// The component whose lease it is.
+        component: String,
+        /// How many sessions were ended.
+        sessions: usize,
+    },
+    /// The server refused to end them, as for a role that is not a member of theirs: the take
+    /// waits until the server ends their transaction itself (its idle-in-transaction timeout).
+    Refused {
+        /// The component whose lease it is.
+        component: String,
+        /// The server's answer.
+        why: String,
+    },
 }
 
 impl std::fmt::Debug for Lease {
@@ -447,6 +466,7 @@ impl Lease {
             client: None,
             prepared: BTreeSet::new(),
             trouble: None,
+            endings: Vec::new(),
         };
         lease.connected()?;
         Ok(lease)
@@ -464,6 +484,48 @@ impl Lease {
     #[must_use]
     pub fn trouble(&self) -> Option<&str> {
         self.trouble.as_deref()
+    }
+
+    /// What takes since the last call did to sessions holding a lease row past the lease's end
+    /// ([`Ending`]), oldest first.
+    pub fn endings(&mut self) -> Vec<Ending> {
+        std::mem::take(&mut self.endings)
+    }
+
+    /// Ends the sessions that hold the lease row of `component`'s tables, in `table`, locked, once
+    /// the lease ran out by its committed row: a take found the row locked past its lock wait, as
+    /// by a write of a process paused inside it, which keeps the row and every lock it took until
+    /// the server ends its transaction. Only a session whose transaction locked the row (the
+    /// row's `xmax`) and which holds a lock on `table` is ended; none while the lease runs.
+    fn end_holders(&mut self, component: &str, table: &str) {
+        let Some(client) = self.client.as_ref() else {
+            return;
+        };
+        let statement = END.replace("{table}", table);
+        let tenant = crate::sqlite::TENANT;
+        let answered = self
+            .runtime
+            .block_on(client.query(&statement, &[&tenant, &LEASE_ROW]));
+        let ending = match answered {
+            Ok(rows) => {
+                let sessions = rows
+                    .iter()
+                    .filter(|row| row.try_get::<_, bool>(0).unwrap_or(false))
+                    .count();
+                if sessions == 0 {
+                    return;
+                }
+                Ending::Ended {
+                    component: component.to_owned(),
+                    sessions,
+                }
+            }
+            Err(error) => Ending::Refused {
+                component: component.to_owned(),
+                why: self.failed(&error, component).to_string(),
+            },
+        };
+        self.endings.push(ending);
     }
 
     /// Makes the connection again where the last one was closed.
@@ -572,8 +634,12 @@ impl Lease {
                 .and_then(|row| row.try_get::<_, i64>(0).ok())
                 .and_then(|token| u64::try_from(token).ok())),
             // A take that waited out its lock or statement timeout found the row locked by the
-            // holder's write, which holds it for its whole transaction: the lease is held.
-            Err(error) if matches!(step, Step::Take) && busy(&error) => Ok(None),
+            // holder's write, which holds it for its whole transaction: the lease is held, unless
+            // it ran out, where the sessions holding the row are ended for the next take.
+            Err(error) if matches!(step, Step::Take) && busy(&error) => {
+                self.end_holders(component, &table);
+                Ok(None)
+            }
             Err(error) => {
                 let failed = self.failed(&error, component);
                 let closed = self
@@ -698,6 +764,22 @@ const RENEW: &str = "UPDATE {table} SET body = jsonb_set(body, '{until}', \
      WHERE tenant_id = $1 AND row_key = $2 AND (body->>'token')::bigint = $4::bigint \
      AND (body->>'pid')::int = pg_backend_pid() \
      RETURNING (body->>'token')::bigint";
+
+/// Ends the sessions holding the lease row locked where the lease ran out by its committed row,
+/// which a plain read answers without waiting for the lock; answers one row for each, `true`
+/// where it was ended. A session holding the row is one whose transaction (or subtransaction)
+/// the row's `xmax` names, holding the exclusive lock on that transaction's id, and which also
+/// holds a lock on the lease table: never this session, a session of another table, or the
+/// session the row names unless it holds the row. `$1` the tenant, `$2` the row's key.
+const END: &str = "WITH lease AS (SELECT xmax FROM {table} WHERE tenant_id = $1 AND row_key = $2 \
+     AND (body->>'until')::float8 <= extract(epoch FROM clock_timestamp())::float8), \
+     holders AS (SELECT DISTINCT held.pid FROM lease \
+     JOIN pg_locks held ON held.locktype = 'transactionid' AND held.transactionid = lease.xmax \
+     AND held.mode = 'ExclusiveLock' AND held.granted \
+     JOIN pg_locks used ON used.pid = held.pid AND used.locktype = 'relation' \
+     AND used.relation = '{table}'::regclass AND used.granted \
+     WHERE held.pid <> pg_backend_pid()) \
+     SELECT pg_terminate_backend(pid) FROM holders";
 
 /// Ends the lease now where it still names the token, `$3`.
 const RELEASE: &str = "UPDATE {table} SET body = jsonb_set(body, '{until}', '0') \

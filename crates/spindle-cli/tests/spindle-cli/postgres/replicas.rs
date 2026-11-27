@@ -34,6 +34,8 @@ struct Replica {
     child: Child,
     address: SocketAddr,
     lines: Arc<Mutex<Vec<(Instant, String)>>>,
+    /// Set once its stderr was read to the end.
+    read: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Drop for Replica {
@@ -64,12 +66,15 @@ impl Replica {
         });
         let lines = Arc::new(Mutex::new(Vec::new()));
         let kept = Arc::clone(&lines);
+        let read = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reading = Arc::clone(&read);
         std::thread::spawn(move || {
             for line in BufReader::new(stderr).lines() {
                 let Ok(line) = line else { break };
                 eprintln!("{line}");
                 kept.lock().expect("the lines").push((Instant::now(), line));
             }
+            reading.store(true, std::sync::atomic::Ordering::SeqCst);
         });
         let line = receiver.recv_timeout(STARTUP).unwrap_or_default();
         let address = serde_json::from_str::<Value>(&line)
@@ -81,6 +86,7 @@ impl Replica {
                 child,
                 address,
                 lines,
+                read,
             },
             None => {
                 let _ = child.kill();
@@ -155,6 +161,12 @@ impl Replica {
         let deadline = Instant::now() + within;
         loop {
             if let Some(status) = self.child.try_wait().expect("the run is waited on") {
+                // Every line it printed is read before its output is asked for.
+                let read = Instant::now() + Duration::from_secs(5);
+                while !self.read.load(std::sync::atomic::Ordering::SeqCst) && Instant::now() < read
+                {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
                 return status;
             }
             assert!(
@@ -442,8 +454,9 @@ fn a_paused_leader_is_fenced() {
     leader.signal(rustix::process::Signal::CONT);
     let status = leader.exit_within(Duration::from_secs(10));
     assert_eq!(status.code(), Some(1), "{}", leader.printed());
+    // The standby took both; the old leader names the first it found taken.
     assert!(
-        leader.printed().contains("lease of board"),
+        leader.printed().contains("lease of board") || leader.printed().contains("lease of ledger"),
         "the old leader names the lease it lost: {}",
         leader.printed()
     );
@@ -666,4 +679,225 @@ fn a_leader_paused_inside_a_write_holds_up_no_takeover() {
     leader.signal(rustix::process::Signal::CONT);
     let _ = leader.exit_within(Duration::from_secs(10));
     let _ = firing.join();
+}
+
+/// A database session of the test's own, as the owner, inside a transaction that ran a statement
+/// and holds what that statement locked until [`Holding::end`]; the server never ends it for
+/// idling.
+struct Holding {
+    pid: i32,
+    end: mpsc::Sender<()>,
+    thread: std::thread::JoinHandle<Result<(), String>>,
+}
+
+impl Holding {
+    /// Opens the session, begins a transaction and runs `statement` in it.
+    fn start(statement: String) -> Self {
+        let (started, starting) = mpsc::channel();
+        let (end, ending) = mpsc::channel::<()>();
+        let thread = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("a runtime");
+            runtime.block_on(async {
+                let (client, connection) =
+                    tokio_postgres::connect(&owner_url(), tokio_postgres::NoTls)
+                        .await
+                        .expect("the test database accepts its owner");
+                let driver = tokio::spawn(connection);
+                client
+                    .batch_execute("SET idle_in_transaction_session_timeout = 0; BEGIN")
+                    .await
+                    .expect("a transaction begins");
+                client
+                    .batch_execute(&statement)
+                    .await
+                    .unwrap_or_else(|error| panic!("{statement}: {error}"));
+                let pid: i32 = client
+                    .query_one("SELECT pg_backend_pid()", &[])
+                    .await
+                    .expect("the session's pid")
+                    .get(0);
+                started.send(pid).expect("the test waits for the session");
+                let _ = ending.recv();
+                let committed = client
+                    .batch_execute("COMMIT")
+                    .await
+                    .map_err(|error| error.to_string());
+                drop(client);
+                let _ = driver.await;
+                committed
+            })
+        });
+        let pid = starting.recv().expect("the session holds its lock");
+        Self { pid, end, thread }
+    }
+
+    /// Whether the session is still open on the server.
+    fn alive(&self) -> bool {
+        super::sql(&[format!(
+            "SELECT count(*) FROM pg_stat_activity WHERE pid = {}",
+            self.pid
+        )])[0]
+            == "1"
+    }
+
+    /// Commits the transaction: an error where the server ended the session.
+    fn end(self) -> Result<(), String> {
+        let _ = self.end.send(());
+        self.thread.join().expect("the session's thread ends")
+    }
+}
+
+/// The lease of board in `schema`, taken by the test for `term` through a connection of its own:
+/// the lease and its token.
+fn taken_by_the_test(schema: &str, term: Duration) -> (spindle_kernel::Lease, u64) {
+    let mut database = spindle_kernel::Database::new(owner_url());
+    database.schema = schema.to_owned();
+    let mut lease = spindle_kernel::Lease::connect(&database, term).expect("the lease connects");
+    let token = lease
+        .take("board")
+        .expect("the lease is read")
+        .expect("the lease is free");
+    lease.take("ledger").expect("the ledger's lease is read");
+    (lease, token)
+}
+
+/// What a standby prints once it ended the sessions holding the lease row of board.
+const ENDED: &str = "the lease of board ran out while a process still held its row: ended 1 of";
+
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_standby_ends_only_the_sessions_holding_a_lease_row_past_its_end() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let schema = schema();
+    let term = Duration::from_secs(6);
+    let taken = Instant::now();
+    let (mut lease, token) = taken_by_the_test(&schema, term);
+    let holding = Holding::start(format!(
+        "SELECT body FROM {schema}.spindle_board_p_lease FOR UPDATE"
+    ));
+    let unrelated = Holding::start(format!(
+        "CREATE TABLE {schema}.unrelated (x int); INSERT INTO {schema}.unrelated VALUES (1); \
+         SELECT x FROM {schema}.unrelated FOR UPDATE"
+    ));
+    let standby = Replica::start(run(&environment, &schema));
+    let (status, body) = standby.ready();
+    assert_eq!(status, 503, "{body}");
+    assert!(
+        taken.elapsed() + Duration::from_millis(2700) < term,
+        "the standby stood by {:?} after the lease was taken, too late to ask twice within it",
+        taken.elapsed()
+    );
+
+    // While the lease runs, the session holding its row is a leader's write: it is not ended.
+    std::thread::sleep(
+        (taken + term - Duration::from_millis(600)).saturating_duration_since(Instant::now()),
+    );
+    assert!(
+        holding.alive(),
+        "a session holding a running lease's row was ended: {}",
+        standby.printed()
+    );
+    assert!(
+        !standby.printed().contains("ran out"),
+        "{}",
+        standby.printed()
+    );
+
+    // Past its end, the standby ends exactly the session holding the row and takes the lease.
+    standby
+        .line_by(TOOK, taken + term + Duration::from_secs(4))
+        .unwrap_or_else(|| {
+            panic!(
+                "the standby did not take the lease within 4 s of its end: {}",
+                standby.printed()
+            )
+        });
+    assert!(
+        standby.printed().contains(ENDED),
+        "no line naming the lease and the sessions ended: {}",
+        standby.printed()
+    );
+    assert!(
+        holding.end().is_err(),
+        "the session holding the row past the lease's end was not ended"
+    );
+    unrelated
+        .end()
+        .expect("a session holding an unrelated table's row is not ended");
+    // The session the lease row names, which holds no lock on it, is not ended either.
+    assert!(
+        !lease
+            .renew("board", token)
+            .expect("the test's lease connection was not ended"),
+        "the standby took the lease"
+    );
+}
+
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_standby_refused_ending_a_holder_warns_once_and_waits() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let schema = schema();
+    let term = Duration::from_secs(2);
+    let taken = Instant::now();
+    let (_lease, _) = taken_by_the_test(&schema, term);
+    let holding = Holding::start(format!(
+        "SELECT body FROM {schema}.spindle_board_p_lease FOR UPDATE"
+    ));
+    // A standby whose role may not end the owner's sessions.
+    let role = super::serving_role(&schema, 100);
+    let mut command = run(&environment, &schema);
+    command
+        .env(
+            "SPINDLE_SETTING_DATABASE_URL",
+            super::as_role(&owner_url(), &role, super::PASSWORD),
+        )
+        .env("SPINDLE_SETTING_DATABASE_CA", super::ca())
+        .env("SPINDLE_SETTING_DATABASE_CONNECTIONS", "100");
+    let mut standby = Replica::start(command);
+    let (status, body) = standby.ready();
+    assert_eq!(status, 503, "{body}");
+
+    std::thread::sleep(
+        (taken + term + Duration::from_secs(3)).saturating_duration_since(Instant::now()),
+    );
+    let warned = standby
+        .printed()
+        .lines()
+        .filter(|line| line.contains("PostgreSQL refused to end") && line.contains("board"))
+        .count();
+    assert_eq!(
+        warned,
+        1,
+        "one warning naming the lease where the server refuses to end its holder: {}",
+        standby.printed()
+    );
+    assert!(
+        standby
+            .child
+            .try_wait()
+            .expect("the standby's status")
+            .is_none(),
+        "the standby exited: {}",
+        standby.printed()
+    );
+    assert!(holding.alive(), "{}", standby.printed());
+    let (status, body) = standby.ready();
+    assert_eq!(status, 503, "{body}");
+
+    // Once the holder's transaction ends, the standby takes the lease at its next ask.
+    holding.end().expect("the holder commits");
+    let ended = Instant::now();
+    assert!(
+        standby
+            .line_by(TOOK, ended + Duration::from_secs(3))
+            .is_some(),
+        "the standby did not take the lease within 3 s of the holder's end: {}",
+        standby.printed()
+    );
 }

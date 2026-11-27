@@ -593,10 +593,15 @@ b10x-spindle: took the lease of ledger
 Taking a lease moves its token on. Every write of a process runs, inside its own transaction, a
 check that the lease row still names the token that process took. So a leader that was paused past
 its lease, while another process took over, lands nothing once it resumes: the write is refused,
-naming the lease, and the rows stay as the new leader left them. A transaction of a process under
-a lease lasts at most `database_lease` (10 s otherwise): the server ends one left open longer, as
-by a process paused inside a write, and the locks it holds, its lease row among them, so a paused
-leader holds up no takeover past its lease. Before it runs a request, a
+naming the lease, and the rows stay as the new leader left them. A process paused inside a write keeps its
+lease row locked until its transaction ends. A standby whose ask finds the row locked once the
+lease has run out by the committed row ends exactly the database sessions holding that row lock
+(`pg_terminate_backend`), and with them their transactions and every lock they hold, prints a line
+naming the lease and the number of sessions ended, and takes the lease at its next ask; while the
+lease runs it ends nothing. Where the server refuses that, as to a role that is not a member of the
+holder's, the standby prints one warning naming the lease and waits until the server ends the
+transaction itself (after 10 s idle in it). A store's operations keep their own 10 s deadline
+whatever the lease. Before it runs a request, a
 leader whose last renewal began two thirds of the lease ago or longer, as after a pause, waits
 until it has renewed its leases or found one taken. A write the check refuses counts as a lease
 found taken, as when the session holding the lease ended and another process took it before the

@@ -16,7 +16,7 @@
 //! ([`spindle_kernel::PostgresStore::open`]). Without `database_lease` a run takes no lease and
 //! opens no connection for one, so two such processes on one store both write.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, PoisonError, mpsc};
@@ -25,7 +25,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use spindle_capability::{Capability, Environment};
 use spindle_host::Stores;
-use spindle_kernel::{Database, Fit, Lease, Misfit, PostgresStore, Shapes, postgres_prefix};
+use spindle_kernel::{
+    Database, Ending, Fit, Lease, Misfit, PostgresStore, Shapes, postgres_prefix,
+};
 use spindle_spec::EssIr;
 use spindle_target::{ENV_SETTING_PREFIX, env_name};
 
@@ -275,6 +277,8 @@ pub(crate) struct Leases {
     held: BTreeMap<String, u64>,
     /// The trouble of the lease connection last told on stderr ([`Leases::told`]).
     told: Option<String>,
+    /// The leases whose holder the server refused to end, warned of once ([`Leases::ended`]).
+    refused: BTreeSet<String>,
 }
 
 impl Leases {
@@ -299,6 +303,7 @@ impl Leases {
             components,
             held: BTreeMap::new(),
             told: None,
+            refused: BTreeSet::new(),
         }))
     }
 
@@ -322,7 +327,46 @@ impl Leases {
     pub(crate) fn take(&mut self) -> Result<Option<String>> {
         let taken = self.asked();
         self.told();
+        self.ended();
         taken
+    }
+
+    /// Prints a line naming the lease and the number of sessions ended where a take ended the
+    /// sessions of a process holding a lease row past the lease's end, and a warning naming the
+    /// lease, once until a take ends them, where the server refused to end them: the run then
+    /// stands by until the server ends their transaction itself.
+    fn ended(&mut self) {
+        let held = &self.held;
+        self.refused
+            .retain(|component| !held.contains_key(component));
+        for ending in self.lease.endings() {
+            match ending {
+                Ending::Ended {
+                    component,
+                    sessions,
+                } => {
+                    self.refused.remove(&component);
+                    crate::log::info(format!(
+                        "the lease of {component} ran out while a process still held its row: \
+                         ended {sessions} of its database sessions, so this run takes the lease \
+                         at its next ask"
+                    ))
+                    .field("sessions", sessions)
+                    .write();
+                }
+                Ending::Refused { component, why } => {
+                    if self.refused.insert(component.clone()) {
+                        crate::log::warn(format!(
+                            "the lease of {component} ran out while a process still holds its \
+                             row, and PostgreSQL refused to end that process's sessions, so this \
+                             run waits until the server ends their transaction: {why}"
+                        ))
+                        .field("error", why.as_str())
+                        .write();
+                    }
+                }
+            }
+        }
     }
 
     /// Prints a warning naming the leases and the connection error when the lease connection
