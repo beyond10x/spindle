@@ -320,6 +320,21 @@ fn an_affects_entry_leaves_out_its_subject_whatever_its_spelling() {
     }
 }
 
+/// A command naming a scale no row has refuses naming the identity as the caller sent it, `1.0`,
+/// not the spelling the row would be keyed by.
+#[test]
+fn a_refusal_names_an_unknown_identity_as_it_was_sent() {
+    let (_dir, ir) = ir();
+    let mut store = MemoryStore::default();
+    let refused = send(&ir, &mut store, NOTE, &note("1.0"))
+        .expect_err("no scale is set, and Note declares no unknown_instance:");
+    let refused = refused.to_string();
+    assert!(
+        refused.contains("has the identity 1.0,"),
+        "the refusal names 1.0: {refused}"
+    );
+}
+
 /// A durable SQLite store reopened between the two commands finds the scale set at `1.0` by `1`,
 /// and the reverse.
 #[cfg(feature = "sqlite")]

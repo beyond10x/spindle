@@ -1832,13 +1832,15 @@ impl<'a, 'ir> Run<'a, 'ir> {
             let reason = match &self.held {
                 Some(Addressed {
                     entity,
+                    field,
                     identity,
                     stored: None,
-                    ..
                 }) => format!(
-                    "no `{}` has the identity {identity}, and the command declares neither \
+                    "no `{}` has the identity {}, and the command declares neither \
                      `unknown_instance:` nor `wrong_state:`",
-                    entity.name
+                    entity.name,
+                    // As the caller sent it, not in the one spelling the row is keyed by.
+                    self.input.get(&field.name).unwrap_or(identity)
                 ),
                 _ => "the held state is not one this command acts from, and the command \
                       declares no `wrong_state:`"

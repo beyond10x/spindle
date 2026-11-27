@@ -1913,6 +1913,10 @@ impl Host {
     /// The row `view` answers for the instance `identity` names; `None` when no instance has it,
     /// or when the view's filter does not hold for it.
     ///
+    /// The row, and every row a reference names, is read by its identity in the one spelling a
+    /// command keys it by ([`spindle_kernel::one_spelling`]): `1.0` and `1` read one row, which
+    /// answers its identity so.
+    ///
     /// The row is read from the store of the component that owns the view's source. A view's
     /// `consistency` changes nothing here: every component's store is in this process, so an
     /// `eventual` view reads the same store a `read_your_writes` one does.
@@ -1952,6 +1956,8 @@ impl Host {
             })?
             .facts;
         let entity = self.ir.entity(&declared.source).name.to_string();
+        // Read by the one spelling a command keys the row by: `1.0` and `1` name one row.
+        let identity = &spindle_kernel::one_spelling(identity);
         let stored = store_of(&mut self.components, &owner)?.load(&entity, identity)?;
         let Some(stored) = stored else {
             return Ok(None);
@@ -2810,6 +2816,9 @@ impl Far {
         let named = crate::view::references(ir, declared, identity, row)
             .into_iter()
             .map(|(via, entity, far)| {
+                // Loaded by the one spelling a command keys the row by, whatever spelling the
+                // referencing field holds (`spindle_kernel::one_spelling`).
+                let far = spindle_kernel::one_spelling(&far);
                 (via, entity, (entity.name.to_string(), far.to_string()), far)
             })
             .collect::<Vec<_>>();

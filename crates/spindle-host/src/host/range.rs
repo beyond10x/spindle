@@ -510,6 +510,9 @@ pub(super) fn history(
     at: impl Fn(u64) -> Option<String>,
     mut read: impl FnMut(u64, usize) -> Result<Vec<Committed>, HostError>,
 ) -> Result<History, HostError> {
+    // A write names its instances in the one spelling a command keys them by, so the asked
+    // identity is compared in it too: `1.0` and `1` name one instance.
+    let identity = &spindle_kernel::one_spelling(identity);
     let same_run = after.run == run;
     // Read after the cursor's position from the store it marks, and from a store of another run
     // (a restart), whose positions go on from the ones it kept: its commands' sequences may repeat
