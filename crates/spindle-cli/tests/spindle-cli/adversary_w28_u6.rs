@@ -36,12 +36,16 @@ fn run_in(directory: &Path, environment: &Path, extra: &[&str], lines: &str) -> 
         .stderr(Stdio::piped())
         .spawn()
         .expect("b10x-spindle starts");
-    child
+    // A run refused at start exits before it reads stdin; its closed pipe is that refusal, which
+    // the caller reads from the exit code and stderr.
+    let written = child
         .stdin
         .take()
         .expect("stdin is piped")
-        .write_all(lines.as_bytes())
-        .expect("the commands are written");
+        .write_all(lines.as_bytes());
+    if let Err(error) = written {
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe, "{error}");
+    }
     child.wait_with_output().expect("b10x-spindle runs")
 }
 
