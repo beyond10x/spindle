@@ -35,7 +35,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 13
+revision: 14
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-22T18:23:53Z", actor: "human:timo", revision: 4}
 - {from: "proposed", to: "active", at: "2026-11-27T07:28:37Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"review_outcome":8}}}
@@ -97,3 +97,8 @@ Taken 2026-11-27 on the scoper's recommended option, each reversible, unless not
 - D2 A: a `[decisions]` table with `file = "<path>"`, relative to where `run`
   starts; `--decisions` wins over it, as `--seed` wins over `[seed]`.
 - D3 A: `decisions-file` bound with no file named exits 1 before running.
+- D4 A, taken by the coordinator after the adversary pass (2026-11-27): the environment's file
+  answers only the causes the environment binds to `decisions-file`; `--decisions` still answers
+  every external cause. A `[decisions]` table that no `external.` key binds to `decisions-file` is
+  refused when the document is read, and `run --scenario`, `play`, `play --component` and
+  `deploy` refuse an environment with one.
