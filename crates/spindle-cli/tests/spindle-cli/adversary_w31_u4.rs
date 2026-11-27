@@ -276,9 +276,14 @@ impl Stopped {
 }
 
 fn serve(arguments: &[&str]) -> Result<Served, Stopped> {
+    serve_on(SPEC, arguments)
+}
+
+/// `run` on the fixture `spec` and laptop with `arguments` added.
+fn serve_on(spec: &str, arguments: &[&str]) -> Result<Served, Stopped> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
         .current_dir(root())
-        .args(["run", SPEC, "--environment", LAPTOP])
+        .args(["run", spec, "--environment", LAPTOP])
         .args(arguments)
         .env_remove("SPINDLE_SETTING_CONSOLE")
         .stdin(Stdio::null())
@@ -1118,4 +1123,248 @@ fn a_mapping_naming_another_actors_attribute_or_an_unqualified_actor_exits_1() {
         needles.extend(named);
         stopped.line_with(&needles);
     }
+}
+
+// Round 3: G1 (a mapped caller the model does not bind is no caller) and G3 (a mapped actor's
+// required attribute mapped from no claim stops the run), on the fixture `adversary-fixed-caller`:
+// `Librarian` carries `branch` (an enum, North or South), `level` (Integer) and `nickname`
+// (Optional<String>) and may add and shelve books and read `Catalogue`; `Visitor` carries
+// nothing and may add books.
+
+const SHELF: &str = "crates/spindle-cli/tests/fixtures/adversary-fixed-caller";
+const SHELF_COMPONENT: &str = "stacks";
+
+fn shelf_route(operation: &str) -> (String, String) {
+    let ir = spindle_spec::load(&root().join(SHELF))
+        .expect("the shelf fixture compiles")
+        .ir;
+    let surface = spindle_ingress::Surface::new(&ir, &[SHELF_COMPONENT.to_owned()], None)
+        .expect("the shelf surface is routed");
+    let route = surface
+        .routes()
+        .iter()
+        .find(|route| route.operation.name() == operation)
+        .unwrap_or_else(|| panic!("a route for {operation}"));
+    (route.method.as_str().to_uppercase(), route.path.clone())
+}
+
+/// A shelf mapping: `librarian` and `visitor` mapped, and `attributes` as the librarian's table.
+fn shelf_mapping(jwks: &str, values: &str, attributes: &str) -> Mapping {
+    let mapping = Mapping::new(jwks, PLAIN);
+    std::fs::write(
+        &mapping.path,
+        format!(
+            "issuer = \"{ISSUER}\"\naudience = \"{AUDIENCE}\"\njwks = \"{jwks}\"\n{PLAIN}\n\n\
+             [actor]\nclaim = \"role\"\n\n[actor.values]\n{values}\n\n\
+             [attributes.\"shelf.book.Librarian\"]\n{attributes}\n"
+        ),
+    )
+    .expect("the shelf mapping is written");
+    mapping
+}
+
+const BOTH: &str = "librarian = \"shelf.book.Librarian\"\nvisitor = \"shelf.book.Visitor\"";
+
+fn shelf_claims(role: Value, extra: &Value) -> Value {
+    let mut claims = json!({
+        "iss": ISSUER,
+        "aud": AUDIENCE,
+        "exp": now() + 3600,
+        "role": role,
+    });
+    for (name, value) in extra.as_object().expect("an object") {
+        claims[name] = value.clone();
+    }
+    claims
+}
+
+/// `operation` on the shelf run with `token`, `body` where given.
+fn shelf_call(served: &Served, operation: &str, token: &str, body: Option<&Value>) -> (u16, Value) {
+    let (method, path) = shelf_route(operation);
+    let bearer = format!("Bearer {token}");
+    exchange(
+        served.address,
+        &method,
+        &path,
+        &[("Authorization", &bearer)],
+        body,
+    )
+}
+
+#[test]
+fn an_optional_attribute_left_unmapped_starts_and_its_token_binds() {
+    let signer = Signer::new("k1");
+    let jwks = Jwks::serving(Answering::Keys(vec![signer.jwk()]));
+    let mapping = shelf_mapping(&jwks.url(), BOTH, "branch = \"branch\"\nlevel = \"level\"");
+    let served = serve_on(SHELF, &["--caller-token", &mapping.path, "--observe"])
+        .unwrap_or_else(|stopped| panic!("an unmapped optional attribute starts: {stopped:?}"));
+
+    let librarian = signer.sign(&shelf_claims(
+        json!("librarian"),
+        &json!({"branch": "North", "level": 3, "nickname": 5}),
+    ));
+    let (status, body) = shelf_call(&served, "shelf.book.Catalogue", &librarian, None);
+    assert_eq!(status, 200, "a librarian without a nickname binds: {body}");
+    for path in [
+        "/__spindle/requests",
+        "/__spindle/metrics",
+        "/__spindle/topology",
+    ] {
+        let (status, body) = get_as(&served, path, &librarian);
+        assert_eq!(status, 200, "a binding caller reads {path}: {body}");
+    }
+    let (status, body) = shelf_call(
+        &served,
+        "shelf.book.ShelveBook",
+        &librarian,
+        Some(&json!({"book_id": A_VISIT, "branch": "North"})),
+    );
+    assert_ne!(status, 403, "the librarian is granted ShelveBook: {body}");
+
+    let visitor = signer.sign(&shelf_claims(
+        json!("visitor"),
+        &json!({"branch": "Nowhere", "level": "high"}),
+    ));
+    let (status, body) = get_as(&served, "/__spindle/requests", &visitor);
+    assert_eq!(
+        status, 200,
+        "a visitor binds whatever claims it carries beside its role: {body}"
+    );
+}
+
+#[test]
+fn a_librarian_token_whose_attributes_do_not_bind_is_no_caller() {
+    let signer = Signer::new("k1");
+    let jwks = Jwks::serving(Answering::Keys(vec![signer.jwk()]));
+    let mapping = shelf_mapping(
+        &jwks.url(),
+        BOTH,
+        "branch = \"branch\"\nlevel = \"level\"\nnickname = \"nick\"",
+    );
+    let served = serve_on(SHELF, &["--caller-token", &mapping.path, "--observe"])
+        .unwrap_or_else(|stopped| panic!("the mapping starts: {stopped:?}"));
+    let not_granted = json!({"refused": "not granted", "actor": null});
+
+    let binds = signer.sign(&shelf_claims(
+        json!("librarian"),
+        &json!({"branch": "South", "level": 1, "nick": "Ada"}),
+    ));
+    assert_eq!(
+        get_as(&served, "/__spindle/requests", &binds).0,
+        200,
+        "the binding librarian reads the log"
+    );
+
+    for (case, extra) in [
+        (
+            "a level as a string",
+            json!({"branch": "North", "level": "3"}),
+        ),
+        (
+            "a level as a fraction",
+            json!({"branch": "North", "level": 3.5}),
+        ),
+        ("a level of null", json!({"branch": "North", "level": null})),
+        (
+            "a branch no variant names",
+            json!({"branch": "East", "level": 3}),
+        ),
+        (
+            "a branch in another case",
+            json!({"branch": "north", "level": 3}),
+        ),
+        ("no branch", json!({"level": 3})),
+        ("no level", json!({"branch": "North"})),
+        (
+            "an optional nickname of the wrong type",
+            json!({"branch": "North", "level": 3, "nick": 5}),
+        ),
+    ] {
+        let token = signer.sign(&shelf_claims(json!("librarian"), &extra));
+        for path in [
+            "/__spindle/requests",
+            "/__spindle/metrics",
+            "/__spindle/topology",
+        ] {
+            let (status, body) = get_as(&served, path, &token);
+            assert_eq!(status, 403, "{case}: {path}: {body}");
+            assert_eq!(body, not_granted, "{case}: {path}");
+        }
+        let (status, body) = shelf_call(&served, "shelf.book.Catalogue", &token, None);
+        assert_eq!(status, 403, "{case}: the view: {body}");
+        assert_eq!(body, not_granted, "{case}: the view");
+    }
+
+    for (case, role) in [
+        (
+            "a role list naming the librarian and the visitor",
+            json!(["librarian", "visitor"]),
+        ),
+        ("a role list naming the visitor alone", json!(["visitor"])),
+    ] {
+        let token = signer.sign(&shelf_claims(role, &json!({})));
+        let (status, body) = get_as(&served, "/__spindle/requests", &token);
+        assert_eq!(status, 403, "{case}: {body}");
+    }
+    let librarian_unbound = signer.sign(&shelf_claims(json!("librarian"), &json!({})));
+    let (status, _) = get_as(&served, "/__spindle/requests", &librarian_unbound);
+    assert_eq!(
+        status, 403,
+        "a librarian that does not bind is not read as the visitor it would bind as"
+    );
+
+    let (_, log) = get_as(&served, "/__spindle/requests", &binds);
+    assert_eq!(
+        log["recorded"], 8,
+        "only the eight views are recorded, nothing under /__spindle/: {log}"
+    );
+}
+
+#[test]
+fn a_required_attribute_mapped_from_no_claim_exits_1_and_an_unmapped_actor_does_not() {
+    let signer = Signer::new("k1");
+    let jwks = Jwks::serving(Answering::Keys(vec![signer.jwk()]));
+    let url = jwks.url();
+    for (case, values, attributes, named) in [
+        (
+            "the level left out",
+            BOTH,
+            "branch = \"branch\"",
+            ["shelf.book.Librarian", "level"],
+        ),
+        (
+            "only the optional nickname mapped",
+            BOTH,
+            "nickname = \"nick\"",
+            ["shelf.book.Librarian", "branch"],
+        ),
+        (
+            "a second role mapped to the librarian, the level left out",
+            "head = \"shelf.book.Librarian\"",
+            "branch = \"branch\"",
+            ["shelf.book.Librarian", "level"],
+        ),
+    ] {
+        let mapping = shelf_mapping(&url, values, attributes);
+        let Err(stopped) = serve_on(SHELF, &["--caller-token", &mapping.path]) else {
+            panic!("{case}: the run listened");
+        };
+        assert_eq!(stopped.code, Some(1), "{case}: {stopped:?}");
+        assert!(stopped.stdout.is_empty(), "{case}: {stopped:?}");
+        stopped.line_with(&["--caller-token", &mapping.path, named[0], named[1]]);
+    }
+
+    let only_visitor = Mapping::new(&url, PLAIN);
+    std::fs::write(
+        &only_visitor.path,
+        format!(
+            "issuer = \"{ISSUER}\"\naudience = \"{AUDIENCE}\"\njwks = \"{url}\"\n{PLAIN}\n\n\
+             [actor]\nclaim = \"role\"\n\n[actor.values]\nvisitor = \"shelf.book.Visitor\"\n"
+        ),
+    )
+    .expect("the mapping is written");
+    let served = serve_on(SHELF, &["--caller-token", &only_visitor.path, "--observe"])
+        .unwrap_or_else(|stopped| panic!("an actor no role maps needs no attributes: {stopped:?}"));
+    let visitor = signer.sign(&shelf_claims(json!("visitor"), &json!({})));
+    assert_eq!(get_as(&served, "/__spindle/requests", &visitor).0, 200);
 }
