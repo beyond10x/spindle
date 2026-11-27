@@ -10,7 +10,11 @@ are Spindle's releases.
 
 - A served `run --clock` steps its clock: `POST /api/clock` `{"at": "<RFC 3339>"}` moves it
   forward to that instant between commands and answers `{"at"}`, `GET /api/clock` answers where
-  it stands, and a reset world may carry `"clock"` to move it there. An instant before the
+  it stands, and a reset world may carry `"clock"` to move it there. The clock holds an instant to
+  the millisecond: every instant that sets it (`--clock`, a stdin line's `"at"`, the route, a reset
+  world's `"clock"`) is floored to the millisecond, so a step to the instant the run answered moves
+  nothing. An instant before 1970-01-01T00:00:00Z is refused: `--clock` exits 2 naming the flag
+  and the instant, and the route and a reset answer `400` and move nothing. An instant before the
   clock's is refused (`409` on the route, `400` on a reset, which then empties nothing); without
   `--clock`, and on an embedded or Node host, both methods and a reset world carrying `clock`
   answer `409`. Every record of `GET /api/events` carries `at`, the time its command ran, as

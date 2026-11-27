@@ -2907,6 +2907,27 @@ pub fn instant(text: &str) -> Option<SystemTime> {
     second.checked_add(Duration::from_nanos(nanos))
 }
 
+/// The instant a stepping clock is set to from the RFC 3339 `date-time` `text` (`--clock`,
+/// `POST /api/clock`, a reset world's `"clock"`): [`instant`], floored to the millisecond, as the
+/// run answers where its clock stands ([`rfc3339`]), so an instant the run answered sets the clock
+/// to where it stands.
+///
+/// # Errors
+/// Why `text` sets no clock: no RFC 3339 `date-time`, or an instant before
+/// 1970-01-01T00:00:00Z, the first instant a clock stands at.
+pub fn clock_instant(text: &str) -> Result<SystemTime, String> {
+    let at = instant(text).ok_or_else(|| {
+        format!("expected an RFC 3339 instant such as 2026-02-01T00:00:00Z: {text}")
+    })?;
+    let since = at.duration_since(SystemTime::UNIX_EPOCH).map_err(|_| {
+        format!("{text} is before 1970-01-01T00:00:00Z, the first instant a clock stands at")
+    })?;
+    let millis = Duration::from_millis(u64::try_from(since.as_millis()).unwrap_or(u64::MAX));
+    SystemTime::UNIX_EPOCH
+        .checked_add(millis)
+        .ok_or_else(|| format!("{text} is past the instants a clock stands at"))
+}
+
 /// The nanoseconds of the fraction of a second `spelled` names, an instant as
 /// [`ess_primitives::Rfc3339Instant::to_rfc3339`] spells it: in UTC, its fraction's trailing zeros
 /// trimmed (`.5Z` is 500 000 000), 0 without a fraction. The fraction is the one part the instant

@@ -216,19 +216,47 @@ fn a_step_to_the_instant_get_answered_moves_nothing_and_is_answered() {
     );
 }
 
-/// Red. On a clock before 1970 an event's `at` reads 1970-01-01T00:00:00Z: the command's sequence
-/// is the clock's microseconds since the epoch, 0 before it, then one past the last.
+/// A clock before 1970 is refused wherever an instant sets it (correction round 3, F2): `--clock`
+/// exits 2 naming the flag and the instant, and `POST /api/clock` and a reset world's `"clock"`
+/// answer `400` and move nothing; the run's rows are left as they were.
 #[test]
-fn an_event_before_1970_carries_the_clock_instant() {
+fn a_clock_before_1970_is_refused() {
     const LANDING: &str = "1969-07-20T20:17:40Z";
-    let served = serve(LANDING);
-    assert_eq!(clock(&served), (200, json!({"at": LANDING})));
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+    let refused = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+        .current_dir(root())
+        .args([
+            "run",
+            CLOCK_SERVED,
+            "--environment",
+            LAPTOP,
+            "--answer-default",
+            "--clock",
+            LANDING,
+        ])
+        .arg("--state")
+        .arg(state.path().join("state"))
+        .stdin(Stdio::null())
+        .output()
+        .expect("b10x-spindle runs");
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert_eq!(refused.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("--clock") && stderr.contains(LANDING) && stderr.contains("1970"),
+        "the refusal names the flag, the instant and the limit: {stderr}"
+    );
+
+    let served = serve(FEBRUARY);
     assert_eq!(booked(&served, "b1"), "early");
-    let listed = events(&served);
-    assert_eq!(listed.len(), 1, "{listed:?}");
+    let (status, answer) = step(&served, LANDING);
+    assert_eq!(status, 400, "a step before 1970: {answer}");
+    let (status, answer) = reset(&served, &json!({"clock": LANDING}));
+    assert_eq!(status, 400, "a world before 1970: {answer}");
+    assert_eq!(clock(&served), (200, json!({"at": FEBRUARY})));
     assert_eq!(
-        listed[0]["at"], LANDING,
-        "the event carries the instant its command ran: {listed:?}"
+        events(&served).len(),
+        1,
+        "the refused world emptied nothing"
     );
 }
 

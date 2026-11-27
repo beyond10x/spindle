@@ -580,18 +580,19 @@ pub fn clock(host: &Host) -> Answer {
 /// What `POST /api/clock` answers on the host's thread once the host's stepping clock moved
 /// forward to the instant `body` names, `{"at": <RFC 3339>}` ([`Host::step_clock`]): `200` with
 /// `{"at"}`, where the clock stands then, as [`clock`] answers it. A host without a stepping
-/// clock refuses `409` whatever the body; otherwise a body that is not that object or names no
-/// RFC 3339 instant is refused `400`, and an instant before the clock's `409`, the clock left
-/// where it stood.
+/// clock refuses `409` whatever the body; otherwise a body that is not that object, names no
+/// RFC 3339 instant or one before 1970-01-01T00:00:00Z is refused `400`, and an instant before the
+/// clock's `409`, the clock left where it stood. The instant is floored to the millisecond
+/// ([`spindle_host::clock_instant`]), as the clock's answer spells it.
 pub fn step(host: &mut Host, body: &[u8]) -> Answer {
     if let Err(error) = host.clock_at() {
         return stands(Err(error));
     }
     let asked = match serde_json::from_slice::<Value>(body) {
         Ok(Value::Object(fields)) if fields.len() == 1 => match fields.get("at") {
-            Some(Value::String(at)) => spindle_host::instant(at).ok_or_else(|| {
-                "at: expected an RFC 3339 instant such as 2026-02-01T00:00:00Z".to_owned()
-            }),
+            Some(Value::String(at)) => {
+                spindle_host::clock_instant(at).map_err(|why| format!("at: {why}"))
+            }
             _ => Err(STEP_BODY.to_owned()),
         },
         _ => Err(STEP_BODY.to_owned()),

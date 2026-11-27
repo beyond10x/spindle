@@ -19,9 +19,10 @@
 //! decision table in the decisions file's shape ([`Answers::from_json`]), laid over the run's own
 //! answers until the next reset ([`Answers::over`]). `mint` seeds the identities and generated
 //! values minted until the next reset ([`spindle_kernel::Seeded`]). `clock`, an RFC 3339
-//! `date-time` ([`crate::instant`]), moves the host's stepping clock forward to that instant
-//! ([`World::clock`]); a host without one refuses the world, and so does one whose clock stands
-//! after it, before anything is emptied ([`crate::Host::reset_to`]).
+//! `date-time` floored to the millisecond ([`crate::clock_instant`]; one before 1970 is refused),
+//! moves the host's stepping clock forward to that instant ([`World::clock`]); a host without one
+//! refuses the world, and so does one whose clock stands after it, before anything is emptied
+//! ([`crate::Host::reset_to`]).
 //!
 //! `run`'s served reset reads its world here, and so does every wasm host that loads one.
 
@@ -93,11 +94,7 @@ pub fn read_world(
         .map(over);
     let clock = body
         .clock
-        .map(|text| {
-            crate::instant(&text).ok_or_else(|| {
-                "clock: expected an RFC 3339 instant such as 2026-02-01T00:00:00Z".to_owned()
-            })
-        })
+        .map(|text| crate::clock_instant(&text).map_err(|why| format!("clock: {why}")))
         .transpose()?;
     Ok(World {
         rows,

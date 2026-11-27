@@ -503,7 +503,10 @@ pub enum Command {
         /// Start the run on a manual clock standing at this RFC 3339 instant
         /// (`2026-02-01T00:00:00Z`, a fraction of a second and an offset read as given) instead of
         /// the system clock: every guard and view that reads `now`, and every generated
-        /// `Timestamp`, reads it. Reading stdin, a line's `"at": "<RFC 3339>"` moves the clock
+        /// `Timestamp`, reads it. The clock holds an instant to the millisecond: every instant
+        /// that sets it (this one, `"at"`, `POST /api/clock`, a reset world's `"clock"`) is
+        /// floored to the millisecond, and one before 1970-01-01T00:00:00Z is refused (here the
+        /// run exits 2). Reading stdin, a line's `"at": "<RFC 3339>"` moves the clock
         /// forward to that instant before its command runs; an instant before the clock's, or
         /// `"at"` on a run without `--clock`, rejects that line, and a rejected line leaves the
         /// clock where it stood.
@@ -514,7 +517,7 @@ pub enum Command {
         /// `--scenario` (each replay's host; ESS's runner keeps its own clock for the document),
         /// the clock stands at the instant for the whole run. No run fires a periodic binding, and
         /// moving the clock fires none.
-        #[arg(long, value_name = "RFC3339", value_parser = instant)]
+        #[arg(long, value_name = "RFC3339", value_parser = clock)]
         clock: Option<SystemTime>,
         /// Mint every identity and generated value from this seed, from the first command on:
         /// two runs given one seed and the same commands mint the same identities, and an
@@ -811,13 +814,23 @@ pub fn console_served(switch: Option<Switch>, address: std::net::IpAddr) -> bool
 
 /// The instant an RFC 3339 `date-time` names (`2026-02-01T00:00:00Z`, `2026-02-01T01:00:00+01:00`,
 /// `2026-02-01T00:00:00.5Z`), its offset and its fraction of a second included, read by ESS's own
-/// reader ([`ess_primitives::Rfc3339Instant`]): `--clock`, and a stdin line's `"at"`.
+/// reader ([`ess_primitives::Rfc3339Instant`]).
 ///
 /// # Errors
 /// A text that is no RFC 3339 `date-time`.
 pub fn instant(text: &str) -> Result<SystemTime, String> {
     spindle_host::instant(text)
         .ok_or_else(|| format!("not an RFC 3339 instant such as 2026-02-01T00:00:00Z: {text}"))
+}
+
+/// The instant an RFC 3339 `date-time` sets the clock to ([`spindle_host::clock_instant`]): as
+/// [`instant`] reads it, floored to the millisecond the run answers its clock in: `--clock`, and a
+/// stdin line's `"at"`.
+///
+/// # Errors
+/// A text that is no RFC 3339 `date-time`, or an instant before 1970-01-01T00:00:00Z.
+pub fn clock(text: &str) -> Result<SystemTime, String> {
+    spindle_host::clock_instant(text)
 }
 
 /// A JSON object, as `--fixed-caller` reads it.
