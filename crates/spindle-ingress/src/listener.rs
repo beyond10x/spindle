@@ -122,15 +122,22 @@ impl Exchange {
     /// [`Exchange::serve_with`], its answer replaced, once the request was served, by the one
     /// `instead` gives where it gives one: a run whose store refused a write because another
     /// process took the store's lease answers `503`, not the store's refusal
-    /// (`story:several-writers-one-postgres`).
+    /// (`story:several-writers-one-postgres`). `instead` is told whether the answer served is a
+    /// failure that committed nothing (a status of `500` or above with `committed: false`), as a
+    /// write whose database session was ended.
     pub fn serve_with_unless(
         self,
         host: &mut Host,
         worlds: Worlds<'_>,
-        instead: impl FnOnce() -> Option<Answer>,
+        instead: impl FnOnce(bool) -> Option<Answer>,
     ) -> Vec<Failed> {
         let (reply, failed, answered) = self.pending.serve(host, Some(worlds));
-        let reply = instead().map_or(reply, Into::into);
+        let uncommitted = reply.status >= 500
+            && serde_json::from_str::<Value>(&reply.body)
+                .ok()
+                .and_then(|body| body.get("committed").and_then(Value::as_bool))
+                == Some(false);
+        let reply = instead(uncommitted).map_or(reply, Into::into);
         let _ = self.reply.send((reply, answered));
         failed
     }

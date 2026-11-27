@@ -750,10 +750,14 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             continue;
         }
         // A write the lease's fence refused, as once the session holding the lease ended and
-        // another process took it, answers `503`; the loop then exits 1 (D4).
-        let failures = if kept.is_some() {
-            exchange.serve_with_unless(&mut host, &worlds, || {
-                crate::database::Kept::fenced().map(|_| Answer::refusal(503, LEASE_LOST))
+        // another process took it, answers `503`; so does a write that failed committing nothing
+        // where the lease is then found lost, as one whose database session a process taking
+        // over ended. The loop then exits 1 (D4).
+        let failures = if let Some(held) = kept.as_ref() {
+            exchange.serve_with_unless(&mut host, &worlds, |uncommitted| {
+                crate::database::Kept::fenced()
+                    .or_else(|| uncommitted.then(|| held.confirmed()).flatten())
+                    .map(|_| Answer::refusal(503, LEASE_LOST))
             })
         } else {
             exchange.serve_with(&mut host, &worlds)

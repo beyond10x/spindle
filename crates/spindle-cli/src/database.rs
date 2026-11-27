@@ -279,6 +279,9 @@ pub(crate) struct Leases {
     told: Option<String>,
     /// The leases whose holder the server refused to end, warned of once ([`Leases::ended`]).
     refused: BTreeSet<String>,
+    /// The leases whose row is held past their end by sessions this run cannot identify, warned
+    /// of once ([`Leases::ended`]).
+    unidentified: BTreeSet<String>,
 }
 
 impl Leases {
@@ -304,6 +307,7 @@ impl Leases {
             held: BTreeMap::new(),
             told: None,
             refused: BTreeSet::new(),
+            unidentified: BTreeSet::new(),
         }))
     }
 
@@ -333,11 +337,13 @@ impl Leases {
 
     /// Prints a line naming the lease and the number of sessions ended where a take ended the
     /// sessions of a process holding a lease row past the lease's end, and a warning naming the
-    /// lease, once until a take ends them, where the server refused to end them: the run then
-    /// stands by until the server ends their transaction itself.
+    /// lease, once until a take ends them, where the server refused to end them or this run cannot
+    /// identify them: the run then stands by until they let the row go.
     fn ended(&mut self) {
         let held = &self.held;
         self.refused
+            .retain(|component| !held.contains_key(component));
+        self.unidentified
             .retain(|component| !held.contains_key(component));
         for ending in self.lease.endings() {
             match ending {
@@ -346,6 +352,7 @@ impl Leases {
                     sessions,
                 } => {
                     self.refused.remove(&component);
+                    self.unidentified.remove(&component);
                     crate::log::info(format!(
                         "the lease of {component} ran out while a process still held its row: \
                          ended {sessions} of its database sessions, so this run takes the lease \
@@ -362,6 +369,16 @@ impl Leases {
                              run waits until the server ends their transaction: {why}"
                         ))
                         .field("error", why.as_str())
+                        .write();
+                    }
+                }
+                Ending::Unidentified { component } => {
+                    if self.unidentified.insert(component.clone()) {
+                        crate::log::warn(format!(
+                            "the lease of {component} ran out while its row is still held, by \
+                             sessions this run cannot identify, so it ends none and waits until \
+                             the row is let go"
+                        ))
                         .write();
                     }
                 }
@@ -475,6 +492,10 @@ impl Leases {
         {
             let began = Instant::now();
             let mut failed = None;
+            // Whether every renewal that did not land waited out the lease row's lock: the row is
+            // held, as by this run's own write held up past the lease, and this run renews on, so
+            // a process standing by reads it as live and takes nothing from it.
+            let mut waited = true;
             for (component, &token) in &self.held {
                 match self.lease.renew(component, token) {
                     Ok(true) => {}
@@ -485,7 +506,10 @@ impl Leases {
                         ));
                         return;
                     }
-                    Err(error) => failed = Some(format!("{component}: {error}")),
+                    Err(error) => {
+                        waited &= self.lease.waited();
+                        failed = Some(format!("{component}: {error}"));
+                    }
                 }
             }
             match failed {
@@ -498,7 +522,7 @@ impl Leases {
                         .unwrap_or_else(PoisonError::into_inner)
                         .renewed = began;
                 }
-                Some(why) if renewed.elapsed() >= term => {
+                Some(why) if !waited && renewed.elapsed() >= term => {
                     lose(format!(
                         "no renewal of the lease of {} landed for {term:?}, so another process may \
                          hold it, and this one exits: {why}",
