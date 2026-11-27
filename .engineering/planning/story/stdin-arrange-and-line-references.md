@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:stdin-arrange-and-line-references
 kind: story
-status: active
+status: implemented
 title: A stdin run arranges rows and names what earlier lines minted
 relations:
 - serves: vision:spindle
@@ -35,10 +35,11 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 24
+revision: 25
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-26T21:00:27Z", actor: "human:operator", revision: 23, decided_on: {"recorded":{"review_outcome":20}}}
 - {from: "proposed", to: "active", at: "2026-11-26T21:00:27Z", actor: "human:operator", revision: 24, decided_on: {"recorded":{"review_outcome":20}}}
+- {from: "active", to: "implemented", at: "2026-11-26T23:02:25Z", actor: "human:operator", revision: 25, decided_on: {"recorded":{"test_result":1,"review_outcome":21}}}
 ---
 # A stdin run arranges rows and names what earlier lines minted
 

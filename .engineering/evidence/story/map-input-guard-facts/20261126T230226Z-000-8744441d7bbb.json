@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-26T23:02:26Z",
+  "actor": "human:operator",
+  "artifact": "story:map-input-guard-facts",
+  "kind": "story",
+  "revision": 15,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "https://github.com/beyond10x/spindle/actions/runs/45903920336 (PR 92 Gate, PostgreSQL, macOS green on 6816e6884; merged 857e20e2a)"
+  }
+}

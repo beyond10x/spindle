@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:wasm-lanes-within-budget
 kind: story
-status: active
+status: implemented
 title: The wasm lanes of the gate end within the step budget
 relations:
 - serves: vision:spindle
@@ -18,10 +18,11 @@ scope:
   path: Taskfile.yml
 - confidence: inferred
   path: scripts/wasm-cache-key.sh
-revision: 22
+revision: 23
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-26T04:51:42Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"review_outcome":19}}}
 - {from: "proposed", to: "active", at: "2026-11-26T04:51:42Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"review_outcome":19}}}
+- {from: "active", to: "implemented", at: "2026-11-26T23:02:27Z", actor: "human:operator", revision: 23, decided_on: {"recorded":{"test_result":2,"review_outcome":41}}}
 ---
 # The wasm lanes of the gate end within the step budget
 

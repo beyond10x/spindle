@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-27
+
 ### Added
 
 - A view filter that compares a parameter with a literal of its type (`param.label == ""`,
