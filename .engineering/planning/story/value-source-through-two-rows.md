@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:value-source-through-two-rows
 kind: story
-status: active
+status: implemented
 title: A value source read through two related rows runs
 relations:
 - serves: vision:spindle
@@ -29,10 +29,11 @@ scope:
   path: website/data/status.json
 - confidence: inferred
   path: website/docs/status.md
-revision: 12
+revision: 13
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T08:24:13Z", actor: "human:operator", revision: 11, decided_on: {"recorded":{"review_outcome":5}}}
 - {from: "proposed", to: "active", at: "2026-11-27T08:24:13Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"review_outcome":5}}}
+- {from: "active", to: "implemented", at: "2026-11-27T13:10:04Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"test_result":1,"review_outcome":6}}}
 ---
 ## Outcome
 

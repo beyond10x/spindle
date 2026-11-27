@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-11-27
+
 ### Added
 
 - An event binding whose `on_failure` escalates runs, where `run` exited 1 before listening or
