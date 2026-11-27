@@ -1,6 +1,6 @@
 # Wave 28
 
-**Proposed.** Planned by the coordinator on the host operator's order of 2026-11-27, relaying the
+**In progress.** Planned by the coordinator on the host operator's order of 2026-11-27, relaying the
 operator's words "resolve all missing spindle features". Skill `aep:implementing` 0.26.0, wave mode.
 All stories serve `vision:spindle`.
 

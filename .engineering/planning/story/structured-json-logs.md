@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:structured-json-logs
 kind: story
-status: draft
+status: active
 title: A served run writes its log as JSON lines on stderr
 summary: With a log-format flag every stderr line of a served run is one JSON object with time, level, message and named fields.
 relations:
@@ -24,7 +24,10 @@ scope:
   path: crates/spindle-cli/tests/spindle-cli/json_logs.rs
 - confidence: inferred
   path: crates/spindle-cli/tests/spindle-cli/main.rs
-revision: 11
+revision: 13
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-27T07:28:34Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "proposed", to: "active", at: "2026-11-27T07:28:34Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"review_outcome":8}}}
 ---
 # A served run writes its log as JSON lines on stderr
 

@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:environment-binds-external-decisions
 kind: story
-status: proposed
+status: active
 title: The environment binds external causes to a decisions file
 relations:
 - serves: vision:spindle
@@ -35,9 +35,10 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 12
+revision: 13
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-22T18:23:53Z", actor: "human:timo", revision: 4}
+- {from: "proposed", to: "active", at: "2026-11-27T07:28:37Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"review_outcome":8}}}
 ---
 # The environment binds external causes to a decisions file
 

@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:one-time-response-admission
 kind: story
-status: draft
+status: active
 title: A scenario with a one-time response is admitted as ESS admits it
 relations:
 - serves: vision:spindle
@@ -17,7 +17,10 @@ scope:
   path: crates/spindle-cli/tests/spindle-cli/adversary_responses.rs
 - confidence: inferred
   path: crates/spindle-cli/tests/spindle-cli/replay.rs
-revision: 11
+revision: 13
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-27T07:28:37Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "proposed", to: "active", at: "2026-11-27T07:28:37Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"review_outcome":8}}}
 ---
 # A scenario with a one-time response is admitted as ESS admits it
 

@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:replay-with-decisions
 kind: story
-status: proposed
+status: active
 title: Replayed scenarios pin external answers from a decisions file
 relations:
 - serves: vision:spindle
@@ -35,9 +35,10 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 10
+revision: 11
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-22T18:23:52Z", actor: "human:timo", revision: 4}
+- {from: "proposed", to: "active", at: "2026-11-27T07:28:37Z", actor: "human:operator", revision: 11, decided_on: {"recorded":{"review_outcome":8}}}
 ---
 # Replayed scenarios pin external answers from a decisions file
 
