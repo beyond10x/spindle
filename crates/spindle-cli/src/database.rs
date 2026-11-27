@@ -273,6 +273,8 @@ pub(crate) struct Leases {
     components: Vec<String>,
     /// The token of each lease taken, by component.
     held: BTreeMap<String, u64>,
+    /// The trouble of the lease connection last told on stderr ([`Leases::told`]).
+    told: Option<String>,
 }
 
 impl Leases {
@@ -296,6 +298,7 @@ impl Leases {
             lease,
             components,
             held: BTreeMap::new(),
+            told: None,
         }))
     }
 
@@ -317,6 +320,40 @@ impl Leases {
     /// # Errors
     /// A lease that cannot be read or written, or one held that another process took.
     pub(crate) fn take(&mut self) -> Result<Option<String>> {
+        let taken = self.asked();
+        self.told();
+        taken
+    }
+
+    /// Prints a warning naming the leases and the connection error when the lease connection
+    /// cannot be made or was closed, once per change of that error, and a line once it is made
+    /// again: a process standing by reads the leases as held meanwhile, and cannot take over.
+    fn told(&mut self) {
+        let trouble = self.lease.trouble().map(str::to_owned);
+        if trouble == self.told {
+            return;
+        }
+        let leases = self.components.join(", ");
+        match &trouble {
+            Some(why) => crate::log::warn(format!(
+                "the connection for the leases of {leases} cannot be made, so this run cannot \
+                 take them over while it stands by; it tries again every {} ms: {why}",
+                self.poll().as_millis()
+            ))
+            .field("error", why.as_str())
+            .write(),
+            None => {
+                crate::log::info(format!(
+                    "the connection for the leases of {leases} is made again"
+                ))
+                .write();
+            }
+        }
+        self.told = trouble;
+    }
+
+    /// [`Leases::take`], without telling the connection's trouble.
+    fn asked(&mut self) -> Result<Option<String>> {
         for component in &self.components {
             match self.held.get(component) {
                 Some(&token) => match self.lease.renew(component, token) {

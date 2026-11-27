@@ -175,10 +175,19 @@ impl LogStore<PostgresEventStore> {
     pub fn open(database: &Database, component: &str, sharing: usize) -> Result<Self, StoreError> {
         let prefix = prefix(component);
         let config = config(database, &prefix)?;
-        let options = PoolOptions {
+        let place = place(database, &prefix);
+        let leased = held().get(&place).copied();
+        let mut options = PoolOptions {
             max_connections: database.pool,
             ..PoolOptions::default()
         };
+        // Under a lease a transaction ends within the lease: eventlog sets each session's
+        // `idle_in_transaction_session_timeout` to it, so the server ends the transaction of a
+        // process paused inside a write, and the locks it holds (its lease row among them), before
+        // another process may take the lease, rather than after the default 10 s.
+        if let Some(leased) = leased {
+            options.transaction_timeout = options.transaction_timeout.min(leased.term);
+        }
         let runtime = runtime()?;
         let log = if database.ca.is_some() {
             let connections = database.connections.ok_or_else(|| {
@@ -204,10 +213,8 @@ impl LogStore<PostgresEventStore> {
                 .map_err(|error| unreachable_hint(error, database))?
         };
         let mut store = LogStore::on(log, Arc::new(runtime), None)?;
-        let place = place(database, &prefix);
-        let token = held().get(&place).map(|held| held.token);
-        if let Some(token) = token {
-            store.fenced(component, token, place)?;
+        if let Some(leased) = leased {
+            store.fenced(component, leased.token, place)?;
         }
         Ok(store)
     }
@@ -404,6 +411,9 @@ pub struct Lease {
     client: Option<tokio_postgres::Client>,
     /// The components whose tables an isolated database was given ([`PostgresStore::migrate`]).
     prepared: BTreeSet<String>,
+    /// Why the last statement could not reach the database, while the connection cannot be made
+    /// or was closed ([`Lease::trouble`]).
+    trouble: Option<String>,
 }
 
 impl std::fmt::Debug for Lease {
@@ -436,6 +446,7 @@ impl Lease {
             runtime: runtime()?,
             client: None,
             prepared: BTreeSet::new(),
+            trouble: None,
         };
         lease.connected()?;
         Ok(lease)
@@ -445,6 +456,14 @@ impl Lease {
     #[must_use]
     pub fn term(&self) -> Duration {
         self.term
+    }
+
+    /// Why the last ask could not reach the database, while the connection for the leases cannot
+    /// be made or was closed: a take then reads the lease as held ([`Lease::take`]), so a process
+    /// standing by says why it cannot take over. `None` once a statement reached it again.
+    #[must_use]
+    pub fn trouble(&self) -> Option<&str> {
+        self.trouble.as_deref()
     }
 
     /// Makes the connection again where the last one was closed.
@@ -531,6 +550,7 @@ impl Lease {
         // A take on a connection that cannot be made again, as one the server refuses for now,
         // reads the lease as held: a standby stands by and connects again for its next ask.
         if let Err(error) = self.connected() {
+            self.trouble = Some(error.to_string());
             return match step {
                 Step::Take => Ok(None),
                 _ => Err(error),
@@ -543,6 +563,10 @@ impl Lease {
         let answered = self
             .runtime
             .block_on(client.query_opt(&statement, &parameters));
+        // A statement that ran, or waited out its timeout, reached the database.
+        if answered.as_ref().map_or_else(busy, |_| true) {
+            self.trouble = None;
+        }
         match answered {
             Ok(row) => Ok(row
                 .and_then(|row| row.try_get::<_, i64>(0).ok())
@@ -558,6 +582,7 @@ impl Lease {
                     .is_some_and(tokio_postgres::Client::is_closed);
                 if closed || dropped(&error) {
                     self.client = None;
+                    self.trouble = Some(failed.to_string());
                     // A take whose connection was closed, as by the server, reads the lease as
                     // held; the next ask connects again.
                     if matches!(step, Step::Take) {

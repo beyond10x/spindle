@@ -173,7 +173,9 @@ are Spindle's releases.
   the lease. A leader whose lease is not known still held posts no event; the process that takes
   over posts from the last position the old leader saved, so a failover may post an event again,
   with the same `component`, `log` and `position`, for a consumer to de-duplicate on. A standby
-  whose lease connection is closed or refused stands by on and connects again. A
+  whose lease connection is closed or refused stands by on, connects again, and warns naming the
+  leases and the connection error. A transaction under a lease lasts at most `database_lease`, so
+  a leader paused inside a write holds up no takeover past its lease. A
   `database_lease` that is not a whole number from 1 to 86400 exits 1 before connecting, and with it tables a release
   before leases migrated are refused until `store migrate` runs again
   (`story:several-writers-one-postgres`).

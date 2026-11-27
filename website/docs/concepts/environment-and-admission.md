@@ -577,8 +577,10 @@ other request `503`. It opens no store, writes nothing, posts no event to a webh
 dead letter. Every third of `database_lease` it asks for the leases again; an ask that waits out
 its third of the lease, as behind a leader's write that holds the lease row for longer, reads the
 lease as held, and the process stands by on. So does an ask whose connection was closed or
-refused: the process connects again for its next ask. A lease is free once its end has passed, or once the
-database session that holds it has ended, as a killed process's does. On taking them all the
+refused: the process connects again for its next ask, and prints a warning naming the leases and
+the connection error, once each time the error changes, and a line once it connects again; its
+readiness reads as any standby's. A lease is free once its end has passed, or once the database
+session that holds it has ended, as a killed process's does. On taking them all the
 process opens the stores, builds its host and serves; it skips the seed, which runs only under
 the leases' first token. Its stderr shows the takeover:
 
@@ -591,7 +593,10 @@ b10x-spindle: took the lease of ledger
 Taking a lease moves its token on. Every write of a process runs, inside its own transaction, a
 check that the lease row still names the token that process took. So a leader that was paused past
 its lease, while another process took over, lands nothing once it resumes: the write is refused,
-naming the lease, and the rows stay as the new leader left them. Before it runs a request, a
+naming the lease, and the rows stay as the new leader left them. A transaction of a process under
+a lease lasts at most `database_lease` (10 s otherwise): the server ends one left open longer, as
+by a process paused inside a write, and the locks it holds, its lease row among them, so a paused
+leader holds up no takeover past its lease. Before it runs a request, a
 leader whose last renewal began two thirds of the lease ago or longer, as after a pause, waits
 until it has renewed its leases or found one taken. A write the check refuses counts as a lease
 found taken, as when the session holding the lease ended and another process took it before the

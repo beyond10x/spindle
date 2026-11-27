@@ -535,3 +535,135 @@ fn accepted(webhook: &super::super::egress::Webhook, count: usize) {
         std::thread::sleep(Duration::from_millis(20));
     }
 }
+
+/// The local TCP ports of the sockets process `pid` holds open: its connections to the database
+/// among them, which `pg_stat_activity` names by `client_port`.
+fn ports_of(pid: u32) -> Vec<u16> {
+    let mut inodes = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(format!("/proc/{pid}/fd")) {
+        for entry in entries.flatten() {
+            if let Ok(target) = std::fs::read_link(entry.path())
+                && let Some(inode) = target
+                    .to_str()
+                    .and_then(|target| target.strip_prefix("socket:["))
+                    .and_then(|rest| rest.strip_suffix(']'))
+            {
+                inodes.push(inode.to_owned());
+            }
+        }
+    }
+    let mut ports = Vec::new();
+    for table in ["/proc/net/tcp", "/proc/net/tcp6"] {
+        let Ok(text) = std::fs::read_to_string(table) else {
+            continue;
+        };
+        for line in text.lines().skip(1) {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            if fields.len() > 9 && inodes.iter().any(|inode| inode == fields[9]) {
+                let port = fields[1]
+                    .rsplit(':')
+                    .next()
+                    .and_then(|port| u16::from_str_radix(port, 16).ok());
+                ports.extend(port);
+            }
+        }
+    }
+    ports
+}
+
+/// Whether a database session of process `pid` is inside a write transaction, between two of its
+/// statements, holding what it wrote or locked (it has a transaction id), for at least 150 ms.
+fn inside_a_transaction(pid: u32) -> bool {
+    let ports = ports_of(pid);
+    if ports.is_empty() {
+        return false;
+    }
+    let list = ports
+        .iter()
+        .map(u16::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    super::sql(&[format!(
+        "SELECT count(*) FROM pg_stat_activity WHERE client_port IN ({list}) \
+         AND state = 'idle in transaction' AND backend_xid IS NOT NULL \
+         AND xact_start < now() - interval '150 ms'"
+    )])[0]
+        != "0"
+}
+
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_leader_paused_inside_a_write_holds_up_no_takeover() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let schema = schema();
+    let (mut leader, standby) = leader_and_standby(&environment, &schema);
+    let (status, answer) = leader.open("t1");
+    assert_eq!(status, 201, "{answer}");
+
+    // Commands reach the leader one after another, so it is inside a write most of the time; it is
+    // paused until a pause lands inside one, between two of its statements.
+    let address = leader.address;
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stopped = Arc::clone(&stop);
+    let firing = std::thread::spawn(move || {
+        let mut index = 0;
+        while !stopped.load(std::sync::atomic::Ordering::SeqCst) {
+            index += 1;
+            let Ok(mut stream) = TcpStream::connect_timeout(&address, ANSWER) else {
+                break;
+            };
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+            let body = json!({"title": "fired"}).to_string();
+            let _ = write!(
+                stream,
+                "PUT /tasks/f{index} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\
+                 Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            let mut answer = String::new();
+            let _ = stream.read_to_string(&mut answer);
+        }
+    });
+    let pid = leader.child.id();
+    let mut inside = false;
+    for _ in 0..60 {
+        leader.signal(rustix::process::Signal::STOP);
+        std::thread::sleep(Duration::from_millis(200));
+        if inside_a_transaction(pid) {
+            inside = true;
+            break;
+        }
+        leader.signal(rustix::process::Signal::CONT);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(inside, "no pause landed inside a write of the leader");
+    let paused = Instant::now() - Duration::from_millis(200);
+
+    // The paused leader's transaction ends within the lease, so the standby takes over and
+    // writes as it would after any pause: by the lease's end and three polls, 4 s.
+    let took = standby
+        .line_by(TOOK, paused + Duration::from_secs(4))
+        .unwrap_or_else(|| {
+            panic!(
+                "the standby did not take over within 4 s of a pause inside a write: {}",
+                standby.printed()
+            )
+        });
+    eprintln!("took over {:?} after the pause", took - paused);
+    standby.ready_by(paused + Duration::from_secs(6));
+    let (status, answer) = standby.open("t2");
+    assert_eq!(
+        status, 201,
+        "the new leader writes past the paused leader's transaction: {answer}"
+    );
+    assert!(
+        paused.elapsed() < Duration::from_secs(8),
+        "t2 landed {:?} after the pause",
+        paused.elapsed()
+    );
+    leader.signal(rustix::process::Signal::CONT);
+    let _ = leader.exit_within(Duration::from_secs(10));
+    let _ = firing.join();
+}
