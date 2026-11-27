@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:error-payload-generated-fields
 kind: story
-status: draft
+status: active
 title: A generated field in an error payload is minted as ESS mints it
 relations:
 - serves: vision:spindle
@@ -22,7 +22,10 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/generated.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/spindle-kernel/mint.rs
-revision: 11
+revision: 13
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-27T09:51:59Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "proposed", to: "active", at: "2026-11-27T09:51:59Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"review_outcome":8}}}
 ---
 # A generated field in an error payload is minted as ESS mints it
 

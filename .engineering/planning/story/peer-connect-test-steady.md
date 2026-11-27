@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:peer-connect-test-steady
 kind: story
-status: draft
+status: active
 title: The slow-peer connect test passes on a loaded runner
 relations:
 - serves: vision:spindle
@@ -20,7 +20,10 @@ scope:
   path: crates/spindle-host/tests/spindle-host/connect.rs
 - confidence: inferred
   path: crates/spindle-host/tests/spindle-host/main.rs
-revision: 8
+revision: 10
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-27T09:52:01Z", actor: "human:operator", revision: 9, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "proposed", to: "active", at: "2026-11-27T09:52:01Z", actor: "human:operator", revision: 10, decided_on: {"recorded":{"review_outcome":8}}}
 ---
 # The slow-peer connect test passes on a loaded runner
 

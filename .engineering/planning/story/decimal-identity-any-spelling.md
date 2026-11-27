@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:decimal-identity-any-spelling
 kind: story
-status: draft
+status: active
 title: A command names a Decimal identity whatever its spelling
 relations:
 - serves: vision:spindle
@@ -32,7 +32,10 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/decimal_identity.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/spindle-kernel/main.rs
-revision: 10
+revision: 12
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-27T09:52:00Z", actor: "human:operator", revision: 11, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "proposed", to: "active", at: "2026-11-27T09:52:00Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"review_outcome":8}}}
 ---
 ## Outcome
 

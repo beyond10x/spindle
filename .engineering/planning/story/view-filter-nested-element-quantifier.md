@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:view-filter-nested-element-quantifier
 kind: story
-status: draft
+status: active
 title: A view filter reads a quantifier over a member of an outer list element
 relations:
 - serves: vision:spindle
@@ -17,7 +17,10 @@ scope:
   path: crates/spindle-host/tests/spindle-host/adversary_w26_u2.rs
 - confidence: inferred
   path: website/docs/concepts/specification.md
-revision: 5
+revision: 7
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-27T09:51:58Z", actor: "human:operator", revision: 6, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "proposed", to: "active", at: "2026-11-27T09:51:58Z", actor: "human:operator", revision: 7, decided_on: {"recorded":{"review_outcome":8}}}
 ---
 # A view filter reads a quantifier over a member of an outer list element
 

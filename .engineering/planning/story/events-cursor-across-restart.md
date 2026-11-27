@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:events-cursor-across-restart
 kind: story
-status: draft
+status: active
 title: An events cursor reads the events committed after a restart
 relations:
 - serves: vision:spindle
@@ -16,7 +16,10 @@ scope:
   path: crates/spindle-host/src/host/range.rs
 - confidence: inferred
   path: crates/spindle-host/tests/spindle-host/events_range.rs
-revision: 7
+revision: 9
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-27T09:52:00Z", actor: "human:operator", revision: 8, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "proposed", to: "active", at: "2026-11-27T09:52:01Z", actor: "human:operator", revision: 9, decided_on: {"recorded":{"review_outcome":8}}}
 ---
 ## Outcome
 

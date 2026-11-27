@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:view-rows-absent-optional-fields
 kind: story
-status: draft
+status: active
 title: A view row shows an optional field never written as ESS does
 relations:
 - serves: vision:spindle
@@ -19,7 +19,10 @@ scope:
   path: crates/spindle-host/src/view.rs
 - confidence: inferred
   path: crates/spindle-host/tests/spindle-host/views.rs
-revision: 11
+revision: 13
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-27T09:51:58Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "proposed", to: "active", at: "2026-11-27T09:51:58Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"review_outcome":8}}}
 ---
 # A view row shows an optional field never written as ESS does
 
