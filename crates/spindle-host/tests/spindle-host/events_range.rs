@@ -633,8 +633,9 @@ fn without_logs(cursor: &Cursor) -> String {
     URL_SAFE_NO_PAD.encode(value.to_string())
 }
 
-/// A cursor an earlier release wrote, whose marks name no log, still reads on after a restart
-/// on SQLite with a fixed clock: the store kept its writes past the positions it marks.
+/// A cursor an earlier release wrote, whose marks name no log, is read as that release read it
+/// after a restart on SQLite, on a clock that moved forward between the runs: every store from
+/// its start, the events it answered skipped by their sequences, and nothing else.
 #[test]
 fn a_cursor_of_an_earlier_release_reads_on_after_a_restart() {
     let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
@@ -645,7 +646,13 @@ fn a_cursor_of_an_earlier_release_reads_on_after_a_restart() {
     let text = without_logs(&end);
     drop(host);
 
-    let mut again = fixed_sqlite(state.path());
+    let mut again = Host::new(
+        tasks(),
+        &laptop(),
+        Arc::new(ManualClock::at(fixed() + Duration::from_secs(3_600))),
+        state.path(),
+    )
+    .expect("the SQLite host opens an hour later");
     submit(
         &mut again,
         "tasks.board.CloseTask",

@@ -168,7 +168,7 @@ impl Reader {
             let reading = reading.ok_or_else(|| {
                 HostError::Unsupported(format!("{name} is read on the host's thread only"))
             })?;
-            stores.push((name.clone(), generation, reading.events_id()?));
+            stores.push((name.clone(), generation));
             handles.insert(name.as_str(), reading);
         }
         let handle = |name: &str| {
@@ -176,13 +176,15 @@ impl Reader {
                 .get(name)
                 .ok_or_else(|| HostError::Unsupported(format!("{name} is not running")))
         };
+        // The id of each store's log is read after its events (`range`), so a mark past a
+        // store's start never names log 0, whatever the host's thread commits meanwhile.
         super::range::range(
             self.run,
             &stores,
             after,
             limit,
             |name, position, wanted| Ok(handle(name)?.events_after(position, wanted)?),
-            |name| Ok(handle(name)?.events_head()?),
+            |name| Ok(handle(name)?.events_id()?),
         )
     }
 
@@ -204,12 +206,9 @@ impl Reader {
             let reading = reading.ok_or_else(|| {
                 HostError::Unsupported(format!("{name} is read on the host's thread only"))
             })?;
-            stores.push((
-                name.clone(),
-                generation,
-                reading.events_id()?,
-                reading.events_head()?,
-            ));
+            // The head before the log's id: a head past the start never comes with log 0.
+            let head = reading.events_head()?;
+            stores.push((name.clone(), generation, reading.events_id()?, head));
         }
         Ok(super::range::head(self.run, &stores, sequence))
     }

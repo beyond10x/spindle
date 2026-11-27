@@ -268,37 +268,34 @@ enum Resumed {
 }
 
 /// Where a read in `run` resumes `after`, a cursor of another run (taken before a restart, or
-/// [`Cursor::start`]), from the stores `stores` names, each by its component, generation and log
-/// id: `read` answers a component's events as [`range`]'s does, and `head` a component's head
-/// ([`spindle_kernel::Store::events_head`]).
+/// [`Cursor::start`]), from the stores `stores` names, each by its component and generation:
+/// `read` answers a component's events as [`range`]'s does, and `log` the id of a component's
+/// log ([`spindle_kernel::Store::events_id`]). Every mark past a store's start names a log
+/// ([`by_log`]).
 ///
-/// Each store whose log is the one the cursor marks ([`spindle_kernel::Store::events_id`]) is
-/// read on after the position the cursor marks for it, whatever sequences this run's commands
-/// take: a store that keeps its writes across a restart (SQLite, PostgreSQL) goes on from the
-/// positions it kept. A store of another log (a new memory store, a SQLite file a reset created
-/// again) started its positions over and is read from its start. Where the mark or the store
-/// names no log (a cursor of an earlier release), a store whose head is before the position is
-/// read from its start, and any other after the position. Every event after
+/// Each store whose log is the one the cursor marks is read on after the position the cursor
+/// marks for it, whatever sequences this run's commands take: a store that keeps its writes
+/// across a restart (SQLite, PostgreSQL) goes on from the positions it kept. A store of another
+/// log (a new memory store, a SQLite file a reset created again) started its positions over and
+/// is read from its start. Every event after
 /// those positions is after the cursor, but for the write the cursor answered in part: it is read
 /// again, its events keyed as the cursor's run keyed them, and those up to the cursor's last are
 /// skipped. The cursor of this run starts after that write, with no event answered in this run.
 fn resumed(
     (run, limit): (u64, usize),
-    stores: &[(String, u64, u64)],
+    stores: &[(String, u64)],
     after: &Cursor,
     read: &mut impl FnMut(&str, u64, usize) -> Result<Vec<Committed>, HostError>,
-    head: &mut impl FnMut(&str) -> Result<u64, HostError>,
+    log: &mut impl FnMut(&str) -> Result<u64, HostError>,
 ) -> Result<Resumed, HostError> {
     let mut rest = Vec::new();
     let mut marks = BTreeMap::new();
-    for (component, generation, log) in stores {
+    for (component, generation) in stores {
         let kept = match after.marks.get(component) {
             Some(mark) if mark.position == 0 => Some(*mark),
             // The same log goes on from the positions it kept; another started them over.
-            Some(mark) if mark.log != 0 && *log != 0 => (mark.log == *log).then_some(*mark),
-            // A mark of an earlier release, or a store that names no log, or none yet.
-            Some(mark) if head(component)? >= mark.position => Some(*mark),
-            _ => None,
+            Some(mark) => (mark.log == log(component)?).then_some(*mark),
+            None => None,
         };
         let mut position = kept.map_or(0, |mark| mark.position);
         if let (Some(mark), Some(last)) = (kept, after.last.as_ref())
@@ -340,7 +337,7 @@ fn resumed(
             component.clone(),
             Mark {
                 position,
-                ..Mark::start(*generation, *log)
+                ..Mark::start(*generation, 0)
             },
         );
     }
@@ -407,21 +404,24 @@ pub(super) fn head(run: u64, stores: &[(String, u64, u64, u64)], sequence: u64) 
 /// in part of a write or before a reset, is read on past them.
 ///
 /// A cursor of another run (taken before a restart) is resumed by store position, whatever
-/// sequences this run's commands take ([`resumed`]): `head` answers a component's head
-/// ([`spindle_kernel::Store::events_head`]), read only for such a cursor.
+/// sequences this run's commands take ([`resumed`]); one whose marks name no log, as an earlier
+/// release wrote them, is read as that release read it: every store from its start, its events
+/// up to the cursor's last skipped ([`by_log`]). `log` answers the id of a component's log
+/// ([`spindle_kernel::Store::events_id`]); the cursor answered takes each store's id after its
+/// events were read, so a mark past a store's start always names a log.
 ///
 /// # Errors
 /// [`HostError::Cursor`] where `after` names a component `stores` does not, before anything is
-/// read; any error of `read` or `head`.
+/// read; any error of `read` or `log`.
 pub(super) fn range(
     run: u64,
-    stores: &[(String, u64, u64)],
+    stores: &[(String, u64)],
     after: &Cursor,
     limit: usize,
     mut read: impl FnMut(&str, u64, usize) -> Result<Vec<Committed>, HostError>,
-    mut head: impl FnMut(&str) -> Result<u64, HostError>,
+    mut log: impl FnMut(&str) -> Result<u64, HostError>,
 ) -> Result<Page, HostError> {
-    let runs = |name: &str| stores.iter().any(|(component, _, _)| component == name);
+    let runs = |name: &str| stores.iter().any(|(component, _)| component == name);
     if after
         .marks
         .keys()
@@ -433,12 +433,27 @@ pub(super) fn range(
         ));
     }
     if after.run == run {
-        return within(run, stores, after, limit, &mut read);
+        return within(run, stores, after, limit, &mut read, &mut log);
     }
-    match resumed((run, limit), stores, after, &mut read, &mut head)? {
+    if !by_log(after) {
+        let from_start = Cursor {
+            run,
+            last: after.last.clone(),
+            marks: BTreeMap::new(),
+        };
+        return within(run, stores, &from_start, limit, &mut read, &mut log);
+    }
+    match resumed((run, limit), stores, after, &mut read, &mut log)? {
         Resumed::Part(page) => Ok(page),
         Resumed::Within(mut rest, cursor) => {
-            let mut page = within(run, stores, &cursor, limit - rest.len(), &mut read)?;
+            let mut page = within(
+                run,
+                stores,
+                &cursor,
+                limit - rest.len(),
+                &mut read,
+                &mut log,
+            )?;
             rest.append(&mut page.events);
             page.events = rest;
             Ok(page)
@@ -446,22 +461,33 @@ pub(super) fn range(
     }
 }
 
+/// Whether a cursor of another run is resumed by the logs its marks name ([`resumed`]): every
+/// mark past its store's start names one. A mark past its store's start that names none was
+/// written by an earlier release, or taken on a store that names no log (the wasm worker's).
+fn by_log(after: &Cursor) -> bool {
+    after
+        .marks
+        .values()
+        .all(|mark| mark.position == 0 || mark.log != 0)
+}
+
 /// [`range`] for `after`, a cursor of this run, `run`.
 fn within(
     run: u64,
-    stores: &[(String, u64, u64)],
+    stores: &[(String, u64)],
     after: &Cursor,
     limit: usize,
     read: &mut impl FnMut(&str, u64, usize) -> Result<Vec<Committed>, HostError>,
+    log: &mut impl FnMut(&str) -> Result<u64, HostError>,
 ) -> Result<Page, HostError> {
     let mut read_from = Vec::with_capacity(stores.len());
-    for (component, generation, log) in stores {
+    for (component, generation) in stores {
         let start = after
             .marks
             .get(component)
             .filter(|mark| mark.generation == *generation)
             .copied()
-            .unwrap_or_else(|| Mark::start(*generation, *log));
+            .unwrap_or_else(|| Mark::start(*generation, 0));
         let mut sequence = start.sequence;
         let mut ordinal = start.ordinal;
         let mut keyed: Vec<Keyed> = Vec::new();
@@ -500,10 +526,16 @@ fn within(
         .into_iter()
         .map(|keyed| keyed.published.clone())
         .collect();
+    // Taken after the events were read: a store that answered one names its log by then.
+    let logs = stores
+        .iter()
+        .map(|(component, _)| log(component))
+        .collect::<Result<Vec<_>, _>>()?;
     let marks = stores
         .iter()
         .zip(&read_from)
-        .map(|((component, _, log), (start, keyed))| {
+        .zip(logs)
+        .map(|(((component, _), (start, keyed)), log)| {
             let done = keyed
                 .iter()
                 .take_while(|keyed| answered(keyed, last.as_ref()))
@@ -517,22 +549,18 @@ fn within(
                     .rposition(|keyed| keyed.position < open.position)
                     .map_or(0, |index| index + 1),
             };
-            let mark = whole.checked_sub(1).map_or(
-                Mark {
-                    log: *log,
-                    ..*start
-                },
-                |index| {
+            let mark = whole
+                .checked_sub(1)
+                .map_or(Mark { log, ..*start }, |index| {
                     let keyed = &keyed[index];
                     Mark {
                         generation: start.generation,
                         position: keyed.position,
                         sequence: keyed.key.sequence,
                         ordinal: keyed.key.ordinal,
-                        log: *log,
+                        log,
                     }
-                },
-            );
+                });
             (component.clone(), mark)
         })
         .collect();

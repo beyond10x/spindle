@@ -68,14 +68,17 @@ are Spindle's releases.
   log of events its store keeps (`spindle_kernel::Store::events_id` and `Reading::events_id`, `0`
   by default: a memory store draws one at random when it is made, a SQLite or PostgreSQL store
   reads it from the first event of its log, so nothing is written for it and a file of any
-  release has one). A cursor from another run reads each store of the log it marks after the
-  position it marks, as the history cursor does, so a store that kept its writes goes on from
-  them; a store of another log (a new memory store, a SQLite file a reset created again) is read
-  from its start; the rest of a write the cursor answered in part is read once first. A cursor of
-  an earlier release names no log and reads on after each position its store's head reached, and
-  from the start of any other store. At the end, a cursor taken before a restart answers a cursor
-  of the new run at the same place, where the CLI reference said the same cursor. A cursor from
-  the same run reads as before (`story:events-cursor-across-restart`).
+  release has one; the wasm worker's store keeps the default). A cursor from another run reads
+  each store of the log it marks after the position it marks, as the history cursor does, so a
+  store that kept its writes goes on from them; a store of another log (a new memory store, a
+  SQLite file a reset created again) is read from its start; the rest of a write the cursor
+  answered in part is read once first. A cursor of an earlier release names no log and is read
+  as before: every store from its start, the events up to its last skipped by their commands'
+  sequences, so on a fixed clock it still skips the restarted host's first events. A cursor taken
+  before `state move` names the SQLite file's log, which the PostgreSQL copy does not keep, and
+  reads the moved events again. At the end, a cursor taken before a restart answers a cursor of
+  the new run at the same place, where the CLI reference said the same cursor. A cursor from the
+  same run reads as before (`story:events-cursor-across-restart`).
 
 ## [0.23.0] - 2026-11-27
 

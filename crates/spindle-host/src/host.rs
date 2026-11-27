@@ -1397,18 +1397,22 @@ impl Host {
     /// opened again reads each store whose log is the one it marks ([`Store::events_id`]) after
     /// its position, whatever sequences this run's commands take, so on a fixed clock too; a
     /// store of another log (a new memory store, a SQLite file a reset created again) is read
-    /// from its start. A cursor of an earlier release marks no log: a store whose head is before
-    /// its position is read from its start ([`Store::events_head`]), any other after it.
+    /// from its start. The cursor answered names each store's log as read after its events, so
+    /// a mark past a store's start always names one. A cursor of an earlier release names no
+    /// log, and is read as that release read it: every store from its start, the events up to
+    /// its last skipped by their commands' sequences. A cursor taken before `state move` names
+    /// the SQLite file's log, which the PostgreSQL copy does not keep: it reads the moved events
+    /// again.
     ///
     /// # Errors
     /// [`HostError::Cursor`] where `after` names a component this host does not run, and
     /// [`HostError::Store`] where a store cannot be read.
     pub fn published_after(&mut self, after: &Cursor, limit: usize) -> Result<Page, HostError> {
-        let mut stores = Vec::with_capacity(self.components.len());
-        for (name, component) in &mut self.components {
-            let generation = component.store.generation();
-            stores.push((name.clone(), generation, component.store.events_id()?));
-        }
+        let stores = self
+            .components
+            .iter()
+            .map(|(name, component)| (name.clone(), component.store.generation()))
+            .collect::<Vec<_>>();
         let components = std::cell::RefCell::new(&mut self.components);
         range::range(
             self.run,
@@ -1418,7 +1422,7 @@ impl Host {
             |name, position, wanted| {
                 Ok(store_of(&mut components.borrow_mut(), name)?.events_after(position, wanted)?)
             },
-            |name| Ok(store_of(&mut components.borrow_mut(), name)?.events_head()?),
+            |name| Ok(store_of(&mut components.borrow_mut(), name)?.events_id()?),
         )
     }
 
@@ -1439,12 +1443,9 @@ impl Host {
         let mut stores = Vec::with_capacity(self.components.len());
         for (name, component) in &mut self.components {
             let generation = component.store.generation();
-            stores.push((
-                name.clone(),
-                generation,
-                component.store.events_id()?,
-                component.store.events_head()?,
-            ));
+            // The head before the log's id: a head past the start never comes with log 0.
+            let head = component.store.events_head()?;
+            stores.push((name.clone(), generation, component.store.events_id()?, head));
         }
         Ok(range::head(self.run, &stores, sequence))
     }
