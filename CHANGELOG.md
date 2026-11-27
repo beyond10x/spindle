@@ -43,6 +43,12 @@ are Spindle's releases.
   at any hop, is read only where the owner's store is reached, as for a one-hop read. Before, it
   was refused `unsupported: the value source … of the row … of the row input.<field> names`; a
   chain that starts at a field of the subject stays refused (`story:value-source-through-two-rows`).
+- A test pins that a `when_related:` guard whose `via:` names a member of a struct input
+  (`via: input.<struct>.<member>`) is refused when the specification loads, with ESS's
+  `[undeclared_reference]` naming the guard, so no such guard reaches the kernel, whose read of the
+  row's identity is the top-level input field ESS reads. The day ESS accepts the guard the test
+  fails and the kernel's read follows the path (`nested_related_via_is_rejected_at_load`,
+  `story:related-via-nested-input`).
 
 ### Changed
 
