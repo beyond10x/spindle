@@ -14,13 +14,18 @@ are Spindle's releases.
   policy escalates invokes the command no further; the component that ran it publishes the event
   once, its fields taken from the command's input, an optional one the input lacks left out, and
   the bindings that listen for it run. A required field the input lacks publishes nothing and
-  reports the escalation unmet. Served, on stdin (the refused command's line carries
+  reports the escalation unmet. Served (stderr names each escalation, published or unmet, and no
+  longer calls an escalated attempt `dropped`), on stdin (the refused command's line carries
   `"escalated": {"event", "payload"}`) and in `conform`, whose scenarios that select an escalated
   refusal now execute. `--drop-retries` keeps every escalation. The event goes to the outbox, is
   not in the event history, and is lost if the process stops before it is delivered. A binding
   that escalates into an event the component running its command does not publish exits 1 at
   start, naming the binding, the event and the component. `spindle_host::uncarried` is removed;
-  `spindle_host::Report` gains `escalated` (`story:binding-failure-escalates`).
+  `spindle_host::Report` gains `escalated` and `invoked` (`story:binding-failure-escalates`).
+- `conform`, `run --scenario` and `spindle_conformance::HostTarget` observe the commands an
+  event binding invoked: every attempt, a refused or failed one included, with the input the
+  binding sent, so a scenario's invocation checks execute where they were unsupported
+  (`story:binding-failure-escalates`).
 - `run --log-format json` writes every line a served run prints on stderr as one JSON object:
   `time` (RFC 3339 in UTC), `level` (`info`, `warn`, `error`), `message` (the text line's words)
   and, where the line names them, `component`, `command`, `binding`, `attempts`, `error` and

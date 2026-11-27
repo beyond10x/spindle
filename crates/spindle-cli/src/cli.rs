@@ -248,10 +248,13 @@ pub enum Command {
     /// no further once an attempt is answered so: the component that ran the command publishes the
     /// escalation event once, each field of it from the command's input, an optional field the
     /// input lacks left out; a required field the input lacks publishes nothing and the escalation
-    /// is unmet. `--drop-retries` keeps every escalation. An escalation event goes to the outbox,
-    /// is not in the event history, and is lost if the process stops before it is delivered. A
-    /// binding that escalates into an event the component running its command does not publish
-    /// exits 1 before listening or reading stdin, naming the binding, the event and the component.
+    /// is unmet. A served run prints one line on stderr per escalation, naming the binding, the
+    /// command and the event, and, for an unmet one, the fields the input lacks; an attempt that
+    /// did not run is logged as escalated, not dropped. `--drop-retries` keeps every escalation.
+    /// An escalation event goes to the outbox, is not in the event history, and is lost if the
+    /// process stops before it is delivered. A binding that escalates into an event the component
+    /// running its command does not publish exits 1 before listening or reading stdin, naming the
+    /// binding, the event and the component.
     Run {
         /// The specification directory.
         spec: PathBuf,

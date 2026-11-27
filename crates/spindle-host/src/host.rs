@@ -210,7 +210,27 @@ pub struct Report {
     /// The escalations of the refused and failed commands whose binding escalates their answer,
     /// in the order escalated.
     pub escalated: Vec<Escalated>,
+    /// Every attempt an event binding made of its command, in the order made, a refused or failed
+    /// one included, each with the input the binding sent: what ESS's conformance runner observes
+    /// as the binding's invocations. A binding whose input was unmet made none.
+    pub invoked: Vec<Invoked>,
 }
+
+/// One attempt an event binding made of its command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Invoked {
+    /// The binding.
+    pub binding: String,
+    /// The component that ran the command.
+    pub component: String,
+    /// The command.
+    pub command: String,
+    /// The input the binding sent.
+    pub input: Map<String, Value>,
+}
+
+/// How many escalations a host keeps for [`Host::take_escalated`] before it forgets the oldest.
+pub const ESCALATIONS_KEPT: usize = DELIVERY_LIMIT;
 
 /// How many envelopes one [`Host::submit`] or [`Host::advance`] delivers before it stops as a
 /// [`HostError::Runaway`]: bindings that trigger each other have no end of their own.
@@ -821,6 +841,9 @@ pub struct Host {
     /// is invoked ([`Failed::caused_by`]). Empty in a run split over processes, whose bound
     /// commands record no trigger.
     staged_by: BTreeMap<(String, DeliveryId), (String, Option<Provenance>)>,
+    /// Every escalation since the last [`Host::take_escalated`], at most [`ESCALATIONS_KEPT`],
+    /// the oldest forgotten first: what a caller that sees only part of a [`Report`] reports.
+    escalations: Vec<Escalated>,
 }
 
 impl std::fmt::Debug for Host {
@@ -1228,6 +1251,7 @@ impl Host {
             seed: None,
             answering,
             staged_by: BTreeMap::new(),
+            escalations: Vec::new(),
         };
         if seeded { host.seeded(0) } else { Ok(host) }
     }
@@ -1319,6 +1343,13 @@ impl Host {
             }
         })?;
         Ok(owner)
+    }
+
+    /// Every escalation since the last call, in the order escalated ([`Escalated`]), each returned
+    /// once; at most [`ESCALATIONS_KEPT`], the oldest forgotten first. Each is in the [`Report`]
+    /// of the call that made it too; this is for a caller handed only part of that report.
+    pub fn take_escalated(&mut self) -> Vec<Escalated> {
+        std::mem::take(&mut self.escalations)
     }
 
     /// Every event a command committed since its component's store was last
@@ -2243,6 +2274,14 @@ impl Host {
             if let Some(route) = retried {
                 sink.retried(&route.binding, Retried::Attempted);
             }
+            if let Cause::Delivered { binding } = &cause {
+                report.invoked.push(Invoked {
+                    binding: binding.clone(),
+                    component: component.to_owned(),
+                    command: command.to_owned(),
+                    input: input.clone(),
+                });
+            }
             let result = self.execute(
                 component,
                 command,
@@ -2316,14 +2355,19 @@ impl Host {
                         (name, Escalation::Unmet(unmet.to_string()))
                     }
                 };
-                report.escalated.push(Escalated {
+                let escalated = Escalated {
                     binding: route.binding.clone(),
                     component: component.to_owned(),
                     command: command.to_owned(),
                     outcome,
                     event,
                     escalation,
-                });
+                };
+                if self.escalations.len() >= ESCALATIONS_KEPT {
+                    self.escalations.remove(0);
+                }
+                self.escalations.push(escalated.clone());
+                report.escalated.push(escalated);
             }
             self.unmet(component, command, report);
             return Ok(());

@@ -421,28 +421,14 @@ fn conform_runs_an_escalating_binding() {
             "the escalation is published, once, and checked: {scenario}"
         );
         assert!(
-            unobserved_invocations_only(scenario),
-            "a scenario that selects an escalated refusal is executed: {scenario}"
+            checks.iter().all(|check| check["status"] == "passed"),
+            "a scenario that selects an escalated refusal is executed, its invocation checks \
+             included: {scenario}"
         );
     }
     for scenario in scenarios {
-        assert!(
-            scenario["status"] == "passed" || unobserved_invocations_only(scenario),
-            "{scenario}"
-        );
+        assert_eq!(scenario["status"], "passed", "{scenario}");
     }
-}
-
-/// Whether every check of `scenario` that did not pass is an invocation the in-process target
-/// cannot observe: it reports no invocation its bindings made (`ESS-CF-INVOCATION`), as
-/// `binding_where.rs` reads a scenario.
-fn unobserved_invocations_only(scenario: &Value) -> bool {
-    scenario["checks"]
-        .as_array()
-        .expect("checks")
-        .iter()
-        .filter(|check| check["status"] != "passed")
-        .all(|check| check["status"] == "unsupported" && check["code"] == "ESS-CF-INVOCATION")
 }
 
 #[test]
