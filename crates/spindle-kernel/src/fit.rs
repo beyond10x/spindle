@@ -14,7 +14,8 @@
 //! A change fits when every stored value reads under the new shape, judged by value where the
 //! shape alone would refuse a readable row (coordinator decision D). Types are compared by
 //! structure first: a named type is written out as its body, with a newtype's alphabet, prefix
-//! and invariants and a struct's invariants, so one redefined under the same name differs. The
+//! and invariants and a struct's invariants and whether it ignores undeclared members, so one
+//! redefined under the same name differs. The
 //! same structure, the field made optional, or made required (the rows lacking it counted apart)
 //! reads every row. Any other change reads each stored value under the new type as the kernel
 //! admits a command's value ([`crate::typed`]: an enum that gains a value, a struct that gains an
@@ -534,6 +535,9 @@ fn structure(ir: &EssIr, kind: &ResolvedTypeRef, within: &mut Vec<String>) -> Va
                         .collect();
                     let mut body = serde_json::Map::new();
                     body.insert("struct".to_owned(), Value::Object(fields));
+                    if ir.undeclared_fields(&declared.name).is_ignored() {
+                        body.insert("undeclared_fields".to_owned(), json!("ignored"));
+                    }
                     constrained(&mut body, invariants);
                     Value::Object(body)
                 }

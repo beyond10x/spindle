@@ -521,6 +521,27 @@ fn a_struct_invariant_a_stored_value_breaks_misfits() {
     assert_eq!(misfits(&mut store, &after), retyped("place", 1));
 }
 
+/// A closed struct opened to undeclared members reads every stored value of it: the change is
+/// part of the structure, so the values are read again, and each still reads.
+#[test]
+fn a_struct_opened_to_undeclared_members_fits_stored_rows() {
+    let scratch = scratch();
+    let mut store = holding(
+        &scratch.path().join("state.sqlite"),
+        &[json!({"place": {"room": "A", "floor": 1}}), json!({})],
+    );
+    let after = changed(
+        "    kind: struct\n",
+        "    kind: struct\n    undeclared_fields: ignored\n",
+    );
+    assert_ne!(
+        after.entities[BOOK].fields["place"],
+        before().entities[BOOK].fields["place"],
+        "opening the struct changes its structure"
+    );
+    fits(&mut store, &after);
+}
+
 const TWO: &str = "format: ess/34
 system: keep
 version: v1
