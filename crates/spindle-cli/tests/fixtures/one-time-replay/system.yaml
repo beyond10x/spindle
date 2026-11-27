@@ -1,0 +1,21 @@
+format: ess/34
+system: vault
+version: v1
+summary: Keys a custodian may issue with a secret disclosed once, and revokes.
+domains:
+  - vault.key
+components:
+  - component: vault
+    summary: Issues and revokes keys.
+    owns:
+      domains:
+        - vault.key
+    accepts:
+      commands:
+        - vault.key.IssueKey
+        - vault.key.RevokeKey
+    publishes:
+      events:
+        - vault.key.KeyIssued
+        - vault.key.KeyRevoked
+    reached_by: in_process

@@ -1,0 +1,85 @@
+domain: vault.key
+summary: A key the custodian issues outside the model, answering a secret disclosed in that answer only.
+entities:
+  - name: vault.key.Key
+    identity:
+      name: key_id
+      type: String
+    fields:
+      - name: label
+        type: String
+    lifecycle:
+      initial: Issued
+      states: [Issued, Revoked]
+      terminal: [Revoked]
+      transitions:
+        - name: revoke
+          from: [Issued]
+          to: Revoked
+errors:
+  - name: vault.key.Held
+    summary: The custodian holds the key back.
+    fields: []
+  - name: vault.key.NoSuchKey
+    summary: No key carries the id.
+    fields: []
+commands:
+  - name: vault.key.IssueKey
+    input:
+      - name: key_id
+        type: String
+      - name: label
+        type: String
+    response:
+      - name: secret
+        type: String
+    outcomes:
+      - name: issued
+        external: the custodian issues the key
+        creates: vault.key.Key
+        instance: key_id
+        sets:
+          label: input.label
+        emits: [vault.key.KeyIssued]
+        payload:
+          vault.key.KeyIssued: {key_id: input.key_id}
+        returns: true
+        one_time_response: [secret]
+        summary: The key is issued; its secret is disclosed in this answer only.
+      - name: held
+        error: vault.key.Held
+        summary: Without the custodian the key is held back.
+  - name: vault.key.RevokeKey
+    input:
+      - name: key_id
+        type: String
+    outcomes:
+      - name: no-such-key
+        unknown_instance: true
+        error: vault.key.NoSuchKey
+        summary: No key carries the id.
+      - name: revoked
+        moves: vault.key.Key.revoke
+        instance: key_id
+        emits: [vault.key.KeyRevoked]
+        payload:
+          vault.key.KeyRevoked: {key_id: input.key_id}
+        summary: The key is revoked.
+events:
+  - name: vault.key.KeyIssued
+    fields:
+      - name: key_id
+        type: String
+  - name: vault.key.KeyRevoked
+    fields:
+      - name: key_id
+        type: String
+views:
+  - name: vault.key.Keys
+    source: vault.key.Key
+    consistency: read_your_writes
+    fields:
+      - name: key_id
+        type: String
+      - name: label
+        type: String
