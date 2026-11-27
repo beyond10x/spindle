@@ -94,7 +94,8 @@ pub(crate) struct Serving<'a> {
     pub port: u16,
     /// `--address`: the IP address the listener binds, 127.0.0.1 by default; off loopback only
     /// with `caller_header`, every request without the proxy's secret refused before it is read
-    /// ([`Listener::bind_reading_on`]).
+    /// ([`Listener::bind_reading_on`]), or with `tokens` over `tls`, every request without a
+    /// valid token refused before it is read.
     pub address: std::net::IpAddr,
     /// What `ingress.network` is bound to; `http-loopback` adds the console routes where
     /// `console` holds.
@@ -132,6 +133,10 @@ pub(crate) struct Serving<'a> {
     /// `--trusted-caller-secret`: the file, and the secret read from it ([`proxy_secret`]), that
     /// the proxy presents in [`Surface::SECRET_HEADER`]; given exactly when `caller_header` is.
     pub proxy_secret: Option<(&'a Path, String)>,
+    /// `--caller-token`: the mapping file, and the verifier of each request's bearer token its
+    /// key set was fetched for ([`crate::token::Verifier::start`], [`Surface::verifying_tokens`]);
+    /// never with `callers` or `caller_header`.
+    pub tokens: Option<(&'a Path, Arc<crate::token::Verifier>)>,
     /// `--tls-cert` with `--tls-key`, and `--tls-client-ca`: the TLS every connection is served
     /// over, a client certificate required where it verifies clients
     /// ([`Listener::bind_reading_on_tls`]); plain HTTP without it.
@@ -380,18 +385,28 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         .map(|component| component.name.as_str().to_owned())
         .collect();
     let reaching = Surface::reaching(&reached);
-    let surface = match (serving.caller_header, &serving.proxy_secret) {
-        (Some(header), Some((_, secret))) => reaching.proving_callers(
+    let surface = match (
+        serving.caller_header,
+        &serving.proxy_secret,
+        &serving.tokens,
+    ) {
+        (None, _, Some((_, verifier))) => reaching.verifying_tokens(
+            &ir,
+            &serving.components,
+            serving.binding.as_ref(),
+            Arc::clone(verifier) as Arc<dyn spindle_ingress::CallerToken>,
+        )?,
+        (Some(header), Some((_, secret)), _) => reaching.proving_callers(
             &ir,
             &serving.components,
             serving.binding.as_ref(),
             header,
             secret,
         )?,
-        (Some(header), None) => {
+        (Some(header), None, _) => {
             bail!("--trusted-caller-header {header} needs --trusted-caller-secret <FILE>")
         }
-        (None, _) => reaching.fixing_callers(
+        (None, _, None) => reaching.fixing_callers(
             &ir,
             &serving.components,
             serving.binding.as_ref(),
@@ -414,6 +429,9 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             Surface::SECRET_HEADER
         ))
         .write();
+    }
+    if let Some((_, verifier)) = &serving.tokens {
+        log::info(verifier.describe()).write();
     }
     let surface = match (serving.observe, PANEL) {
         (Some(capacity), Some(page)) => surface
@@ -449,7 +467,7 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             "a command that reads caller attributes is served where the run fixes its caller \
              (--fixed-actor with --fixed-caller), a test backend, or where each request proves \
              its caller through a trusted proxy (--trusted-caller-header with \
-             --trusted-caller-secret)",
+             --trusted-caller-secret) or by a verified bearer token (--caller-token)",
         )
         .write();
     }

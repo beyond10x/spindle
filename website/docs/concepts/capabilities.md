@@ -117,12 +117,33 @@ port forwards to, and the start line names it (`[::1]:<port>` for `--address ::1
 `run` binds `127.0.0.1` only. A value that is not an IP address, such as a host name or one with
 a port, exits 2 before anything listens. An address off loopback, anything but `127.0.0.0/8`
 and `::1`, is served only behind an authenticating proxy: it requires `--trusted-caller-header`
-with `--trusted-caller-secret`, and without both `run` exits 2 before listening. `--fixed-actor`
+with `--trusted-caller-secret`, or `--caller-token` over TLS (below), and without either `run`
+exits 2 before listening. `--fixed-actor`
 is not enough, since it proves nobody. On such an address every request that does not carry the
 proxy's secret is refused `403` `{"refused": "not granted", "actor": null}` before anything of it
 is read: every command and view, `GET /api/model`, `GET /api/events`, `POST /api/reset` and every
 route under `/__spindle/`, and also a path no route has, a method a route does not take and a
 body of any size. On a loopback address `run` answers exactly as without `--address`.
+
+`--caller-token <FILE>` has the run verify each request's caller itself, from the signed token
+the request carries as `Authorization: Bearer <JWT>`. The TOML file names the token's `issuer` and
+`audience`, the issuer's key set `jwks` (`https://`, or `http://` to a loopback host), and maps a
+role claim to the model's actors (`[actor] claim` with `[actor.values]`) and claims to each
+actor's attributes (`[attributes."<actor>"]`); `algorithms` allows asymmetric ones only. A token
+verifies where a key of the set that its `kid` names checks its signature and its issuer, audience
+and expiry hold. A request without one, or with one that does not verify, answers `401` before
+anything of it is read and is neither recorded nor counted; one whose claims map to no caller of
+the model answers `403` "not granted". The key set is fetched before listening, and a run that
+cannot fetch it exits 1; it is fetched again every `refresh_seconds`, so a rotated key verifies
+without a restart. On such a run only `/__spindle/live`, `/__spindle/ready` and
+`/__spindle/seed` answer without a token; every other route under `/__spindle/` needs a token
+whose claims map to a caller of the model and answers any other `403`. The console routes are
+off, and `--console on` exits 2. A mapping naming an actor or attribute the specification does
+not declare, or leaving a required attribute of a mapped actor unmapped, exits 1 before
+listening, and a refreshed set that lists no usable key refuses every
+token until a refresh lists one.
+It takes no `--trusted-caller-header` or `--fixed-actor` beside it (exit 1), and off loopback it
+needs `--tls-cert` and `--tls-key`, exiting 2 without them.
 
 `--tls-cert <FILE>` with `--tls-key <FILE>` serves HTTPS on the listener instead of plain HTTP:
 the PEM certificate chain, the server's own certificate first, and its PEM private key, TLS 1.2
@@ -135,7 +156,7 @@ cannot connect, and the probes are `tcpSocket` probes on the port, which show th
 accepts but not what `/__spindle/live` or `/__spindle/ready` answer. The published image holds
 the binary alone, with no shell and no probe command, so an `exec` probe has nothing to run.
 With TLS alone an `httpGet` probe sets `scheme: HTTPS`. Off loopback mTLS adds to `--trusted-caller-header` and
-`--trusted-caller-secret`, which are still required. A file that cannot be read, a file holding
+`--trusted-caller-secret`, or to `--caller-token`, one of which is still required. A file that cannot be read, a file holding
 no certificate or key, and a key that does not match the certificate exit 2 before anything
 listens, with one line naming the flag and the file. Each file is read once at start: a renewed
 certificate is served from the next restart. The start line is the same with TLS as without.

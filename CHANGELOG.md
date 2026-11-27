@@ -64,6 +64,20 @@ are Spindle's releases.
   `not_kept`, `Host::dead_letters`, `Host::replay` and `Host::replayed` list and replay them,
   and `Host::take_unkept` hands a served run each refused command its store could not keep
   (`story:dead-letters-kept-and-replayed`).
+- A served `run` given `--caller-token <FILE>` verifies each request's caller itself from its
+  signed token, `Authorization: Bearer <JWT>`: the signature against the issuer's key set (JWKS,
+  `https://`, or `http://` on loopback), the issuer, the audience and the expiry, its claims
+  mapped by the TOML file to an actor and its attributes. A request without a valid token answers
+  `401` before anything of it is read and is neither recorded nor counted; one whose claims map to
+  no caller of the model answers `403` "not granted" and writes nothing. The key set is fetched
+  before listening (exit 1 when it cannot be) and again every `refresh_seconds`, so a rotated key
+  verifies without a restart, and a key removed from the set stops verifying. Only
+  `/__spindle/live`, `ready` and `seed` answer without a token; the other routes under
+  `/__spindle/` need a token whose claims map to a caller of the model. The console routes are
+  off (`--console on` exits 2), and a mapping naming an actor or attribute the specification does
+  not declare, or leaving a required attribute of a mapped actor unmapped, exits 1.
+  Given with `--trusted-caller-header` or `--fixed-actor` the run exits 1; off loopback it requires
+  `--tls-cert` and `--tls-key`, and exits 2 without them (`story:verified-caller-token`).
 - `run --stdin` reads JSON lines on stdin where a component is `reached_by: network`, instead of
   serving HTTP: every component runs in the one process on one store and the event bindings fire
   as on any other stdin run. Given with a flag only a served run reads (`--http`, `--port`,

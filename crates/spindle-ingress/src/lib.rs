@@ -101,7 +101,8 @@ pub use observe::{
 };
 pub use router::{BODY_LIMIT, CONTENT_TYPE, Request, Response, Routed, route, route_with};
 pub use surface::{
-    Caller, Queried, Resolved, Route, Surface, SurfaceError, Unfixed, Unserved, Variable,
+    Caller, CallerToken, Queried, Resolved, Route, Surface, SurfaceError, Unfixed, Unserved,
+    Unverified, Variable,
 };
 
 /// The `ingress.network` implementation this crate serves: HTTP on the loopback address.

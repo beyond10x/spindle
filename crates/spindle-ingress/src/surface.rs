@@ -1136,6 +1136,8 @@ pub struct Surface {
     /// Every request must carry the secret, refused before anything is read without it
     /// ([`Surface::requiring_secret`]).
     secret_required: bool,
+    /// What verifies the bearer token each request carries ([`Surface::verifying_tokens`]).
+    caller_token: Option<Tokens>,
     /// The body `GET /api/served` answers, computed once the console routes are added
     /// ([`Surface::with_console`]); `None` without them.
     served: Option<Arc<str>>,
@@ -1161,6 +1163,63 @@ impl fmt::Debug for Secret {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("Secret(..)")
     }
+}
+
+/// A bearer token that verifies nothing: its signature, issuer, audience, expiry or form fails
+/// the check of a [`CallerToken`]. It carries no reason, so no answer or line can repeat the
+/// token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Unverified;
+
+/// What verifies the bearer token a request carries and maps it to a caller
+/// ([`Surface::verifying_tokens`]): a signed token checked against the issuer's keys, its claims
+/// mapped to an actor and its attributes. `run --caller-token` provides one; this crate holds
+/// none, so it builds without any token library.
+pub trait CallerToken: Send + Sync {
+    /// The caller `token` proves: `Ok(Some)` for a token that verifies and maps to a caller the
+    /// model binds, `Ok(None)` for one that verifies and maps to none, `Err` for one that does not
+    /// verify. The run's own routes under `/__spindle/` open to `Ok(Some)` as it is; a command or
+    /// view binds the caller again, as every proven caller is.
+    ///
+    /// # Errors
+    /// [`Unverified`] for a token that does not verify.
+    fn caller(&self, token: &str) -> Result<Option<Caller>, Unverified>;
+}
+
+/// A surface's [`CallerToken`]: equal only to itself, and never written by `Debug`.
+#[derive(Clone)]
+pub(crate) struct Tokens(Arc<dyn CallerToken>);
+
+impl Tokens {
+    /// The verifier.
+    #[cfg_attr(not(feature = "listener"), allow(dead_code))]
+    pub(crate) fn verifier(&self) -> &dyn CallerToken {
+        &*self.0
+    }
+}
+
+impl PartialEq for Tokens {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for Tokens {}
+
+impl fmt::Debug for Tokens {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("Tokens(..)")
+    }
+}
+
+/// Whether `reserved` is one of the probes a surface [`Surface::verifying_tokens`] answers
+/// without a token: `/__spindle/live`, `/__spindle/ready` and `/__spindle/seed`.
+#[cfg_attr(not(feature = "listener"), allow(dead_code))]
+pub(crate) fn probe(reserved: Option<Reserved>) -> bool {
+    matches!(
+        reserved,
+        Some(Reserved::Live | Reserved::Ready | Reserved::Seed)
+    )
 }
 
 /// The constructors of a [`Surface`] whose commands run on a store reaching the stores of a set of
@@ -1200,6 +1259,21 @@ impl Reaching<'_> {
         secret: &str,
     ) -> Result<Surface, SurfaceError> {
         Surface::proving(ir, components, binding, header, secret, Some(self.reached))
+    }
+
+    /// [`Surface::verifying_tokens`], reaching the stores of the components
+    /// [`Surface::reaching`] names.
+    ///
+    /// # Errors
+    /// As [`Surface::new`].
+    pub fn verifying_tokens(
+        self,
+        ir: &EssIr,
+        components: &[String],
+        binding: Option<&Binding>,
+        verifier: Arc<dyn CallerToken>,
+    ) -> Result<Surface, SurfaceError> {
+        Surface::verifying(ir, components, binding, verifier, Some(self.reached))
     }
 }
 
@@ -1364,6 +1438,62 @@ impl Surface {
         Ok(surface)
     }
 
+    /// [`Surface::new`], each request proving its own caller by the bearer token it carries,
+    /// `Authorization: Bearer <token>`, which `verifier` checks and maps to a caller
+    /// ([`CallerToken`]): a command that reads its caller is served rather than marked
+    /// [`Unserved::Ingress`], each request's caller is bound against the model before it is used,
+    /// and the grant check runs as for a fixed caller.
+    ///
+    /// Its listener reads nothing of a request whose token is missing, given more than once or
+    /// does not verify: it answers `401` with `WWW-Authenticate: Bearer`
+    /// ([`crate::Answer::unauthenticated`]) on every route, the console routes and a path no
+    /// route has included, and neither records nor counts it. Only `/__spindle/live`,
+    /// `/__spindle/ready` and `/__spindle/seed`, the probes, answer without one. A token that
+    /// verifies and maps to no caller of the model answers the standard refusal for a request
+    /// authenticated as no caller, `403` `{"refused": "not granted", "actor": null}`, on a
+    /// command or view, and nothing is read or written; it is refused so on every route under
+    /// `/__spindle/` but the probes too, reading nothing they hold, and is not recorded there.
+    /// Off loopback such a surface is served only over TLS (`Listener::bind_reading_on_tls`). A
+    /// request [`crate::route`] answers carries no header, so there every request but the probes
+    /// is refused `401`.
+    ///
+    /// # Errors
+    /// As [`Surface::new`].
+    pub fn verifying_tokens(
+        ir: &EssIr,
+        components: &[String],
+        binding: Option<&Binding>,
+        verifier: Arc<dyn CallerToken>,
+    ) -> Result<Self, SurfaceError> {
+        Self::verifying(ir, components, binding, verifier, None)
+    }
+
+    /// [`Surface::verifying_tokens`], reaching the stores `reached` names, or the running
+    /// component's alone.
+    fn verifying(
+        ir: &EssIr,
+        components: &[String],
+        binding: Option<&Binding>,
+        verifier: Arc<dyn CallerToken>,
+        reached: Option<&BTreeSet<String>>,
+    ) -> Result<Self, SurfaceError> {
+        let mut surface = Self::routed(ir, components, binding, &[], true, reached)?;
+        surface.caller_token = Some(Tokens(verifier));
+        Ok(surface)
+    }
+
+    /// Whether each request proves its caller by a bearer token ([`Surface::verifying_tokens`]).
+    pub fn verifies_tokens(&self) -> bool {
+        self.caller_token.is_some()
+    }
+
+    /// The verifier of each request's bearer token, where the surface was made
+    /// [`Surface::verifying_tokens`]; only the listener reads a request's headers.
+    #[cfg_attr(not(feature = "listener"), allow(dead_code))]
+    pub(crate) fn caller_token(&self) -> Option<&Tokens> {
+        self.caller_token.as_ref()
+    }
+
     /// The secret the proxy presents on each request, where the surface was made
     /// [`Surface::proving_callers`]; only the listener reads a request's headers.
     #[cfg_attr(not(feature = "listener"), allow(dead_code))]
@@ -1460,6 +1590,7 @@ impl Surface {
             caller_header: None,
             caller_secret: None,
             secret_required: false,
+            caller_token: None,
             served: None,
             seed: None,
         })

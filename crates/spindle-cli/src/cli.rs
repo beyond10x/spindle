@@ -302,7 +302,7 @@ pub enum Command {
         /// and its event bindings fire as on any other stdin run; no periodic binding fires. Given
         /// with a flag only a served run reads (`--http`, `--port`, `--address`, `--tls-cert`,
         /// `--tls-key`, `--tls-client-ca`, `--fixed-actor`, `--fixed-caller`,
-        /// `--trusted-caller-header`, `--trusted-caller-secret`, `--observe`,
+        /// `--trusted-caller-header`, `--trusted-caller-secret`, `--caller-token`, `--observe`,
         /// `--observe-requests`, `--observe-series`, `--seed`, `--drain` or `--log-format json`),
         /// exits 2 before anything is loaded. Where no component requires `ingress.network`, `run`
         /// reads stdin with or without it.
@@ -320,6 +320,7 @@ pub enum Command {
                 "fixed_caller",
                 "trusted_caller_header",
                 "trusted_caller_secret",
+                "caller_token",
                 "observe",
                 "observe_requests",
                 "observe_series",
@@ -345,8 +346,9 @@ pub enum Command {
         /// The IP address to serve HTTP on, IPv4 or IPv6 (`::1`, no brackets), instead of
         /// 127.0.0.1, the default; a host name or a value with a port exits 2 before listening.
         /// An address off loopback (anything but 127.0.0.0/8 and `::1`) requires
-        /// `--trusted-caller-header` with `--trusted-caller-secret`, and without both exits 2
-        /// before listening; `--fixed-actor` is not enough, since it proves nobody. There every
+        /// `--trusted-caller-header` with `--trusted-caller-secret`, or `--caller-token` with
+        /// `--tls-cert` and `--tls-key`, and without either exits 2 before listening;
+        /// `--fixed-actor` is not enough, since it proves nobody. With the header there every
         /// request without the proxy's secret is refused `403` `{"refused": "not granted",
         /// "actor": null}` before anything of it is read, on every route, the console routes and
         /// `/__spindle/` included. Off loopback the console routes are off unless `--console on`
@@ -429,6 +431,38 @@ pub enum Command {
         /// never the secret. Only where `run` serves HTTP.
         #[arg(long, value_name = "FILE", conflicts_with = "scenario")]
         trusted_caller_secret: Option<PathBuf>,
+        /// Verify each request's caller from the signed token it carries, `Authorization: Bearer
+        /// <JWT>`, as the TOML mapping `FILE` says: `issuer`, `audience`, `jwks` (the issuer's
+        /// key set, `https://`, or `http://` to a loopback host only), `ca_file` (PEM roots for
+        /// an `https://` key set, optional), `algorithms` (asymmetric only, `RS256` by default;
+        /// a symmetric one exits 1), `leeway_seconds` (60 by default, at most 300) and
+        /// `refresh_seconds` (300 by default, 1 to 86400); `[actor]` `claim` and
+        /// `[actor.values]`, each value of that claim mapped to a qualified actor, and
+        /// `[attributes."<actor>"]`, each attribute of that actor mapped to the claim it is read
+        /// from. A token verifies where a key of the set its header names (`kid`) of the
+        /// algorithm's family verifies its signature, and its `iss`, `aud` and `exp` hold. A
+        /// command that reads its caller then runs for the caller its claims map to, bound
+        /// against the model as `--fixed-caller` is, and a read-granted view is read as it. A
+        /// request without a token, with one that does not verify (expired, another issuer or
+        /// audience, an unknown key, a signature that does not verify, `alg: none`) is refused
+        /// `401` with `WWW-Authenticate: Bearer` before anything of it is read, and is neither
+        /// recorded nor counted; one whose claims map to no caller of the model is refused `403`
+        /// `{"refused": "not granted", "actor": null}` and writes nothing. Only
+        /// `/__spindle/live`, `/__spindle/ready` and `/__spindle/seed` answer without a token;
+        /// every other route under `/__spindle/` needs a token whose claims map to a caller of
+        /// the model, and answers any other `403` the same way, unrecorded. The console routes
+        /// are off, and `--console on` exits 2. A role mapped to an actor, or an attribute, the
+        /// specification does not declare, or a required attribute of a mapped actor mapped from
+        /// no claim, exits 1 before listening. The key set is fetched
+        /// before listening, and a run that cannot fetch it, or whose set lists no usable key,
+        /// exits 1; it is fetched again every `refresh_seconds`: a set fetched replaces the keys,
+        /// one listing no usable key too (every token is then refused, with a warning line), and
+        /// a failed refresh keeps the last set and writes one warning line. No token or claim is
+        /// printed. Given with `--trusted-caller-header` or `--fixed-actor`, `run` exits 1; off
+        /// loopback it requires `--tls-cert` and `--tls-key`, and without them exits 2. Only where
+        /// `run` serves HTTP.
+        #[arg(long, value_name = "FILE", conflicts_with = "scenario")]
+        caller_token: Option<PathBuf>,
         /// Record every request the listener answers outside `/__spindle/`, timed from its head
         /// read to its answer handed back, and answer `GET /__spindle/requests` with a
         /// `spindle-requests/1` log: the totals per class since start (`served`, `refused`,
@@ -765,8 +799,9 @@ pub struct ListenerTls {
     /// signed, fails the handshake and gets no answer. This holds on every route,
     /// `/__spindle/live` and `/__spindle/ready` included: an `httpGet` probe cannot connect, so
     /// the probes are `tcpSocket` probes on the port. Requires `--tls-cert` and `--tls-key`.
-    /// Off loopback `--trusted-caller-header` and `--trusted-caller-secret` are still
-    /// required. A file that cannot be read or holds no certificate exits 2 before listening.
+    /// Off loopback `--trusted-caller-header` and `--trusted-caller-secret`, or
+    /// `--caller-token`, are still required. A file that cannot be read or holds no certificate
+    /// exits 2 before listening.
     #[arg(
         long,
         value_name = "FILE",
