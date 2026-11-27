@@ -1286,7 +1286,9 @@ impl<L: Log> Reading for SharedReading<L> {
         self.store.committed_after(position, limit)
     }
 
-    /// Reads the feed through the store's own pool on a turn, as a scan does.
+    /// Reads the feed through the store's own pool on a turn, as a scan does. Where the store is
+    /// fenced, its lease is checked before the read and again after it, so a read that a pause
+    /// past the lease interrupted, and that ran on once the process resumed, answers nothing.
     fn events_placed_after(
         &self,
         position: u64,
@@ -1294,7 +1296,9 @@ impl<L: Log> Reading for SharedReading<L> {
     ) -> Result<Vec<(u64, Committed)>, StoreError> {
         self.store.current()?;
         let _turn = self.turns.take()?;
-        self.store.placed_after(position, limit)
+        let placed = self.store.placed_after(position, limit)?;
+        self.store.current()?;
+        Ok(placed)
     }
 
     /// Reads the feed through the store's own pool on a turn, as a scan does.
