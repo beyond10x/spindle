@@ -685,16 +685,37 @@ job publish | grep -Eq "^    if: .*needs\\.gate\\.result == 'success' && needs\\
 
 mkdir -p "$work/steps"
 step_script provenance "Whether the commit builds an image" "$work/steps/containerfile.sh"
-for has in true false; do
+# provenance's answer for a commit of <version>, with or without a root Containerfile: true,
+# false, or the step fails naming the file (the answer is then "fails").
+provenance_answer() {
     rm -rf "$work/commit"
     mkdir -p "$work/commit"
-    [ "$has" = false ] || cp "$containerfile" "$work/commit/Containerfile"
+    [ "$2" = without ] || cp "$containerfile" "$work/commit/Containerfile"
     : >"$work/commit/output"
+    if (cd "$work/commit" && GITHUB_OUTPUT=$work/commit/output GITHUB_STEP_SUMMARY=$work/commit/summary VERSION=$1 \
+        bash "$work/steps/containerfile.sh" >/dev/null 2>"$work/commit/err"); then
+        sed -n 's/^containerfile=//p' "$work/commit/output"
+    elif [ ! -s "$work/commit/output" ] && grep -q 'no Containerfile at the repository root' "$work/commit/err"; then
+        echo fails
+    else
+        echo "broken: $(cat "$work/commit/output" "$work/commit/err")"
+    fi
+}
+for row in "0.26.0 with true" "0.25.3 with true" "0.25.3 without false" "0.9.0 without false" \
+    "0.26.0 without fails" "0.26.1 without fails" "0.100.0 without fails" "1.0.0 without fails"; do
+    set -- $row
     cases=$((cases + 1))
-    (cd "$work/commit" && GITHUB_OUTPUT=$work/commit/output GITHUB_STEP_SUMMARY=$work/commit/summary \
-        bash "$work/steps/containerfile.sh" >/dev/null 2>&1) &&
-        [ "$(cat "$work/commit/output")" = "containerfile=$has" ] ||
-        fail "release.yml: provenance does not answer containerfile=$has: $(cat "$work/commit/output")"
+    answer=$(provenance_answer "$1" "$2")
+    [ "$answer" = "$3" ] ||
+        fail "release.yml: provenance answers '$answer' for $1 $2 a Containerfile, not '$3'"
+done
+for version in "" "0.26" "v0.26.0"; do
+    cases=$((cases + 1))
+    answer=$(provenance_answer "$version" without)
+    case $answer in
+        broken:*) [ ! -s "$work/commit/output" ] || fail "release.yml: provenance answers for the version '$version': $answer" ;;
+        *) fail "release.yml: provenance answers '$answer' for the version '$version'" ;;
+    esac
 done
 
 # publish's checksum step on the downloaded artifacts, with and without IMAGES.

@@ -74,18 +74,26 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      # A tag cut before the image existed has no Containerfile: its backfill builds no image and
-      # publishes the rest without IMAGES.
+      # Only a version cut before the image existed (older than 0.26.0) may lack the Containerfile:
+      # its backfill builds no image and publishes the rest without IMAGES. From 0.26.0 on, a commit
+      # without one at the repository root fails here.
       - id: image
         name: Whether the commit builds an image
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
           if [ -f Containerfile ]; then
             echo "containerfile=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "containerfile=false" >> "$GITHUB_OUTPUT"
-            echo "The commit has no Containerfile: no image is built and the release carries no IMAGES." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "No version to compare with 0.26.0: '$VERSION'." >&2; exit 1; }
+          if [ "$(printf '%s\n%s\n' "$VERSION" 0.26.0 | sort -V | head -n 1)" = 0.26.0 ]; then
+            echo "The commit of $VERSION has no Containerfile at the repository root; every release from 0.26.0 on publishes its image from it." | tee -a "$GITHUB_STEP_SUMMARY" >&2
+            exit 1
+          fi
+          echo "containerfile=false" >> "$GITHUB_OUTPUT"
+          echo "The commit of $VERSION, older than 0.26.0, has no Containerfile: no image is built and the release carries no IMAGES." | tee -a "$GITHUB_STEP_SUMMARY"
 
   gate:
     name: Gate green on the tagged commit
@@ -726,7 +734,7 @@ jobs:
             echo "${IMAGE}:${VERSION} already lists the two checked images (${held}); left as it is." | tee -a "$GITHUB_STEP_SUMMARY"
           else
             case "$inspected" in
-              *"not found"*) ;;
+              *"${IMAGE}:${VERSION}: not found"*) ;;
               *)
                 echo "ghcr.io could not say whether it holds ${IMAGE}:${VERSION}; nothing tagged: ${inspected}" | tee -a "$GITHUB_STEP_SUMMARY"
                 exit 1

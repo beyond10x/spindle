@@ -202,11 +202,11 @@ containerfile() {
     copies=0
     users=0
     entrypoints=0
-    # Tabs read as spaces, so one space-separated reading covers both.
-    lines=$(tr '\t' ' ' <"$file") || refuse "could not read $file"
+    # Tabs and carriage returns read as spaces, so one space-separated reading covers them all.
+    lines=$(tr '\t\r' '  ' <"$file") || refuse "could not read $file"
     while IFS= read -r line; do
-        # Trailing blanks dropped first: BuildKit reads a backslash followed by blanks as a
-        # continuation too.
+        # Trailing blanks dropped first: BuildKit reads a backslash followed by spaces, tabs or a
+        # carriage return as a continuation too.
         line=${line%"${line##*[! ]}"}
         case $line in
             '') continue ;;

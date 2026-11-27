@@ -237,10 +237,12 @@ cut from `main`:
    the workflow's tag, checksum and upload steps on stub tools. A pull request that changes the
    workflow, the script or the Containerfile runs the builds, builds and checks both images, and
    publishes and pushes nothing. `workflow_dispatch` with `tag` backfills an existing tag whose
-   page lacks the assets: a commit without a `Containerfile` (a tag cut before 0.26.0) builds no
-   image, and `publish` uploads the archives, the SBOM and `SHA256SUMS` without `IMAGES`; a commit
-   with one rebuilds the images, and their tag is left as it is only where the rebuilt images
-   have the digests it lists, since a rebuilt binary that differs gives other images.
+   page lacks the assets: a version older than 0.26.0 without a root `Containerfile` builds no
+   image, and `publish` uploads the archives, the SBOM and `SHA256SUMS` without `IMAGES`; for
+   0.26.0 or later a commit without one fails `provenance`, naming the file. A commit with one
+   rebuilds the images, and their tag is left as it is only where the rebuilt images have the
+   digests it lists, since a rebuilt binary that differs gives other images. `image-manifest`
+   tags only on the registry's answer `<image>:<version>: not found`; any other error stops it.
 7. Verify: the `Release` run for the tag succeeded; the page is authored by `b10x-bot[bot]`, is
    Latest and resolves to the tag's commit; it carries one archive per target, `IMAGES` and
    `SHA256SUMS`, and `sha256sum --check SHA256SUMS` passes on the downloaded assets. The line in
