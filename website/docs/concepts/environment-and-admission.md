@@ -564,8 +564,11 @@ migrate` creates beside the other tables (a database opened isolated creates it 
 names a token, the database session of the process that holds it, and when it ends, by the
 database's clock. Each process takes the lease of every component in name order through one
 connection of its own, one of the serving role's beyond its pools
-([the role's limit](#state-in-postgresql)), and leads once it holds them all. The leader renews them every third of
-`database_lease`; a clean exit, on SIGINT or SIGTERM, releases them.
+([the role's limit](#state-in-postgresql)), and leads once it holds them all. The leader renews
+them every fifth of `database_lease` on that same session, and retries a renewal that did not land
+at once; a clean exit, on SIGINT or SIGTERM, releases them. A renewal lands only on the session
+that took the lease: a leader whose lease connection was closed (a terminated backend, a dropped
+connection, an idle-session timeout) has given its leases up, and exits 1 at its next renewal.
 
 A process that finds a lease held stands by. It binds its listener and prints its listening line,
 answers `GET /__spindle/live` `200`, `GET /__spindle/ready` `503` with `standby: true`, and every
@@ -588,12 +591,15 @@ check that the lease row still names the token that process took. So a leader th
 its lease, while another process took over, lands nothing once it resumes: the write is refused,
 naming the lease, and the rows stay as the new leader left them. Before it runs a request, a
 leader whose last renewal began two thirds of the lease ago or longer, as after a pause, waits
-until it has renewed its leases or found one taken. A leader that finds its lease taken answers
-the request it took and those already queued `503`, prints the line below on stderr and exits 1,
-for its supervisor to start it again as a standby:
+until it has renewed its leases or found one taken. A write the check refuses counts as a lease
+found taken, as when the session holding the lease ended and another process took it before the
+leader's next renewal. A leader that finds its lease taken answers the request it took and those
+already queued `503`, prints a line naming the lease on stderr, as below, and exits 1, for its
+supervisor to start it again as a standby. While its lease is not known still held, its egress
+posts nothing. The line it prints:
 
 ```text
-b10x-spindle: another process took the lease of board, so this one writes nothing more and exits
+b10x-spindle: the lease of board was taken by another process, or its session ended, so this one writes nothing more and exits
 ```
 
 A leader whose renewals all fail for a whole `database_lease`, as when the database is unreachable,

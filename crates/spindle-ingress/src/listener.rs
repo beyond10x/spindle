@@ -119,6 +119,22 @@ impl Exchange {
         self.serve_loading(host, Some(worlds))
     }
 
+    /// [`Exchange::serve_with`], its answer replaced, once the request was served, by the one
+    /// `instead` gives where it gives one: a run whose store refused a write because another
+    /// process took the store's lease answers `503`, not the store's refusal
+    /// (`story:several-writers-one-postgres`).
+    pub fn serve_with_unless(
+        self,
+        host: &mut Host,
+        worlds: Worlds<'_>,
+        instead: impl FnOnce() -> Option<Answer>,
+    ) -> Vec<Failed> {
+        let (reply, failed, answered) = self.pending.serve(host, Some(worlds));
+        let reply = instead().map_or(reply, Into::into);
+        let _ = self.reply.send((reply, answered));
+        failed
+    }
+
     fn serve_loading(self, host: &mut Host, worlds: Option<Worlds<'_>>) -> Vec<Failed> {
         let (reply, failed, answered) = self.pending.serve(host, worlds);
         let _ = self.reply.send((reply, answered));

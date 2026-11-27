@@ -261,6 +261,9 @@ fn lease_term() -> Result<Option<Duration>> {
     }
 }
 
+/// How soon a renewal that did not land is tried again, where it failed without waiting.
+const RETRY: Duration = Duration::from_millis(50);
+
 /// The leases of every component of a served run bound to `postgres`, taken in name order through
 /// one connection of their own, which reads and takes only the lease rows and opens no store.
 pub(crate) struct Leases {
@@ -300,6 +303,12 @@ impl Leases {
         self.lease.term() / 3
     }
 
+    /// How often the leader renews the leases: a fifth of the lease, so a renewal queued behind a
+    /// write that holds a lease row for up to four fifths of the lease lands before it runs out.
+    fn renewal(&self) -> Duration {
+        self.lease.term() / 5
+    }
+
     /// Renews each lease held and takes, in name order, each one not held yet, stopping at the
     /// first another process holds: `None` once every one is held, else the component whose
     /// lease another process holds.
@@ -336,7 +345,7 @@ impl Leases {
         &self.components
     }
 
-    /// Keeps every lease held on a thread of its own, renewing each at [`Leases::poll`], until
+    /// Keeps every lease held on a thread of its own, renewing each every [`Leases::renewal`], until
     /// the [`Kept`] is dropped, which releases them.
     ///
     /// # Errors
@@ -372,8 +381,14 @@ impl Leases {
         let lose = |why: String| {
             shared.lock().unwrap_or_else(PoisonError::into_inner).lost = Some(why);
         };
+        // Renewals start every fifth of the lease from the start of the last that landed; one that
+        // did not land, as one that waited out a lock on the row, is tried again [`RETRY`] later,
+        // so a renewal queued behind a write holding the row lands as the write ends.
+        let mut next = Instant::now() + self.renewal();
         // A message or a dropped sender stops the renewals.
-        while let Err(mpsc::RecvTimeoutError::Timeout) = stopped.recv_timeout(self.poll()) {
+        while let Err(mpsc::RecvTimeoutError::Timeout) =
+            stopped.recv_timeout(next.saturating_duration_since(Instant::now()))
+        {
             let began = Instant::now();
             let mut failed = None;
             for (component, &token) in &self.held {
@@ -381,8 +396,8 @@ impl Leases {
                     Ok(true) => {}
                     Ok(false) => {
                         lose(format!(
-                            "another process took the lease of {component}, so this one writes \
-                             nothing more and exits"
+                            "the lease of {component} was taken by another process, or its session \
+                             ended, so this one writes nothing more and exits"
                         ));
                         return;
                     }
@@ -392,6 +407,7 @@ impl Leases {
             match failed {
                 None => {
                     renewed = began;
+                    next = began + self.renewal();
                     shared
                         .lock()
                         .unwrap_or_else(PoisonError::into_inner)
@@ -405,7 +421,7 @@ impl Leases {
                     ));
                     return;
                 }
-                Some(_) => {}
+                Some(_) => next = Instant::now() + RETRY,
             }
         }
         for (component, &token) in &self.held {
@@ -443,11 +459,15 @@ impl Kept {
     /// began two thirds of the lease ago or longer, as after the process was paused: until the
     /// lease thread renews them all or finds one lost, at most two leases. A write is fenced by
     /// its lease's token either way; this lets the run answer a request `503` rather than with
-    /// the store's refusal of the write.
+    /// the store's refusal of the write. A write the fence refused ([`Kept::fenced`]) is a lease
+    /// lost at once.
     pub(crate) fn confirmed(&self) -> Option<String> {
         let stale = self.term.saturating_mul(2) / 3;
         let deadline = Instant::now() + self.term.saturating_mul(2);
         loop {
+            if let Some(fenced) = Self::fenced() {
+                return Some(fenced);
+            }
             {
                 let renewal = self.shared.lock().unwrap_or_else(PoisonError::into_inner);
                 if renewal.lost.is_some() {
@@ -459,6 +479,15 @@ impl Kept {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    /// Why a write of this run was refused by its lease's fence, once one was, as when the
+    /// database session holding the lease ended and another process took it before the next
+    /// renewal: the lease is lost, so the run writes nothing more and exits.
+    pub(crate) fn fenced() -> Option<String> {
+        spindle_kernel::fenced().map(|why| {
+            format!("a write was refused, so this run writes nothing more and exits: {why}")
+        })
     }
 
     /// The first component, in name order, whose lease this run took at a token above the

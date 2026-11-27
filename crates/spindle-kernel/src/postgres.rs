@@ -26,7 +26,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use eventlog_core::{
     BoxFuture, CaptureError, CaptureLimits, ConsistentTenantCapture, EventLogError, EventStore,
@@ -204,9 +204,10 @@ impl LogStore<PostgresEventStore> {
                 .map_err(|error| unreachable_hint(error, database))?
         };
         let mut store = LogStore::on(log, Arc::new(runtime), None)?;
-        let token = held().get(&place(database, &prefix)).copied();
+        let place = place(database, &prefix);
+        let token = held().get(&place).map(|held| held.token);
         if let Some(token) = token {
-            store.fenced(component, token)?;
+            store.fenced(component, token, place)?;
         }
         Ok(store)
     }
@@ -214,7 +215,7 @@ impl LogStore<PostgresEventStore> {
     /// Every write of this store from now on lands only while `token` is the token of
     /// `component`'s lease ([`Fence`]), checked in the write's own transaction: what
     /// [`PostgresStore::open`] does where this process took that lease ([`Lease::take`]).
-    fn fenced(&mut self, component: &str, token: u64) -> Result<(), StoreError> {
+    fn fenced(&mut self, component: &str, token: u64, place: String) -> Result<(), StoreError> {
         let leased: Arc<dyn Projector> = Arc::new(Leased);
         self.call(self.log().register_inline(leased))
             .map_err(|error| {
@@ -228,7 +229,8 @@ impl LogStore<PostgresEventStore> {
             token,
             tenant: self.tenant().clone(),
         };
-        self.fence(Arc::new(fence));
+        let named = component.to_owned();
+        self.fence(Arc::new(fence), Arc::new(move || current(&named, &place)));
         Ok(())
     }
 }
@@ -306,15 +308,32 @@ impl Guard for Fence {
                 return Ok(());
             }
             let now = held.map_or_else(|| "no token".to_owned(), |held| format!("token {held}"));
-            Err(EventLogError::GuardRefused {
-                code: format!(
-                    "fenced: the lease of {} was taken by another process ({now}, this process \
-                     took token {}), so this process writes nothing more to its tables",
-                    self.component, self.token
-                ),
-            })
+            let code = format!(
+                "fenced: the lease of {} was taken by another process ({now}, this process took \
+                 token {}), so this process writes nothing more to its tables",
+                self.component, self.token
+            );
+            FENCED
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get_or_insert_with(|| code.clone());
+            Err(EventLogError::GuardRefused { code })
         })
     }
+}
+
+/// The first refusal of a write by a [`Fence`] in this process: the lease it was taken under is
+/// another process's from then on.
+static FENCED: Mutex<Option<String>> = Mutex::new(None);
+
+/// Why a write of this process was refused by its lease's fence, once one was: another process
+/// took a lease this process wrote under, so it writes nothing more to those tables.
+#[must_use]
+pub fn fenced() -> Option<String> {
+    FENCED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()
 }
 
 /// Where a component's tables are: the database's hosts and name, the schema and the prefix.
@@ -326,12 +345,49 @@ fn place(database: &Database, prefix: &str) -> String {
     format!("{}/{name}/{}/{prefix}", hosts(database), database.schema)
 }
 
-/// The token of each lease this process took ([`Lease::take`]), by [`place`]: every store this
-/// process opens on those tables afterwards writes under it ([`PostgresStore::open`]).
-static HELD: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
+/// Each lease this process took ([`Lease::take`]), by [`place`]: every store this process opens
+/// on those tables afterwards writes under it ([`PostgresStore::open`]).
+static HELD: Mutex<BTreeMap<String, Held>> = Mutex::new(BTreeMap::new());
 
-fn held() -> std::sync::MutexGuard<'static, BTreeMap<String, u64>> {
+fn held() -> std::sync::MutexGuard<'static, BTreeMap<String, Held>> {
     HELD.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// A lease this process took.
+#[derive(Clone, Copy)]
+struct Held {
+    token: u64,
+    term: Duration,
+    /// When the last take or renewal of it that landed began.
+    renewed: Instant,
+    /// Set once a renewal found it taken by another process.
+    lost: bool,
+}
+
+/// Whether the lease of the tables at `place` is known still held by this process: no write of
+/// it was refused by its fence, no renewal found it taken, and the last one that landed began
+/// less than two thirds of its term ago. A process paused past its lease, once it resumes, reads
+/// it as not known until its next renewal lands or finds it taken.
+fn current(component: &str, place: &str) -> Result<(), StoreError> {
+    if let Some(fenced) = fenced() {
+        return Err(StoreError::Backend(fenced));
+    }
+    let held = held().get(place).copied();
+    match held {
+        Some(held) if held.lost => Err(StoreError::Backend(format!(
+            "the lease of {component} was taken by another process, so this process reads its \
+             tables for nothing more"
+        ))),
+        Some(held) if held.renewed.elapsed() < held.term.saturating_mul(2) / 3 => Ok(()),
+        Some(held) => Err(StoreError::Backend(format!(
+            "the lease of {component} was last renewed {:?} ago, so it is not known still held \
+             until its next renewal",
+            held.renewed.elapsed()
+        ))),
+        None => Err(StoreError::Backend(format!(
+            "this process no longer holds the lease of {component}"
+        ))),
+    }
 }
 
 /// A process's hold on the leases of its components' tables (`story:several-writers-one-postgres`):
@@ -507,9 +563,18 @@ impl Lease {
     /// # Errors
     /// [`StoreError::Backend`] where the lease cannot be read or written.
     pub fn take(&mut self, component: &str) -> Result<Option<u64>, StoreError> {
+        let began = Instant::now();
         let taken = self.run(component, Step::Take)?;
         if let Some(token) = taken {
-            held().insert(place(&self.database, &prefix(component)), token);
+            held().insert(
+                place(&self.database, &prefix(component)),
+                Held {
+                    token,
+                    term: self.term,
+                    renewed: began,
+                    lost: false,
+                },
+            );
         }
         Ok(taken)
     }
@@ -520,7 +585,18 @@ impl Lease {
     /// # Errors
     /// [`StoreError::Backend`] where the lease cannot be read or written.
     pub fn renew(&mut self, component: &str, token: u64) -> Result<bool, StoreError> {
-        Ok(self.run(component, Step::Renew(token))?.is_some())
+        let began = Instant::now();
+        let renewed = self.run(component, Step::Renew(token))?.is_some();
+        if let Some(held) = held().get_mut(&place(&self.database, &prefix(component)))
+            && held.token == token
+        {
+            if renewed {
+                held.renewed = began;
+            } else {
+                held.lost = true;
+            }
+        }
+        Ok(renewed)
     }
 
     /// Ends the lease of `component`'s tables held under `token` now, so a process standing by
@@ -565,11 +641,14 @@ const TAKE: &str = "INSERT INTO {table} AS lease (tenant_id, row_key, body) \
      OR NOT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = (lease.body->>'pid')::int) \
      RETURNING (body->>'token')::bigint";
 
-/// Moves the lease's end a term past now where it still names the token. `$3` the term in
+/// Moves the lease's end a term past now where it still names the token and this session, the
+/// one that took it: a lease whose session ended is free ([`TAKE`]), so a process whose lease
+/// connection was closed renews nothing on the next one and gives the lease up. `$3` the term in
 /// seconds, `$4` the token.
-const RENEW: &str = "UPDATE {table} SET body = jsonb_build_object('token', $4::bigint, \
-     'pid', pg_backend_pid(), 'until', extract(epoch FROM clock_timestamp())::float8 + $3::float8) \
+const RENEW: &str = "UPDATE {table} SET body = jsonb_set(body, '{until}', \
+     to_jsonb(extract(epoch FROM clock_timestamp())::float8 + $3::float8)) \
      WHERE tenant_id = $1 AND row_key = $2 AND (body->>'token')::bigint = $4::bigint \
+     AND (body->>'pid')::int = pg_backend_pid() \
      RETURNING (body->>'token')::bigint";
 
 /// Ends the lease now where it still names the token, `$3`.

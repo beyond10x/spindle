@@ -240,28 +240,18 @@ fn rows(schema: &str, component: &str, entity: &str) -> Vec<Value> {
         .collect()
 }
 
-/// The position of the last write in `component`'s store in `schema`.
-fn head(schema: &str, component: &str) -> u64 {
-    spindle_kernel::Store::events_head(&mut store(schema, component)).expect("the head is read")
-}
-
-/// The heads of board and ledger in `schema` once board's holds at least `events` events. A
-/// head reads a write once every older transaction on the server has ended, so while another
-/// test of the lane holds one open it reads behind for a while.
-fn settled(schema: &str, events: u64) -> (u64, u64) {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        let heads = (head(schema, "board"), head(schema, "ledger"));
-        if heads.0 >= events {
-            return heads;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "board's head read {} of {events} events for 30 s",
-            heads.0
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    }
+/// The events board's and ledger's tables in `schema` hold, counted as the database's owner. A
+/// count reads every committed row at once, where a store's head reads a write only once every
+/// older transaction on the server has ended, which another test of the lane may hold open.
+fn counts(schema: &str) -> (u64, u64) {
+    let count = |component: &str| -> u64 {
+        super::sql(&[format!(
+            "SELECT count(*) FROM {schema}.spindle_{component}_events"
+        )])[0]
+            .parse()
+            .expect("a count")
+    };
+    (count("board"), count("ledger"))
 }
 
 /// A leader, ready, and a second process on the same store.
@@ -281,8 +271,7 @@ fn a_second_process_stands_by() {
     let (leader, standby) = leader_and_standby(&environment, &schema);
     let (status, answer) = leader.open("t1");
     assert_eq!(status, 201, "{answer}");
-    // The specification recorded and t1.
-    let before = settled(&schema, 2);
+    let before = counts(&schema);
 
     let (status, body) = standby.ready();
     assert_eq!(status, 503, "a standby is not ready: {body}");
@@ -301,11 +290,7 @@ fn a_second_process_stands_by() {
     std::thread::sleep(Duration::from_secs(2));
     let (status, body) = standby.ready();
     assert_eq!(status, 503, "the standby still stands by: {body}");
-    assert_eq!(
-        (head(&schema, "board"), head(&schema, "ledger")),
-        before,
-        "the standby wrote nothing"
-    );
+    assert_eq!(counts(&schema), before, "the standby wrote nothing");
     assert!(
         standby.line_by(TOOK, Instant::now()).is_none(),
         "{}",
@@ -432,8 +417,7 @@ fn a_paused_leader_is_fenced() {
     standby.ready_by(paused + Duration::from_secs(15));
     let (status, answer) = standby.open("t2");
     assert_eq!(status, 201, "{answer}");
-    // The specification recorded, t1 and t2.
-    let before = settled(&schema, 3);
+    let before = counts(&schema);
 
     // A command reaches the paused leader's socket; it is read once the leader resumes.
     let address = leader.address;
@@ -469,7 +453,7 @@ fn a_paused_leader_is_fenced() {
         "the old leader answers the late command 503: {answer}"
     );
     assert_eq!(
-        (head(&schema, "board"), head(&schema, "ledger")),
+        counts(&schema),
         before,
         "the old leader wrote nothing once it resumed"
     );

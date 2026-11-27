@@ -157,7 +157,7 @@ are Spindle's releases.
 - Several served `run` processes of one specification given the new setting `database_lease`
   (whole seconds) may start on one PostgreSQL store. Each component's tables hold a lease, a row
   of `spindle_<component>_p_lease` that `store migrate` creates; the process that takes every
-  lease, in component name order, leads and is the one writer, renewing them every third of
+  lease, in component name order, leads and is the one writer, renewing them every fifth of
   `database_lease`. Leases apply only where `database_lease` is set: without it a run takes no
   lease and behaves as before, so two processes on one store both write, and replicas must set
   it. The lease takes one connection of the serving role beyond components x `database_pool`, so
@@ -168,9 +168,11 @@ are Spindle's releases.
   database session does, as a killed leader's does (measured 0.7 s after a SIGKILL), and skips
   the seed, which runs only under the leases' first token. Every write checks its lease's token in
   its own transaction, so a leader paused past its lease lands nothing once it resumes, answers
-  the requests it took `503`, and exits 1 naming the lease. A `database_lease` that is not a
-  whole number from 1 to 86400 exits 1 before connecting, and with it tables a release before
-  leases migrated are refused until `store migrate` runs again
+  the requests it took `503`, and exits 1 naming the lease; so does a leader whose write the
+  check refused, or whose lease session ended, as a renewal lands only on the session that took
+  the lease. A leader whose lease is not known still held posts no event. A `database_lease` that
+  is not a whole number from 1 to 86400 exits 1 before connecting, and with it tables a release
+  before leases migrated are refused until `store migrate` runs again
   (`story:several-writers-one-postgres`).
 
 ### Fixed

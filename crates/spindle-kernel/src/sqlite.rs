@@ -239,7 +239,16 @@ pub struct LogStore<L> {
     /// write once another process took that lease (`story:several-writers-one-postgres`). A
     /// SQLite store has none: its state directory is locked to one process.
     fence: Option<Arc<dyn Guard>>,
+    /// Whether the lease the fence names is known still held, checked before a read of the feed
+    /// by position ([`Reading::events_placed_after`]), which an egress posts from: a process
+    /// that lost its lease, or was paused past it, posts no event another process committed.
+    #[cfg(feature = "postgres")]
+    current: Option<Current>,
 }
+
+/// The check of [`LogStore::current`].
+#[cfg(feature = "postgres")]
+type Current = Arc<dyn Fn() -> Result<(), StoreError> + Send + Sync>;
 
 /// The feed positions of a store's own appends: the last one it committed, and the last one the
 /// feed was seen to answer. A read of the feed waits until the feed answers the first
@@ -408,6 +417,8 @@ impl<L: Log> LogStore<L> {
             own: Arc::default(),
             continued: (0, 0),
             fence: None,
+            #[cfg(feature = "postgres")]
+            current: None,
         })
     }
 
@@ -431,6 +442,8 @@ impl<L: Log> LogStore<L> {
             own: Arc::clone(&self.own),
             continued: (0, 0),
             fence: self.fence.clone(),
+            #[cfg(feature = "postgres")]
+            current: self.current.clone(),
         }
     }
 
@@ -450,8 +463,15 @@ impl<L: Log> LogStore<L> {
     /// it admits the write; its refusal ([`EventLogError::GuardRefused`]) is the write's error,
     /// its code the whole message ([`backend`]).
     #[cfg(feature = "postgres")]
-    pub(crate) fn fence(&mut self, fence: Arc<dyn Guard>) {
+    pub(crate) fn fence(&mut self, fence: Arc<dyn Guard>, current: Current) {
         self.fence = Some(fence);
+        self.current = Some(current);
+    }
+
+    /// Refuses where the store is fenced and its lease is not known still held.
+    #[cfg(feature = "postgres")]
+    fn current(&self) -> Result<(), StoreError> {
+        self.current.as_ref().map_or(Ok(()), |current| current())
     }
 
     /// Appends `group` in one transaction, under the store's fence where it has one.
@@ -1272,6 +1292,7 @@ impl<L: Log> Reading for SharedReading<L> {
         position: u64,
         limit: usize,
     ) -> Result<Vec<(u64, Committed)>, StoreError> {
+        self.store.current()?;
         let _turn = self.turns.take()?;
         self.store.placed_after(position, limit)
     }
