@@ -913,6 +913,291 @@ mod postgres {
         assert!(second.running(), "{}", second.printed());
     }
 
+    /// Sends `PUT /tasks/<prefix><n>` to `address` one after another until `stop` is set or the
+    /// address accepts no more: each id with the status it was answered, 0 for none.
+    fn fire(
+        address: SocketAddr,
+        prefix: &'static str,
+        stop: Arc<std::sync::atomic::AtomicBool>,
+    ) -> std::thread::JoinHandle<Vec<(String, u16)>> {
+        std::thread::spawn(move || {
+            let mut answers = Vec::new();
+            let mut index = 0;
+            while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+                index += 1;
+                let id = format!("{prefix}{index}");
+                let Ok(mut stream) = TcpStream::connect_timeout(&address, ANSWER) else {
+                    break;
+                };
+                let _ = stream.set_read_timeout(Some(ANSWER));
+                let body = json!({"title": format!("task {id}")}).to_string();
+                let written = write!(
+                    stream,
+                    "PUT /tasks/{id} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\
+                     Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                );
+                let mut answer = String::new();
+                if written.is_ok() {
+                    let _ = stream.read_to_string(&mut answer);
+                }
+                let status = status_and_body(&answer).0;
+                answers.push((id, status));
+                if status == 0 {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            answers
+        })
+    }
+
+    /// The task ids `GET /tasks` lists at `address`.
+    fn task_ids(address: SocketAddr) -> Vec<String> {
+        let (status, body) = call(address, "GET", "/tasks", None);
+        assert_eq!(status, 200, "{body}");
+        body["rows"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .map(|row| row["task_id"].as_str().expect("an id").to_owned())
+            .collect()
+    }
+
+    /// Round 3, change 1: a renewal lands only on the session that took the lease, so a dropped
+    /// lease connection of a leader fails over. While commands flow to the leader its lease
+    /// connection is terminated: the leader exits 1 naming the lease, the standby takes over, every
+    /// command the old leader answered `201` is held once and none it answered `503`, and the
+    /// webhook is sent each opened task once.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_dropped_leader_session_fails_over_with_each_write_once() {
+        let webhook = Webhook::start(200);
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment =
+            crate::egress::environment(directory.path(), "postgres", &webhook.url(), &[OPENED]);
+        let schema = schema();
+        let (mut leader, standby) = leader_and_standby(&environment, &schema);
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let firing = fire(leader.address, "f", Arc::clone(&stop));
+        std::thread::sleep(Duration::from_millis(500));
+        let holder = sql_value(&format!(
+            "SELECT body->>'pid' FROM {schema}.spindle_board_p_lease"
+        ))
+        .expect("the lease row names its holder");
+        sql(&[format!("SELECT pg_terminate_backend({holder})")]);
+        let code = leader.exit_within(Duration::from_secs(10));
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        let answers = firing.join().expect("the commands end");
+        assert_eq!(code, Some(1), "{}", leader.printed());
+        assert!(
+            leader.line_by(
+                "writes nothing more and exits",
+                Instant::now() + Duration::from_secs(2)
+            ),
+            "the old leader names the lease: {}",
+            leader.printed()
+        );
+        standby.ready_by(Instant::now() + Duration::from_secs(10));
+        let held = task_ids(standby.address);
+        let landed: Vec<&String> = answers
+            .iter()
+            .filter(|(_, status)| *status == 201)
+            .map(|(id, _)| id)
+            .collect();
+        eprintln!(
+            "the old leader answered {} commands: {} x 201, statuses {:?}",
+            answers.len(),
+            landed.len(),
+            answers
+                .iter()
+                .filter(|(_, status)| *status != 201)
+                .collect::<Vec<_>>()
+        );
+        for id in &landed {
+            assert!(held.contains(id), "{id} was answered 201 and is lost");
+        }
+        for (id, status) in &answers {
+            assert!(
+                matches!(status, 201 | 503 | 0),
+                "{id} answered {status}: {}",
+                leader.printed()
+            );
+            if *status == 503 {
+                assert!(!held.contains(id), "{id} was answered 503 and landed");
+            }
+        }
+        let (status, answer) = standby.open("n1");
+        assert_eq!(status, 201, "{answer}");
+        accepted(&webhook, held.len() + 1);
+        std::thread::sleep(Duration::from_millis(500));
+        let posted: Vec<String> = crate::egress::named(&webhook.accepted())
+            .into_iter()
+            .map(|(_, task)| task)
+            .collect();
+        let mut twice: Vec<&String> = posted
+            .iter()
+            .filter(|task| posted.iter().filter(|other| other == task).count() > 1)
+            .collect();
+        twice.dedup();
+        assert!(
+            twice.is_empty(),
+            "posted more than once across the failover: {twice:?} of {} posts",
+            posted.len()
+        );
+    }
+
+    /// Round 3, change 1 seen from the standby: its own lease connection is dropped (it asks for
+    /// the leases on one connection of its own, and the last thing it ran there is a take of
+    /// board's lease). It stands by on, still running, and takes over once the leader is killed.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_dropped_standby_session_keeps_it_standing_by() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = environment(directory.path());
+        let schema = schema();
+        let (mut leader, mut standby) = leader_and_standby(&environment, &schema);
+        // The standby polls every 667 ms; wait for one poll at least.
+        std::thread::sleep(Duration::from_millis(800));
+        let holder = sql_value(&format!(
+            "SELECT pid FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND query LIKE \
+             'INSERT INTO {schema}.spindle_board_p_lease%' LIMIT 1"
+        ))
+        .expect("the standby's lease connection last ran a take");
+        sql(&[format!("SELECT pg_terminate_backend({holder})")]);
+        std::thread::sleep(Duration::from_millis(1500));
+        assert!(
+            standby.running(),
+            "the standby exited once its lease connection was dropped: {}",
+            standby.printed()
+        );
+        let (status, body) = standby.ready();
+        assert_eq!(status, 503, "{body}");
+        assert_eq!(body["standby"], true, "{body}");
+        leader.child.kill().expect("SIGKILL is sent");
+        let _ = leader.child.wait();
+        standby.ready_by(Instant::now() + Duration::from_secs(5));
+    }
+
+    /// The `until` of board's lease row in `schema`, as text.
+    fn until(schema: &str) -> Option<String> {
+        sql_value(&format!(
+            "SELECT body->>'until' FROM {schema}.spindle_board_p_lease"
+        ))
+    }
+
+    /// Round 3, change 2: on the shortest lease (1 s) a healthy leader renews every fifth of it,
+    /// about 10 renewals of board's lease in 2 s, not a storm: the row's `until` moves between 5
+    /// and 15 times.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn renewals_on_the_shortest_lease_come_every_fifth_of_it() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = environment(directory.path());
+        let schema = schema();
+        let leader = Replica::start(run(&environment, &schema, "1"));
+        leader.ready_by(Instant::now() + ANSWER);
+        let mut seen = Vec::new();
+        let end = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < end {
+            let value = until(&schema);
+            if seen.last() != Some(&value) {
+                seen.push(value);
+            }
+            std::thread::sleep(Duration::from_millis(15));
+        }
+        let moves = seen.len().saturating_sub(1);
+        eprintln!("board's lease moved {moves} times in 2 s");
+        assert!((5..=15).contains(&moves), "{moves} renewals in 2 s");
+    }
+
+    /// The time from `answered` until `webhook` accepted more than `before` bodies, at most 10 s.
+    fn posted_after(webhook: &Webhook, before: usize, answered: Instant) -> Duration {
+        let deadline = answered + Duration::from_secs(10);
+        while webhook.accepted().len() <= before {
+            assert!(Instant::now() < deadline, "not posted within 10 s");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        answered.elapsed()
+    }
+
+    /// Round 3, changes 2 and 3: on the shortest lease the lease row is locked for 0.7 s, under
+    /// the four fifths of the lease a renewal is queued for. The leader keeps leading, a command
+    /// sent meanwhile is answered `201` once the lock ends, its event is posted within 5 s of
+    /// that answer (the egress resumes once the renewal lands), and the standby stands by.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_shortest_lease_held_up_by_a_row_lock_keeps_leading_and_posting() {
+        let webhook = Webhook::start(200);
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment =
+            crate::egress::environment(directory.path(), "postgres", &webhook.url(), &[OPENED]);
+        let schema = schema();
+        let mut leader = Replica::start(run(&environment, &schema, "1"));
+        leader.ready_by(Instant::now() + ANSWER);
+        let standby = Replica::start(run(&environment, &schema, "1"));
+        let (status, answer) = leader.open("t1");
+        assert_eq!(status, 201, "{answer}");
+        accepted(&webhook, 1);
+        let table = format!("{schema}.spindle_board_p_lease");
+        let locker = std::thread::spawn(move || {
+            sql(&[
+                "BEGIN".to_owned(),
+                format!("SELECT body FROM {table} FOR UPDATE"),
+                "SELECT pg_sleep(0.7)".to_owned(),
+                "COMMIT".to_owned(),
+            ]);
+        });
+        std::thread::sleep(Duration::from_millis(100));
+        let (status, answer) = leader.open("t2");
+        let answered = Instant::now();
+        assert_eq!(status, 201, "{answer}\n{}", leader.printed());
+        let latency = posted_after(&webhook, 1, answered);
+        locker.join().expect("the lock ends");
+        eprintln!("t2 posted {latency:?} after its answer");
+        assert!(latency < Duration::from_secs(5), "{latency:?}");
+        std::thread::sleep(Duration::from_millis(500));
+        assert!(leader.running(), "{}", leader.printed());
+        assert!(!standby.has_line(TOOK), "{}", standby.printed());
+    }
+
+    /// Round 3, change 3: the egress of a healthy leader is not held back by the check that its
+    /// lease is known held. With a lease of 1 s and of 10 s, each of five tasks opened 300 ms
+    /// apart is posted with no read of the store refused (`cannot read the store`), within 5 s of
+    /// its answer (a feed read waits for older transactions of other tests of the lane).
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_healthy_leader_posts_promptly_on_a_short_and_a_long_lease() {
+        for lease in ["1", "10"] {
+            let webhook = Webhook::start(200);
+            let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+            let environment =
+                crate::egress::environment(directory.path(), "postgres", &webhook.url(), &[OPENED]);
+            let schema = schema();
+            let leader = Replica::start(run(&environment, &schema, lease));
+            leader.ready_by(Instant::now() + ANSWER);
+            let mut slowest = Duration::ZERO;
+            for index in 0..5 {
+                let before = webhook.accepted().len();
+                let (status, answer) = leader.open(&format!("t{index}"));
+                let answered = Instant::now();
+                assert_eq!(status, 201, "{answer}");
+                slowest = slowest.max(posted_after(&webhook, before, answered));
+                std::thread::sleep(Duration::from_millis(300));
+            }
+            eprintln!("lease {lease} s: the slowest post {slowest:?} after its answer");
+            assert!(
+                !leader.has_line("cannot read the store"),
+                "lease {lease} s: the egress of a healthy leader was held back: {}",
+                leader.printed()
+            );
+            assert!(
+                slowest < Duration::from_secs(5),
+                "lease {lease} s: {slowest:?}"
+            );
+        }
+    }
+
     /// Waits until `webhook` accepted `count` bodies, at most 30 s.
     fn accepted(webhook: &Webhook, count: usize) {
         let deadline = Instant::now() + Duration::from_secs(30);
