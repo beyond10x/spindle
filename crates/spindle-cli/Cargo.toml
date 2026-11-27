@@ -24,6 +24,7 @@ ess-primitives.workspace = true
 http-body-util = "0.1"
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
+jsonwebtoken = { version = "9.3.1", default-features = false }
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
 rustls-native-certs = "0.8"
 serde.workspace = true

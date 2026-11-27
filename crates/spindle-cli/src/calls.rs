@@ -235,7 +235,7 @@ impl Call {
                 bail!("[http.{name}] url's host is not a name a certificate can carry");
             };
             let verifying = match &declared.ca_file {
-                Some(path) => client(file_roots(name, path)?)?,
+                Some(path) => client(file_roots(&format!("[http.{name}]"), path)?)?,
                 None => match platform {
                     Some(shared) => Arc::clone(shared),
                     None => {
@@ -382,8 +382,9 @@ impl Call {
     }
 }
 
-/// A TLS client on `ring` verifying its server against `roots` only.
-fn client(roots: RootCertStore) -> Result<Arc<rustls::ClientConfig>> {
+/// A TLS client on `ring` verifying its server against `roots` only: an HTTP call's, and the
+/// key set fetch of `--caller-token` (`crate::token`).
+pub(crate) fn client(roots: RootCertStore) -> Result<Arc<rustls::ClientConfig>> {
     let config = rustls::ClientConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
@@ -394,10 +395,11 @@ fn client(roots: RootCertStore) -> Result<Arc<rustls::ClientConfig>> {
     Ok(Arc::new(config))
 }
 
-/// Every certificate of the PEM file `path`, the `ca_file` of the call `name`.
-fn file_roots(name: &str, path: &str) -> Result<RootCertStore> {
+/// Every certificate of the PEM file `path`, the `ca_file` of what `label` names (`[http.<name>]`,
+/// or `--caller-token <FILE>`).
+pub(crate) fn file_roots(label: &str, path: &str) -> Result<RootCertStore> {
     let unreadable = |error: &dyn std::fmt::Display| {
-        anyhow::anyhow!("[http.{name}] ca_file {path} is not a PEM certificate file: {error}")
+        anyhow::anyhow!("{label} ca_file {path} is not a PEM certificate file: {error}")
     };
     let mut roots = RootCertStore::empty();
     for certificate in CertificateDer::pem_file_iter(path).map_err(|error| unreadable(&error))? {
@@ -405,14 +407,14 @@ fn file_roots(name: &str, path: &str) -> Result<RootCertStore> {
         roots.add(certificate).map_err(|error| unreadable(&error))?;
     }
     if roots.is_empty() {
-        bail!("[http.{name}] ca_file {path} holds no certificate");
+        bail!("{label} ca_file {path} holds no certificate");
     }
     Ok(roots)
 }
 
 /// The platform's trust roots, each one rustls can read; one the platform holds but cannot be
 /// read is left out, so a server it issued for is not verified.
-fn platform_roots() -> RootCertStore {
+pub(crate) fn platform_roots() -> RootCertStore {
     let mut roots = RootCertStore::empty();
     roots.add_parsable_certificates(rustls_native_certs::load_native_certs().certs);
     roots

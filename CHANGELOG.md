@@ -15,6 +15,17 @@ are Spindle's releases.
   that does not match the certificate exits 2 before listening, naming the flag and the file. The
   listening line is unchanged, and a renewed certificate is read by a restart
   (`story:listener-tls`).
+- A served `run` given `--caller-token <FILE>` verifies each request's caller itself from its
+  signed token, `Authorization: Bearer <JWT>`: the signature against the issuer's key set (JWKS,
+  `https://`, or `http://` on loopback), the issuer, the audience and the expiry, its claims
+  mapped by the TOML file to an actor and its attributes. A request without a valid token answers
+  `401` before anything of it is read and is neither recorded nor counted; one whose claims map to
+  no caller of the model answers `403` "not granted" and writes nothing. The key set is fetched
+  before listening (exit 1 when it cannot be) and again every `refresh_seconds`, so a rotated key
+  verifies without a restart. Only `/__spindle/live`, `ready` and `seed` answer without a token,
+  and the console routes are off (`--console on` exits 2). Given with `--trusted-caller-header` or
+  `--fixed-actor` the run exits 1; off loopback it requires `--tls-cert` and `--tls-key`, and
+  exits 2 without them (`story:verified-caller-token`).
 - `run --stdin` reads JSON lines on stdin where a component is `reached_by: network`, instead of
   serving HTTP: every component runs in the one process on one store and the event bindings fire
   as on any other stdin run. Given with a flag only a served run reads (`--http`, `--port`,

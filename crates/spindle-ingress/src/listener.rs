@@ -33,7 +33,7 @@ use crate::console::{Console, Worlds};
 use crate::health::{LIVENESS, Probed, SeedState};
 use crate::observe::{Answered, By, Note, Reserved, Target};
 use crate::router::{Asked, BODY_LIMIT, Pending, Response as Reply};
-use crate::surface::{Caller, Route, Surface};
+use crate::surface::{Caller, Route, Surface, Unverified};
 
 /// How long a connection may take to send a request's head; a slower one is closed.
 pub const HEADER_READ: Duration = Duration::from_secs(10);
@@ -363,17 +363,28 @@ impl Listener {
     /// As [`Listener::bind_reading`], bound to `ip`, IPv4 or IPv6, instead of 127.0.0.1. Off
     /// loopback ([`exposed`]) the surface must be made [`Surface::proving_callers`], and is served
     /// [`Surface::requiring_secret`]: every request without the proxy's secret is refused `403`
-    /// before anything else of it is read. On loopback each request is checked as on 127.0.0.1.
+    /// before anything else of it is read. A surface made [`Surface::verifying_tokens`] is served
+    /// off loopback only over TLS ([`Listener::bind_reading_on_tls`]). On loopback each request is
+    /// checked as on 127.0.0.1.
     ///
     /// # Errors
     /// [`io::ErrorKind::InvalidInput`], before anything is bound, for a surface without the
-    /// proxy's secret off loopback; otherwise as [`Listener::bind`].
+    /// proxy's secret off loopback, or one verifying tokens; otherwise as [`Listener::bind`].
     pub fn bind_reading_on(
         ip: IpAddr,
         port: u16,
         surface: Surface,
         reader: Reader,
     ) -> io::Result<Self> {
+        if exposed(ip) && surface.verifies_tokens() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "{ip} is not loopback, and a surface verifying bearer tokens is served there \
+                     only over TLS, so no token crosses the network in the clear"
+                ),
+            ));
+        }
         let surface = if exposed(ip) {
             surface.requiring_secret()
         } else {
@@ -388,10 +399,12 @@ impl Listener {
     /// task, bounded by [`HEADER_READ`] and given up once the listener closes, so a client that
     /// stalls it holds neither the accept loop nor the drain; one that fails it, a plain HTTP
     /// request included, is closed with no HTTP read or written. Every route is behind it, the
-    /// run's own under `/__spindle/` included.
+    /// run's own under `/__spindle/` included. Off loopback a surface made
+    /// [`Surface::verifying_tokens`] is served as it is: its token takes the place of the proxy's
+    /// secret, every request without a valid one refused `401` before anything else is read.
     ///
     /// # Errors
-    /// As [`Listener::bind_reading_on`].
+    /// As [`Listener::bind_reading_on`], but for a surface verifying tokens off loopback.
     pub fn bind_reading_on_tls(
         ip: IpAddr,
         port: u16,
@@ -399,7 +412,7 @@ impl Listener {
         reader: Reader,
         tls: Arc<rustls::ServerConfig>,
     ) -> io::Result<Self> {
-        let surface = if exposed(ip) {
+        let surface = if exposed(ip) && !surface.verifies_tokens() {
             surface.requiring_secret()
         } else {
             surface
@@ -659,6 +672,19 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
     {
         return (refusal.into(), unrouted(By::Ingress));
     }
+    // On a surface verifying bearer tokens, nothing of a request is read until its token
+    // verifies, but at the probes: not its route, its method, its body or its claims. A refusal
+    // is neither recorded nor counted, as the proxy's secret refusal is not
+    // (`story:verified-caller-token`, D7).
+    let verified = match served.surface.caller_token() {
+        Some(tokens) if !crate::surface::probe(reserved) => {
+            match bearer(request.headers()).map(|token| tokens.verifier().caller(token)) {
+                Some(Ok(caller)) => Some(caller),
+                Some(Err(Unverified)) | None => return (Answer::unauthenticated().into(), None),
+            }
+        }
+        _ => None,
+    };
     // On a surface whose requests prove their caller, the run's own routes are operator tooling
     // behind the proxy: they answer the proxy's secret alone.
     let unproxied = served
@@ -766,6 +792,7 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         served.surface.caller_header(),
         served.surface.caller_secret(),
     ) {
+        (Asked::Route(_), _, _) if verified.is_some() => verified.flatten(),
         (Asked::Route(_), Some(header), Some(secret)) => {
             proven(request.headers(), header, secret.expose())
         }
@@ -833,6 +860,15 @@ fn presents(headers: &HeaderMap, secret: &str) -> bool {
     once(headers, Surface::SECRET_HEADER)
         .and_then(|presented| presented.to_str().ok())
         .is_some_and(|presented| same(presented, secret))
+}
+
+/// The bearer token `headers` carry once in `Authorization` (`Bearer <token>`, the scheme in any
+/// case); `None` where the header is absent, given more than once, of another scheme, or empty.
+fn bearer(headers: &HeaderMap) -> Option<&str> {
+    let value = once(headers, AUTHORIZATION.as_str())?.to_str().ok()?;
+    let (scheme, token) = value.split_once(' ')?;
+    let token = token.trim_start_matches(' ');
+    (scheme.eq_ignore_ascii_case("bearer") && !token.is_empty()).then_some(token)
 }
 
 /// The one value of the header `name` in `headers`; `None` where it is absent or given more than

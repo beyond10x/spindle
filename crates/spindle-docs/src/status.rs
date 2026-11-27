@@ -456,8 +456,15 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "Caller proven by a verified token",
+        "run --caller-token names a TOML mapping, and the run verifies each request's bearer token itself: its signature against the issuer's key set (JWKS), fetched before listening and refreshed on a period so a rotated key verifies without a restart, its issuer, audience and expiry; the claims are mapped to an actor and its attributes. A request without a valid token answers 401 before anything is read and is neither recorded nor counted, and one whose claims map to no caller of the model answers 403 not granted. Only the live, ready and seed probes answer without a token, the console routes are off, and off loopback the run is served only over TLS.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-cli/tests/spindle-cli/caller_token.rs::a_request_with_a_valid_token_runs_as_its_mapped_caller",
+    ),
+    shipped(
+        "Execution",
         "HTTPS listener and client certificates",
-        "run --tls-cert with --tls-key serves HTTPS on the listener, TLS 1.2 and 1.3, and a plain HTTP request gets no HTTP answer; --tls-client-ca requires every client, the proxy in front, to present a certificate that CA signed (mTLS), on every route, /__spindle/live and /__spindle/ready included. A file that cannot be read, holds no certificate or key, or a key that does not match the certificate exits 2 before listening, naming the flag and the file. Off loopback the trusted caller header and secret are still required; a renewed certificate is read by a restart.",
+        "run --tls-cert with --tls-key serves HTTPS on the listener, TLS 1.2 and 1.3, and a plain HTTP request gets no HTTP answer; --tls-client-ca requires every client, the proxy in front, to present a certificate that CA signed (mTLS), on every route, /__spindle/live and /__spindle/ready included. A file that cannot be read, holds no certificate or key, or a key that does not match the certificate exits 2 before listening, naming the flag and the file. Off loopback the trusted caller header and secret, or a verified caller token, are still required; a renewed certificate is read by a restart.",
         "/docs/concepts/capabilities",
         "crates/spindle-cli/tests/spindle-cli/listener_tls.rs::a_served_run_given_a_certificate_answers_https",
     ),
