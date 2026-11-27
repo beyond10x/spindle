@@ -1610,32 +1610,24 @@ fn generated_files(commands: usize) -> Vec<(String, String)> {
     files
 }
 
-/// The generated specification of `commands` commands ([`generated_files`]), written once per
-/// test run: under the target directory, in a directory named by the FNV-1a digest of its
-/// files, so a test that finds it there reads it and a change of the generator writes a new one.
-fn generated(commands: usize) -> PathBuf {
-    let files = generated_files(commands);
-    let mut digest: u64 = 0xcbf2_9ce4_8422_2325;
-    for (path, text) in &files {
-        for byte in path.bytes().chain([0]).chain(text.bytes()).chain([0]) {
-            digest ^= u64::from(byte);
-            digest = digest.wrapping_mul(0x0100_0000_01b3);
-        }
-    }
-    let parent = Path::new(env!("CARGO_TARGET_TMPDIR")).join("observe-series");
-    let directory = parent.join(format!("gen-{commands}-{digest:016x}"));
-    if directory.join("system.yaml").is_file() {
-        return directory;
-    }
-    std::fs::create_dir_all(&parent).expect("the generated specifications' directory");
-    let written = tempfile::tempdir_in(&parent).expect("a directory to write it in");
+/// The generated specification of `commands` commands ([`generated_in`]), under the target
+/// directory.
+fn generated(commands: usize) -> tempfile::TempDir {
+    generated_in(Path::new(env!("CARGO_TARGET_TMPDIR")), commands)
+}
+
+/// The generated specification of `commands` commands ([`generated_files`]), written for this
+/// caller alone into a new directory under `parent`, which is removed when the answer is dropped.
+/// No directory is shared between callers or runs: CI keeps `target/` between runs with every file
+/// under `target/tmp` removed and its directories kept ([`strip_files`]), so a directory found by
+/// its name there may hold none of the files a run before wrote into it.
+fn generated_in(parent: &Path, commands: usize) -> tempfile::TempDir {
+    let written = tempfile::tempdir_in(parent).expect("a directory to write it in");
     std::fs::create_dir_all(written.path().join("domains")).expect("the domains' directory");
-    for (path, text) in &files {
+    for (path, text) in &generated_files(commands) {
         std::fs::write(written.path().join(path), text).expect("a file of the specification");
     }
-    // Another test may have written it meanwhile: its copy holds the same files.
-    let _ = std::fs::rename(written.keep(), &directory);
-    directory
+    written
 }
 
 /// The method and path of every route the served surface of the generated specification at
@@ -1665,14 +1657,14 @@ fn sample_lines(exposition: &str) -> Vec<&str> {
 fn an_aggregated_scrape_does_not_grow_with_the_specification() {
     let mut written = BTreeMap::new();
     for commands in [30, 300] {
-        let spec = generated(commands);
-        let routes = command_routes(&spec);
+        let specification = generated(commands);
+        let routes = command_routes(specification.path());
         assert_eq!(
             routes.len(),
             commands,
             "every command is routed: {routes:?}"
         );
-        let spec = spec.to_str().expect("a path in UTF-8");
+        let spec = specification.path().to_str().expect("a path in UTF-8");
         for mode in ["per-command", "aggregated"] {
             let served = serve(spec, &["--observe", "--observe-series", mode]);
             for (opened, (method, path)) in routes.iter().enumerate() {
@@ -1714,6 +1706,74 @@ fn an_aggregated_scrape_does_not_grow_with_the_specification() {
         written[&(30, "per-command")] < written[&(300, "per-command")],
         "{written:?}"
     );
+}
+
+/// Removes every file under `directory` and keeps every directory, as CI's cache of `target/`
+/// (`Swatinem/rust-cache`, `cleanTargetDir`) leaves a directory under `target/tmp` for the next
+/// run: a generated specification a run wrote is found by the next run as its directories alone.
+fn strip_files(directory: &Path) {
+    for entry in std::fs::read_dir(directory).expect("a directory to strip") {
+        let path = entry.expect("an entry").path();
+        if path.is_dir() {
+            strip_files(&path);
+        } else {
+            std::fs::remove_file(&path).expect("a file is removed");
+        }
+    }
+}
+
+/// The text of every file of the specification at `spec`, by its path under `spec`, as
+/// [`generated_files`] names them.
+fn spec_files(spec: &Path, prefix: &str, files: &mut Vec<(String, String)>) {
+    for entry in std::fs::read_dir(spec.join(prefix)).expect("a directory of the specification") {
+        let entry = entry.expect("an entry");
+        let name = format!("{prefix}{}", entry.file_name().to_string_lossy());
+        if entry.path().is_dir() {
+            spec_files(spec, &format!("{name}/"), files);
+        } else {
+            let text = std::fs::read_to_string(entry.path()).expect("a file of the specification");
+            files.push((name, text));
+        }
+    }
+}
+
+/// CI keeps `target/` between runs with its files stripped ([`strip_files`]), and callers ask
+/// for a generated specification at once: each gets every file of it, and it compiles.
+#[test]
+fn a_generated_specification_is_complete_after_its_files_were_stripped() {
+    let parent = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let _written = generated_in(parent.path(), 30);
+    strip_files(parent.path());
+    let asked = std::thread::scope(|scope| {
+        let asking = (0..8)
+            .map(|_| scope.spawn(|| generated_in(parent.path(), 30)))
+            .collect::<Vec<_>>();
+        asking
+            .into_iter()
+            .map(|each| each.join().expect("the helper answers"))
+            .collect::<Vec<_>>()
+    });
+    let mut expected = generated_files(30);
+    expected.sort();
+    let names = |files: &[(String, String)]| {
+        files
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>()
+    };
+    for spec in &asked {
+        let spec = spec.path();
+        let mut files = Vec::new();
+        spec_files(spec, "", &mut files);
+        files.sort();
+        assert_eq!(names(&files), names(&expected), "{}", spec.display());
+        assert!(
+            files == expected,
+            "{}: a file's text differs",
+            spec.display()
+        );
+        spindle_spec::load(spec).expect("the generated specification compiles");
+    }
 }
 
 #[test]
