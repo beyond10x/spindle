@@ -44,15 +44,21 @@ enum Reply {
     Closed,
     /// Answers `307` to this path on the stub.
     Redirect(&'static str),
+    /// Answers `100 Continue`, then the status with no body.
+    Continue(u16),
+    /// Answers `200` with a chunked body, a chunk every 100 ms for this long, never its end.
+    Endless(Duration),
 }
 
 impl Reply {
     /// The status the stub answers, `None` for none.
     fn status(&self) -> Option<u16> {
         match self {
-            Self::Status(status) | Self::WithBody(status, _) | Self::After(_, status) => {
-                Some(*status)
-            }
+            Self::Status(status)
+            | Self::WithBody(status, _)
+            | Self::After(_, status)
+            | Self::Continue(status) => Some(*status),
+            Self::Endless(_) => Some(200),
             Self::Redirect(_) => Some(307),
             Self::Silent(_) | Self::Closed => None,
         }
@@ -222,6 +228,22 @@ fn serve(stream: TcpStream, got: &Mutex<Vec<Got>>, decide: &Mutex<Arc<Decide>>) 
                 )
                 .as_bytes(),
             )
+        }
+        Reply::Continue(status) => {
+            stream.write_all(format!("HTTP/1.1 100 Continue\r\n\r\n{}", head(status, 0)).as_bytes())
+        }
+        Reply::Endless(lasting) => {
+            let until = Instant::now() + lasting;
+            let mut written = stream.write_all(
+                b"HTTP/1.1 200 Answer\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+            );
+            while written.is_ok() && Instant::now() < until {
+                written = stream
+                    .write_all(b"4\r\nmore\r\n")
+                    .and_then(|()| stream.flush());
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            written
         }
     };
     let _ = stream.flush();
@@ -812,4 +834,401 @@ fn a_closed_connection_and_a_timeout_are_posted_again_until_a_2xx() {
         "each attempt carries one body: {got:#?}"
     );
     assert_eq!(named(&stub.accepted()), [pair(OPENED, "t1")]);
+}
+
+// Round 2: the corrections of 76392d94 (a post decided on the status alone, each event at its own
+// store position, the stop checked before each post).
+
+/// `run` on the notes fixture, where each `OpenNote` publishes two events in one write.
+fn notes(environment: &Path, state: &Path) -> Served {
+    listening(run(NOTES, NOTES_HTTP, environment, state, &[]))
+}
+
+fn note(served: &Served, id: &str) {
+    let (status, answer) = exchange(
+        served.address,
+        "PUT",
+        &format!("/notes/{id}"),
+        Some(&json!({"title": format!("note {id}")})),
+    );
+    assert_eq!(status, 201, "{answer}");
+}
+
+/// Sends SIGTERM and answers how long the run took to exit, and its exit code.
+fn terminated(mut served: Served) -> (Duration, Option<i32>) {
+    let signalled = Instant::now();
+    rustix::process::kill_process(
+        rustix::process::Pid::from_child(&served.child),
+        rustix::process::Signal::TERM,
+    )
+    .expect("SIGTERM is sent");
+    loop {
+        if let Some(status) = served.child.try_wait().expect("the run is waited on") {
+            return (signalled.elapsed(), status.code());
+        }
+        assert!(
+            signalled.elapsed() < Duration::from_secs(30),
+            "run did not exit within 30 s of SIGTERM"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// F1: a `200` whose chunked body never ends is decided on its status: posted once, and the
+/// lane goes on with the next event.
+#[test]
+fn a_200_whose_chunked_body_never_ends_is_posted_once() {
+    let stub = Stub::start(|_, _| Reply::Endless(Duration::from_secs(4)));
+    let directory = scratch();
+    let environment = environment(directory.path(), &stub.url(), &[OPENED], "POST", 1000);
+    let served = tasks(&environment, &directory.path().join("state"));
+    open(&served, "t1");
+    open(&served, "t2");
+    stub.wait_accepted(2, Duration::from_secs(10));
+    std::thread::sleep(Duration::from_millis(1500));
+    let got = stub.got();
+    assert_eq!(
+        got.iter()
+            .map(|got| named(std::slice::from_ref(&got.body))[0].clone())
+            .collect::<Vec<_>>(),
+        [pair(OPENED, "t1"), pair(OPENED, "t2")],
+        "each event posted once: {got:#?}"
+    );
+}
+
+/// F1: a `100 Continue` before the status is no status of the post: the `200` after it is.
+#[test]
+fn a_100_continue_before_the_status_is_read_past() {
+    let stub = Stub::start(|_, _| Reply::Continue(200));
+    let directory = scratch();
+    let environment = environment(directory.path(), &stub.url(), &[OPENED], "POST", 2000);
+    let served = tasks(&environment, &directory.path().join("state"));
+    open(&served, "t1");
+    stub.wait_accepted(1, Duration::from_secs(10));
+    std::thread::sleep(Duration::from_millis(1000));
+    assert_eq!(stub.got().len(), 1, "{:#?}", stub.got());
+}
+
+/// F1: a webhook that answers `200` once it read the head, before it reads the body, has the
+/// event: it is posted once.
+#[test]
+fn a_webhook_answering_before_it_reads_the_body_is_posted_once() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("the stub binds");
+    let address = listener.local_addr().expect("an address");
+    let bodies = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let recorded = Arc::clone(&bodies);
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else { return };
+            let recorded = Arc::clone(&recorded);
+            std::thread::spawn(move || {
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+                let mut reader = BufReader::new(stream);
+                let mut length = 0;
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).is_err() {
+                        return;
+                    }
+                    let header = header.trim_end();
+                    if header.is_empty() {
+                        break;
+                    }
+                    if let Some((name, value)) = header.split_once(':')
+                        && name.trim().eq_ignore_ascii_case("content-length")
+                    {
+                        length = value.trim().parse().unwrap_or(0);
+                    }
+                }
+                let _ = reader.get_mut().write_all(
+                    b"HTTP/1.1 200 Answer\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+                let mut body = vec![0; length];
+                let _ = reader.read_exact(&mut body);
+                recorded
+                    .lock()
+                    .expect("the record")
+                    .push(serde_json::from_slice(&body).unwrap_or(Value::Null));
+            });
+        }
+    });
+    let directory = scratch();
+    let environment = environment(
+        directory.path(),
+        &format!("http://{address}/events"),
+        &[OPENED],
+        "POST",
+        2000,
+    );
+    let served = tasks(&environment, &directory.path().join("state"));
+    open(&served, "t1");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while bodies.lock().expect("the record").is_empty() {
+        assert!(Instant::now() < deadline, "the webhook got nothing");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    std::thread::sleep(Duration::from_millis(1500));
+    let bodies = bodies.lock().expect("the record").clone();
+    assert_eq!(named(&bodies), [pair(OPENED, "t1")], "{bodies:#?}");
+}
+
+/// F2: each event at its own position, rising strictly across writes and across a restart on the
+/// same state; the first run's are not posted again.
+#[test]
+fn positions_rise_strictly_across_writes_and_a_restart() {
+    let stub = Stub::start(|_, _| Reply::Status(200));
+    let directory = scratch();
+    let state = directory.path().join("state");
+    let environment = environment(
+        directory.path(),
+        &stub.url(),
+        &[NOTE_OPENED, NOTE_COUNTED],
+        "POST",
+        2000,
+    );
+    let served = notes(&environment, &state);
+    note(&served, "n1");
+    note(&served, "n2");
+    stub.wait_accepted(4, Duration::from_secs(10));
+    assert_eq!(terminated(served).1, Some(143));
+
+    let again = notes(&environment, &state);
+    note(&again, "n3");
+    let accepted = stub.wait_accepted(6, Duration::from_secs(10));
+    std::thread::sleep(Duration::from_millis(500));
+    let accepted_now = stub.accepted();
+    assert_eq!(accepted_now.len(), 6, "{:?}", named(&accepted_now));
+    let positions = positions(&accepted);
+    assert!(
+        positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "{positions:?} for {:?}",
+        named(&accepted)
+    );
+}
+
+/// F2: the cursor is the whole write's position. A SIGKILL after the first event of a write was
+/// accepted and while its second is under way posts both again after the restart, in order and at
+/// the positions they had.
+#[test]
+fn a_kill_between_the_two_events_of_one_write_posts_both_again_in_order() {
+    let stub = Stub::start(|index, _| {
+        if index == 1 {
+            Reply::Silent(Duration::from_secs(3))
+        } else {
+            Reply::Status(200)
+        }
+    });
+    let directory = scratch();
+    let state = directory.path().join("state");
+    let environment = environment(
+        directory.path(),
+        &stub.url(),
+        &[NOTE_OPENED, NOTE_COUNTED],
+        "POST",
+        10_000,
+    );
+    let served = notes(&environment, &state);
+    note(&served, "n1");
+    stub.wait(
+        "the second event under way",
+        Duration::from_secs(10),
+        |got| got.len() >= 2,
+    );
+    served.kill();
+    let before = stub.got();
+
+    let _again = notes(&environment, &state);
+    let accepted = stub.wait_accepted(3, Duration::from_secs(10));
+    assert_eq!(
+        named(&accepted),
+        [
+            pair(NOTE_OPENED, "n1"),
+            pair(NOTE_OPENED, "n1"),
+            pair(NOTE_COUNTED, "n1"),
+        ]
+    );
+    assert_eq!(
+        positions(&accepted),
+        [
+            before[0].body["position"].as_u64().expect("a position"),
+            before[0].body["position"].as_u64().expect("a position"),
+            before[1].body["position"].as_u64().expect("a position"),
+        ],
+        "each event keeps its position"
+    );
+}
+
+/// F2: `position` is what tells two posts of one component apart. A reset on SQLite starts a new
+/// file, so the first event after it is posted at the position an earlier, different event was:
+/// a consumer that drops a post it already has by component and position drops it.
+#[test]
+fn an_event_after_a_reset_is_not_posted_at_an_earlier_event_s_position() {
+    let stub = Stub::start(|_, _| Reply::Status(200));
+    let directory = scratch();
+    let environment = environment(directory.path(), &stub.url(), &[OPENED], "POST", 2000);
+    let served = tasks(&environment, &directory.path().join("state"));
+    open(&served, "t1");
+    stub.wait_accepted(1, Duration::from_secs(10));
+    let (status, answer) = exchange(served.address, "POST", "/api/reset", None);
+    assert_eq!(status, 200, "{answer}");
+    open(&served, "t2");
+    let accepted = stub.wait_accepted(2, Duration::from_secs(10));
+    assert_eq!(named(&accepted), [pair(OPENED, "t1"), pair(OPENED, "t2")]);
+    let positions = positions(&accepted);
+    assert_ne!(
+        (&accepted[0]["component"], positions[0]),
+        (&accepted[1]["component"], positions[1]),
+        "t1 and t2 are posted as one component and position: {accepted:#?}"
+    );
+}
+
+/// F3, the default drain: a SIGTERM with nothing waiting stops the egress after the post under
+/// way, a backlog against a slow webhook left for the next start.
+#[test]
+fn a_run_with_its_default_drain_stops_its_egress_after_the_post_under_way() {
+    let stub = Stub::start(|_, _| Reply::Status(503));
+    let directory = scratch();
+    let environment = environment(directory.path(), &stub.url(), &[OPENED], "POST", 5000);
+    let served = tasks(&environment, &directory.path().join("state"));
+    for index in 0..15 {
+        open(&served, &format!("t{index}"));
+    }
+    stub.wait("a refused post", Duration::from_secs(10), |got| {
+        !got.is_empty()
+    });
+    stub.answer(|_, _| Reply::After(Duration::from_millis(700), 200));
+    stub.wait("a post answered 200", Duration::from_secs(10), |got| {
+        got.iter().any(is_2xx)
+    });
+    let (took, code) = terminated(served);
+    assert_eq!(code, Some(143));
+    assert!(
+        took < Duration::from_secs(4),
+        "exited {took:?} after SIGTERM"
+    );
+}
+
+/// F3: a reset during an outage stops the lane in its backoff at once, answers, and the egress
+/// goes on with the events after it.
+#[test]
+fn a_reset_during_an_outage_answers_at_once_and_posts_what_follows() {
+    let stub = Stub::start(|_, _| Reply::Status(503));
+    let directory = scratch();
+    let environment = environment(directory.path(), &stub.url(), &[OPENED], "POST", 2000);
+    let served = tasks(&environment, &directory.path().join("state"));
+    open(&served, "t1");
+    stub.wait("three refused posts", Duration::from_secs(10), |got| {
+        got.len() >= 3
+    });
+    let asked = Instant::now();
+    let (status, answer) = exchange(served.address, "POST", "/api/reset", None);
+    let took = asked.elapsed();
+    assert_eq!(status, 200, "{answer}");
+    assert!(took < Duration::from_secs(2), "the reset took {took:?}");
+    stub.answer(|_, _| Reply::Status(200));
+    open(&served, "t2");
+    let got = stub.wait("t2 accepted", Duration::from_secs(10), |got| {
+        got.iter()
+            .any(|got| is_2xx(got) && got.body["fields"]["task_id"] == "t2")
+    });
+    let accepted: Vec<Value> = got.into_iter().filter(is_2xx).map(|got| got.body).collect();
+    assert_eq!(
+        named(&accepted).last(),
+        Some(&pair(OPENED, "t2")),
+        "{accepted:#?}"
+    );
+}
+
+/// The PostgreSQL lane (`task check:postgres`): the events of one write posted at positions that
+/// rise strictly, as on SQLite.
+mod postgres {
+    use std::time::Duration;
+
+    use super::{
+        NOTE_COUNTED, NOTE_OPENED, NOTES, NOTES_HTTP, Reply, Stub, environment, listening, named,
+        note, pair, positions, scratch,
+    };
+
+    fn owner_url() -> String {
+        std::env::var("SPINDLE_TEST_DATABASE_URL")
+            .expect("SPINDLE_TEST_DATABASE_URL names a loopback PostgreSQL (task check:postgres)")
+    }
+
+    /// A schema of its own, created as the test database's owner.
+    fn schema() -> String {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("a clock after 1970")
+            .as_nanos();
+        let schema = format!("spindle_adv_w31_u7_{nanos}");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        runtime.block_on(async {
+            let (client, connection) = tokio_postgres::connect(&owner_url(), tokio_postgres::NoTls)
+                .await
+                .expect("the test database accepts its owner");
+            let driver = tokio::spawn(connection);
+            client
+                .simple_query(&format!("CREATE SCHEMA {schema}"))
+                .await
+                .expect("the schema is created");
+            drop(client);
+            let _ = driver.await;
+        });
+        schema
+    }
+
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn the_events_of_one_write_rise_strictly_on_postgres() {
+        let stub = Stub::start(|_, _| Reply::Status(200));
+        let directory = scratch();
+        let sqlite = environment(
+            directory.path(),
+            &stub.url(),
+            &[NOTE_OPENED, NOTE_COUNTED],
+            "POST",
+            2000,
+        );
+        let text = std::fs::read_to_string(&sqlite).expect("the environment reads");
+        let kept = directory.path().join("postgres.toml");
+        std::fs::write(
+            &kept,
+            text.replace(
+                "\"store.durable\" = [\"sqlite\"]",
+                "\"store.durable\" = [\"postgres\"]",
+            ),
+        )
+        .expect("the environment is written");
+        let schema = schema();
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_b10x-spindle"));
+        command
+            .args(["run", NOTES, "--http", NOTES_HTTP, "--environment"])
+            .arg(&kept)
+            .env("SPINDLE_SETTING_DATABASE_URL", owner_url())
+            .env("SPINDLE_SETTING_DATABASE_SCHEMA", &schema)
+            .env_remove("SPINDLE_SETTING_DATABASE_CA")
+            .env_remove("SPINDLE_SETTING_DATABASE_POOL")
+            .env_remove("SPINDLE_SETTING_DATABASE_CONNECTIONS");
+        let served = listening(command);
+        note(&served, "n1");
+        note(&served, "n2");
+        let accepted = stub.wait_accepted(4, Duration::from_secs(20));
+        assert_eq!(
+            named(&accepted),
+            [
+                pair(NOTE_OPENED, "n1"),
+                pair(NOTE_COUNTED, "n1"),
+                pair(NOTE_OPENED, "n2"),
+                pair(NOTE_COUNTED, "n2"),
+            ]
+        );
+        let positions = positions(&accepted);
+        assert!(
+            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            "{positions:?}"
+        );
+    }
 }
