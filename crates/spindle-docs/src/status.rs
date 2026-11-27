@@ -456,6 +456,13 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "HTTPS listener and client certificates",
+        "run --tls-cert with --tls-key serves HTTPS on the listener, TLS 1.2 and 1.3, and a plain HTTP request gets no HTTP answer; --tls-client-ca requires every client, the proxy in front, to present a certificate that CA signed (mTLS), on every route, /__spindle/live and /__spindle/ready included. A file that cannot be read, holds no certificate or key, or a key that does not match the certificate exits 2 before listening, naming the flag and the file. Off loopback the trusted caller header and secret are still required; a renewed certificate is read by a restart.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-cli/tests/spindle-cli/listener_tls.rs::a_served_run_given_a_certificate_answers_https",
+    ),
+    shipped(
+        "Execution",
         "Seed at start",
         "run --seed, or the environment's [seed] file, names a JSON array of commands, each with its input, actor, caller and request id, that a served run submits on every start after its stores open: checked against the specification before listening, then one at a time in the file's order beside the listener. Each counts as applied, already there (an existing_instance: outcome, or a request id an earlier applied or already-there entry carried), refused (a declared refusing outcome) or rejected (the host or the kernel refused it before an outcome); each is logged and the rest still run, the counts are in one log line and in /__spindle/metrics, and a seed that ends with a rejected entry stops the run with exit 1. On a --state directory, seed.json records the seed file's digest and how many entries are done: a restart with the same file sends only the entries not yet done, and one with another file exits 1 before listening unless the state holds no row; a store kept elsewhere records nothing, and every start sends the whole seed. A reset drops the entries not yet sent; with no world it submits the seed again before it answers, and with a world it loads that world alone and records every entry done. GET /__spindle/seed answers whether the seed is running or ended with its counts, and GET /__spindle/ready answers 503 until it has ended and 200 from then on, with or without --observe, so a readiness probe needs no view row.",
         "/docs/concepts/environment-and-admission#a-seed-submitted-at-start",

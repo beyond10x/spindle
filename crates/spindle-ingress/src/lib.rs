@@ -38,7 +38,10 @@
 //! arrive on `Listener::next`, one at a time in arrival order. Every listener binds 127.0.0.1
 //! but one made by `Listener::bind_reading_on`, which binds the IP address it is given; off
 //! loopback (`exposed`) only a surface made [`Surface::proving_callers`], served
-//! [`Surface::requiring_secret`].
+//! [`Surface::requiring_secret`]. `Listener::bind_reading_on_tls` serves the same over TLS with
+//! the `rustls` server configuration it is given, a client certificate required where that
+//! configuration verifies clients (mTLS); every route is behind the handshake, the run's own
+//! under `/__spindle/` included.
 //!
 //! Beside those, a surface bound to `http-loopback` serves the routes a generic model console
 //! reads ([`Surface::with_console`], [`Console`]): `GET /api/model`, the IR as

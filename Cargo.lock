@@ -2255,6 +2255,8 @@ dependencies = [
  "hyper",
  "hyper-util",
  "jsonschema",
+ "rcgen",
+ "rustls",
  "serde_json",
  "spindle-capability",
  "spindle-host",
@@ -2263,6 +2265,7 @@ dependencies = [
  "spindle-telemetry",
  "tempfile",
  "tokio",
+ "tokio-rustls",
 ]
 
 [[package]]

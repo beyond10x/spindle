@@ -128,7 +128,10 @@ stores until its seed run ends, with that run's counts.
 All three are answered by the listener's own threads, never waiting for a command, a seed entry or
 an external call. On a run with `--trusted-caller-header` they require the proxy's secret, as every
 `/__spindle/` route does: a probe sends the `Spindle-Proxy-Secret` header, such as Kubernetes'
-`httpGet.httpHeaders`. The answers are declared by `spindle.observe.SeedState`,
+`httpGet.httpHeaders`. On a run serving TLS an `httpGet` probe sets `scheme: HTTPS`; with
+`--tls-client-ca` an `httpGet` probe cannot connect at all, since it presents no client
+certificate, and the probes are `tcpSocket` probes
+([serving TLS](capabilities.md#serving-ingressnetwork-over-http)). The answers are declared by `spindle.observe.SeedState`,
 `spindle.observe.Readiness` and `spindle.observe.Liveness` in `ess/domains/observe.yaml`.
 
 ### Draining on SIGTERM
