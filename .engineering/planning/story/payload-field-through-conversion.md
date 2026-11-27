@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:payload-field-through-conversion
 kind: story
-status: active
+status: implemented
 title: An outcome field filled through a declared conversion runs
 relations:
 - serves: vision:spindle
@@ -22,10 +22,11 @@ scope:
   path: crates/spindle-kernel/src/supported.rs
 - confidence: inferred
   path: crates/spindle-kernel/src/values.rs
-revision: 10
+revision: 11
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T08:24:13Z", actor: "human:operator", revision: 9, decided_on: {"recorded":{"review_outcome":5}}}
 - {from: "proposed", to: "active", at: "2026-11-27T08:24:13Z", actor: "human:operator", revision: 10, decided_on: {"recorded":{"review_outcome":5}}}
+- {from: "active", to: "implemented", at: "2026-11-27T13:10:03Z", actor: "human:operator", revision: 11, decided_on: {"recorded":{"test_result":1,"review_outcome":6}}}
 ---
 ## Outcome
 

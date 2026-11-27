@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-27T13:10:03Z",
+  "actor": "human:operator",
+  "artifact": "story:payload-field-through-conversion",
+  "kind": "story",
+  "revision": 10,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "https://github.com/beyond10x/spindle/actions/runs/45991253483 (PR 97 Gate, PostgreSQL, macOS green on d5d4377b; merged 8e1b9793c6a555969032fcce1b248ab8447b4b2f)"
+  }
+}

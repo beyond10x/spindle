@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-11-27
+
 ### Added
 
 - `run --stdin` reads JSON lines on stdin where a component is `reached_by: network`, instead of
