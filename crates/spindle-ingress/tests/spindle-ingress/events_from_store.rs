@@ -167,14 +167,26 @@ fn published() -> Vec<Value> {
     ]
 }
 
-/// The events an answer of `GET /api/events` lists.
+/// The events an answer of `GET /api/events` lists, each without its `at`: every record carries
+/// one, its command's time on the system clock or `null` for an event no command of this host
+/// attributed (`story:served-clock-steps`), which no expected record here can spell.
 fn listed(what: &str, answer: Answer) -> Vec<Value> {
     assert_eq!(answer.status, 200, "{what}: {:?}", answer.body);
     let body = answer.body.unwrap_or_else(|| panic!("{what}: a body"));
     body["events"]
         .as_array()
         .unwrap_or_else(|| panic!("{what}: {{\"events\": [...]}}, got {body}"))
-        .clone()
+        .iter()
+        .map(|record| {
+            let mut record = record.clone();
+            let at = record
+                .as_object_mut()
+                .and_then(|record| record.remove("at"))
+                .unwrap_or_else(|| panic!("{what}: every record carries at: {record}"));
+            assert!(at.is_string() || at.is_null(), "{what}: {at}");
+            record
+        })
+        .collect()
 }
 
 /// What `GET /api/events` answers on the host's thread and through its reader beside it, which

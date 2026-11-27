@@ -1,0 +1,128 @@
+domain: shelf.box
+summary: Boxes packed under an id the request sends, and tallies opened under an integer it sends.
+entities:
+  - name: shelf.box.Box
+    identity:
+      name: box_id
+      type: String
+    fields:
+      - name: label
+        type: String
+    lifecycle:
+      initial: Packed
+      states: [Packed]
+      terminal: [Packed]
+  - name: shelf.box.Tally
+    identity:
+      name: tally_id
+      type: Integer
+    fields:
+      - name: label
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+commands:
+  - name: shelf.box.PackBox
+    input:
+      - name: box_id
+        type: String
+      - name: label
+        type: String
+      - name: rush
+        type: Boolean
+    outcomes:
+      - name: rushed
+        when: rush == true
+        creates: shelf.box.Box
+        instance: box_id
+        sets:
+          label: input.label
+        emits: [shelf.box.BoxPacked]
+        payload:
+          shelf.box.BoxPacked: {box_id: input.box_id}
+        summary: The box is packed in a rush.
+      - name: packed
+        creates: shelf.box.Box
+        instance: box_id
+        sets:
+          label: input.label
+        emits: [shelf.box.BoxPacked]
+        payload:
+          shelf.box.BoxPacked: {box_id: input.box_id}
+        summary: The box is packed.
+  - name: shelf.box.PackBoxMaybe
+    input:
+      - name: box_id
+        type: Optional<String>
+      - name: label
+        type: String
+    outcomes:
+      - name: packed-maybe
+        creates: shelf.box.Box
+        instance: box_id
+        sets:
+          label: input.label
+        emits: [shelf.box.BoxPacked]
+        payload:
+          shelf.box.BoxPacked:
+            box_id: {input: box_id, else: {generated: true}}
+        summary: The box is packed under the id sent, else one the runtime mints.
+  - name: shelf.box.PackFixed
+    input:
+      - name: label
+        type: String
+    outcomes:
+      - name: packed-fixed
+        creates: shelf.box.Box
+        instance: box_id
+        sets:
+          label: input.label
+        emits: [shelf.box.BoxPacked]
+        payload:
+          shelf.box.BoxPacked:
+            box_id: fixed
+        summary: The box is packed under one id the model names.
+  - name: shelf.box.OpenTally
+    input:
+      - name: tally_id
+        type: Integer
+      - name: label
+        type: String
+    outcomes:
+      - name: opened
+        creates: shelf.box.Tally
+        instance: tally_id
+        sets:
+          label: input.label
+        emits: [shelf.box.TallyOpened]
+        payload:
+          shelf.box.TallyOpened: {tally_id: input.tally_id}
+        summary: The tally is opened.
+events:
+  - name: shelf.box.BoxPacked
+    fields:
+      - name: box_id
+        type: String
+  - name: shelf.box.TallyOpened
+    fields:
+      - name: tally_id
+        type: Integer
+views:
+  - name: shelf.box.AllBoxes
+    source: shelf.box.Box
+    consistency: read_your_writes
+    fields:
+      - name: box_id
+        type: String
+      - name: label
+        type: String
+  - name: shelf.box.AllTallies
+    source: shelf.box.Tally
+    consistency: read_your_writes
+    fields:
+      - name: tally_id
+        type: Integer
+      - name: label
+        type: String

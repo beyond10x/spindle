@@ -33,6 +33,14 @@ mod adversary_w26_u2;
 mod adversary_w27_u8;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_w28_u5;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod adversary_w30_u1;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod adversary_w30_u6;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod adversary_w30_u7;
+#[cfg(target_os = "linux")]
+mod adversary_w30_u8;
 mod adversary_wasm;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_world_integers;
@@ -46,6 +54,8 @@ mod any_filter;
 mod computed;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod concurrent_reads;
+#[cfg(target_os = "linux")]
+mod connect;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod console;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
@@ -94,6 +104,8 @@ mod supplied;
 mod telemetry;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod text_filters;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod view_filter_map;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod views;
 mod wasm;

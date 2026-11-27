@@ -138,8 +138,9 @@ pub(crate) struct Serving<'a> {
     /// `--drain`: how long, once a signal arrives, the run goes on answering the requests already
     /// waiting for it.
     pub drain: Duration,
-    /// `--clock`: the host runs on a manual clock standing at this instant, never moved; the
-    /// system clock without it.
+    /// `--clock`: the host runs on a manual clock starting at this instant, which it steps forward
+    /// between commands on `POST /api/clock` and on a reset world's `clock`
+    /// ([`Host::stepping`]); the system clock without it, which steps on neither.
     pub clock: Option<std::time::SystemTime>,
     /// `--mint-seed`: the host mints from this seed from its first command, and again after each
     /// reset whose world carries no mint ([`Host::seeded`]).
@@ -456,11 +457,18 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     let decider = serving
         .decides
         .then(|| decisions::deciding(&answers, None, recorder.as_ref()).boxed());
-    let clock: Arc<dyn Clock> = match serving.clock {
-        Some(at) => Arc::new(ManualClock::at(at)),
+    // With `--clock` the host steps its manual clock forward on `POST /api/clock` and on a reset
+    // world's `clock`, between commands (`story:served-clock-steps`).
+    let stepping = serving.clock.map(|at| Arc::new(ManualClock::at(at)));
+    let clock: Arc<dyn Clock> = match &stepping {
+        Some(manual) => Arc::clone(manual) as Arc<dyn Clock>,
         None => Arc::new(SystemClock),
     };
     let opened = Host::with_stores(ir, environment, clock, directory, decider, retries, stores)
+        .map(|host| match stepping {
+            Some(manual) => host.stepping(manual),
+            None => host,
+        })
         .and_then(|host| match serving.mint_seed {
             Some(seed) => host.seeded(seed),
             None => Ok(host),

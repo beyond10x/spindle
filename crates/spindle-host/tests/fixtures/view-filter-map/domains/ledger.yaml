@@ -1,0 +1,64 @@
+domain: org.ledger
+summary: Entries, each with stamps by name, a stamp being an instant.
+types:
+  - name: org.ledger.EntryId
+    kind: newtype
+    of: String
+  - name: org.ledger.Stamp
+    kind: newtype
+    of: Timestamp
+entities:
+  - name: org.ledger.Entry
+    identity:
+      name: entry_id
+      type: org.ledger.EntryId
+    fields:
+      - name: stamps
+        type: Map<String, org.ledger.Stamp>
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+commands:
+  - name: org.ledger.AddEntry
+    input:
+      - name: entry_id
+        type: org.ledger.EntryId
+      - name: stamps
+        type: Map<String, org.ledger.Stamp>
+    outcomes:
+      - name: added
+        creates: org.ledger.Entry
+        instance: entry_id
+        sets:
+          stamps: input.stamps
+        emits: [org.ledger.EntryAdded]
+        payload:
+          org.ledger.EntryAdded: {entry_id: input.entry_id}
+        summary: The entry is kept.
+events:
+  - name: org.ledger.EntryAdded
+    fields:
+      - name: entry_id
+        type: org.ledger.EntryId
+views:
+  - name: org.ledger.Late
+    source: org.ledger.Entry
+    consistency: read_your_writes
+    filter:
+      exists:
+        in: stamps
+        as: v
+        that: v > "2026-01-01T09:00:00Z"
+    fields: &fields
+      - name: entry_id
+        type: org.ledger.EntryId
+  - name: org.ledger.AllLate
+    source: org.ledger.Entry
+    consistency: read_your_writes
+    filter:
+      forall:
+        in: stamps
+        as: v
+        that: v > "2026-01-01T09:00:00Z"
+    fields: *fields

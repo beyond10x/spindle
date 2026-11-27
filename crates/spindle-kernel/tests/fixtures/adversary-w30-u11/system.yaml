@@ -1,0 +1,38 @@
+format: ess/35
+system: ledger
+version: v1
+summary: Books whose outcomes write one entry, cell or counter per element of an input list.
+domains:
+  - ledger.book
+components:
+  - component: desk
+    summary: Opens books and writes the entries, cells and counters their lists name.
+    owns:
+      domains:
+        - ledger.book
+    accepts:
+      commands:
+        - ledger.book.OpenBook
+        - ledger.book.AddEntry
+        - ledger.book.AddCell
+        - ledger.book.AddCounter
+        - ledger.book.Post
+        - ledger.book.PostFirst
+        - ledger.book.Note
+        - ledger.book.Stamp
+        - ledger.book.Label
+        - ledger.book.Count
+        - ledger.book.Tie
+    publishes:
+      events:
+        - ledger.book.BookOpened
+        - ledger.book.EntryAdded
+        - ledger.book.CellAdded
+        - ledger.book.CounterAdded
+        - ledger.book.Posted
+        - ledger.book.Noted
+        - ledger.book.Stamped
+        - ledger.book.Labelled
+        - ledger.book.Counted
+        - ledger.book.Tied
+    reached_by: in_process

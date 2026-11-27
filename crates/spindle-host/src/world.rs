@@ -6,7 +6,8 @@
 //!  "decisions": {"<outcome>": true, "<command>": {"<outcome>": false},
 //!                "rules": [{"command": "<command>", "outcome": "<outcome>", "answer": true,
 //!                           "when": {"input.<field>": <value>}}]},
-//!  "mint": 7}
+//!  "mint": 7,
+//!  "clock": "2026-07-01T00:00:00Z"}
 //! ```
 //!
 //! Every key is optional and no other is read. Each row is checked against the model by ESS as an
@@ -17,7 +18,11 @@
 //! name one value; every other value is held as written. `decisions` is a
 //! decision table in the decisions file's shape ([`Answers::from_json`]), laid over the run's own
 //! answers until the next reset ([`Answers::over`]). `mint` seeds the identities and generated
-//! values minted until the next reset ([`spindle_kernel::Seeded`]).
+//! values minted until the next reset ([`spindle_kernel::Seeded`]). `clock`, an RFC 3339
+//! `date-time` floored to the millisecond ([`crate::clock_instant`]; one before 1970 is refused),
+//! moves the host's stepping clock forward to that instant ([`World::clock`]); a host without one
+//! refuses the world, and so does one whose clock stands after it, before anything is emptied
+//! ([`crate::Host::reset_to`]).
 //!
 //! `run`'s served reset reads its world here, and so does every wasm host that loads one.
 
@@ -39,6 +44,9 @@ struct Body {
     rows: Vec<SeedRow>,
     decisions: Option<Value>,
     mint: Option<u64>,
+    // A default, so a world spelled as an array of the three keys before it is read as before.
+    #[serde(default)]
+    clock: Option<String>,
 }
 
 /// A row as the body spells it. ESS checks its identity and fields as the [`Node`]s it reads them
@@ -59,9 +67,10 @@ struct SeedRow {
 /// of it (laid over the run's answers).
 ///
 /// # Errors
-/// A body not of the shape above, a row ESS refuses, or a decision table [`Answers::from_json`]
-/// refuses; the reason names which, as `reading the reset's world: ...`, `row <n>: ...` or
-/// `in the decision table: ...`.
+/// A body not of the shape above, a row ESS refuses, a decision table [`Answers::from_json`]
+/// refuses, or a `clock` that is no RFC 3339 instant; the reason names which, as
+/// `reading the reset's world: ...`, `row <n>: ...`, `in the decision table: ...` or
+/// `clock: ...`.
 pub fn read_world(
     ir: &EssIr,
     body: &Value,
@@ -83,10 +92,15 @@ pub fn read_world(
         })
         .transpose()?
         .map(over);
+    let clock = body
+        .clock
+        .map(|text| crate::clock_instant(&text).map_err(|why| format!("clock: {why}")))
+        .transpose()?;
     Ok(World {
         rows,
         answers,
         mint: body.mint,
+        clock,
     })
 }
 
@@ -112,7 +126,10 @@ fn seed(ir: &EssIr, row: &SeedRow) -> Result<Seed, String> {
     )
     .map_err(|detail| format!("{} {identity}: {detail}", row.entity))?;
     let refused = |what: &str, why: String| format!("{} {identity}: {what}: {why}", row.entity);
+    // The identity in the one spelling a command's is keyed in, so a command finds the row by
+    // `1` or `1.0` of a `Decimal` identity (`spindle_kernel::one_spelling`).
     let held = integers(ir, &entity.identity.type_ref, identity)
+        .map(|held| spindle_kernel::one_spelling(&held))
         .map_err(|why| refused("the identity", why))?;
     let fields = row
         .fields

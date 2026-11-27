@@ -1,0 +1,23 @@
+format: ess/34
+system: ledger
+version: v1
+summary: Releases served over the network, each recording one row per contract it lists.
+domains:
+  - ledger.release
+components:
+  - component: ledger
+    summary: Opens releases and records their contracts.
+    owns:
+      domains:
+        - ledger.release
+    accepts:
+      commands:
+        - ledger.release.OpenRelease
+        - ledger.release.AddRecord
+        - ledger.release.Publish
+    publishes:
+      events:
+        - ledger.release.ReleaseOpened
+        - ledger.release.RecordAdded
+        - ledger.release.Published
+    reached_by: network

@@ -51,6 +51,27 @@ fn exchanges() -> Vec<Exchange> {
     serde_json::from_str(EXCHANGES).expect("the recorded exchanges read")
 }
 
+/// `answer` with the value of every `"at":"<text>"` written as `<at>`, as the recording holds it:
+/// each record of `GET /api/events` carries its command's time (`story:served-clock-steps`), and
+/// a host on the system clock answers another one on every run. An `at` left out, or `null`,
+/// still differs from the recording.
+fn timeless(answer: &str) -> String {
+    const KEY: &str = "\"at\":\"";
+    let mut out = String::with_capacity(answer.len());
+    let mut rest = answer;
+    while let Some(start) = rest.find(KEY) {
+        let value = &rest[start + KEY.len()..];
+        let Some(end) = value.find('"') else {
+            break;
+        };
+        out.push_str(&rest[..start]);
+        out.push_str("\"at\":\"<at>\"");
+        rest = &value[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
 fn ir() -> spindle_spec::EssIr {
     let (names, texts): (Vec<String>, Vec<String>) = SOURCES
         .iter()

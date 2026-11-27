@@ -68,7 +68,9 @@ export async function replay(spindle, exchanges) {
       ...exchange,
       status: response.status,
       allow: allow ? allow[1] : null,
-      answer: new TextDecoder().decode(response.body),
+      // Each record of `GET /api/events` carries its command's time on the system clock
+      // (`story:served-clock-steps`): written `<at>`, as the recordings hold it.
+      answer: new TextDecoder().decode(response.body).replace(/"at":"[^"]*"/g, '"at":"<at>"'),
     });
   }
   return answered;

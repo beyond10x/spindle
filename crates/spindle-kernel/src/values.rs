@@ -554,7 +554,8 @@ impl<'a> Sources<'a, '_> {
         Ok(value)
     }
 
-    /// The value this run mints for the generated `field`.
+    /// The value this run mints for the generated `field`; a declared error's apart from the
+    /// run's sequence ([`crate::Mint::error_uuid`]).
     fn generated(
         &self,
         field: &ResolvedPayloadField,
@@ -566,6 +567,7 @@ impl<'a> Sources<'a, '_> {
             self.owner,
             field,
             present,
+            self.error,
         )
     }
 

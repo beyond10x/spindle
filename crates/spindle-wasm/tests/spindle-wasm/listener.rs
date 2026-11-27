@@ -125,7 +125,7 @@ fn the_loopback_listener_answers_the_recorded_exchanges() {
         listened.push(Exchange {
             status,
             allow,
-            answer,
+            answer: crate::timeless(&answer),
             ..exchange.clone()
         });
     }

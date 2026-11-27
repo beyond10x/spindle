@@ -297,7 +297,7 @@ fn ir() -> (tempfile::TempDir, spindle_spec::EssIr) {
 }
 
 /// `text` parsed as JSON, so a number keeps the spelling it is written with.
-fn parsed(text: &str) -> Value {
+pub(super) fn parsed(text: &str) -> Value {
     serde_json::from_str(text).unwrap_or_else(|error| panic!("JSON {text}: {error}"))
 }
 
@@ -323,7 +323,7 @@ fn fill(bin_no: &str) -> Value {
     parsed(&format!(r#"{{"slot_id": "s1", "bin_no": {bin_no}}}"#))
 }
 
-fn send(
+pub(super) fn send(
     ir: &spindle_spec::EssIr,
     store: &mut dyn Store,
     command: &str,
@@ -379,7 +379,7 @@ fn interpreted(
 
 /// Runs `steps` on `store` and on ESS's interpreter, asserts each step answers alike (the same
 /// outcome and error, or a refusal both), and answers the kernel's executions.
-fn agreed(
+pub(super) fn agreed(
     ir: &spindle_spec::EssIr,
     store: &mut dyn Store,
     steps: &[(&str, Value)],
@@ -413,11 +413,11 @@ fn agreed(
         .collect()
 }
 
-fn outcome(executed: &Option<Executed>) -> Option<&str> {
+pub(super) fn outcome(executed: &Option<Executed>) -> Option<&str> {
     executed.as_ref().map(|executed| executed.outcome.as_str())
 }
 
-fn identities(store: &mut dyn Store, entity: &str) -> Vec<Value> {
+pub(super) fn identities(store: &mut dyn Store, entity: &str) -> Vec<Value> {
     store
         .scan(entity)
         .expect("the store scans")
@@ -585,10 +585,9 @@ fn a_durable_store_finds_an_integer_identity_whatever_its_spelling() {
 }
 
 /// ESS keys an instance by the value it reads and compares numbers by their exact value, so a
-/// `Decimal` identity spelled `1.0` and `1` names one instance too. The story writes only an
-/// `Integer` as the integer, so the kernel keys the two spellings apart.
+/// `Decimal` identity spelled `1.0` and `1` names one instance too. The kernel keys a row by its
+/// identity in one spelling (story:decimal-identity-any-spelling).
 #[test]
-#[ignore = "pre-existing: a Decimal identity is keyed by its JSON text; story:decimal-identity-any-spelling"]
 fn a_decimal_identity_names_one_row_whatever_its_spelling() {
     for (created, named) in [("1.0", "1"), ("1", "1.0")] {
         let (_dir, ir) = ir();

@@ -70,10 +70,13 @@ and a command's input may name what an earlier line answered, such as the identi
 with `{"$line": 1, "pointer": "/events/0/payload/<field>"}`.
 
 Where `run` serves HTTP, it also serves the console routes `POST /api/reset`, `GET /api/events`,
-`GET /api/model` and `GET /api/served`. `--console off` (or `SPINDLE_SETTING_CONSOLE=off`)
-turns them off: each answers `404` as an unrouted path does, whatever secret the request carries.
-A run whose `--address` is off loopback serves them only with `--console on`. A route the
-specification publishes at a console path exits 1 before listening, the console on or off.
+`GET /api/model`, `GET /api/served`, `GET /api/history` and `GET` and `POST /api/clock`. With
+`--clock`, `POST /api/clock` `{"at": "<RFC 3339>"}` moves the run's clock forward between
+commands, and every record of `GET /api/events` carries its command's `at`. `--console off` (or
+`SPINDLE_SETTING_CONSOLE=off`) turns them off: each answers `404` as an unrouted path does,
+whatever secret the request carries. A run whose `--address` is off loopback serves them only
+with `--console on`. A route the specification publishes at a console path exits 1 before
+listening, the console on or off.
 
 Where `run` serves HTTP, `--seed <file>` (or `[seed] file` in the environment document) submits a
 JSON array of commands, each with its input, actor, caller and request id, on every start: checked
@@ -164,7 +167,7 @@ No scenario is known to fail, so the task declares none and every executed scena
 | `projection` | a view with `consistency: eventual` |
 | `external.<command>.<outcome>` | an outcome whose condition is `external:` |
 | `identity.mint` | a `creates:` outcome whose identity is neither an input nor a payload source (`{generated: true}`); a `Uuid` identity is minted as a UUIDv4 (`uuid-v4`), a `Uuid` newtype without invariants likewise, a bare `String` identity as a UUIDv4's text, a `String` newtype identity whose prefix and alphabet admit a UUID's text and whose invariants bound only its length (`value.count`) as its prefix and a UUIDv4's text, and an `Integer` identity, or an `Integer` newtype without invariants, as an integer drawn from a UUIDv4; any other identity type, and an entity invariant no minted length meets, is refused by name where a request selects that outcome, before anything is written, and the command's other outcomes run |
-| `identity.mint`, `clock` | an outcome field marked `{generated: true}` (or `{input: f, else: {generated: true}}`) other than a minted creation identity, a refusal's error field the outcome gives no source and the row it is answered for does not hold (an `Optional` one stays absent; a type the runtime does not mint is refused by name where a request selects that outcome, before anything is written), and each `response:` field of a command whose outcome returns it (`returns: true`; a `one_time_response:` field is minted fresh per invocation and written nowhere else): a `Uuid`, `String`, `Integer`, `Boolean`, `Bytes` or `List` is minted through `identity.mint` (a `List` as `[]`, as ESS mints it), a `Timestamp` read from `clock`; a response record, a union's first variant and a one-entry map need what their members, content and key need, an enum response is the variant one `identity.mint` draw names, and a constrained newtype answered by a literal its invariants name needs nothing |
+| `identity.mint`, `clock` | an outcome field marked `{generated: true}` (or `{input: f, else: {generated: true}}`) other than a minted creation identity, a refusal's error field the outcome gives no source and the row it is answered for does not hold (an `Optional` one stays absent; a type the runtime does not mint, and a required field of an `unknown_instance:` refusal, which has no row and which ESS's served application does not serve, are refused by name where a request selects that outcome, before anything is written), and each `response:` field of a command whose outcome returns it (`returns: true`; a `one_time_response:` field is minted fresh per invocation and written nowhere else): a `Uuid`, `String`, `Integer`, `Boolean`, `Bytes` or `List` is minted through `identity.mint` (a `List` as `[]`, as ESS mints it), a `Timestamp` read from `clock`; a response record, a union's first variant and a one-entry map need what their members, content and key need, an enum response is the variant one `identity.mint` draw names, and a constrained newtype answered by a literal its invariants name needs nothing |
 
 ## Environment
 

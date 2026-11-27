@@ -54,9 +54,15 @@ mod adversary_w27_u4;
 mod adversary_w27_u5;
 #[cfg(feature = "sqlite")]
 mod adversary_w28_u5;
+mod adversary_w30_u11;
+mod adversary_w30_u3;
+mod adversary_w30_u4;
+mod adversary_w30_u6;
+mod affects_each;
 mod before_row;
 mod caller;
 mod creation_takes_unknown_row;
+mod decimal_identity;
 mod deletes;
 mod deployment;
 mod error_fields;

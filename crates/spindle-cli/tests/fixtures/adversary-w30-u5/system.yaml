@@ -1,0 +1,36 @@
+format: ess/34
+system: shelf
+version: v1
+summary: Boxes a packer packs and tallies it opens, and crates a loader packs under ids of its own.
+domains:
+  - shelf.box
+  - shelf.load
+components:
+  - component: packer
+    summary: Packs boxes and opens tallies.
+    owns:
+      domains:
+        - shelf.box
+    accepts:
+      commands:
+        - shelf.box.PackBox
+        - shelf.box.PackBoxMaybe
+        - shelf.box.PackFixed
+        - shelf.box.OpenTally
+    publishes:
+      events:
+        - shelf.box.BoxPacked
+        - shelf.box.TallyOpened
+    reached_by: in_process
+  - component: loader
+    summary: Packs crates.
+    owns:
+      domains:
+        - shelf.load
+    accepts:
+      commands:
+        - shelf.load.PackCrate
+    publishes:
+      events:
+        - shelf.load.CratePacked
+    reached_by: in_process

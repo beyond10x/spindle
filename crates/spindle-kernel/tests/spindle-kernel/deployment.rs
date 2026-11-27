@@ -605,13 +605,55 @@ fn a_binding_the_environment_does_not_provide_is_not_admitted() {
             missing,
         );
         assert_invalid(&decided, "not-provided", &mut store, id);
-        // A refusing decision makes `refused` eligible: the held-state look-ahead, as ESS's
-        // `select` reads it, asks its cause before the environment's row is read, and the
-        // environment's refusal still answers. A decision naming nothing missing never asks it.
-        if !refuses {
-            assert!(decider.asked.is_empty(), "{id}: {:?}", decider.asked);
-        }
+        // A refusing decision makes `refused` eligible, but every answer its cause could give
+        // leaves the deployment `Offered` for the environment's refusal, so the look-ahead asks
+        // nothing (story:look-ahead-asks-only-where-it-matters). A decision naming nothing
+        // missing never reaches it.
+        assert!(
+            decider.asked.is_empty(),
+            "{id} (refusing: {refuses}): {:?}",
+            decider.asked
+        );
     }
+}
+
+/// Has no answer to any external question and records what it was asked.
+#[derive(Default)]
+struct Unanswering {
+    asked: Vec<String>,
+}
+
+impl Decider for Unanswering {
+    fn decide(&mut self, question: &External<'_>) -> Result<bool, String> {
+        self.asked.push(question.capability.clone());
+        Err(format!("no decision for {}", question.capability))
+    }
+}
+
+/// story:look-ahead-asks-only-where-it-matters: a refusing decision with a binding the
+/// environment does not provide is `not-provided` under every answer `refused`'s cause could
+/// give, so the model answers it with a decider that has no answer, and asks it nothing.
+#[test]
+fn decide_admission_not_provided_asks_no_decider() {
+    let ir = specification();
+    let mut store = MemoryStore::default();
+    offer(&ir, &mut store, "d1");
+    let mut decider = Unanswering::default();
+    let decided = execute(
+        &ir,
+        &mut store,
+        &mut decider,
+        "spindle.deployment.DecideAdmission",
+        &input(json!({
+            "deployment_id": "d1",
+            "requires": ["channel", "store.durable"],
+            "bindings": [{"capability": "store.durable", "implementation": "memory"}],
+            "missing": ["channel"],
+        })),
+    )
+    .unwrap_or_else(|error| panic!("DecideAdmission executes with no decision: {error}"));
+    assert_invalid(&decided, "not-provided", &mut store, "d1");
+    assert!(decider.asked.is_empty(), "{:?}", decider.asked);
 }
 
 /// story:admission-decision-checked-by-model (H7): a refusal `AdmissionDecisionInvalid`'s own text

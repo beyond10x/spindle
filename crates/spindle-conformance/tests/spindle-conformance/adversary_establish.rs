@@ -173,7 +173,6 @@ fn list<T: ConformanceTarget + ?Sized>(
 /// A command that creates an instance with an identity the scenario established answers on the
 /// host as it answers on ESS's interpreter.
 #[test]
-#[ignore = "pre-existing: a create on a held identity answers undeclared where ESS answers unavailable; backlog draft"]
 fn a_create_on_an_established_identity_answers_as_the_interpreter() {
     let ir = fixture_ir();
     let host = HostTarget::new(ir.clone(), laptop());
@@ -198,6 +197,37 @@ fn a_create_on_an_established_identity_answers_as_the_interpreter() {
         let rows = list(target, context, "post.parcel.AllParcels");
         target.end_scenario(context).expect("close");
         (established, format!("{answer} | {rows:?}"))
+    };
+    let spindle = drive(&host);
+    let ess = drive(&interpreter);
+    assert_eq!(spindle, ess, "host left, interpreter right");
+}
+
+/// Two creates of one identity, with no establish step: the second answers on the host as it
+/// answers on ESS's interpreter, and the first instance is left as it was.
+#[test]
+fn a_second_create_on_one_identity_answers_as_the_interpreter() {
+    let ir = fixture_ir();
+    let host = HostTarget::new(ir.clone(), laptop());
+    let interpreter = Interpreted::for_model(ir);
+    let drive = |target: &dyn ConformanceTarget| {
+        let context = &context();
+        target.begin_scenario(context).expect("open");
+        let first = send(
+            target,
+            context,
+            "post.parcel.PackParcel",
+            json!({"parcel_id": "parcel-1", "label": "books"}),
+        );
+        let second = send(
+            target,
+            context,
+            "post.parcel.PackParcel",
+            json!({"parcel_id": "parcel-1", "label": "cups"}),
+        );
+        let rows = list(target, context, "post.parcel.AllParcels");
+        target.end_scenario(context).expect("close");
+        (first, second, rows)
     };
     let spindle = drive(&host);
     let ess = drive(&interpreter);

@@ -107,7 +107,7 @@ anything listens.
 
 Where a component requires `ingress.network` and the environment binds it to `http-loopback`,
 `b10x-spindle run` runs every component in one process. It serves those components over HTTP on
-`127.0.0.1` instead of reading stdin. Any other binding, such as `http` in `microvm.toml`, is
+`127.0.0.1` instead of reading stdin, unless `--stdin` is given. Any other binding, such as `http` in `microvm.toml`, is
 refused before anything listens. Once listening it prints
 `{"listening": "127.0.0.1:<port>", "components": [...]}`. `--port` picks the port, and its
 default, `0`, lets the system choose one. It serves until SIGINT or SIGTERM.
@@ -120,9 +120,9 @@ and `::1`, is served only behind an authenticating proxy: it requires `--trusted
 with `--trusted-caller-secret`, and without both `run` exits 2 before listening. `--fixed-actor`
 is not enough, since it proves nobody. On such an address every request that does not carry the
 proxy's secret is refused `403` `{"refused": "not granted", "actor": null}` before anything of it
-is read: every command and view, `GET /api/model`, `GET /api/events`, `POST /api/reset` and every
-route under `/__spindle/`, and also a path no route has, a method a route does not take and a
-body of any size. On a loopback address `run` answers exactly as without `--address`.
+is read: every command and view, `GET /api/model`, `GET /api/events`, `POST /api/reset`,
+`GET` and `POST /api/clock` and every route under `/__spindle/`, and also a path no route has, a
+method a route does not take and a body of any size. On a loopback address `run` answers exactly as without `--address`.
 
 What is served is what ESS derives: each command the component accepts and, for a
 `reached_by: network` component, each view of a domain it owns. Each is served exactly where

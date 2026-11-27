@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use ess_compiler::EssIr;
-use ess_compiler::ir::{ResolvedFailure, ResolvedRefusalAction, ResolvedTypeRef};
+use ess_compiler::ir::{ResolvedFailure, ResolvedRefusalAction, ResolvedTypeRef, ResolvedView};
 use ess_compiler::refs::{ErrorRef, EventRef, OutcomeRef};
 use ess_conformance::{
     ConformanceTarget, DeclaredErrorValue, EventObservationRequest, ExternalOutcomeControl,
@@ -16,6 +16,7 @@ use ess_conformance::{
     SemanticViewRequest, SemanticViewResult, TargetError,
 };
 use ess_domain::command::OutcomeName;
+use ess_domain::types::Presence;
 use ess_primitives::consistency::ConsistencyToken;
 use ess_primitives::ids::CorrelationId;
 use ess_primitives::node::Node;
@@ -90,11 +91,18 @@ pub enum Answered {
     },
     /// It was refused by no declared outcome.
     Undeclared,
+    /// It was refused as unavailable, a request no branch of the model describes, as ESS's
+    /// interpreter refuses a create on an identity an instance already holds.
+    Unavailable,
     /// Its actor may not send it.
     NotGranted,
     /// It did not run: the target answered an error.
     Failed,
 }
+
+/// How the detail of a [`TargetError::Unavailable`] begins where the request is one no branch of
+/// the model describes, in ESS's interpreter's words (`interpret::execute::Undetermined::Request`).
+const UNDESCRIBED: &str = "the request is not what the model declares: ";
 
 impl Answered {
     /// What `sent` answered.
@@ -108,6 +116,9 @@ impl Answered {
                 None => Self::Undeclared,
             },
             Err(TargetError::NotGranted { .. }) => Self::NotGranted,
+            Err(TargetError::Unavailable { detail, .. }) if detail.starts_with(UNDESCRIBED) => {
+                Self::Unavailable
+            }
             Err(_) => Self::Failed,
         }
     }
@@ -251,11 +262,7 @@ impl HostTarget {
     /// The first field `view` declares, not as `Optional`, that a row of `rows` lacks: one no
     /// command determined, such as a list a later command sets.
     fn undetermined(&self, view: &str, rows: &[Map<String, Value>]) -> Option<String> {
-        let declared = self
-            .ir
-            .views()
-            .iter()
-            .find_map(|(name, declared)| (name.to_string() == view).then_some(declared))?;
+        let declared = self.declared(view)?;
         rows.iter().find_map(|row| {
             declared
                 .fields
@@ -264,6 +271,51 @@ impl HostTarget {
                 .find(|field| !row.contains_key(&field.name))
                 .map(|field| field.name.clone())
         })
+    }
+
+    /// The view the model declares by the name `view`.
+    fn declared(&self, view: &str) -> Option<&ResolvedView> {
+        self.ir
+            .views()
+            .iter()
+            .find_map(|(name, declared)| (name.to_string() == view).then_some(declared))
+    }
+
+    /// Answers each `Optional` field `view` declares that a row of `rows` leaves out as ESS's
+    /// interpreter answers it (`ess-conformance` `src/interpret/views.rs`, `query`, at ESS
+    /// 0.99.2): `null`, unless the field carries `presence: omitted_when_absent`. A field read
+    /// through a reference is `null` whatever its presence, as the interpreter reads one whose
+    /// reference names no row, or whose row holds nothing or `null` for it. A row of an aggregate
+    /// view is a group, not a source row, and is answered as the host answers it.
+    ///
+    /// The host's own projection ([`Host::listed_with`]) keeps ESS's published contract, which
+    /// declares such a field optional and not nullable, and leaves it out; only this target
+    /// answers it as the interpreter does. The host's rows leave out a field the row held as
+    /// `null`, so it reads as one the row does not hold: answered `null`, as the interpreter keeps
+    /// a stored `null`, except under `omitted_when_absent`, where it stays left out and the
+    /// interpreter answers the stored `null`.
+    fn absent_as_ess(&self, view: &str, rows: &mut [Map<String, Value>]) {
+        let Some(declared) = self.declared(view) else {
+            return;
+        };
+        if declared.aggregation.is_some() {
+            return;
+        }
+        let null = declared
+            .fields
+            .iter()
+            .filter(|field| field.type_ref.is_optional())
+            .filter(|field| {
+                declared.related_read(&field.name).is_some()
+                    || field.naming.presence != Some(Presence::OmittedWhenAbsent)
+            })
+            .map(|field| field.name.as_str())
+            .collect::<Vec<_>>();
+        for row in rows {
+            for field in &null {
+                row.entry(*field).or_insert(Value::Null);
+            }
+        }
     }
 
     fn force(&self, forcing: Option<(String, String)>) {
@@ -430,6 +482,20 @@ impl HostTarget {
                 )
             }
             Err(HostError::Execute { error, .. }) => match *error {
+                // ESS's interpreter describes no branch for a create on a held identity
+                // (`interpret::execute::create`) and answers the request as unavailable, in
+                // these words.
+                ExecuteError::Undeclared {
+                    held: Some(held), ..
+                } => Err(TargetError::unavailable(
+                    format!("invoking `{command}`"),
+                    format!(
+                        "{UNDESCRIBED}no branch the model allows is described by the given \
+                         values — `{command}/{}`: a supplied identity is already held by `{}`, \
+                         and creation never replaces it",
+                        held.outcome, held.entity
+                    ),
+                )),
                 ExecuteError::Undeclared { .. } => Ok(SemanticCommandResult::undeclared()),
                 ExecuteError::NotGranted { actor } => Err(TargetError::not_granted(Some(actor))),
                 ExecuteError::Unsupported { construct } => Err(TargetError::unsupported(
@@ -534,7 +600,7 @@ impl ConformanceTarget for HostTarget {
         let running = running
             .as_mut()
             .ok_or_else(|| TargetError::unavailable(&view, "no scenario is open"))?;
-        let listed = match running.host.listed_with(&view, &params) {
+        let mut listed = match running.host.listed_with(&view, &params) {
             Ok(listed) => listed,
             // ESS's interpreter refuses a read with a parameter the view does not declare, a
             // required one left out or one not of its type as unsupported (`interpret/views.rs`,
@@ -568,6 +634,7 @@ impl ConformanceTarget for HostTarget {
                 ),
             ));
         }
+        self.absent_as_ess(&view, &mut listed.rows);
         let rows = listed
             .rows
             .iter()

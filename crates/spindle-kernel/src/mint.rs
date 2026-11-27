@@ -29,6 +29,10 @@
 //! UUIDs mints the values the interpreter does: the kernel draws in the interpreter's order
 //! (`interpret::execute::take`), each published value a `{payload: <Event>.<field>}` reads
 //! first, then a minted creation identity, then the other `sets:`, then the payloads.
+//! A field of a declared error, `{generated: true}` or one its outcome gives no source, is drawn
+//! apart from that sequence ([`Mint::error_uuid`]): the interpreter carries no such value and
+//! draws no tick for it (`interpret::execute::declared_error`), so a refusal leaves the two
+//! sequences in step.
 //! That holds up to the first response field a command answers: the kernel draws response values
 //! from the same [`Mint`], where the interpreter draws them from a counter of its own, so after a
 //! returning outcome the two sequences no longer line up.
@@ -203,9 +207,15 @@ impl<'m> Generator<'m> {
         self.minted.borrow_mut().truncate(mark);
     }
 
-    /// A fresh UUID for `identity`.
-    pub(crate) fn uuid(&self, identity: &Identity<'_>) -> Uuid {
-        self.mint.borrow_mut().uuid(identity)
+    /// A fresh UUID for `identity`, for a field of a declared error where `error` is set
+    /// ([`Mint::error_uuid`]), from the run's sequence ([`Mint::uuid`]) otherwise.
+    fn draw(&self, identity: &Identity<'_>, error: bool) -> Uuid {
+        let mut mint = self.mint.borrow_mut();
+        if error {
+            mint.error_uuid(identity)
+        } else {
+            mint.uuid(identity)
+        }
     }
 
     /// A fresh value of `shape` for `identity`.
@@ -213,11 +223,23 @@ impl<'m> Generator<'m> {
     /// # Errors
     /// The reason, from [`value`], where the value cannot be spelled.
     pub(crate) fn mint(&self, shape: &Minted, identity: &Identity<'_>) -> Result<Value, String> {
-        value(shape, || self.uuid(identity), self.now)
+        self.minting(shape, identity, false)
+    }
+
+    /// [`Self::mint`], drawn for a field of a declared error where `error` is set.
+    fn minting(
+        &self,
+        shape: &Minted,
+        identity: &Identity<'_>,
+        error: bool,
+    ) -> Result<Value, String> {
+        value(shape, || self.draw(identity, error), self.now)
     }
 
     /// The value the generated `field`, of `owner` in `outcome`, holds in this run: minted on the
     /// first read, the same value on every later one; `None` where the mint leaves it absent.
+    /// A field of a declared error (`error`) is drawn apart from the run's sequence
+    /// ([`Mint::error_uuid`]).
     ///
     /// # Errors
     /// [`ExecuteError::Unsupported`] for a type the runtime does not mint, which
@@ -230,6 +252,7 @@ impl<'m> Generator<'m> {
         owner: &QualifiedName,
         field: &ResolvedPayloadField,
         present: bool,
+        error: bool,
     ) -> Result<Option<Value>, ExecuteError> {
         let place = std::ptr::from_ref(field);
         if let Some((_, held)) = self
@@ -250,7 +273,7 @@ impl<'m> Generator<'m> {
             })?;
             let owner = owner.to_string();
             let value = self
-                .choose(
+                .choosing(
                     &choice,
                     &Identity {
                         capability: IDENTITY_MINT,
@@ -259,6 +282,7 @@ impl<'m> Generator<'m> {
                         entity: &owner,
                         field: &field.target,
                     },
+                    error,
                 )
                 .map_err(|error| {
                     ExecuteError::InvalidValue(format!(
@@ -284,10 +308,35 @@ impl<'m> Generator<'m> {
     /// # Errors
     /// The reason, where a leaf cannot be spelled.
     pub(crate) fn choose(&self, choice: &Choice, identity: &Identity<'_>) -> Result<Value, String> {
+        self.choosing(choice, identity, false)
+    }
+
+    /// [`Self::choose`] for a field of a declared error: every leaf drawn apart from the run's
+    /// sequence ([`Mint::error_uuid`]).
+    ///
+    /// # Errors
+    /// As [`Self::choose`].
+    pub(crate) fn choose_error(
+        &self,
+        choice: &Choice,
+        identity: &Identity<'_>,
+    ) -> Result<Value, String> {
+        self.choosing(choice, identity, true)
+    }
+
+    /// [`Self::choose`], each leaf drawn for a field of a declared error where `error` is set.
+    fn choosing(
+        &self,
+        choice: &Choice,
+        identity: &Identity<'_>,
+        error: bool,
+    ) -> Result<Value, String> {
         match choice {
-            Choice::Mint(shape) => self.mint(shape, identity),
+            Choice::Mint(shape) => self.minting(shape, identity, error),
             Choice::Literal(literal) => spelled(literal),
-            Choice::Enum(variants) => Ok(Value::String(variant(variants, self.uuid(identity)))),
+            Choice::Enum(variants) => {
+                Ok(Value::String(variant(variants, self.draw(identity, error))))
+            }
             Choice::Record(members) => members
                 .iter()
                 .map(|(name, member)| {
@@ -295,7 +344,7 @@ impl<'m> Generator<'m> {
                         field: name,
                         ..*identity
                     };
-                    Ok((name.clone(), self.choose(member, &at)?))
+                    Ok((name.clone(), self.choosing(member, &at, error)?))
                 })
                 .collect::<Result<Map<_, _>, String>>()
                 .map(Value::Object),
@@ -307,15 +356,15 @@ impl<'m> Generator<'m> {
                 let mut variant = Map::new();
                 variant.insert(tag.clone(), Value::String(label.clone()));
                 if let Some((key, content)) = content {
-                    variant.insert((*key).to_owned(), self.choose(content, identity)?);
+                    variant.insert((*key).to_owned(), self.choosing(content, identity, error)?);
                 }
                 Ok(Value::Object(variant))
             }
             Choice::Entry { key, value } => {
-                let Value::String(key) = self.mint(key, identity)? else {
+                let Value::String(key) = self.minting(key, identity, error)? else {
                     return Err("a map key that is not text".to_owned());
                 };
-                let value = self.choose(value, identity)?;
+                let value = self.choosing(value, identity, error)?;
                 Ok(Value::Object(Map::from_iter([(key, value)])))
             }
         }
@@ -370,6 +419,19 @@ pub(crate) fn unfilled(error: &str, field: &ResolvedField) -> String {
          `Boolean`, a `Bytes`, a `List` or a `Timestamp`, or a newtype of one without invariants, \
          and builds a record without invariants, a union's first variant or a map of one entry \
          keyed by text from them",
+        field.name, field.type_ref
+    )
+}
+
+/// The refusal of the required error field `field` of `error` that an `unknown_instance:`
+/// refusal gives no source ([`spindle_capability::mint::Unsourced::Unanswered`]): no row exists
+/// to read it from, and ESS's served application does not serve such a refusal.
+pub(crate) fn unanswered(error: &str, field: &ResolvedField) -> String {
+    format!(
+        "the required error field `{error}.{}` of type `{}` of a refusal of an unknown instance, \
+         which the outcome gives no source and no row exists to hold; ESS's served application \
+         does not serve such a refusal, so give the field a source (`payload:`) or make it \
+         `Optional`",
         field.name, field.type_ref
     )
 }
@@ -480,6 +542,15 @@ pub trait Mint {
     /// again (`interpret::execute::creation_identity`), and refuses the creation only once it has
     /// drawn one more identity than the entity has instances, each a held one.
     fn uuid(&mut self, identity: &Identity<'_>) -> Uuid;
+
+    /// A fresh `Uuid` for a value of a field of a declared error, `{generated: true}` or one its
+    /// outcome gives no source: drawn apart from the sequence [`Mint::uuid`] answers. ESS's
+    /// interpreter mints no value of an error's field and so draws no tick for one
+    /// (`interpret::execute::declared_error`), so a mint that answers its ticks from
+    /// [`Mint::uuid`] stays in step with it after a refusal. By default a random version 4 UUID.
+    fn error_uuid(&mut self, _identity: &Identity<'_>) -> Uuid {
+        Uuid::new_v4()
+    }
 }
 
 impl<F> Mint for F
@@ -511,20 +582,29 @@ impl Mint for UuidV4 {
 /// next 128 bits of a `SplitMix64` sequence started at the seed; not for anything an attacker may
 /// guess. A UUID it was told is [held](Seeded::avoiding), or whose minted `Integer` is
 /// ([`Seeded::avoiding_identities`]), is skipped and the next one drawn, so it never mints an
-/// identity a seeded instance already holds and stays deterministic.
+/// identity a seeded instance already holds and stays deterministic. The values of a declared
+/// error's fields ([`Mint::error_uuid`]) follow from the seed too, from a second `SplitMix64`
+/// sequence, so a refusal moves the sequence identities are minted from by nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Seeded {
     state: u64,
+    /// The state of the second sequence, which answers the values of a declared error's fields.
+    errors: u64,
     held: BTreeSet<Uuid>,
     /// The `Integer` identities held: a UUID whose low 53 bits are one of them is skipped.
     integers: BTreeSet<u64>,
 }
+
+/// What the second sequence of a [`Seeded`] mint starts from, beside its seed: any constant
+/// that starts it away from the first.
+const ERROR_STREAM: u64 = 0x6a09_e667_f3bc_c908;
 
 impl Seeded {
     /// A mint whose UUIDs follow from `seed`.
     pub fn new(seed: u64) -> Self {
         Self {
             state: seed,
+            errors: seed ^ ERROR_STREAM,
             held: BTreeSet::new(),
             integers: BTreeSet::new(),
         }
@@ -580,21 +660,28 @@ impl Seeded {
     }
 
     fn draw(&mut self) -> Uuid {
-        let high = self.next().to_be_bytes();
-        let low = self.next().to_be_bytes();
-        let mut bytes = [0; 16];
-        bytes[..8].copy_from_slice(&high);
-        bytes[8..].copy_from_slice(&low);
-        uuid::Builder::from_random_bytes(bytes).into_uuid()
+        drawn(&mut self.state)
     }
+}
 
-    fn next(&mut self) -> u64 {
-        self.state = self.state.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut mixed = self.state;
-        mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        mixed ^ (mixed >> 31)
-    }
+/// The version 4 UUID whose random bits are the next 128 bits of the `SplitMix64` sequence at
+/// `state`.
+fn drawn(state: &mut u64) -> Uuid {
+    let high = next(state).to_be_bytes();
+    let low = next(state).to_be_bytes();
+    let mut bytes = [0; 16];
+    bytes[..8].copy_from_slice(&high);
+    bytes[8..].copy_from_slice(&low);
+    uuid::Builder::from_random_bytes(bytes).into_uuid()
+}
+
+/// The next 64 bits of the `SplitMix64` sequence at `state`.
+fn next(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut mixed = *state;
+    mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    mixed ^ (mixed >> 31)
 }
 
 impl Mint for Seeded {
@@ -607,6 +694,12 @@ impl Mint for Seeded {
             drawn = self.draw();
         }
         drawn
+    }
+
+    /// The next UUID of the seed's second sequence: an error's value is no identity, so none is
+    /// skipped.
+    fn error_uuid(&mut self, _identity: &Identity<'_>) -> Uuid {
+        drawn(&mut self.errors)
     }
 }
 

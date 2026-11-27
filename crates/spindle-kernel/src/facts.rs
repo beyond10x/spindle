@@ -473,6 +473,73 @@ impl FactSource for Selector<'_> {
     }
 }
 
+/// The facts an `each:` entry's filter reads of one element of its input list, routed as ESS's
+/// interpreter routes them (`interpret::execute::set_effects::ElementFacts`, ess/27):
+/// `<binder>.<member>` to the member of element `index` of `input.<list>`, `input.<field>` to the
+/// command's input, and no other path to anything.
+pub(crate) struct Element<'a> {
+    /// The command's input at its fields' own names ([`Facts::values`]).
+    pub(crate) input: &'a Facts<'a>,
+    /// The input field holding the list.
+    pub(crate) list: &'a str,
+    /// The name the element is read under.
+    pub(crate) binder: &'a str,
+    /// The element's place in the list.
+    pub(crate) index: usize,
+}
+
+impl Element<'_> {
+    fn rebind(&self, path: &FactPath) -> Option<FactPath> {
+        let (first, rest) = path.segments().split_first()?;
+        if first == self.binder {
+            return Some(FactPath::from_segments(
+                [self.list.to_owned(), self.index.to_string()]
+                    .into_iter()
+                    .chain(rest.iter().cloned()),
+            ));
+        }
+        (first == INPUT && !rest.is_empty()).then(|| FactPath::from_segments(rest))
+    }
+}
+
+impl FactSource for Element<'_> {
+    fn fact(&self, path: &FactPath) -> Option<FactValue> {
+        self.input.fact(&self.rebind(path)?)
+    }
+
+    fn present(&self, path: &FactPath) -> bool {
+        self.rebind(path)
+            .is_some_and(|path| self.input.present(&path))
+    }
+
+    fn observed_presence(&self, path: &FactPath) -> Option<bool> {
+        self.rebind(path)
+            .map_or(Some(false), |path| self.input.observed_presence(&path))
+    }
+
+    fn observe(&self, path: &FactPath) -> Option<FactValue> {
+        self.input.observe(&self.rebind(path)?)
+    }
+
+    fn cardinality(&self, path: &FactPath) -> Option<usize> {
+        self.input.cardinality(&self.rebind(path)?)
+    }
+
+    fn scales(&self) -> &Scales {
+        self.input.scales()
+    }
+
+    fn orders_as_instant(&self, path: &FactPath) -> bool {
+        self.rebind(path)
+            .is_some_and(|path| self.input.orders_as_instant(&path))
+    }
+
+    fn orders_text_by_bytes(&self, path: &FactPath) -> bool {
+        self.rebind(path)
+            .is_some_and(|path| self.input.orders_text_by_bytes(&path))
+    }
+}
+
 impl FactSource for Facts<'_> {
     fn fact(&self, path: &FactPath) -> Option<FactValue> {
         self.store.fact(path)

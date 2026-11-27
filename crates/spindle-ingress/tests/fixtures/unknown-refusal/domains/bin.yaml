@@ -1,0 +1,138 @@
+domain: study.bin
+summary: Bins that are filled, sealed and labelled; each command refuses an unknown bin, naming the bin where its outcome gives that a source.
+types:
+  - name: study.bin.BinId
+    kind: newtype
+    of: String
+entities:
+  - name: study.bin.Bin
+    identity:
+      name: bin_id
+      type: study.bin.BinId
+    fields:
+      - name: content
+        type: String
+      - name: label
+        type: Optional<String>
+    lifecycle:
+      initial: Open
+      states: [Open, Sealed]
+      terminal: [Sealed]
+      transitions:
+        - name: seal
+          from: [Open]
+          to: Sealed
+errors:
+  - name: study.bin.NoSuchBin
+    summary: No bin carries the id, which the refusal would name but its outcome gives no source.
+    fields:
+      - name: bin_id
+        type: study.bin.BinId
+  - name: study.bin.UnknownBin
+    summary: No bin carries the id, which the refusal names from the input.
+    fields:
+      - name: bin_id
+        type: study.bin.BinId
+  - name: study.bin.MissingBin
+    summary: No bin carries the id, which the refusal names from the input, with a hint nothing gives.
+    fields:
+      - name: bin_id
+        type: study.bin.BinId
+      - name: hint
+        type: Optional<String>
+commands:
+  - name: study.bin.OpenBin
+    input:
+      - name: bin_id
+        type: study.bin.BinId
+      - name: content
+        type: String
+    outcomes:
+      - name: opened
+        creates: study.bin.Bin
+        instance: bin_id
+        sets:
+          content: input.content
+        emits: [study.bin.BinOpened]
+        payload:
+          study.bin.BinOpened: {bin_id: input.bin_id}
+        summary: The bin is open with its first content.
+  - name: study.bin.FillBin
+    input:
+      - name: bin_id
+        type: study.bin.BinId
+      - name: item
+        type: String
+    outcomes:
+      - name: no-such-bin
+        unknown_instance: true
+        error: study.bin.NoSuchBin
+        summary: No bin carries the id; the error's bin_id has no source.
+      - name: filled
+        updates: study.bin.Bin
+        instance: bin_id
+        sets:
+          content: input.item
+        emits: [study.bin.BinFilled]
+        payload:
+          study.bin.BinFilled: {bin_id: input.bin_id, item: input.item}
+        summary: The item is put in the bin.
+  - name: study.bin.SealBin
+    input:
+      - name: bin_id
+        type: study.bin.BinId
+    outcomes:
+      - name: unknown-bin
+        unknown_instance: true
+        error: study.bin.UnknownBin
+        payload:
+          study.bin.UnknownBin: {bin_id: input.bin_id}
+        summary: No bin carries the id, named from the input.
+      - name: sealed
+        moves: study.bin.Bin.seal
+        instance: bin_id
+        emits: [study.bin.BinSealed]
+        payload:
+          study.bin.BinSealed: {bin_id: input.bin_id}
+        summary: The bin is sealed.
+  - name: study.bin.LabelBin
+    input:
+      - name: bin_id
+        type: study.bin.BinId
+      - name: label
+        type: String
+    outcomes:
+      - name: missing-bin
+        unknown_instance: true
+        error: study.bin.MissingBin
+        payload:
+          study.bin.MissingBin: {bin_id: input.bin_id}
+        summary: No bin carries the id, named from the input; the hint has no source.
+      - name: labelled
+        updates: study.bin.Bin
+        instance: bin_id
+        sets:
+          label: input.label
+        emits: [study.bin.BinLabelled]
+        payload:
+          study.bin.BinLabelled: {bin_id: input.bin_id}
+        summary: The bin is labelled.
+events:
+  - name: study.bin.BinOpened
+    fields:
+      - name: bin_id
+        type: study.bin.BinId
+  - name: study.bin.BinFilled
+    fields:
+      - name: bin_id
+        type: study.bin.BinId
+      - name: item
+        type: String
+  - name: study.bin.BinSealed
+    fields:
+      - name: bin_id
+        type: study.bin.BinId
+  - name: study.bin.BinLabelled
+    fields:
+      - name: bin_id
+        type: study.bin.BinId

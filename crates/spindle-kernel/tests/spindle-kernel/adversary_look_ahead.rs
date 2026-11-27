@@ -1,5 +1,5 @@
 //! Adversary pass 2 for the look-ahead beside a missing related row (`select_ahead`,
-//! `ahead_answer`, `missing_reference`), each request run against ESS 0.90's interpreter, which is
+//! `ahead_answer`, `look_ahead`), each request run against ESS 0.90's interpreter, which is
 //! the authority.
 //!
 //! The fixture `tests/fixtures/adversary-look-ahead` declares desks that open and close, and
@@ -334,7 +334,6 @@ fn adversary_two_input_rows_one_missing_agree() {
 
 /// No decider is asked for a request the model answers alone, on every command of the fixture.
 #[test]
-#[ignore = "pre-existing: story:look-ahead-asks-only-where-it-matters"]
 fn adversary_no_decider_is_asked_for_a_request_the_model_answers_alone() {
     let ir = ir();
     decided_by_the_model(&ir, &lend_quiet_probes(), &["withheld"]);
@@ -345,19 +344,16 @@ fn adversary_no_decider_is_asked_for_a_request_the_model_answers_alone() {
 
 /// The same, one command each, so a red one does not hide the next.
 #[test]
-#[ignore = "pre-existing: story:look-ahead-asks-only-where-it-matters"]
 fn adversary_return_quiet_asks_no_decider_for_a_request_the_model_answers_alone() {
     decided_by_the_model(&ir(), &return_quiet_probes(), &["withheld"]);
 }
 
 #[test]
-#[ignore = "pre-existing: story:look-ahead-asks-only-where-it-matters"]
 fn adversary_lend_two_asks_no_decider_for_a_request_the_model_answers_alone() {
     decided_by_the_model(&ir(), &lend_two_probes(), &["withheld"]);
 }
 
 #[test]
-#[ignore = "pre-existing: story:look-ahead-asks-only-where-it-matters"]
 fn adversary_lend_approved_asks_no_decider_for_a_request_the_model_answers_alone() {
     decided_by_the_model(&ir(), &lend_approved_probes(), &["approved"]);
 }

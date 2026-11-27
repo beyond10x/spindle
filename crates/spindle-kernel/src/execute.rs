@@ -323,6 +323,16 @@ fn reaching(
         }
         None => None,
     };
+    // Every identity the command reads or writes by, in one spelling, so `1.0` and `1` of a
+    // `Decimal` or `Binary64` identity name one row, as ESS reads both as one value
+    // (`crate::typed::spelled`); every read and write of the command goes through this store.
+    // The subject's identity is held so too, as the rows a scan answers are keyed, so it is
+    // told apart from them by equality (an `affects:` entry over its own entity leaves it out).
+    let address = address.map(|(entity, field, identity)| {
+        let identity = crate::typed::spelled(&identity).into_owned();
+        (entity, field, identity)
+    });
+    let mut spelled = crate::store::Spelled(store);
     let mut run = Run {
         ir,
         spec,
@@ -330,7 +340,7 @@ fn reaching(
         input,
         caller,
         attributes,
-        store,
+        store: &mut spelled,
         decider,
         held: None,
         related: crate::values::Related::new(),
@@ -426,7 +436,9 @@ enum Reference {
     Row(Value, Row),
 }
 
-/// What the addressed row answers for the branch a look-ahead selects ([`Run::look_ahead`]).
+/// What the addressed row answers for the branch a look-ahead selects ([`Run::look_ahead`]). Two
+/// branches with the same answer are answered alike.
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Ahead {
     /// The branch acts on a row no store holds: the existence answer.
     Unknown,
@@ -786,13 +798,12 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 Phase::HeldState | Phase::PresentRelated | Phase::Accepting | Phase::Default => {
                     if !looked_ahead {
                         looked_ahead = true;
-                        let missing = missing_late && !stored && self.missing_reference()?;
                         if !stored
                             && plan
                                 .branches(Phase::PresentRelated)
                                 .iter()
                                 .any(|outcome| present_related(outcome))
-                            && let Some(answered) = self.look_ahead(&plan, true, !missing)?
+                            && let Some(answered) = self.look_ahead(&plan, true)?
                         {
                             return Ok(Selected::Answered(answered));
                         }
@@ -826,6 +837,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
         Err(ExecuteError::Undeclared {
             command: self.command.to_owned(),
             reason: "no outcome's condition holds and the command declares no default".to_owned(),
+            held: None,
         })
     }
 
@@ -1471,24 +1483,6 @@ impl<'a, 'ir> Run<'a, 'ir> {
         Ok(None)
     }
 
-    /// Whether a related row the command reads, through the input or a stored reference, is named
-    /// and no store holds it: the request is then the model's to answer, by that row's
-    /// `exists: false` branch or as undecidable, unless the held state answers first, and a
-    /// decider is asked only where a branch it could select has a held-state answer, or a guard
-    /// past an external branch is unknown ([`Self::look_ahead`]).
-    fn missing_reference(&mut self) -> Result<bool, ExecuteError> {
-        let spec = self.spec;
-        let ir = self.ir;
-        for outcome in &spec.outcomes {
-            if let ResolvedCondition::Related { via, entity, .. } = &outcome.condition
-                && let Reference::Missing = self.reference(via, ir.entity(entity))?
-            {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
     /// Refuses a missing row the input names that no `exists: false` branch answered: a predicate
     /// over it is `Unknown`, never a branch taken by default, and ESS's interpreter refuses the
     /// whole selection where it reads it.
@@ -1520,8 +1514,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
         &mut self,
         plan: &PrecedencePlan<'ir>,
     ) -> Result<Option<Selected<'ir>>, ExecuteError> {
-        let missing = self.missing_reference()?;
-        if let Some(answered) = self.look_ahead(plan, false, !missing)? {
+        if let Some(answered) = self.look_ahead(plan, false)? {
             return Ok(Some(Selected::Answered(answered)));
         }
         let spec = self.spec;
@@ -1571,39 +1564,56 @@ impl<'a, 'ir> Run<'a, 'ir> {
     /// The answer is kept for selection ([`Self::ask`]). A selected refusal acts on no row, so
     /// selection goes on to the related rows.
     ///
-    /// `ask: false` is the look-ahead beside a missing related row ([`Self::missing_reference`]),
-    /// which the model answers itself once the held state has. A first walk asks no decider and
-    /// reads past each external branch. Where no branch it could select, the external ones passed
-    /// included, has a held-state answer, nothing is asked and the missing row answers. The
-    /// decider is asked, by the walk that asks, wherever any branch it could select has a
-    /// held-state answer, and where a guard read past an external branch is unknown.
+    /// A decider is asked only where its answer changes the look-ahead's. A first walk asks no
+    /// decider and reads past each external branch; the branches the walk that asks could select
+    /// are the external ones passed and the one the first walk selects. Where they all give the
+    /// same answer (none, or the same held-state answer), that answer stands and nothing is
+    /// asked, so a request the model turns away never reaches the decider. The walk that asks
+    /// decides where they differ, and where a read past an external branch fails or leaves a
+    /// guard unknown, as a decider that takes that branch stops the reading before it.
+    ///
+    /// The row sets the first walk scans condition the commit only where its held-state answer
+    /// answers the request. Otherwise they are dropped: selection, or the walk that asks, scans
+    /// what it reads itself, and a branch a decider takes reads nothing past it.
     fn look_ahead(
         &mut self,
         plan: &PrecedencePlan<'ir>,
         subjects: bool,
-        ask: bool,
     ) -> Result<Option<Executed>, ExecuteError> {
-        if !ask {
-            let mut passed = Vec::new();
-            match self.select_ahead(plan, subjects, Some(&mut passed)) {
-                Ok(selected) => {
-                    if selected
-                        .into_iter()
-                        .chain(passed)
-                        .all(|outcome| self.ahead_answer(outcome).is_none())
-                    {
-                        return Ok(None);
-                    }
+        let scanned = self.scanned.len();
+        let mut passed = Vec::new();
+        let stands = match self.select_ahead(plan, subjects, Some(&mut passed)) {
+            Ok(selected) => {
+                let answer = selected.and_then(|outcome| self.ahead_answer(outcome));
+                let alike = passed
+                    .iter()
+                    .all(|outcome| self.ahead_answer(outcome) == answer);
+                if alike
+                    && answer.is_some()
+                    && let Some(outcome) = selected
+                {
+                    return self.answer_ahead(outcome);
                 }
-                // A guard read past an external branch is unknown: a decider that takes that
-                // branch stops the reading before it, so the walk that asks decides.
-                Err(ExecuteError::Undecidable { .. }) if !passed.is_empty() => {}
-                Err(error) => return Err(error),
+                alike
             }
-        }
-        let Some(outcome) = self.select_ahead(plan, subjects, None)? else {
-            return Ok(None);
+            Err(_) if !passed.is_empty() => false,
+            Err(error) => return Err(error),
         };
+        self.scanned.truncate(scanned);
+        if stands {
+            return Ok(None);
+        }
+        match self.select_ahead(plan, subjects, None)? {
+            Some(outcome) => self.answer_ahead(outcome),
+            None => Ok(None),
+        }
+    }
+
+    /// The look-ahead's answer once it selected `outcome` ([`Self::ahead_answer`]).
+    fn answer_ahead(
+        &mut self,
+        outcome: &ResolvedOutcome,
+    ) -> Result<Option<Executed>, ExecuteError> {
         match self.ahead_answer(outcome) {
             None => Ok(None),
             Some(Ahead::Unknown) => self.unknown_instance(outcome).map(Some),
@@ -1822,13 +1832,15 @@ impl<'a, 'ir> Run<'a, 'ir> {
             let reason = match &self.held {
                 Some(Addressed {
                     entity,
+                    field,
                     identity,
                     stored: None,
-                    ..
                 }) => format!(
-                    "no `{}` has the identity {identity}, and the command declares neither \
+                    "no `{}` has the identity {}, and the command declares neither \
                      `unknown_instance:` nor `wrong_state:`",
-                    entity.name
+                    entity.name,
+                    // As the caller sent it, not in the one spelling the row is keyed by.
+                    self.input.get(&field.name).unwrap_or(identity)
                 ),
                 _ => "the held state is not one this command acts from, and the command \
                       declares no `wrong_state:`"
@@ -1837,6 +1849,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
             return Err(ExecuteError::Undeclared {
                 command: self.command.to_owned(),
                 reason,
+                held: None,
             });
         };
         self.refusal(outcome)
@@ -2105,12 +2118,19 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 return Ok(identity);
             }
             if !(redraws && minted) {
+                // A supplied identity, not one this draw minted, is the held identity ESS's
+                // interpreter refuses as a request no branch describes (`interpret::execute::create`).
+                let held = (!minted).then(|| crate::HeldIdentity {
+                    outcome: outcome.name.to_string(),
+                    entity: entity_name.clone(),
+                });
                 return Err(ExecuteError::Undeclared {
                     command: self.command.to_owned(),
                     reason: format!(
                         "a `{entity_name}` already has the identity {identity}, and `creates:` \
                          never replaces an instance"
                     ),
+                    held,
                 });
             }
             let held = match occupied {
@@ -2130,6 +2150,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                          `{entity_name}`, one more than the {held} it holds, is already held by \
                          one, and `creates:` never replaces an instance"
                     ),
+                    held: None,
                 });
             }
             self.generator.rewind(mark);
@@ -2352,10 +2373,13 @@ impl<'a, 'ir> Run<'a, 'ir> {
     /// Fills each field of `outcome`'s error that `outcome` gives no source, after the sourced
     /// ones, as [`spindle_capability::mint::unsourced`] says: from the row the refusal is
     /// answered for (`before`), as ESS's served application reads it, else minted from its type,
-    /// as ESS's interpreter leaves it to the implementation; an `Optional` one no row fills stays
-    /// absent. Without a row (the unknown-instance arm of `wrong_state:`) a field the row would
-    /// fill is left out: an instance that does not exist has nothing to describe. With `mint`
-    /// false a field that would be minted is left out too.
+    /// as ESS's interpreter leaves it to the implementation, apart from the run's sequence
+    /// ([`crate::Mint::error_uuid`]: the interpreter draws no tick for it); an `Optional` one no
+    /// row fills stays absent. Without a row (the unknown-instance arm of `wrong_state:`) a
+    /// field the row would fill is left out: an instance that does not exist has nothing to
+    /// describe. With `mint` false a field that would be minted is left out too. A required field
+    /// of an `unknown_instance:` refusal ([`Unsourced::Unanswered`]) is not reached: the outcome
+    /// is refused by name before it runs ([`Self::runs`]).
     fn unsourced_error_fields(
         &self,
         outcome: &ResolvedOutcome,
@@ -2383,7 +2407,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 (Unsourced::Minted(choice), _) => {
                     let minted = self
                         .generator
-                        .choose(
+                        .choose_error(
                             &choice,
                             &Identity {
                                 capability: IDENTITY_MINT,

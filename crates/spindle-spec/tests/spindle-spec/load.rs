@@ -194,3 +194,93 @@ fn an_empty_directory_is_refused_by_name() {
     let error = spindle_spec::load(directory.path()).expect_err("nothing to load");
     assert!(matches!(error, spindle_spec::LoadError::Empty(_)));
 }
+
+/// A domain whose command `demo.shelf.PlaceBook` takes a shelf's identity twice, at the top of its
+/// input (`shelf`) and as the member of a struct input (`wrap.shelf`), and guards its first branch
+/// with `when_related: {via: <via>, exists: false}`.
+fn shelf_specification(root: &Path, via: &str) {
+    fs::write(
+        root.join("system.yaml"),
+        "format: ess/34\nsystem: demo\nversion: v1\ndomains:\n  - demo.shelf\n",
+    )
+    .expect("write");
+    fs::create_dir_all(root.join("domains")).expect("the domains directory");
+    fs::write(
+        root.join("domains/shelf.yaml"),
+        format!(
+            "domain: demo.shelf
+types:
+  - {{name: demo.shelf.ShelfId, kind: newtype, of: String}}
+  - {{name: demo.shelf.BookId, kind: newtype, of: String}}
+  - name: demo.shelf.Wrap
+    kind: struct
+    fields:
+      - {{name: shelf, type: demo.shelf.ShelfId}}
+entities:
+  - name: demo.shelf.Shelf
+    identity: {{name: shelf_id, type: demo.shelf.ShelfId}}
+    lifecycle: {{initial: Open, states: [Open], terminal: [Open]}}
+  - name: demo.shelf.Book
+    identity: {{name: book_id, type: demo.shelf.BookId}}
+    lifecycle: {{initial: Placed, states: [Placed], terminal: [Placed]}}
+errors:
+  - name: demo.shelf.NoShelf
+    summary: No shelf carries the id.
+    fields: []
+commands:
+  - name: demo.shelf.PlaceBook
+    input:
+      - {{name: book_id, type: demo.shelf.BookId}}
+      - {{name: shelf, type: demo.shelf.ShelfId}}
+      - {{name: wrap, type: demo.shelf.Wrap}}
+    outcomes:
+      - name: no-shelf
+        when_related: {{via: {via}, exists: false}}
+        error: demo.shelf.NoShelf
+        summary: The named shelf does not exist.
+      - name: placed
+        creates: demo.shelf.Book
+        instance: book_id
+        emits: [demo.shelf.BookPlaced]
+        payload:
+          demo.shelf.BookPlaced: {{book_id: input.book_id}}
+        summary: The book is placed.
+events:
+  - name: demo.shelf.BookPlaced
+    fields:
+      - {{name: book_id, type: demo.shelf.BookId}}
+"
+        ),
+    )
+    .expect("write");
+}
+
+/// `story:related-via-nested-input`: ESS refuses a `when_related:` guard whose `via:` names a
+/// member of a struct input when it checks the specification (`undeclared_reference`), so no IR
+/// with such a guard reaches the kernel, whose read of `ResolvedRelatedVia::Input` is flat. The
+/// day ESS accepts the guard this test fails, and the kernel's read follows the path then.
+#[test]
+fn nested_related_via_is_rejected_at_load() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+    let root = directory.path();
+
+    shelf_specification(root, "input.shelf");
+    spindle_spec::load(root).expect("the same guard through a top-level input loads");
+
+    shelf_specification(root, "input.wrap.shelf");
+    let error = spindle_spec::load(root).expect_err("a guard through a nested member is refused");
+    let text = error.to_string();
+    assert!(
+        matches!(error, spindle_spec::LoadError::Refused(_)),
+        "{text}"
+    );
+    assert!(text.contains("[undeclared_reference]"), "{text}");
+    assert!(
+        text.lines()
+            .any(|line| line.contains("[undeclared_reference]")
+                && line.contains("demo.shelf.PlaceBook")
+                && line.contains("outcomes.no-shelf.when_related")
+                && line.contains("`wrap.shelf`")),
+        "{text}"
+    );
+}

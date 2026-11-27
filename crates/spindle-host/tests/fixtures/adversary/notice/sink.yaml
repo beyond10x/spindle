@@ -44,6 +44,9 @@ commands:
       - name: no-board
         unknown_instance: true
         error: notice.sink.NoBoard
+        payload:
+          notice.sink.NoBoard:
+            board_id: input.board_id
         summary: No board yet, so nothing is pinned.
       - name: pinned
         updates: notice.sink.Board

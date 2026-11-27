@@ -4,4 +4,5 @@
 
 mod adversary_manifest;
 mod adversary_w17_scenarios;
+mod adversary_w30_u10;
 mod load;

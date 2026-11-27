@@ -1,7 +1,7 @@
 format: ess/34
 system: bay
 version: v1
-summary: Lots tagged and closed in process, where one way to close a lot has a secondary effect this runtime does not run.
+summary: Lots tagged and closed in process, where closing a lot may sweep its tags and one way to close it is a compensating refusal this runtime does not run.
 domains:
   - bay.lot
 components:
@@ -15,9 +15,11 @@ components:
         - bay.lot.OpenLot
         - bay.lot.TagLot
         - bay.lot.CloseLot
+        - bay.lot.SweepTag
     publishes:
       events:
         - bay.lot.LotOpened
         - bay.lot.LotTagged
         - bay.lot.LotClosed
+        - bay.lot.TagSwept
     reached_by: in_process

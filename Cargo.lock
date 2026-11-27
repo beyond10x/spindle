@@ -2227,6 +2227,7 @@ dependencies = [
  "ess-conformance",
  "ess-domain",
  "ess-primitives",
+ "rustix",
  "serde",
  "serde_json",
  "spindle-capability",

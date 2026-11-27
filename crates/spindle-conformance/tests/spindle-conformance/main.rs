@@ -2,6 +2,7 @@
 //! one test binary (`story:one-test-binary-per-crate`). Test names are unchanged under their
 //! module path.
 
+mod absent_view_fields;
 mod adversary_caller;
 mod adversary_conform;
 mod adversary_conversions;
@@ -14,6 +15,8 @@ mod adversary_w17_conformance;
 mod adversary_w29_u1;
 mod adversary_w29_u2;
 mod adversary_w29_u3;
+mod adversary_w30_u2;
+mod adversary_w30_u5;
 mod aggregates;
 mod before_row_and_reference_lists;
 mod computed;

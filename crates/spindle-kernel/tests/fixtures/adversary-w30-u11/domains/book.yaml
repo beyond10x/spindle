@@ -1,0 +1,444 @@
+domain: ledger.book
+summary: A book writes one entry per line it lists, creating, updating and posting entries in one outcome, and labels the cells and counters it lists by numeric identities.
+types:
+  - name: ledger.book.Line
+    kind: struct
+    fields:
+      - name: line_id
+        type: String
+      - name: qty
+        type: Integer
+      - name: memo
+        type: Optional<String>
+      - name: tag
+        type: Optional<String>
+  - name: ledger.book.CellRef
+    kind: struct
+    fields:
+      - name: slot
+        type: Decimal
+      - name: label
+        type: String
+  - name: ledger.book.CounterRef
+    kind: struct
+    fields:
+      - name: n
+        type: Integer
+      - name: label
+        type: String
+entities:
+  - name: ledger.book.Book
+    identity:
+      name: book_id
+      type: String
+    fields:
+      - name: last
+        type: Optional<String>
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+  - name: ledger.book.Entry
+    identity:
+      name: line_id
+      type: String
+    fields:
+      - name: book_id
+        type: Optional<String>
+      - name: qty
+        type: Integer
+      - name: memo
+        type: Optional<String>
+      - name: token
+        type: Optional<Uuid>
+    invariants:
+      - qty >= 0
+    lifecycle:
+      initial: Draft
+      states: [Draft, Posted]
+      terminal: [Posted]
+      transitions:
+        - {name: post, from: [Draft], to: Posted}
+  - name: ledger.book.Cell
+    identity:
+      name: slot
+      type: Decimal
+    fields:
+      - name: label
+        type: String
+    lifecycle:
+      initial: Filled
+      states: [Filled]
+      terminal: [Filled]
+  - name: ledger.book.Counter
+    identity:
+      name: n
+      type: Integer
+    fields:
+      - name: label
+        type: String
+    lifecycle:
+      initial: Filled
+      states: [Filled]
+      terminal: [Filled]
+errors:
+  - name: ledger.book.Duplicate
+    summary: The list names one row twice.
+    fields: []
+commands:
+  - name: ledger.book.OpenBook
+    input:
+      - name: book_id
+        type: String
+    outcomes:
+      - name: opened
+        creates: ledger.book.Book
+        instance: book_id
+        emits: [ledger.book.BookOpened]
+        payload:
+          ledger.book.BookOpened:
+            book_id: input.book_id
+        summary: The book is opened.
+  - name: ledger.book.AddEntry
+    input:
+      - name: line_id
+        type: String
+      - name: qty
+        type: Integer
+      - name: memo
+        type: Optional<String>
+    outcomes:
+      - name: added
+        creates: ledger.book.Entry
+        instance: line_id
+        sets:
+          qty: input.qty
+          memo: input.memo
+        emits: [ledger.book.EntryAdded]
+        payload:
+          ledger.book.EntryAdded:
+            line_id: input.line_id
+        summary: The entry is added as a draft.
+  - name: ledger.book.AddCell
+    input:
+      - name: slot
+        type: Decimal
+      - name: label
+        type: String
+    outcomes:
+      - name: added
+        creates: ledger.book.Cell
+        instance: slot
+        sets:
+          label: input.label
+        emits: [ledger.book.CellAdded]
+        payload:
+          ledger.book.CellAdded:
+            slot: input.slot
+        summary: The cell is added.
+  - name: ledger.book.AddCounter
+    input:
+      - name: n
+        type: Integer
+      - name: label
+        type: String
+    outcomes:
+      - name: added
+        creates: ledger.book.Counter
+        instance: n
+        sets:
+          label: input.label
+        emits: [ledger.book.CounterAdded]
+        payload:
+          ledger.book.CounterAdded:
+            n: input.n
+        summary: The counter is added.
+  - name: ledger.book.Post
+    input:
+      - name: book_id
+        type: String
+      - name: lines
+        type: List<ledger.book.Line>
+    outcomes:
+      - name: duplicated
+        when: {not: {distinct: {in: lines, as: l, by: l.line_id}}}
+        error: ledger.book.Duplicate
+        summary: The list names one entry twice.
+      - name: posted
+        updates: ledger.book.Book
+        instance: book_id
+        sets:
+          last: posted
+        affects:
+          - entity: ledger.book.Entry
+            each: {in: input.lines, as: l}
+            instance: l.line_id
+            sets:
+              book_id: input.book_id
+              qty: l.qty
+              memo: l.memo
+          - entity: ledger.book.Entry
+            each: {in: input.lines, as: l}
+            instance: l.line_id
+            moves: ledger.book.Entry.post
+        emits: [ledger.book.Posted]
+        payload:
+          ledger.book.Posted:
+            book_id: input.book_id
+        summary: The book writes one entry per line, creating any it does not hold, then posts every draft among them.
+  - name: ledger.book.PostFirst
+    input:
+      - name: book_id
+        type: String
+      - name: lines
+        type: List<ledger.book.Line>
+    outcomes:
+      - name: duplicated
+        when: {not: {distinct: {in: lines, as: l, by: l.line_id}}}
+        error: ledger.book.Duplicate
+        summary: The list names one entry twice.
+      - name: posted
+        updates: ledger.book.Book
+        instance: book_id
+        sets:
+          last: posted-first
+        affects:
+          - entity: ledger.book.Entry
+            each: {in: input.lines, as: l}
+            instance: l.line_id
+            moves: ledger.book.Entry.post
+          - entity: ledger.book.Entry
+            each: {in: input.lines, as: l}
+            instance: l.line_id
+            sets:
+              book_id: input.book_id
+              qty: l.qty
+              memo: l.memo
+        emits: [ledger.book.Posted]
+        payload:
+          ledger.book.Posted:
+            book_id: input.book_id
+        summary: The book posts every held draft it lists, then writes one entry per line.
+  - name: ledger.book.Note
+    input:
+      - name: book_id
+        type: String
+      - name: lines
+        type: List<ledger.book.Line>
+    outcomes:
+      - name: duplicated
+        when: {not: {distinct: {in: lines, as: l, by: l.line_id}}}
+        error: ledger.book.Duplicate
+        summary: The list names one entry twice.
+      - name: noted
+        updates: ledger.book.Book
+        instance: book_id
+        sets:
+          last: noted
+        affects:
+          - entity: ledger.book.Entry
+            each: {in: input.lines, as: l, where: l.tag == "keep"}
+            instance: l.line_id
+            sets:
+              qty: l.qty
+              memo: l.memo
+        emits: [ledger.book.Noted]
+        payload:
+          ledger.book.Noted:
+            book_id: input.book_id
+        summary: The book writes the entries of the lines tagged to keep; a line without a tag is skipped.
+  - name: ledger.book.Stamp
+    input:
+      - name: book_id
+        type: String
+      - name: lines
+        type: List<ledger.book.Line>
+    outcomes:
+      - name: duplicated
+        when: {not: {distinct: {in: lines, as: l, by: l.line_id}}}
+        error: ledger.book.Duplicate
+        summary: The list names one entry twice.
+      - name: stamped
+        updates: ledger.book.Book
+        instance: book_id
+        sets:
+          last: stamped
+        affects:
+          - entity: ledger.book.Entry
+            each: {in: input.lines, as: l}
+            instance: l.line_id
+            sets:
+              qty: l.qty
+              token: {generated: true, present: true}
+        emits: [ledger.book.Stamped]
+        payload:
+          ledger.book.Stamped:
+            book_id: input.book_id
+        summary: The book stamps one entry per line with a token minted for it.
+  - name: ledger.book.Label
+    input:
+      - name: book_id
+        type: String
+      - name: cells
+        type: List<ledger.book.CellRef>
+    outcomes:
+      - name: duplicated
+        when: {not: {distinct: {in: cells, as: c, by: c.slot}}}
+        error: ledger.book.Duplicate
+        summary: The list names one cell twice.
+      - name: labelled
+        updates: ledger.book.Book
+        instance: book_id
+        sets:
+          last: labelled
+        affects:
+          - entity: ledger.book.Cell
+            each: {in: input.cells, as: c}
+            instance: c.slot
+            sets:
+              label: c.label
+        emits: [ledger.book.Labelled]
+        payload:
+          ledger.book.Labelled:
+            book_id: input.book_id
+        summary: The book labels every cell it lists.
+  - name: ledger.book.Count
+    input:
+      - name: book_id
+        type: String
+      - name: counters
+        type: List<ledger.book.CounterRef>
+    outcomes:
+      - name: duplicated
+        when: {not: {distinct: {in: counters, as: k, by: k.n}}}
+        error: ledger.book.Duplicate
+        summary: The list names one counter twice.
+      - name: counted
+        updates: ledger.book.Book
+        instance: book_id
+        sets:
+          last: counted
+        affects:
+          - entity: ledger.book.Counter
+            each: {in: input.counters, as: k}
+            instance: k.n
+            sets:
+              label: k.label
+        emits: [ledger.book.Counted]
+        payload:
+          ledger.book.Counted:
+            book_id: input.book_id
+        summary: The book labels every counter it lists.
+  - name: ledger.book.Tie
+    input:
+      - name: slot
+        type: Decimal
+      - name: cells
+        type: List<ledger.book.CellRef>
+    outcomes:
+      - name: duplicated
+        when: {not: {distinct: {in: cells, as: c, by: c.slot}}}
+        error: ledger.book.Duplicate
+        summary: The list names one cell twice.
+      - name: tied
+        updates: ledger.book.Cell
+        instance: slot
+        sets:
+          label: tied
+        affects:
+          - entity: ledger.book.Cell
+            each: {in: input.cells, as: c}
+            instance: c.slot
+            sets:
+              label: c.label
+        emits: [ledger.book.Tied]
+        payload:
+          ledger.book.Tied:
+            slot: input.slot
+        summary: The cell labels every other cell it lists, itself excepted.
+events:
+  - name: ledger.book.BookOpened
+    fields:
+      - name: book_id
+        type: String
+  - name: ledger.book.EntryAdded
+    fields:
+      - name: line_id
+        type: String
+  - name: ledger.book.CellAdded
+    fields:
+      - name: slot
+        type: Decimal
+  - name: ledger.book.CounterAdded
+    fields:
+      - name: n
+        type: Integer
+  - name: ledger.book.Posted
+    fields:
+      - name: book_id
+        type: String
+  - name: ledger.book.Noted
+    fields:
+      - name: book_id
+        type: String
+  - name: ledger.book.Stamped
+    fields:
+      - name: book_id
+        type: String
+  - name: ledger.book.Labelled
+    fields:
+      - name: book_id
+        type: String
+  - name: ledger.book.Counted
+    fields:
+      - name: book_id
+        type: String
+  - name: ledger.book.Tied
+    fields:
+      - name: slot
+        type: Decimal
+views:
+  - name: ledger.book.BookCard
+    source: ledger.book.Book
+    consistency: read_your_writes
+    fields:
+      - name: book_id
+        type: String
+      - name: last
+        type: Optional<String>
+      - name: state
+        type: ledger.book.Book.State
+  - name: ledger.book.EntryCard
+    source: ledger.book.Entry
+    consistency: read_your_writes
+    fields:
+      - name: line_id
+        type: String
+      - name: book_id
+        type: Optional<String>
+      - name: qty
+        type: Integer
+      - name: memo
+        type: Optional<String>
+      - name: state
+        type: ledger.book.Entry.State
+  - name: ledger.book.CellCard
+    source: ledger.book.Cell
+    consistency: read_your_writes
+    fields:
+      - name: slot
+        type: Decimal
+      - name: label
+        type: String
+      - name: state
+        type: ledger.book.Cell.State
+  - name: ledger.book.CounterCard
+    source: ledger.book.Counter
+    consistency: read_your_writes
+    fields:
+      - name: n
+        type: Integer
+      - name: label
+        type: String
+      - name: state
+        type: ledger.book.Counter.State

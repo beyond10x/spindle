@@ -1,0 +1,125 @@
+domain: ledger.release
+summary: A release records one row per contract it lists, updating a held record and creating any other.
+types:
+  - name: ledger.release.Contract
+    kind: struct
+    fields:
+      - name: record_id
+        type: String
+      - name: version
+        type: String
+entities:
+  - name: ledger.release.Release
+    identity:
+      name: release_id
+      type: String
+    fields:
+      - name: published
+        type: Optional<Boolean>
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+  - name: ledger.release.Record
+    identity:
+      name: record_id
+      type: String
+    fields:
+      - name: release_id
+        type: String
+      - name: version
+        type: String
+    lifecycle:
+      initial: Live
+      states: [Live]
+      terminal: [Live]
+errors:
+  - name: ledger.release.Duplicate
+    summary: The list names one record twice.
+    fields: []
+commands:
+  - name: ledger.release.OpenRelease
+    input:
+      - name: release_id
+        type: String
+    outcomes:
+      - name: opened
+        creates: ledger.release.Release
+        instance: release_id
+        emits: [ledger.release.ReleaseOpened]
+        payload:
+          ledger.release.ReleaseOpened:
+            release_id: input.release_id
+        summary: The release is opened.
+  - name: ledger.release.AddRecord
+    input:
+      - name: record_id
+        type: String
+      - name: release_id
+        type: String
+      - name: version
+        type: String
+    outcomes:
+      - name: added
+        creates: ledger.release.Record
+        instance: record_id
+        sets:
+          release_id: input.release_id
+          version: input.version
+        emits: [ledger.release.RecordAdded]
+        payload:
+          ledger.release.RecordAdded:
+            record_id: input.record_id
+        summary: The record is added.
+  - name: ledger.release.Publish
+    input:
+      - name: release_id
+        type: String
+      - name: contracts
+        type: List<ledger.release.Contract>
+    outcomes:
+      - name: duplicated
+        when: {not: {distinct: {in: contracts, as: c, by: c.record_id}}}
+        error: ledger.release.Duplicate
+        summary: The list names one record twice.
+      - name: published
+        updates: ledger.release.Release
+        instance: release_id
+        sets:
+          published: true
+        affects:
+          - entity: ledger.release.Record
+            each: {in: input.contracts, as: c}
+            instance: c.record_id
+            sets:
+              release_id: input.release_id
+              version: c.version
+        emits: [ledger.release.Published]
+        payload:
+          ledger.release.Published:
+            release_id: input.release_id
+        summary: The release records one row per contract it lists.
+events:
+  - name: ledger.release.ReleaseOpened
+    fields:
+      - name: release_id
+        type: String
+  - name: ledger.release.RecordAdded
+    fields:
+      - name: record_id
+        type: String
+  - name: ledger.release.Published
+    fields:
+      - name: release_id
+        type: String
+views:
+  - name: ledger.release.Records
+    source: ledger.release.Record
+    consistency: read_your_writes
+    fields:
+      - name: record_id
+        type: String
+      - name: release_id
+        type: String
+      - name: version
+        type: String

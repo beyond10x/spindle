@@ -6,6 +6,7 @@
 //! [`Store::commit_all`]. A store never decides anything; it holds rows and the events that
 //! changed them.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::{Arc, PoisonError, RwLock};
 
@@ -478,6 +479,18 @@ pub trait Store {
     fn events_head(&mut self) -> Result<u64, StoreError> {
         Err(no_events())
     }
+
+    /// The id of the log of events this store keeps, never `0`, as long as the positions
+    /// [`Store::events_after`] reads go on from one another: the same for every process that
+    /// opens the same log, a different one for a store that starts its positions over (a new
+    /// memory store, a SQLite file created again). `0` where the store names none: this
+    /// default, and a log that holds no event yet.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read.
+    fn events_id(&mut self) -> Result<u64, StoreError> {
+        Ok(0)
+    }
 }
 
 /// A read-only handle on what a store committed, read from any thread beside the store's one
@@ -526,6 +539,16 @@ pub trait Reading: Send + Sync {
     fn events_head(&self) -> Result<u64, StoreError> {
         Err(no_events())
     }
+
+    /// The id of the log of events the store keeps, as [`Store::events_id`] answers it; `0`
+    /// where it names none, as this default does.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read.
+    fn events_id(&self) -> Result<u64, StoreError> {
+        Ok(0)
+    }
+
     /// One position of the store for reads of `entities` together ([`Position`]): a scan of
     /// one of them and loads of instances of the others, by identity, answer the store as one
     /// write left it, so a group of writes is seen whole by all of them or by none.
@@ -685,6 +708,102 @@ pub(crate) fn identity_from_key(text: &str) -> Result<Value, StoreError> {
         .map_err(|error| StoreError::Backend(format!("a stored identity {text}: {error}")))
 }
 
+/// A store whose every identity a command hands it is written in one spelling first
+/// ([`crate::typed::spelled`]): what [`Store::load`], [`Store::commit`], [`Store::remove`] and
+/// [`Store::commit_all`] are given. Every other method is handed on as it is, so the store it
+/// wraps answers as it would; what it reads back it keyed in that spelling already.
+pub(crate) struct Spelled<'a>(pub(crate) &'a mut dyn Store);
+
+impl Spelled<'_> {
+    /// `change` with its identity in the one spelling; borrowed where it is so already.
+    fn change(change: &Change) -> Cow<'_, Change> {
+        match crate::typed::spelled(&change.identity) {
+            Cow::Borrowed(_) => Cow::Borrowed(change),
+            Cow::Owned(identity) => Cow::Owned(Change {
+                identity,
+                ..change.clone()
+            }),
+        }
+    }
+
+    /// `removal` with its identity in the one spelling; borrowed where it is so already.
+    fn removal(removal: &Removal) -> Cow<'_, Removal> {
+        match crate::typed::spelled(&removal.identity) {
+            Cow::Borrowed(_) => Cow::Borrowed(removal),
+            Cow::Owned(identity) => Cow::Owned(Removal {
+                identity,
+                ..removal.clone()
+            }),
+        }
+    }
+}
+
+impl Store for Spelled<'_> {
+    fn load(&mut self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
+        self.0.load(entity, &crate::typed::spelled(identity))
+    }
+
+    fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
+        self.0.commit(&Self::change(change))
+    }
+
+    fn remove(&mut self, removal: &Removal) -> Result<(), StoreError> {
+        self.0.remove(&Self::removal(removal))
+    }
+
+    fn commit_all(&mut self, writes: &[Write]) -> Result<(), StoreError> {
+        let spelled =
+            |write: &Write| matches!(crate::typed::spelled(write.instance().1), Cow::Borrowed(_));
+        if writes.iter().all(spelled) {
+            return self.0.commit_all(writes);
+        }
+        let writes = writes
+            .iter()
+            .map(|write| match write {
+                Write::Commit(change) => Write::Commit(Self::change(change).into_owned()),
+                Write::Remove(removal) => Write::Remove(Self::removal(removal).into_owned()),
+            })
+            .collect::<Vec<_>>();
+        self.0.commit_all(&writes)
+    }
+
+    fn scan(&mut self, entity: &str) -> Result<Scan, StoreError> {
+        self.0.scan(entity)
+    }
+
+    fn counts(&mut self, entities: &[String]) -> Result<BTreeMap<String, usize>, StoreError> {
+        self.0.counts(entities)
+    }
+
+    fn reading(&mut self) -> Option<Arc<dyn Reading>> {
+        self.0.reading()
+    }
+
+    fn attribute(&mut self, origin: Option<Origin>) {
+        self.0.attribute(origin);
+    }
+
+    fn outcome(&mut self, outcome: &str) {
+        self.0.outcome(outcome);
+    }
+
+    fn commit_events(&mut self, events: &[Event], scanned: &[Scanned]) -> Result<(), StoreError> {
+        self.0.commit_events(events, scanned)
+    }
+
+    fn forget_events(&mut self) -> Result<(), StoreError> {
+        self.0.forget_events()
+    }
+
+    fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
+        self.0.events_after(position, limit)
+    }
+
+    fn events_head(&mut self) -> Result<u64, StoreError> {
+        self.0.events_head()
+    }
+}
+
 /// Instances held only while the process runs: `store.ephemeral`, or `store.durable` bound to
 /// `memory` in an environment that accepts losing state on restart.
 ///
@@ -709,6 +828,18 @@ pub struct MemoryStore {
 struct Held {
     entities: BTreeMap<String, Arc<Instances>>,
     events: Events,
+    /// The id of its log of events ([`Store::events_id`]).
+    log: LogId,
+}
+
+/// The id of a [`MemoryStore`]'s log of events: random, never `0`, drawn when the store is made.
+#[derive(Debug, Clone, Copy)]
+struct LogId(u64);
+
+impl Default for LogId {
+    fn default() -> Self {
+        Self(uuid::Uuid::new_v4().as_u64_pair().0.max(1))
+    }
 }
 
 /// How many events one chunk of [`Events`] holds before it is sealed.
@@ -1116,6 +1247,17 @@ impl Store for MemoryStore {
     fn events_head(&mut self) -> Result<u64, StoreError> {
         Ok(events_head(&self.held))
     }
+
+    /// Drawn at random when the store was made, and kept past a reset that forgot its events,
+    /// whose positions go on.
+    fn events_id(&mut self) -> Result<u64, StoreError> {
+        Ok(events_id(&self.held))
+    }
+}
+
+/// The id of the log of events `held` keeps ([`Store::events_id`]).
+fn events_id(held: &RwLock<Held>) -> u64 {
+    held.read().unwrap_or_else(PoisonError::into_inner).log.0
 }
 
 /// The reading handle of a [`MemoryStore`]: what it holds, read as it stands.
@@ -1132,6 +1274,10 @@ impl Reading for MemoryReading {
 
     fn events_head(&self) -> Result<u64, StoreError> {
         Ok(events_head(&self.0))
+    }
+
+    fn events_id(&self) -> Result<u64, StoreError> {
+        Ok(events_id(&self.0))
     }
 
     /// Every entity's count as one write left them all: taken under one lock.
