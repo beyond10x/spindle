@@ -65,15 +65,18 @@ by the coordinator at merge:
   `Unsourced::Minted` arm of `unsourced_error_fields` (`:2382-2400`), plus a doc comment; U4
   `look_ahead`, `select_ahead`, `ahead_answer` (`:1580-1712`), `Run::select` (`:787-798`) and the
   lines its Scope names; U5 `creation_identity` (`:2076-2136`) and one line in each other
-  constructor of `ExecuteError::Undeclared` (`:826` in U4's `Run::select` hunk, `:1837`); U6
+  constructor of `ExecuteError::Undeclared` (`:826` in U4's `Run::select` hunk, `:1837`); U11 at
+  most a doc comment at `:87`; U6
   `reaching` (`:271-345`).
 - `crates/spindle-kernel/src/lib.rs`: U5 the field on `ExecuteError::Undeclared`, U6 a re-export.
 - `crates/spindle-kernel/src/supported.rs`: U3 `unfilled_error_field`; U11 `affects` (`:602-636`).
-- `crates/spindle-kernel/src/execute/affects.rs`: U5 one line (`:240`); U11 `Run::affect` and
+- `crates/spindle-kernel/src/execute/affects.rs`: U5 one line (`:240`), the new field of
+  `ExecuteError::Undeclared`, which U11's `Undeclared` constructors also set; U11 `Run::affect` and
   `select_affected` (`:189-197` and the element loop).
 - `crates/spindle-kernel/src/values.rs`: U3 only (`Sources::generated`, `:433`).
 - `crates/spindle-conformance/src/target.rs`: U2 `query_view` (`:461`), U5 the undeclared mapping
   (`:377-378`).
+- `website/docs/concepts/specification.md`: U1 (`:168-173`), U11 (`:124-125`).
 - `crates/spindle-host/src/view.rs`: U1 the filter admission; U2 at most a doc comment of
   `project`.
 - `crates/spindle-host/src/host.rs`: U1 the doc comment of the host's read method (`:1974-1977`);
@@ -93,8 +96,10 @@ merges, so the line numbers above, taken before wave 29, may move.
 
 Merge order: U10, U8, U7, U1, U2, U4, U3, U5, U6, U11, U9. The `execute.rs` units merge U4, U3, U5, U6:
 U5 after U4 because of the shared line in `Run::select`, and U6 last, as its wrapper sits at the
-entry of every command. U11 merges after U6, whose one spelling of an identity its list elements
-read (`depends_on`).
+entry of every command. U11 merges after U5, whose `Undeclared` field its constructors set, and
+after U6, whose one spelling of an identity its list elements
+read (`depends_on`); the coordinator merges `wave/30` holding U5 and U6 into U11's branch before
+U11's last run.
 
 ## Exit
 

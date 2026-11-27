@@ -1,0 +1,14 @@
+{
+  "at": "2026-11-27T10:26:13Z",
+  "actor": "human:operator",
+  "artifact": "story:affects-over-input-list",
+  "kind": "story",
+  "revision": 11,
+  "change": {
+    "change": "evidence",
+    "kind": "review_outcome",
+    "source": "review-result:wave30-u11-acc-r1",
+    "review": "review-result:wave30-u11-acc-r1",
+    "outcome": "fixed"
+  }
+}

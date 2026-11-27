@@ -10,6 +10,8 @@ relations:
 scope:
 - confidence: cited
   path: CHANGELOG.md
+- confidence: inferred
+  path: crates/spindle-cli/tests/fixtures/affects-each-network
 - confidence: cited
   path: crates/spindle-cli/tests/fixtures/outcome-scoped-refusal-effects/domains/lot.yaml
 - confidence: cited
@@ -30,7 +32,7 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/main.rs
 - confidence: cited
   path: website/docs/concepts/specification.md
-revision: 8
+revision: 11
 ---
 # An `affects:` entry over an input list runs once per element
 
@@ -61,18 +63,32 @@ an `affects:` filter, and `affects:` beside a creating or missing subject).
   updates it and creates no second row.
 - `an_affects_entry_over_an_input_list_moves_only_held_rows`: a `moves:` entry moves the held rows
   its elements name and creates none for the others.
+- `an_affects_entry_over_an_input_list_deletes_only_held_rows`: a `deletes:` entry removes the held
+  rows its elements name and leaves the store otherwise unchanged.
 - `an_element_its_filter_does_not_select_is_skipped` and `an_element_naming_the_subject_is_skipped`.
 - `affects_over_an_input_list_agrees_with_the_interpreter`: for a sequence of commands over these
   cases, including `repeated: last_wins` and an element whose `Decimal` identity is written `1.0`
-  for a row held as `1`, every answer, row and event equals ESS's interpreter.
+  for a row held as `1`, every answer, row and event equals ESS's interpreter. The `Decimal` case
+  reads the one spelling of `story:decimal-identity-any-spelling`: the coordinator merges
+  `wave/30` holding U6 into U11's branch before U11's last run, and U11 reports green only on
+  that tree.
 - `admit_lists_no_refusal_for_an_affects_entry_over_an_input_list`: `admit` on the
   `outcome-scoped-refusal-effects` fixture lists its `swept` outcome as served.
-- `run_answers_an_affects_entry_over_an_input_list_on_stdin_and_http`: one stdin line and one HTTP
-  request that select `swept` each act on the rows and answer the outcome.
+- `stdin_runs_an_affects_entry_over_an_input_list`: on the `outcome-scoped-refusal-effects`
+  fixture, a stdin line that selects `swept` answers `swept`, and afterwards each held tag the
+  input listed rests in `Swept` and every other tag where it was, read back by a following line.
+- `http_serves_an_affects_entry_over_an_input_list`: on a new fixture
+  `crates/spindle-cli/tests/fixtures/affects-each-network/`, whose component is
+  `reached_by: network`, one HTTP request that selects the entry's outcome answers it, and
+  `GET /api/history?entity=<affected entity>&identity=<id>` for each element answers the write
+  that created or moved that row.
 - `an_outcome_with_secondary_effects_refuses_only_the_request_that_selects_it`
   (`crates/spindle-cli/tests/spindle-cli/outcome_scoped_refusal.rs:568`) keeps testing an
-  outcome-scoped refusal on stdin, on a new outcome of `CloseLot` that uses a construct the kernel
-  still refuses and ESS accepts.
+  outcome-scoped refusal on stdin, on a new outcome of `CloseLot` with `compensates: true`, which
+  the kernel still refuses and ESS accepts (as in the fixture
+  `adversary-outcome-scoped-refusal-compensates`).
+- `website/docs/concepts/specification.md:124-125` no longer names `each:` among the constructs
+  Spindle refuses.
 
 ## Consumer gap
 
@@ -87,7 +103,7 @@ Derived 2026-11-27 by `story-scoper` against `plan/wave-30` (cbf7ec1e). Every li
 - **Primary surface:** `crates/spindle-kernel` — cited (`supported.rs:629`; `execute/affects.rs:189-197` returns the same refusal at run time)
 - **Files:** `crates/spindle-kernel/src/supported.rs:602-636` (`affects`: drop the `each:` refusal, keep the "beside" and rows-quantifier refusals) — cited
 - **Files:** `crates/spindle-kernel/src/execute/affects.rs` (`Run::affect`, `select_affected`: one row per element in list order; update if the row exists, create in `initial` if not, with `Change { expected: None }`; moves and deletes only for existing rows; skip the subject; apply the element filter; write `each.reads`) — cited (`:189` holds the run-time refusal)
-- **Files:** `crates/spindle-cli/tests/spindle-cli/outcome_scoped_refusal.rs:519-608` (the `SWEPT` constant at `:522`, the test at `:568`) and `crates/spindle-cli/tests/fixtures/outcome-scoped-refusal-effects/domains/lot.yaml:84-100` — cited
+- **Files:** `crates/spindle-cli/tests/spindle-cli/outcome_scoped_refusal.rs:519-608` (the `SWEPT` constant at `:524`, the test at `:568`) and `crates/spindle-cli/tests/fixtures/outcome-scoped-refusal-effects/domains/lot.yaml:84-100` — cited
 - **Symbols:** `supported::affects`, `Run::affect`, `Run::select_affected`, `ess_compiler::ir::ResolvedEach` (`list`, `binder`, `member`, `reads`, `filter`, `repeated`), `ResolvedElementRead` — cited
 - **Parity target:** ESS 0.99.2 `crates/verify/ess-conformance/src/interpret/execute/set_effects.rs` `apply`, `carry_out`, `elements`, `ElementFacts` (unchanged since 0.99.1) — cited
 - **Also likely:** `crates/spindle-kernel/src/facts.rs` — inferred: a rebinding fact source for `<binder>.<member>` → `<list>.<index>.<member>`; input lists already bind at `<path>.<index>` (`facts.rs:203-216`). It may instead live in `execute/affects.rs`
@@ -96,8 +112,12 @@ Derived 2026-11-27 by `story-scoper` against `plan/wave-30` (cbf7ec1e). Every li
 - **Tests (cli):** `admit_lists_no_refusal_for_an_affects_entry_over_an_input_list` and `run_answers_an_affects_entry_over_an_input_list_on_stdin_and_http` in `outcome_scoped_refusal.rs` — inferred. Each starts the binary, a few seconds each, not measured; well under the 60 s per test and the 120 s step
 - **Documents:** `website/docs/concepts/specification.md:124-125` (names `each:` as the refused example), `CHANGELOG.md` `[Unreleased]` — cited
 - **Confidence:** high for the kernel surface (the story and the tree name both refusal sites); medium for where the tests and the fixture land
-- **Would collide with:** `supported.rs` (wave 29 changes it; wave 30 U3 changes `unfilled_error_field`, a different hunk); the `spindle-kernel` test `main.rs` module list (U3, U6); `CHANGELOG.md` `[Unreleased]` (every unit). `execute/affects.rs`, `facts.rs` and the cli refusal fixture are named by no other wave-29 or wave-30 surface
+- **Would collide with:** `supported.rs` (wave 29 changes it; wave 30 U3 changes `unfilled_error_field`, a different hunk); `execute/affects.rs` with U5, which adds a field to `ExecuteError::Undeclared` at `:240` that every `Undeclared` constructor in U11's rewritten `Run::affect` sets, so U11 merges after U5; `execute.rs` (U3, U4, U5, U6) at most a doc comment at `:87`, near no other unit's hunk; `website/docs/concepts/specification.md` with U1 (`:168-173`, U11 at `:124-125`); the `spindle-kernel` test `main.rs` module list (U3, U6); `CHANGELOG.md` `[Unreleased]` (every unit). `facts.rs` and the cli refusal fixture are named by no other wave-29 or wave-30 surface
 - **Safety fact:** creating a row inside the outcome's write group with `Change { expected: None }` is the existing creation contract of `Store::commit_all`: a row that appeared after the scan refuses the whole group — `store.rs:47`, `:321-328`, `sqlite.rs:608-637`, level 2, unproven
+- **Tests (fixture, new):** `crates/spindle-cli/tests/fixtures/affects-each-network/`, a component
+  `reached_by: network` with one outcome whose `affects:` walks an input list, for the HTTP case;
+  the `outcome-scoped-refusal-effects` fixture is `reached_by: in_process` and `run` serves HTTP
+  only for a network component — cited (`system.yaml:23`, `website/docs/reference/cli.md:107`)
 
 ## Decided when scoped
 
