@@ -7,7 +7,26 @@ title: A value source read through two related rows runs
 relations:
 - serves: vision:spindle
 - informed_by: story:related-row-selected-by-predicate
-revision: 1
+scope:
+- confidence: inferred
+  path: CHANGELOG.md
+- confidence: inferred
+  path: crates/spindle-docs/src/status.rs
+- confidence: cited
+  path: crates/spindle-kernel/src/supported.rs
+- confidence: cited
+  path: crates/spindle-kernel/src/values.rs
+- confidence: inferred
+  path: crates/spindle-kernel/tests/fixtures/related-chain
+- confidence: inferred
+  path: crates/spindle-kernel/tests/spindle-kernel/main.rs
+- confidence: inferred
+  path: crates/spindle-kernel/tests/spindle-kernel/related_chain_values.rs
+- confidence: inferred
+  path: website/data/status.json
+- confidence: inferred
+  path: website/docs/status.md
+revision: 6
 ---
 ## Outcome
 
@@ -26,7 +45,66 @@ row, not a chain of two.
 ## Acceptance
 
 - `a_value_source_through_two_rows_reads_the_far_row`: a neutral fixture with three entities, where
-  an outcome copies a field of the row two hops from the input; the command answers, the row holds
-  the far row's value, and ESS's interpreter gives the same row.
-- `a_missing_middle_row_is_refused_as_ess_refuses_it`: with the middle row absent, the command is
-  answered as ESS's interpreter answers it.
+  an outcome copies a field and a state of the row two hops from the input; the command answers,
+  the row holds the far row's values, and ESS's interpreter gives the same row. It is refused on
+  0.22.0.
+- `a_missing_row_in_the_chain_is_answered_as_ess_answers_it`: with the first row absent, with the
+  far row absent, and with an absent `Optional` reference on the way, the command is answered as
+  ESS's interpreter answers it.
+- `a_chain_through_another_component_s_row_is_checked_at_every_hop`: where the middle row's entity
+  belongs to another component, the read is refused or answered as the one-hop read of that entity
+  is.
+
+## Scope
+
+Derived 2026-11-27 by `story-scoper`. Every line is **cited** (read from the story or the tree) or
+**inferred** (a reading that could be wrong).
+
+- **Primary surface:** `crates/spindle-kernel` (`values.rs`, `supported.rs`) — cited
+- **Files:** `crates/spindle-kernel/src/supported.rs:928` (the refusal named in the story, text
+  matches ESS `ResolvedPayloadValue::describe` for a `through` chain) and `:898-912` (the arm that
+  admits `RelatedField`/`RelatedState` only where `through.is_empty()`) — cited
+- **Files:** `crates/spindle-kernel/src/values.rs:41-117` (`related`, the pre-outcome load of the
+  rows; filters `through.is_empty()` at `:72`), `:370-384` (`Sources::value` arms, same filter),
+  `:482-508` (`Sources::related`, one row only) — cited
+- **Files:** `crates/spindle-kernel/src/supported.rs:296-338` (`foreign_read`): checks only the last
+  `entity`, not each `ResolvedRelatedHop::entity`; must check the middle row's entity too once the
+  chain runs — cited (read), the need is inferred
+- **Symbols:** `ResolvedPayloadValue::RelatedField { through }`, `ResolvedPayloadValue::RelatedState
+  { through }`, `ResolvedRelatedHop { entity, field, type_ref }`, `values::Related`,
+  `values::related`, `Sources::related`, `supported::value`, `supported::foreign_read` — cited
+- **Parity target:** ESS 0.99.1 `interpret::execute::determined::Reads::related` (the chain walk,
+  `Reads::row`, `stored_reference`): an absent `Optional` reference gives an absent value; a present
+  reference that names no row gives `Undetermined::NoValue` (a capability gap, which ESS reports
+  as `unsupported`); a hop field that is the identity field reads the address itself — cited
+- **Tests:** new module `crates/spindle-kernel/tests/spindle-kernel/related_chain_values.rs` with
+  `a_value_source_through_two_rows_reads_the_far_row` and
+  `a_missing_middle_row_is_refused_as_ess_refuses_it` (kernel `no_value` against the interpreter
+  determining nothing, the `interpreter_determines` pattern of `where_selected_values.rs:93`); one
+  `mod` line in `tests/spindle-kernel/main.rs` — inferred (module name)
+- **Fixture:** new `crates/spindle-kernel/tests/fixtures/<three-entity fixture>/` (`system.yaml`,
+  `domains/*.yaml`) — inferred
+- **Also likely:** `crates/spindle-kernel/src/execute.rs:363` stays unchanged if `values::related`
+  keeps its signature — inferred
+- **Documents:** `CHANGELOG.md` `[Unreleased]` (0.19-era line 1325 says "chains … stay refused by
+  name"); `crates/spindle-docs/src/status.rs` with `website/data/status.json` and
+  `website/docs/status.md` if a row is added (precedent: commit 5db28f60) — inferred
+- **Confidence:** high — the story names the refusal site, and the code that must change sits in two
+  functions already gated on `through.is_empty()`
+- **Would collide with:** any unit changing `supported::value` or `Sources::value` in the kernel
+  (an outcome-field conversion lifts its refusal at `supported.rs:839-843`, about 90 lines from this
+  arm, in the same function); the kernel test `main.rs` `mod` list; `CHANGELOG.md` `[Unreleased]`;
+  the status rows in `spindle-docs/src/status.rs` and its generated files
+- **Safety fact:** every row the chain reads is loaded in `values::related` before the outcome
+  writes anything (`execute.rs:363`, `values.rs:41`), so the far row is read from the store as it
+  was before the outcome, as ESS's `Reads::original` is — step 2, unproven
+
+## Decided when scoped
+
+Taken 2026-11-27 on the scoper's recommended option, each reversible.
+
+- D1 A: a field and a state read through a chain that starts at an input field; the
+  cross-component check reads every entity of the chain.
+- D2 A: a `CHANGELOG.md` line and a status row, regenerated.
+- D3 A: the missing-row test covers an absent first row, an absent far row and an absent
+  `Optional` hop, each answered as ESS's interpreter answers it.
