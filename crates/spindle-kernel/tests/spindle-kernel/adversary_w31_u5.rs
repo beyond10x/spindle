@@ -277,3 +277,319 @@ fn an_enum_value_added_fits_stored_rows() {
         ),
     );
 }
+
+// Round 2: the correction reads each stored value of a changed field under its new type
+// (`typed::validate`). Nested types, an optional enum, a null under a field made required, and
+// newtype constraints loosened, tightened and left alone.
+
+const NESTED: &str = "domain: keep.shelf
+summary: Books on shelves, tagged and rated.
+types:
+  - name: keep.shelf.BookId
+    kind: newtype
+    of: String
+  - name: keep.shelf.Genre
+    kind: enum
+    variants: [Fiction, Poetry]
+  - name: keep.shelf.Tag
+    kind: struct
+    fields:
+      - {name: genre, type: keep.shelf.Genre}
+      - {name: aside, type: Optional<String>}
+  - name: keep.shelf.Code
+    kind: newtype
+    of: String
+    prefix: c_
+    invariants:
+      - 'value.count <= 8'
+entities:
+  - name: keep.shelf.Book
+    identity: {name: id, type: keep.shelf.BookId}
+    fields:
+      - {name: title, type: String}
+      - {name: tags, type: List<keep.shelf.Tag>}
+      - {name: ratings, type: 'Map<String, keep.shelf.Genre>'}
+      - {name: mood, type: Optional<keep.shelf.Genre>}
+      - {name: code, type: keep.shelf.Code}
+      - {name: note, type: Optional<String>}
+    lifecycle: {initial: Shelved, states: [Shelved], terminal: [Shelved]}
+";
+
+fn nested() -> Shapes {
+    Shapes::of(&ir(NESTED))
+}
+
+/// [`NESTED`] with each `(from, to)` replaced, each of which must change it.
+fn nested_changed(edits: &[(&str, &str)]) -> Shapes {
+    let mut domain = NESTED.to_owned();
+    for (from, to) in edits {
+        let edited = domain.replace(from, to);
+        assert_ne!(edited, domain, "{from:?} is in the specification");
+        domain = edited;
+    }
+    Shapes::of(&ir(&domain))
+}
+
+/// A book holding `fields` beside a title, no tags, no ratings and the code `c_1`, unless
+/// `fields` sets them.
+fn book(fields: Value) -> Value {
+    let mut book = json!({"title": "Dune", "tags": [], "ratings": {}, "code": "c_1"});
+    if let (Some(book), Value::Object(fields)) = (book.as_object_mut(), fields) {
+        book.extend(fields);
+    }
+    book
+}
+
+/// A store at `path` that recorded [`NESTED`] and holds each of `rows`, by identity.
+fn nested_written(path: &Path, rows: &[(&str, Value)]) -> SqliteStore {
+    let mut store = SqliteStore::open(path).expect("the store opens");
+    assert_eq!(
+        store.fit(&nested()).expect("the store is checked"),
+        Fit::Fits { unrecorded: false }
+    );
+    for (id, fields) in rows {
+        put(&mut store, id, book(fields.clone()));
+    }
+    store
+}
+
+fn nested_misfits(store: &mut SqliteStore, after: &Shapes, expected: &[Misfit]) {
+    assert_eq!(
+        store.fit(after).expect("checked"),
+        Fit::Misfits(expected.to_vec())
+    );
+    assert_eq!(
+        store.recorded().expect("the record reads"),
+        Some(nested()),
+        "a misfit leaves the record as it was"
+    );
+}
+
+fn retyped(field: &str, rows: usize) -> Misfit {
+    Misfit::Retyped {
+        entity: BOOK.to_owned(),
+        field: field.to_owned(),
+        rows,
+    }
+}
+
+const WIDENED: (&str, &str) = (
+    "variants: [Fiction, Poetry]",
+    "variants: [Fiction, Poetry, Drama]",
+);
+const NARROWED: (&str, &str) = ("variants: [Fiction, Poetry]", "variants: [Fiction]");
+
+#[test]
+fn r2_an_enum_widened_inside_a_struct_inside_a_list_and_a_map_fits() {
+    let scratch = scratch();
+    let mut store = nested_written(
+        &scratch.path().join("state.sqlite"),
+        &[(
+            "b1",
+            json!({"tags": [{"genre": "Poetry", "aside": "x"}], "ratings": {"a": "Fiction"}}),
+        )],
+    );
+    fits(&mut store, &nested_changed(&[WIDENED]));
+}
+
+#[test]
+fn r2_an_enum_narrowed_misfits_each_field_where_a_nested_value_uses_the_value() {
+    let scratch = scratch();
+    let mut store = nested_written(
+        &scratch.path().join("state.sqlite"),
+        &[
+            (
+                "b1",
+                json!({"tags": [{"genre": "Fiction"}, {"genre": "Poetry"}]}),
+            ),
+            ("b2", json!({"ratings": {"a": "Fiction", "b": "Poetry"}})),
+            ("b3", json!({"mood": "Fiction"})),
+        ],
+    );
+    // Every row holds tags and ratings (empty or not); one value of each is Poetry. No mood is.
+    nested_misfits(
+        &mut store,
+        &nested_changed(&[NARROWED]),
+        &[retyped("ratings", 3), retyped("tags", 3)],
+    );
+}
+
+#[test]
+fn r2_an_enum_narrowed_where_no_stored_value_uses_the_value_fits() {
+    let scratch = scratch();
+    let mut store = nested_written(
+        &scratch.path().join("state.sqlite"),
+        &[
+            (
+                "b1",
+                json!({"tags": [{"genre": "Fiction"}], "mood": "Fiction"}),
+            ),
+            ("b2", json!({"ratings": {"a": "Fiction"}, "mood": null})),
+        ],
+    );
+    fits(&mut store, &nested_changed(&[NARROWED]));
+}
+
+#[test]
+fn r2_an_optional_enum_narrowed_misfits_only_through_a_value_not_a_null() {
+    let scratch = scratch();
+    let mut store = nested_written(
+        &scratch.path().join("state.sqlite"),
+        &[
+            ("b1", json!({"mood": "Poetry"})),
+            ("b2", json!({"mood": null})),
+        ],
+    );
+    nested_misfits(
+        &mut store,
+        &nested_changed(&[NARROWED]),
+        &[retyped("mood", 1)],
+    );
+}
+
+#[test]
+fn r2_a_null_held_under_a_field_made_required_misfits_as_required_alone() {
+    let scratch = scratch();
+    let mut store = nested_written(
+        &scratch.path().join("state.sqlite"),
+        &[
+            ("b1", json!({"mood": "Fiction"})),
+            ("b2", json!({"mood": null})),
+            ("b3", json!({})),
+        ],
+    );
+    nested_misfits(
+        &mut store,
+        &nested_changed(&[(
+            "{name: mood, type: Optional<keep.shelf.Genre>}",
+            "{name: mood, type: keep.shelf.Genre}",
+        )]),
+        &[Misfit::Required {
+            entity: BOOK.to_owned(),
+            field: "mood".to_owned(),
+            rows: 2,
+        }],
+    );
+}
+
+#[test]
+fn r2_a_field_made_required_and_its_enum_widened_fits_where_every_row_holds_it() {
+    let scratch = scratch();
+    let mut store = nested_written(
+        &scratch.path().join("state.sqlite"),
+        &[("b1", json!({"mood": "Fiction"}))],
+    );
+    fits(
+        &mut store,
+        &nested_changed(&[
+            WIDENED,
+            (
+                "{name: mood, type: Optional<keep.shelf.Genre>}",
+                "{name: mood, type: keep.shelf.Genre}",
+            ),
+        ]),
+    );
+}
+
+#[test]
+fn r2_a_struct_member_removed_misfits_where_a_stored_tag_holds_it() {
+    let scratch = scratch();
+    let mut store = nested_written(
+        &scratch.path().join("state.sqlite"),
+        &[("b1", json!({"tags": [{"genre": "Fiction", "aside": "x"}]}))],
+    );
+    nested_misfits(
+        &mut store,
+        &nested_changed(&[("      - {name: aside, type: Optional<String>}\n", "")]),
+        &[retyped("tags", 1)],
+    );
+}
+
+#[test]
+fn r2_a_loosened_newtype_constraint_fits() {
+    let scratch = scratch();
+    let mut store = nested_written(
+        &scratch.path().join("state.sqlite"),
+        &[("b1", json!({"code": "c_1234"}))],
+    );
+    fits(
+        &mut store,
+        &nested_changed(&[
+            ("    prefix: c_\n", ""),
+            ("'value.count <= 8'", "'value.count <= 16'"),
+        ]),
+    );
+}
+
+#[test]
+fn r2_a_tightened_newtype_constraint_no_stored_value_breaks_fits() {
+    let scratch = scratch();
+    let mut store = nested_written(
+        &scratch.path().join("state.sqlite"),
+        &[("b1", json!({"code": "c_12"}))],
+    );
+    fits(
+        &mut store,
+        &nested_changed(&[("'value.count <= 8'", "'value.count <= 4'")]),
+    );
+}
+
+#[test]
+fn r2_a_tightened_newtype_prefix_a_stored_value_breaks_misfits() {
+    let scratch = scratch();
+    let mut store = nested_written(
+        &scratch.path().join("state.sqlite"),
+        &[("b1", json!({"code": "c_12"}))],
+    );
+    nested_misfits(
+        &mut store,
+        &nested_changed(&[("    prefix: c_\n", "    prefix: cd_\n")]),
+        &[retyped("code", 1)],
+    );
+}
+
+#[test]
+fn r2_an_unchanged_constrained_type_does_not_misfit_when_another_field_changes() {
+    let scratch = scratch();
+    let mut store = nested_written(
+        &scratch.path().join("state.sqlite"),
+        &[("b1", json!({"code": "c_12345", "note": "n"}))],
+    );
+    fits(
+        &mut store,
+        &nested_changed(&[(
+            "      - {name: note, type: Optional<String>}\n",
+            "      - {name: note, type: Optional<String>}\n      - {name: shelfmark, type: Optional<String>}\n",
+        )]),
+    );
+}
+
+/// A struct that ignored undeclared members (`undeclared_fields: ignored`) stored a tag holding
+/// one; closed again, the kernel refuses that value (`typed::validate`), so the rows holding it
+/// misfit. The structure written for a struct leaves the setting out, so nothing is read again.
+#[test]
+fn r2_a_struct_closed_to_undeclared_members_misfits_where_a_stored_value_holds_one() {
+    let scratch = scratch();
+    let open = NESTED.replace(
+        "    kind: struct\n",
+        "    kind: struct\n    undeclared_fields: ignored\n",
+    );
+    assert_ne!(open, NESTED);
+    let recorded = Shapes::of(&ir(&open));
+    let mut store = SqliteStore::open(&scratch.path().join("state.sqlite")).expect("opens");
+    assert_eq!(
+        store.fit(&recorded).expect("checked"),
+        Fit::Fits { unrecorded: false }
+    );
+    put(
+        &mut store,
+        "b1",
+        book(json!({"tags": [{"genre": "Fiction", "shelf": 4}]})),
+    );
+    assert_eq!(
+        store.fit(&nested()).expect("checked"),
+        Fit::Misfits(vec![retyped("tags", 1)]),
+        "the closed struct does not read the stored tag"
+    );
+    assert_eq!(store.recorded().expect("the record reads"), Some(recorded));
+}

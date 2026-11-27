@@ -1,0 +1,27 @@
+domain: archive.vault
+summary: Coins kept under a mark.
+entities:
+  - name: archive.vault.Coin
+    identity: {name: id, type: String}
+    fields:
+      - {name: mark, type: String}
+    lifecycle: {initial: Kept, states: [Kept], terminal: [Kept]}
+commands:
+  - name: archive.vault.KeepCoin
+    input:
+      - {name: id, type: String}
+      - {name: mark, type: String}
+    outcomes:
+      - name: kept
+        creates: archive.vault.Coin
+        instance: id
+        sets:
+          mark: input.mark
+        emits: [archive.vault.CoinKept]
+        payload:
+          archive.vault.CoinKept: {id: input.id}
+        summary: The coin is kept.
+events:
+  - name: archive.vault.CoinKept
+    fields:
+      - {name: id, type: String}

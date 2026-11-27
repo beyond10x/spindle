@@ -1,0 +1,27 @@
+domain: archive.shelf
+summary: Books shelved under a numbered title.
+entities:
+  - name: archive.shelf.Book
+    identity: {name: id, type: String}
+    fields:
+      - {name: title, type: Integer}
+    lifecycle: {initial: Shelved, states: [Shelved], terminal: [Shelved]}
+commands:
+  - name: archive.shelf.ShelveBook
+    input:
+      - {name: id, type: String}
+      - {name: title, type: Integer}
+    outcomes:
+      - name: shelved
+        creates: archive.shelf.Book
+        instance: id
+        sets:
+          title: input.title
+        emits: [archive.shelf.BookShelved]
+        payload:
+          archive.shelf.BookShelved: {id: input.id}
+        summary: The book is shelved.
+events:
+  - name: archive.shelf.BookShelved
+    fields:
+      - {name: id, type: String}
