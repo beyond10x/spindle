@@ -1,0 +1,14 @@
+{
+  "at": "2026-11-27T07:21:30Z",
+  "actor": "human:operator",
+  "artifact": "story:health-and-graceful-drain",
+  "kind": "story",
+  "revision": 24,
+  "change": {
+    "change": "evidence",
+    "kind": "review_outcome",
+    "source": "review-result:wave28-sco-r1",
+    "review": "review-result:wave28-sco-r1",
+    "outcome": "fixed"
+  }
+}

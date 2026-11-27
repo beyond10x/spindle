@@ -36,7 +36,7 @@ scope:
   path: crates/spindle-store-browser/src/indexeddb.rs
 - confidence: inferred
   path: docs/design/spindle.md
-revision: 6
+revision: 7
 ---
 # Every committed event records the caller that caused it
 
@@ -61,6 +61,8 @@ holds the command and its sequence only (`crates/spindle-kernel/src/store.rs:143
   through `Store::events_after` on memory, SQLite and PostgreSQL (the store contract).
 - `an_event_a_binding_caused_records_its_cause`: an event a binding's command committed names the
   binding and the caller of the event that triggered it.
+- `a_split_run_binding_event_records_an_unknown_cause`: in a run split over two processes, an
+  event a binding's command committed names the binding and records its cause as not known.
 - `a_seed_event_records_the_seed`: an event a seed entry committed names the seed, the entry's actor
   and the entry's `request_id`.
 - `a_store_written_before_reads_back_no_caller`: an origin with only `command` and `sequence`, as

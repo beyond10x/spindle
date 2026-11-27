@@ -24,7 +24,7 @@ scope:
   path: crates/spindle-cli/tests/spindle-cli/json_logs.rs
 - confidence: inferred
   path: crates/spindle-cli/tests/spindle-cli/main.rs
-revision: 10
+revision: 11
 ---
 # A served run writes its log as JSON lines on stderr
 
@@ -44,12 +44,16 @@ the log only.
 
 ## Acceptance
 
-- `every_stderr_line_is_one_json_object`: a served run with the JSON format, sent a command, a
+- `every_stderr_line_is_one_json_object`: a served run with `--log-format json`, sent a command, a
   refused command and a SIGTERM, writes only lines that each parse as one JSON object with `time`,
   `level` and `message`.
-- `a_dropped_binding_command_names_its_fields`: the line for a dropped command carries the
-  component, command, binding and attempts as fields.
-- `text_stays_the_default`: without the flag, stderr is as today.
+- `a_dropped_binding_command_names_its_fields`: the line for a dropped command carries `component`,
+  `command`, `binding`, `attempts` and `error` as fields.
+- `a_seed_entry_line_names_its_request_id`: on a served run with a seed, the line for a refused seed
+  entry carries the entry's `request_id`.
+- `json_logs_on_a_stdin_run_exit_1`: `--log-format json` on a run that does not serve HTTP exits 1
+  before reading stdin.
+- `text_stays_the_default`: without the flag, the drop line equals today's text.
 
 ## Decided when scoped
 

@@ -49,7 +49,7 @@ scope:
   path: website/docs/concepts/observe.md
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 23
+revision: 24
 ---
 # A served run answers liveness and readiness, and drains on SIGTERM
 
@@ -74,8 +74,9 @@ turns readiness to `503`, stops accepting, answers the requests already received
 - `liveness_answers_200_while_the_host_answers` (ingress): `GET /__spindle/live` answers `200`
   while the host thread calls `Listener::next` within the bound the test passes, and `503` once it
   stops.
-- `the_health_routes_need_no_observe`: `/__spindle/live` and `/__spindle/ready` answer without
-  `--observe`; on a `--trusted-caller-header` run both answer `403` without the proxy secret.
+- `the_liveness_route_needs_no_observe`: `/__spindle/live` answers without `--observe`; on a
+  `--trusted-caller-header` run it answers `403` without the proxy secret. (`/__spindle/ready` is
+  covered by `story:seed-readiness`.)
 - `readiness_reads_503_once_sigterm_arrives`: a served run whose seed ended reads `200` on
   `/__spindle/ready`, then `503` as soon as SIGTERM arrives, while a command is still held.
 - `sigterm_answers_the_requests_in_flight`: one command held by a slow external cause and one queued

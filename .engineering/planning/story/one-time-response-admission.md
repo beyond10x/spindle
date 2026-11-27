@@ -17,28 +17,31 @@ scope:
   path: crates/spindle-cli/tests/spindle-cli/adversary_responses.rs
 - confidence: inferred
   path: crates/spindle-cli/tests/spindle-cli/replay.rs
-revision: 9
+revision: 11
 ---
 # A scenario with a one-time response is admitted as ESS admits it
 
 ## Outcome
 
 A conformance scenario whose external cause carries a one-time response runs under
-`b10x-spindle conform` and replay. Today it is refused at admission with `InvalidOneTimeResponse`
-("one-time event window is not anchored to an operation"), raised by ESS's `ess-conformance`
-(`one_time_response.rs`) from spindle's call in `crates/spindle-conformance/src/target.rs`.
+`b10x-spindle conform` and replay. Today `run --scenario` ends in an error instead of a "diverges"
+line when such a scenario does not pass: `Replays::run` (`crates/spindle-cli/src/replay.rs`) bisects
+with prefixes that keep the whole scenario's one-time trace, and ESS's `ess-conformance` refuses a
+prefix with `InvalidOneTimeResponse` ("one-time event window is not anchored to an operation").
+`conform` already runs such a model.
 
 ## Acceptance
 
 - `a_divergent_one_time_scenario_names_its_divergent_step`: replaying a one-time scenario whose later
   act diverges exits 1 with a "diverges" line naming that step, and no `InvalidOneTimeResponse` on
-  stderr. It fails on 0.22.0.
-- `a_one_time_response_scenario_runs_on_the_host`: a neutral fixture with one external cause and a
-  one-time response replays with exit 0, as under ESS's interpreter.
-- `conform_runs_a_one_time_external_cause`: `conform` on the same fixture; every executed scenario
-  passes.
+  stderr. It fails on 0.22.0: the bisection prefix keeps the whole scenario's one-time trace.
 - `a_prefix_keeps_only_its_own_one_time_windows` (unit): every prefix of a compiled one-time
-  scenario is admitted by `AdmittedSuite::from_suite`.
+  scenario is admitted by `AdmittedSuite::from_suite`. It fails on 0.22.0, which has no restriction
+  of the trace to a prefix.
+- Guards, which pass on 0.22.0 and stay green: `a_one_time_response_scenario_runs_on_the_host` (a
+  neutral fixture with one external cause and a one-time response replays with exit 0, as under
+  ESS's interpreter) and `conform_runs_a_one_time_external_cause` (`conform` on the same fixture;
+  every executed scenario passes).
 
 ## Origin
 

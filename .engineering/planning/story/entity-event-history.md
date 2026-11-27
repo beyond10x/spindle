@@ -52,23 +52,22 @@ scope:
   path: crates/spindle-telemetry/src/kernel.rs
 - confidence: inferred
   path: crates/spindle-wasm/src/worker.rs
-revision: 7
+revision: 10
 ---
 # A consumer reads the committed events of one entity instance
 
 ## Outcome
 
-A consumer reads the committed events of one entity instance (component, entity, identity), oldest
-first, with position, time, command, caller and outcome, paged; used to show the revision history
-of a record that commands change in place.
+A consumer reads the committed events of one entity instance (the entity's qualified name, which
+names its component, and the identity), oldest first, with position, time, command, caller and
+outcome, paged; used to show the revision history of a record that commands change in place.
 
 ## Why
 
-Asked for by a downstream consumer on 2026-11-10, in its words above. Today `GET /api/events`
-answers the events the host published in this process, with no filter
-(`crates/spindle-ingress/src/console.rs:84-86`). `story:events-read-from-store` (draft) adds one
-store read of all committed events after a position, in commit order, and has no per-instance
-filter. No priority over wave 19 was asked for.
+Asked for by a downstream consumer on 2026-11-10: a revision history for a record that commands
+change in place. Today `GET /api/events` (`crates/spindle-ingress/src/console.rs:90-158`) reads all
+committed events from the stores after a position (`story:events-read-from-store`, implemented),
+with no per-instance filter, and no store keeps the caller or the outcome beside an event.
 
 ## Acceptance
 
@@ -88,6 +87,9 @@ filter. No priority over wave 19 was asked for.
   log.
 - `the_store_names_the_instances_each_write_wrote` (store contract): memory and SQLite, and
   PostgreSQL and IndexedDB where their suites run.
+- `a_store_written_before_reads_history_only_from_new_writes`: on a SQLite state written by 0.22.0,
+  whose writes name no instances, a read of an instance answers only the events of writes made
+  after the upgrade, and the changelog says so.
 
 ## Open
 

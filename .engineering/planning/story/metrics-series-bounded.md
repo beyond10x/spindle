@@ -34,7 +34,7 @@ scope:
   path: website/docs/concepts/observe.md
 - confidence: cited
   path: website/docs/reference/cli.md
-revision: 6
+revision: 7
 ---
 ## Outcome
 
@@ -60,10 +60,10 @@ and because of `story:refusal-reason-bounded`.
 - `an_aggregated_scrape_drops_the_specified_labels` (unit, `metrics.rs`): in the aggregated mode
   every label whose value comes from the specification (`route`, `operation`, `command`,
   `outcome`, `event`, `binding`, `entity`) is written empty, and equal label sets are summed.
-- `an_aggregated_scrape_of_300_commands_writes_at_most_n_series`: a served run over a specification
-  with 300 commands, each answered once, with `--observe-series aggregated`, writes at most the
-  number of series the test states, and that number does not grow with the number of commands.
-  The specification is generated once per test run, not per test.
+- `an_aggregated_scrape_does_not_grow_with_the_specification`: served runs over two generated
+  specifications, 30 and 300 commands, each command answered once, with
+  `--observe-series aggregated`, write the same number of series; with the default they do not.
+  Both specifications are generated once per test run, not per test.
 - `a_scrape_names_its_series_mode`: the scrape holds `spindle_metrics_series_mode{mode=...} 1` with
   the mode in effect, in both modes.
 - `observe_series_requires_observe`: `--observe-series` without `--observe` exits 2.

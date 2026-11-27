@@ -53,7 +53,7 @@ scope:
   path: website/docs/concepts/observe.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 6
+revision: 7
 ---
 # A served run says over HTTP when its seed has ended
 
@@ -90,6 +90,9 @@ What exists today: the seed's end is one line on stderr (`crates/spindle-cli/src
   `running` and `503`, with that seed's counts, until it ends.
 - `a_seed_already_run_on_a_kept_state_is_ended_from_the_first_request`: on a `--state` whose seed
   marker records every entry done, the first request reads `ended` and `200`.
+- `a_view_holds_the_last_entry_once_ready_reads_200`: the first request that reads `200` on
+  `/__spindle/ready` is followed at once by a view read that holds the row the seed's last entry
+  wrote.
 
 ## Decided when scoped
 

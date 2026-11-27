@@ -11,9 +11,17 @@ ESS pin 0.99.1 stays.
 
 The triage of the 98 open stories on 2026-11-27 put the gaps consumers reported first: running
 Spindle as a production service (console off, JSON logs, bounded metrics, seed readiness, health
-and drain), the history of one instance with the caller of each event, and decisions answered from
-the environment and in replay. The host operator accepted this list for the operator on 2026-11-27.
-Seven stories that change the architecture wait for the operator's picks and are not in this wave.
+and drain), the history of one instance with the caller of each event, decisions answered from
+the environment and in replay, and a consumer-reported replay fault on one-time responses
+(`story:one-time-response-admission`, which shares `Replays::run` with replay with decisions). The
+host operator accepted this list for the operator on 2026-11-27.
+
+Seven stories that would change the architecture wait for the operator's picks, put to the operator
+one at a time by the host operator, and are not in this wave: `story:event-egress-and-dead-letters`,
+`story:verified-caller-token`, `story:listener-tls`, `story:several-writers-one-postgres`,
+`story:spec-change-over-stored-rows`, `story:one-ingress-several-specifications` and
+`story:spindle-image-published`. `story:sensitive-fields-redacted` waits for an ESS release.
+
 Each story's `## Scope` was derived against `plan/wave-28`; its `## Decided when scoped` records the
 options taken, and its `## Acceptance` was amended where the scoper found the draft stale.
 
@@ -54,10 +62,18 @@ by the coordinator at merge:
   `reserved()`; U5 the request-log query elision (`:1070-1100`).
 - `crates/spindle-ingress/src/surface.rs`: U3 a builder beside `observing`; U4 `with_seed`; U5 the
   console routes from `Console::ALL`; U1 doc text of `with_console` only.
-- `crates/spindle-ingress/src/listener.rs`: U4 only. `crates/spindle-ingress/src/console.rs` and
-  `router.rs`: U5 only (U1 does not change them: it skips `with_console`).
-- `crates/spindle-kernel`, `crates/spindle-host/src/host.rs`, `crates/spindle-store-browser`: U5
-  only. `crates/spindle-capability`: U6 only. `crates/spindle-cli/src/replay.rs` and
+- `crates/spindle-ingress/src/listener.rs`: U4 only. `crates/spindle-ingress/src/console.rs`: U5
+  only (U1 does not change it: it skips `with_console`).
+- `crates/spindle-ingress/src/router.rs`: U4 the match arms over `Reserved` (`:123-140`, `:342`,
+  `:429`) for its new variants; U5 the console dispatch (`:299-346`, `:400-421`) for
+  `/api/history`. U5 merges before U4.
+- `website/docs/concepts/observe.md`: U3 the series bound of each mode (`:47-64`); U4 a new section
+  on the seed, readiness and liveness routes, placed after the metrics section. U3 merges before U4.
+- `website/docs/concepts/environment-and-admission.md`: U4 edits § A seed submitted at start
+  (`:153-240`); U6 the `external.*` row (`:71`) and a new section placed after § A seed submitted at
+  start ends, not inside it. U6 merges before U4.
+- `crates/spindle-kernel`, `crates/spindle-host/src/host.rs`, `crates/spindle-store-browser`,
+  `crates/spindle-ingress/src/answer.rs` (the request id minted per HTTP request): U5 only. `crates/spindle-capability`: U6 only. `crates/spindle-cli/src/replay.rs` and
   `crates/spindle-conformance/src/target.rs`: U7 only.
 - `ess/domains/observe.yaml`, `Taskfile.yml` and their generated outputs: U4 only (`SeedState`, the
   health answers). `ess/fixtures/observe/metrics/families.json`: U3 only.

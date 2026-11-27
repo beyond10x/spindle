@@ -31,20 +31,21 @@ scope:
   path: crates/spindle-ingress/src/surface.rs
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 6
+revision: 9
 ---
 # An exposed run serves no console route unless asked
 
 ## Outcome
 
-An operator turns the console routes off with one flag or environment entry: `/api/reset`,
-`/api/events`, `/api/model` and `/api/served` then answer `404` like any unrouted path, on every
-listener, whatever secret a request carries.
+An operator turns the console routes off with one flag or setting: every route of `Console::ALL`
+(today `/api/reset`, `/api/events`, `/api/model` and `/api/served`, and any console route a later
+story adds) then answers `404` like any unrouted path on a served `run`, whatever secret a request
+carries.
 
 ## Why
 
 The console routes are added to every surface whose `ingress.network` is bound to
-`http-loopback` (`Surface::with_console`, `crates/spindle-ingress/src/surface.rs:1082-1108`;
+`http-loopback` (`Surface::with_console`, `crates/spindle-ingress/src/surface.rs:1513-1534`;
 `Console::ALL`, `crates/spindle-ingress/src/console.rs:30`). Off loopback they require only the
 proxy secret (`crates/spindle-cli/src/cli.rs:254-256`), so any proxy that adds the secret to every
 request, as a consumer's does, exposes a reset of the whole store and every published event to the
@@ -53,8 +54,10 @@ public.
 ## Acceptance
 
 - `console_routes_off_answer_404_with_the_secret`: a `--trusted-caller-header` loopback run with
-  `--console off`; `POST /api/reset`, `GET /api/events`, `GET /api/model` and `GET /api/served`
-  with the right secret each answer `404`, and a row written before is still there.
+  `--console off`; every route of `Console::ALL`, iterated in the test (today `POST /api/reset`,
+  `GET /api/events`, `GET /api/model` and `GET /api/served`, and any console route a later story
+  adds, such as `story:entity-event-history`'s `GET /api/history`), with the right secret, answers
+  `404`, and a row written before is still there.
 - `console_routes_off_leaves_the_published_routes_served`: with the console off, a command and a
   view ESS publishes answer as before.
 - `console_routes_on_by_default_on_loopback`: without the flag a loopback run serves them as today.
