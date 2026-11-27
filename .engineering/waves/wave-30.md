@@ -28,6 +28,8 @@ this list on 2026-11-27 (D-W30 A):
 - `story:events-cursor-across-restart`: the events cursor reads what a restarted host commits.
 - `story:peer-connect-test-steady`: the slow-peer test passes on a loaded runner.
 - `story:rally-example-reads-stdin`: the rally example runs as its page says.
+- `story:affects-over-input-list`: a consumer's gap reported on 2026-11-27, an `affects:` entry
+  over an input list; added as U11 by the host operator (D-AFFECTS A) before the wave started.
 
 None changes the architecture under the options taken. Each story's `## Scope` was derived against
 `plan/wave-30` (main at 0.22.0 plus wave 28); its `## Decided when scoped` records the options
@@ -47,6 +49,7 @@ taken; its `## Outcome` and `## Acceptance` were amended where the scoper found 
 | U8 | `story:peer-connect-test-steady` | `unit/w30-peer` | `spindle-w30-peer` |
 | U9 | `story:rally-example-reads-stdin` | `unit/w30-rally` | `spindle-w30-rally` |
 | U10 | `story:related-via-nested-input` | `unit/w30-via` | `spindle-w30-via` |
+| U11 | `story:affects-over-input-list` | `unit/w30-affects-each` | `spindle-w30-affects-each` |
 
 U1's two stories rewrite the same `Exists`/`Forall` arm of `Scope::admits` and U3's two stories the
 same `unsourced_error_fields`; each pair runs one after the other in one unit, and the second story
@@ -65,7 +68,9 @@ by the coordinator at merge:
   constructor of `ExecuteError::Undeclared` (`:826` in U4's `Run::select` hunk, `:1837`); U6
   `reaching` (`:271-345`).
 - `crates/spindle-kernel/src/lib.rs`: U5 the field on `ExecuteError::Undeclared`, U6 a re-export.
-- `crates/spindle-kernel/src/supported.rs`: U3 only (`unfilled_error_field`).
+- `crates/spindle-kernel/src/supported.rs`: U3 `unfilled_error_field`; U11 `affects` (`:602-636`).
+- `crates/spindle-kernel/src/execute/affects.rs`: U5 one line (`:240`); U11 `Run::affect` and
+  `select_affected` (`:189-197` and the element loop).
 - `crates/spindle-kernel/src/values.rs`: U3 only (`Sources::generated`, `:433`).
 - `crates/spindle-conformance/src/target.rs`: U2 `query_view` (`:461`), U5 the undeclared mapping
   (`:377-378`).
@@ -78,7 +83,7 @@ by the coordinator at merge:
 - `crates/spindle-cli/src/main.rs`, `crates/spindle-cli/src/cli.rs` with the generated
   `website/docs/reference/cli.md`: U9 only (`--stdin`).
 - `crates/spindle-cli/src/replay.rs`: U5 only (`, unavailable`).
-- The test `main.rs` module lists of `spindle-kernel` (U3, U6), `spindle-conformance` (U2),
+- The test `main.rs` module lists of `spindle-kernel` (U3, U6, U11), `spindle-conformance` (U2),
   `spindle-ingress` (U3), `spindle-cli` (U9), `spindle-host` (U1, U8); `README.md` (U3);
   `CHANGELOG.md` `[Unreleased]` (every unit).
 
@@ -86,9 +91,10 @@ Wave 29 changes `spindle-host`, `spindle-cli` `cli.rs` and `lines.rs`, `spindle-
 `target.rs`, and `spindle-kernel` `supported.rs` and `values.rs`. Wave 30 forks after wave 29
 merges, so the line numbers above, taken before wave 29, may move.
 
-Merge order: U10, U8, U7, U1, U2, U4, U3, U5, U6, U9. The `execute.rs` units merge U4, U3, U5, U6:
+Merge order: U10, U8, U7, U1, U2, U4, U3, U5, U6, U11, U9. The `execute.rs` units merge U4, U3, U5, U6:
 U5 after U4 because of the shared line in `Run::select`, and U6 last, as its wrapper sits at the
-entry of every command.
+entry of every command. U11 merges after U6, whose one spelling of an identity its list elements
+read (`depends_on`).
 
 ## Exit
 
