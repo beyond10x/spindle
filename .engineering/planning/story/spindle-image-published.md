@@ -18,7 +18,7 @@ scope:
   path: README.md
 - confidence: cited
   path: website/docs
-revision: 4
+revision: 5
 ---
 # The release publishes a Spindle image with its digest
 
@@ -59,6 +59,8 @@ no published image: every user writes a Dockerfile that downloads the release ar
 it against `SHA256SUMS`. This story is that gap; its acceptance already asks for a versioned image
 with its digest in the release notes.
 
-The image's base must run the binary the release builds: today the Linux binaries need
-`GLIBC_2.39` (built on `ubuntu-24.04`), so a Debian bookworm or distroless base (glibc 2.36)
-fails. A static base is open only after `story:release-binary-portable-libc`.
+The image's base must run the binary the release builds. Since 0.22.0
+(`story:release-linux-glibc-floor-and-musl`) the Linux binaries need glibc 2.17, so a Debian
+bookworm or distroless base runs them, and a static `x86_64-unknown-linux-musl` archive runs on a
+base with no libc (`scratch`). Corrected 2026-11-27: the text said `GLIBC_2.39`, the floor before
+0.22.0.
