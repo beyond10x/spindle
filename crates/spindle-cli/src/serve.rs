@@ -13,7 +13,8 @@ use anyhow::{Context, Result, bail};
 use ess_gen::http::Binding;
 use spindle_capability::{Capability, Environment};
 use spindle_host::{
-    Cause, Clock, Escalated, Escalation, Failed, Host, HostError, ManualClock, Retries, SystemClock,
+    Cause, Clock, Escalated, Escalation, Failed, Host, HostError, ManualClock, RefusedCommand,
+    Retries, SystemClock,
 };
 use spindle_ingress::console::{self, Worlds};
 use spindle_ingress::{
@@ -643,6 +644,27 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
                 .field("error", failed.error.as_str())
                 .write();
         }
+        // A refused command its store kept as a dead letter prints nothing, as before; one its
+        // store could not keep prints why (story:dead-letters-kept-and-replayed).
+        for refused in host.take_unkept() {
+            let bound = match &refused.cause {
+                Cause::Delivered { binding } | Cause::Tick { binding } => Some(binding.as_str()),
+                Cause::Submitted => None,
+            };
+            let mut line = log::warn(refused_not_kept(&refused, bound.unwrap_or("the request")))
+                .field("component", refused.component.as_str())
+                .field("command", refused.command.as_str());
+            if let Some(binding) = bound {
+                line = line.field("binding", binding);
+            }
+            if let Some(why) = &refused.not_kept {
+                line = line.field("not_kept", why.as_str());
+            }
+            line.field("outcome", refused.outcome.as_str())
+                .field("attempts", refused.attempts)
+                .field("error", refused.error.name.as_str())
+                .write();
+        }
         for escalated in escalations {
             let refusal = escalated.outcome.as_deref().unwrap_or("a failure");
             log::warn(format!(
@@ -721,6 +743,21 @@ fn did_not_run(failed: &Failed, binding: &str, escalated: Option<&Escalated>) ->
     )
 }
 
+/// The line a served run prints for `refused`, a command `binding` invoked that its model refused
+/// and whose dead letter its store could not keep: dropped, naming the store's reason.
+fn refused_not_kept(refused: &RefusedCommand, binding: &str) -> String {
+    let attempts = if refused.attempts > 1 {
+        format!(" after {} attempts", refused.attempts)
+    } else {
+        String::new()
+    };
+    let why = refused.not_kept.as_deref().unwrap_or("no reason given");
+    format!(
+        "{} refused {} ({binding}) with {}, dropped{attempts}, not kept as a dead letter: {why}: {}",
+        refused.component, refused.command, refused.outcome, refused.error.name
+    )
+}
+
 fn escalation(escalated: &Escalated) -> String {
     match &escalated.escalation {
         Escalation::Published(_) => format!("escalated into {}", escalated.event),
@@ -782,9 +819,10 @@ fn reset_seeded(
 
 #[cfg(test)]
 mod tests {
-    use spindle_host::{Cause, Failed};
+    use spindle_host::{Cause, Failed, RefusedCommand};
+    use spindle_kernel::DeclaredError;
 
-    use super::did_not_run;
+    use super::{did_not_run, refused_not_kept};
 
     fn failed(dead_letter: Option<u64>, not_kept: Option<&str>) -> Failed {
         Failed {
@@ -824,6 +862,34 @@ mod tests {
             did_not_run(&failed(None, None), "ship-on-order", None),
             "shipping did not run depot.shipping.Ship (ship-on-order), dropped after 5 attempts: \
              the cause is undecided"
+        );
+    }
+
+    /// A refused command whose dead letter its store could not keep is printed dropped, with the
+    /// store's reason (story:dead-letters-kept-and-replayed).
+    #[test]
+    fn a_refused_command_its_store_could_not_keep_is_printed_dropped_with_why() {
+        let refused = RefusedCommand {
+            component: "shipping".to_owned(),
+            command: "depot.shipping.Ship".to_owned(),
+            cause: Cause::Delivered {
+                binding: "ship-on-order".to_owned(),
+            },
+            caused_by: Some("depot.orders.PlaceOrder".to_owned()),
+            outcome: "busy".to_owned(),
+            error: DeclaredError {
+                name: "depot.shipping.Busy".to_owned(),
+                fields: serde_json::Map::new(),
+                unknown_instance: false,
+            },
+            attempts: 5,
+            dead_letter: None,
+            not_kept: Some("store: the disk is full".to_owned()),
+        };
+        assert_eq!(
+            refused_not_kept(&refused, "ship-on-order"),
+            "shipping refused depot.shipping.Ship (ship-on-order) with busy, dropped after 5 \
+             attempts, not kept as a dead letter: store: the disk is full: depot.shipping.Busy"
         );
     }
 }

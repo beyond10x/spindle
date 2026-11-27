@@ -22,7 +22,8 @@ are Spindle's releases.
   store's reason where the store could not keep it. `spindle_kernel::Store` gains
   `keep_dead_letter`, `dead_letters`, `take_dead_letter`, `last_dead_letter_id` and
   `continue_dead_letter_ids`; `spindle_host::Failed` and `RefusedCommand` gain `dead_letter` and
-  `not_kept`, and `Host::dead_letters`, `Host::replay` and `Host::replayed` list and replay them
+  `not_kept`, `Host::dead_letters`, `Host::replay` and `Host::replayed` list and replay them,
+  and `Host::take_unkept` hands a served run each refused command its store could not keep
   (`story:dead-letters-kept-and-replayed`).
 - `run --stdin` reads JSON lines on stdin where a component is `reached_by: network`, instead of
   serving HTTP: every component runs in the one process on one store and the event bindings fire

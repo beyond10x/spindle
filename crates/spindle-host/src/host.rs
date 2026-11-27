@@ -862,6 +862,9 @@ struct Component {
     position: u64,
     counters: Arc<Counters>,
     sink: Sink,
+    /// Set while its store is lost: a reset could not empty it nor reopen it ([`Lost`]), so
+    /// every read and write of it fails until a reset opens it again.
+    lost: bool,
 }
 
 struct Periodic {
@@ -925,6 +928,9 @@ pub struct Host {
     /// Every escalation since the last [`Host::take_escalated`], at most [`ESCALATIONS_KEPT`],
     /// the oldest forgotten first: what a caller that sees only part of a [`Report`] reports.
     escalations: Vec<Escalated>,
+    /// Every refused command whose dead letter its store could not keep since the last
+    /// [`Host::take_unkept`], at most [`ESCALATIONS_KEPT`], the oldest forgotten first.
+    unkept: Vec<RefusedCommand>,
 }
 
 impl std::fmt::Debug for Host {
@@ -1230,6 +1236,7 @@ impl Host {
                     position: 0,
                     counters,
                     sink,
+                    lost: false,
                 },
             );
         }
@@ -1333,6 +1340,7 @@ impl Host {
             answering,
             staged_by: BTreeMap::new(),
             escalations: Vec::new(),
+            unkept: Vec::new(),
         };
         if seeded { host.seeded(0) } else { Ok(host) }
     }
@@ -1435,6 +1443,15 @@ impl Host {
     /// of the call that made it too; this is for a caller handed only part of that report.
     pub fn take_escalated(&mut self) -> Vec<Escalated> {
         std::mem::take(&mut self.escalations)
+    }
+
+    /// Every refused command since the last call whose dead letter its store could not keep
+    /// ([`RefusedCommand::not_kept`]), in the order refused, each returned once; at most
+    /// [`ESCALATIONS_KEPT`], the oldest forgotten first. Each is in the [`Report`] of the call
+    /// that ran it too; this is for a caller handed only the commands that did not execute, such
+    /// as a served run, which prints it.
+    pub fn take_unkept(&mut self) -> Vec<RefusedCommand> {
+        std::mem::take(&mut self.unkept)
     }
 
     /// Every dead letter the components' stores keep and no replay took ([`Undelivered`]),
@@ -1811,6 +1828,7 @@ impl Host {
                     component.store.replace(Box::new(Lost(format!(
                         "{name}'s store was lost in a reset: {error}"
                     ))));
+                    component.lost = true;
                     return Err(HostError::Reset {
                         component: name.clone(),
                         error,
@@ -1819,7 +1837,7 @@ impl Host {
                 }
             } else if let Kept::File(file) = &component.kept {
                 let file = file.clone();
-                let after = last_dead_letter_id(name, &mut component.store)?;
+                let after = last_dead_letter_id(name, component)?;
                 let closed = component
                     .store
                     .replace(Box::new(Lost(format!("{name}'s store is being reset"))));
@@ -1827,11 +1845,13 @@ impl Host {
                 match emptied_file(&file, &component.sink, after) {
                     Ok(store) => {
                         component.store.replace(store);
+                        component.lost = false;
                     }
                     Err(error) => {
                         let restored = match opened(Some(&file), &component.sink) {
                             Ok(store) => {
                                 component.store.replace(store);
+                                component.lost = false;
                                 true
                             }
                             Err(again) => {
@@ -1840,6 +1860,7 @@ impl Host {
                                      failed: {again}",
                                     file.display()
                                 ))));
+                                component.lost = true;
                                 false
                             }
                         };
@@ -1851,7 +1872,7 @@ impl Host {
                     }
                 }
             } else {
-                let after = last_dead_letter_id(name, &mut component.store)?;
+                let after = last_dead_letter_id(name, component)?;
                 let mut store = opened(None, &component.sink)?;
                 store
                     .continue_dead_letter_ids(after)
@@ -1861,6 +1882,7 @@ impl Host {
                         restored: true,
                     })?;
                 component.store.replace(store);
+                component.lost = false;
             }
             emptied.push(name.clone());
         }
@@ -2565,6 +2587,16 @@ impl Host {
                         dead_letter,
                         not_kept,
                     });
+                    if let Some(refused) = report
+                        .refused
+                        .last()
+                        .filter(|refused| refused.not_kept.is_some())
+                    {
+                        if self.unkept.len() >= ESCALATIONS_KEPT {
+                            self.unkept.remove(0);
+                        }
+                        self.unkept.push(refused.clone());
+                    }
                 }
                 Ok(executed) => report.ran.push(Ran {
                     component: component.to_owned(),
@@ -2905,14 +2937,23 @@ impl Store for Lost {
 /// The last id `store`, the store of `component` a reset replaces, answered for a dead letter
 /// ([`Store::last_dead_letter_id`]), which the empty store replacing it continues after: a
 /// replay naming a dead letter the reset forgot then finds none. A store that cannot answer it
-/// is kept as it is, and the reset fails naming why.
-fn last_dead_letter_id(component: &str, store: &mut impl Store) -> Result<u64, HostError> {
-    store
+/// is kept as it is, and the reset fails naming why: as it was before the reset, or, for a store
+/// an earlier reset lost, still lost.
+fn last_dead_letter_id(name: &str, component: &mut Component) -> Result<u64, HostError> {
+    component
+        .store
         .last_dead_letter_id()
         .map_err(|error| HostError::Reset {
-            component: component.to_owned(),
-            error: format!("reading the last dead letter id: {error}"),
-            restored: true,
+            component: name.to_owned(),
+            error: if component.lost {
+                format!(
+                    "reading the last dead letter id: {error}; its store was lost in an earlier \
+                     reset and is still lost"
+                )
+            } else {
+                format!("reading the last dead letter id: {error}")
+            },
+            restored: !component.lost,
         })
 }
 

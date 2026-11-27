@@ -372,6 +372,12 @@ fn a_dead_letter_its_store_cannot_keep_names_why() {
         Some("store: this store keeps no dead letters"),
         "{report:?}"
     );
+    assert_eq!(
+        host.take_unkept(),
+        report.refused,
+        "a served run is handed it to print"
+    );
+    assert!(host.take_unkept().is_empty(), "each is handed once");
     assert!(letters(&mut host).is_empty());
 }
 
@@ -384,6 +390,10 @@ fn a_kept_dead_letter_names_no_reason() {
     let report = place(&mut host, "o-1");
     assert!(report.refused[0].dead_letter.is_some(), "{report:?}");
     assert_eq!(report.refused[0].not_kept, None, "{report:?}");
+    assert!(
+        host.take_unkept().is_empty(),
+        "a kept one is not handed to print"
+    );
 }
 
 /// A reset of stores in memory replaces each with an empty one, which continues the ids: the next
