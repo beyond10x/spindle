@@ -1,0 +1,27 @@
+format: ess/34
+system: bay
+version: v1
+summary: A loading bay that makes crates, slots and tags under minted identities, refusing some requests with errors whose fields the runtime fills.
+domains:
+  - bay.yard
+components:
+  - component: yard
+    summary: Makes and seals crates, slots and tags.
+    owns:
+      domains:
+        - bay.yard
+    accepts:
+      commands:
+        - bay.yard.MakeCrate
+        - bay.yard.SealCrate
+        - bay.yard.TapCrate
+        - bay.yard.MakeSlot
+        - bay.yard.MakeTag
+    publishes:
+      events:
+        - bay.yard.CrateMade
+        - bay.yard.CrateSealed
+        - bay.yard.CrateTapped
+        - bay.yard.SlotMade
+        - bay.yard.TagMade
+    reached_by: in_process
