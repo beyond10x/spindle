@@ -12,7 +12,8 @@ are Spindle's releases.
   `time` (RFC 3339 in UTC), `level` (`info`, `warn`, `error`), `message` (the text line's words)
   and, where the line names them, `component`, `command`, `binding`, `attempts`, `error` and
   `request_id` at the top level, so a log collector reads a dropped bound command or a refused
-  seed entry without matching its wording. The error a run exits with and a panic are a line too.
+  seed entry without matching its wording; a line before listening that names an operation not
+  served, or an outcome answered `501`, carries it as `command`, or `view` for a view. The error a run exits with and a panic are a line too.
   `text`, the default, writes each line as before. `json` on a run that reads stdin exits 1 before
   reading a line (`story:structured-json-logs`).
 

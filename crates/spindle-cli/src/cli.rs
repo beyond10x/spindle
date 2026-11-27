@@ -403,8 +403,9 @@ pub enum Command {
         /// it was written, RFC 3339 in UTC; `level` `info`, `warn` or `error`; `message` the text
         /// line's words; and, where the line names them, the fields `component`, `command`,
         /// `binding` (a dropped bound command's binding), `attempts`, `error` and `request_id` (a
-        /// seed entry's) at the top level. The error a run exits 1 with, and a panic, are a line
-        /// too. No line is written per answered request. `json` on a run that does not serve
+        /// seed entry's) at the top level; a line before listening that names an operation not
+        /// served, or an outcome answered `501`, carries it as `command`, or `view` for a view.
+        /// The error a run exits 1 with, and a panic, are a line too. No line is written per answered request. `json` on a run that does not serve
         /// HTTP exits 1 before reading stdin.
         #[arg(
             long,

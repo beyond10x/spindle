@@ -378,8 +378,13 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         (Some(capacity), None) => surface.observing(capacity),
         (None, _) => surface,
     };
-    for line in surface.report() {
-        log::warn(line).write();
+    for (line, operation) in reported(&surface) {
+        let line = log::warn(line);
+        match operation {
+            Some(operation) => line.field(operation.kind(), operation.name()),
+            None => line,
+        }
+        .write();
     }
     if surface
         .unserved()
@@ -563,6 +568,35 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     // the run exits.
     listener.close(CLOSE_GRACE);
     Ok(code)
+}
+
+/// Each line of [`Surface::report`], as it is written, with the operation it names: the route of
+/// each operation not served ([`Route::not_served`](spindle_ingress::Route::not_served)), in the
+/// order of [`Surface::unserved`], then the route of each outcome refused
+/// ([`Route::refused`](spindle_ingress::Route::refused)), route by route, the order `report`
+/// writes them in. A line gets its operation only where it names it, in backticks, so a line
+/// `report` adds or reorders is still written, without one.
+fn reported(surface: &Surface) -> Vec<(String, Option<&ess_http::Operation>)> {
+    let unserved = surface
+        .unserved()
+        .into_iter()
+        .filter(|route| route.not_served().is_some())
+        .map(|route| &route.operation);
+    let refused = surface
+        .routes()
+        .iter()
+        .flat_map(|route| route.refused().iter().map(move |_| &route.operation));
+    let mut operations = unserved.chain(refused);
+    surface
+        .report()
+        .into_iter()
+        .map(|line| {
+            let operation = operations
+                .next()
+                .filter(|operation| line.contains(&format!("`{}", operation.name())));
+            (line, operation)
+        })
+        .collect()
 }
 
 /// How long the run waits, once it stops, for the answers it handed back to be written.
