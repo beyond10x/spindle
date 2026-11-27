@@ -218,26 +218,68 @@ fn off_loopback_the_run_itself_serves_no_console_route_by_default() {
     }
 }
 
-/// The flag's own text: "Off, each answers `404` as an unrouted path does, whatever secret the
-/// request carries". A binding route whose template carries a console path (`/{a}/{b}` carries
-/// `/api/model`) exits 1 before listening with the console on (`Surface::with_console`,
-/// `Shadowed`); with it off the run starts, and the console paths reach that route instead of
-/// answering `404`.
+/// A binding route whose template carries a console path (`/{a}/{b}` carries `/api/model`)
+/// exits 1 before listening with the console on (`Surface::with_console`, `Shadowed`), and with
+/// it off too, on loopback and off it: the switch never changes which route a console path
+/// reaches (coordinator's decision, wave 28 U1 correction round 1; this case first asserted that
+/// with the console off the run starts and each console path answers `404`).
 #[test]
-fn with_the_console_off_a_console_path_answers_404_even_where_a_binding_route_carries_it() {
-    let served = serve_as(
-        RESERVED,
-        false,
-        &["--http", CONSOLE_PATH_HTTP, "--console", "off"],
-        None,
-    );
-    let (status, answer) = exchange(&served, "GET", "/x/y", None);
-    assert_eq!(status, 200, "the binding's own route is served: {answer}");
-    for (console, status, answer) in console_answers(&served) {
-        assert_eq!(
-            (status, answer),
-            (404, unrouted(console.path())),
-            "--console off: {console} answers as an unrouted path"
+fn with_the_console_off_a_binding_route_on_a_console_path_is_refused_at_start() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+    let secret = dir.path().join("proxy-secret");
+    std::fs::write(&secret, format!("{SECRET}\n")).expect("the secret file is written");
+    let secret = secret.to_str().expect("a UTF-8 path");
+    let trusted = [
+        "--trusted-caller-header",
+        HEADER,
+        "--trusted-caller-secret",
+        secret,
+    ];
+    let cases: [(&str, Vec<&str>); 3] = [
+        ("console on, loopback", vec!["--console", "on"]),
+        ("console off, loopback", vec!["--console", "off"]),
+        (
+            "console off, off loopback",
+            [
+                &["--console", "off", "--address", MAPPED_LOOPBACK][..],
+                &trusted[..],
+            ]
+            .concat(),
+        ),
+    ];
+    for (case, arguments) in cases {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+            .current_dir(root())
+            .args(["run", RESERVED, "--environment", LAPTOP, "--state"])
+            .arg(dir.path().join(case.replace([' ', ','], "-")))
+            .args(["--http", CONSOLE_PATH_HTTP])
+            .args(&arguments)
+            .env_remove(SETTING)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("b10x-spindle starts");
+        let started = std::time::Instant::now();
+        while child.try_wait().expect("the child is waited on").is_none() {
+            if started.elapsed() > STARTUP {
+                let _ = child.kill();
+                let output = child.wait_with_output();
+                panic!("{case}: run did not exit within {STARTUP:?}: {output:?}");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let output = child.wait_with_output().expect("the output is read");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{case}: {stderr}");
+        assert!(
+            !stdout.contains("listening"),
+            "{case}: nothing listened: {stdout}"
+        );
+        assert!(
+            stderr.contains("the console route GET /api/model would shadow view `notes.shelf.NotesOn`, which is served at GET /{a}/{b}"),
+            "{case}: the refusal names the console route and the route it shadows: {stderr}"
         );
     }
 }

@@ -261,15 +261,12 @@ pub enum Command {
         /// `GET /api/model`, `GET /api/served` and every other route under `/api/` the console
         /// answers) or not. Off, each answers `404` as an unrouted path does, whatever secret the
         /// request carries, and the routes the specification publishes and `/__spindle/` are
-        /// served as before. Read from the setting `SPINDLE_SETTING_CONSOLE` where the flag is not
-        /// given. Without either the console is on where `run` listens on loopback and off where
-        /// `--address` is off loopback. Only where `run` serves HTTP.
-        #[arg(
-            long,
-            value_name = "SWITCH",
-            env = "SPINDLE_SETTING_CONSOLE",
-            conflicts_with = "scenario"
-        )]
+        /// served as before. A route the binding or ESS publishes at a console path exits 1
+        /// before listening either way. Read from the setting `SPINDLE_SETTING_CONSOLE` where the
+        /// flag is not given. Without either the console is on where `run` listens on loopback
+        /// and off where `--address` is off loopback. Only where `run` serves HTTP; ignored
+        /// otherwise, `--scenario` included.
+        #[arg(long, value_name = "SWITCH", env = "SPINDLE_SETTING_CONSOLE")]
         console: Option<Switch>,
         /// A TOML file of answers, `<outcome> = true | false`, at the top level for every command
         /// or under a `["<command>"]` table for one, and `[[rules]]` (`command`, `outcome`,

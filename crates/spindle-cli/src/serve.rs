@@ -91,7 +91,8 @@ pub(crate) struct Serving<'a> {
     pub ingress: &'a str,
     /// `--console` (`SPINDLE_SETTING_CONSOLE`), decided with `address` where not given
     /// ([`spindle_cli::cli::console_served`]): without it no console route exists, and each
-    /// answers `404` as an unrouted path does.
+    /// answers `404` as an unrouted path does; a route at a console path is refused at start
+    /// ([`Surface::with_console`]) either way.
     pub console: bool,
     /// `--drop-retries`: run each `on_failure: retry` binding as a `drop` binding.
     pub drop_retries: bool,
@@ -358,11 +359,11 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             &serving.callers,
         )?,
     };
-    let surface = if serving.console {
-        surface.with_console(serving.ingress)?
-    } else {
-        surface
-    };
+    // The shadow check runs with the console on or off: a route at a console path exits 1
+    // before listening either way, so turning the console on later never changes which route a
+    // path reaches.
+    let consoled = surface.clone().with_console(serving.ingress)?;
+    let surface = if serving.console { consoled } else { surface };
     if let (Some(header), Some((path, _))) = (serving.caller_header, &serving.proxy_secret) {
         eprintln!(
             "b10x-spindle: each request's caller is read from its {header} header \

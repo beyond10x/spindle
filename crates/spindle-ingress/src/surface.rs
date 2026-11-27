@@ -1510,7 +1510,8 @@ impl Surface {
     /// A surface never given this call has no console route either: each console path then
     /// resolves as any other path, to a route that carries it or to `404`, whatever secret the
     /// request carries. `run --console off` serves such a surface, as `run` does by default where
-    /// it listens off loopback (`exposed`, feature `listener`).
+    /// it listens off loopback (`exposed`, feature `listener`); it makes this call on a copy
+    /// first, so a route at a console path is refused there too.
     ///
     /// # Errors
     /// [`SurfaceError::Shadowed`] when a route the binding or ESS publishes has a path a console
