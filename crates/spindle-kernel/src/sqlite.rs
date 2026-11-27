@@ -33,7 +33,7 @@
 //! that appends groups and answers the tenant's whole log ([`Log`]), and the PostgreSQL store
 //! (`PostgresStore`, the `postgres` feature) is the same store on PostgreSQL.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, btree_map};
 #[cfg(feature = "sqlite")]
 use std::path::Path;
 use std::path::PathBuf;
@@ -82,8 +82,9 @@ const CAUSE: &str = "cause";
 /// none.
 const OUTCOME: &str = "outcome";
 /// The field of a `spindle.written` event's body listing the identity of each instance of its
-/// entity the write wrote, each once in the order of its text ([`Committed::instances`]); a write
-/// of a release before 0.23.0, and one that wrote no instance of the entity, carries none.
+/// entity the write wrote as its key text (the canonical JSON text the stream id and the `rows`
+/// keys hold, in which U+0000 is escaped), each once in text order ([`Committed::instances`]); a
+/// write of a release before 0.23.0, and one that wrote no instance of the entity, carries none.
 const INSTANCES: &str = "instances";
 /// The stream of the events a command committed with no row ([`Store::commit_events`]): each
 /// such write appends them, then one [`PUBLISHED_END`] event naming the command under
@@ -600,7 +601,7 @@ impl<L: Log> Store for LogStore<L> {
         }
         let mut written = BTreeMap::<&str, Written>::new();
         // The identities each entity's writes wrote, by their text: each once, in text order.
-        let mut named = BTreeMap::<&str, BTreeMap<String, Value>>::new();
+        let mut named = BTreeMap::<&str, BTreeSet<String>>::new();
         let mut instances = Vec::with_capacity(writes.len());
         for write in writes {
             let (entity, identity) = write.instance();
@@ -630,8 +631,7 @@ impl<L: Log> Store for LogStore<L> {
             named
                 .entry(entity)
                 .or_default()
-                .entry(identity.to_string())
-                .or_insert_with(|| identity.clone());
+                .insert(identity.to_string());
             instances.push(StreamAppend {
                 stream,
                 expected,
@@ -642,7 +642,7 @@ impl<L: Log> Store for LogStore<L> {
         for (entity, expected) in marks {
             let mut body = written.remove(entity).unwrap_or_default().body();
             let identities = named.remove(entity).unwrap_or_default();
-            self.attributing(&mut body, identities.into_values().collect());
+            self.attributing(&mut body, identities);
             appends.push(StreamAppend {
                 stream: self.entity_stream(entity)?,
                 expected,
@@ -739,7 +739,7 @@ impl<L: Log> Store for LogStore<L> {
         let mut appends = Vec::with_capacity(scanned.len() + 1);
         for scanned in scanned {
             let mut body = Written::default().body();
-            self.attributing(&mut body, Vec::new());
+            self.attributing(&mut body, BTreeSet::new());
             appends.push(StreamAppend {
                 stream: self.entity_stream(&scanned.entity)?,
                 expected: match scanned.version {
@@ -750,7 +750,7 @@ impl<L: Log> Store for LogStore<L> {
             });
         }
         let mut body = Value::Object(serde_json::Map::new());
-        self.attributing(&mut body, Vec::new());
+        self.attributing(&mut body, BTreeSet::new());
         let end = NewEvent::new(PUBLISHED_END, SCHEMA, body).map_err(backend)?;
         let (kind, id) = PUBLISHED;
         appends.push(StreamAppend {
@@ -823,8 +823,8 @@ impl<L: Log> LogStore<L> {
 
     /// Adds to `body`, a `spindle.written` or `spindle.published` event's, the command the writes
     /// are attributed to ([`ORIGIN`]), the outcome named for them ([`OUTCOME`]) and, where any,
-    /// `identities`, the identities of the entity's instances the write wrote ([`INSTANCES`]).
-    fn attributing(&self, body: &mut Value, identities: Vec<Value>) {
+    /// `identities`, the key texts of the entity's instances the write wrote ([`INSTANCES`]).
+    fn attributing(&self, body: &mut Value, identities: BTreeSet<String>) {
         let Value::Object(fields) = body else {
             return;
         };
@@ -835,7 +835,10 @@ impl<L: Log> LogStore<L> {
             fields.insert(OUTCOME.to_owned(), Value::String(outcome.clone()));
         }
         if !identities.is_empty() {
-            fields.insert(INSTANCES.to_owned(), Value::Array(identities));
+            fields.insert(
+                INSTANCES.to_owned(),
+                identities.into_iter().map(Value::String).collect(),
+            );
         }
     }
 
@@ -1306,17 +1309,26 @@ impl<L: Log> LogStore<L> {
                         if group.outcome.is_none() {
                             group.outcome = outcome_of(&event.data);
                         }
-                        for identity in event
+                        for text in event
                             .data
                             .get(INSTANCES)
                             .and_then(Value::as_array)
                             .into_iter()
                             .flatten()
                         {
-                            group
+                            let Some(text) = text.as_str() else {
+                                return Err(StoreError::Backend(format!(
+                                    "the event {} at version {} of the stream {} {} names an \
+                                     instance by no key text",
+                                    event.name, event.version, event.stream_type, event.stream_id
+                                )));
+                            };
+                            if let btree_map::Entry::Vacant(vacant) = group
                                 .instances
-                                .entry((event.stream_id.clone(), identity.to_string()))
-                                .or_insert_with(|| identity.clone());
+                                .entry((event.stream_id.clone(), text.to_owned()))
+                            {
+                                vacant.insert(identity_from_key(text)?);
+                            }
                         }
                     }
                     continue;
@@ -2384,7 +2396,7 @@ mod tests {
             last_written(&store, TASK),
             (
                 WRITTEN_SCHEMA,
-                json!({"rows": {"\"a\"": 1, "\"b\"": 2}, "removed": {}, "instances": ["a", "b"]})
+                json!({"rows": {"\"a\"": 1, "\"b\"": 2}, "removed": {}, "instances": ["\"a\"", "\"b\""]})
             )
         );
         store
@@ -2400,7 +2412,7 @@ mod tests {
             last_written(&store, TASK),
             (
                 WRITTEN_SCHEMA,
-                json!({"rows": {}, "removed": {"\"a\"": 2}, "instances": ["a"]})
+                json!({"rows": {}, "removed": {"\"a\"": 2}, "instances": ["\"a\""]})
             )
         );
         let mut conditioned = change("c", None, "Open");
@@ -2674,6 +2686,50 @@ mod tests {
             .map(|committed| committed.event.name.as_str())
             .collect();
         assert_eq!(history, ["a.Revised"], "only the write after the upgrade");
+    }
+
+    /// `story:entity-event-history`: a write of an instance whose identity holds U+0000 names it
+    /// in its `spindle.written` event as the identity's key text, in which U+0000 is escaped, so
+    /// no event of the log holds U+0000 in a JSON string, which PostgreSQL refuses and a state
+    /// move checks for ([`crate::state_move::nul`]); the write still reads back naming the
+    /// identity itself.
+    #[cfg(feature = "postgres")]
+    #[test]
+    fn an_identity_holding_u0000_reaches_no_event_body_raw() {
+        let mut store = store();
+        let identity = json!("a\u{0}b");
+        let mut opened = change("a\u{0}b", None, "Open");
+        opened.events = vec![crate::Event {
+            name: "a.Opened".to_owned(),
+            payload: serde_json::Map::new(),
+        }];
+        store.attribute(Some(Origin {
+            command: "a.Open".to_owned(),
+            sequence: 1,
+            cause: None,
+        }));
+        store.outcome("opened");
+        store.commit(&opened).expect("a write");
+        let page = store
+            .call(store.log.read_feed(&store.tenant, 0, 1_000))
+            .expect("the feed reads");
+        assert!(!page.events.is_empty());
+        let raw: Vec<String> = page
+            .events
+            .iter()
+            .filter_map(|event| {
+                crate::state_move::nul(&event.data, "body").map(|at| {
+                    format!(
+                        "{} {} {}: {at}",
+                        event.stream_type, event.stream_id, event.name
+                    )
+                })
+            })
+            .collect();
+        assert_eq!(raw, Vec::<String>::new(), "no body holds U+0000");
+        let committed = store.events_after(0, usize::MAX).expect("the events read");
+        assert_eq!(committed.len(), 1, "{committed:?}");
+        assert_eq!(committed[0].instances, [(TASK.to_owned(), identity)]);
     }
 
     #[test]

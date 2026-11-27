@@ -579,7 +579,7 @@ fn group(tenant: &TenantId, events: &[RecordedEvent]) -> Result<AppendGroup, Sto
 /// indexes: `body["fields"]["note"]`. Every other value a [`Value`] holds `jsonb` takes: its
 /// numbers are finite, its strings valid Unicode, and its depth within what the SQLite store
 /// reads back.
-fn nul(value: &Value, at: &str) -> Option<String> {
+pub(crate) fn nul(value: &Value, at: &str) -> Option<String> {
     match value {
         Value::String(text) => text.contains('\0').then(|| at.to_owned()),
         Value::Array(items) => items
