@@ -1353,6 +1353,213 @@ mod postgres {
         );
     }
 
+    /// Holds `lock` on `table` for `seconds` on a thread of its own, as the test database's owner:
+    /// answers once the lock is held, and the thread ends once it is released.
+    fn locked(table: String, lock: &'static str, seconds: f64) -> std::thread::JoinHandle<()> {
+        let (held, holding) = mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("a runtime");
+            runtime.block_on(async {
+                let (client, connection) =
+                    tokio_postgres::connect(&owner_url(), tokio_postgres::NoTls)
+                        .await
+                        .expect("the test database accepts its owner");
+                let driver = tokio::spawn(connection);
+                client
+                    .batch_execute(&format!("BEGIN; LOCK TABLE {table} IN {lock} MODE"))
+                    .await
+                    .expect("the lock is taken");
+                let _ = held.send(());
+                client
+                    .batch_execute(&format!("SELECT pg_sleep({seconds}); COMMIT"))
+                    .await
+                    .expect("the lock is released");
+                drop(client);
+                let _ = driver.await;
+            });
+        });
+        holding
+            .recv_timeout(ANSWER)
+            .expect("the lock is held within 10 s");
+        thread
+    }
+
+    /// Who leads once things settle: the old leader where it still answers ready `200` (`true`),
+    /// else the standby, once it does (`false`), with its address.
+    fn settled_leader(leader: &mut Replica, standby: &Replica) -> (bool, SocketAddr) {
+        std::thread::sleep(Duration::from_secs(2));
+        if leader.running() && leader.ready().0 == 200 {
+            return (true, leader.address);
+        }
+        standby.ready_by(Instant::now() + Duration::from_secs(10));
+        (false, standby.address)
+    }
+
+    /// Round 5, the transaction cut: a write held up longer than a short lease. On a 1 s lease
+    /// board's event table is locked against inserts for 1.5 s while a command is sent. Whatever
+    /// the caller is answered, the write is whole: answered `201` it is held, answered otherwise
+    /// it is not, at whichever process leads once things settle. The answer, its time and who
+    /// leads are printed.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_write_longer_than_a_short_lease_lands_whole_or_not_at_all() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = environment(directory.path());
+        let schema = schema();
+        let mut leader = Replica::start(run(&environment, &schema, "1"));
+        leader.ready_by(Instant::now() + ANSWER);
+        let standby = Replica::start(run(&environment, &schema, "1"));
+        let (status, answer) = leader.open("t1");
+        assert_eq!(status, 201, "{answer}");
+        let lock = locked(format!("{schema}.spindle_board_events"), "SHARE", 1.5);
+        let sent = Instant::now();
+        let (status, body) = leader.open("t2");
+        let took = sent.elapsed();
+        lock.join().expect("the lock ends");
+        let (old_leads, leads) = settled_leader(&mut leader, &standby);
+        let held = task_ids(leads);
+        eprintln!(
+            "the write held up 1.5 s on a 1 s lease was answered {status} after {took:?}: {body}; \
+             the old leader {}",
+            if old_leads {
+                "leads on"
+            } else {
+                "lost the lease"
+            }
+        );
+        assert_eq!(
+            status == 201,
+            held.contains(&"t2".to_owned()),
+            "answered {status} and held {held:?}: {body}"
+        );
+        assert!(held.contains(&"t1".to_owned()), "{held:?}");
+    }
+
+    /// Round 5, the transaction cut, under the bound the docs give a renewal: on a 2 s lease the
+    /// write is held up 1.2 s, below the lease and below four fifths of it. It lands (`201`), the
+    /// leader keeps leading and the standby stands by.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_write_held_up_within_the_lease_lands_and_keeps_the_leader() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = environment(directory.path());
+        let schema = schema();
+        let (mut leader, standby) = leader_and_standby(&environment, &schema);
+        let (status, answer) = leader.open("t1");
+        assert_eq!(status, 201, "{answer}");
+        let lock = locked(format!("{schema}.spindle_board_events"), "SHARE", 1.2);
+        let (status, body) = leader.open("t2");
+        lock.join().expect("the lock ends");
+        assert_eq!(status, 201, "{body}\n{}", leader.printed());
+        std::thread::sleep(Duration::from_secs(2));
+        assert!(leader.running(), "{}", leader.printed());
+        assert!(!standby.has_line(TOOK), "{}", standby.printed());
+        assert_eq!(leader.ready().0, 200);
+    }
+
+    /// Round 5, the transaction cut reaches reads too: on a 1 s lease board's event table is
+    /// locked against every access for 1.5 s while `GET /tasks` is read. The documents bound
+    /// "a transaction" by the lease, so a read, which writes nothing and holds no lease row, waits
+    /// for the lock and answers `200`, as it does without a lease.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_read_held_up_longer_than_a_short_lease_answers() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = environment(directory.path());
+        let schema = schema();
+        let leader = Replica::start(run(&environment, &schema, "1"));
+        leader.ready_by(Instant::now() + ANSWER);
+        let (status, answer) = leader.open("t1");
+        assert_eq!(status, 201, "{answer}");
+        let lock = locked(
+            format!("{schema}.spindle_board_events"),
+            "ACCESS EXCLUSIVE",
+            1.5,
+        );
+        let sent = Instant::now();
+        let (status, body) = call(leader.address, "GET", "/tasks", None);
+        let took = sent.elapsed();
+        lock.join().expect("the lock ends");
+        eprintln!("the read held up 1.5 s on a 1 s lease answered {status} after {took:?}");
+        assert_eq!(status, 200, "{body}");
+    }
+
+    /// Round 5, F1's warning once per change: a standby the database refuses warns once, not at
+    /// each of its polls (about six in 4 s), and once the database admits it again it prints one
+    /// line that the connection is made again, and no further warning.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_refused_standby_warns_once_and_says_when_it_is_back() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = environment(directory.path());
+        let schema = schema();
+        let leader = Replica::start(run(&environment, &schema, LEASE));
+        leader.ready_by(Instant::now() + ANSWER);
+        let role = format!("{schema}_w");
+        sql(&[
+            format!("CREATE ROLE {role} LOGIN PASSWORD 'standby-pw'"),
+            format!("GRANT USAGE ON SCHEMA {schema} TO {role}"),
+            format!(
+                "GRANT SELECT, INSERT, UPDATE ON {schema}.spindle_board_p_lease, \
+                 {schema}.spindle_ledger_p_lease TO {role}"
+            ),
+        ]);
+        let owner = owner_url();
+        let (scheme, rest) = owner.split_once("://").expect("a URL with a scheme");
+        let (_, location) = rest.split_once('@').expect("a URL with a user");
+        let url = format!("{scheme}://{role}:standby-pw@{location}");
+        let ca = std::env::var("SPINDLE_TEST_DATABASE_CA")
+            .expect("SPINDLE_TEST_DATABASE_CA names the test server's CA (task check:postgres)");
+        let mut command = run(&environment, &schema, LEASE);
+        command
+            .env("SPINDLE_SETTING_DATABASE_URL", &url)
+            .env("SPINDLE_SETTING_DATABASE_CA", &ca)
+            .env("SPINDLE_SETTING_DATABASE_CONNECTIONS", "100");
+        let mut standby = Replica::start(command);
+        let (status, body) = standby.ready();
+        assert_eq!(status, 503, "{body}");
+
+        sql(&[
+            format!("ALTER ROLE {role} NOLOGIN"),
+            format!(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = '{role}'"
+            ),
+        ]);
+        std::thread::sleep(Duration::from_secs(4));
+        let count = |replica: &Replica, text: &str| {
+            replica
+                .printed()
+                .lines()
+                .filter(|line| line.contains(text))
+                .count()
+        };
+        let warned = count(&standby, "cannot be made");
+        assert!(standby.running(), "{}", standby.printed());
+        assert!(
+            (1..=2).contains(&warned),
+            "{warned} warnings in about six polls (one, or two where the closed connection and \
+             the refusal differ): {}",
+            standby.printed()
+        );
+        sql(&[format!("ALTER ROLE {role} LOGIN")]);
+        assert!(
+            standby.line_by("is made again", Instant::now() + Duration::from_secs(3)),
+            "{}",
+            standby.printed()
+        );
+        std::thread::sleep(Duration::from_secs(2));
+        assert_eq!(count(&standby, "is made again"), 1, "{}", standby.printed());
+        assert_eq!(
+            count(&standby, "cannot be made"),
+            warned,
+            "{}",
+            standby.printed()
+        );
+    }
+
     /// Waits until `webhook` accepted `count` bodies, at most 30 s.
     fn accepted(webhook: &Webhook, count: usize) {
         let deadline = Instant::now() + Duration::from_secs(30);
