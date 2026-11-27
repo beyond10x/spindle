@@ -56,6 +56,7 @@ mod adversary_w27_u5;
 mod adversary_w28_u5;
 mod adversary_w30_u4;
 mod adversary_w30_u6;
+mod affects_each;
 mod before_row;
 mod caller;
 mod creation_takes_unknown_row;

@@ -77,6 +77,15 @@ are Spindle's releases.
   synthesises from `ess/` is byte for byte the one 0.99.1 synthesised, and the observe types
   differ only in their header. Its UI change (an overlay reading its opener's params) does not
   reach Spindle, which builds none of ESS's UI crates (`story:ess-pin-0-99-2`).
+- The kernel runs an outcome whose `affects:` entry walks an input list
+  (`each: {in: input.<list>, as: <name>}`), as ESS's interpreter does: for each element, in list
+  order, the entry acts on the row the element names. With `sets:` it updates that row if held and
+  creates it in the entity's `initial` state if not; a `moves:` or `deletes:` entry acts only on a
+  held row. An element the entry's `where:` does not select is skipped, an element naming the
+  subject is skipped, `repeated: last_wins` keeps the last element naming a row, and a `Decimal`
+  identity written `1.0` names the row held as `1`. `admit`, `run` on stdin and the HTTP ingress
+  answer such a command, where the kernel refused the outcome as `unsupported` before it ran
+  (`story:affects-over-input-list`).
 
 ### Fixed
 

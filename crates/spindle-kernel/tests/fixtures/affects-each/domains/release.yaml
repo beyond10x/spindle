@@ -1,0 +1,357 @@
+domain: depot.release
+summary: A release records one row per contract it lists, retires or purges the records it lists, links the releases it lists and fills the bins it lists, the last element naming a bin twice winning.
+types:
+  - name: depot.release.Contract
+    kind: struct
+    fields:
+      - name: record_id
+        type: String
+      - name: version
+        type: String
+      - name: note
+        type: Optional<String>
+  - name: depot.release.RecordRef
+    kind: struct
+    fields:
+      - name: record_id
+        type: String
+  - name: depot.release.ReleaseRef
+    kind: struct
+    fields:
+      - name: release_id
+        type: String
+  - name: depot.release.BinEntry
+    kind: struct
+    fields:
+      - name: slot
+        type: Decimal
+      - name: label
+        type: String
+entities:
+  - name: depot.release.Release
+    identity:
+      name: release_id
+      type: String
+    fields:
+      - name: last
+        type: Optional<String>
+      - name: linked_to
+        type: Optional<String>
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+  - name: depot.release.Record
+    identity:
+      name: record_id
+      type: String
+    fields:
+      - name: release_id
+        type: String
+      - name: version
+        type: String
+      - name: note
+        type: Optional<String>
+    lifecycle:
+      initial: Live
+      states: [Live, Retired]
+      terminal: [Retired]
+      transitions:
+        - {name: retire, from: [Live], to: Retired}
+  - name: depot.release.Bin
+    identity:
+      name: slot
+      type: Decimal
+    fields:
+      - name: label
+        type: String
+    lifecycle:
+      initial: Filled
+      states: [Filled]
+      terminal: [Filled]
+errors:
+  - name: depot.release.Duplicate
+    summary: The list names one row twice.
+    fields: []
+commands:
+  - name: depot.release.OpenRelease
+    input:
+      - name: release_id
+        type: String
+    outcomes:
+      - name: opened
+        creates: depot.release.Release
+        instance: release_id
+        emits: [depot.release.ReleaseOpened]
+        payload:
+          depot.release.ReleaseOpened:
+            release_id: input.release_id
+        summary: The release is opened.
+  - name: depot.release.AddRecord
+    input:
+      - name: record_id
+        type: String
+      - name: release_id
+        type: String
+      - name: version
+        type: String
+    outcomes:
+      - name: added
+        creates: depot.release.Record
+        instance: record_id
+        sets:
+          release_id: input.release_id
+          version: input.version
+        emits: [depot.release.RecordAdded]
+        payload:
+          depot.release.RecordAdded:
+            record_id: input.record_id
+        summary: The record is added.
+  - name: depot.release.AddBin
+    input:
+      - name: slot
+        type: Decimal
+      - name: label
+        type: String
+    outcomes:
+      - name: added
+        creates: depot.release.Bin
+        instance: slot
+        sets:
+          label: input.label
+        emits: [depot.release.BinAdded]
+        payload:
+          depot.release.BinAdded:
+            slot: input.slot
+        summary: The bin is added.
+  - name: depot.release.Publish
+    input:
+      - name: release_id
+        type: String
+      - name: contracts
+        type: List<depot.release.Contract>
+    outcomes:
+      - name: duplicated
+        when: {not: {distinct: {in: contracts, as: c, by: c.record_id}}}
+        error: depot.release.Duplicate
+        summary: The list names one record twice.
+      - name: published
+        updates: depot.release.Release
+        instance: release_id
+        sets:
+          last: published
+        affects:
+          - entity: depot.release.Record
+            each: {in: input.contracts, as: c}
+            instance: c.record_id
+            sets:
+              release_id: input.release_id
+              version: c.version
+              note: c.note
+        emits: [depot.release.Published]
+        payload:
+          depot.release.Published:
+            release_id: input.release_id
+        summary: The release records one row per contract, updating a held one and creating any other.
+  - name: depot.release.PublishStable
+    input:
+      - name: release_id
+        type: String
+      - name: skip
+        type: String
+      - name: contracts
+        type: List<depot.release.Contract>
+    outcomes:
+      - name: duplicated
+        when: {not: {distinct: {in: contracts, as: c, by: c.record_id}}}
+        error: depot.release.Duplicate
+        summary: The list names one record twice.
+      - name: published
+        updates: depot.release.Release
+        instance: release_id
+        sets:
+          last: stable
+        affects:
+          - entity: depot.release.Record
+            each: {in: input.contracts, as: c, where: c.version != input.skip}
+            instance: c.record_id
+            sets:
+              release_id: input.release_id
+              version: c.version
+        emits: [depot.release.Published]
+        payload:
+          depot.release.Published:
+            release_id: input.release_id
+        summary: The release records one row per contract whose version is not the one skipped.
+  - name: depot.release.Retire
+    input:
+      - name: release_id
+        type: String
+      - name: records
+        type: List<depot.release.RecordRef>
+    outcomes:
+      - name: duplicated
+        when: {not: {distinct: {in: records, as: r, by: r.record_id}}}
+        error: depot.release.Duplicate
+        summary: The list names one record twice.
+      - name: retired
+        updates: depot.release.Release
+        instance: release_id
+        sets:
+          last: retired
+        affects:
+          - entity: depot.release.Record
+            each: {in: input.records, as: r}
+            instance: r.record_id
+            moves: depot.release.Record.retire
+        emits: [depot.release.Retired]
+        payload:
+          depot.release.Retired:
+            release_id: input.release_id
+        summary: The release retires every held live record it lists.
+  - name: depot.release.Purge
+    input:
+      - name: release_id
+        type: String
+      - name: records
+        type: List<depot.release.RecordRef>
+    outcomes:
+      - name: duplicated
+        when: {not: {distinct: {in: records, as: r, by: r.record_id}}}
+        error: depot.release.Duplicate
+        summary: The list names one record twice.
+      - name: purged
+        updates: depot.release.Release
+        instance: release_id
+        sets:
+          last: purged
+        affects:
+          - entity: depot.release.Record
+            each: {in: input.records, as: r}
+            instance: r.record_id
+            deletes: depot.release.Record
+        emits: [depot.release.Purged]
+        payload:
+          depot.release.Purged:
+            release_id: input.release_id
+        summary: The release removes every held record it lists.
+  - name: depot.release.Link
+    input:
+      - name: release_id
+        type: String
+      - name: releases
+        type: List<depot.release.ReleaseRef>
+    outcomes:
+      - name: duplicated
+        when: {not: {distinct: {in: releases, as: l, by: l.release_id}}}
+        error: depot.release.Duplicate
+        summary: The list names one release twice.
+      - name: linked
+        updates: depot.release.Release
+        instance: release_id
+        sets:
+          last: linked
+        affects:
+          - entity: depot.release.Release
+            each: {in: input.releases, as: l}
+            instance: l.release_id
+            sets:
+              linked_to: input.release_id
+        emits: [depot.release.Linked]
+        payload:
+          depot.release.Linked:
+            release_id: input.release_id
+        summary: Every release listed is linked to this one, the release itself excepted.
+  - name: depot.release.Fill
+    input:
+      - name: release_id
+        type: String
+      - name: bins
+        type: List<depot.release.BinEntry>
+    outcomes:
+      - name: filled
+        updates: depot.release.Release
+        instance: release_id
+        sets:
+          last: filled
+        affects:
+          - entity: depot.release.Bin
+            each: {in: input.bins, as: b, repeated: last_wins}
+            instance: b.slot
+            sets:
+              label: b.label
+        emits: [depot.release.Filled]
+        payload:
+          depot.release.Filled:
+            release_id: input.release_id
+        summary: The release labels every bin it lists, the last element naming a bin winning.
+events:
+  - name: depot.release.ReleaseOpened
+    fields:
+      - name: release_id
+        type: String
+  - name: depot.release.RecordAdded
+    fields:
+      - name: record_id
+        type: String
+  - name: depot.release.BinAdded
+    fields:
+      - name: slot
+        type: Decimal
+  - name: depot.release.Published
+    fields:
+      - name: release_id
+        type: String
+  - name: depot.release.Retired
+    fields:
+      - name: release_id
+        type: String
+  - name: depot.release.Purged
+    fields:
+      - name: release_id
+        type: String
+  - name: depot.release.Linked
+    fields:
+      - name: release_id
+        type: String
+  - name: depot.release.Filled
+    fields:
+      - name: release_id
+        type: String
+views:
+  - name: depot.release.ReleaseCard
+    source: depot.release.Release
+    consistency: read_your_writes
+    fields:
+      - name: release_id
+        type: String
+      - name: last
+        type: Optional<String>
+      - name: linked_to
+        type: Optional<String>
+      - name: state
+        type: depot.release.Release.State
+  - name: depot.release.RecordCard
+    source: depot.release.Record
+    consistency: read_your_writes
+    fields:
+      - name: record_id
+        type: String
+      - name: release_id
+        type: String
+      - name: version
+        type: String
+      - name: note
+        type: Optional<String>
+      - name: state
+        type: depot.release.Record.State
+  - name: depot.release.BinCard
+    source: depot.release.Bin
+    consistency: read_your_writes
+    fields:
+      - name: slot
+        type: Decimal
+      - name: label
+        type: String
+      - name: state
+        type: depot.release.Bin.State
