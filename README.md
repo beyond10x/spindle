@@ -112,9 +112,11 @@ commands by outcome and failure, events appended, bindings, timer ticks, store w
 each entity holds, the resets, the external causes answered, by command, outcome and source, the
 refused bound commands, by binding, command and refusal, in a run given a seed, its entries
 sent, applied, already there and refused, and the series mode. `--observe-series aggregated`
-writes every route, operation, command, outcome, event, binding and entity label empty and sums
-the series that then match, so a scrape writes as many series for a specification of 300 commands
-as for one of 30; the default, `per-command`, writes each value as its own series.
+writes every route, operation, command, outcome, event, binding and entity label empty, and every
+refusal that names a declared outcome, and sums the series that then match: the series count does
+not grow with the number of commands or outcomes, and `component` keeps one value per declared
+component. A scrape writes as many series for a specification of 300 commands as for one of 30;
+the default, `per-command`, writes each value as its own series.
 
 `GET /__spindle/topology` answers the graph of what the run serves (`spindle-topology/1`), derived
 from the specification. It holds the ingress, the specification, its domains, their commands,

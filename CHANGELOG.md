@@ -10,8 +10,11 @@ are Spindle's releases.
 
 - `run --observe-series <per-command|aggregated>` bounds the series `GET /__spindle/metrics`
   writes. `aggregated` writes every label whose value comes from the specification (`route`,
-  `operation`, `command`, `outcome`, `event`, `binding`, `entity`) empty and sums the series that
-  then share every label, so a specification of 300 commands writes as many series as one of 30;
+  `operation`, `command`, `outcome`, `event`, `binding`, `entity`, and a bound command's `refusal`
+  where it names a declared outcome) empty and sums the series that then share every label: the
+  series count does not grow with the number of commands or outcomes, and `component` keeps one
+  value per declared component, so a specification of 300 commands writes as many series as one
+  of 30;
   `per-command`, the default, writes them as before. Every scrape names the mode in a new family,
   `spindle_metrics_series_mode{mode}`, at 1, also listed in
   `ess/fixtures/observe/metrics/families.json`. The request log and the topology keep every label.

@@ -340,11 +340,13 @@ pub enum Command {
         observe_requests: u16,
         /// How `GET /__spindle/metrics` of `--observe` writes the labels whose values come from
         /// the specification (`route`, `operation`, `command`, `outcome`, `event`, `binding`,
-        /// `entity`). `per-command`: each value its own series, so the series grow with the
-        /// specification. `aggregated`: each of them written empty and the series that then
-        /// share every label summed, so their number does not depend on the specification's
-        /// size. The scrape names the mode as `spindle_metrics_series_mode{mode}`; the request
-        /// log and the topology are the same in either.
+        /// `entity`, and a bound command's `refusal` where it names a declared outcome).
+        /// `per-command`: each value its own series, so the series grow with the specification.
+        /// `aggregated`: each of them written empty and the series that then share every label
+        /// summed, so the series count does not grow with the number of commands or outcomes;
+        /// `component` keeps one value per declared component. The scrape names the mode as
+        /// `spindle_metrics_series_mode{mode}`; the request log and the topology are the same in
+        /// either.
         #[arg(
             long,
             value_name = "MODE",

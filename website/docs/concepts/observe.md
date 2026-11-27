@@ -66,12 +66,13 @@ so a slow route shows in its own series. An unrouted request has an empty `route
 
 [`--observe-series`](../reference/cli.md#run--observe-series) sets how a scrape writes the labels
 whose values come from the specification: `route`, `operation`, `command`, `outcome`, `event`,
-`binding` and `entity`. The scrape names the mode in `spindle_metrics_series_mode{mode}`, at 1.
+`binding` and `entity`, and the `refusal` of a bound command where it names an outcome the
+specification declares. The scrape names the mode in `spindle_metrics_series_mode{mode}`, at 1.
 
 | Mode | Series a scrape writes |
 |---|---|
 | `per-command`, the default | one for each value counted, so the series grow with the specification: a generated model whose commands were each answered once writes about 33 sample lines per command |
-| `aggregated` | each of those labels empty, and the series that then share every label summed. The number no longer depends on how many commands, events, bindings or entities the specification declares: it is bounded by the labels kept, a request's method, kind, class and status class, a failure kind, each component, what a binding carried, retried or timed, a cause's source, a seed entry's count, and the outcome that refused a bound command. Generated models of 30 and of 300 commands, each answered once, write the same series |
+| `aggregated` | each of those labels empty, and the series that then share every label summed. The number of series does not grow with the number of commands or outcomes, nor with the events, bindings or entities the specification declares. It is bounded by the labels kept: a request's method, kind, class and status class, a failure kind, what a binding carried, retried or timed, a cause's source, a seed entry's count, the kernel's error kind of a rejected bound command, and `component`, which keeps one value per declared component. Generated models of 30 and of 300 commands, each answered once, write the same series |
 
 The mode changes the scrape only. The request log and the topology keep every route and operation,
 in either mode.

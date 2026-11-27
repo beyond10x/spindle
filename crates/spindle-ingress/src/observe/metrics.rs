@@ -26,12 +26,13 @@
 //!
 //! A run's [`SeriesMode`] decides how the labels whose values come from the specification
 //! ([`SPECIFIED_LABELS`]) are written (`story:metrics-series-bounded`): each value its own series,
-//! or every one written empty and the series that then share every label summed, so the series
+//! or every one written empty, with each refusal of a bound command that names an outcome the
+//! specification declares, and the series that then share every label summed, so the series
 //! no longer grow with the specification. It is applied here, when the scrape is written: the
 //! [`Recorder`] keeps every label, since the topology's `routes` edges read them.
 
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 
 use spindle_host::Reader;
@@ -183,8 +184,9 @@ pub(crate) const FAMILIES: [Family; 18] = [
         labels: &["mode"],
         summary: "1, labelled with how the run writes the labels whose values come from the \
                   specification: per-command, each value its own series, or aggregated, every \
-                  route, operation, command, outcome, event, binding and entity written empty \
-                  and the series that then share their labels summed.",
+                  route, operation, command, outcome, event, binding and entity, and each \
+                  refusal that names a declared outcome, written empty and the series that \
+                  then share their labels summed.",
     },
 ];
 
@@ -524,7 +526,15 @@ pub(crate) fn exposition(recorder: &Recorder, host: &Reader, rows: Vec<(String, 
             Value::Number(count),
         );
     }
-    for (labels, count) in refusals {
+    let declared = match mode {
+        SeriesMode::PerCommand => HashSet::new(),
+        SeriesMode::Aggregated => declared_outcomes(host, &components),
+    };
+    for (mut labels, count) in refusals {
+        let [_, command, refusal] = &labels;
+        if declared.contains(&(command.as_str(), refusal.as_str())) {
+            labels[2] = String::new();
+        }
         samples.add(
             "spindle_bound_refusals_total",
             &labels,
@@ -558,6 +568,22 @@ pub(crate) fn exposition(recorder: &Recorder, host: &Reader, rows: Vec<(String, 
         Value::Number(1),
     );
     samples.text()
+}
+
+/// Every outcome the specification declares, with its command, as the catalogue of each of
+/// `components` lists it. An aggregated scrape writes a bound command's `refusal` empty where it
+/// is one of them, and keeps the kernel's own error kinds (`broken_invariant`), which do not grow
+/// with the specification.
+fn declared_outcomes<'a>(host: &'a Reader, components: &[String]) -> HashSet<(&'a str, &'a str)> {
+    components
+        .iter()
+        .filter_map(|component| host.counters(component))
+        .flat_map(|counters| &counters.catalogue().counters)
+        .filter_map(|counter| match &counter.key {
+            Key::Outcome { command, outcome } => Some((command.as_str(), outcome.as_str())),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Adds every counter and histogram of `component`'s `counters` that counted anything to
@@ -671,8 +697,8 @@ mod tests {
         "timed",
         // world, file, default, call, unanswered.
         "source",
-        // The refusing outcome or the kernel's error kind: kept, as the story decided (D1), though
-        // an outcome is named by the specification.
+        // The kernel's error kind of a rejected bound command; a refusing outcome the
+        // specification declares is written empty ([`declared_outcomes`](super::declared_outcomes)).
         "refusal",
         // sent, applied, already_there, refused.
         "counted",
