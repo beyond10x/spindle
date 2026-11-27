@@ -154,7 +154,7 @@ async fn a_fetch_to_a_bound_route_is_answered_in_the_browser() {
         answered.push(Exchange {
             status,
             allow,
-            answer,
+            answer: crate::timeless(&answer),
             ..exchange.clone()
         });
     }

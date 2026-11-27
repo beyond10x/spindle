@@ -294,7 +294,12 @@ type Shared = Arc<Mutex<Link>>;
 fn close_with_reset(stream: TcpStream) {
     #[cfg(unix)]
     let _ = rustix::net::sockopt::set_socket_linger(&stream, Some(Duration::ZERO));
+    // Dropping the stream closes it. On wasm32-unknown-unknown std's `TcpStream` holds no socket
+    // and has no `Drop` (clippy's `drop_non_drop`), so the explicit drop is native only.
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     drop(stream);
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    let _socketless = stream;
 }
 
 fn held(link: &Shared) -> MutexGuard<'_, Link> {
