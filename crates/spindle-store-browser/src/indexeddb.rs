@@ -62,10 +62,11 @@ struct Recorded {
     /// 0.23.0 recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     outcome: Option<String>,
-    /// Every instance its write wrote ([`Committed::instances`]), on each event of the write;
-    /// none on an event a release before 0.23.0 recorded.
+    /// Every instance its write wrote ([`Committed::instances`]), on each event of the write, by
+    /// entity and the identity's key text, as the `rows` object store keys it; none on an event a
+    /// release before 0.23.0 recorded.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    instances: Vec<(String, Value)>,
+    instances: Vec<Key>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     reset: bool,
 }
@@ -332,7 +333,7 @@ impl Shared {
         for text in read_all(&database, EVENTS).await? {
             events.push(parse::<Recorded>(&text, "an event")?);
         }
-        let (events, position) = committed(events);
+        let (events, position) = committed(events)?;
         let mut held = shared.borrow_mut();
         held.events = events;
         held.position = position;
@@ -496,6 +497,10 @@ impl Shared {
             .database
             .transaction_with_str_sequence_and_mode(&scope, IdbTransactionMode::Readwrite)
             .map_err(js)?;
+        let named: Vec<Key> = instances
+            .iter()
+            .map(|(entity, identity)| key(entity, identity))
+            .collect();
         let mut entries = Vec::with_capacity(pending.len());
         let mut announced = Vec::with_capacity(pending.len());
         for Pending {
@@ -518,7 +523,7 @@ impl Shared {
                         sequence: self.origin.as_ref().map(|origin| origin.sequence),
                         cause: self.origin.as_ref().and_then(|origin| origin.cause.clone()),
                         outcome: self.outcome.clone(),
-                        instances: instances.to_vec(),
+                        instances: named.clone(),
                         reset: false,
                     })
                 })
@@ -819,7 +824,10 @@ fn key(entity: &str, identity: &Value) -> Key {
 /// The events the `events` object store holds past its last reset mark, in key order, at their
 /// positions, and the last position: the events of one attributed command, one write, share
 /// one; an event attributed to none has one of its own. Positions go on growing past a mark.
-fn committed(recorded: Vec<Recorded>) -> (Vec<Committed>, u64) {
+///
+/// # Errors
+/// [`StoreError::Backend`] where an event names an instance by text that is no identity's.
+fn committed(recorded: Vec<Recorded>) -> Result<(Vec<Committed>, u64), StoreError> {
     let mut committed: Vec<Committed> = Vec::with_capacity(recorded.len());
     let mut position = 0;
     let mut last: Option<Option<Origin>> = None;
@@ -838,14 +846,20 @@ fn committed(recorded: Vec<Recorded>) -> (Vec<Committed>, u64) {
             position,
             origin,
             outcome: recorded.outcome,
-            instances: recorded.instances,
+            instances: recorded
+                .instances
+                .into_iter()
+                .map(|(entity, identity)| {
+                    parse::<Value>(&identity, "an instance's identity").map(|held| (entity, held))
+                })
+                .collect::<Result<_, _>>()?,
             event: Event {
                 name: recorded.event,
                 payload: recorded.payload,
             },
         });
     }
-    (committed, position)
+    Ok((committed, position))
 }
 
 fn describe_standing(standing: Standing) -> String {
