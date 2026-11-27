@@ -10,7 +10,7 @@ publish.workspace = true
 
 [features]
 default = ["listener"]
-listener = ["dep:http-body-util", "dep:hyper", "dep:hyper-util", "dep:tokio"]
+listener = ["dep:http-body-util", "dep:hyper", "dep:hyper-util", "dep:rustls", "dep:tokio", "dep:tokio-rustls"]
 
 [dependencies]
 ess-compiler.workspace = true
@@ -20,15 +20,19 @@ ess-primitives.workspace = true
 http-body-util = { version = "0.1", optional = true }
 hyper = { version = "1", features = ["http1", "server"], optional = true }
 hyper-util = { version = "0.1", features = ["tokio"], optional = true }
+rustls = { version = "0.23", default-features = false, features = ["std"], optional = true }
 serde_json.workspace = true
 spindle-host = { path = "../spindle-host", default-features = false }
 spindle-kernel = { path = "../spindle-kernel", default-features = false }
 spindle-telemetry = { path = "../spindle-telemetry", default-features = false }
 tokio = { version = "1", default-features = false, features = ["macros", "net", "rt", "sync", "time"], optional = true }
+tokio-rustls = { version = "0.26", default-features = false, optional = true }
 
 [dev-dependencies]
 ess-conformance.workspace = true
 jsonschema = { version = "0.52.1", default-features = false }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
 spindle-capability = { path = "../spindle-capability" }
 spindle-host = { path = "../spindle-host" }
 spindle-spec = { path = "../spindle-spec" }

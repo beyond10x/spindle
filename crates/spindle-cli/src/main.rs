@@ -7,6 +7,7 @@ mod database;
 mod decisions;
 mod deploy;
 mod lines;
+mod listener_tls;
 mod log;
 mod replay;
 mod scaled;
@@ -237,6 +238,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             http,
             port,
             address,
+            tls,
             console,
             drop_retries,
             fixed_actor,
@@ -262,6 +264,15 @@ fn run(cli: Cli) -> Result<ExitCode> {
             http: http.as_deref(),
             port,
             address,
+            tls: tls
+                .tls_cert
+                .as_deref()
+                .zip(tls.tls_key.as_deref())
+                .map(|(cert, key)| listener_tls::Files {
+                    cert,
+                    key,
+                    client_ca: tls.tls_client_ca.as_deref(),
+                }),
             console,
             drop_retries,
             callers: serve::callers(fixed_actor, fixed_caller)?,
@@ -616,6 +627,9 @@ struct Execute<'a> {
     port: Option<u16>,
     /// `--address`: the IP address to serve on, 127.0.0.1 without it.
     address: Option<std::net::IpAddr>,
+    /// `--tls-cert` with `--tls-key`, and `--tls-client-ca`: the files a served run listens
+    /// with over TLS; plain HTTP without them.
+    tls: Option<listener_tls::Files<'a>>,
     /// `--console` (`SPINDLE_SETTING_CONSOLE`): whether the console routes are served, decided
     /// with the address where not given ([`spindle_cli::cli::console_served`]).
     console: Option<spindle_cli::cli::Switch>,
@@ -653,6 +667,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         http,
         port,
         address,
+        tls,
         console,
         drop_retries,
         ref callers,
@@ -677,6 +692,15 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         .write();
         return Ok(ExitCode::from(USAGE));
     }
+    // A certificate, key or CA file that cannot be served is a mistake on the command line: it
+    // exits as clap exits on one, before anything is loaded or listens.
+    let listening_tls = match tls.map(listener_tls::server_config).transpose() {
+        Ok(config) => config,
+        Err(refused) => {
+            log::error(refused).write();
+            return Ok(ExitCode::from(USAGE));
+        }
+    };
     if let (Some(header), Some(caller)) = (caller_header, callers.first()) {
         bail!(
             "--trusted-caller-header {header} and --fixed-actor {} are given together: each \
@@ -796,6 +820,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 observe_series,
                 caller_header,
                 proxy_secret,
+                tls: listening_tls,
                 seed,
                 drain,
                 clock,
@@ -847,6 +872,12 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
     }
     if let Some(address) = address {
         bail!("{unserved}, so --address {address} would be ignored");
+    }
+    if let Some(files) = tls {
+        bail!(
+            "{unserved}, so --tls-cert {} would be ignored",
+            files.cert.display()
+        );
     }
     let bindings = lines::Bindings::new(spec, &loaded.ir, drop_retries)?;
     let scratch;

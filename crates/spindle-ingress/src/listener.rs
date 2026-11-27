@@ -2,7 +2,9 @@
 //! ([`Listener::bind_reading_on`]), hyper on a thread of its own, and every request for
 //! a route handed to the caller's thread as an [`Exchange`], answered there by the router
 //! ([`crate::route`]); on a listener given the host's [`Reader`], every read answered through it
-//! on a blocking thread of its own instead ([`Listener::bind_reading`]).
+//! on a blocking thread of its own instead ([`Listener::bind_reading`]); over TLS, with or without
+//! a client certificate required, where it is given a TLS configuration
+//! ([`Listener::bind_reading_on_tls`]).
 
 use std::convert::Infallible;
 use std::io;
@@ -133,6 +135,9 @@ struct Served {
     reader: Option<Reader>,
     /// What the health routes read beside the caller's thread.
     health: Arc<Health>,
+    /// The TLS each connection is served over, where the listener serves TLS
+    /// ([`Listener::bind_reading_on_tls`]).
+    tls: Option<tokio_rustls::TlsAcceptor>,
 }
 
 /// What `GET /__spindle/live` and `GET /__spindle/ready` read beside the caller's thread
@@ -377,11 +382,53 @@ impl Listener {
         Self::serve(SocketAddr::new(ip, port), surface, None, Some(reader))
     }
 
+    /// As [`Listener::bind_reading_on`], every connection served over TLS as `tls` says
+    /// (`story:listener-tls`): its certificate and key, and, where it verifies clients, the
+    /// client certificate it requires. Each connection's handshake runs on that connection's own
+    /// task, bounded by [`HEADER_READ`] and given up once the listener closes, so a client that
+    /// stalls it holds neither the accept loop nor the drain; one that fails it, a plain HTTP
+    /// request included, is closed with no HTTP read or written. Every route is behind it, the
+    /// run's own under `/__spindle/` included.
+    ///
+    /// # Errors
+    /// As [`Listener::bind_reading_on`].
+    pub fn bind_reading_on_tls(
+        ip: IpAddr,
+        port: u16,
+        surface: Surface,
+        reader: Reader,
+        tls: Arc<rustls::ServerConfig>,
+    ) -> io::Result<Self> {
+        let surface = if exposed(ip) {
+            surface.requiring_secret()
+        } else {
+            surface
+        };
+        Self::serve_over(
+            SocketAddr::new(ip, port),
+            surface,
+            None,
+            Some(reader),
+            Some(tokio_rustls::TlsAcceptor::from(tls)),
+        )
+    }
+
     fn serve(
         address: SocketAddr,
         surface: Surface,
         token: Option<String>,
         reader: Option<Reader>,
+    ) -> io::Result<Self> {
+        Self::serve_over(address, surface, token, reader, None)
+    }
+
+    /// [`Listener::serve`], each connection over TLS where `tls` is given.
+    fn serve_over(
+        address: SocketAddr,
+        surface: Surface,
+        token: Option<String>,
+        reader: Option<Reader>,
+        tls: Option<tokio_rustls::TlsAcceptor>,
     ) -> io::Result<Self> {
         if surface.secret_required() && surface.caller_secret().is_none() {
             return Err(io::Error::new(
@@ -412,6 +459,7 @@ impl Listener {
             guard,
             reader,
             health: Arc::clone(&health),
+            tls,
         });
         let server = std::thread::Builder::new()
             .name("spindle-ingress".to_owned())
@@ -525,13 +573,35 @@ impl Drop for Listener {
     }
 }
 
-/// Serves one connection, HTTP/1.1, its heads bounded by [`HEADER_READ`]. Once `closing` reads
-/// `true`, the connection writes the answer it holds, if any, and closes.
+/// Serves one connection, HTTP/1.1, its heads bounded by [`HEADER_READ`]; over TLS where the
+/// listener serves it, once the handshake has completed within [`HEADER_READ`]. A handshake that
+/// fails or does not complete in time, or is under way once `closing` reads `true`, closes the
+/// connection with no HTTP read or written. Once `closing` reads `true`, the connection writes the
+/// answer it holds, if any, and closes.
 async fn connection(
     served: Arc<Served>,
     stream: tokio::net::TcpStream,
     mut closing: watch::Receiver<bool>,
 ) {
+    let Some(tls) = served.tls.clone() else {
+        return answering(served, stream, closing).await;
+    };
+    let handshake = tokio::time::timeout(HEADER_READ, tls.accept(stream));
+    let stream = tokio::select! {
+        shaken = handshake => match shaken {
+            Ok(Ok(stream)) => stream,
+            Ok(Err(_)) | Err(_) => return,
+        },
+        _ = closing.wait_for(|closing| *closing) => return,
+    };
+    answering(served, stream, closing).await;
+}
+
+/// Serves HTTP/1.1 on `stream`, as [`connection`] says.
+async fn answering<S>(served: Arc<Served>, stream: S, mut closing: watch::Receiver<bool>)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
     let service = hyper::service::service_fn(move |request| handle(Arc::clone(&served), request));
     let serving = hyper::server::conn::http1::Builder::new()
         .timer(TokioTimer::new())

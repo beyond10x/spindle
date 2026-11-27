@@ -272,8 +272,9 @@ pub enum Command {
         /// Read JSON lines on stdin where a component requires `ingress.network` (`reached_by:
         /// network`), instead of serving HTTP: every component runs in this process on one store
         /// and its event bindings fire as on any other stdin run; no periodic binding fires. Given
-        /// with a flag only a served run reads (`--http`, `--port`, `--address`, `--fixed-actor`,
-        /// `--fixed-caller`, `--trusted-caller-header`, `--trusted-caller-secret`, `--observe`,
+        /// with a flag only a served run reads (`--http`, `--port`, `--address`, `--tls-cert`,
+        /// `--tls-key`, `--tls-client-ca`, `--fixed-actor`, `--fixed-caller`,
+        /// `--trusted-caller-header`, `--trusted-caller-secret`, `--observe`,
         /// `--observe-requests`, `--observe-series`, `--seed`, `--drain` or `--log-format json`),
         /// exits 2 before anything is loaded. Where no component requires `ingress.network`, `run`
         /// reads stdin with or without it.
@@ -284,6 +285,9 @@ pub enum Command {
                 "http",
                 "port",
                 "address",
+                "tls_cert",
+                "tls_key",
+                "tls_client_ca",
                 "fixed_actor",
                 "fixed_caller",
                 "trusted_caller_header",
@@ -322,6 +326,8 @@ pub enum Command {
         /// HTTP.
         #[arg(long, value_name = "IP", conflicts_with = "scenario")]
         address: Option<std::net::IpAddr>,
+        #[command(flatten)]
+        tls: Box<ListenerTls>,
         /// `on` or `off`: serve the console routes (`POST /api/reset`, `GET /api/events`,
         /// `GET /api/model`, `GET /api/served` and every other route under `/api/` the console
         /// answers) or not. Off, each answers `404` as an unrouted path does, whatever secret the
@@ -697,6 +703,49 @@ pub enum Command {
         #[command(subcommand)]
         command: StateCommand,
     },
+}
+
+/// The flags `run` serves TLS with (`story:listener-tls`), flattened into `run` and boxed, so
+/// `Command` stays within the size clippy allows a variant.
+#[derive(Debug, clap::Args)]
+pub struct ListenerTls {
+    /// Serve HTTPS instead of plain HTTP, with the PEM certificate chain in `FILE`, the
+    /// server's own certificate first, and the key of `--tls-key`; each requires the other.
+    /// TLS 1.2 and 1.3; a plain HTTP request on the port gets no HTTP answer, and the
+    /// listening line is the same as without it. A file that cannot be read or holds no
+    /// certificate, or a key that does not match the certificate, exits 2 before listening,
+    /// with a line naming the flag and the file. Read once at start: a renewed certificate is
+    /// served from the next restart. Only where `run` serves HTTP.
+    #[arg(
+        long,
+        value_name = "FILE",
+        requires = "tls_key",
+        conflicts_with = "scenario"
+    )]
+    pub tls_cert: Option<PathBuf>,
+    /// The PEM private key of `--tls-cert` (PKCS #8, PKCS #1 or SEC1); requires `--tls-cert`.
+    /// A file that cannot be read or holds no key exits 2 before listening.
+    #[arg(
+        long,
+        value_name = "FILE",
+        requires = "tls_cert",
+        conflicts_with = "scenario"
+    )]
+    pub tls_key: Option<PathBuf>,
+    /// Require every client, the proxy in front, to present a certificate one of the PEM CA
+    /// certificates in `FILE` signed (mTLS): a client without one, or with one another CA
+    /// signed, fails the handshake and gets no answer. This holds on every route,
+    /// `/__spindle/live` and `/__spindle/ready` included, so a platform probe checks the
+    /// process (`exec`) or the port (`tcpSocket`). Requires `--tls-cert` and `--tls-key`.
+    /// Off loopback `--trusted-caller-header` and `--trusted-caller-secret` are still
+    /// required. A file that cannot be read or holds no certificate exits 2 before listening.
+    #[arg(
+        long,
+        value_name = "FILE",
+        requires_all = ["tls_cert", "tls_key"],
+        conflicts_with = "scenario"
+    )]
+    pub tls_client_ca: Option<PathBuf>,
 }
 
 /// One `b10x-spindle state` command.

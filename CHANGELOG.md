@@ -8,6 +8,13 @@ are Spindle's releases.
 
 ### Added
 
+- A served `run` given `--tls-cert <FILE>` and `--tls-key <FILE>` serves HTTPS on its listener,
+  TLS 1.2 and 1.3 on `ring`; with `--tls-client-ca <FILE>` every client, the proxy in front, must
+  present a certificate that CA signed (mTLS), on every route, `/__spindle/live` and
+  `/__spindle/ready` included. A file that cannot be read, holds no certificate or key, or a key
+  that does not match the certificate exits 2 before listening, naming the flag and the file. The
+  listening line is unchanged, and a renewed certificate is read by a restart
+  (`story:listener-tls`).
 - `run --stdin` reads JSON lines on stdin where a component is `reached_by: network`, instead of
   serving HTTP: every component runs in the one process on one store and the event bindings fire
   as on any other stdin run. Given with a flag only a served run reads (`--http`, `--port`,

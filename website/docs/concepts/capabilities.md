@@ -124,6 +124,20 @@ is read: every command and view, `GET /api/model`, `GET /api/events`, `POST /api
 route under `/__spindle/`, and also a path no route has, a method a route does not take and a
 body of any size. On a loopback address `run` answers exactly as without `--address`.
 
+`--tls-cert <FILE>` with `--tls-key <FILE>` serves HTTPS on the listener instead of plain HTTP:
+the PEM certificate chain, the server's own certificate first, and its PEM private key, TLS 1.2
+and 1.3. Each requires the other. A plain HTTP request on that port gets no HTTP answer.
+`--tls-client-ca <FILE>`, given with both, requires every client, the proxy in front, to present
+a certificate the PEM CAs of that file signed (mTLS); a client without one, or with one another CA
+signed, fails the handshake. This holds on every route, `/__spindle/live` and `/__spindle/ready`
+included, so with a client CA a probe of the platform checks the process with `exec` or the port
+with `tcpSocket`, not with `httpGet`; with TLS alone an `httpGet` probe sets `scheme: HTTPS`. Off
+loopback mTLS adds to `--trusted-caller-header` and
+`--trusted-caller-secret`, which are still required. A file that cannot be read, a file holding
+no certificate or key, and a key that does not match the certificate exit 2 before anything
+listens, with one line naming the flag and the file. Each file is read once at start: a renewed
+certificate is served from the next restart. The start line is the same with TLS as without.
+
 What is served is what ESS derives: each command the component accepts and, for a
 `reached_by: network` component, each view of a domain it owns. Each is served exactly where
 `ess generate --kind openapi` publishes it:

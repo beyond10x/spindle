@@ -131,6 +131,10 @@ pub(crate) struct Serving<'a> {
     /// `--trusted-caller-secret`: the file, and the secret read from it ([`proxy_secret`]), that
     /// the proxy presents in [`Surface::SECRET_HEADER`]; given exactly when `caller_header` is.
     pub proxy_secret: Option<(&'a Path, String)>,
+    /// `--tls-cert` with `--tls-key`, and `--tls-client-ca`: the TLS every connection is served
+    /// over, a client certificate required where it verifies clients
+    /// ([`Listener::bind_reading_on_tls`]); plain HTTP without it.
+    pub tls: Option<std::sync::Arc<rustls::ServerConfig>>,
     /// The seed file read and checked before listening ([`crate::seed::load`]): its entries are
     /// submitted once listening, one between each two exchanges ([`crate::seed::Seeding`]), and
     /// again, all before the answer, after each reset with no world ([`reset_seeded`]).
@@ -495,8 +499,17 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         )?),
         _ => None,
     };
-    let listener = Listener::bind_reading_on(serving.address, serving.port, surface, host.reader())
-        .context("binding the HTTP listener")?;
+    let listener = match serving.tls {
+        Some(tls) => Listener::bind_reading_on_tls(
+            serving.address,
+            serving.port,
+            surface,
+            host.reader(),
+            tls,
+        ),
+        None => Listener::bind_reading_on(serving.address, serving.port, surface, host.reader()),
+    }
+    .context("binding the HTTP listener")?;
     // The signal itself stops the listener taking work, while a command may hold this thread.
     let stopping = listener.stopping();
     stopping_on(&stopping)?;
