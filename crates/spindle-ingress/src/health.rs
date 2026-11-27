@@ -111,6 +111,9 @@ impl Eq for SeedState {}
 pub(crate) struct Probed<'a> {
     pub seed: Option<&'a SeedState>,
     pub stopping: bool,
+    /// Whether the run stands by for another process's lease of its store
+    /// (`story:several-writers-one-postgres`).
+    pub standby: bool,
     pub holding: bool,
     pub idle: Duration,
     pub bound: Duration,
@@ -123,6 +126,7 @@ impl Probed<'_> {
         Probed {
             seed,
             stopping: false,
+            standby: false,
             holding: true,
             idle: Duration::ZERO,
             bound: LIVENESS,
@@ -148,15 +152,18 @@ pub(crate) fn seed(seed: Option<&SeedState>) -> Value {
     })
 }
 
-/// `GET /__spindle/ready`: `200` where the run has no seed or its seed has ended, and it is not
-/// stopping; `503` while the seed runs and once the run stops. Its body says which.
+/// `GET /__spindle/ready`: `200` where the run has no seed or its seed has ended, and it neither
+/// stops nor stands by for another process's lease of its store; `503` while the seed runs, once
+/// the run stops, and while it stands by. Its body says which: `standby: true` only while it
+/// stands by, absent otherwise.
 pub(crate) fn ready(probed: &Probed<'_>) -> (u16, Value) {
     let state = probed.seed.map_or("none", |seed| seed.read().phase.name());
-    let ready = state != SeedPhase::Running.name() && !probed.stopping;
-    (
-        if ready { 200 } else { 503 },
-        json!({"ready": ready, "seed": state, "stopping": probed.stopping}),
-    )
+    let ready = state != SeedPhase::Running.name() && !probed.stopping && !probed.standby;
+    let mut body = json!({"ready": ready, "seed": state, "stopping": probed.stopping});
+    if probed.standby {
+        body["standby"] = Value::Bool(true);
+    }
+    (if ready { 200 } else { 503 }, body)
 }
 
 /// `GET /__spindle/live`: `200` while the host's thread holds a request it took, however long it

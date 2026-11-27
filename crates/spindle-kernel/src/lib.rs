@@ -83,7 +83,8 @@ pub use fit::{Fit, Misfit, Model, Shape, Shapes};
 pub use mint::{Identity, Mint, Seeded, Uuid, UuidV4};
 #[cfg(feature = "postgres")]
 pub use postgres::{
-    Database, PostgresStore, RESERVED as POSTGRES_RESERVED, prefix as postgres_prefix,
+    Database, LEASE_MAX, Lease, PostgresStore, RESERVED as POSTGRES_RESERVED, fenced,
+    prefix as postgres_prefix,
 };
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
 pub use sqlite::LogStore;

@@ -685,7 +685,7 @@
     },
     "spindle.observe.Readiness": {
       "additionalProperties": false,
-      "description": "The answer of `GET /__spindle/ready`, with or without `--observe` and without the host's thread, beside its status: `200` where the run has no seed or its seed run has ended, a declared refusal among its entries included, and the run is not stopping; `503` while the seed runs and from the moment SIGINT or SIGTERM arrives. A probe reading `200` reads every view holding what the seed's last entry wrote.",
+      "description": "The answer of `GET /__spindle/ready`, with or without `--observe` and without the host's thread, beside its status: `200` where the run has no seed or its seed run has ended, a declared refusal among its entries included, and the run is not stopping; `503` while the seed runs, from the moment SIGINT or SIGTERM arrives, and while the run stands by for another process's lease of its PostgreSQL store. A probe reading `200` reads every view holding what the seed's last entry wrote.",
       "properties": {
         "ready": {
           "description": "Whether the status is `200`.",
@@ -694,6 +694,10 @@
         "seed": {
           "$ref": "#/$defs/spindle.observe.SeedStateKind",
           "description": "The `state` `GET /__spindle/seed` answers."
+        },
+        "standby": {
+          "description": "`true` while the run stands by: another `run` process of the same specification holds the lease of a component's tables in the PostgreSQL store, so this one opens no store and answers every request but its own routes `503`, until it takes every lease and leads. Absent otherwise.",
+          "type": "boolean"
         },
         "stopping": {
           "description": "Whether the run is stopping on a signal: it answers each request that arrives `503` at once, and the requests already waiting for up to `--drain` seconds.",
@@ -1578,8 +1582,8 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-ess-provenance": {
-    "contract_digest": "slice-sha256/2:ad38b534d4b1c965fcd4a66c2432a29a8d329a20ed1315b4712290b65d3e88cc",
-    "source_digest": "88bcbc977a2ce8a3fee2620d14ba44c695e574db4f4ea8004dd455ffbef05936",
+    "contract_digest": "slice-sha256/2:b981cfadfb7a79fa6d778afc0a36cc1c97e4d0037a83d7beec80f632b5cf837e",
+    "source_digest": "b6f0694e443b747d92db8242928bd4e79f4d3dd633544c41b9a5db337c14ad11",
     "specification_version": "v1",
     "system": "spindle"
   }

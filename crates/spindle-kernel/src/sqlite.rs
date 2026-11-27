@@ -44,8 +44,9 @@ use std::sync::{Condvar, Mutex, PoisonError};
 
 use eventlog_core::EventStore;
 use eventlog_core::{
-    AppendGroup, AppendGroupResult, CommandMeta, EventLogError, Expected, MAX_READ_LIMIT, NewEvent,
-    Read, ReadResult, RecordedEvent, StreamAppend, StreamId, TenantId, new_event_id, request_hash,
+    AppendGroup, AppendGroupResult, CommandMeta, EventLogError, Expected, Guard, MAX_READ_LIMIT,
+    NewEvent, Read, ReadResult, RecordedEvent, StreamAppend, StreamId, TenantId, new_event_id,
+    request_hash,
 };
 #[cfg(feature = "sqlite")]
 use eventlog_sqlite::SqliteEventStore;
@@ -233,7 +234,21 @@ pub struct LogStore<L> {
     /// How far this store read the stream [`DEAD_LETTERS`] for the ids it continues, and the
     /// greatest `after` of the [`CONTINUED`] events up to there ([`LogStore::offset_before`]).
     continued: (u64, u64),
+    /// The check every write runs inside its own append transaction, where one is set
+    /// ([`LogStore::fence`]): a PostgreSQL store opened under its component's lease refuses each
+    /// write once another process took that lease (`story:several-writers-one-postgres`). A
+    /// SQLite store has none: its state directory is locked to one process.
+    fence: Option<Arc<dyn Guard>>,
+    /// Whether the lease the fence names is known still held, checked before a read of the feed
+    /// by position ([`Reading::events_placed_after`]), which an egress posts from: a process
+    /// that lost its lease, or was paused past it, posts no event another process committed.
+    #[cfg(feature = "postgres")]
+    current: Option<Current>,
 }
+
+/// The check of [`LogStore::current`].
+#[cfg(feature = "postgres")]
+type Current = Arc<dyn Fn() -> Result<(), StoreError> + Send + Sync>;
 
 /// The feed positions of a store's own appends: the last one it committed, and the last one the
 /// feed was seen to answer. A read of the feed waits until the feed answers the first
@@ -264,7 +279,7 @@ thread_local! {
 
 impl<L> LogStore<L> {
     /// Blocks on `call`, one call of the event store, on the store's runtime.
-    fn call<F: std::future::Future>(&self, call: F) -> F::Output {
+    pub(crate) fn call<F: std::future::Future>(&self, call: F) -> F::Output {
         #[cfg(test)]
         LOG_CALLS.with(|calls| calls.set(calls.get() + 1));
         self.runtime.block_on(call)
@@ -401,6 +416,9 @@ impl<L: Log> LogStore<L> {
             outcome: None,
             own: Arc::default(),
             continued: (0, 0),
+            fence: None,
+            #[cfg(feature = "postgres")]
+            current: None,
         })
     }
 
@@ -423,6 +441,9 @@ impl<L: Log> LogStore<L> {
             outcome: None,
             own: Arc::clone(&self.own),
             continued: (0, 0),
+            fence: self.fence.clone(),
+            #[cfg(feature = "postgres")]
+            current: self.current.clone(),
         }
     }
 
@@ -430,6 +451,35 @@ impl<L: Log> LogStore<L> {
     #[cfg(feature = "postgres")]
     pub(crate) fn log(&self) -> &L {
         &self.log
+    }
+
+    /// The tenant every stream of the store is of.
+    #[cfg(feature = "postgres")]
+    pub(crate) fn tenant(&self) -> &TenantId {
+        &self.tenant
+    }
+
+    /// Every write from now on runs `fence` inside its own append transaction and lands only where
+    /// it admits the write; its refusal ([`EventLogError::GuardRefused`]) is the write's error,
+    /// its code the whole message ([`backend`]).
+    #[cfg(feature = "postgres")]
+    pub(crate) fn fence(&mut self, fence: Arc<dyn Guard>, current: Current) {
+        self.fence = Some(fence);
+        self.current = Some(current);
+    }
+
+    /// Refuses where the store is fenced and its lease is not known still held.
+    #[cfg(feature = "postgres")]
+    fn current(&self) -> Result<(), StoreError> {
+        self.current.as_ref().map_or(Ok(()), |current| current())
+    }
+
+    /// Appends `group` in one transaction, under the store's fence where it has one.
+    fn grouped(&self, group: &AppendGroup) -> Result<AppendGroupResult, EventLogError> {
+        match &self.fence {
+            Some(fence) => self.call(self.log.append_group_guarded(group, Arc::clone(fence))),
+            None => self.call(self.log.append_group(group)),
+        }
     }
 
     /// The event store and the runtime its calls block on: what a state move appends through.
@@ -690,7 +740,7 @@ impl<L: Log> Store for LogStore<L> {
             meta: self.attributed(request_hash(&entries).map_err(backend)?),
             appends,
         };
-        match self.call(self.log.append_group(&group)) {
+        match self.grouped(&group) {
             Ok(landed) => {
                 self.landed(&landed);
                 // The group landed: its rows are folded in now, so a read finds no more to fold.
@@ -1119,7 +1169,7 @@ impl<L: Log> LogStore<L> {
             meta: self.attributed(hash),
             appends,
         };
-        let landed = self.call(self.log.append_group(&group))?;
+        let landed = self.grouped(&group)?;
         self.landed(&landed);
         Ok(landed)
     }
@@ -1236,14 +1286,19 @@ impl<L: Log> Reading for SharedReading<L> {
         self.store.committed_after(position, limit)
     }
 
-    /// Reads the feed through the store's own pool on a turn, as a scan does.
+    /// Reads the feed through the store's own pool on a turn, as a scan does. Where the store is
+    /// fenced, its lease is checked before the read and again after it, so a read that a pause
+    /// past the lease interrupted, and that ran on once the process resumed, answers nothing.
     fn events_placed_after(
         &self,
         position: u64,
         limit: usize,
     ) -> Result<Vec<(u64, Committed)>, StoreError> {
+        self.store.current()?;
         let _turn = self.turns.take()?;
-        self.store.placed_after(position, limit)
+        let placed = self.store.placed_after(position, limit)?;
+        self.store.current()?;
+        Ok(placed)
     }
 
     /// Reads the feed through the store's own pool on a turn, as a scan does.
@@ -2764,8 +2819,13 @@ pub(crate) fn meta(request_hash: String) -> CommandMeta {
     }
 }
 
+/// `error` as the store's: a fence's refusal by its code alone, which names what refused the
+/// write ([`LogStore::fence`]).
 pub(crate) fn backend(error: EventLogError) -> StoreError {
-    StoreError::Backend(error.to_string())
+    match error {
+        EventLogError::GuardRefused { code } => StoreError::Backend(code),
+        other => StoreError::Backend(other.to_string()),
+    }
 }
 
 #[cfg(all(test, feature = "sqlite"))]

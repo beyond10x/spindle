@@ -539,6 +539,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "crates/spindle-kernel/tests/spindle-kernel/resting_rows.rs::a_view_read_of_forty_rows_beside_a_hundred_thousand_events_answers_in_under_20_ms",
     ),
     shipped(
+        "Execution",
+        "Several processes on one PostgreSQL store",
+        "Several run processes of one specification given database_lease may start on one PostgreSQL store: one leads under a lease of each component's tables, renewed every fifth of database_lease, and is the one writer; the others answer /__spindle/live 200, /__spindle/ready 503 with standby: true and every other request 503, and write nothing. A standby takes over once the leader's lease ends or its database session does, as a killed leader's does, and every write runs a check of its lease's token, so a leader paused past its lease lands nothing once it resumes and exits 1. Without database_lease a run takes no lease and two processes on one store both write, so replicas must set it; the lease takes one connection of the serving role beyond components x database_pool, so the role's limit must leave room for it.",
+        "/docs/concepts/environment-and-admission",
+        "crates/spindle-cli/tests/spindle-cli/postgres/replicas.rs::a_killed_leader_leaves_the_standby_serving",
+    ),
+    shipped(
         "Conformance",
         "Scenario replay",
         "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: an entity it arranges with setup is written into the store of the component that owns it, captures feed later steps, view asserts are checked, each act's line names the outcome its command took with its declared error, or its refusal, the first divergent step is named and ends the run, an external cause the scenario does not force is answered by --decisions, and a specification that declares no component replays as one implied component that owns every domain.",
@@ -568,7 +575,7 @@ pub const CAPABILITIES: &[Capability] = &[
     planned(
         "Deploy",
         "Cells, ownership and snapshots",
-        "Cells across threads, ownership leases with fencing, snapshots; design milestone M5, no story yet.",
+        "Cells across threads and snapshots; design milestone M5, no story yet. Ownership leases with fencing ship for several run processes on one PostgreSQL store.",
         "/docs/concepts/deployment-targets",
     ),
 ];

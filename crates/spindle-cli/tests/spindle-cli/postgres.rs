@@ -17,16 +17,19 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+mod replicas;
+
 const RALLY: &str = "examples/rally/ess";
 const POSTGRES: &str = "examples/environments/postgres.toml";
 const STARTUP: Duration = Duration::from_secs(60);
 const ANSWER: Duration = Duration::from_secs(10);
-const SETTINGS: [&str; 5] = [
+const SETTINGS: [&str; 6] = [
     "SPINDLE_SETTING_DATABASE_URL",
     "SPINDLE_SETTING_DATABASE_CA",
     "SPINDLE_SETTING_DATABASE_SCHEMA",
     "SPINDLE_SETTING_DATABASE_POOL",
     "SPINDLE_SETTING_DATABASE_CONNECTIONS",
+    "SPINDLE_SETTING_DATABASE_LEASE",
 ];
 /// A password the refusals must never print.
 const PASSWORD: &str = "n0t-printed-anywhere";
@@ -376,6 +379,25 @@ fn run_with_a_connection_budget_below_components_times_pool_exits_1_naming_both(
     );
 }
 
+/// `story:several-writers-one-postgres`: a `database_lease` that is no whole number of seconds
+/// above 0 exits 1 naming it, before anything connects to the database.
+#[test]
+fn a_malformed_lease_setting_is_refused_before_connecting() {
+    let url = format!("postgres://serving:{PASSWORD}@127.0.0.1:1/rally");
+    for lease in ["soon", "0", "-2", "1.5", "86401", "10000000"] {
+        let refused = refused(run(&[("database_url", &url), ("database_lease", lease)]));
+        exits_1_naming(
+            &refused,
+            &["database_lease", "SPINDLE_SETTING_DATABASE_LEASE", lease],
+        );
+        assert!(
+            !refused.stderr.contains("no connection"),
+            "the setting is refused before anything connects: {}",
+            refused.stderr
+        );
+    }
+}
+
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn state_outlives_a_restart_on_postgres() {
@@ -614,12 +636,12 @@ fn an_egress_cursor_survives_on_postgres() {
     };
     let first = listening(command());
     first.open("t1");
-    webhook.wait_for(1);
+    webhook.wait_within(1, Duration::from_secs(30));
     assert_eq!(first.terminate().code(), Some(143));
 
     let second = listening(command());
     second.open("t2");
-    webhook.wait_for(2);
+    webhook.wait_within(2, Duration::from_secs(30));
     std::thread::sleep(Duration::from_millis(500));
     assert_eq!(
         named(&webhook.accepted()),

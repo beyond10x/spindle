@@ -94,7 +94,14 @@ impl Webhook {
 
     /// Waits until the webhook accepted `count` bodies, and answers them.
     pub(super) fn wait_for(&self, count: usize) -> Vec<Value> {
-        let deadline = Instant::now() + DELIVERY;
+        self.wait_within(count, DELIVERY)
+    }
+
+    /// [`Webhook::wait_for`], waiting at most `within`: an egress on PostgreSQL reads a write once
+    /// every older transaction on the server has ended, so while another test of the lane holds
+    /// one open it posts late.
+    pub(super) fn wait_within(&self, count: usize, within: Duration) -> Vec<Value> {
+        let deadline = Instant::now() + within;
         loop {
             let accepted = self.accepted();
             if accepted.len() >= count {
@@ -102,7 +109,7 @@ impl Webhook {
             }
             assert!(
                 Instant::now() < deadline,
-                "the webhook accepted {} of {count} bodies within {DELIVERY:?}: {:?}",
+                "the webhook accepted {} of {count} bodies within {within:?}: {:?}",
                 accepted.len(),
                 self.received()
             );

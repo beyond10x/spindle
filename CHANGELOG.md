@@ -139,6 +139,34 @@ are Spindle's releases.
   identity written `1.0` names the row held as `1`. `admit`, `run` on stdin and the HTTP ingress
   answer such a command, where the kernel refused the outcome as `unsupported` before it ran
   (`story:affects-over-input-list`).
+- Several served `run` processes of one specification given the new setting `database_lease`
+  (whole seconds) may start on one PostgreSQL store. Each component's tables hold a lease, a row
+  of `spindle_<component>_p_lease` that `store migrate` creates; the process that takes every
+  lease, in component name order, leads and is the one writer, renewing them every fifth of
+  `database_lease`. Leases apply only where `database_lease` is set: without it a run takes no
+  lease and behaves as before, so two processes on one store both write, and replicas must set
+  it. The lease takes one connection of the serving role beyond components x `database_pool`, so
+  the role's `CONNECTION LIMIT` must leave room for it. The others stand by: they print the
+  listening line, answer `/__spindle/live` `200`, `/__spindle/ready` `503` with
+  `"standby": true` and every other request `503`, open no store, write nothing, post no event to
+  a webhook and keep no dead letter. A standby takes over once the leader's lease ends or its
+  database session does, as a killed leader's does (measured 0.7 s after a SIGKILL), and skips
+  the seed, which runs only under the leases' first token. Every write checks its lease's token in
+  its own transaction, so a leader paused past its lease lands nothing once it resumes, answers
+  the requests it took `503`, and exits 1 naming the lease; so does a leader whose write the
+  check refused, or whose lease session ended, as a renewal lands only on the session that took
+  the lease. A leader whose lease is not known still held posts no event; the process that takes
+  over posts from the last position the old leader saved, so a failover may post an event again,
+  with the same `component`, `log` and `position`, for a consumer to de-duplicate on. A standby
+  whose lease connection is closed or refused stands by on, connects again, and warns naming the
+  leases and the connection error. A leader paused inside a write holds its lease row
+  until the store's 10 s idle timeout ends its transaction, so the takeover comes at most one
+  lease plus 10 s and one ask of the standby after the pause; a session outside Spindle that locks a lease row stops the
+  takeover while it holds it, and the leader exits 1 after one lease without a renewal. A write
+  that failed committing nothing, where the lease is then found lost, answers `503`. A
+  `database_lease` that is not a whole number from 1 to 86400 exits 1 before connecting, and with it tables a release
+  before leases migrated are refused until `store migrate` runs again
+  (`story:several-writers-one-postgres`).
 
 ### Fixed
 

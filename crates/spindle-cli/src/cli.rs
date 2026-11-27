@@ -163,7 +163,14 @@ pub enum Command {
     /// stops it, it takes no further request, writes every answer it has given, answers each
     /// request still waiting `503`, and exits. `GET /__spindle/live` answers `200` while the
     /// run's thread answers a request it took or has asked for one within 60 s, `503` once it
-    /// has done neither, with or without `--observe`. Routes are where `ess generate --kind
+    /// has done neither, with or without `--observe`. On a store kept in PostgreSQL with the
+    /// setting `database_lease` a run that finds another process holding the lease of a
+    /// component's tables stands by: it prints its listening line, answers `GET /__spindle/live`
+    /// `200`, `GET /__spindle/ready` `503` with `"standby": true` and every other request `503`,
+    /// writes nothing, and serves once it takes every lease; a run whose lease another process
+    /// took exits 1. The lease takes one connection of the serving role beyond components x
+    /// `database_pool`. Without `database_lease` it takes no lease, and two runs on one store
+    /// both write, so replicas must set it. Routes are where `ess generate --kind
     /// openapi` publishes them:
     /// ESS's derived routes, or with `--http` the `ess-http/1` binding's, read and checked by ESS
     /// (methods, paths, path variables and per-outcome statuses), an operation it does not name
