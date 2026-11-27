@@ -12,12 +12,78 @@ use std::process::ExitCode;
 use anyhow::{Context, Result, bail};
 use spindle_capability::{Capability, Environment};
 use spindle_host::Stores;
-use spindle_kernel::{Database, PostgresStore, postgres_prefix};
+use spindle_kernel::{Database, Fit, Misfit, PostgresStore, Shapes, postgres_prefix};
 use spindle_spec::EssIr;
 use spindle_target::{ENV_SETTING_PREFIX, env_name};
 
 /// The implementation of `store.durable` this module opens.
 pub(crate) const POSTGRES: &str = "postgres";
+
+/// A durable store holds rows the specification `run` serves cannot read
+/// (`story:spec-change-over-stored-rows`): `run` prints it on stdout and exits 3 before
+/// listening. `store` says which store, as [`spindle_host::HostError::Misfit`] does.
+#[derive(Debug)]
+pub(crate) struct Misfitted {
+    store: String,
+    misfits: Vec<Misfit>,
+}
+
+impl std::fmt::Display for Misfitted {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "refused: {} holds rows this specification cannot read",
+            self.store
+        )?;
+        for misfit in &self.misfits {
+            write!(formatter, "\n  {misfit}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for Misfitted {}
+
+/// What `run` exits with for `error`: 3 with the misfit printed on stdout where it is
+/// [`Misfitted`].
+///
+/// # Errors
+/// `error` itself where it is not [`Misfitted`].
+pub(crate) fn misfit_refused(error: anyhow::Error) -> Result<ExitCode> {
+    let misfitted = error.downcast::<Misfitted>()?;
+    println!("{misfitted}");
+    Ok(ExitCode::from(crate::REFUSED))
+}
+
+/// The line `run` logs for a store, named by `store`, that held rows and recorded no
+/// specification: it now records the one served, unchecked (D2).
+pub(crate) fn unrecorded(store: &str) -> String {
+    format!(
+        "the store of {store} recorded no specification it was written under; it now records \
+         this one, its rows unchecked"
+    )
+}
+
+/// What `run` does with `fit`, the check of the store `store` names against the specification it
+/// serves ([`spindle_kernel::LogStore::check`]): nothing where it fits, a line where it recorded no
+/// specification before, and [`Misfitted`] where the specification cannot read a row.
+///
+/// # Errors
+/// [`Misfitted`].
+pub(crate) fn fitting(fit: Fit, store: &str, named: &str) -> Result<()> {
+    match fit {
+        Fit::Same | Fit::Fits { unrecorded: false } => Ok(()),
+        Fit::Fits { unrecorded: true } => {
+            crate::log::info(unrecorded(named)).write();
+            Ok(())
+        }
+        Fit::Misfits(misfits) => Err(Misfitted {
+            store: store.to_owned(),
+            misfits,
+        }
+        .into()),
+    }
+}
 
 /// The environment variable carrying the setting `name`.
 fn variable(name: &str) -> String {
@@ -97,7 +163,9 @@ pub(crate) fn components(
 /// `database_pool`, which the database checks when a store opens.
 ///
 /// # Errors
-/// A setting missing or malformed, a budget too small, or a store the database refused, naming it.
+/// A setting missing or malformed, a budget too small, or a store the database refused, naming it;
+/// [`Misfitted`] where a store holds rows the specification cannot read, every store opened
+/// before it closed again.
 pub(crate) fn stores(ir: &EssIr, environment: &Environment) -> Result<Stores> {
     let database = database()?;
     let components = components(ir, environment).map_err(|refusal| anyhow::anyhow!("{refusal}"))?;
@@ -125,10 +193,27 @@ pub(crate) fn stores(ir: &EssIr, environment: &Environment) -> Result<Stores> {
         ),
         _ => {}
     }
-    let mut stores = Stores::new();
+    // Every store is checked before any records the specification, so a misfit in one leaves
+    // every record as it was.
+    let mut checked = Vec::new();
     for component in &components {
-        let store = PostgresStore::open(&database, component, components.len())
+        let mut store = PostgresStore::open(&database, component, components.len())
             .with_context(|| format!("opening the PostgreSQL store of {component}"))?;
+        let shapes = Shapes::owned(ir, component);
+        let fit = store
+            .check(&shapes)
+            .with_context(|| format!("checking the PostgreSQL store of {component}"))?;
+        let records = matches!(fit, Fit::Fits { .. });
+        fitting(fit, &format!("the store of {component}"), component)?;
+        checked.push((component, store, records.then_some(shapes)));
+    }
+    let mut stores = Stores::new();
+    for (component, mut store, shapes) in checked {
+        if let Some(shapes) = shapes {
+            store
+                .record(&shapes)
+                .with_context(|| format!("recording the specification of {component}"))?;
+        }
         stores.insert(component.clone(), Box::new(store));
     }
     Ok(stores)

@@ -91,6 +91,7 @@ mod seed;
 mod served_decisions;
 mod served_operations;
 mod served_world;
+mod spec_change;
 mod state_lock;
 mod state_move;
 mod stdin_bindings;

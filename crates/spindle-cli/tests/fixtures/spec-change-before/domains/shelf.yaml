@@ -1,0 +1,57 @@
+domain: archive.shelf
+summary: Books shelved under a title and cards filed under a code.
+entities:
+  - name: archive.shelf.Book
+    identity: {name: id, type: String}
+    fields:
+      - {name: title, type: String}
+    lifecycle: {initial: Shelved, states: [Shelved], terminal: [Shelved]}
+  - name: archive.shelf.Card
+    identity: {name: id, type: String}
+    fields:
+      - {name: code, type: String}
+    lifecycle: {initial: Filed, states: [Filed], terminal: [Filed]}
+commands:
+  - name: archive.shelf.ShelveBook
+    input:
+      - {name: id, type: String}
+      - {name: title, type: String}
+    outcomes:
+      - name: shelved
+        creates: archive.shelf.Book
+        instance: id
+        sets:
+          title: input.title
+        emits: [archive.shelf.BookShelved]
+        payload:
+          archive.shelf.BookShelved: {id: input.id, title: input.title}
+        summary: The book is shelved.
+  - name: archive.shelf.FileCard
+    input:
+      - {name: id, type: String}
+      - {name: code, type: String}
+    outcomes:
+      - name: filed
+        creates: archive.shelf.Card
+        instance: id
+        sets:
+          code: input.code
+        emits: [archive.shelf.CardFiled]
+        payload:
+          archive.shelf.CardFiled: {id: input.id}
+        summary: The card is filed.
+events:
+  - name: archive.shelf.BookShelved
+    fields:
+      - {name: id, type: String}
+      - {name: title, type: String}
+  - name: archive.shelf.CardFiled
+    fields:
+      - {name: id, type: String}
+views:
+  - name: archive.shelf.ShelvedBooks
+    source: archive.shelf.Book
+    consistency: read_your_writes
+    fields:
+      - {name: id, type: String}
+      - {name: title, type: String}

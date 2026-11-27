@@ -70,6 +70,8 @@ mod deployment;
 mod error_fields;
 mod existing_instance;
 mod expressions;
+#[cfg(feature = "sqlite")]
+mod fit;
 mod generated;
 mod guard_reads_now;
 mod guards;

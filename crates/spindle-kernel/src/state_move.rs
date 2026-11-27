@@ -37,7 +37,8 @@ use tokio_postgres::error::SqlState;
 
 use crate::postgres::{Database, PostgresStore, prefix, session};
 use crate::sqlite::{
-    ENTITY, Log, MARKS, PREFIX, REMOVED, TENANT, WRITTEN, WRITTEN_SCHEMA, Written, backend, meta,
+    ENTITY, Log, MARKS, PREFIX, REMOVED, SPECIFICATION, TENANT, WRITTEN, WRITTEN_SCHEMA, Written,
+    backend, meta,
 };
 use crate::store::StoreError;
 
@@ -540,9 +541,16 @@ fn group(tenant: &TenantId, events: &[RecordedEvent]) -> Result<AppendGroup, Sto
             Some(append) => append.events.push(new),
             None => appends.push(StreamAppend {
                 stream,
-                expected: match event.version {
-                    0 | 1 => Expected::NoStream,
-                    version => Expected::Exact(version - 1),
+                // The record of the specification lands after any the tables hold already (a
+                // `run` that opened them empty recorded one), so its last is the file's.
+                expected: if (event.stream_type.as_str(), event.stream_id.as_str()) == SPECIFICATION
+                {
+                    Expected::Any
+                } else {
+                    match event.version {
+                        0 | 1 => Expected::NoStream,
+                        version => Expected::Exact(version - 1),
+                    }
                 },
                 events: vec![new],
             }),

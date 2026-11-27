@@ -55,6 +55,7 @@ pub mod contract;
 mod decider;
 mod execute;
 mod facts;
+mod fit;
 mod grant;
 mod mint;
 #[cfg(feature = "postgres")]
@@ -78,6 +79,7 @@ pub use execute::execute_reaching;
 pub use execute::{
     Invocation, at_rest, execute, execute_as, execute_at, execute_minting, execute_refusing,
 };
+pub use fit::{Fit, Misfit, Shape, Shapes};
 pub use mint::{Identity, Mint, Seeded, Uuid, UuidV4};
 #[cfg(feature = "postgres")]
 pub use postgres::{
