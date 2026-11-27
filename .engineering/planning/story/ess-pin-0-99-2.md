@@ -56,7 +56,7 @@ scope:
   path: ui/src/api/generated/types-report.json
 - confidence: cited
   path: ui/src/api/generated/types.ts
-revision: 32
+revision: 33
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T08:24:14Z", actor: "human:operator", revision: 31, decided_on: {"recorded":{"review_outcome":5}}}
 - {from: "proposed", to: "active", at: "2026-11-27T08:24:14Z", actor: "human:operator", revision: 32, decided_on: {"recorded":{"review_outcome":5}}}
@@ -83,7 +83,9 @@ Reported by a consumer on 2026-11-27: its specification requires ESS 0.99.2 whil
   `check:conformance` are green
   on it.
 - `the_accepting_scenario_of_an_input_list_quantifier_sends_several_elements_and_passes`: a neutral
-  fixture with a refusal that quantifies over a `List<String>` input; the synthesised accepting step
+  fixture with a refusal that quantifies over an input list of a value type with a member
+  (`List<shelf.box.Label>`: 0.99.2 moves only `<list>.0.<member>` witnesses, so a `List<String>` keeps
+  0.99.1's empty list; amended 2026-11-27 after the unit); the synthesised accepting step
   holds two or more elements and Spindle passes every scenario. Its suite differs from 0.99.1's.
 - `a_trimmed_witness_on_the_deciding_element_is_answered_as_ess_answers_it`: the refusal witness
   0.99.2 synthesises is answered as ESS's interpreter answers it.

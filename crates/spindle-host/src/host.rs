@@ -7,14 +7,13 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use ess_compiler::EssIr;
-use ess_compiler::ir::{
-    ResolvedBinding, ResolvedEntity, ResolvedMappingValue, ResolvedRefusalAction, ResolvedView,
-};
+use ess_compiler::ir::{ResolvedEntity, ResolvedMappingValue, ResolvedRefusalAction, ResolvedView};
 use ess_domain::binding::Failure;
 use serde_json::{Map, Value};
 use spindle_capability::{Capability, Environment};
 use spindle_channel::{
-    ChannelError, DeliveryId, Envelope, Receiver, Route, RouteError, Router, Sender, in_process,
+    ChannelError, DeliveryId, Envelope, MappingError, Receiver, Route, RouteError, Router, Sender,
+    in_process,
 };
 use spindle_kernel::{
     Change, Committed, Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, Mint,
@@ -118,6 +117,39 @@ pub struct RefusedCommand {
     pub attempts: u32,
 }
 
+/// One command a binding invoked whose last attempt did not take effect and whose failure policy
+/// escalates that answer (`on_failure: {escalate: ...}`, or an `escalate:` entry chosen for the
+/// refusal): the component that ran it publishes the binding's escalation event once, from the
+/// attempt's input, and the command is not invoked again. The event goes to that component's
+/// outbox, as every event it publishes, and is not written to its store: it is not in the event
+/// history ([`Host::published`]), and is lost if the process stops before it is delivered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Escalated {
+    /// The binding.
+    pub binding: String,
+    /// The component that ran the command and publishes the event.
+    pub component: String,
+    /// The command.
+    pub command: String,
+    /// The refusing outcome of the last attempt; `None` for an attempt that did not execute.
+    pub outcome: Option<String>,
+    /// The escalation event.
+    pub event: String,
+    /// What was published.
+    pub escalation: Escalation,
+}
+
+/// What an escalation published.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Escalation {
+    /// The event, with this payload: each field of the event the command's input holds, an
+    /// optional one it does not hold left out.
+    Published(Map<String, Value>),
+    /// Nothing: the command's input does not hold a required field of the event, or holds one that
+    /// is no value of the field's type. The escalation is unmet; this host fills no placeholder.
+    Unmet(String),
+}
+
 /// What a run starts from after a [reset](Host::reset_to); the default is an empty run.
 #[derive(Default)]
 pub struct World {
@@ -175,7 +207,30 @@ pub struct Report {
     pub failed: Vec<Failed>,
     /// The commands whose outcome declares an error.
     pub refused: Vec<RefusedCommand>,
+    /// The escalations of the refused and failed commands whose binding escalates their answer,
+    /// in the order escalated.
+    pub escalated: Vec<Escalated>,
+    /// Every attempt an event binding made of its command, in the order made, a refused or failed
+    /// one included, each with the input the binding sent: what ESS's conformance runner observes
+    /// as the binding's invocations. A binding whose input was unmet made none.
+    pub invoked: Vec<Invoked>,
 }
+
+/// One attempt an event binding made of its command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Invoked {
+    /// The binding.
+    pub binding: String,
+    /// The component that ran the command.
+    pub component: String,
+    /// The command.
+    pub command: String,
+    /// The input the binding sent.
+    pub input: Map<String, Value>,
+}
+
+/// How many escalations a host keeps for [`Host::take_escalated`] before it forgets the oldest.
+pub const ESCALATIONS_KEPT: usize = DELIVERY_LIMIT;
 
 /// How many envelopes one [`Host::submit`] or [`Host::advance`] delivers before it stops as a
 /// [`HostError::Runaway`]: bindings that trigger each other have no end of their own.
@@ -339,27 +394,6 @@ pub enum Retries {
     /// Run the binding as a `drop` binding runs: a failed invocation is reported once and never
     /// run again, and an envelope whose send fails is dropped.
     Dropped,
-}
-
-/// The first event binding of `ir`, by name, whose `on_failure` a host does not carry, and what
-/// it says: the binding [`Host::new`] refuses before it opens anything. Only `escalate` is not
-/// carried, universal or chosen for some refusal (`on_refusal`).
-pub fn uncarried(ir: &EssIr) -> Option<(String, Failure)> {
-    ir.bindings()
-        .values()
-        .filter(|binding| binding.cause.event().is_some())
-        .find(|binding| escalates(binding))
-        .map(|binding| (binding.name.as_str().to_owned(), Failure::Escalate))
-}
-
-/// Whether `binding` escalates some failure.
-fn escalates(binding: &ResolvedBinding) -> bool {
-    match &binding.refusal_policy {
-        Some(policy) => policy
-            .actions()
-            .any(|action| matches!(action, ResolvedRefusalAction::Escalate { .. })),
-        None => binding.failure == Failure::Escalate,
-    }
 }
 
 /// The event bindings of `ir` that retry a failure, by name: `on_failure: retry`, or a policy
@@ -797,15 +831,19 @@ pub struct Host {
     /// The run's seed ([`Host::seeded`]): the mint a reset whose world has no mint of its own
     /// installs again from its first draw; `None` for random version 4 UUIDs.
     seed: Option<u64>,
-    /// The routes of the event bindings this host may retry, by binding name: read from its own
-    /// routes, never from an envelope, so a peer's frame does not decide the policy.
-    retrying: BTreeMap<String, Arc<Route>>,
+    /// The routes of the event bindings this host may retry or escalate a failure of, by binding
+    /// name: read from its own routes, never from an envelope, so a peer's frame does not decide
+    /// the policy.
+    answering: BTreeMap<String, Arc<Route>>,
     /// The qualified command whose run staged each envelope in flight between this host's own
     /// components, by the publishing component and the envelope's id, with what the command the
     /// envelope invokes records as its trigger ([`Provenance::Binding`]); taken when the envelope
     /// is invoked ([`Failed::caused_by`]). Empty in a run split over processes, whose bound
     /// commands record no trigger.
     staged_by: BTreeMap<(String, DeliveryId), (String, Option<Provenance>)>,
+    /// Every escalation since the last [`Host::take_escalated`], at most [`ESCALATIONS_KEPT`],
+    /// the oldest forgotten first: what a caller that sees only part of a [`Report`] reports.
+    escalations: Vec<Escalated>,
 }
 
 impl std::fmt::Debug for Host {
@@ -827,10 +865,11 @@ impl Host {
     ///
     /// # Errors
     /// [`HostError::Refused`] when a component is not admitted, naming everything every component
-    /// lacks; [`HostError::Unsupported`] when admission bound something this host does not run,
-    /// or the specification uses a binding it does not carry, such as an event binding whose
-    /// `on_failure` is `escalate` ([`uncarried`]). An `on_failure: retry` binding is retried
-    /// ([`Retries::Retried`]).
+    /// lacks; [`HostError::Unsupported`] when admission bound something this host does not run;
+    /// [`HostError::Route`] when the specification uses a binding the channel does not carry, such
+    /// as a bounded retry, or one that escalates into an event the component running its command
+    /// does not publish. An `on_failure: retry` binding is retried ([`Retries::Retried`]); a
+    /// binding that escalates a failure publishes its escalation event ([`Escalated`]).
     pub fn new(
         ir: EssIr,
         environment: &Environment,
@@ -1027,20 +1066,14 @@ impl Host {
             mut stores,
         } = opening;
         let answers = decider.is_some();
-        if let Some((binding, failure)) = uncarried(&ir) {
-            return Err(HostError::Unsupported(format!(
-                "binding {binding} says on_failure: {failure:?}; this host drops or retries an \
-                 invocation that fails and does not escalate it"
-            )));
-        }
         let router = match retries {
             Retries::Retried => Router::from_shared(&ir)?,
             Retries::Dropped => Router::from_shared(&ir)?.dropping_retries(),
         };
-        let retrying = router
+        let answering = router
             .routes()
             .iter()
-            .filter(|route| route.retries())
+            .filter(|route| route.retries() || route.escalation.is_some())
             .map(|route| (route.binding.clone(), Arc::new(route.clone())))
             .collect();
         let mut components = BTreeMap::new();
@@ -1216,8 +1249,9 @@ impl Host {
             answers: None,
             mint: Box::new(UuidV4),
             seed: None,
-            retrying,
+            answering,
             staged_by: BTreeMap::new(),
+            escalations: Vec::new(),
         };
         if seeded { host.seeded(0) } else { Ok(host) }
     }
@@ -1309,6 +1343,13 @@ impl Host {
             }
         })?;
         Ok(owner)
+    }
+
+    /// Every escalation since the last call, in the order escalated ([`Escalated`]), each returned
+    /// once; at most [`ESCALATIONS_KEPT`], the oldest forgotten first. Each is in the [`Report`]
+    /// of the call that made it too; this is for a caller handed only part of that report.
+    pub fn take_escalated(&mut self) -> Vec<Escalated> {
+        std::mem::take(&mut self.escalations)
     }
 
     /// Every event a command committed since its component's store was last
@@ -2170,11 +2211,13 @@ impl Host {
     /// attempt that is refused or does not execute and that the route answers with
     /// [`Failure::Retry`] ([`Route::answer`]: `on_failure: retry`, or the refusal's policy under
     /// `on_refusal`), until one takes effect, the route drops one, or [`RETRY_ATTEMPTS`] were
-    /// made, each attempt counted on the receiving component. A command it reports as refused or
-    /// not executed names the command whose run in this host staged `envelope`; one delivered
-    /// from another process names none.
+    /// made, each attempt counted on the receiving component. Where the route answers the last
+    /// attempt with [`Failure::Escalate`], the receiving component publishes the binding's
+    /// escalation event ([`Escalated`]). A command it reports as refused or not executed names
+    /// the command whose run in this host staged `envelope`; one delivered from another process
+    /// names none.
     fn invoke(&mut self, envelope: &Envelope, report: &mut Report) -> Result<(), HostError> {
-        let retried = self.retrying.get(&envelope.binding).cloned();
+        let route = self.answering.get(&envelope.binding).cloned();
         let staged = self.staged_by.remove(&(envelope.from.clone(), envelope.id));
         self.attempt(
             &envelope.to,
@@ -2184,16 +2227,19 @@ impl Host {
                 binding: envelope.binding.clone(),
             },
             staged,
-            retried.as_deref(),
+            route.as_deref(),
             report,
         )
     }
 
-    /// Runs `command` once, or, when `retried` is the binding's route, again after each attempt
-    /// the route answers with [`Failure::Retry`], up to [`RETRY_ATTEMPTS`] in all; reports the
-    /// attempt that took effect, or the last one, a refused or failed one as caused by the command
-    /// `staged` names. Each attempt is attributed to `cause` ([`Provenance`]): a tick's binding, or
-    /// a delivery's binding and the trigger `staged` names, none known where nothing staged it.
+    /// Runs `command` once, or, when `route` is the binding's route and retries, again after each
+    /// attempt the route answers with [`Failure::Retry`], up to [`RETRY_ATTEMPTS`] in all; reports
+    /// the attempt that took effect, or the last one, a refused or failed one as caused by the
+    /// command `staged` names, and, where `route` answers that last one with
+    /// [`Failure::Escalate`], publishes its escalation event from `component`
+    /// ([`Route::escalate`], [`Escalated`]). Each attempt is attributed to `cause`
+    /// ([`Provenance`]): a tick's binding, or a delivery's binding and the trigger `staged` names,
+    /// none known where nothing staged it.
     #[allow(clippy::too_many_arguments)]
     fn attempt(
         &mut self,
@@ -2202,9 +2248,10 @@ impl Host {
         input: &Map<String, Value>,
         cause: Cause,
         staged: Option<(String, Option<Provenance>)>,
-        retried: Option<&Route>,
+        route: Option<&Route>,
         report: &mut Report,
     ) -> Result<(), HostError> {
+        let retried = route.filter(|route| route.retries());
         let (caused_by, trigger) = staged.unzip();
         let provenance = match &cause {
             Cause::Tick { binding } => Provenance::Tick {
@@ -2226,6 +2273,14 @@ impl Host {
             attempts += 1;
             if let Some(route) = retried {
                 sink.retried(&route.binding, Retried::Attempted);
+            }
+            if let Cause::Delivered { binding } = &cause {
+                report.invoked.push(Invoked {
+                    binding: binding.clone(),
+                    component: component.to_owned(),
+                    command: command.to_owned(),
+                    input: input.clone(),
+                });
             }
             let result = self.execute(
                 component,
@@ -2250,6 +2305,10 @@ impl Host {
             if let Some(route) = again {
                 sink.retried(&route.binding, Retried::Exhausted);
             }
+            let escalation = route.zip(refusal).and_then(|(route, refusal)| {
+                let escalation = route.escalate(&self.ir, refusal, input)?;
+                Some((route, refusal.map(str::to_owned), escalation))
+            });
             match result {
                 Ok(Executed {
                     outcome,
@@ -2281,9 +2340,70 @@ impl Host {
                     attempts,
                 }),
             }
+            if let Some((route, outcome, escalation)) = escalation {
+                let (event, escalation) = match escalation {
+                    Ok(event) => {
+                        let (name, payload) = (event.name.clone(), event.fields.clone());
+                        self.publish(component, command, event, provenance.trigger())?;
+                        (name, Escalation::Published(payload))
+                    }
+                    Err(unmet) => {
+                        let name = match &unmet {
+                            MappingError::EscalationUnmet { event, .. } => event.clone(),
+                            _ => route.escalation.clone().unwrap_or_default(),
+                        };
+                        (name, Escalation::Unmet(unmet.to_string()))
+                    }
+                };
+                let escalated = Escalated {
+                    binding: route.binding.clone(),
+                    component: component.to_owned(),
+                    command: command.to_owned(),
+                    outcome,
+                    event,
+                    escalation,
+                };
+                if self.escalations.len() >= ESCALATIONS_KEPT {
+                    self.escalations.remove(0);
+                }
+                self.escalations.push(escalated.clone());
+                report.escalated.push(escalated);
+            }
             self.unmet(component, command, report);
             return Ok(());
         }
+    }
+
+    /// Publishes `event`, which `command` did not emit, from `component` through its sender, as
+    /// [`Self::execute`] publishes what a command emits: staged at a position of its own, marked
+    /// durable at once because no store holds it, and sent. Between this host's own components,
+    /// each envelope it stages records `command` and `trigger` ([`Self::staged_by`]).
+    fn publish(
+        &mut self,
+        component: &str,
+        command: &str,
+        event: spindle_channel::Event,
+        trigger: Option<Provenance>,
+    ) -> Result<(), HostError> {
+        let held = self
+            .components
+            .get_mut(component)
+            .ok_or_else(|| HostError::NotAccepted(command.to_owned()))?;
+        held.position += 1;
+        let first = held.sender.next_delivery();
+        held.sender.publish(held.position, event)?;
+        if self.remote.is_none() {
+            let DeliveryId(after) = held.sender.next_delivery();
+            for id in first.0..after {
+                self.staged_by.insert(
+                    (component.to_owned(), DeliveryId(id)),
+                    (command.to_owned(), trigger.clone()),
+                );
+            }
+        }
+        held.sender.mark_durable(held.position);
+        held.sender.flush()?;
+        Ok(())
     }
 
     /// Reports every binding the events `component` just published, running `command`, triggered

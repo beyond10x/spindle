@@ -1,0 +1,127 @@
+domain: beacon.desk
+summary: A desk is registered under a code; a badge is issued under the short code its code converts to, and a desk is labelled with the short code of the code it holds.
+types:
+  - name: beacon.desk.Code
+    kind: newtype
+    of: String
+  - name: beacon.desk.ShortCode
+    kind: newtype
+    of: String
+    invariants:
+      - 'value.count <= 8'
+entities:
+  - name: beacon.desk.Desk
+    identity:
+      name: desk_id
+      type: String
+    fields:
+      - name: code
+        type: beacon.desk.Code
+    lifecycle:
+      initial: Registered
+      states: [Registered, Labelled]
+      terminal: [Labelled]
+      transitions:
+        - {name: label, from: [Registered], to: Labelled}
+  - name: beacon.desk.Badge
+    identity:
+      name: badge_id
+      type: String
+    fields:
+      - name: code
+        type: beacon.desk.ShortCode
+    lifecycle:
+      initial: Issued
+      states: [Issued]
+      terminal: [Issued]
+errors:
+  - name: beacon.desk.NoSuchDesk
+    summary: No desk carries the id.
+    fields: []
+commands:
+  - name: beacon.desk.RegisterDesk
+    input:
+      - name: desk_id
+        type: String
+      - name: code
+        type: beacon.desk.Code
+    outcomes:
+      - name: registered
+        creates: beacon.desk.Desk
+        instance: desk_id
+        sets:
+          code: input.code
+        emits: [beacon.desk.DeskRegistered]
+        payload:
+          beacon.desk.DeskRegistered: {desk_id: input.desk_id, code: input.code}
+        summary: The desk is registered under its code.
+  - name: beacon.desk.IssueBadge
+    input:
+      - name: badge_id
+        type: String
+      - name: code
+        type: beacon.desk.Code
+    outcomes:
+      - name: issued
+        creates: beacon.desk.Badge
+        instance: badge_id
+        sets:
+          code: input.code
+        emits: [beacon.desk.BadgeIssued]
+        payload:
+          beacon.desk.BadgeIssued: {badge_id: input.badge_id, code: input.code}
+        summary: The badge is issued under the short code the code converts to.
+  - name: beacon.desk.LabelDesk
+    input:
+      - name: desk_id
+        type: String
+    outcomes:
+      - name: no-such-desk
+        unknown_instance: true
+        error: beacon.desk.NoSuchDesk
+        summary: No desk carries the id.
+      - name: labelled
+        moves: beacon.desk.Desk.label
+        instance: desk_id
+        emits: [beacon.desk.DeskLabelled]
+        payload:
+          beacon.desk.DeskLabelled:
+            desk_id: input.desk_id
+            label: {subject: code}
+        summary: The desk is labelled with the short code its code converts to.
+events:
+  - name: beacon.desk.DeskRegistered
+    fields:
+      - name: desk_id
+        type: String
+      - name: code
+        type: beacon.desk.Code
+  - name: beacon.desk.BadgeIssued
+    fields:
+      - name: badge_id
+        type: String
+      - name: code
+        type: beacon.desk.ShortCode
+  - name: beacon.desk.DeskLabelled
+    fields:
+      - name: desk_id
+        type: String
+      - name: label
+        type: beacon.desk.ShortCode
+views:
+  - name: beacon.desk.Desks
+    source: beacon.desk.Desk
+    consistency: read_your_writes
+    fields:
+      - name: desk_id
+        type: String
+      - name: code
+        type: beacon.desk.Code
+  - name: beacon.desk.Badges
+    source: beacon.desk.Badge
+    consistency: read_your_writes
+    fields:
+      - name: badge_id
+        type: String
+      - name: code
+        type: beacon.desk.ShortCode

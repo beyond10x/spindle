@@ -1,7 +1,7 @@
 format: ess/34
 system: desk
 version: v1
-summary: Tickets a clerk opens and a binding files, each filing archived once; the binding escalates a failure.
+summary: Tickets a clerk opens and a binding files, each filing archived once; the binding retries a failure at most three times.
 domains:
   - desk.tickets
 components:
@@ -32,8 +32,7 @@ bindings:
       copies: event.copies
     delivery: at_most_once
     on_failure:
-      escalate:
-        emits: desk.tickets.TicketFiled
+      retry: {attempts: 3}
 domain: desk.tickets
 entities:
   - name: desk.tickets.Ticket

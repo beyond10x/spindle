@@ -6,6 +6,59 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- An event binding whose `on_failure` escalates runs, where `run` exited 1 before listening or
+  reading stdin: universal (`on_failure: {escalate: {emits: <event>}}`) or chosen per refusal
+  (`escalate: {emits: <event>, outcomes: [...]}` beside `drop:` and `retry:`). An attempt the
+  policy escalates invokes the command no further; the component that ran it publishes the event
+  once, its fields taken from the command's input, an optional one the input lacks left out, and
+  the bindings that listen for it run. A required field the input lacks publishes nothing and
+  reports the escalation unmet. Served (stderr names each escalation, published or unmet, and no
+  longer calls an escalated attempt `dropped`), on stdin (the refused command's line carries
+  `"escalated": {"event", "payload"}`) and in `conform`, whose scenarios that select an escalated
+  refusal now execute. `--drop-retries` keeps every escalation. The event goes to the outbox, is
+  not in the event history, and is lost if the process stops before it is delivered. A binding
+  that escalates into an event the component running its command does not publish exits 1 at
+  start, naming the binding, the event and the component. `spindle_host::uncarried` is removed;
+  `spindle_host::Report` gains `escalated` and `invoked` (`story:binding-failure-escalates`).
+- `conform`, `run --scenario` and `spindle_conformance::HostTarget` observe the commands an
+  event binding invoked: every attempt, a refused or failed one included, with the input the
+  binding sent, so a scenario's invocation checks execute where they were unsupported
+  (`story:binding-failure-escalates`).
+- An outcome whose payload or `sets:` field is filled through a declared conversion
+  (`conversions:`) runs in `run` and `conform`, as ESS's interpreter runs it: the value is passed
+  on unchanged, and a value read from a row (`{subject: …}`, `{changed: …}`, `{related: …}`) is
+  checked against the conversion's source and target type, one the target refuses answered
+  `invalid input` (`400` when served) before anything is written, where ESS refuses it as the
+  request's. Before, a request that selected such an outcome was refused `unsupported: the
+  conversion … into <field>`. A `{response: …}` field through a conversion stays refused by name,
+  as ESS does not interpret it (`story:payload-field-through-conversion`).
+- A value source that reads a field or the state of a row through another row
+  (`{related: {via: [input.<field>, <field>], field: …}}`) runs in `run` and `conform`, as ESS's
+  interpreter reads it: the row the input names, then the row its reference names, each as the
+  store held it before the outcome. An absent `Optional` reference on the way leaves the value
+  absent; a row none carries gives `no_value` and nothing is written; a field read through a
+  declared conversion is checked as a one-hop read is; a row of an entity another component owns,
+  at any hop, is read only where the owner's store is reached, as for a one-hop read. Before, it
+  was refused `unsupported: the value source … of the row … of the row input.<field> names`; a
+  chain that starts at a field of the subject stays refused (`story:value-source-through-two-rows`).
+
+### Changed
+
+- ESS moves on to 0.99.2 (the crates, `ess/ess-inputs.yaml`, `ESS_TOOLCHAIN`, and the `ess` CLI
+  CI installs and its checksum). Its synthesis fix reaches `conform` without `--suite` and
+  `spindle_conformance::synthesize`: for a refusal that quantifies over an input list of a struct,
+  the accepting scenario now sends a list of several elements none of which meets the quantifier,
+  where it sent only an empty list, and the refusal's `trimmed` witness (the literal between `\v\f`
+  and `\r\n`) lands on the element that decides it, where it landed on a filler beside it. Spindle
+  passes both, as ESS's interpreter does
+  (`the_accepting_scenario_of_an_input_list_quantifier_sends_several_elements_and_passes`,
+  `a_trimmed_witness_on_the_deciding_element_is_answered_as_ess_answers_it`). The suite ESS
+  synthesises from `ess/` is byte for byte the one 0.99.1 synthesised, and the observe types
+  differ only in their header. Its UI change (an overlay reading its opener's params) does not
+  reach Spindle, which builds none of ESS's UI crates (`story:ess-pin-0-99-2`).
+
 ## [0.23.0] - 2026-11-27
 
 ### Added

@@ -115,6 +115,13 @@
       "status": "shipped"
     },
     {
+      "area": "Bindings",
+      "detail": "A binding whose on_failure escalates, for every failure or for the refusals an escalate entry names beside drop and retry, invokes its command no further once an attempt is answered so: the component that ran it publishes the escalation event once from the command's input, served, on stdin and in conform, and the bindings that listen for it run. A required event field the input lacks publishes nothing and is reported unmet; an optional one is left out. The event goes to the outbox and is not in the event history. --drop-retries keeps every escalation.",
+      "href": "/docs/concepts/components-and-bindings",
+      "label": "Escalation on failure",
+      "status": "shipped"
+    },
+    {
       "area": "Rally",
       "detail": "b10x-spindle play runs the three rally components in one process with in-process channels until a side wins.",
       "href": "/docs/examples/rally",
@@ -182,6 +189,13 @@
       "detail": "A value {related: {entity, where, field}} in sets: or an event payload reads the field of the one row of the entity the predicate selects, from the store as it was before the outcome; no row or several give no value and nothing is written, as ESS's interpreter decides. A predicate reading payload. or walking the rows of an entity, the value in an error's fields, and a selector over an entity another component owns, stay refused.",
       "href": "/docs/concepts/specification",
       "label": "Values from the one row a predicate selects",
+      "status": "shipped"
+    },
+    {
+      "area": "Execution",
+      "detail": "A value {related: {via: [input.<field>, <field>], field}} in sets: or an event payload reads the field or the state of the row a reference of the row the input names names, each row from the store as it was before the outcome, as ESS's interpreter reads it: an absent Optional reference on the way leaves the value absent, a row none carries gives no value and nothing is written, a field filled through a declared conversion is checked as a one-hop read is, and a row of an entity another component owns is read only where its owner's store is reached. A chain that starts at a field of the subject stays refused.",
+      "href": "/docs/concepts/specification",
+      "label": "Values read through two rows",
       "status": "shipped"
     },
     {

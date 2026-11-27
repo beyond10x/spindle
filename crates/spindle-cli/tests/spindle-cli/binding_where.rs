@@ -141,17 +141,6 @@ fn the_host_invokes_the_bound_command_only_for_a_payload_that_matches_as_ess_doe
     host.stop();
 }
 
-/// Whether every check of `scenario` that did not pass is an invocation the in-process target
-/// cannot observe: it reports no invocation its bindings made (`ESS-CF-INVOCATION`).
-fn unobserved_invocations_only(scenario: &Value) -> bool {
-    scenario["checks"]
-        .as_array()
-        .expect("checks")
-        .iter()
-        .filter(|check| check["status"] != "passed")
-        .all(|check| check["status"] == "unsupported" && check["code"] == "ESS-CF-INVOCATION")
-}
-
 #[test]
 fn every_scenario_the_target_observes_ends_as_ess_interprets_it() {
     let ir = parcels();
@@ -207,15 +196,19 @@ fn every_scenario_the_target_observes_ends_as_ess_interprets_it() {
     for scenario in scenarios {
         let id = scenario["scenario"].as_str().expect("an id");
         let status = scenario["status"].as_str().expect("a status");
-        assert!(
-            status == ess[id] || (status == "unsupported" && unobserved_invocations_only(scenario)),
+        // The target observes its bindings' invocations (story:binding-failure-escalates), so no
+        // invocation check is left unsupported.
+        assert_eq!(
+            status, ess[id],
             "{id}: {status} here, {} on ESS's interpreter: {scenario:#}",
             ess[id]
         );
     }
-    let flow = scenarios
-        .iter()
-        .find(|scenario| scenario["scenario"] == "send-boxes/binding/flow")
-        .expect("the flow scenario");
-    assert_eq!(flow["status"], "passed", "{flow:#}");
+    for id in ["send-boxes/binding/flow", "send-boxes/binding/mapping"] {
+        let scenario = scenarios
+            .iter()
+            .find(|scenario| scenario["scenario"] == id)
+            .unwrap_or_else(|| panic!("the scenario {id}"));
+        assert_eq!(scenario["status"], "passed", "{scenario:#}");
+    }
 }

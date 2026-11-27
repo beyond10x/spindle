@@ -337,8 +337,12 @@ impl Bindings {
     /// included, before the next, round after round until none carries anything. Each command is
     /// sent as no actor, its external causes answered by the run's answers. A command that is
     /// refused or does not run is attempted again where its binding retries it, up to
-    /// [`spindle_host::RETRY_ATTEMPTS`] in all. Stops after [`spindle_host::DELIVERY_LIMIT`]
-    /// commands, the rest rejected as a runaway.
+    /// [`spindle_host::RETRY_ATTEMPTS`] in all. Where its binding escalates the last attempt
+    /// ([`Route::escalate`]), its line carries `"escalated": {"event", "payload"}` and the event
+    /// fires the bindings that listen for it, as a served run publishes it from the component that
+    /// ran the command; where the command's input does not make the event, the line carries
+    /// `"escalated": {"event", "unmet"}` and nothing is published. Stops after
+    /// [`spindle_host::DELIVERY_LIMIT`] commands, the rest rejected as a runaway.
     pub(crate) fn fire(
         &self,
         running: &mut Running<'_>,
@@ -388,9 +392,31 @@ impl Bindings {
                     let (attempts, result) =
                         attempted(running, route, &command.name, &command.fields);
                     let mut printed = printed(&command.name, &result);
+                    let refusal = match &result {
+                        Ok(Executed { error: None, .. }) => None,
+                        Ok(Executed { outcome, .. }) => Some(Some(outcome.as_str())),
+                        Err(_) => Some(None),
+                    };
+                    let escalation = refusal
+                        .and_then(|refusal| route.escalate(running.ir, refusal, &command.fields));
                     if let Some(object) = printed.as_object_mut() {
                         object.insert("caused_by".to_owned(), caused_by);
                         object.insert("attempts".to_owned(), json!(attempts));
+                        match &escalation {
+                            Some(Ok(event)) => {
+                                object.insert(
+                                    "escalated".to_owned(),
+                                    json!({"event": event.name, "payload": event.fields}),
+                                );
+                            }
+                            Some(Err(unmet)) => {
+                                object.insert(
+                                    "escalated".to_owned(),
+                                    json!({"event": route.escalation, "unmet": unmet.to_string()}),
+                                );
+                            }
+                            None => {}
+                        }
                     }
                     let rejected = match &result {
                         Ok(Executed { error: None, .. }) => None,
@@ -398,9 +424,13 @@ impl Bindings {
                         Err(error) => Some(format!("did not run ({})", error.kind())),
                     }
                     .map(|what| {
+                        let unmet = match &escalation {
+                            Some(Err(unmet)) => format!("; {unmet}"),
+                            _ => String::new(),
+                        };
                         format!(
                             "line {line}: binding {} invoked {}, which {what} after {attempts} \
-                             attempt(s)",
+                             attempt(s){unmet}",
                             route.binding, command.name
                         )
                     });
@@ -408,14 +438,22 @@ impl Bindings {
                         line: printed,
                         rejected,
                     });
-                    if let Ok(Executed {
-                        error: None,
-                        events,
-                        ..
-                    }) = result
-                    {
-                        self.publish(line, events, &mut links, &mut fired);
-                    }
+                    let events = match (result, escalation) {
+                        (
+                            Ok(Executed {
+                                error: None,
+                                events,
+                                ..
+                            }),
+                            _,
+                        ) => events,
+                        (_, Some(Ok(event))) => vec![Event {
+                            name: event.name,
+                            payload: event.fields,
+                        }],
+                        _ => Vec::new(),
+                    };
+                    self.publish(line, events, &mut links, &mut fired);
                 }
             }
             if !delivered {
@@ -425,9 +463,9 @@ impl Bindings {
     }
 
     /// Puts the command each binding maps each of `events` to on its link, in the order the
-    /// events were emitted and, per event, in binding-name order, as a served run's sender stages
-    /// them; a binding whose input is unmet or whose condition is undecided is printed as a
-    /// command that did not run.
+    /// events were emitted or escalated and, per event, in binding-name order, as a served run's
+    /// sender stages them; a binding whose input is unmet or whose condition is undecided is
+    /// printed as a command that did not run.
     fn publish<'r>(
         &'r self,
         line: usize,
@@ -473,7 +511,8 @@ impl Bindings {
 
 /// Runs `command` as `route` invoked it, again after each attempt the route answers with
 /// [`Failure::Retry`] ([`Route::answer`]), up to [`spindle_host::RETRY_ATTEMPTS`] in all, as a
-/// served run attempts it; answers how many attempts were made and the last one's result.
+/// served run attempts it; answers how many attempts were made and the last one's result, which
+/// the caller escalates where the route says so.
 fn attempted(
     running: &mut Running<'_>,
     route: &Route,

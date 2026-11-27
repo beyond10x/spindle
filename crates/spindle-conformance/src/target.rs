@@ -11,17 +11,19 @@ use ess_compiler::ir::{ResolvedFailure, ResolvedRefusalAction, ResolvedTypeRef};
 use ess_compiler::refs::{ErrorRef, EventRef, OutcomeRef};
 use ess_conformance::{
     ConformanceTarget, DeclaredErrorValue, EventObservationRequest, ExternalOutcomeControl,
-    ImplementationIdentity, ObservedEvent, RedeliveryRequest, ScenarioContext,
-    SemanticCommandRequest, SemanticCommandResult, SemanticViewRequest, SemanticViewResult,
-    TargetError,
+    ImplementationIdentity, InvocationObservationRequest, ObservedEvent, ObservedInvocation,
+    RedeliveryRequest, ScenarioContext, SemanticCommandRequest, SemanticCommandResult,
+    SemanticViewRequest, SemanticViewResult, TargetError,
 };
 use ess_domain::command::OutcomeName;
 use ess_primitives::consistency::ConsistencyToken;
+use ess_primitives::ids::CorrelationId;
 use ess_primitives::node::Node;
 use serde_json::{Map, Value};
 use spindle_capability::Environment;
 use spindle_host::{
-    Answers, Cause, Clock, Host, HostError, Placements, RETRY_ATTEMPTS, Refusal, SystemClock,
+    Answers, Cause, Clock, Escalation, Host, HostError, Placements, RETRY_ATTEMPTS, Refusal,
+    SystemClock,
 };
 use spindle_kernel::{Decider, ExecuteError, External};
 
@@ -50,7 +52,11 @@ type Forcing = Arc<Mutex<Option<(String, String)>>>;
 /// ([`Host::establish`]), checked by ESS first, as ESS's interpreter establishes it. Fixture
 /// values and redelivery are unsupported, each with its reason, and so is a send whose
 /// `on_failure: retry` binding gave up after [`RETRY_ATTEMPTS`](spindle_host::RETRY_ATTEMPTS), as
-/// ESS's interpreter answers a retry that exceeds its execution budget.
+/// ESS's interpreter answers a retry that exceeds its execution budget. An escalation event a
+/// binding published is observed among the send's events; a send whose escalation was unmet
+/// ([`Escalation::Unmet`]) is unsupported, since ESS's interpreter fills a placeholder there. Every
+/// attempt an event binding made of its command, with the input it sent, is observed as the
+/// binding's invocations ([`ConformanceTarget::observe_invocations`]).
 pub struct HostTarget {
     ir: Arc<EssIr>,
     /// The admission of `ir` on the environment, made once and shared by every host opened.
@@ -113,6 +119,17 @@ struct Running {
     /// How many commands have run: the consistency token of the last.
     writes: u64,
     events: Vec<ObservedEvent>,
+    /// Every attempt an event binding made of its command, in the order made.
+    invocations: Vec<Invocation>,
+}
+
+/// One attempt an event binding made of its command, as [`Host::submit_as`] reported it, under
+/// the correlation of the step that sent the command it followed from.
+struct Invocation {
+    binding: String,
+    command: String,
+    input: BTreeMap<String, Node>,
+    correlation: CorrelationId,
 }
 
 /// The decider of every host the target opens: what the scenario forced, for every cause of the
@@ -308,6 +325,18 @@ impl HostTarget {
             for invoked in invoked(report) {
                 self.lapse(invoked);
             }
+            for attempt in &report.invoked {
+                let mut input = BTreeMap::new();
+                for (field, value) in &attempt.input {
+                    input.insert(field.clone(), node(value)?);
+                }
+                running.invocations.push(Invocation {
+                    binding: attempt.binding.clone(),
+                    command: attempt.command.clone(),
+                    input,
+                    correlation: request.correlation.clone(),
+                });
+            }
             if let Some(binding) = exhausted(&self.ir, report) {
                 return Err(TargetError::unsupported(
                     format!("binding `{binding}`"),
@@ -315,6 +344,23 @@ impl HostTarget {
                         "its retry gave up after {RETRY_ATTEMPTS} attempts; ESS's interpreter \
                          answers an unbounded retry that never takes effect as unsupported: it \
                          exceeds the finite execution budget"
+                    ),
+                ));
+            }
+            if let Some((escalated, why)) =
+                report
+                    .escalated
+                    .iter()
+                    .find_map(|escalated| match &escalated.escalation {
+                        Escalation::Unmet(why) => Some((escalated, why)),
+                        Escalation::Published(_) => None,
+                    })
+            {
+                return Err(TargetError::unsupported(
+                    format!("binding `{}`", escalated.binding),
+                    format!(
+                        "{why}; ESS's interpreter publishes the escalation with a placeholder for \
+                         each field the input lacks, and this host publishes nothing"
                     ),
                 ));
             }
@@ -352,6 +398,15 @@ impl HostTarget {
                 for ran in &report.ran {
                     for event in &ran.executed.events {
                         running.events.push(observed(event, &request)?);
+                    }
+                }
+                for escalated in &report.escalated {
+                    if let Escalation::Published(payload) = &escalated.escalation {
+                        let event = spindle_kernel::Event {
+                            name: escalated.event.clone(),
+                            payload: payload.clone(),
+                        };
+                        running.events.push(observed(&event, &request)?);
                     }
                 }
                 Ok(result)
@@ -445,6 +500,7 @@ impl ConformanceTarget for HostTarget {
             host,
             writes: 0,
             events: Vec::new(),
+            invocations: Vec::new(),
         });
         Ok(())
     }
@@ -527,6 +583,37 @@ impl ConformanceTarget for HostTarget {
             Some(total) => SemanticViewResult::of(rows).with_total(total),
             None => SemanticViewResult::of(rows),
         })
+    }
+
+    /// Every attempt `request.binding` made of `request.command` under the request's correlation
+    /// since the scenario began, a refused or failed one included, each with the input the binding
+    /// sent ([`spindle_host::Report::invoked`]); none read, drained or filtered by success.
+    fn observe_invocations(
+        &self,
+        request: InvocationObservationRequest,
+    ) -> Result<Vec<ObservedInvocation>, TargetError> {
+        let (binding, command) = (request.binding.to_string(), request.command.to_string());
+        Ok(self
+            .running
+            .borrow()
+            .as_ref()
+            .map(|running| {
+                running
+                    .invocations
+                    .iter()
+                    .filter(|invocation| {
+                        invocation.binding == binding
+                            && invocation.command == command
+                            && invocation.correlation == request.correlation
+                    })
+                    .map(|invocation| ObservedInvocation {
+                        binding: request.binding.clone(),
+                        command: request.command.clone(),
+                        input: invocation.input.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
     }
 
     fn observe_events(

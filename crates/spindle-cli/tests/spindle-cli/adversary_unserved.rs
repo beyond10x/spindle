@@ -7,7 +7,7 @@
 //! representation, which this ingress does not serve (it was `body: array` until
 //! `story:ess-099-path-types-and-wrapped-views` served that).
 //! `tests/fixtures/adversary_escalate` binds one event to a command twice: `audit-note` with
-//! `on_failure: escalate` and `index-note` with `on_failure: retry`.
+//! `on_failure: escalate` and `index-note` with `on_failure: retry`; the command fails.
 
 use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -410,42 +410,30 @@ fn adversary_temporary_state_is_fresh_per_run_and_removed_on_sigint() {
     }
 }
 
-/// `--drop-retries` lifts the refusal of `retry` only; `escalate` stays refused, naming its
-/// binding, and nothing listens.
+// story:binding-failure-escalates: `escalate` runs, so this case, which pinned its refusal as
+// `adversary_escalate_is_refused_even_with_drop_retries`, now pins what the flag does to it.
+/// `--drop-retries` drops the retries of `index-note` and keeps the escalation of `audit-note`:
+/// the run listens, names `index-note` alone as dropping its retries, and answers a write.
 #[test]
-fn adversary_escalate_is_refused_even_with_drop_retries() {
-    let state = scratch();
-    let file = state.path().join("state");
-    let mut running = Running::start(
-        &[
-            "run",
-            ESCALATE,
-            "--environment",
-            LAPTOP,
-            "--drop-retries",
-            "--state",
-            file.to_str().expect("a UTF-8 path"),
-        ],
-        Stdio::null(),
-    );
-    let status = running.exited();
-    let mut stdout = String::new();
-    running
-        .child
-        .stdout
-        .take()
-        .expect("stdout")
-        .read_to_string(&mut stdout)
-        .expect("stdout is read");
-    let stderr = running.stderr.until("b10x-spindle:");
-    assert!(!status.success(), "{status:?} {stdout} {stderr:#?}");
-    assert!(!stdout.contains("listening"), "{stdout}");
+fn adversary_escalate_runs_with_drop_retries() {
+    let (running, address) = serve(ESCALATE, &["--drop-retries"]);
+    let stderr = running.stderr.until("index-note");
+    let dropped = stderr
+        .iter()
+        .filter(|line| line.contains("--drop-retries"))
+        .collect::<Vec<_>>();
+    assert_eq!(dropped.len(), 1, "{stderr:#?}");
     assert!(
-        stderr
-            .iter()
-            .any(|line| line.contains("audit-note") && line.contains("Escalate")),
-        "{stderr:#?}"
+        dropped[0].contains("index-note") && !dropped[0].contains("audit-note"),
+        "{dropped:?}"
     );
+    let (status, answer) = exchange(
+        address,
+        "POST",
+        "/pad/commands/WriteNote",
+        Some(r#"{"note_id": "n1", "text": "kept"}"#),
+    );
+    assert_eq!(status, 202, "{answer}");
 }
 
 /// The console routes answer beside the routes that answer `501`, and a `501` route answers

@@ -1,0 +1,29 @@
+format: ess/34
+system: beacon
+version: v1
+summary: Desks registered under a code, badges issued under the short code a code converts to, and desks labelled with the short code of the code they hold.
+domains:
+  - beacon.desk
+conversions:
+  - from: beacon.desk.Code
+    to: beacon.desk.ShortCode
+    because: >-
+      A code is shown as a short code where it fits one; the short code bounds its own length and
+      checks that bound where it is filled.
+components:
+  - component: front
+    summary: Registers and labels desks, and issues badges.
+    owns:
+      domains:
+        - beacon.desk
+    accepts:
+      commands:
+        - beacon.desk.RegisterDesk
+        - beacon.desk.IssueBadge
+        - beacon.desk.LabelDesk
+    publishes:
+      events:
+        - beacon.desk.DeskRegistered
+        - beacon.desk.BadgeIssued
+        - beacon.desk.DeskLabelled
+    reached_by: in_process

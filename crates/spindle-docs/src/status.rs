@@ -182,6 +182,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "crates/spindle-host/tests/spindle-host/retry.rs::a_failing_invocation_is_retried_until_it_succeeds",
     ),
     shipped(
+        "Bindings",
+        "Escalation on failure",
+        "A binding whose on_failure escalates, for every failure or for the refusals an escalate entry names beside drop and retry, invokes its command no further once an attempt is answered so: the component that ran it publishes the escalation event once from the command's input, served, on stdin and in conform, and the bindings that listen for it run. A required event field the input lacks publishes nothing and is reported unmet; an optional one is left out. The event goes to the outbox and is not in the event history. --drop-retries keeps every escalation.",
+        "/docs/concepts/components-and-bindings",
+        "crates/spindle-conformance/tests/spindle-conformance/escalation.rs::an_escalated_refusal_emits_the_named_event_and_invokes_nothing",
+    ),
+    shipped(
         "Rally",
         "Every component in one process",
         "b10x-spindle play runs the three rally components in one process with in-process channels until a side wins.",
@@ -250,6 +257,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "A value {related: {entity, where, field}} in sets: or an event payload reads the field of the one row of the entity the predicate selects, from the store as it was before the outcome; no row or several give no value and nothing is written, as ESS's interpreter decides. A predicate reading payload. or walking the rows of an entity, the value in an error's fields, and a selector over an entity another component owns, stay refused.",
         "/docs/concepts/specification",
         "crates/spindle-kernel/tests/spindle-kernel/where_selected_values.rs::where_selected_values_agree_with_the_interpreter",
+    ),
+    shipped(
+        "Execution",
+        "Values read through two rows",
+        "A value {related: {via: [input.<field>, <field>], field}} in sets: or an event payload reads the field or the state of the row a reference of the row the input names names, each row from the store as it was before the outcome, as ESS's interpreter reads it: an absent Optional reference on the way leaves the value absent, a row none carries gives no value and nothing is written, a field filled through a declared conversion is checked as a one-hop read is, and a row of an entity another component owns is read only where its owner's store is reached. A chain that starts at a field of the subject stays refused.",
+        "/docs/concepts/specification",
+        "crates/spindle-kernel/tests/spindle-kernel/related_chain_values.rs::a_value_source_through_two_rows_reads_the_far_row",
     ),
     shipped(
         "Execution",

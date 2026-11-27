@@ -4,8 +4,9 @@
 //! `rally` example use, a value read from the row an input field names, a value an expression
 //! computes outside an error, a guard over a row set, a guard over a list of references for a
 //! missing row, an external refusal asked before the row, a set outcome (`instances:`) with the
-//! rows it changed, secondary effects (`affects:`) selecting their rows by a filter, and an event
-//! payload value read from the response the outcome answers (`{response: …}`). Every other
+//! rows it changed, secondary effects (`affects:`) selecting their rows by a filter, an event
+//! payload value read from the response the outcome answers (`{response: …}`), and a value that
+//! fills its field through a declared conversion, other than a response field. Every other
 //! construct is refused by name, as [`ExecuteError::Unsupported`], before anything is written;
 //! what it refuses depends on what reads the construct.
 //!
@@ -286,8 +287,9 @@ fn foreign_write(
 }
 
 /// The value, named, that reads a row of an entity a component running `command` does not own:
-/// `{related: {entity, where, field}}` (ess/22) or `{related: {via, field}}` (ess/16, ess/28), in
-/// `outcome`'s `sets:`, `affects:`, payloads or error, struct members included. The kernel reads
+/// `{related: {entity, where, field}}` (ess/22) or `{related: {via, field}}` (ess/16, ess/28), any
+/// row of a chain among them (`via: [input.<field>, <field>]`, ess/22), in `outcome`'s `sets:`,
+/// `affects:`, payloads or error, struct members included. The kernel reads
 /// only the store it runs on ([`crate::values`]); where that store does not reach the owner's
 /// (`reached`, [`foreign`]), no row of such an entity is kept there, so the read would find none
 /// and answer `no_value` for every request. ESS's interpreter holds every entity in one store and
@@ -308,8 +310,17 @@ fn foreign_read(
                 ResolvedPayloadValue::RelatedSelection { selection, .. } => {
                     found.push((field, &selection.entity));
                 }
-                ResolvedPayloadValue::RelatedField { entity, .. }
-                | ResolvedPayloadValue::RelatedState { entity, .. } => found.push((field, entity)),
+                // Every row a chain reads: the one the first reference names, each one a further
+                // reference names, and the last.
+                ResolvedPayloadValue::RelatedField {
+                    entity, through, ..
+                }
+                | ResolvedPayloadValue::RelatedState {
+                    entity, through, ..
+                } => {
+                    found.extend(through.iter().map(|hop| (field, &hop.entity)));
+                    found.push((field, entity));
+                }
                 ResolvedPayloadValue::Struct { fields } => reads(fields, found),
                 _ => {}
             }
@@ -836,10 +847,17 @@ fn value(ir: &EssIr, field: &ResolvedPayloadField, reading: Reading) -> Option<S
             && crate::mint::generated(ir, &field.target_type, present).is_none())
         .then(|| crate::mint::unmintable(&field.target, &field.target_type))
     };
-    if let Some(conversion) = &field.conversion {
+    // A value through a declared conversion is passed on unchanged, and a value read from a row is
+    // checked against the source and the target type ([`crate::values`]), as ESS's interpreter
+    // reads it (`interpret::execute::determined::checked_read`). ESS does not interpret a response
+    // field through one (`determined::response`), and neither does the kernel.
+    if let (Some(conversion), ResolvedPayloadValue::ResponseField { .. }) =
+        (&field.conversion, &field.value)
+    {
         return Some(format!(
-            "the conversion `{conversion}` into `{}`",
-            field.target
+            "the conversion `{conversion}` into `{}` of the value source {}",
+            field.target,
+            field.value.describe()
         ));
     }
     match &field.value {
@@ -895,24 +913,18 @@ fn value(ir: &EssIr, field: &ResolvedPayloadField, reading: Reading) -> Option<S
         ResolvedPayloadValue::Struct { fields } => {
             fields.iter().find_map(|member| value(ir, member, reading))
         }
-        // The field or the held state of the row an input field names (ess/16, ess/28), read as
-        // the store held it before the outcome ([`crate::values::related`]). A reference stored on
-        // the subject, a chain through a further reference, and a list of references stay
-        // refused.
+        // The field or the held state of the row an input field names (ess/16, ess/28), or of the
+        // row a reference that row holds names (a chain, ess/22), each row read as the store held
+        // it before the outcome ([`crate::values::related`]). A reference stored on the subject and
+        // a list of references stay refused.
         ResolvedPayloadValue::RelatedField {
             via: via @ ResolvedRelatedVia::Input { .. },
-            through,
             ..
         }
         | ResolvedPayloadValue::RelatedState {
             via: via @ ResolvedRelatedVia::Input { .. },
-            through,
             ..
-        } if through.is_empty()
-            && !matches!(via.type_ref().required(), ResolvedTypeRef::List { .. }) =>
-        {
-            None
-        }
+        } if !matches!(via.type_ref().required(), ResolvedTypeRef::List { .. }) => None,
         // A field of the one row a selector selects (ess/22), read from the store as it was
         // before the outcome ([`crate::values::Selections`]). A selector that reads what its own
         // outcome publishes (`payload.<Event>.<field>`, ess/27) or walks the rows of an entity
