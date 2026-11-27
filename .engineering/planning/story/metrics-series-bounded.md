@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:metrics-series-bounded
 kind: story
-status: active
+status: implemented
 title: An operator bounds the series a metrics scrape writes
 relations:
 - decomposes: epic:runtime-observability-depth
@@ -34,10 +34,11 @@ scope:
   path: website/docs/concepts/observe.md
 - confidence: cited
   path: website/docs/reference/cli.md
-revision: 10
+revision: 11
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T07:28:35Z", actor: "human:operator", revision: 9, decided_on: {"recorded":{"review_outcome":8}}}
 - {from: "proposed", to: "active", at: "2026-11-27T07:28:35Z", actor: "human:operator", revision: 10, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "active", to: "implemented", at: "2026-11-27T09:53:23Z", actor: "human:operator", revision: 11, decided_on: {"recorded":{"test_result":1,"review_outcome":9}}}
 ---
 ## Outcome
 

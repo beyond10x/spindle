@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:events-record-their-caller
 kind: story
-status: active
+status: implemented
 title: Every committed event records the caller that caused it
 summary: Each committed event records the actor, caller attributes and request id of its cause instead of spindle-kernel.
 relations:
@@ -38,10 +38,11 @@ scope:
   path: crates/spindle-store-browser/src/indexeddb.rs
 - confidence: inferred
   path: docs/design/spindle.md
-revision: 11
+revision: 12
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T07:28:36Z", actor: "human:operator", revision: 10, decided_on: {"recorded":{"review_outcome":8}}}
 - {from: "proposed", to: "active", at: "2026-11-27T07:28:37Z", actor: "human:operator", revision: 11, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "active", to: "implemented", at: "2026-11-27T09:53:23Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"test_result":1,"review_outcome":9}}}
 ---
 # Every committed event records the caller that caused it
 
