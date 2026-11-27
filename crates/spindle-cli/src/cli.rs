@@ -154,7 +154,7 @@ pub enum Command {
     ///
     /// Where a component requires `ingress.network` (`reached_by: network`), runs every component
     /// in one process and serves those over HTTP on 127.0.0.1, or `--address`, instead of reading
-    /// stdin; only `http-loopback` is served, and any other binding exits 1 before listening. Prints
+    /// stdin, unless `--stdin` is given; only `http-loopback` is served, and any other binding exits 1 before listening. Prints
     /// `{"listening": "<address>", "components": [...]}` once listening and serves until SIGINT
     /// or SIGTERM (exit 130 or 143), or until a seed that rejected an entry ends (exit 1,
     /// `--seed`). On the signal `GET /__spindle/ready` answers `503` and every request that
@@ -267,6 +267,29 @@ pub enum Command {
         /// the run ends.
         #[arg(long)]
         state: Option<PathBuf>,
+        /// Read JSON lines on stdin where a component requires `ingress.network` (`reached_by:
+        /// network`), instead of serving HTTP: every component runs in this process on one store
+        /// and its event bindings fire as on any other stdin run; no periodic binding fires. Given
+        /// with a flag only a served run reads (`--http`, `--port`, `--address`, `--fixed-actor`,
+        /// `--trusted-caller-header`, `--trusted-caller-secret`, `--observe`, `--seed`, `--drain`
+        /// or `--log-format json`), exits 2 before running anything. Where no component requires
+        /// `ingress.network`, `run` reads stdin with or without it.
+        #[arg(
+            long,
+            conflicts_with_all = [
+                "scenario",
+                "http",
+                "port",
+                "address",
+                "fixed_actor",
+                "trusted_caller_header",
+                "trusted_caller_secret",
+                "observe",
+                "seed",
+                "drain",
+            ]
+        )]
+        stdin: bool,
         /// Run each event binding that retries on failure (`on_failure: retry`, or a per-refusal
         /// policy that retries some refusal) as a `drop` binding: a failed invocation is dropped,
         /// not retried. Prints one line per such binding on stderr before listening or reading

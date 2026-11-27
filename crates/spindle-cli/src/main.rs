@@ -214,6 +214,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             spec,
             environment,
             state,
+            stdin,
             decisions,
             answer_default,
             http,
@@ -238,6 +239,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             spec: &spec,
             environment: &environment,
             state: state.as_deref(),
+            stdin,
             decisions: decisions.as_deref(),
             answer_default,
             http: http.as_deref(),
@@ -589,6 +591,8 @@ struct Execute<'a> {
     spec: &'a Path,
     environment: &'a Path,
     state: Option<&'a Path>,
+    /// `--stdin`: read JSON lines on stdin even where a component requires `ingress.network`.
+    stdin: bool,
     decisions: Option<&'a Path>,
     answer_default: bool,
     http: Option<&'a Path>,
@@ -626,6 +630,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         spec,
         environment,
         state,
+        stdin,
         decisions,
         answer_default,
         http,
@@ -722,10 +727,10 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         .iter()
         .find(|binding| binding.capability.as_str() == "store.durable")
         .map(|binding| binding.implementation.as_str());
-    if let Some(ingress) = bindings
+    let networked = bindings
         .iter()
-        .find(|binding| binding.capability.as_str() == Capability::INGRESS_NETWORK)
-    {
+        .find(|binding| binding.capability.as_str() == Capability::INGRESS_NETWORK);
+    if let Some(ingress) = networked.filter(|_| !stdin) {
         if ingress.implementation != spindle_ingress::HTTP_LOOPBACK {
             bail!(
                 "ingress.network is bound to `{}` on {}; this build serves `{}` only",
@@ -781,6 +786,12 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
             },
         );
     }
+    // Why a flag only a served run reads would do nothing here.
+    let unserved = if networked.is_some() {
+        "--stdin reads JSON lines instead of serving HTTP".to_owned()
+    } else {
+        format!("nothing in {} requires ingress.network", spec.display())
+    };
     if let Some(path) = seed_path {
         let given = if seed.is_some() {
             "--seed"
@@ -788,57 +799,46 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
             "the environment's [seed] file"
         };
         bail!(
-            "nothing in {} requires ingress.network, so {given} {} would never be submitted: a \
-             seed is submitted by a run serving HTTP",
-            spec.display(),
+            "{unserved}, so {given} {} would never be submitted: a seed is submitted by a run \
+             serving HTTP",
             path.display()
         );
     }
     if observe.is_some() {
-        bail!(
-            "nothing in {} requires ingress.network, so --observe would be ignored",
-            spec.display()
-        );
+        bail!("{unserved}, so --observe would be ignored");
     }
     if log_format == LogFormat::Json {
+        // Like every other flag only a served run reads, refused beside `--stdin` as clap refuses
+        // a conflict; `--log-format text` is its default, so clap cannot tell the two apart.
+        if networked.is_some() {
+            log::error(format!(
+                "{unserved}, so --log-format json would not be kept: give one or the other"
+            ))
+            .write();
+            return Ok(ExitCode::from(USAGE));
+        }
         bail!(
-            "nothing in {} requires ingress.network, so --log-format json would not be kept: \
-             only a run serving HTTP writes its log as JSON lines",
-            spec.display()
+            "{unserved}, so --log-format json would not be kept: only a run serving HTTP \
+             writes its log as JSON lines"
         );
     }
     if let Some(caller) = callers.first() {
         bail!(
-            "nothing in {} requires ingress.network, so --fixed-actor {} would be ignored",
-            spec.display(),
+            "{unserved}, so --fixed-actor {} would be ignored",
             caller.actor
         );
     }
     if let Some(header) = caller_header {
-        bail!(
-            "nothing in {} requires ingress.network, so --trusted-caller-header {header} would be \
-             ignored",
-            spec.display()
-        );
+        bail!("{unserved}, so --trusted-caller-header {header} would be ignored");
     }
     if let Some(path) = http {
-        bail!(
-            "nothing in {} requires ingress.network, so --http {} would be ignored",
-            spec.display(),
-            path.display()
-        );
+        bail!("{unserved}, so --http {} would be ignored", path.display());
     }
     if let Some(port) = port {
-        bail!(
-            "nothing in {} requires ingress.network, so --port {port} would be ignored",
-            spec.display()
-        );
+        bail!("{unserved}, so --port {port} would be ignored");
     }
     if let Some(address) = address {
-        bail!(
-            "nothing in {} requires ingress.network, so --address {address} would be ignored",
-            spec.display()
-        );
+        bail!("{unserved}, so --address {address} would be ignored");
     }
     let bindings = lines::Bindings::new(spec, &loaded.ir, drop_retries)?;
     let scratch;

@@ -77,6 +77,7 @@ mod outcome_scoped_refusal;
 mod play;
 mod postgres;
 mod processes;
+mod rally_page;
 mod rejected_line;
 mod replay;
 mod response_source;
