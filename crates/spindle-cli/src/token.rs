@@ -35,6 +35,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use ess_compiler::EssIr;
+use ess_compiler::ir::ResolvedTypeRef;
 use http_body_util::{BodyExt, Empty, Limited};
 use hyper::body::Bytes;
 use hyper::header::{ACCEPT, HOST};
@@ -311,8 +312,9 @@ impl Mapping {
     }
 
     /// Refuses a mapping that names what the model `ir` does not declare: an actor a role maps to,
-    /// or an attribute of an actor (`story:verified-caller-token`, F3), so no token maps to a
-    /// caller the model could never bind.
+    /// or an attribute of an actor (`story:verified-caller-token`, F3), or that maps a required
+    /// attribute of a mapped actor from no claim (G3), so no token maps to a caller the model
+    /// could never bind.
     ///
     /// # Errors
     /// The first such actor or attribute, the message naming the file.
@@ -349,6 +351,25 @@ impl Mapping {
                     "{}: [attributes.\"{actor}\"] maps the attribute {attribute}, which the actor \
                      {actor} does not declare",
                     self.label
+                );
+            }
+        }
+        for (role, actor) in &self.actors {
+            let Some(declared) = declared(actor) else {
+                continue;
+            };
+            // A required attribute mapped from no claim leaves every token of this role no
+            // caller (`story:verified-caller-token`, G3).
+            let mapped = self.attributes.get(actor);
+            if let Some(required) = declared.attributes.iter().find(|field| {
+                !matches!(field.type_ref, ResolvedTypeRef::Optional { .. })
+                    && !mapped.is_some_and(|mapped| mapped.contains_key(field.name.as_str()))
+            }) {
+                bail!(
+                    "{}: [actor.values] maps {role} to the actor {actor}, whose required \
+                     attribute {} [attributes.\"{actor}\"] maps from no claim",
+                    self.label,
+                    required.name
                 );
             }
         }
@@ -568,6 +589,9 @@ impl Fetcher {
 pub(crate) struct Verifier {
     mapping: Mapping,
     keys: RwLock<Keys>,
+    /// The model each mapped caller is bound against: a caller it does not bind is no caller
+    /// (`story:verified-caller-token`, G1).
+    ir: EssIr,
 }
 
 impl Verifier {
@@ -603,6 +627,7 @@ impl Verifier {
         let verifier = Arc::new(Self {
             mapping,
             keys: RwLock::new(keys),
+            ir: ir.clone(),
         });
         let refreshed = Arc::clone(&verifier);
         std::thread::Builder::new()
@@ -692,7 +717,10 @@ impl Verifier {
 impl CallerToken for Verifier {
     fn caller(&self, token: &str) -> Result<Option<Caller>, Unverified> {
         let claims = self.verified(token)?;
-        Ok(self.mapping.mapped(&claims))
+        Ok(self
+            .mapping
+            .mapped(&claims)
+            .filter(|caller| caller.fixed(&self.ir).is_ok()))
     }
 }
 
@@ -810,6 +838,11 @@ auditor = "porch.visit.Auditor"
         let verifier = Verifier {
             mapping,
             keys: RwLock::new(keys),
+            ir: spindle_spec::load(
+                &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/trusted-caller"),
+            )
+            .expect("the trusted-caller fixture compiles")
+            .ir,
         };
         let claims = json!({
             "iss": "https://issuer.test",

@@ -421,10 +421,11 @@ pub enum Command {
         /// recorded nor counted; one whose claims map to no caller of the model is refused `403`
         /// `{"refused": "not granted", "actor": null}` and writes nothing. Only
         /// `/__spindle/live`, `/__spindle/ready` and `/__spindle/seed` answer without a token;
-        /// every other route under `/__spindle/` needs a token that maps to a caller, and
-        /// answers one that maps to none `403` the same way, unrecorded. The console routes are
-        /// off, and `--console on` exits 2. A role mapped to an actor, or an attribute, the
-        /// specification does not declare exits 1 before listening. The key set is fetched
+        /// every other route under `/__spindle/` needs a token whose claims map to a caller of
+        /// the model, and answers any other `403` the same way, unrecorded. The console routes
+        /// are off, and `--console on` exits 2. A role mapped to an actor, or an attribute, the
+        /// specification does not declare, or a required attribute of a mapped actor mapped from
+        /// no claim, exits 1 before listening. The key set is fetched
         /// before listening, and a run that cannot fetch it, or whose set lists no usable key,
         /// exits 1; it is fetched again every `refresh_seconds`: a set fetched replaces the keys,
         /// one listing no usable key too (every token is then refused, with a warning line), and

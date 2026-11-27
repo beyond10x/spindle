@@ -767,7 +767,7 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
     let refused = |answer: Answer| -> (Reply, Option<Note>) {
         (answer.into(), Some(noted(&asked, Answered::ingress())))
     };
-    if matches!(asked, Asked::Console(_)) && (unproxied || unmapped) {
+    if matches!(asked, Asked::Console(_)) && unproxied {
         return refused(Answer::not_proven());
     }
     if request.headers().contains_key(TRANSFER_ENCODING) {

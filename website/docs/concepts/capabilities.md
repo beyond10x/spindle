@@ -137,9 +137,10 @@ the model answers `403` "not granted". The key set is fetched before listening, 
 cannot fetch it exits 1; it is fetched again every `refresh_seconds`, so a rotated key verifies
 without a restart. On such a run only `/__spindle/live`, `/__spindle/ready` and
 `/__spindle/seed` answer without a token; every other route under `/__spindle/` needs a token
-that maps to a caller and answers one that maps to none `403`. The console routes are off, and
-`--console on` exits 2. A mapping naming an actor or attribute the specification does not
-declare exits 1 before listening, and a refreshed set that lists no usable key refuses every
+whose claims map to a caller of the model and answers any other `403`. The console routes are
+off, and `--console on` exits 2. A mapping naming an actor or attribute the specification does
+not declare, or leaving a required attribute of a mapped actor unmapped, exits 1 before
+listening, and a refreshed set that lists no usable key refuses every
 token until a refresh lists one.
 It takes no `--trusted-caller-header` or `--fixed-actor` beside it (exit 1), and off loopback it
 needs `--tls-cert` and `--tls-key`, exiting 2 without them.

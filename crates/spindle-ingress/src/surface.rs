@@ -1176,9 +1176,10 @@ pub struct Unverified;
 /// mapped to an actor and its attributes. `run --caller-token` provides one; this crate holds
 /// none, so it builds without any token library.
 pub trait CallerToken: Send + Sync {
-    /// The caller `token` proves: `Ok(Some)` for a token that verifies and maps to a caller,
-    /// `Ok(None)` for one that verifies and maps to none, `Err` for one that does not verify.
-    /// The caller is bound against the model afterwards, as every proven caller is.
+    /// The caller `token` proves: `Ok(Some)` for a token that verifies and maps to a caller the
+    /// model binds, `Ok(None)` for one that verifies and maps to none, `Err` for one that does not
+    /// verify. The run's own routes under `/__spindle/` open to `Ok(Some)` as it is; a command or
+    /// view binds the caller again, as every proven caller is.
     ///
     /// # Errors
     /// [`Unverified`] for a token that does not verify.
@@ -1450,12 +1451,11 @@ impl Surface {
     /// `/__spindle/ready` and `/__spindle/seed`, the probes, answer without one. A token that
     /// verifies and maps to no caller of the model answers the standard refusal for a request
     /// authenticated as no caller, `403` `{"refused": "not granted", "actor": null}`, on a
-    /// command or view, and nothing is read or written; one that maps to no caller at all is
-    /// refused so on every route under `/__spindle/` but the probes and on the console routes,
-    /// reading nothing they hold, and under `/__spindle/` it is not recorded. Off loopback such a
-    /// surface is served only over TLS (`Listener::bind_reading_on_tls`). A request
-    /// [`crate::route`] answers carries no header, so there every request but the probes is
-    /// refused `401`.
+    /// command or view, and nothing is read or written; it is refused so on every route under
+    /// `/__spindle/` but the probes too, reading nothing they hold, and is not recorded there.
+    /// Off loopback such a surface is served only over TLS (`Listener::bind_reading_on_tls`). A
+    /// request [`crate::route`] answers carries no header, so there every request but the probes
+    /// is refused `401`.
     ///
     /// # Errors
     /// As [`Surface::new`].

@@ -879,4 +879,22 @@ fn a_mapping_naming_what_the_model_does_not_declare_exits_1() {
         assert!(stopped.stdout.is_empty(), "{case}: {stopped:?}");
         stopped.line_with(&["--caller-token", &mapping.path, named]);
     }
+
+    // G3 of correction round 2: a mapped actor whose required attribute the mapping maps from
+    // no claim could never be a caller.
+    let unmapped = Mapping::new(&jwks.url(), 300);
+    let text = std::fs::read_to_string(&unmapped.path).expect("the mapping reads");
+    std::fs::write(&unmapped.path, text.replace("person_id = \"sub\"\n", ""))
+        .expect("the mapping is rewritten");
+    let Err(stopped) = serve(&["--caller-token", &unmapped.path]) else {
+        panic!("a required attribute mapped from no claim: run listened");
+    };
+    assert_eq!(stopped.code, Some(1), "{stopped:?}");
+    assert!(stopped.stdout.is_empty(), "{stopped:?}");
+    stopped.line_with(&[
+        "--caller-token",
+        &unmapped.path,
+        "porch.visit.Member",
+        "person_id",
+    ]);
 }
