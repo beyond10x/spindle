@@ -3,8 +3,10 @@
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use clap::builder::TypedValueParser as _;
 use clap::{Parser, Subcommand};
 use serde_json::{Map, Value};
+use spindle_ingress::SeriesMode;
 
 /// The `b10x-spindle` command line.
 #[derive(Debug, Parser)]
@@ -336,6 +338,25 @@ pub enum Command {
             conflicts_with = "scenario"
         )]
         observe_requests: u16,
+        /// How `GET /__spindle/metrics` of `--observe` writes the labels whose values come from
+        /// the specification (`route`, `operation`, `command`, `outcome`, `event`, `binding`,
+        /// `entity`). `per-command`: each value its own series, so the series grow with the
+        /// specification. `aggregated`: each of them written empty and the series that then
+        /// share every label summed, so their number does not depend on the specification's
+        /// size. The scrape names the mode as `spindle_metrics_series_mode{mode}`; the request
+        /// log and the topology are the same in either.
+        #[arg(
+            long,
+            value_name = "MODE",
+            default_value = "per-command",
+            value_parser = clap::builder::PossibleValuesParser::new(
+                SeriesMode::ALL.map(SeriesMode::name)
+            )
+            .map(|name| SeriesMode::named(&name).unwrap_or_default()),
+            requires = "observe",
+            conflicts_with = "scenario"
+        )]
+        observe_series: SeriesMode,
         /// A seed file to submit at every start: one JSON array of entries `{"command", "input",
         /// "actor", "caller", "request_id"}`, in place of the environment document's `[seed]
         /// file`. It is read and checked before listening: a file that does not parse, or an

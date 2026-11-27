@@ -211,6 +211,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             trusted_caller_secret,
             observe,
             observe_requests,
+            observe_series,
             seed,
             clock,
             mint_seed,
@@ -227,6 +228,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             drop_retries,
             callers: serve::callers(fixed_actor, fixed_caller)?,
             observe: observe.then_some(usize::from(observe_requests)),
+            observe_series,
             caller_header: trusted_caller_header.as_deref(),
             caller_secret: trusted_caller_secret.as_deref(),
             seed: seed.as_deref(),
@@ -468,6 +470,8 @@ struct Execute<'a> {
     callers: Vec<spindle_ingress::Caller>,
     /// With `--observe`, how many request records to keep.
     observe: Option<usize>,
+    /// `--observe-series`: how a metrics scrape writes the labels taken from the specification.
+    observe_series: spindle_ingress::SeriesMode,
     /// `--trusted-caller-header`: the header each request proves its caller in.
     caller_header: Option<&'a str>,
     /// `--trusted-caller-secret`: the file holding the secret the proxy presents.
@@ -493,6 +497,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         drop_retries,
         ref callers,
         observe,
+        observe_series,
         caller_header,
         caller_secret,
         seed,
@@ -615,6 +620,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 answers: answers.calling(calls),
                 callers: callers.clone(),
                 observe,
+                observe_series,
                 caller_header,
                 proxy_secret,
                 seed,

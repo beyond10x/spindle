@@ -110,8 +110,11 @@ the attempts, never a value of the error's fields.
 requests by method, route template, operation, kind, class and status class, their durations,
 commands by outcome and failure, events appended, bindings, timer ticks, store writes, the rows
 each entity holds, the resets, the external causes answered, by command, outcome and source, the
-refused bound commands, by binding, command and refusal, and, in a run given a seed, its entries
-sent, applied, already there and refused.
+refused bound commands, by binding, command and refusal, in a run given a seed, its entries
+sent, applied, already there and refused, and the series mode. `--observe-series aggregated`
+writes every route, operation, command, outcome, event, binding and entity label empty and sums
+the series that then match, so a scrape writes as many series for a specification of 300 commands
+as for one of 30; the default, `per-command`, writes each value as its own series.
 
 `GET /__spindle/topology` answers the graph of what the run serves (`spindle-topology/1`), derived
 from the specification. It holds the ingress, the specification, its domains, their commands,

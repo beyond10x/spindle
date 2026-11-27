@@ -1502,3 +1502,267 @@ fn external_causes_are_counted_per_command_outcome_and_source() {
         "the metric matches the records: {logged}"
     );
 }
+
+// story:metrics-series-bounded: `--observe-series` bounds the series a scrape writes.
+
+/// How many commands each domain of a generated specification declares.
+const GENERATED_COMMANDS: usize = 10;
+
+/// One domain of a generated specification: an entity, `Desk`, and [`GENERATED_COMMANDS`]
+/// commands, each opening a desk with an outcome and an event of its own.
+fn generated_domain(index: usize) -> String {
+    let mut commands = String::new();
+    let mut events = String::new();
+    for command in 0..GENERATED_COMMANDS {
+        commands.push_str(&format!(
+            r"  - name: gen.d{index}.Open{command}
+    input:
+      - name: desk_id
+        type: gen.d{index}.DeskId
+      - name: holder
+        type: String
+    outcomes:
+      - name: opened{command}
+        creates: gen.d{index}.Desk
+        instance: desk_id
+        sets:
+          holder: input.holder
+        emits: [gen.d{index}.Opened{command}]
+        payload:
+          gen.d{index}.Opened{command}: {{desk_id: input.desk_id}}
+        summary: The desk is open.
+"
+        ));
+        events.push_str(&format!(
+            r"  - name: gen.d{index}.Opened{command}
+    fields:
+      - name: desk_id
+        type: gen.d{index}.DeskId
+"
+        ));
+    }
+    format!(
+        r"domain: gen.d{index}
+summary: The desks of room {index}.
+types:
+  - name: gen.d{index}.DeskId
+    kind: newtype
+    of: String
+entities:
+  - name: gen.d{index}.Desk
+    identity:
+      name: desk_id
+      type: gen.d{index}.DeskId
+    fields:
+      - name: holder
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+      transitions: []
+commands:
+{commands}events:
+{events}"
+    )
+}
+
+/// The files of a generated specification of `commands` commands, [`GENERATED_COMMANDS`] to a
+/// domain, all accepted by one component reached over the network: each path under the
+/// specification's directory and its text.
+fn generated_files(commands: usize) -> Vec<(String, String)> {
+    let domains = commands.div_ceil(GENERATED_COMMANDS);
+    let listed = |each: &dyn Fn(usize) -> Vec<String>| {
+        (0..domains)
+            .flat_map(each)
+            .map(|line| format!("        - {line}\n"))
+            .collect::<String>()
+    };
+    let system = format!(
+        "format: ess/34\nsystem: gen\nversion: v1\n\
+         summary: {domains} desks of notes, {GENERATED_COMMANDS} commands each.\n\
+         domains:\n{listed_domains}\
+         components:\n\
+         \x20 - component: desk\n\
+         \x20   summary: Keeps every desk's notes.\n\
+         \x20   owns:\n\
+         \x20     domains:\n{owned}\
+         \x20   accepts:\n\
+         \x20     commands:\n{accepted}\
+         \x20   publishes:\n\
+         \x20     events:\n{published}\
+         \x20   reached_by: network\n",
+        listed_domains = (0..domains)
+            .map(|index| format!("  - gen.d{index}\n"))
+            .collect::<String>(),
+        owned = listed(&|index| vec![format!("gen.d{index}")]),
+        accepted = listed(&|index| (0..GENERATED_COMMANDS)
+            .map(|command| format!("gen.d{index}.Open{command}"))
+            .collect()),
+        published = listed(&|index| (0..GENERATED_COMMANDS)
+            .map(|command| format!("gen.d{index}.Opened{command}"))
+            .collect()),
+    );
+    let mut files = vec![("system.yaml".to_owned(), system)];
+    files.extend(
+        (0..domains).map(|index| (format!("domains/d{index}.yaml"), generated_domain(index))),
+    );
+    files
+}
+
+/// The generated specification of `commands` commands ([`generated_files`]), written once per
+/// test run: under the target directory, in a directory named by the FNV-1a digest of its
+/// files, so a test that finds it there reads it and a change of the generator writes a new one.
+fn generated(commands: usize) -> PathBuf {
+    let files = generated_files(commands);
+    let mut digest: u64 = 0xcbf2_9ce4_8422_2325;
+    for (path, text) in &files {
+        for byte in path.bytes().chain([0]).chain(text.bytes()).chain([0]) {
+            digest ^= u64::from(byte);
+            digest = digest.wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    let parent = Path::new(env!("CARGO_TARGET_TMPDIR")).join("observe-series");
+    let directory = parent.join(format!("gen-{commands}-{digest:016x}"));
+    if directory.join("system.yaml").is_file() {
+        return directory;
+    }
+    std::fs::create_dir_all(&parent).expect("the generated specifications' directory");
+    let written = tempfile::tempdir_in(&parent).expect("a directory to write it in");
+    std::fs::create_dir_all(written.path().join("domains")).expect("the domains' directory");
+    for (path, text) in &files {
+        std::fs::write(written.path().join(path), text).expect("a file of the specification");
+    }
+    // Another test may have written it meanwhile: its copy holds the same files.
+    let _ = std::fs::rename(written.keep(), &directory);
+    directory
+}
+
+/// The method and path of every route the served surface of the generated specification at
+/// `spec` puts a command at: it declares no view.
+fn command_routes(spec: &Path) -> Vec<(String, String)> {
+    let ir = spindle_spec::load(spec)
+        .expect("the generated specification compiles")
+        .ir;
+    let surface = spindle_ingress::Surface::new(&ir, &["desk".to_owned()], None)
+        .expect("the generated specification is routed");
+    surface
+        .routes()
+        .iter()
+        .map(|route| (route.method.as_str().to_uppercase(), route.path.clone()))
+        .collect()
+}
+
+/// The sample lines of `exposition`: one per series, each histogram bucket its own.
+fn sample_lines(exposition: &str) -> Vec<&str> {
+    exposition
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.is_empty())
+        .collect()
+}
+
+#[test]
+fn an_aggregated_scrape_does_not_grow_with_the_specification() {
+    let mut written = BTreeMap::new();
+    for commands in [30, 300] {
+        let spec = generated(commands);
+        let routes = command_routes(&spec);
+        assert_eq!(
+            routes.len(),
+            commands,
+            "every command is routed: {routes:?}"
+        );
+        let spec = spec.to_str().expect("a path in UTF-8");
+        for mode in ["per-command", "aggregated"] {
+            let served = serve(spec, &["--observe", "--observe-series", mode]);
+            for (opened, (method, path)) in routes.iter().enumerate() {
+                let desk = format!("desk-{opened}");
+                let path = path.replace("{desk_id}", &desk);
+                let body = json!({"desk_id": desk, "holder": "a holder"});
+                let (status, answer) = exchange(served.address, method, &path, Some(&body));
+                assert!(status < 300, "{method} {path}: {status} {answer}");
+            }
+            let exposition = scrape(&served);
+            let lines = sample_lines(&exposition);
+            if mode == "aggregated" {
+                assert!(
+                    lines.iter().all(|line| !line.contains("gen.d")),
+                    "no label holds a name of the specification:\n{exposition}"
+                );
+            }
+            // The topology's route edges still count every request.
+            let (status, topology) = exchange(served.address, "GET", "/__spindle/topology", None);
+            assert_eq!(status, 200, "{topology}");
+            let routed = topology["edges"]
+                .as_array()
+                .expect("edges")
+                .iter()
+                .filter(|edge| edge["kind"] == "routes")
+                .map(|edge| edge["traffic"]["count"].as_u64().expect("a count"))
+                .sum::<u64>();
+            assert_eq!(routed, commands as u64, "{mode}: {topology}");
+            written.insert((commands, mode), lines.len());
+        }
+    }
+    eprintln!("series written: {written:?}");
+    assert_eq!(
+        written[&(30, "aggregated")],
+        written[&(300, "aggregated")],
+        "{written:?}"
+    );
+    assert!(
+        written[&(30, "per-command")] < written[&(300, "per-command")],
+        "{written:?}"
+    );
+}
+
+#[test]
+fn a_scrape_names_its_series_mode() {
+    let modes: [(&[&str], &str); 3] = [
+        (&[], "per-command"),
+        (&["--observe-series", "per-command"], "per-command"),
+        (&["--observe-series", "aggregated"], "aggregated"),
+    ];
+    for (added, mode) in modes {
+        let mut arguments = vec!["--http", INGRESS_HTTP, "--observe"];
+        arguments.extend_from_slice(added);
+        let served = serve(INGRESS, &arguments);
+        scripted(&served);
+        let samples = samples(&scrape(&served));
+        let named = series("spindle_metrics_series_mode", &[("mode", mode)]);
+        assert_eq!(sample(&samples, &named), 1.0, "{arguments:?}");
+        let modes = samples
+            .keys()
+            .filter(|key| key.starts_with("spindle_metrics_series_mode"))
+            .collect::<Vec<_>>();
+        assert_eq!(modes, [&named], "{arguments:?}");
+    }
+}
+
+#[test]
+fn observe_series_requires_observe() {
+    let (code, stdout, stderr) = refused(
+        INGRESS,
+        &["--http", INGRESS_HTTP, "--observe-series", "aggregated"],
+    );
+    assert_eq!(code, Some(2), "{stdout}\n{stderr}");
+    assert!(
+        stderr.contains("required arguments were not provided") && stderr.contains("  --observe\n"),
+        "the refusal names --observe as required: {stderr}"
+    );
+    let (code, stdout, stderr) = refused(
+        INGRESS,
+        &[
+            "--http",
+            INGRESS_HTTP,
+            "--observe",
+            "--observe-series",
+            "each",
+        ],
+    );
+    assert_eq!(code, Some(2), "{stdout}\n{stderr}");
+    assert!(
+        stderr.contains("[possible values: per-command, aggregated]"),
+        "the refusal names the modes: {stderr}"
+    );
+}
