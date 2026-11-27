@@ -1813,6 +1813,8 @@ mod tests {
                 unknown_instance: false,
             },
             attempts: 1,
+            dead_letter: None,
+            not_kept: None,
         };
         let entry = RefusedBound::refused(&refused).expect("a delivered refusal is listed");
         let recorder = Recorder::new(4);

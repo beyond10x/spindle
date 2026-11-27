@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.console.Replay.schema.json",
+  "$ref": "#/$defs/spindle.console.Replay",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "contract_digest": "slice-sha256/2:41075d42d4ad1bd8286a37ce13d3fa9d5cb4a354620d777e55fe826e602b28b5",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.console.Replay": {
+      "title": "Replay",
+      "description": "The body of `POST /api/dead-letters/replay`, a console route of a served run answered on the host's thread: the dead letter to run once more, by its component and its id, as `GET /api/dead-letters` lists it (`spindle.observe.DeadLetter`). No other member is read.",
+      "x-ess-name": "spindle.console.Replay",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "component": {
+          "description": "The component that keeps the dead letter.",
+          "type": "string"
+        },
+        "id": {
+          "description": "Its id in that component's store.",
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "component",
+        "id"
+      ],
+      "additionalProperties": false,
+      "x-ess-invariants": [
+        "id >= 1"
+      ]
+    }
+  }
+}

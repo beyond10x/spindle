@@ -6,7 +6,8 @@ use ess_compiler::EssIr;
 use ess_http::{Method, Operation};
 use serde_json::{Value, json};
 use spindle_host::{
-    Cursor, History, HistoryCursor, Host, HostError, Page, Published, Reader, Revision, World,
+    Attempted, Cursor, Failed, History, HistoryCursor, Host, HostError, Page, Published, Reader,
+    Replayed, Revision, Undelivered, World,
 };
 
 use crate::answer::Answer;
@@ -28,23 +29,32 @@ pub enum Console {
     /// `GET /api/history`: the committed events of one entity instance, oldest first, paged
     /// ([`history_queried`]).
     History,
+    /// `GET /api/dead-letters`: every dead letter the run keeps and no replay took, without a
+    /// value of its input ([`dead_letters`]).
+    DeadLetters,
+    /// `POST /api/dead-letters/replay`: one dead letter run once more ([`replay`]).
+    Replay,
 }
 
 impl Console {
     /// Every console route.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 7] = [
         Self::Model,
         Self::Events,
         Self::Reset,
         Self::Served,
         Self::History,
+        Self::DeadLetters,
+        Self::Replay,
     ];
 
     /// The method it answers.
     pub fn method(self) -> Method {
         match self {
-            Self::Model | Self::Events | Self::Served | Self::History => Method::Get,
-            Self::Reset => Method::Post,
+            Self::Model | Self::Events | Self::Served | Self::History | Self::DeadLetters => {
+                Method::Get
+            }
+            Self::Reset | Self::Replay => Method::Post,
         }
     }
 
@@ -56,6 +66,8 @@ impl Console {
             Self::Reset => "/api/reset",
             Self::Served => "/api/served",
             Self::History => "/api/history",
+            Self::DeadLetters => "/api/dead-letters",
+            Self::Replay => "/api/dead-letters/replay",
         }
     }
 }
@@ -549,4 +561,111 @@ pub fn reset(host: &mut Host, body: &[u8], worlds: Option<Worlds<'_>>) -> Answer
         Err(error @ HostError::World(_)) => Answer::refusal(400, error.to_string()),
         Err(error) => Answer::refusal(500, error.to_string()),
     }
+}
+
+/// What `GET /api/dead-letters` answers on the host's thread: `200` with `{"dead_letters": [...]}`,
+/// each dead letter the run keeps and no replay took ([`Host::dead_letters`]) as
+/// `{"id", "component", "binding", "event", "command", "outcome", "error", "attempts"}`, `event`
+/// and `outcome` left out where it has none (`spindle.observe.DeadLetters`); never a value of its
+/// input. `500` naming why where a store cannot be read.
+pub fn dead_letters(host: &mut Host) -> Answer {
+    match host.dead_letters() {
+        Ok(letters) => Answer {
+            status: 200,
+            body: Some(json!({"dead_letters": letters.iter().map(letter).collect::<Vec<_>>()})),
+            headers: Vec::new(),
+        },
+        Err(error) => Answer::refusal(500, error.to_string()),
+    }
+}
+
+/// One dead letter as `GET /api/dead-letters` lists it: what it was kept with but its input.
+fn letter(kept: &Undelivered) -> Value {
+    let mut entry = serde_json::Map::new();
+    entry.insert("id".to_owned(), json!(kept.id));
+    entry.insert("component".to_owned(), json!(kept.component));
+    entry.insert("binding".to_owned(), json!(kept.letter.binding));
+    if let Some(event) = &kept.letter.event {
+        entry.insert("event".to_owned(), json!(event));
+    }
+    entry.insert("command".to_owned(), json!(kept.letter.command));
+    if let Some(outcome) = &kept.letter.outcome {
+        entry.insert("outcome".to_owned(), json!(outcome));
+    }
+    entry.insert("error".to_owned(), json!(kept.letter.error));
+    entry.insert("attempts".to_owned(), json!(kept.letter.attempts));
+    Value::Object(entry)
+}
+
+/// What `POST /api/dead-letters/replay` answers on the host's thread, its body
+/// `{"component", "id"}` (`spindle.console.Replay`): the dead letter run once more
+/// ([`Host::replayed`]), and `200` with `{"component", "id", "command", "result", "outcome",
+/// "dead_letter"}` (`spindle.console.ReplayAnswer`) of the replay's own run: `result` `ran`,
+/// `refused` or `failed`, `outcome` the outcome it took where it took one, and `dead_letter` the
+/// id a refused or failed replay is kept as again. `400` for a body that names no component and
+/// id; `404` where no dead letter with that id waits in that component; `500` where a store
+/// cannot be read or written.
+/// With the answer, every command a binding invoked on the way that did not execute.
+pub fn replay(host: &mut Host, body: &[u8]) -> (Answer, Vec<Failed>) {
+    let asked = serde_json::from_slice::<Value>(body)
+        .map_err(|error| format!("the replay body is not JSON: {error}"))
+        .and_then(|value| {
+            let component = value.get("component").and_then(Value::as_str);
+            let id = value.get("id").and_then(Value::as_u64);
+            component
+                .zip(id)
+                .map(|(component, id)| (component.to_owned(), id))
+                .ok_or_else(|| {
+                    "the replay body names no dead letter: {\"component\": <name>, \"id\": <id>}"
+                        .to_owned()
+                })
+        });
+    let (component, id) = match asked {
+        Ok(asked) => asked,
+        Err(why) => return (Answer::refusal(400, why), Vec::new()),
+    };
+    let Replayed { own, report } = match host.replayed(&component, id) {
+        Ok(Some(replayed)) => replayed,
+        Ok(None) => {
+            return (
+                Answer::refusal(
+                    404,
+                    format!("no dead letter {id} of {component} waits for a replay"),
+                ),
+                Vec::new(),
+            );
+        }
+        Err(error) => return (Answer::refusal(500, error.to_string()), Vec::new()),
+    };
+    // The replay's own run, as the host took it before anything else settled: an envelope a peer
+    // process sent meanwhile may run in the same call, and is not this answer's.
+    let (command, result, outcome, dead_letter) = match &own {
+        Attempted::Ran(ran) => (&ran.command, "ran", Some(&ran.executed.outcome), None),
+        Attempted::Refused(refused) => (
+            &refused.command,
+            "refused",
+            Some(&refused.outcome),
+            refused.dead_letter,
+        ),
+        Attempted::Failed(failed) => (&failed.command, "failed", None, failed.dead_letter),
+    };
+    let mut answer = serde_json::Map::new();
+    answer.insert("component".to_owned(), json!(component));
+    answer.insert("id".to_owned(), json!(id));
+    answer.insert("command".to_owned(), json!(command));
+    answer.insert("result".to_owned(), json!(result));
+    if let Some(outcome) = outcome {
+        answer.insert("outcome".to_owned(), json!(outcome));
+    }
+    if let Some(dead_letter) = dead_letter {
+        answer.insert("dead_letter".to_owned(), json!(dead_letter));
+    }
+    (
+        Answer {
+            status: 200,
+            body: Some(Value::Object(answer)),
+            headers: Vec::new(),
+        },
+        report.failed,
+    )
 }

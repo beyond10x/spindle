@@ -154,3 +154,65 @@ types:
       - name: refused
         type: String
         summary: Why the reset was refused.
+
+  - name: spindle.console.Replay
+    kind: struct
+    naming:
+      summary: >-
+        The body of `POST /api/dead-letters/replay`, a console route of a served run answered on
+        the host's thread: the dead letter to run once more, by its component and its id, as
+        `GET /api/dead-letters` lists it (`spindle.observe.DeadLetter`). No other member is read.
+    # UNMAPPED: the replay itself has no declaration here, as the reset has none: it runs a
+    # command of whatever specification the run serves.
+    fields:
+      - name: component
+        type: String
+        summary: The component that keeps the dead letter.
+      - name: id
+        type: Integer
+        summary: Its id in that component's store.
+    invariants:
+      - id >= 1
+
+  - name: spindle.console.ReplayResult
+    kind: enum
+    naming:
+      summary: >-
+        What the replayed command did. `ran`: it took effect, and what its events lead to ran
+        after it. `refused`: an outcome that declares an error refused it. `failed`: the kernel
+        rejected it. A refused or failed replay is kept as a new dead letter.
+    variants: [ran, refused, failed]
+
+  - name: spindle.console.ReplayAnswer
+    kind: struct
+    naming:
+      summary: >-
+        The answer of `POST /api/dead-letters/replay`, `200`, once the command ran: once, without
+        the retries or the escalation of its binding, attributed to its binding as the first run
+        was. The dead letter is marked replayed before the command runs, so it is replayed at most
+        once, after a restart too. `400`: the body is no `spindle.console.Replay`. `404`: no dead
+        letter with this id waits for a replay in that component, because none was kept, it was
+        replayed, a reset forgot it, or the component is not running. `500`: a store could not be
+        read or written. A refusal answers `{"refused": <why>}`.
+    fields:
+      - name: component
+        type: String
+        summary: The component that kept the dead letter and ran the command.
+      - name: id
+        type: Integer
+        summary: The id of the dead letter replayed.
+      - name: command
+        type: String
+        summary: The qualified name of the command.
+      - name: result
+        type: spindle.console.ReplayResult
+      - name: outcome
+        type: Optional<String>
+        summary: The outcome the command took; absent where the kernel rejected it.
+      - name: dead_letter
+        type: Optional<Integer>
+        summary: >-
+          The id of the new dead letter a refused or failed replay is kept as, in the same
+          component; absent where the command ran.
+    invariants:
+      - id >= 1

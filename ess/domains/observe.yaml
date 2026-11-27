@@ -873,6 +873,69 @@ types:
       - attempts >= 1
       - attempts <= 5
 
+  - name: spindle.observe.DeadLetter
+    kind: struct
+    naming:
+      summary: >-
+        One command a binding or a periodic binding invoked whose last attempt was refused or did
+        not execute, and that its binding did not escalate, kept in the store of the component
+        that accepts it: with `--drop-retries` too, and after the retries of a binding that
+        retries. A binding whose input was unmet ran no attempt and keeps none. The command's
+        input is kept with it for its replay (`POST /api/dead-letters/replay`) and never listed:
+        like `RefusedBound`, an entry names the error and never a value of its fields. A dead
+        letter survives a restart on the same state, is no event (`GET /api/events` never lists
+        it), is replayed at most once, and is forgotten by a reset (`POST /api/reset`). Spindle's
+        own (`docs/design/spindle.md` § 11, dead letters).
+    fields:
+      - name: id
+        type: Integer
+        summary: >-
+          Its id in its component's store, which a replay names with the component; ids grow and
+          are never reused while the store is kept.
+      - name: component
+        type: String
+        summary: The component that accepts the command and keeps the dead letter.
+      - name: binding
+        type: String
+        summary: The binding id, of an event binding or a periodic one.
+      - name: event
+        type: Optional<String>
+        summary: >-
+          The qualified name of the event the binding carried; absent for a periodic binding's
+          command.
+      - name: command
+        type: String
+        summary: The qualified name of the command.
+      - name: outcome
+        type: Optional<String>
+        summary: The refusing outcome the model selected; absent where the kernel rejected it.
+      - name: error
+        type: String
+        summary: >-
+          The qualified name of the error the refusing outcome declares, or, where the kernel
+          rejected the command, the kind of its error, as `spindle_command_failures_total` labels
+          it.
+      - name: attempts
+        type: Integer
+        summary: >-
+          How many times it was run, the last included: more than 1 only where the binding
+          retries; 1 for a replay that was kept again.
+    invariants:
+      - id >= 1
+      - attempts >= 1
+      - attempts <= 5
+
+  - name: spindle.observe.DeadLetters
+    kind: struct
+    naming:
+      summary: >-
+        The answer of `GET /api/dead-letters`, a console route of a served run, answered on the
+        host's thread: every dead letter that waits for a replay, component by component in name
+        order, each component's by id.
+    fields:
+      - name: dead_letters
+        type: List<spindle.observe.DeadLetter>
+
   - name: spindle.observe.SeedStateKind
     kind: enum
     naming:

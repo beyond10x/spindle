@@ -252,6 +252,37 @@ pub struct Committed {
     pub event: Event,
 }
 
+/// One command a binding or a periodic binding invoked whose last attempt was refused or did not
+/// execute, and that its binding did not escalate: kept by the store of the component that
+/// accepts it ([`Store::keep_dead_letter`]) so that it can be run once more
+/// (`story:dead-letters-kept-and-replayed`). It is no event: [`Store::events_after`] never
+/// answers it. Its input is kept for that run alone; what lists a dead letter names no value of
+/// it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeadLetter {
+    /// The binding that invoked the command.
+    pub binding: String,
+    /// The qualified event the binding carried; `None` for a periodic binding's command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event: Option<String>,
+    /// The qualified command.
+    pub command: String,
+    /// The input its last attempt was sent.
+    pub input: serde_json::Map<String, Value>,
+    /// The refusing outcome of its last attempt; `None` where the kernel rejected it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<String>,
+    /// The qualified error the refusing outcome declares, or the kind of the kernel's error.
+    pub error: String,
+    /// How many times it was run, the last included.
+    pub attempts: u32,
+}
+
+/// What a store that keeps no dead letters answers to [`Store::keep_dead_letter`].
+fn no_dead_letters() -> StoreError {
+    StoreError::Backend("this store keeps no dead letters".to_owned())
+}
+
 /// The instances `writes` write, as [`Committed::instances`] lists them: each once, ordered by
 /// entity and then by the identity's canonical JSON text.
 pub fn instances_of(writes: &[Write]) -> Vec<(String, Value)> {
@@ -512,6 +543,67 @@ pub trait Store {
     fn egress_posted(&mut self, call: &str, position: u64) -> Result<(), StoreError> {
         let _ = (call, position);
         Err(no_cursor())
+    }
+
+    /// Keeps `letter` as a dead letter, after a restart too where the store keeps its state, and
+    /// answers its id: never `0`, and greater than every id this store answered before, a dead
+    /// letter's it forgot included. A dead letter is no event ([`Store::events_after`] never
+    /// answers it); [`Store::forget_events`] forgets it with the events.
+    ///
+    /// This default, for a store that keeps no dead letters, keeps nothing.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be written, or, this default, keeps no dead
+    /// letters.
+    fn keep_dead_letter(&mut self, letter: &DeadLetter) -> Result<u64, StoreError> {
+        let _ = letter;
+        Err(no_dead_letters())
+    }
+
+    /// Every dead letter kept since the store last forgot its events and not taken
+    /// ([`Store::take_dead_letter`]), each with its id, by id. This default keeps none.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read.
+    fn dead_letters(&mut self) -> Result<Vec<(u64, DeadLetter)>, StoreError> {
+        Ok(Vec::new())
+    }
+
+    /// Takes the dead letter `id` for its replay: once this returns it, the store records it
+    /// taken, after a restart too, and neither lists nor answers it again. `None` where no dead
+    /// letter with this id waits: never kept, taken already, or forgotten. This default keeps
+    /// none.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read or written.
+    fn take_dead_letter(&mut self, id: u64) -> Result<Option<DeadLetter>, StoreError> {
+        let _ = id;
+        Ok(None)
+    }
+
+    /// An id no smaller than any this store answered for a dead letter
+    /// ([`Store::keep_dead_letter`]), forgotten ones included; `0` where it answered none. What a
+    /// reset that replaces the store with an empty one hands that one
+    /// ([`Store::continue_dead_letter_ids`]). This default, for a store that keeps no dead
+    /// letters, answers `0`.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read.
+    fn last_dead_letter_id(&mut self) -> Result<u64, StoreError> {
+        Ok(0)
+    }
+
+    /// Makes every id this store answers for a dead letter from now on greater than `after`, an
+    /// id the store it replaces answered ([`Store::last_dead_letter_id`]), so a replay naming a
+    /// dead letter the replaced store kept finds none here. The ids already answered stay; an
+    /// `after` below them changes nothing. This default, for a store that keeps no dead letters,
+    /// does nothing.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be written.
+    fn continue_dead_letter_ids(&mut self, after: u64) -> Result<(), StoreError> {
+        let _ = after;
+        Ok(())
     }
 }
 
@@ -888,6 +980,10 @@ struct Held {
     events: Events,
     /// The id of its log of events ([`Store::events_id`]).
     log: LogId,
+    /// The dead letters it keeps ([`Store::keep_dead_letter`]), by id.
+    letters: BTreeMap<u64, DeadLetter>,
+    /// The id of the last dead letter it kept, `0` before the first.
+    lettered: u64,
 }
 
 /// The id of a [`MemoryStore`]'s log of events: random, never `0`, drawn when the store is made.
@@ -1288,13 +1384,51 @@ impl Store for MemoryStore {
         })
     }
 
-    /// Drops every event held; a read still holding their chunks reads them still.
+    /// Drops every event held, and every dead letter; a read still holding their chunks reads
+    /// them still.
     fn forget_events(&mut self) -> Result<(), StoreError> {
         let mut held = self.held.write().unwrap_or_else(PoisonError::into_inner);
         held.events = Events {
             position: held.events.position,
             ..Events::default()
         };
+        held.letters.clear();
+        Ok(())
+    }
+
+    fn keep_dead_letter(&mut self, letter: &DeadLetter) -> Result<u64, StoreError> {
+        let mut held = self.held.write().unwrap_or_else(PoisonError::into_inner);
+        held.lettered += 1;
+        let id = held.lettered;
+        held.letters.insert(id, letter.clone());
+        Ok(id)
+    }
+
+    fn dead_letters(&mut self) -> Result<Vec<(u64, DeadLetter)>, StoreError> {
+        let held = self.held.read().unwrap_or_else(PoisonError::into_inner);
+        Ok(held
+            .letters
+            .iter()
+            .map(|(id, letter)| (*id, letter.clone()))
+            .collect())
+    }
+
+    fn take_dead_letter(&mut self, id: u64) -> Result<Option<DeadLetter>, StoreError> {
+        let mut held = self.held.write().unwrap_or_else(PoisonError::into_inner);
+        Ok(held.letters.remove(&id))
+    }
+
+    fn last_dead_letter_id(&mut self) -> Result<u64, StoreError> {
+        Ok(self
+            .held
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .lettered)
+    }
+
+    fn continue_dead_letter_ids(&mut self, after: u64) -> Result<(), StoreError> {
+        let mut held = self.held.write().unwrap_or_else(PoisonError::into_inner);
+        held.lettered = held.lettered.max(after);
         Ok(())
     }
 

@@ -37,8 +37,8 @@ use tokio_postgres::error::SqlState;
 
 use crate::postgres::{Database, PostgresStore, prefix, session};
 use crate::sqlite::{
-    ENTITY, Log, MARKS, PREFIX, REMOVED, SPECIFICATION, TENANT, WRITTEN, WRITTEN_SCHEMA, Written,
-    backend, meta,
+    DEAD_LETTERS, ENTITY, Log, MARKS, PREFIX, REMOVED, SPECIFICATION, TENANT, WRITTEN,
+    WRITTEN_SCHEMA, Written, backend, meta,
 };
 use crate::store::StoreError;
 
@@ -256,7 +256,8 @@ impl Target {
 
     /// Whether the tables hold no stream a move of `source` could land on: neither the stream
     /// of any entity in `declared` (those the specification declares) or in the file, nor the
-    /// mark of a log holding writes that recorded no entity's version ([`MARKS`]).
+    /// mark of a log holding writes that recorded no entity's version ([`MARKS`]), nor the stream
+    /// of its dead letters ([`DEAD_LETTERS`]): tables holding only dead letters are not empty.
     ///
     /// Every write of a PostgreSQL store appends to the stream of each entity it writes, and a
     /// move to the mark before anything else, so tables holding any of Spindle's writes hold
@@ -272,12 +273,13 @@ impl Target {
             .chain(&source.read()?.entities)
             .map(String::as_str)
             .collect();
-        let mut streams = Vec::with_capacity(entities.len() + 1);
+        let mut streams = Vec::with_capacity(entities.len() + 2);
         for entity in entities {
             streams.push(StreamId::new(self.tenant.clone(), ENTITY, entity).map_err(backend)?);
         }
-        let (kind, id) = MARKS;
-        streams.push(StreamId::new(self.tenant.clone(), kind, id).map_err(backend)?);
+        for (kind, id) in [MARKS, DEAD_LETTERS] {
+            streams.push(StreamId::new(self.tenant.clone(), kind, id).map_err(backend)?);
+        }
         for stream in &streams {
             let version = self
                 .runtime

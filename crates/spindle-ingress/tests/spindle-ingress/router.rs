@@ -192,6 +192,18 @@ fn requests(surface: &Surface) -> Vec<(String, String, Option<String>, String)> 
         ("GET".into(), "/api/events".into(), None, String::new()),
         ("GET".into(), "/api/served".into(), None, String::new()),
         ("GET".into(), "/api/reset".into(), None, String::new()),
+        (
+            "GET".into(),
+            "/api/dead-letters".into(),
+            None,
+            String::new(),
+        ),
+        (
+            "POST".into(),
+            "/api/dead-letters/replay".into(),
+            json.clone(),
+            r#"{"component": "desk", "id": 1}"#.into(),
+        ),
         ("POST".into(), "/api/reset".into(), json, String::new()),
         ("GET".into(), view, None, String::new()),
     ]
@@ -265,4 +277,58 @@ fn the_router_answers_without_a_listener() {
             .all(|answer| answer.allow.is_some()),
         "every 405 names what the path answers: {answers:?}"
     );
+}
+
+/// `GET /api/dead-letters` and `POST /api/dead-letters/replay` are console routes: a surface
+/// served with the console answers them, one without it answers each as a path no route has
+/// (story:dead-letters-kept-and-replayed).
+#[test]
+fn the_dead_letter_routes_are_not_served_with_the_console_off() {
+    let ir = ir();
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let mut host = host(ir.clone(), state.path());
+    let off = Surface::new(&ir, &[COMPONENT.to_owned()], None).expect("the desk surface is served");
+    let on = surface(&ir);
+    let request = |method: &str, path: &str, body: &str| Request {
+        method: method.to_owned(),
+        path: path.to_owned(),
+        query: String::new(),
+        content_type: Some("application/json".to_owned()),
+        body: body.as_bytes().to_vec(),
+    };
+    let replay = r#"{"component": "desk", "id": 1}"#;
+    for (method, path, body) in [
+        ("GET", "/api/dead-letters", ""),
+        ("POST", "/api/dead-letters/replay", replay),
+    ] {
+        let answered = spindle_ingress::route(&off, &mut host, request(method, path, body));
+        assert_eq!(
+            answered.response.status, 404,
+            "{method} {path} with the console off"
+        );
+        assert_eq!(
+            answered.response.body,
+            format!(r#"{{"refused":"no route serves {path}"}}"#),
+            "{method} {path} answers as a path no route has"
+        );
+    }
+    let listed = spindle_ingress::route(&on, &mut host, request("GET", "/api/dead-letters", ""));
+    assert_eq!(listed.response.status, 200, "{:?}", listed.response);
+    assert_eq!(listed.response.body, r#"{"dead_letters":[]}"#);
+    let replayed = spindle_ingress::route(
+        &on,
+        &mut host,
+        request("POST", "/api/dead-letters/replay", replay),
+    );
+    assert_eq!(replayed.response.status, 404, "{:?}", replayed.response);
+    assert_ne!(
+        replayed.response.body, r#"{"refused":"no route serves /api/dead-letters/replay"}"#,
+        "with the console the route is served, and no dead letter has the id"
+    );
+    let malformed = spindle_ingress::route(
+        &on,
+        &mut host,
+        request("POST", "/api/dead-letters/replay", r#"{"id": 1}"#),
+    );
+    assert_eq!(malformed.response.status, 400, "{:?}", malformed.response);
 }

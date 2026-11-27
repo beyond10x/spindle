@@ -53,8 +53,8 @@ use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::store::{
-    Change, Committed, Origin, Position, Provenance, Reading, Removal, Row, Scan, Scanned, Store,
-    StoreError, Stored, Write, first_writes, identity_from_key, moved,
+    Change, Committed, DeadLetter, Origin, Position, Provenance, Reading, Removal, Row, Scan,
+    Scanned, Store, StoreError, Stored, Write, first_writes, identity_from_key, moved,
 };
 
 /// The table prefix Spindle's events are kept under.
@@ -121,6 +121,20 @@ const EGRESS: &str = "egress:";
 /// The event of an egress cursor's stream: `{"position": <n>}`, the position of the last write
 /// whose events were posted to the call.
 const EGRESS_MARK: &str = "spindle.egress";
+/// The stream of the store's dead letters ([`Store::keep_dead_letter`]): one [`DEAD_LETTER`]
+/// event for each, its id the event's version plus the greatest `after` of the [`CONTINUED`]
+/// events before it, and one [`REPLAYED`] event for each taken ([`Store::take_dead_letter`]).
+/// Of the stream type [`MARKS`] is of; no read of the events answers it
+/// ([`LogStore::groups_after`]), and only those after the last [`RESET`] mark are kept.
+pub(crate) const DEAD_LETTERS: (&str, &str) = ("spindle:log", "dead-letters");
+/// The event of [`DEAD_LETTERS`] that keeps one, its body the [`DeadLetter`].
+const DEAD_LETTER: &str = "spindle.dead-letter";
+/// The event of [`DEAD_LETTERS`] that takes one, `{"id": <id>}`.
+const REPLAYED: &str = "spindle.replayed";
+/// The event of [`DEAD_LETTERS`] that continues the ids of the store a reset replaced,
+/// `{"after": <id>}` ([`Store::continue_dead_letter_ids`]): every dead letter kept after it has
+/// an id greater than `after`.
+const CONTINUED: &str = "spindle.dead-letter-ids-continued";
 /// Who records the change: the runtime itself, the actor of an append whose cause names no actor
 /// ([`LogStore::attributed`]).
 const ACTOR: &str = "spindle-kernel";
@@ -216,6 +230,9 @@ pub struct LogStore<L> {
     /// How far the feed holds this store's own appends, shared with its reading handle where
     /// that reads through the same event store ([`LogStore::published`]).
     own: Arc<Own>,
+    /// How far this store read the stream [`DEAD_LETTERS`] for the ids it continues, and the
+    /// greatest `after` of the [`CONTINUED`] events up to there ([`LogStore::offset_before`]).
+    continued: (u64, u64),
 }
 
 /// The feed positions of a store's own appends: the last one it committed, and the last one the
@@ -383,6 +400,7 @@ impl<L: Log> LogStore<L> {
             origin: None,
             outcome: None,
             own: Arc::default(),
+            continued: (0, 0),
         })
     }
 
@@ -404,6 +422,7 @@ impl<L: Log> LogStore<L> {
             origin: None,
             outcome: None,
             own: Arc::clone(&self.own),
+            continued: (0, 0),
         }
     }
 
@@ -853,6 +872,82 @@ impl<L: Log> Store for LogStore<L> {
         }])
         .map_err(backend)
     }
+
+    /// Appends one [`DEAD_LETTER`] event to the stream [`DEAD_LETTERS`], as an append group of
+    /// its own; its id is the event's version in that stream past the ids the stream was told to
+    /// continue before it ([`CONTINUED`]).
+    fn keep_dead_letter(&mut self, letter: &DeadLetter) -> Result<u64, StoreError> {
+        let body = serde_json::to_value(letter).map_err(|error| {
+            StoreError::Backend(format!("a dead letter does not encode: {error}"))
+        })?;
+        let event = NewEvent::new(DEAD_LETTER, SCHEMA, body).map_err(backend)?;
+        let landed = self
+            .appended(vec![StreamAppend {
+                stream: self.dead_letter_stream()?,
+                expected: Expected::Any,
+                events: vec![event],
+            }])
+            .map_err(backend)?;
+        let version = landed
+            .appends
+            .first()
+            .map(|append| append.last_version)
+            .ok_or_else(|| StoreError::Backend("the dead letter was not appended".to_owned()))?;
+        Ok(self.offset_before(version)? + version)
+    }
+
+    /// Read from the stream [`DEAD_LETTERS`], from the first event after the last reset mark
+    /// ([`RESET`]) on.
+    fn dead_letters(&mut self) -> Result<Vec<(u64, DeadLetter)>, StoreError> {
+        Ok(self.ledger()?.letters.into_iter().collect())
+    }
+
+    /// Appends one [`REPLAYED`] event naming `id` to the stream [`DEAD_LETTERS`], at the version
+    /// the stream stood at when it was read: a dead letter taken in between refuses the take.
+    fn take_dead_letter(&mut self, id: u64) -> Result<Option<DeadLetter>, StoreError> {
+        let stream = self.dead_letter_stream()?;
+        let ledger = self.ledger()?;
+        let Some(letter) = ledger.letters.get(&id).cloned() else {
+            return Ok(None);
+        };
+        let event =
+            NewEvent::new(REPLAYED, SCHEMA, serde_json::json!({"id": id})).map_err(backend)?;
+        self.appended(vec![StreamAppend {
+            stream,
+            expected: Expected::Exact(ledger.version),
+            events: vec![event],
+        }])
+        .map_err(|error| match error {
+            EventLogError::Conflict { .. } => StoreError::Backend(format!(
+                "another writer kept or took a dead letter while dead letter {id} was taken"
+            )),
+            other => backend(other),
+        })?;
+        Ok(Some(letter))
+    }
+
+    /// The stream's version past the ids it was told to continue: no id it answered is greater.
+    fn last_dead_letter_id(&mut self) -> Result<u64, StoreError> {
+        let ledger = self.ledger()?;
+        Ok(ledger.offset + ledger.version)
+    }
+
+    /// Appends one [`CONTINUED`] event naming `after` to the stream [`DEAD_LETTERS`], unless the
+    /// next id is past `after` already.
+    fn continue_dead_letter_ids(&mut self, after: u64) -> Result<(), StoreError> {
+        if self.last_dead_letter_id()? >= after {
+            return Ok(());
+        }
+        let event = NewEvent::new(CONTINUED, SCHEMA, serde_json::json!({"after": after}))
+            .map_err(backend)?;
+        self.appended(vec![StreamAppend {
+            stream: self.dead_letter_stream()?,
+            expected: Expected::Any,
+            events: vec![event],
+        }])
+        .map_err(backend)?;
+        Ok(())
+    }
 }
 
 impl<L: Log> LogStore<L> {
@@ -862,7 +957,114 @@ impl<L: Log> LogStore<L> {
     }
 }
 
+/// What the stream [`DEAD_LETTERS`] holds ([`LogStore::ledger`]).
+struct Ledger {
+    /// The dead letters it keeps and no [`REPLAYED`] event took, by id.
+    letters: BTreeMap<u64, DeadLetter>,
+    /// What the id of a dead letter appended next adds to its version: the greatest `after` a
+    /// [`CONTINUED`] event named, `0` for none.
+    offset: u64,
+    /// The version of the last event read, `0` for none.
+    version: u64,
+}
+
 impl<L: Log> LogStore<L> {
+    /// The stream [`DEAD_LETTERS`] of the store's tenant.
+    fn dead_letter_stream(&self) -> Result<StreamId, StoreError> {
+        let (kind, id) = DEAD_LETTERS;
+        StreamId::new(self.tenant.clone(), kind, id).map_err(backend)
+    }
+
+    /// The greatest `after` of the [`CONTINUED`] events of the stream [`DEAD_LETTERS`] before
+    /// `version`, `0` for none: what the id of the dead letter at `version` adds to it. Reads on
+    /// from where the last call stopped, so keeping one dead letter after another does not read
+    /// the stream again from its start.
+    fn offset_before(&mut self, version: u64) -> Result<u64, StoreError> {
+        let stream = self.dead_letter_stream()?;
+        let (mut read, mut offset) = self.continued;
+        if read >= version {
+            (read, offset) = (0, 0);
+        }
+        'pages: while read + 1 < version {
+            let page = self
+                .call(self.log.read_stream(&stream, read, MAX_READ_LIMIT))
+                .map_err(backend)?;
+            if page.events.is_empty() {
+                break;
+            }
+            for event in page.events {
+                if event.version >= version {
+                    break 'pages;
+                }
+                read = event.version;
+                if event.name == CONTINUED {
+                    let after = event.data.get("after").and_then(Value::as_u64);
+                    offset = offset.max(after.unwrap_or(0));
+                }
+            }
+            if page.end_of_stream {
+                break;
+            }
+        }
+        self.continued = (read, offset);
+        Ok(offset)
+    }
+
+    /// The stream [`DEAD_LETTERS`] read whole: each dead letter's id is its
+    /// version plus the greatest `after` of the [`CONTINUED`] events before it, and only those
+    /// appended after the last reset mark ([`RESET`]), compared by feed position, are kept.
+    fn ledger(&self) -> Result<Ledger, StoreError> {
+        let reset = StreamId::new(self.tenant.clone(), RESET.0, RESET.1).map_err(backend)?;
+        let forgotten = self.last(&reset)?.map_or(0, |(_, mark)| mark.global_seq);
+        let stream = self.dead_letter_stream()?;
+        let mut ledger = Ledger {
+            letters: BTreeMap::new(),
+            offset: 0,
+            version: 0,
+        };
+        loop {
+            let page = self
+                .call(
+                    self.log
+                        .read_stream(&stream, ledger.version, MAX_READ_LIMIT),
+                )
+                .map_err(backend)?;
+            let read = page.events.len();
+            for event in page.events {
+                ledger.version = event.version;
+                if event.name == CONTINUED {
+                    let after = event.data.get("after").and_then(Value::as_u64);
+                    ledger.offset = ledger.offset.max(after.unwrap_or(0));
+                    continue;
+                }
+                if event.global_seq <= forgotten {
+                    continue;
+                }
+                match event.name.as_str() {
+                    DEAD_LETTER => {
+                        let letter =
+                            serde_json::from_value::<DeadLetter>(event.data).map_err(|error| {
+                                StoreError::Backend(format!(
+                                    "the dead letter at version {} does not read: {error}",
+                                    event.version
+                                ))
+                            })?;
+                        ledger.letters.insert(ledger.offset + event.version, letter);
+                    }
+                    REPLAYED => {
+                        if let Some(id) = event.data.get("id").and_then(Value::as_u64) {
+                            ledger.letters.remove(&id);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if page.end_of_stream || read == 0 {
+                return Ok(ledger);
+            }
+        }
+    }
+
     /// What an append records about the command it is for ([`meta`]), its actor the actor of the
     /// caller its writes are attributed to ([`Provenance::sender`]) where the cause names one.
     /// The request id stays fresh for each append: a read of the feed tells one write from the
@@ -904,6 +1106,11 @@ impl<L: Log> LogStore<L> {
 
     /// Appends `appends` as one append group.
     fn append(&self, appends: Vec<StreamAppend>) -> Result<(), EventLogError> {
+        self.appended(appends).map(drop)
+    }
+
+    /// Appends `appends` as one append group, and answers where each landed.
+    fn appended(&self, appends: Vec<StreamAppend>) -> Result<AppendGroupResult, EventLogError> {
         let entries: Vec<&Vec<NewEvent>> = appends.iter().map(|append| &append.events).collect();
         let hash =
             request_hash(&entries).map_err(|error| EventLogError::Backend(error.to_string()))?;
@@ -914,7 +1121,7 @@ impl<L: Log> LogStore<L> {
         };
         let landed = self.call(self.log.append_group(&group))?;
         self.landed(&landed);
-        Ok(())
+        Ok(landed)
     }
 
     /// Records the feed position of the last event of an append group this store committed: a
@@ -1256,10 +1463,10 @@ impl<L: Log> LogStore<L> {
     /// The events committed by the append groups after the one ending at feed position
     /// `position`, in commit order, group by group up to the one that brings them to `limit`
     /// ([`crate::whole_writes`]), each at its group's last feed position, attributed to the
-    /// command its group's `spindle.written` events name. The rows, removals and entity versions
-    /// the groups appended are left out, so a group that committed no event of a command answers
-    /// nothing. Read once the feed answers every write this store committed
-    /// ([`LogStore::published`]).
+    /// command its group's `spindle.written` events name. The rows, removals, entity versions and
+    /// dead letters ([`DEAD_LETTERS`]) the groups appended are left out, so a group that committed
+    /// no event of a command answers nothing. Read once the feed answers every write this store
+    /// committed ([`LogStore::published`]).
     ///
     /// Where the read stops before the feed's end, a reset mark ([`RESET`]) past where it stopped
     /// forgets every event it read: the feed is then read again from the last mark.
@@ -1466,6 +1673,7 @@ impl<L: Log> LogStore<L> {
                 }
                 if stream == MARKS
                     || stream == SPECIFICATION
+                    || stream == DEAD_LETTERS
                     || event.name == ROW
                     || event.name == REMOVED
                     || (event.stream_type == MARKS.0 && event.stream_id.starts_with(EGRESS))
