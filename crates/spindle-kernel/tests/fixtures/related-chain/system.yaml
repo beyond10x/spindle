@@ -1,0 +1,50 @@
+format: ess/34
+system: forge
+version: v1
+summary: Instances created from the formation their workload or their lease names, two rows away from the request.
+domains:
+  - forge.plant
+  - forge.yard
+conversions:
+  - from: forge.plant.Code
+    to: forge.plant.Tag
+    because: >-
+      A formation's code is shown on a badge as a tag where it fits one; the tag bounds its own
+      length and checks that bound where it is filled.
+components:
+  - component: plant
+    summary: Registers formations and workloads, and creates instances and badges from them.
+    owns:
+      domains:
+        - forge.plant
+    accepts:
+      commands:
+        - forge.plant.RegisterFormation
+        - forge.plant.ReadyFormation
+        - forge.plant.RegisterWorkload
+        - forge.plant.CreateInstance
+        - forge.plant.BadgeWorkload
+        - forge.plant.BadgeFormation
+        - forge.plant.LeaseInstance
+        - forge.plant.NoteLease
+    publishes:
+      events:
+        - forge.plant.FormationRegistered
+        - forge.plant.FormationReadied
+        - forge.plant.WorkloadRegistered
+        - forge.plant.InstanceCreated
+        - forge.plant.BadgeIssued
+        - forge.plant.InstanceLeased
+    reached_by: in_process
+  - component: yard
+    summary: Holds the leases that name a formation.
+    owns:
+      domains:
+        - forge.yard
+    accepts:
+      commands:
+        - forge.yard.RegisterLease
+    publishes:
+      events:
+        - forge.yard.LeaseRegistered
+    reached_by: in_process

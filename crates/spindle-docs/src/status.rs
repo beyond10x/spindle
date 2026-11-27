@@ -260,6 +260,13 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "Values read through two rows",
+        "A value {related: {via: [input.<field>, <field>], field}} in sets: or an event payload reads the field or the state of the row a reference of the row the input names names, each row from the store as it was before the outcome, as ESS's interpreter reads it: an absent Optional reference on the way leaves the value absent, a row none carries gives no value and nothing is written, a field filled through a declared conversion is checked as a one-hop read is, and a row of an entity another component owns is read only where its owner's store is reached. A chain that starts at a field of the subject stays refused.",
+        "/docs/concepts/specification",
+        "crates/spindle-kernel/tests/spindle-kernel/related_chain_values.rs::a_value_source_through_two_rows_reads_the_far_row",
+    ),
+    shipped(
+        "Execution",
         "Set outcomes",
         "An outcome that declares instances: selects every row of its entity whose filter holds, read from the store before the outcome, and moves, updates or removes each in ascending order of identity as ESS's interpreter does; a move skips a row outside its from states, and zero rows selected is a successful outcome. {count: changed} reads how many rows changed, and an event declared once per changed row is published once for each. A filter that walks the rows of an entity stays refused, by name.",
         "/docs/concepts/specification",

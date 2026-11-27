@@ -1,0 +1,25 @@
+format: ess/34
+system: beacon
+version: v1
+summary: A badge asked for at a counter, its event publishing the code the answer returns as a short code.
+domains:
+  - beacon.counter
+conversions:
+  - from: beacon.counter.Code
+    to: beacon.counter.ShortCode
+    because: >-
+      A code is shown as a short code where it fits one; the short code bounds its own length and
+      checks that bound where it is filled.
+components:
+  - component: counter
+    summary: Answers badge requests for callers outside the process.
+    owns:
+      domains:
+        - beacon.counter
+    accepts:
+      commands:
+        - beacon.counter.AskBadge
+    publishes:
+      events:
+        - beacon.counter.BadgeAsked
+    reached_by: network

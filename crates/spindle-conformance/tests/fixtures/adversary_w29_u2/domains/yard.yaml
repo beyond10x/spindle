@@ -1,0 +1,43 @@
+domain: forge.yard
+summary: A lease names the formation it holds.
+types:
+  - name: forge.yard.LeaseId
+    kind: newtype
+    of: String
+entities:
+  - name: forge.yard.Lease
+    identity:
+      name: lease_id
+      type: forge.yard.LeaseId
+    fields:
+      - name: formation_id
+        type: forge.plant.FormationId
+    relations:
+      - {name: formation, kind: references, target: forge.plant.Formation, cardinality: one, via: formation_id}
+    lifecycle:
+      initial: Held
+      states: [Held]
+      terminal: [Held]
+errors: []
+commands:
+  - name: forge.yard.RegisterLease
+    input:
+      - name: lease_id
+        type: forge.yard.LeaseId
+      - name: formation_id
+        type: forge.plant.FormationId
+    outcomes:
+      - name: registered
+        creates: forge.yard.Lease
+        instance: lease_id
+        sets:
+          formation_id: input.formation_id
+        emits: [forge.yard.LeaseRegistered]
+        payload:
+          forge.yard.LeaseRegistered: {lease_id: input.lease_id}
+        summary: The lease is registered on the formation it names.
+events:
+  - name: forge.yard.LeaseRegistered
+    fields:
+      - name: lease_id
+        type: forge.yard.LeaseId

@@ -821,3 +821,86 @@ fn the_executed_set_is_held() {
         "{printed}"
     );
 }
+
+/// Whether `scenario` expects one of `outcomes`.
+fn expects(scenario: &ess_conformance::ConformanceScenario, outcomes: &[&str]) -> bool {
+    scenario.steps.iter().any(|step| {
+        matches!(
+            step,
+            ess_conformance::scenario::ScenarioStep::ExpectOutcome { outcome }
+                if outcomes.contains(&outcome.to_string().as_str())
+        )
+    })
+}
+
+/// Runs `conform` on the fixture `spec` and asserts it executes every scenario ESS's synthesis
+/// writes that expects one of `outcomes`, none skipped as `unsupported`, and that every executed
+/// scenario passes.
+fn conform_runs_every_scenario_selecting(spec: &str, outcomes: &[&str]) {
+    let loaded = spindle_spec::load(&root().join(spec)).expect("the fixture loads");
+    let synthesis = spindle_conformance::synthesize(&loaded).expect("the suite synthesises");
+    for outcome in outcomes {
+        assert!(
+            synthesis
+                .suite
+                .scenarios
+                .values()
+                .any(|scenario| expects(scenario, &[outcome])),
+            "ESS synthesises a scenario that selects {outcome}"
+        );
+    }
+    let selecting = synthesis
+        .suite
+        .scenarios
+        .iter()
+        .filter(|(_, scenario)| expects(scenario, outcomes))
+        .map(|(id, _)| id.to_string())
+        .collect::<Vec<_>>();
+    let dir = scratch();
+    let (output, _, results) = run_spec(dir.path(), spec);
+    let scenarios = scenarios(&results);
+    for id in &selecting {
+        let scenario = scenarios
+            .iter()
+            .find(|scenario| scenario["scenario"] == id.as_str())
+            .unwrap_or_else(|| panic!("{id} is run: {results}"));
+        assert_ne!(
+            scenario["status"], "unsupported",
+            "{id} is executed, not skipped: {scenario:#}"
+        );
+    }
+    for scenario in scenarios {
+        if scenario["status"] != "unsupported" {
+            assert_eq!(scenario["status"], "passed", "{scenario:#}");
+        }
+    }
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+/// `conform` on a specification whose outcomes fill an event field and a `sets:` field, and
+/// publish a stored field, through a declared conversion (`story:payload-field-through-conversion`).
+#[test]
+fn conform_runs_an_outcome_with_a_conversion() {
+    conform_runs_every_scenario_selecting(
+        "crates/spindle-conformance/tests/fixtures/payload-conversion",
+        &[
+            "beacon.desk.IssueBadge/issued",
+            "beacon.desk.LabelDesk/labelled",
+        ],
+    );
+}
+
+/// `conform` on a specification whose outcomes read a value through two rows: the row the input
+/// names, then the row a field of it names, one of them owned by another component
+/// (`story:value-source-through-two-rows`).
+#[test]
+fn conform_runs_a_value_source_through_two_rows() {
+    conform_runs_every_scenario_selecting(
+        "crates/spindle-kernel/tests/fixtures/related-chain",
+        &[
+            "forge.plant.CreateInstance/created",
+            "forge.plant.BadgeWorkload/issued",
+            "forge.plant.LeaseInstance/leased",
+        ],
+    );
+}

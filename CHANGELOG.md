@@ -26,6 +26,23 @@ are Spindle's releases.
   event binding invoked: every attempt, a refused or failed one included, with the input the
   binding sent, so a scenario's invocation checks execute where they were unsupported
   (`story:binding-failure-escalates`).
+- An outcome whose payload or `sets:` field is filled through a declared conversion
+  (`conversions:`) runs in `run` and `conform`, as ESS's interpreter runs it: the value is passed
+  on unchanged, and a value read from a row (`{subject: …}`, `{changed: …}`, `{related: …}`) is
+  checked against the conversion's source and target type, one the target refuses answered
+  `invalid input` (`400` when served) before anything is written, where ESS refuses it as the
+  request's. Before, a request that selected such an outcome was refused `unsupported: the
+  conversion … into <field>`. A `{response: …}` field through a conversion stays refused by name,
+  as ESS does not interpret it (`story:payload-field-through-conversion`).
+- A value source that reads a field or the state of a row through another row
+  (`{related: {via: [input.<field>, <field>], field: …}}`) runs in `run` and `conform`, as ESS's
+  interpreter reads it: the row the input names, then the row its reference names, each as the
+  store held it before the outcome. An absent `Optional` reference on the way leaves the value
+  absent; a row none carries gives `no_value` and nothing is written; a field read through a
+  declared conversion is checked as a one-hop read is; a row of an entity another component owns,
+  at any hop, is read only where the owner's store is reached, as for a one-hop read. Before, it
+  was refused `unsupported: the value source … of the row … of the row input.<field> names`; a
+  chain that starts at a field of the subject stays refused (`story:value-source-through-two-rows`).
 
 ## [0.23.0] - 2026-11-27
 
