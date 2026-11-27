@@ -46,7 +46,6 @@ are Spindle's releases.
   `egress_position` and `egress_posted`, and `spindle_kernel::Reading` gains
   `events_placed_after`, each event with its own store position, which an egress posts; the
   host's reading handle answers it as the store does (`story:event-egress-webhook`).
-
 - A command a binding or a tick invoked whose last attempt was refused or did not run, and that
   its binding did not escalate, is kept as a dead letter in the store of the component that
   accepts it, where a served run printed it on stderr as `dropped` (a refused one not at all) and
@@ -78,60 +77,6 @@ are Spindle's releases.
   not declare, or leaving a required attribute of a mapped actor unmapped, exits 1.
   Given with `--trusted-caller-header` or `--fixed-actor` the run exits 1; off loopback it requires
   `--tls-cert` and `--tls-key`, and exits 2 without them (`story:verified-caller-token`).
-- `run --stdin` reads JSON lines on stdin where a component is `reached_by: network`, instead of
-  serving HTTP: every component runs in the one process on one store and the event bindings fire
-  as on any other stdin run. Given with a flag only a served run reads (`--http`, `--port`,
-  `--address`, `--fixed-actor`, `--fixed-caller`, `--trusted-caller-header`,
-  `--trusted-caller-secret`, `--observe`, `--observe-requests`, `--observe-series`, `--seed`,
-  `--drain`, `--log-format json`), it exits 2 before anything is loaded. The rally page's "Drive it
-  by hand" now runs as written, where its command served HTTP and never read its lines; its output
-  shows the `ObserveBall` commands each `BallMoved` invokes (`story:rally-example-reads-stdin`).
-- A view filter that quantifies over a list member of an outer list field's element
-  (`exists g in slots: (exists w in g.words: w == "x")`) is answered with the rows ESS's
-  interpreter answers, each inner element read at the outer element's path
-  (`slots.<n>.words.<m>`). Before, the host refused the view whole as `unsupported`
-  (`story:view-filter-nested-element-quantifier`).
-- An event binding whose `on_failure` escalates runs, where `run` exited 1 before listening or
-  reading stdin: universal (`on_failure: {escalate: {emits: <event>}}`) or chosen per refusal
-  (`escalate: {emits: <event>, outcomes: [...]}` beside `drop:` and `retry:`). An attempt the
-  policy escalates invokes the command no further; the component that ran it publishes the event
-  once, its fields taken from the command's input, an optional one the input lacks left out, and
-  the bindings that listen for it run. A required field the input lacks publishes nothing and
-  reports the escalation unmet. Served (stderr names each escalation, published or unmet, and no
-  longer calls an escalated attempt `dropped`), on stdin (the refused command's line carries
-  `"escalated": {"event", "payload"}`) and in `conform`, whose scenarios that select an escalated
-  refusal now execute. `--drop-retries` keeps every escalation. The event goes to the outbox, is
-  not in the event history, and is lost if the process stops before it is delivered. A binding
-  that escalates into an event the component running its command does not publish exits 1 at
-  start, naming the binding, the event and the component. `spindle_host::uncarried` is removed;
-  `spindle_host::Report` gains `escalated` and `invoked` (`story:binding-failure-escalates`).
-- `conform`, `run --scenario` and `spindle_conformance::HostTarget` observe the commands an
-  event binding invoked: every attempt, a refused or failed one included, with the input the
-  binding sent, so a scenario's invocation checks execute where they were unsupported
-  (`story:binding-failure-escalates`).
-- An outcome whose payload or `sets:` field is filled through a declared conversion
-  (`conversions:`) runs in `run` and `conform`, as ESS's interpreter runs it: the value is passed
-  on unchanged, and a value read from a row (`{subject: …}`, `{changed: …}`, `{related: …}`) is
-  checked against the conversion's source and target type, one the target refuses answered
-  `invalid input` (`400` when served) before anything is written, where ESS refuses it as the
-  request's. Before, a request that selected such an outcome was refused `unsupported: the
-  conversion … into <field>`. A `{response: …}` field through a conversion stays refused by name,
-  as ESS does not interpret it (`story:payload-field-through-conversion`).
-- A value source that reads a field or the state of a row through another row
-  (`{related: {via: [input.<field>, <field>], field: …}}`) runs in `run` and `conform`, as ESS's
-  interpreter reads it: the row the input names, then the row its reference names, each as the
-  store held it before the outcome. An absent `Optional` reference on the way leaves the value
-  absent; a row none carries gives `no_value` and nothing is written; a field read through a
-  declared conversion is checked as a one-hop read is; a row of an entity another component owns,
-  at any hop, is read only where the owner's store is reached, as for a one-hop read. Before, it
-  was refused `unsupported: the value source … of the row … of the row input.<field> names`; a
-  chain that starts at a field of the subject stays refused (`story:value-source-through-two-rows`).
-- A test pins that a `when_related:` guard whose `via:` names a member of a struct input
-  (`via: input.<struct>.<member>`) is refused when the specification loads, with ESS's
-  `[undeclared_reference]` naming the guard, so no such guard reaches the kernel, whose read of the
-  row's identity is the top-level input field ESS reads. The day ESS accepts the guard the test
-  fails and the kernel's read follows the path (`nested_related_via_is_rejected_at_load`,
-  `story:related-via-nested-input`).
 - Each release publishes the image `ghcr.io/beyond10x/spindle:<version>`, one manifest list for
   `linux/amd64` and `linux/arm64`: the release's gnu binary on `gcr.io/distroless/cc-debian12`
   pinned by digest, run as UID 65532 with `b10x-spindle` as the entrypoint, from the new
@@ -145,20 +90,46 @@ are Spindle's releases.
   pushes nothing; a backfilled tag cut before the image existed publishes its assets without
   `IMAGES` (`story:spindle-image-published`).
 
+## [0.25.0] - 2026-11-27
+
+### Added
+
+- A served `run --clock` steps its clock: `POST /api/clock` `{"at": "<RFC 3339>"}` moves it
+  forward to that instant between commands and answers `{"at"}`, `GET /api/clock` answers where
+  it stands, and a reset world may carry `"clock"` to move it there. The clock holds an instant to
+  the millisecond: every instant that sets it (`--clock`, a stdin line's `"at"`, the route, a reset
+  world's `"clock"`) is floored to the millisecond, so a step to the instant the run answered moves
+  nothing. An instant before 1970-01-01T00:00:00Z is refused: `--clock` exits 2 naming the flag
+  and the instant, and the route and a reset answer `400` and move nothing. An instant before the
+  clock's is refused (`409` on the route, `400` on a reset, which then empties nothing); without
+  `--clock`, and on an embedded or Node host, both methods and a reset world carrying `clock`
+  answer `409`. Every record of `GET /api/events` carries `at`, the time its command ran, as
+  `GET /api/history` does. The route takes the proxy secret as every `/api/*` route does, and a
+  specification route at `/api/clock` is refused at start. `spindle_host::Published` gains `at`,
+  `spindle_host::World` gains `clock`, `spindle_ingress::Console` gains `Clock` and `Step`
+  (`story:served-clock-steps`).
+- `run --stdin` reads JSON lines on stdin where a component is `reached_by: network`, instead of
+  serving HTTP: every component runs in the one process on one store and the event bindings fire
+  as on any other stdin run. Given with a flag only a served run reads (`--http`, `--port`,
+  `--address`, `--fixed-actor`, `--fixed-caller`, `--trusted-caller-header`,
+  `--trusted-caller-secret`, `--observe`, `--observe-requests`, `--observe-series`, `--seed`,
+  `--drain`, `--log-format json`), it exits 2 before anything is loaded. The rally page's "Drive it
+  by hand" now runs as written, where its command served HTTP and never read its lines; its output
+  shows the `ObserveBall` commands each `BallMoved` invokes (`story:rally-example-reads-stdin`).
+- A view filter that quantifies over a list member of an outer list field's element
+  (`exists g in slots: (exists w in g.words: w == "x")`) is answered with the rows ESS's
+  interpreter answers, each inner element read at the outer element's path
+  (`slots.<n>.words.<m>`). Before, the host refused the view whole as `unsupported`
+  (`story:view-filter-nested-element-quantifier`).
+- A test pins that a `when_related:` guard whose `via:` names a member of a struct input
+  (`via: input.<struct>.<member>`) is refused when the specification loads, with ESS's
+  `[undeclared_reference]` naming the guard, so no such guard reaches the kernel, whose read of the
+  row's identity is the top-level input field ESS reads. The day ESS accepts the guard the test
+  fails and the kernel's read follows the path (`nested_related_via_is_rejected_at_load`,
+  `story:related-via-nested-input`).
+
 ### Changed
 
-- ESS moves on to 0.99.2 (the crates, `ess/ess-inputs.yaml`, `ESS_TOOLCHAIN`, and the `ess` CLI
-  CI installs and its checksum). Its synthesis fix reaches `conform` without `--suite` and
-  `spindle_conformance::synthesize`: for a refusal that quantifies over an input list of a struct,
-  the accepting scenario now sends a list of several elements none of which meets the quantifier,
-  where it sent only an empty list, and the refusal's `trimmed` witness (the literal between `\v\f`
-  and `\r\n`) lands on the element that decides it, where it landed on a filler beside it. Spindle
-  passes both, as ESS's interpreter does
-  (`the_accepting_scenario_of_an_input_list_quantifier_sends_several_elements_and_passes`,
-  `a_trimmed_witness_on_the_deciding_element_is_answered_as_ess_answers_it`). The suite ESS
-  synthesises from `ess/` is byte for byte the one 0.99.1 synthesised, and the observe types
-  differ only in their header. Its UI change (an overlay reading its opener's params) does not
-  reach Spindle, which builds none of ESS's UI crates (`story:ess-pin-0-99-2`).
 - The kernel runs an outcome whose `affects:` entry walks an input list
   (`each: {in: input.<list>, as: <name>}`), as ESS's interpreter does: for each element, in list
   order, the entry acts on the row the element names. With `sets:` it updates that row if held and
@@ -171,6 +142,19 @@ are Spindle's releases.
 
 ### Fixed
 
+- `conform`, `run --scenario` and `spindle_conformance::HostTarget` answer an `Optional` view
+  field the row never wrote as ESS's interpreter does: `null`, unless the field carries
+  `presence: omitted_when_absent`, and `null` for a field read through a reference that names no
+  row, where the field was left out unless it carried `null_when_absent`, so a scenario's view
+  check disagreed with ESS on the same state. A served view still leaves such a field out, as
+  ESS's published contract declares it optional and not nullable
+  (`story:view-rows-absent-optional-fields`).
+- `play --component` no longer links a peer to itself: a connect to a peer's port that nothing
+  listens on yet can leave from that same port and reach itself, and the process then failed on
+  its own `hello`. `spindle_host::Host::connect` refuses such a connection, naming the address,
+  and closes it with a reset, so the peer can listen on that port at once; the caller tries again
+  until the peer listens. The new `Host::link` makes an open connection the link to a peer, with
+  the same refusal (`story:peer-connect-test-steady`).
 - The kernel asks a decider for an external cause only where its answer changes the outcome. A
   request ESS's interpreter answers the same under every forcing (a present-related refusal or the
   wrong state, read after an external branch declared before the held-state check) is answered
@@ -241,6 +225,61 @@ are Spindle's releases.
   reads the moved events again. At the end, a cursor taken before a restart answers a cursor of
   the new run at the same place, where the CLI reference said the same cursor. A cursor from the
   same run reads as before (`story:events-cursor-across-restart`).
+
+## [0.24.0] - 2026-11-27
+
+### Added
+
+- An event binding whose `on_failure` escalates runs, where `run` exited 1 before listening or
+  reading stdin: universal (`on_failure: {escalate: {emits: <event>}}`) or chosen per refusal
+  (`escalate: {emits: <event>, outcomes: [...]}` beside `drop:` and `retry:`). An attempt the
+  policy escalates invokes the command no further; the component that ran it publishes the event
+  once, its fields taken from the command's input, an optional one the input lacks left out, and
+  the bindings that listen for it run. A required field the input lacks publishes nothing and
+  reports the escalation unmet. Served (stderr names each escalation, published or unmet, and no
+  longer calls an escalated attempt `dropped`), on stdin (the refused command's line carries
+  `"escalated": {"event", "payload"}`) and in `conform`, whose scenarios that select an escalated
+  refusal now execute. `--drop-retries` keeps every escalation. The event goes to the outbox, is
+  not in the event history, and is lost if the process stops before it is delivered. A binding
+  that escalates into an event the component running its command does not publish exits 1 at
+  start, naming the binding, the event and the component. `spindle_host::uncarried` is removed;
+  `spindle_host::Report` gains `escalated` and `invoked` (`story:binding-failure-escalates`).
+- `conform`, `run --scenario` and `spindle_conformance::HostTarget` observe the commands an
+  event binding invoked: every attempt, a refused or failed one included, with the input the
+  binding sent, so a scenario's invocation checks execute where they were unsupported
+  (`story:binding-failure-escalates`).
+- An outcome whose payload or `sets:` field is filled through a declared conversion
+  (`conversions:`) runs in `run` and `conform`, as ESS's interpreter runs it: the value is passed
+  on unchanged, and a value read from a row (`{subject: …}`, `{changed: …}`, `{related: …}`) is
+  checked against the conversion's source and target type, one the target refuses answered
+  `invalid input` (`400` when served) before anything is written, where ESS refuses it as the
+  request's. Before, a request that selected such an outcome was refused `unsupported: the
+  conversion … into <field>`. A `{response: …}` field through a conversion stays refused by name,
+  as ESS does not interpret it (`story:payload-field-through-conversion`).
+- A value source that reads a field or the state of a row through another row
+  (`{related: {via: [input.<field>, <field>], field: …}}`) runs in `run` and `conform`, as ESS's
+  interpreter reads it: the row the input names, then the row its reference names, each as the
+  store held it before the outcome. An absent `Optional` reference on the way leaves the value
+  absent; a row none carries gives `no_value` and nothing is written; a field read through a
+  declared conversion is checked as a one-hop read is; a row of an entity another component owns,
+  at any hop, is read only where the owner's store is reached, as for a one-hop read. Before, it
+  was refused `unsupported: the value source … of the row … of the row input.<field> names`; a
+  chain that starts at a field of the subject stays refused (`story:value-source-through-two-rows`).
+
+### Changed
+
+- ESS moves on to 0.99.2 (the crates, `ess/ess-inputs.yaml`, `ESS_TOOLCHAIN`, and the `ess` CLI
+  CI installs and its checksum). Its synthesis fix reaches `conform` without `--suite` and
+  `spindle_conformance::synthesize`: for a refusal that quantifies over an input list of a struct,
+  the accepting scenario now sends a list of several elements none of which meets the quantifier,
+  where it sent only an empty list, and the refusal's `trimmed` witness (the literal between `\v\f`
+  and `\r\n`) lands on the element that decides it, where it landed on a filler beside it. Spindle
+  passes both, as ESS's interpreter does
+  (`the_accepting_scenario_of_an_input_list_quantifier_sends_several_elements_and_passes`,
+  `a_trimmed_witness_on_the_deciding_element_is_answered_as_ess_answers_it`). The suite ESS
+  synthesises from `ess/` is byte for byte the one 0.99.1 synthesised, and the observe types
+  differ only in their header. Its UI change (an overlay reading its opener's params) does not
+  reach Spindle, which builds none of ESS's UI crates (`story:ess-pin-0-99-2`).
 
 ## [0.23.0] - 2026-11-27
 
@@ -335,13 +374,6 @@ are Spindle's releases.
 
 ### Fixed
 
-- `conform`, `run --scenario` and `spindle_conformance::HostTarget` answer an `Optional` view
-  field the row never wrote as ESS's interpreter does: `null`, unless the field carries
-  `presence: omitted_when_absent`, and `null` for a field read through a reference that names no
-  row, where the field was left out unless it carried `null_when_absent`, so a scenario's view
-  check disagreed with ESS on the same state. A served view still leaves such a field out, as
-  ESS's published contract declares it optional and not nullable
-  (`story:view-rows-absent-optional-fields`).
 - `run --scenario` names the divergent step of a scenario whose command returns a one-time
   response (`one_time_response:`), where it ended in an error: each prefix the bisection replays
   keeps only the one-time event windows anchored to its own steps, the origins it invokes and the
@@ -353,12 +385,6 @@ are Spindle's releases.
   and answered the cause as `operator-prompt`. `run` provides `operator-prompt`, `decisions-file`
   and each `[http.<name>]` call the environment declares
   (`story:environment-binds-external-decisions`).
-- `play --component` no longer links a peer to itself: a connect to a peer's port that nothing
-  listens on yet can leave from that same port and reach itself, and the process then failed on
-  its own `hello`. `spindle_host::Host::connect` refuses such a connection, naming the address,
-  and closes it with a reset, so the peer can listen on that port at once; the caller tries again
-  until the peer listens. The new `Host::link` makes an open connection the link to a peer, with
-  the same refusal (`story:peer-connect-test-steady`).
 
 ## [0.22.0] - 2026-11-27
 

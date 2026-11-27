@@ -121,9 +121,9 @@ with `--trusted-caller-secret`, or `--caller-token` over TLS (below), and withou
 exits 2 before listening. `--fixed-actor`
 is not enough, since it proves nobody. On such an address every request that does not carry the
 proxy's secret is refused `403` `{"refused": "not granted", "actor": null}` before anything of it
-is read: every command and view, `GET /api/model`, `GET /api/events`, `POST /api/reset` and every
-route under `/__spindle/`, and also a path no route has, a method a route does not take and a
-body of any size. On a loopback address `run` answers exactly as without `--address`.
+is read: every command and view, `GET /api/model`, `GET /api/events`, `POST /api/reset`,
+`GET` and `POST /api/clock` and every route under `/__spindle/`, and also a path no route has, a
+method a route does not take and a body of any size. On a loopback address `run` answers exactly as without `--address`.
 
 `--caller-token <FILE>` has the run verify each request's caller itself, from the signed token
 the request carries as `Authorization: Bearer <JWT>`. The TOML file names the token's `issuer` and

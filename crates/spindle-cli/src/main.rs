@@ -1185,7 +1185,7 @@ fn moved(
             "`at` {at} moves the clock --clock starts the run on; this run reads the system clock"
         ));
     };
-    let instant = spindle_cli::cli::instant(at).map_err(|error| format!("`at`: {error}"))?;
+    let instant = spindle_cli::cli::clock(at).map_err(|error| format!("`at`: {error}"))?;
     if instant < standing {
         return Err(format!(
             "`at` {at} is before the clock's current instant: the clock only moves forward"

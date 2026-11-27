@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:unknown-instance-unsourced-unserved
 kind: story
-status: active
+status: implemented
 title: An unknown-instance refusal with unsourced fields is not served
 relations:
 - serves: vision:spindle
@@ -29,10 +29,11 @@ scope:
   path: crates/spindle-kernel/src/supported.rs
 - confidence: cited
   path: crates/spindle-kernel/tests/spindle-kernel/error_fields.rs
-revision: 10
+revision: 11
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T09:51:59Z", actor: "human:operator", revision: 9, decided_on: {"recorded":{"review_outcome":8}}}
 - {from: "proposed", to: "active", at: "2026-11-27T09:51:59Z", actor: "human:operator", revision: 10, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "active", to: "implemented", at: "2026-11-27T17:04:21Z", actor: "human:operator", revision: 11, decided_on: {"recorded":{"test_result":1,"review_outcome":9}}}
 ---
 # An unknown-instance refusal with unsourced fields is not served
 

@@ -42,7 +42,7 @@
     "body": "",
     "status": 200,
     "allow": null,
-    "answer": "{\"events\":[{\"command\":\"probe.review.Submit\",\"component\":\"probe\",\"event\":\"probe.review.Submitted\",\"payload\":{\"submission_id\":\"s1\"}}]}"
+    "answer": "{\"events\":[{\"at\":\"<at>\",\"command\":\"probe.review.Submit\",\"component\":\"probe\",\"event\":\"probe.review.Submitted\",\"payload\":{\"submission_id\":\"s1\"}}]}"
   },
   {
     "method": "GET",

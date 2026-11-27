@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-27T13:23:44Z",
+  "actor": "human:operator",
+  "artifact": "story:peer-connect-test-steady",
+  "kind": "story",
+  "revision": 10,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "acceptance 4, workstation, 2026-11-27: the two adversary_processes tests passed 20 of 20 runs in a row at unit head 68360469 (merged 00101717), 1-minute load 40.04 to 67.56 before each run, each run 3.24-3.81 s of test time"
+  }
+}

@@ -70,7 +70,10 @@ and a command's input may name what an earlier line answered, such as the identi
 with `{"$line": 1, "pointer": "/events/0/payload/<field>"}`.
 
 Where `run` serves HTTP, it also serves the console routes `POST /api/reset`, `GET /api/events`,
-`GET /api/model`, `GET /api/served`, `GET /api/dead-letters` and `POST /api/dead-letters/replay`.
+`GET /api/model`, `GET /api/served`, `GET /api/history`, `GET` and `POST /api/clock`,
+`GET /api/dead-letters` and `POST /api/dead-letters/replay`. With `--clock`, `POST /api/clock`
+`{"at": "<RFC 3339>"}` moves the run's clock forward between commands, and every record of
+`GET /api/events` carries its command's `at`.
 A command a binding or a tick invoked whose last attempt was refused or did not run, and that its
 binding did not escalate, is kept as a dead letter in the store of the component that accepts it:
 `GET /api/dead-letters` lists each with its id, component, binding, event, command, outcome, error

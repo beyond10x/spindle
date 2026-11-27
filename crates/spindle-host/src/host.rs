@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::{ResolvedEntity, ResolvedMappingValue, ResolvedRefusalAction, ResolvedView};
@@ -21,7 +21,9 @@ use spindle_kernel::{
     StoreError, Stored, Uuid, UuidV4,
 };
 use spindle_telemetry::{Counters, CountingStore, Retried, Sink};
-use spindle_timer::{BindingName, Clock, CompleteError, Instant, LifetimeError, Timer};
+use spindle_timer::{
+    BindingName, Clock, CompleteError, Instant, LifetimeError, ManualClock, Timer,
+};
 
 use crate::admission::{Placements, Refusal, admit};
 
@@ -210,6 +212,11 @@ pub struct World {
     /// The seed every identity and generated value is minted from until the next reset
     /// ([`Seeded`]); `None` for random version 4 UUIDs.
     pub mint: Option<u64>,
+    /// The civil time the host's stepping clock moves forward to ([`Host::stepping`]); `None`
+    /// leaves the clock where it stands. A host without a stepping clock refuses a world that
+    /// carries one ([`HostError::Clock`]), and one with an instant before the clock's
+    /// ([`HostError::World`]), before anything changed.
+    pub clock: Option<SystemTime>,
 }
 
 impl std::fmt::Debug for World {
@@ -219,6 +226,7 @@ impl std::fmt::Debug for World {
             .field("rows", &self.rows)
             .field("answers", &self.answers.is_some())
             .field("mint", &self.mint)
+            .field("clock", &self.clock)
             .finish()
     }
 }
@@ -242,6 +250,10 @@ pub struct Published {
     pub component: String,
     /// The command.
     pub command: String,
+    /// The civil time of its command, as RFC 3339 in UTC to the millisecond, read from the
+    /// sequence the host attributed the command with ([`spindle_kernel::Origin::sequence`]), as
+    /// [`Revision::at`] is; `None` for an event its store holds no command for.
+    pub at: Option<String>,
     /// The event and its payload.
     pub event: Event,
 }
@@ -410,6 +422,11 @@ pub enum HostError {
     /// [`Host::reset_to`] refused a world before it changed anything.
     #[error("the world was refused: {0}")]
     World(String),
+    /// The host's clock was asked to step and does not: the host has no stepping clock
+    /// ([`Host::stepping`]), or [`Host::step_clock`] named an instant before the clock's.
+    /// Nothing moved and nothing was emptied.
+    #[error("{0}")]
+    Clock(String),
     /// A cursor names a component this host does not run ([`Host::published_after`]):
     /// one another run answered. Nothing was read.
     #[error("{0}")]
@@ -899,6 +916,9 @@ struct Periodic {
 pub struct Host {
     ir: Arc<EssIr>,
     clock: Arc<dyn Clock>,
+    /// The clock this host steps forward between commands, the one it reads
+    /// ([`Host::stepping`]); `None` where it steps none.
+    stepping: Option<Arc<ManualClock>>,
     placements: Arc<Placements>,
     components: BTreeMap<String, Component>,
     receivers: Vec<Receiver>,
@@ -1347,6 +1367,7 @@ impl Host {
         let host = Self {
             ir,
             clock,
+            stepping: None,
             placements,
             components,
             receivers,
@@ -1384,6 +1405,48 @@ impl Host {
         self.seed = Some(seed);
         self.mint = Box::new(Seeded::new(seed).avoiding_identities(held.iter()));
         Ok(self)
+    }
+
+    /// This host, reading `clock` and stepping it forward between commands
+    /// ([`Host::step_clock`], a world's [`World::clock`]): every guard and view that reads `now`,
+    /// every generated `Timestamp` and every command's time read it from then on. A
+    /// [`Reader`] taken before this call reads the clock the host was opened with.
+    #[must_use]
+    pub fn stepping(mut self, clock: Arc<ManualClock>) -> Self {
+        self.clock = Arc::clone(&clock) as Arc<dyn Clock>;
+        self.stepping = Some(clock);
+        self
+    }
+
+    /// The civil time the host's stepping clock stands at ([`Host::stepping`]).
+    ///
+    /// # Errors
+    /// [`HostError::Clock`] where the host has no stepping clock.
+    pub fn clock_at(&self) -> Result<SystemTime, HostError> {
+        self.stepping
+            .as_ref()
+            .map(|clock| clock.wall())
+            .ok_or_else(unstepped)
+    }
+
+    /// Moves the host's stepping clock ([`Host::stepping`]) forward to the civil time `at`, and
+    /// answers where it stands then; an instant the clock stands at moves nothing. The commands
+    /// run after it read `at`, and their sequences ([`spindle_kernel::Origin::sequence`]) never
+    /// go back, so neither do event times and cursors.
+    ///
+    /// # Errors
+    /// [`HostError::Clock`] where the host has no stepping clock, or `at` is before the clock's
+    /// civil time; the clock does not move.
+    pub fn step_clock(&mut self, at: SystemTime) -> Result<SystemTime, HostError> {
+        let clock = self.stepping.as_ref().ok_or_else(unstepped)?;
+        let by = at.duration_since(clock.wall()).map_err(|_| {
+            HostError::Clock(format!(
+                "the clock stands at {}; it moves forward only",
+                rfc3339(clock.wall()).unwrap_or_default()
+            ))
+        })?;
+        clock.advance(by);
+        Ok(clock.wall())
     }
 
     /// Every identity an instance in the store of a running component holds, each entity read
@@ -1771,14 +1834,26 @@ impl Host {
     ///
     /// Every row is checked before any store is emptied: its entity declared and owned by a
     /// running component, its invariants held, its identity one its store can key (read from the
-    /// store as it is), and no two rows one instance. The answers and the mint are taken only once
-    /// every row is written.
+    /// store as it is), and no two rows one instance. A world's [`World::clock`] is checked
+    /// before them. The answers and the mint are taken, and the host's stepping clock moved
+    /// forward to the world's clock ([`Host::step_clock`]), only once every row is written.
     ///
     /// # Errors
-    /// [`HostError::World`] for a row that does not pass, before anything changed; then as
+    /// [`HostError::Clock`] for a world that carries a clock on a host without a stepping clock
+    /// ([`Host::stepping`]), and [`HostError::World`] for one whose clock is before the
+    /// clock's civil time or a row that does not pass, each before anything changed; then as
     /// [`Host::reset`], and as [`Host::establish`] for a row a store did not take, the rows
-    /// before it written and the answers and mint of the last world kept.
+    /// before it written and the answers, mint and clock of the last world kept.
     pub fn reset_to(&mut self, world: World) -> Result<Vec<String>, HostError> {
+        if let Some(at) = world.clock {
+            let stands = self.clock_at()?;
+            if at < stands {
+                return Err(HostError::World(format!(
+                    "clock: the clock stands at {}; a world moves it forward only",
+                    rfc3339(stands).unwrap_or_default()
+                )));
+            }
+        }
         let mut owners = Vec::with_capacity(world.rows.len());
         let mut instances = BTreeSet::new();
         for (index, seed) in world.rows.iter().enumerate() {
@@ -1814,6 +1889,9 @@ impl Host {
             component.store.publish();
         }
         let emptied = loaded?;
+        if let Some(at) = world.clock {
+            self.step_clock(at)?;
+        }
         self.answers = world.answers;
         self.mint = held.map_or_else(
             || Box::new(UuidV4) as Box<dyn Mint + Send>,
@@ -2854,12 +2932,14 @@ fn micros(wall: std::time::SystemTime) -> u64 {
 /// The events of every component, each component's in its store's commit order, merged into the
 /// order published: by the sequence each command was attributed with ([`Origin::sequence`]). An
 /// event its store holds no command for keeps the sequence of the event before it in its store,
-/// and a component's events never pass each other, whatever their sequences.
+/// and a component's events never pass each other, whatever their sequences. Each event's `at`
+/// is its own command's sequence as a civil time ([`Published::at`]), `None` for such an event.
 pub(crate) fn merged(committed: Vec<(String, Vec<Committed>)>) -> Vec<Published> {
     let mut keyed = Vec::with_capacity(committed.iter().map(|(_, events)| events.len()).sum());
     for (index, (component, events)) in committed.into_iter().enumerate() {
         let mut sequence = 0;
         for (at, committed) in events.into_iter().enumerate() {
+            let commanded = committed.origin.as_ref().map(|origin| origin.sequence);
             let command = match committed.origin {
                 Some(origin) => {
                     sequence = sequence.max(origin.sequence);
@@ -2872,6 +2952,7 @@ pub(crate) fn merged(committed: Vec<(String, Vec<Committed>)>) -> Vec<Published>
                 Published {
                     component: component.clone(),
                     command,
+                    at: commanded.and_then(civil),
                     event: committed.event,
                 },
             ));
@@ -3264,7 +3345,74 @@ fn holding(ir: &EssIr, entity: &str) -> Result<String, HostError> {
 /// millisecond; `None` past the years RFC 3339 spells.
 fn civil(sequence: u64) -> Option<String> {
     let at = std::time::SystemTime::UNIX_EPOCH.checked_add(Duration::from_micros(sequence))?;
+    rfc3339(at)
+}
+
+/// The civil time `at` as RFC 3339 in UTC to the millisecond it falls in, as ESS spells an
+/// instant ([`ess_primitives::Rfc3339Instant::to_rfc3339`]: `2026-02-01T00:00:00Z`,
+/// `2026-02-01T00:00:00.5Z`); `None` past the years RFC 3339 spells.
+pub fn rfc3339(at: SystemTime) -> Option<String> {
     crate::view::instant(at).map(ess_primitives::Rfc3339Instant::to_rfc3339)
+}
+
+/// The civil time an RFC 3339 `date-time` names (`2026-02-01T00:00:00Z`,
+/// `2026-02-01T01:00:00+01:00`, `2026-02-01T00:00:00.5Z`), its offset and its fraction of a second
+/// included, read by ESS's own reader ([`ess_primitives::Rfc3339Instant`]); `None` for a text that
+/// is no RFC 3339 `date-time`.
+pub fn instant(text: &str) -> Option<SystemTime> {
+    let parsed = ess_primitives::Rfc3339Instant::parse_rfc3339(text)?;
+    let seconds = parsed.epoch_seconds();
+    let nanos = nanos(&parsed.to_rfc3339());
+    let whole = Duration::from_secs(seconds.unsigned_abs());
+    let second = if seconds >= 0 {
+        SystemTime::UNIX_EPOCH.checked_add(whole)?
+    } else {
+        SystemTime::UNIX_EPOCH.checked_sub(whole)?
+    };
+    second.checked_add(Duration::from_nanos(nanos))
+}
+
+/// The instant a stepping clock is set to from the RFC 3339 `date-time` `text` (`--clock`,
+/// `POST /api/clock`, a reset world's `"clock"`): [`instant`], floored to the millisecond, as the
+/// run answers where its clock stands ([`rfc3339`]), so an instant the run answered sets the clock
+/// to where it stands.
+///
+/// # Errors
+/// Why `text` sets no clock: no RFC 3339 `date-time`, or an instant before
+/// 1970-01-01T00:00:00Z, the first instant a clock stands at.
+pub fn clock_instant(text: &str) -> Result<SystemTime, String> {
+    let at = instant(text).ok_or_else(|| {
+        format!("expected an RFC 3339 instant such as 2026-02-01T00:00:00Z: {text}")
+    })?;
+    let since = at.duration_since(SystemTime::UNIX_EPOCH).map_err(|_| {
+        format!("{text} is before 1970-01-01T00:00:00Z, the first instant a clock stands at")
+    })?;
+    let millis = Duration::from_millis(u64::try_from(since.as_millis()).unwrap_or(u64::MAX));
+    SystemTime::UNIX_EPOCH
+        .checked_add(millis)
+        .ok_or_else(|| format!("{text} is past the instants a clock stands at"))
+}
+
+/// The nanoseconds of the fraction of a second `spelled` names, an instant as
+/// [`ess_primitives::Rfc3339Instant::to_rfc3339`] spells it: in UTC, its fraction's trailing zeros
+/// trimmed (`.5Z` is 500 000 000), 0 without a fraction. The fraction is the one part the instant
+/// answers only in its spelling.
+fn nanos(spelled: &str) -> u64 {
+    let Some((_, fraction)) = spelled.split_once('.') else {
+        return 0;
+    };
+    let digits = fraction.trim_end_matches('Z');
+    if digits.is_empty() || digits.len() > 9 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return 0;
+    }
+    format!("{digits:0<9}").parse().unwrap_or(0)
+}
+
+/// The refusal of a step on a host without a stepping clock.
+fn unstepped() -> HostError {
+    HostError::Clock(
+        "this host's clock does not step; a run started with --clock steps its clock".to_owned(),
+    )
 }
 
 fn owner_of(ir: &EssIr, entity: &ResolvedEntity) -> Result<String, HostError> {

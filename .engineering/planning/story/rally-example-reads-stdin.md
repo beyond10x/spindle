@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:rally-example-reads-stdin
 kind: story
-status: active
+status: implemented
 title: The rally example's stdin run reads its lines
 relations:
 - serves: vision:spindle
@@ -21,10 +21,11 @@ scope:
   path: website/docs/examples/rally.md
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 8
+revision: 9
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T09:52:01Z", actor: "human:operator", revision: 7, decided_on: {"recorded":{"review_outcome":8}}}
 - {from: "proposed", to: "active", at: "2026-11-27T09:52:01Z", actor: "human:operator", revision: 8, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "active", to: "implemented", at: "2026-11-27T17:04:23Z", actor: "human:operator", revision: 9, decided_on: {"recorded":{"test_result":1,"review_outcome":9}}}
 ---
 ## Outcome
 

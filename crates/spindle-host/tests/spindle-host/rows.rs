@@ -247,6 +247,7 @@ fn step(draw: &mut Draw, kept: &Kept, host: &mut Host) -> String {
                 rows,
                 answers: None,
                 mint: None,
+                clock: None,
             });
             return done;
         }

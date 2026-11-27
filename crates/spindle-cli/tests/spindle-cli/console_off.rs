@@ -221,10 +221,13 @@ fn console_answers(served: &Served) -> Vec<(Console, u16, Value)> {
         .collect()
 }
 
-/// Whether `console` answered as a route the run serves: `200`, or, for the replay of a dead
-/// letter no run keeps, `404` naming the letter, not the path (story:dead-letters-kept-and-replayed).
+/// Whether `console` answered as a route the run serves: `409` for both methods of `/api/clock`,
+/// which a run without `--clock` serves and refuses to step (`story:served-clock-steps`), `404`
+/// naming the letter, not the path, for the replay of a dead letter no run keeps
+/// (story:dead-letters-kept-and-replayed), `200` for every other.
 fn served_answer(console: Console, status: u16, answer: &Value) -> bool {
     match console {
+        Console::Clock | Console::Step => status == 409,
         Console::Replay => {
             status == 404
                 && answer["refused"]

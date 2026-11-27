@@ -92,6 +92,7 @@ fn world(prefix: &str, count: usize, borrower: &str) -> World {
             .collect(),
         answers: None,
         mint: None,
+        clock: None,
     }
 }
 

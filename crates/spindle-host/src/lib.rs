@@ -32,7 +32,7 @@ pub use host::{
     Attempted, Cause, Cursor, DELIVERY_LIMIT, ESCALATIONS_KEPT, Escalated, Escalation, Failed,
     History, HistoryCursor, Host, HostError, Invoked, Listed, Page, Published, RETRY_ATTEMPTS, Ran,
     Reader, RefusedCommand, Replayed, Report, Retries, Revision, Seed, Stores, Undelivered, World,
-    reads, retried,
+    clock_instant, instant, reads, retried, rfc3339,
 };
 pub use spindle_kernel::DeadLetter;
 pub use spindle_timer::{Clock, ManualClock, SystemClock};
