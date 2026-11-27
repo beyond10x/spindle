@@ -1,0 +1,52 @@
+domain: shelf.box
+summary: A box is packed with labels.
+types:
+  - name: shelf.box.Label
+    kind: struct
+    fields:
+      - name: text
+        type: String
+entities:
+  - name: shelf.box.Box
+    identity:
+      name: box_id
+      type: String
+    fields:
+      - name: title
+        type: String
+    lifecycle:
+      initial: Packed
+      states: [Packed]
+      terminal: [Packed]
+errors:
+  - name: shelf.box.BlankLabel
+    summary: A label is blank.
+    fields: []
+commands:
+  - name: shelf.box.PackBox
+    input:
+      - name: box_id
+        type: String
+      - name: title
+        type: String
+      - name: labels
+        type: List<shelf.box.Label>
+    outcomes:
+      - name: blank-label
+        when: {exists: {in: input.labels, as: label, that: {label.text: {trimmed: {starts_with: "x"}}}}}
+        error: shelf.box.BlankLabel
+        summary: Refused.
+      - name: packed
+        creates: shelf.box.Box
+        instance: box_id
+        sets:
+          title: input.title
+        emits: [shelf.box.BoxPacked]
+        payload:
+          shelf.box.BoxPacked: {box_id: input.box_id}
+        summary: Packed.
+events:
+  - name: shelf.box.BoxPacked
+    fields:
+      - name: box_id
+        type: String
