@@ -1294,7 +1294,8 @@ impl Host {
     /// Writes `row` as the instance of `entity` (its qualified name) with `identity` into the
     /// store of the component that owns the entity's domain, as it rests, with no command: the
     /// state a scenario arranges. Nothing is published and no binding runs. The row is checked
-    /// against the entity's invariants first ([`spindle_kernel::at_rest`]).
+    /// against the entity's invariants first ([`spindle_kernel::at_rest`]). The identity is keyed
+    /// in the one spelling a command's is ([`spindle_kernel::one_spelling`]): `1.0` as `1`.
     ///
     /// # Errors
     /// [`HostError::Unsupported`] for an entity the model does not declare or no running
@@ -1302,10 +1303,13 @@ impl Host {
     /// [`HostError::Store`], a [`StoreError::Conflict`], when the instance already exists, and
     /// any other store failure.
     pub fn establish(&mut self, entity: &str, identity: &Value, row: Row) -> Result<(), HostError> {
-        let owner = self.resting(entity, identity, &row)?;
+        // Keyed in the one spelling a command's identity is, so a command finds the row by any
+        // spelling of a number ESS reads as one value (`spindle_kernel::one_spelling`).
+        let identity = spindle_kernel::one_spelling(identity);
+        let owner = self.resting(entity, &identity, &row)?;
         store_of(&mut self.components, &owner)?.commit(&Change {
             entity: entity.to_owned(),
-            identity: identity.clone(),
+            identity,
             expected: None,
             row,
             events: Vec::new(),

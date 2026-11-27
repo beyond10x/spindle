@@ -59,6 +59,19 @@ are Spindle's releases.
   differ only in their header. Its UI change (an overlay reading its opener's params) does not
   reach Spindle, which builds none of ESS's UI crates (`story:ess-pin-0-99-2`).
 
+### Fixed
+
+- A command names a `Decimal` or `Binary64` identity whatever its spelling: one sent as `1` finds
+  the row created as `1.0`, and the reverse, as ESS 0.99.2's interpreter reads both as one value,
+  where it answered that no row has the identity, or created a second row. The kernel keys every
+  identity a command reads or writes by in one spelling, whatever its declared type: an integral
+  number within 64 bits as the integer (`1.0`, `1e0` and `-0.0` as `1`, `1` and `0`), any other as
+  the binary64 it reads. A reset's world row and a row `Host::establish` writes are keyed the same
+  way (`spindle_kernel::one_spelling`). The identity a store scans reads `1`; a `Decimal` field keeps its spelling in
+  the row and the event payload. A durable row created with a `Decimal` or `Binary64` identity
+  spelled `1.0` or `1e0` before this change is keyed so and is no longer found; it is not
+  migrated (`story:decimal-identity-any-spelling`).
+
 ## [0.23.0] - 2026-11-27
 
 ### Added

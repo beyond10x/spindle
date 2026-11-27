@@ -323,6 +323,16 @@ fn reaching(
         }
         None => None,
     };
+    // Every identity the command reads or writes by, in one spelling, so `1.0` and `1` of a
+    // `Decimal` or `Binary64` identity name one row, as ESS reads both as one value
+    // (`crate::typed::spelled`); every read and write of the command goes through this store.
+    // The subject's identity is held so too, as the rows a scan answers are keyed, so it is
+    // told apart from them by equality (an `affects:` entry over its own entity leaves it out).
+    let address = address.map(|(entity, field, identity)| {
+        let identity = crate::typed::spelled(&identity).into_owned();
+        (entity, field, identity)
+    });
+    let mut spelled = crate::store::Spelled(store);
     let mut run = Run {
         ir,
         spec,
@@ -330,7 +340,7 @@ fn reaching(
         input,
         caller,
         attributes,
-        store,
+        store: &mut spelled,
         decider,
         held: None,
         related: crate::values::Related::new(),

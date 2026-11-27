@@ -57,6 +57,7 @@ mod adversary_w28_u5;
 mod before_row;
 mod caller;
 mod creation_takes_unknown_row;
+mod decimal_identity;
 mod deletes;
 mod deployment;
 mod error_fields;
