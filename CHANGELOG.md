@@ -6,6 +6,24 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- An environment document binds external causes to `decisions-file` and names the file in a
+  `[decisions]` table (`file`, relative to where `run` starts): `run`, reading stdin or serving
+  HTTP, answers those causes from it as it answers from `--decisions`, which wins over the table.
+  A cause bound to `decisions-file` with no file named exits 1 before anything runs, naming the
+  capability. A `[decisions]` table no `external.` key binds to `decisions-file` is refused when
+  the document is read, and `play`, `play --component` and `deploy` refuse an environment with
+  one (`story:environment-binds-external-decisions`).
+
+### Fixed
+
+- `run` refuses, with exit 1 before anything runs, an environment that binds an external cause to
+  an implementation it does not provide, naming the capability and the name; it accepted any name
+  and answered the cause as `operator-prompt`. `run` provides `operator-prompt`, `decisions-file`
+  and each `[http.<name>]` call the environment declares
+  (`story:environment-binds-external-decisions`).
+
 ## [0.22.0] - 2026-11-27
 
 ### Added

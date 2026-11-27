@@ -90,10 +90,15 @@ impl Drop for Served {
 }
 
 fn command(state: &tempfile::TempDir, arguments: &[&str]) -> Command {
+    command_on(LAPTOP, state, arguments)
+}
+
+/// `run` on the fixture and `environment` with `arguments` added.
+fn command_on(environment: &str, state: &tempfile::TempDir, arguments: &[&str]) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"));
     command
         .current_dir(root())
-        .args(["run", SPEC, "--environment", LAPTOP, "--state"])
+        .args(["run", SPEC, "--environment", environment, "--state"])
         .arg(state.path().join("state"))
         .args(arguments)
         .stdin(Stdio::null())
@@ -103,7 +108,13 @@ fn command(state: &tempfile::TempDir, arguments: &[&str]) -> Command {
 
 /// `run` on the fixture and laptop with `arguments` added, once it prints where it listens.
 fn serve(state: &tempfile::TempDir, arguments: &[&str]) -> Served {
-    let mut child = command(state, arguments)
+    serve_on(LAPTOP, state, arguments)
+}
+
+/// `run` on the fixture and `environment` with `arguments` added, once it prints where it
+/// listens.
+fn serve_on(environment: &str, state: &tempfile::TempDir, arguments: &[&str]) -> Served {
+    let mut child = command_on(environment, state, arguments)
         .stderr(Stdio::inherit())
         .spawn()
         .expect("b10x-spindle starts");
@@ -224,6 +235,46 @@ fn a_served_command_is_answered_from_the_decisions_file() {
         answer["published"],
         json!([{"event": "probe.review.Approved", "payload": {"decision_id": "d1"}}])
     );
+}
+
+/// story:environment-binds-external-decisions: the laptop environment with `external.*` bound to
+/// `decisions-file` and a `[decisions]` table naming `file` answers a served run without
+/// `--decisions`.
+#[test]
+fn a_served_run_answers_from_the_environment_s_decisions_file() {
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+    let file = decisions(
+        &state,
+        "escalated = false\nvetoed = false\n\n[\"probe.review.Submit\"]\nflagged = true\n",
+    );
+    let laptop = std::fs::read_to_string(root().join(LAPTOP)).expect("the laptop environment");
+    assert!(laptop.contains("\"external.*\" = [\"operator-prompt\"]"));
+    let environment = state.path().join("environment.toml");
+    std::fs::write(
+        &environment,
+        format!(
+            "{}\n[decisions]\nfile = {file:?}\n",
+            laptop.replace("[\"operator-prompt\"]", "[\"decisions-file\"]")
+        ),
+    )
+    .expect("the environment is written");
+    let served = serve_on(environment.to_str().expect("a UTF-8 path"), &state, &[]);
+
+    let (status, answer) = call(
+        &served,
+        SUBMIT,
+        &json!({"submission_id": "s1", "amount": 5}),
+    );
+    assert!(!(200..300).contains(&status), "{status} {answer}");
+    assert_eq!(answer["outcome"], "flagged", "{answer}");
+
+    let (status, answer) = call(
+        &served,
+        DECIDE,
+        &json!({"decision_id": "d1", "approve": true}),
+    );
+    assert!((200..300).contains(&status), "{status} {answer}");
+    assert_eq!(answer["outcome"], "approved", "{answer}");
 }
 
 #[test]

@@ -449,6 +449,13 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "External causes bound to a decisions file",
+        "An environment binds external causes to decisions-file and names the file in a [decisions] table; run, on stdin or serving HTTP, answers them from it as from --decisions, which wins over the table. A cause bound to decisions-file with no file named, or to an implementation run does not provide (anything but operator-prompt, decisions-file and a declared [http.<name>] call), exits 1 before anything runs, naming the capability. A [decisions] table no external key binds is refused when the document is read, and play and deploy refuse one.",
+        "/docs/concepts/environment-and-admission#external-causes-answered-from-a-decisions-file",
+        "crates/spindle-cli/tests/spindle-cli/decisions.rs::an_environment_binding_external_to_a_decisions_file_answers_from_it",
+    ),
+    shipped(
+        "Execution",
         "A rejected line fails the run",
         "run reading JSON lines on stdin answers every line, then exits 1 when a line was rejected (not JSON, no declared command, input not admitted, an external cause unanswered, or refused by the kernel before an outcome), naming each such line on stderr by its place in the input. A line answered by a declared outcome, a refusing one included, leaves the exit status 0.",
         "/docs/concepts/capabilities",
