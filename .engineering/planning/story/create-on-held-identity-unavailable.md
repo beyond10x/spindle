@@ -21,9 +21,9 @@ scope:
   path: crates/spindle-kernel/src/execute/affects.rs
 - confidence: inferred
   path: crates/spindle-kernel/src/lib.rs
-- confidence: inferred
+- confidence: cited
   path: crates/spindle-telemetry/tests/spindle-telemetry/catalogue.rs
-revision: 8
+revision: 10
 ---
 # A create on a held identity is refused as unavailable
 
@@ -57,7 +57,8 @@ Derived 2026-11-27 by `story-scoper`. Every line is **cited** (read from the sto
 - **Files:** `crates/spindle-kernel/src/execute.rs:2076-2136` (`creation_identity`; the refusal of a
   supplied identity already held at `:2107-2114`) — cited
 - **Files:** `crates/spindle-kernel/src/execute.rs:826` (`Run::select`) and `:1837`
-  (`Run::wrong_state`), and `crates/spindle-kernel/src/execute/affects.rs:240`: the other
+  (`Run::wrong_state`), `crates/spindle-kernel/src/execute/affects.rs:240` and the test
+  `crates/spindle-telemetry/tests/spindle-telemetry/catalogue.rs:186-189`: the other
   constructors of `ExecuteError::Undeclared`, which gain the new field as `None` (one line each);
   `:826` sits in the hunk U4 rewrites, so U5 merges after U4 — cited (`git grep -n "Undeclared *{"`)
 - **Files:** `crates/spindle-conformance/src/target.rs:377-378` (`ExecuteError::Undeclared` mapped to

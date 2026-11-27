@@ -10,7 +10,7 @@ relations:
 scope:
 - confidence: inferred
   path: crates/spindle-spec/tests/spindle-spec/load.rs
-revision: 9
+revision: 10
 ---
 # A related row named through a nested input member is read
 
@@ -37,7 +37,7 @@ with a test yet.
 
 - `nested_related_via_is_rejected_at_load` (`crates/spindle-spec/tests/spindle-spec/load.rs`): a
   specification written into a temporary directory with `when_related: {via: input.<struct>.<member>}`
-  is refused by `spindle_spec::load` with ESS's `UndeclaredReference`, naming the guard.
+  is refused by `spindle_spec::load` with ESS's code `[undeclared_reference]` in its text, naming the guard.
 
 ## Scope
 

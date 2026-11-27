@@ -29,7 +29,7 @@ scope:
   path: crates/spindle-kernel/src/supported.rs
 - confidence: cited
   path: crates/spindle-kernel/tests/spindle-kernel/error_fields.rs
-revision: 7
+revision: 8
 ---
 # An unknown-instance refusal with unsourced fields is not served
 
@@ -69,7 +69,7 @@ Derived 2026-11-27 by `story-scoper`. Every line is **cited** (read from the sto
 - **Files:** `crates/spindle-host/tests/fixtures/adversary/notice/sink.yaml:44-47` — cited, `no-board` leaves the required `NoBoard.board_id` unsourced; it serves `adversary_retry.rs` (host and conformance), `refusal.rs` and `spindle-cli` `adversary_w26_u4.rs`
 - **Symbols:** `spindle_capability::mint::unsourced`, `Unsourced::Unanswered`, `spindle_kernel::supported::unfilled_error_field` — cited
 - **Also likely:** `crates/spindle-kernel/src/mint.rs:363-374` — inferred, a message for this case next to `unfilled` (the current text says "whose type the runtime does not mint", which would be wrong here)
-- **Also likely:** `crates/spindle-ingress/tests/spindle-ingress/unknown_refusal.rs` (new), `crates/spindle-ingress/tests/fixtures/unknown-refusal` (new), `crates/spindle-ingress/tests/spindle-ingress/main.rs` (one `mod` line) — inferred, the two acceptance tests on the in-process `Room` harness that `refusal_payload.rs` uses: `an_unknown_instance_refusal_with_an_unsourced_field_is_not_served` (501 naming the field, nothing written, other outcomes served) and `an_unknown_instance_refusal_whose_fields_all_have_sources_is_served` (full payload, checked against `ess_gen::openapi`); each in-process, far under 60 s; the test step stays within 120 s
+- **Also likely:** `crates/spindle-ingress/tests/spindle-ingress/unknown_refusal.rs` (new), `crates/spindle-ingress/tests/fixtures/unknown-refusal` (new), `crates/spindle-ingress/tests/spindle-ingress/main.rs` (one `mod` line) — inferred, the four acceptance tests on the in-process `Room` harness that `refusal_payload.rs` uses: `an_unknown_instance_refusal_with_an_unsourced_field_is_not_served` (501 naming the field, nothing written, other outcomes served) and `an_unknown_instance_refusal_whose_fields_all_have_sources_is_served` (full payload, checked against `ess_gen::openapi`); each in-process, far under 60 s; the test step stays within 120 s
 - **Also likely:** `crates/spindle-kernel/src/execute.rs:2352-2381` — inferred, doc comment only; the `Unanswered => None` arm stays valid because `runs` refuses the outcome before it is reached
 - **Documents:** `README.md:167` — inferred, the capability table describes how unsourced error fields are filled
 - **Confidence:** high — the defect site, the hook that refuses by name and the two tests that pin today's behaviour are all read from the tree

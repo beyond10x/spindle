@@ -32,7 +32,7 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/decimal_identity.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/spindle-kernel/main.rs
-revision: 9
+revision: 10
 ---
 ## Outcome
 
@@ -80,7 +80,7 @@ Derived 2026-11-27 by `story-scoper`. Every line is **cited** (read from the sto
 - **Symbols:** `typed::integers`, `store::key`, `identity_from_key`, `Store`, `reaching`, `Host::establish`, `world::seed` — cited
 - **Tests:** un-ignore `a_decimal_identity_names_one_row_whatever_its_spelling` (`crates/spindle-kernel/tests/spindle-kernel/adversary_w27_u5.rs:590-591`) — cited
 - **Tests:** new module `crates/spindle-kernel/tests/spindle-kernel/decimal_identity.rs` plus its `mod` line in `tests/spindle-kernel/main.rs`: `a_decimal_beside_a_decimal_identity_keeps_its_spelling` (identity `1.0`, a `Decimal` field `2.0`: the row field and the event payload answer `2.0`, the scanned identity answers `1`), `a_binary64_identity_names_one_row_whatever_its_spelling` (pins the type-blind key, agreed with the interpreter), `a_durable_store_finds_a_decimal_identity_whatever_its_spelling` (`#[cfg(feature = "sqlite")]`, reopened between the two commands, both directions) — inferred
-- **Tests:** `a_world_row_with_a_decimal_identity_is_found_whatever_its_spelling` in `crates/spindle-host/tests/spindle-host/adversary_world_integers.rs` (seeded `1.0` named by `1`, and the reverse) — inferred
+- **Tests:** `a_world_row_with_a_decimal_identity_is_found_whatever_its_spelling` and `an_established_decimal_identity_is_found_whatever_its_spelling` (through `Host::establish`; `spindle-kernel` has no `spindle-host` dev-dependency) in the existing module `crates/spindle-host/tests/spindle-host/adversary_world_integers.rs`, so no `main.rs` line (seeded `1.0` named by `1`, and the reverse) — inferred
 - **Test budget:** each test compiles one small inline model on a memory or scratch SQLite store, like the module's existing tests; expected well under 1 s each, not timed. 60 s per-test bound, 120 s test step, 10 min pool limit — inferred
 - **Documents:** `CHANGELOG.md` `[Unreleased]` (and the D3 note on durable rows) — inferred
 - **Confidence:** medium. The defect site and the keying are read from the tree. The choice of layer (D2) is a design call, and the completeness of the command path rests on every store access going through the `store` that `reaching` receives.
