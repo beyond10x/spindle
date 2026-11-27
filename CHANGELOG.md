@@ -8,6 +8,19 @@ are Spindle's releases.
 
 ### Added
 
+- An environment's `[egress]` table binds a published event to an `[http.<name>]` call
+  (`"<qualified event>" = "<name>"`, method `POST`), and a served `run` posts each such event
+  there: one `spindle-egress/1` JSON body per event (`format`, `event`, `component`, `position`,
+  `fields`), at least once, in commit order per component store, beside the thread that runs
+  commands. A failed or non-`2xx` post is sent again after a pause that doubles up to 5 s, the
+  component's later events waiting for it. The position up to which the call answered `2xx` is
+  kept in a reserved `spindle:log` stream of the component's own log, SQLite or PostgreSQL, which
+  `GET /api/events` and `Store::events_after` do not list, and a restart posts the events after
+  it. An egress naming an event no component publishes, or one of a component kept in `memory`,
+  exits 3 before listening; a call named only by an egress is no longer refused as unused.
+  `spindle_capability::Environment` gains `egress` and `egress_of`, `spindle_kernel::Store` gains
+  `egress_position` and `egress_posted` (`story:event-egress-webhook`).
+
 - `run --stdin` reads JSON lines on stdin where a component is `reached_by: network`, instead of
   serving HTTP: every component runs in the one process on one store and the event bindings fire
   as on any other stdin run. Given with a flag only a served run reads (`--http`, `--port`,

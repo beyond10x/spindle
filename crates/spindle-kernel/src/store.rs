@@ -491,6 +491,35 @@ pub trait Store {
     fn events_id(&mut self) -> Result<u64, StoreError> {
         Ok(0)
     }
+
+    /// The egress cursor of the `[http.<name>]` call `call`: the position ([`Committed::position`])
+    /// of the last write whose events a served run posted to it, as [`Store::egress_posted`] last
+    /// saved it; `0` where none was saved. Read back after a restart.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read, or, this default, keeps no cursor.
+    fn egress_position(&mut self, call: &str) -> Result<u64, StoreError> {
+        let _ = call;
+        Err(no_cursor())
+    }
+
+    /// Saves `position` as the egress cursor of the call `call` ([`Store::egress_position`]). The
+    /// cursor is kept in the store's own log, and is no event [`Store::events_after`] reads.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be written, or, this default, keeps no
+    /// cursor.
+    fn egress_posted(&mut self, call: &str, position: u64) -> Result<(), StoreError> {
+        let _ = (call, position);
+        Err(no_cursor())
+    }
+}
+
+/// What a store that keeps no egress cursor answers ([`Store::egress_position`]).
+fn no_cursor() -> StoreError {
+    StoreError::Backend(
+        "this store keeps no egress cursor; an egress needs sqlite or postgres".to_owned(),
+    )
 }
 
 /// A read-only handle on what a store committed, read from any thread beside the store's one
@@ -801,6 +830,14 @@ impl Store for Spelled<'_> {
 
     fn events_head(&mut self) -> Result<u64, StoreError> {
         self.0.events_head()
+    }
+
+    fn egress_position(&mut self, call: &str) -> Result<u64, StoreError> {
+        self.0.egress_position(call)
+    }
+
+    fn egress_posted(&mut self, call: &str, position: u64) -> Result<(), StoreError> {
+        self.0.egress_posted(call, position)
     }
 }
 

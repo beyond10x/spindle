@@ -69,8 +69,9 @@ impl std::fmt::Debug for Calls {
     }
 }
 
-/// One `[http.<name>]` table, resolved: its URL parsed and its secret read.
-struct Call {
+/// One `[http.<name>]` table, resolved: its URL parsed and its secret read. An external cause
+/// asks it ([`Calls`]); an egress posts events to it ([`crate::egress`]).
+pub(crate) struct Call {
     name: String,
     method: Method,
     /// Where to connect: `host:port`.
@@ -172,7 +173,7 @@ impl Call {
     /// `declared`, resolved: its URL parsed and checked, its secret read and, for an `https://`
     /// URL, its TLS client built. `platform` is the client verifying against the platform's
     /// roots, read on first need and shared by every call without a `ca_file`.
-    fn new(
+    pub(crate) fn new(
         name: &str,
         declared: &HttpCall,
         platform: &mut Option<Arc<rustls::ClientConfig>>,
@@ -324,6 +325,31 @@ impl Call {
             .ok()
             .and_then(|reply| reply.get("holds").and_then(serde_json::Value::as_bool))
             .ok_or_else(|| format!("{called}, whose reply is not {{\"holds\": true | false}}"))
+    }
+
+    /// Sends `body`, a JSON text, within the call's timeout: `Ok` for a `2xx` reply, the reason
+    /// otherwise (a timeout, a failure, or the status answered). The reply body is not read past
+    /// [`REPLY_LIMIT`] and not kept.
+    pub(crate) fn post(
+        &self,
+        runtime: &tokio::runtime::Runtime,
+        body: String,
+    ) -> Result<(), String> {
+        let (status, _) = runtime
+            .block_on(async { tokio::time::timeout(self.timeout, self.send(body)).await })
+            .map_err(|_| {
+                format!(
+                    "the HTTP call `{}` did not reply within {} ms",
+                    self.name,
+                    self.timeout.as_millis()
+                )
+            })?
+            .map_err(|why| format!("the HTTP call `{}` failed: {why}", self.name))?;
+        if (200..300).contains(&status) {
+            Ok(())
+        } else {
+            Err(format!("the HTTP call `{}` answered {status}", self.name))
+        }
     }
 
     /// One request on its own connection: the status and the body of the reply.

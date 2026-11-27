@@ -4,6 +4,7 @@
 
 mod admission;
 mod adversary_generated;
+mod egress;
 mod error_fields;
 mod generated;
 mod mint;

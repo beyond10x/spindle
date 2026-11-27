@@ -60,6 +60,7 @@ mod console_off;
 mod decisions;
 mod deletes;
 mod deploy;
+mod egress;
 mod error_object_bodies;
 mod escalation;
 mod fixed_caller;

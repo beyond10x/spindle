@@ -19,6 +19,6 @@ pub mod mint;
 pub use admission::{Admission, Binding, admit};
 pub use derive::{Capability, Reason, Requirements, derive};
 pub use environment::{
-    DECISIONS_FILE, DecisionsFile, Environment, EnvironmentError, FORMAT as ENVIRONMENT_FORMAT,
-    HttpCall, SeedFile, loopback_host,
+    DECISIONS_FILE, DecisionsFile, Egress, Environment, EnvironmentError,
+    FORMAT as ENVIRONMENT_FORMAT, HttpCall, SeedFile, loopback_host,
 };

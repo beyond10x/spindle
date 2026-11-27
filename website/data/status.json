@@ -403,6 +403,13 @@
     },
     {
       "area": "Execution",
+      "detail": "An environment's [egress] table binds a published event to an [http.<name>] call with method POST; a served run posts each such event there as one spindle-egress/1 JSON body (format, event, component, position, fields), at least once and in commit order per component store. A post that fails or is answered anything but 2xx is sent again after a pause that doubles up to 5 s, the component's later events waiting for it. The position up to which the call answered 2xx is kept in the component's own store, SQLite or PostgreSQL, as no published event, and a restart posts the events after it. An egress naming an event no component publishes, or one a component kept in memory publishes, exits 3 before listening.",
+      "href": "/docs/concepts/environment-and-admission#published-events-posted-to-a-webhook",
+      "label": "Published events posted to a webhook",
+      "status": "shipped"
+    },
+    {
+      "area": "Execution",
       "detail": "run reading JSON lines on stdin answers every line, then exits 1 when a line was rejected (not JSON, no declared command, input not admitted, an external cause unanswered, or refused by the kernel before an outcome), naming each such line on stderr by its place in the input. A line answered by a declared outcome, a refusing one included, leaves the exit status 0.",
       "href": "/docs/concepts/capabilities",
       "label": "A rejected line fails the run",

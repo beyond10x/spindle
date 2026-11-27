@@ -200,6 +200,12 @@ against the platform's trust roots or the PEM file `ca_file` names. A plain `htt
 accepted only on loopback (`localhost`, `127.0.0.0/8`, `[::1]`). Any other URL is refused when
 the document is read.
 
+An `[egress]` table binds a published event to such a call (`"<qualified event>" = "<name>"`,
+method `POST`): a served `run` posts each such event there as one `spindle-egress/1` JSON body,
+at least once, in commit order per component, and goes on after a restart from the position it
+keeps in the component's store; a component kept in `memory` is refused
+([published events posted to a webhook](https://beyond10x.github.io/spindle/docs/concepts/environment-and-admission#published-events-posted-to-a-webhook)).
+
 ## Node export
 
 `spindle-node` serves a specification inside a Node program, as an in-process fake backend:

@@ -106,6 +106,14 @@ pub(crate) const ENTITY: &str = "spindle:entity";
 /// it before it copies such a write into a PostgreSQL store. A scan of a marked log reads the
 /// whole log.
 pub(crate) const MARKS: (&str, &str) = ("spindle:log", "unnamed-writes");
+/// The stream id prefix of an egress cursor, a stream of the type [`MARKS`] is of, one per
+/// `[http.<name>]` call: `egress:<name>` ([`Store::egress_posted`]). Each of its events is one
+/// [`EGRESS_MARK`]; the last names the cursor. No published event: a read of the events
+/// committed skips it.
+const EGRESS: &str = "egress:";
+/// The event of an egress cursor's stream: `{"position": <n>}`, the position of the last write
+/// whose events were posted to the call.
+const EGRESS_MARK: &str = "spindle.egress";
 /// Who records the change: the runtime itself, the actor of an append whose cause names no actor
 /// ([`LogStore::attributed`]).
 const ACTOR: &str = "spindle-kernel";
@@ -804,6 +812,47 @@ impl<L: Log> Store for LogStore<L> {
     fn events_id(&mut self) -> Result<u64, StoreError> {
         self.log_id()
     }
+
+    /// The `position` of the last event of the call's cursor stream ([`EGRESS`]), `0` for none.
+    fn egress_position(&mut self, call: &str) -> Result<u64, StoreError> {
+        let stream = self.egress_stream(call)?;
+        let Some((_, last)) = self.last(&stream)? else {
+            return Ok(0);
+        };
+        last.data
+            .get("position")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                StoreError::Backend(format!(
+                    "the egress cursor of {call} at version {} names no position",
+                    last.version
+                ))
+            })
+    }
+
+    /// Appends one `spindle.egress` event to the call's cursor stream ([`EGRESS`]), as an append
+    /// group of its own.
+    fn egress_posted(&mut self, call: &str, position: u64) -> Result<(), StoreError> {
+        let mark = NewEvent::new(
+            EGRESS_MARK,
+            SCHEMA,
+            serde_json::json!({"position": position}),
+        )
+        .map_err(backend)?;
+        self.append(vec![StreamAppend {
+            stream: self.egress_stream(call)?,
+            expected: Expected::Any,
+            events: vec![mark],
+        }])
+        .map_err(backend)
+    }
+}
+
+impl<L: Log> LogStore<L> {
+    /// The egress cursor stream of the call `call` ([`EGRESS`]).
+    fn egress_stream(&self, call: &str) -> Result<StreamId, StoreError> {
+        StreamId::new(self.tenant.clone(), MARKS.0, format!("{EGRESS}{call}")).map_err(backend)
+    }
 }
 
 impl<L: Log> LogStore<L> {
@@ -1378,7 +1427,11 @@ impl<L: Log> LogStore<L> {
                     }
                     continue;
                 }
-                if stream == MARKS || event.name == ROW || event.name == REMOVED {
+                if stream == MARKS
+                    || event.name == ROW
+                    || event.name == REMOVED
+                    || (event.stream_type == MARKS.0 && event.stream_id.starts_with(EGRESS))
+                {
                     continue;
                 }
                 let Value::Object(payload) = event.data else {
