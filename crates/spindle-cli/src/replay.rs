@@ -9,7 +9,9 @@
 //! stores for every replay, whatever `store.durable` is bound to, so a replay writes nothing to
 //! disk. Spindle compares nothing itself; what holds is the runner's answer. Each act's line also
 //! names what its command answered ([`HostTarget::answered`]): an act that states no outcome
-//! compiles to no outcome check, so the runner passes it refused, and the line says so.
+//! compiles to no outcome check, so the runner passes it refused, and the line says so. An
+//! external cause the scenario does not force is answered by `--decisions`
+//! ([`HostTarget::answering`]).
 //!
 //! The runner reports a scenario as a whole and goes on past a failed expectation. To name the
 //! first step that diverges, the compiled steps are cut into the document's own steps (what is
@@ -37,7 +39,7 @@ use ess_conformance::{
 };
 use spindle_capability::{Admission, Environment};
 use spindle_conformance::{Answered, HostTarget, in_memory};
-use spindle_host::{Clock, HostError, ManualClock, Refusal, SystemClock};
+use spindle_host::{Answers, Clock, HostError, ManualClock, Refusal, SystemClock};
 
 /// Exit status of a replay the environment refused.
 const REFUSED: u8 = 3;
@@ -47,17 +49,26 @@ pub(crate) const MOST_STEPS: usize = 1000;
 
 /// Replays the scenario in `scenario` against `spec` admitted on `environment`.
 ///
+/// An external cause the scenario does not force is answered by `decisions`, a decisions file
+/// ([`crate::decisions::load`]); one neither forces nor answers does not hold.
+///
 /// Exits 0 when every step holds, 1 at the first step that does not, when ESS refuses the
-/// document or when it has more than [`MOST_STEPS`] steps, and 3, running nothing, when admission
-/// is refused.
+/// document, when it has more than [`MOST_STEPS`] steps or when the decisions file is refused,
+/// and 3, running nothing, when admission is refused.
 pub(crate) fn replay(
     spec: &Path,
     environment: &Path,
     scenario: &Path,
+    decisions: Option<&Path>,
     clock: Option<SystemTime>,
     mint: Option<u64>,
 ) -> Result<ExitCode> {
     let loaded = spindle_spec::load_with_implied_component(spec)?;
+    let answers = decisions
+        .map(|path| {
+            crate::decisions::load(&loaded.ir, Some(path), false).map(|run| run.answers().clone())
+        })
+        .transpose()?;
     let text = std::fs::read_to_string(environment)
         .with_context(|| format!("reading {}", environment.display()))?;
     let parsed =
@@ -105,6 +116,7 @@ pub(crate) fn replay(
         id: &id,
         scenario: &compiled,
         origin: scenario,
+        answers: answers.as_ref(),
         clock,
         mint,
     };
@@ -201,6 +213,8 @@ struct Replays<'a> {
     id: &'a ScenarioId,
     scenario: &'a ConformanceScenario,
     origin: &'a Path,
+    /// `--decisions`: each replay's host answers a cause the scenario does not force from it.
+    answers: Option<&'a Answers>,
     /// `--clock`: each replay's host decides `now` on a manual clock standing at this instant.
     clock: Option<SystemTime>,
     /// `--mint-seed`: each replay's host mints from this seed.
@@ -250,6 +264,10 @@ impl Replays<'_> {
         };
         let target =
             HostTarget::clocked(self.ir.clone(), self.environment.clone(), clock, self.mint);
+        let target = match self.answers {
+            Some(answers) => target.answering(answers.clone()),
+            None => target,
+        };
         let report = Runner::new(
             RunnerConfig::default(),
             AdvancingClock::default(),

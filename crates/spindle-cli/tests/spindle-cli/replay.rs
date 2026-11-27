@@ -568,3 +568,82 @@ fn a_divergent_one_time_scenario_names_its_divergent_step() {
         "no step after the divergent one runs: {printed}"
     );
 }
+
+/// The fixture whose `probe.review.Submit` has two external causes, `flagged` then `escalated`,
+/// beside a default branch (`story:replay-with-decisions`).
+const REVIEW: &str = "crates/spindle-cli/tests/fixtures/review";
+
+/// The scenarios of [`REVIEW`].
+const REVIEW_SCENARIOS: &str = "crates/spindle-cli/tests/fixtures/review-scenarios";
+
+/// An environment that binds every store to `memory` and `external.*` to the operator.
+const MEMORY: &str = "crates/spindle-cli/tests/fixtures/memory.toml";
+
+/// `run --scenario` of `scenario` of [`REVIEW_SCENARIOS`] against [`REVIEW`], with `decisions`
+/// written as the decisions file.
+fn replay_deciding(scenario: &str, decisions: &str) -> Output {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+    let file = directory.path().join("decisions.toml");
+    std::fs::write(&file, decisions).expect("the decisions file is written");
+    let scenario = format!("{REVIEW_SCENARIOS}/{scenario}");
+    Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+        .current_dir(root())
+        .args([
+            "run",
+            REVIEW,
+            "--environment",
+            MEMORY,
+            "--scenario",
+            &scenario,
+        ])
+        .arg("--decisions")
+        .arg(&file)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("b10x-spindle runs")
+}
+
+/// The decisions file of the review cases: the fraud desk flags every submission.
+const FLAGGING: &str = "[\"probe.review.Submit\"]\nflagged = true\n";
+
+#[test]
+fn a_scenario_replays_with_a_decisions_file() {
+    let output = replay_deciding("unforced.yaml", FLAGGING);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let printed = stdout(&output);
+    let line =
+        "timeline[0] probe.review.Submit: holds, outcome flagged, error probe.review.Flagged\n";
+    assert!(printed.contains(line), "{line:?} in {printed}");
+}
+
+/// The act forces `escalated`; the file answers `flagged`, which the kernel asks first. The
+/// forcing answers every cause of its command, so `flagged` does not hold and the act holds.
+#[test]
+fn a_scenario_s_forcing_wins_over_the_decisions_file() {
+    let output = replay_deciding("escalated.yaml", FLAGGING);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let printed = stdout(&output);
+    let line =
+        "timeline[0] probe.review.Submit: holds, outcome escalated, error probe.review.Escalated\n";
+    assert!(printed.contains(line), "{line:?} in {printed}");
+}
+
+#[test]
+fn a_decisions_file_the_model_refuses_exits_one_before_any_step() {
+    let output = replay_deciding(
+        "unforced.yaml",
+        "[\"probe.review.Withdraw\"]\nflagged = true\n",
+    );
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(
+        !stdout(&output).contains("timeline["),
+        "no step runs: {output:?}"
+    );
+    let diagnostic = stderr(&output);
+    assert!(
+        diagnostic.contains("probe.review.Withdraw"),
+        "the command named: {diagnostic}"
+    );
+}

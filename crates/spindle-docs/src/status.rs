@@ -485,7 +485,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Conformance",
         "Scenario replay",
-        "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: an entity it arranges with setup is written into the store of the component that owns it, captures feed later steps, view asserts are checked, each act's line names the outcome its command took with its declared error, or its refusal, the first divergent step is named and ends the run, and a specification that declares no component replays as one implied component that owns every domain.",
+        "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: an entity it arranges with setup is written into the store of the component that owns it, captures feed later steps, view asserts are checked, each act's line names the outcome its command took with its declared error, or its refusal, the first divergent step is named and ends the run, an external cause the scenario does not force is answered by --decisions, and a specification that declares no component replays as one implied component that owns every domain.",
         "/docs/concepts/specification",
         "crates/spindle-conformance/tests/spindle-conformance/establish.rs::an_established_row_is_read_by_the_next_command",
     ),

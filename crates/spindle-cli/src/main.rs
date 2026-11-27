@@ -191,10 +191,18 @@ fn run(cli: Cli) -> Result<ExitCode> {
             spec,
             environment,
             scenario: Some(scenario),
+            decisions,
             clock,
             mint_seed,
             ..
-        } => replay::replay(&spec, &environment, &scenario, clock, mint_seed),
+        } => replay::replay(
+            &spec,
+            &environment,
+            &scenario,
+            decisions.as_deref(),
+            clock,
+            mint_seed,
+        ),
         Command::Run {
             spec,
             environment,
