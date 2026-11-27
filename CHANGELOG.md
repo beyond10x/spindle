@@ -78,6 +78,14 @@ are Spindle's releases.
   exits 143 or 130; a reset among them is answered `503` and empties nothing. Before, every
   request still waiting at the signal was answered `503`; `--drain 0` keeps that
   (`story:health-and-graceful-drain`).
+- An outcome whose payload or `sets:` field is filled through a declared conversion
+  (`conversions:`) runs in `run` and `conform`, as ESS's interpreter runs it: the value is passed
+  on unchanged, and a value read from a row (`{subject: …}`, `{changed: …}`, `{related: …}`) is
+  checked against the conversion's source and target type, one the target refuses answered
+  `invalid input` (`400` when served) before anything is written, where ESS refuses it as the
+  request's. Before, a request that selected such an outcome was refused `unsupported: the
+  conversion … into <field>`. A `{response: …}` field through a conversion stays refused by name,
+  as ESS does not interpret it (`story:payload-field-through-conversion`).
 
 ### Changed
 

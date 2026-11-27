@@ -1,0 +1,37 @@
+domain: beacon.counter
+summary: A badge is asked for; the answer returns a code, which the event publishes as a short code.
+types:
+  - name: beacon.counter.Code
+    kind: newtype
+    of: String
+  - name: beacon.counter.ShortCode
+    kind: newtype
+    of: String
+    invariants:
+      - 'value.count <= 8'
+entities: []
+errors: []
+commands:
+  - name: beacon.counter.AskBadge
+    input:
+      - name: badge_id
+        type: String
+    response:
+      - name: code
+        type: beacon.counter.Code
+    outcomes:
+      - name: asked
+        emits: [beacon.counter.BadgeAsked]
+        payload:
+          beacon.counter.BadgeAsked:
+            badge_id: input.badge_id
+            code: {response: code}
+        returns: true
+        summary: The badge is asked for; the event publishes the code this answer returns.
+events:
+  - name: beacon.counter.BadgeAsked
+    fields:
+      - name: badge_id
+        type: String
+      - name: code
+        type: beacon.counter.ShortCode

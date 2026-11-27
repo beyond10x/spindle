@@ -4,8 +4,9 @@
 //! `rally` example use, a value read from the row an input field names, a value an expression
 //! computes outside an error, a guard over a row set, a guard over a list of references for a
 //! missing row, an external refusal asked before the row, a set outcome (`instances:`) with the
-//! rows it changed, secondary effects (`affects:`) selecting their rows by a filter, and an event
-//! payload value read from the response the outcome answers (`{response: …}`). Every other
+//! rows it changed, secondary effects (`affects:`) selecting their rows by a filter, an event
+//! payload value read from the response the outcome answers (`{response: …}`), and a value that
+//! fills its field through a declared conversion, other than a response field. Every other
 //! construct is refused by name, as [`ExecuteError::Unsupported`], before anything is written;
 //! what it refuses depends on what reads the construct.
 //!
@@ -836,10 +837,17 @@ fn value(ir: &EssIr, field: &ResolvedPayloadField, reading: Reading) -> Option<S
             && crate::mint::generated(ir, &field.target_type, present).is_none())
         .then(|| crate::mint::unmintable(&field.target, &field.target_type))
     };
-    if let Some(conversion) = &field.conversion {
+    // A value through a declared conversion is passed on unchanged, and a value read from a row is
+    // checked against the source and the target type ([`crate::values`]), as ESS's interpreter
+    // reads it (`interpret::execute::determined::checked_read`). ESS does not interpret a response
+    // field through one (`determined::response`), and neither does the kernel.
+    if let (Some(conversion), ResolvedPayloadValue::ResponseField { .. }) =
+        (&field.conversion, &field.value)
+    {
         return Some(format!(
-            "the conversion `{conversion}` into `{}`",
-            field.target
+            "the conversion `{conversion}` into `{}` of the value source {}",
+            field.target,
+            field.value.describe()
         ));
     }
     match &field.value {

@@ -272,16 +272,26 @@ impl<'a> Sources<'a, '_> {
             // A stored field read as the row holds it: a field it does not hold is absent, and one
             // it holds as `null` (an established row's) is `null`, as ESS's `determined::subject`
             // reads it; the same for a changed row and a related or selected row below.
-            ResolvedPayloadValue::SubjectField { field: read, .. } => {
-                Ok(self.before(field)?.fields.get(read).cloned())
-            }
+            ResolvedPayloadValue::SubjectField {
+                field: read,
+                type_ref,
+            } => self.checked(
+                field,
+                type_ref,
+                self.before(field)?.fields.get(read).cloned(),
+            ),
             ResolvedPayloadValue::SubjectState { .. } => {
                 Ok(Some(Value::String(self.before(field)?.state.clone())))
             }
             // ESS `emit` holds the changed row an occurrence is for as the row before the outcome.
-            ResolvedPayloadValue::ChangedField { field: read, .. } => {
-                Ok(self.before(field)?.fields.get(read).cloned())
-            }
+            ResolvedPayloadValue::ChangedField {
+                field: read,
+                type_ref,
+            } => self.checked(
+                field,
+                type_ref,
+                self.before(field)?.fields.get(read).cloned(),
+            ),
             ResolvedPayloadValue::ChangedState { .. } => {
                 Ok(Some(Value::String(self.before(field)?.state.clone())))
             }
@@ -374,19 +384,28 @@ impl<'a> Sources<'a, '_> {
                 through,
                 entity,
                 field: read,
-                ..
-            } if through.is_empty() => self.related(field, via, entity, Some(read)),
+                type_ref,
+            } if through.is_empty() => {
+                let value = self.related(field, via, entity, Some(read))?;
+                self.checked(field, type_ref, value)
+            }
             ResolvedPayloadValue::RelatedState {
                 via: ResolvedRelatedVia::Input { field: via, .. },
                 through,
                 entity,
-                ..
-            } if through.is_empty() => self.related(field, via, entity, None),
+                type_ref,
+            } if through.is_empty() => {
+                let value = self.related(field, via, entity, None)?;
+                self.checked(field, type_ref, value)
+            }
             ResolvedPayloadValue::RelatedSelection {
                 selection,
                 field: read,
-                ..
-            } => self.selected(field, selection, read),
+                type_ref,
+            } => {
+                let value = self.selected(field, selection, read)?;
+                self.checked(field, type_ref, value)
+            }
             ResolvedPayloadValue::ResponseField {
                 field: read,
                 type_ref,
@@ -427,6 +446,50 @@ impl<'a> Sources<'a, '_> {
             }
         }
         Ok(object)
+    }
+
+    /// `value`, read from a row for `field` from a field of type `source`, checked where `field`
+    /// fills its target through a declared conversion, as ESS's interpreter checks every row read
+    /// (`interpret::execute::determined::checked_read`): a value must be one of `source` and of
+    /// the target's type, and an absent one is absent only where `source` admits absence. The
+    /// value is passed on unchanged. ESS refuses one that is not as a request that is not what
+    /// the model declares (`Undetermined::Request`), so the kernel answers
+    /// [`ExecuteError::InvalidInput`], before anything is written; no message names the value.
+    fn checked(
+        &self,
+        field: &ResolvedPayloadField,
+        source: &ResolvedTypeRef,
+        value: Option<Value>,
+    ) -> Result<Option<Value>, ExecuteError> {
+        let Some(conversion) = &field.conversion else {
+            return Ok(value);
+        };
+        let refused = |why: String| {
+            ExecuteError::InvalidInput(format!(
+                "`{}`, read from a row through the conversion `{conversion}`, {why}",
+                field.target
+            ))
+        };
+        match &value {
+            Some(held) => {
+                crate::typed::validate(self.ir, source, held).map_err(|_| {
+                    refused(format!("holds no value of its source type `{source}`"))
+                })?;
+                crate::typed::validate(self.ir, &field.target_type, held).map_err(|_| {
+                    refused(format!(
+                        "holds a value its target type `{}` does not admit",
+                        field.target_type
+                    ))
+                })?;
+            }
+            None if crate::typed::validate(self.ir, source, &Value::Null).is_ok() => {}
+            None => {
+                return Err(refused(format!(
+                    "holds no value, and its source type `{source}` is required"
+                )));
+            }
+        }
+        Ok(value)
     }
 
     /// The value this run mints for the generated `field`.
