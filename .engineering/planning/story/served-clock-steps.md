@@ -27,8 +27,16 @@ scope:
   path: crates/spindle-host/src/host/range.rs
 - confidence: cited
   path: crates/spindle-host/src/world.rs
+- confidence: cited
+  path: crates/spindle-host/tests/spindle-host/adversary_concurrent_reads.rs
+- confidence: cited
+  path: crates/spindle-host/tests/spindle-host/adversary_rows.rs
+- confidence: cited
+  path: crates/spindle-host/tests/spindle-host/concurrent_reads.rs
 - confidence: inferred
   path: crates/spindle-host/tests/spindle-host/console.rs
+- confidence: cited
+  path: crates/spindle-host/tests/spindle-host/rows.rs
 - confidence: cited
   path: crates/spindle-ingress/src/console.rs
 - confidence: inferred
@@ -39,11 +47,15 @@ scope:
   path: crates/spindle-ingress/src/surface.rs
 - confidence: inferred
   path: crates/spindle-ingress/tests/spindle-ingress/router.rs
+- confidence: cited
+  path: website/data/status.json
 - confidence: inferred
   path: website/docs/concepts/capabilities.md
 - confidence: cited
   path: website/docs/reference/cli.md
-revision: 7
+- confidence: cited
+  path: website/docs/status.md
+revision: 11
 ---
 # A served run steps its clock
 
@@ -52,7 +64,8 @@ revision: 7
 A `run` serving HTTP with `--clock` answers `POST /api/clock` `{"at": "<RFC 3339>"}` by moving its
 manual clock forward to that instant between commands and answering `{"at"}`, guarded by the proxy
 secret as every `/api/*` route. An instant before the clock's current one is refused `409` and
-leaves the clock where it stood; without `--clock` the route answers `409`. `GET /api/clock` answers
+leaves the clock where it stood; without `--clock` both methods of the route answer `409`, and so
+does a reset whose world carries `clock`, which then empties nothing. `GET /api/clock` answers
 the current instant. A reset world may carry `"clock": "<RFC 3339>"` to move the clock forward
 there; an earlier instant refuses the reset `400` before anything is emptied, because the host's
 command sequence, on which event times and both cursors rest, never goes back. Every record of
@@ -71,17 +84,22 @@ published format that this story does not make (decision D4 A).
   `POST /api/clock` to 2026-07-01 answers `{"at"}`, and the next booking answers `late`.
 - `a_served_clock_refuses_to_move_back`: a later `POST /api/clock` to an earlier instant answers
   `409`, and `GET /api/clock` answers the instant before it.
-- `a_served_run_without_clock_refuses_to_step`: without `--clock`, `POST /api/clock` answers `409`.
-- `a_reset_world_moves_the_clock`: a reset whose world carries a later `clock` moves the clock
-  there; one with an earlier `clock` answers `400` and empties nothing.
-- `every_event_record_carries_at`: each record of `GET /api/events`, unpaged and on an `after=`
-  page, names the clock instant its command ran.
+- `a_served_run_without_clock_refuses_to_step`: without `--clock`, `POST /api/clock` and
+  `GET /api/clock` each answer `409`, and a reset whose world carries `clock` answers `409` and
+  empties nothing.
+- `a_reset_world_moves_the_clock`: on a `--clock` run, a reset whose world carries a later `clock`
+  moves the clock there; one with an earlier `clock` answers `400` and empties nothing.
+- `every_event_record_carries_at`: on a `--clock 2026-02-01T00:00:00Z` run, one command, then
+  `POST /api/clock` to 2026-07-01, then a second command: in `GET /api/events`, unpaged and on an
+  `after=` page, the first command's events carry `at` 2026-02-01T00:00:00Z and the second's
+  2026-07-01T00:00:00Z, to the millisecond.
 - `the_clock_route_needs_the_proxy_secret`: on a `--trusted-caller-header` run, the route without
   the secret answers `403` and moves nothing.
 - `get_and_post_share_the_clock_path` (`router.rs`): both methods resolve, another method answers
   `405` with `Allow: GET, POST`, and a specification route at `/api/clock` is refused at start as
   shadowed.
-- `a_published_event_carries_its_command_time` (`spindle-host` `console.rs`).
+- `a_published_event_carries_its_command_time` (`spindle-host` `console.rs`): one command on a host
+  opened on `ManualClock::at(T)` publishes events whose `at` is `T` to the millisecond.
 
 ## Not covered
 
@@ -113,13 +131,17 @@ Derived 2026-11-27 by `story-scoper`, against `plan/wave-30` at c65b744e. Every 
 - **Documents:** `README.md` :72 (console route list), `crates/spindle-ingress/src/lib.rs` :43-50 (module doc), `website/docs/concepts/capabilities.md` :123, `crates/spindle-docs/src/status.rs` :473-476 (the generated status pages follow), `CHANGELOG.md` `[Unreleased]` — inferred
 - **Not touched:** `ess/domains/observe.yaml`, `crates/spindle-observe-api/types.rs`, `ui/src/api/generated/source.schema.json`, `crates/spindle-ingress/src/observe.rs`, `crates/spindle-timer`, the stdin loop in `crates/spindle-cli/src/main.rs` — inferred, true under D4 A and D2 A
 - **Confidence:** medium — every code site was read; the shape depends on D1 to D4, and the drafted acceptance was stale on three points
-- **Would collide with:** `spindle-host/src/host/range.rs` `range` (wave 30's events cursor unit); `spindle-host/src/host.rs` (wave 29; wave 30 doc comments and `Host::establish`, different hunks); `spindle-cli/src/cli.rs` with the generated `reference/cli.md` (wave 29 and the wave 30 `--stdin` unit); `README.md` and `CHANGELOG.md` `[Unreleased]`
+- **Would collide with:** `spindle-host/src/host/range.rs` `range` (wave 30 U7, the events cursor); `spindle-host/src/host.rs` (wave 29; wave 30 U1, U6 and U7 on other hunks; the stepping handle, if built beside `Host::seeded` `:1235-1268`, sits next to U6's `establish` `:1270-1281`); `spindle-host/src/world.rs` with U6 (`seed` `:115`; U12 `Body` `:34-42` and `read_world` `:65-91`); `spindle-cli/src/cli.rs` with the generated `reference/cli.md` (wave 29 and wave 30 U9); `README.md` (U3) and `CHANGELOG.md` `[Unreleased]`
 - **Shares code with:** `story:node-export-clock-and-seeds` (a host-held clock its program steps); neither depends on the other — inferred
 - **depends_on:** `story:events-cursor-across-restart`, which rewrites `range::range` where `Published` is built (`range.rs:316`) — inferred
 - **Safety fact:** every console route is refused without the proxy secret where the surface proves callers (`listener.rs:667`, `matches!(asked, Asked::Console(_)) && unproxied`), so a new `Console` variant inherits the guard without new code. Step 2, unproven
 - **Safety fact:** a specification that declares a route at `/api/clock` is refused at start once the route exists (`surface.rs:1554-1566`, `SurfaceError::Shadowed`), on every surface with the console, the embedded ones too (`spindle-embed/src/lib.rs:175`). Step 2, unproven
 - **Safety fact:** `at` comes from the command's sequence, `max(clock µs, last + 1)` (`host.rs:2380-2382`); on a clock standing still, the n-th command at one instant reads up to n−1 µs past it, shown to the millisecond. Step 3, unproven
 - **Architecture:** none under D1 A to D4 A: a new route on the existing console, an optional key on the reset world, an extra field on the `/api/events` JSON, which `observe.yaml` does not declare; no new crate, process, wire format or dependency — inferred
+- **Also changed:** the `World { rows, answers, mint }` struct literals of the `spindle-host` tests
+  `concurrent_reads.rs:132`, `rows.rs:246`, `adversary_rows.rs:276` and
+  `adversary_concurrent_reads.rs:78` gain `clock`; the generated `website/docs/status.md` and
+  `website/data/status.json` follow `status.rs` — cited
 
 ## Decided when scoped
 

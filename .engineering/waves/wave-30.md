@@ -87,12 +87,13 @@ by the coordinator at merge:
   U6 `Host::establish` (`:1271-1281`); U7 the doc comments of `published_after` and
   `published_head` (`:1338-1368`).
 - `crates/spindle-host/src/host/component.rs`: U8 only (`Host::connect`).
+- `crates/spindle-host/src/world.rs`: U6 `seed` (`:115`); U12 `Body` (`:34-42`) and `read_world`
+  (`:65-91`), after U6.
 - `crates/spindle-host/src/host/range.rs`: U7 the events cursor in `range`; U12 the `at` of the
   `Published` it builds (`:316-320`), after U7.
 - `crates/spindle-cli/src/cli.rs` and the generated `website/docs/reference/cli.md`: U12 the docs of
   `--clock`, the reset world and the console routes, besides U9.
-- `crates/spindle-cli/src/main.rs`, `crates/spindle-cli/src/cli.rs` with the generated
-  `website/docs/reference/cli.md`: U9 only (`--stdin`).
+- `crates/spindle-cli/src/main.rs`: U9 only (`--stdin`); `cli.rs` and the generated `cli.md` as above.
 - `crates/spindle-cli/src/replay.rs`: U5 only (`, unavailable`).
 - The test `main.rs` module lists of `spindle-kernel` (U3, U6, U11), `spindle-conformance` (U2),
   `spindle-ingress` (U3), `spindle-cli` (U9), `spindle-host` (U1, U8); `README.md` (U3);
