@@ -1452,7 +1452,7 @@ impl Surface {
     /// authenticated as no caller, `403` `{"refused": "not granted", "actor": null}`, on a
     /// command or view, and nothing is read or written. Off loopback such a surface is served
     /// only over TLS (`Listener::bind_reading_on_tls`). A request [`crate::route`] answers carries
-    /// no header, so there it proves no caller.
+    /// no header, so there every request but the probes is refused `401`.
     ///
     /// # Errors
     /// As [`Surface::new`].

@@ -92,7 +92,9 @@ pub struct Routed {
 /// compared exactly; a path variable that does not decode `400`; a body over [`BODY_LIMIT`]
 /// `413`. A [`Request`] carries no header, so on a surface made [`Surface::proving_callers`] it
 /// proves no caller and carries no proxy secret: every command, view, console route and route
-/// under `/__spindle/` is refused `403` `{"refused": "not granted", "actor": null}`.
+/// under `/__spindle/` is refused `403` `{"refused": "not granted", "actor": null}`; on one made
+/// [`Surface::verifying_tokens`] it carries no token, and every request but the probes
+/// (`/__spindle/live`, `/__spindle/ready`, `/__spindle/seed`) is refused `401`.
 pub fn route(surface: &Surface, host: &mut Host, request: Request) -> Routed {
     routing(surface, host, request, None)
 }
@@ -115,6 +117,14 @@ fn routing(
 ) -> Routed {
     // A request value carries no header, so on a surface whose requests prove their caller it
     // carries neither a caller nor the proxy's secret, which the run's own routes answer alone.
+    // On one verifying bearer tokens it carries no token: every request but the probes is
+    // refused `401`.
+    if surface.verifies_tokens() && !crate::surface::probe(Reserved::of(&request.path)) {
+        return Routed {
+            response: Answer::unauthenticated().into(),
+            failed: Vec::new(),
+        };
+    }
     let proving = surface.caller_header().is_some();
     let unproven = || Routed {
         response: Answer::not_proven().into(),

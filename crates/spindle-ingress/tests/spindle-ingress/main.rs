@@ -38,6 +38,7 @@ mod refusal_payload;
 mod router;
 mod served;
 mod tls;
+mod token_router;
 mod topology;
 mod unknown_refusal;
 mod unpublished_event;

@@ -264,7 +264,8 @@ list for `linux/amd64` and `linux/arm64`: the release's gnu binary on `gcr.io/di
 (no shell), run as UID 65532, with `b10x-spindle` as the entrypoint. The release's `IMAGES` asset,
 listed in `SHA256SUMS`, names that list by digest (`ghcr.io/beyond10x/spindle:<version>@sha256:<digest>`);
 pull it by that line. A container port reaches `run` only on an address off loopback
-(`--address 0.0.0.0`), which needs `--trusted-caller-header` and `--trusted-caller-secret`. Changes
+(`--address 0.0.0.0`), which needs `--trusted-caller-header` and `--trusted-caller-secret`, or
+`--caller-token` with `--tls-cert` and `--tls-key`. Changes
 are in [`CHANGELOG.md`](CHANGELOG.md), and the release steps in
 [`AGENTS.md`](AGENTS.md#cutting-a-release).
 
