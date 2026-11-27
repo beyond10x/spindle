@@ -166,9 +166,10 @@ are Spindle's releases.
   `"standby": true` and every other request `503`, open no store, write nothing, post no event to
   a webhook and keep no dead letter. A standby takes over once the leader's lease ends or its
   database session does, as a killed leader's does (measured 0.7 s after a SIGKILL), and skips
-  the seed. Every write checks its lease's token in its own transaction, so a leader paused past
-  its lease lands nothing once it resumes, and exits 1 naming the lease. A `database_lease` that
-  is not a whole number above 0 exits 1 before connecting, and with it tables a release before
+  the seed, which runs only under the leases' first token. Every write checks its lease's token in
+  its own transaction, so a leader paused past its lease lands nothing once it resumes, answers
+  the requests it took `503`, and exits 1 naming the lease. A `database_lease` that is not a
+  whole number from 1 to 86400 exits 1 before connecting, and with it tables a release before
   leases migrated are refused until `store migrate` runs again
   (`story:several-writers-one-postgres`).
 

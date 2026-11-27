@@ -384,7 +384,7 @@ fn run_with_a_connection_budget_below_components_times_pool_exits_1_naming_both(
 #[test]
 fn a_malformed_lease_setting_is_refused_before_connecting() {
     let url = format!("postgres://serving:{PASSWORD}@127.0.0.1:1/rally");
-    for lease in ["soon", "0", "-2", "1.5"] {
+    for lease in ["soon", "0", "-2", "1.5", "86401", "10000000"] {
         let refused = refused(run(&[("database_url", &url), ("database_lease", lease)]));
         exits_1_naming(
             &refused,

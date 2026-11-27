@@ -465,8 +465,8 @@ fn a_paused_leader_is_fenced() {
     );
     let answer = late.join().expect("the late command ends");
     assert!(
-        !answer.starts_with("HTTP/1.1 2"),
-        "the old leader landed the late command: {answer}"
+        answer.starts_with("HTTP/1.1 503"),
+        "the old leader answers the late command 503: {answer}"
     );
     assert_eq!(
         (head(&schema, "board"), head(&schema, "ledger")),

@@ -567,15 +567,19 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     }
     // Where a `--state` records the seed applied to it (`seed.json`), a seed it does not record
     // stops the run here, before listening.
+    let taken_again = kept.as_ref().and_then(crate::database::Kept::taken_again);
     let mut seeding = match (serving.seed, published) {
-        // A run that took over the leases from another process skips the seed, which ran under
-        // the first leader (`story:several-writers-one-postgres`, D5).
-        (Some(seed), Some(published)) if standing.is_some() => {
+        // The seed runs only under the first token of each lease: a run that took one at a later
+        // token, standing by first or not, skips it (`story:several-writers-one-postgres`, D5).
+        (Some(seed), Some(published)) if taken_again.is_some() => {
+            let (component, token) = taken_again.unwrap_or_default();
             log::info(format!(
-                "seed {} is not submitted: this run took over the leases of its stores from \
-                 another process, which submitted it",
+                "seed {} is not submitted: this run took the lease of {component} at token \
+                 {token}, and the seed runs only under a lease's first token",
                 seed.path().display()
             ))
+            .field("component", component)
+            .field("token", token)
             .write();
             published.publish(SeedProgress {
                 phase: SeedPhase::Ended,
@@ -650,7 +654,7 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         // A leader that lost a lease writes nothing more: every request still queued is answered
         // `503` below and the run exits 1, for its supervisor to start it again
         // (`story:several-writers-one-postgres`, D4).
-        if let Some(lost) = kept.as_ref().and_then(crate::database::Kept::lost) {
+        if let Some(lost) = kept.as_ref().and_then(crate::database::Kept::confirmed) {
             log::error(lost).write();
             break ExitCode::FAILURE;
         }
@@ -692,6 +696,14 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
                 None => continue,
             }
         };
+        // The wait for the exchange may have outlasted the lease, as in a process paused: the
+        // exchange runs only once the leases are known still held, and is answered `503` where
+        // one was lost (D4).
+        if let Some(lost) = kept.as_ref().and_then(crate::database::Kept::confirmed) {
+            exchange.respond(Answer::refusal(503, LEASE_LOST));
+            log::error(lost).write();
+            break ExitCode::FAILURE;
+        }
         if exchange.console() == Some(Console::Reset)
             && (draining.is_some() || stopping.load(Ordering::SeqCst))
         {
@@ -970,6 +982,9 @@ fn escalation(escalated: &Escalated) -> String {
 
 /// How long the run waits, once it stops, for the answers it handed back to be written.
 const CLOSE_GRACE: Duration = Duration::from_secs(2);
+
+/// The refusal of a request taken by a leader that lost a lease of its store (D4).
+const LEASE_LOST: &str = "the run lost the lease of its store to another process and exits";
 
 /// Answers `exchange`, a `POST /api/reset` on a run with a seed: every store emptied and the world
 /// its body carries loaded, as [`console::reset`] answers it, and the reset counted on `recorder`

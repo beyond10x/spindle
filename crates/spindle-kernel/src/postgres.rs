@@ -365,9 +365,15 @@ impl Lease {
     /// from its last renewal.
     ///
     /// # Errors
-    /// [`StoreError::Backend`] naming the setting refused, or the server that cannot be reached
-    /// or refused the connection.
+    /// [`StoreError::Backend`] naming the setting refused, a `term` not from 1 s to
+    /// [`LEASE_MAX`], or the server that cannot be reached or refused the connection.
     pub fn connect(database: &Database, term: Duration) -> Result<Self, StoreError> {
+        if term < Duration::from_secs(1) || term > LEASE_MAX {
+            return Err(StoreError::Backend(format!(
+                "a lease of {term:?} is not from 1 s to {} s",
+                LEASE_MAX.as_secs()
+            )));
+        }
         let mut lease = Self {
             database: database.clone(),
             term,
@@ -400,7 +406,11 @@ impl Lease {
                 .block_on(client.batch_execute(&format!(
                     "SET statement_timeout = {wait}; SET lock_timeout = {wait}"
                 )))
-                .map_err(|error| self.failed(&error, "the lease"))?;
+                .map_err(|error| {
+                    StoreError::Backend(format!(
+                        "the connection for the leases did not take its timeouts: {error}"
+                    ))
+                })?;
             self.client = Some(client);
         }
         Ok(())
@@ -474,6 +484,9 @@ impl Lease {
             Ok(row) => Ok(row
                 .and_then(|row| row.try_get::<_, i64>(0).ok())
                 .and_then(|token| u64::try_from(token).ok())),
+            // A take that waited out its lock or statement timeout found the row locked by the
+            // holder's write, which holds it for its whole transaction: the lease is held.
+            Err(error) if matches!(step, Step::Take) && busy(&error) => Ok(None),
             Err(error) => {
                 let failed = self.failed(&error, component);
                 if self
@@ -519,6 +532,17 @@ impl Lease {
         held().remove(&place(&self.database, &prefix(component)));
         self.run(component, Step::Release(token)).map(drop)
     }
+}
+
+/// The longest lease a process may hold from its last renewal: a day.
+pub const LEASE_MAX: Duration = Duration::from_secs(86_400);
+
+/// Whether `error` is a statement that waited out its lock or statement timeout.
+fn busy(error: &tokio_postgres::Error) -> bool {
+    error.as_db_error().is_some_and(|refused| {
+        refused.code() == &tokio_postgres::error::SqlState::LOCK_NOT_AVAILABLE
+            || refused.code() == &tokio_postgres::error::SqlState::QUERY_CANCELED
+    })
 }
 
 /// What [`Lease::run`] does to a lease row.

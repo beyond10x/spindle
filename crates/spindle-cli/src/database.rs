@@ -246,8 +246,19 @@ fn budgeted(database: &Database, components: &[String]) -> Result<()> {
 /// `database_lease`: how long a lease is held from its last renewal, in whole seconds above 0;
 /// `None` where it is not given, and the run takes no lease (D9 C).
 fn lease_term() -> Result<Option<Duration>> {
-    Ok(count("database_lease")?
-        .map(|seconds| Duration::from_secs(u64::try_from(seconds).unwrap_or(u64::MAX))))
+    let Some(seconds) = count("database_lease")? else {
+        return Ok(None);
+    };
+    match u64::try_from(seconds) {
+        Ok(seconds) if seconds <= spindle_kernel::LEASE_MAX.as_secs() => {
+            Ok(Some(Duration::from_secs(seconds)))
+        }
+        _ => bail!(
+            "database_lease ({}) is {seconds}, above the longest lease, {} seconds (a day)",
+            variable("database_lease"),
+            spindle_kernel::LEASE_MAX.as_secs()
+        ),
+    }
 }
 
 /// The leases of every component of a served run bound to `postgres`, taken in name order through
@@ -298,11 +309,17 @@ impl Leases {
     pub(crate) fn take(&mut self) -> Result<Option<String>> {
         for component in &self.components {
             match self.held.get(component) {
-                Some(&token) => {
-                    if !self.lease.renew(component, token)? {
-                        bail!("another process took the lease of {component} while standing by");
+                Some(&token) => match self.lease.renew(component, token) {
+                    Ok(true) => {}
+                    // Another process took it while this one stood by: this one stands by on.
+                    Ok(false) => {
+                        self.held.remove(component);
+                        return Ok(Some(component.clone()));
                     }
-                }
+                    // A renewal that did not land, as one waiting out a lock, leaves the lease
+                    // held until its end: the run stands by and asks again.
+                    Err(_) => return Ok(Some(component.clone())),
+                },
                 None => match self.lease.take(component)? {
                     Some(token) => {
                         self.held.insert(component.clone(), token);
@@ -325,33 +342,45 @@ impl Leases {
     /// # Errors
     /// The thread cannot start.
     pub(crate) fn keep(self) -> Result<Kept> {
-        let lost = Arc::new(Mutex::new(None));
+        let term = self.lease.term();
+        let tokens = self.held.clone();
+        let shared = Arc::new(Mutex::new(Renewal {
+            lost: None,
+            renewed: Instant::now(),
+        }));
         let (stop, stopped) = mpsc::channel::<()>();
-        let noted = Arc::clone(&lost);
+        let noted = Arc::clone(&shared);
         let thread = std::thread::Builder::new()
             .name("spindle-lease".to_owned())
             .spawn(move || self.renewing(&stopped, &noted))
             .context("starting the lease thread")?;
         Ok(Kept {
-            lost,
+            shared,
+            term,
+            tokens,
             stop: Some(stop),
             thread: Some(thread),
         })
     }
 
-    /// Renews every lease held until `stopped` reads, then releases them; notes on `lost` why
-    /// one was lost: another process took it, or no renewal landed for a whole lease.
-    fn renewing(mut self, stopped: &mpsc::Receiver<()>, lost: &Mutex<Option<String>>) {
+    /// Renews every lease held until `stopped` reads, then releases them; notes on `shared` when
+    /// each renewal began that landed, and why a lease was lost: another process took it, or no
+    /// renewal landed for a whole lease.
+    fn renewing(mut self, stopped: &mpsc::Receiver<()>, shared: &Mutex<Renewal>) {
         let term = self.lease.term();
         let mut renewed = Instant::now();
+        let lose = |why: String| {
+            shared.lock().unwrap_or_else(PoisonError::into_inner).lost = Some(why);
+        };
         // A message or a dropped sender stops the renewals.
         while let Err(mpsc::RecvTimeoutError::Timeout) = stopped.recv_timeout(self.poll()) {
+            let began = Instant::now();
             let mut failed = None;
             for (component, &token) in &self.held {
                 match self.lease.renew(component, token) {
                     Ok(true) => {}
                     Ok(false) => {
-                        *lost.lock().unwrap_or_else(PoisonError::into_inner) = Some(format!(
+                        lose(format!(
                             "another process took the lease of {component}, so this one writes \
                              nothing more and exits"
                         ));
@@ -361,9 +390,15 @@ impl Leases {
                 }
             }
             match failed {
-                None => renewed = Instant::now(),
+                None => {
+                    renewed = began;
+                    shared
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .renewed = began;
+                }
                 Some(why) if renewed.elapsed() >= term => {
-                    *lost.lock().unwrap_or_else(PoisonError::into_inner) = Some(format!(
+                    lose(format!(
                         "no renewal of the lease of {} landed for {term:?}, so another process may \
                          hold it, and this one exits: {why}",
                         self.components.join(", ")
@@ -385,20 +420,54 @@ impl Leases {
     }
 }
 
+/// What the lease thread notes for the run's thread ([`Kept`]).
+struct Renewal {
+    /// Why a lease was lost, once one was.
+    lost: Option<String>,
+    /// When the last renewal that landed began.
+    renewed: Instant,
+}
+
 /// The leases a leading run holds, renewed beside it; dropping it releases them.
 pub(crate) struct Kept {
-    lost: Arc<Mutex<Option<String>>>,
+    shared: Arc<Mutex<Renewal>>,
+    term: Duration,
+    /// The token of each lease, by component, as this run took it.
+    tokens: BTreeMap<String, u64>,
     stop: Option<mpsc::Sender<()>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Kept {
-    /// Why a lease was lost, once one was.
-    pub(crate) fn lost(&self) -> Option<String> {
-        self.lost
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+    /// Why a lease was lost, once one was, waiting first where the last renewal that landed
+    /// began two thirds of the lease ago or longer, as after the process was paused: until the
+    /// lease thread renews them all or finds one lost, at most two leases. A write is fenced by
+    /// its lease's token either way; this lets the run answer a request `503` rather than with
+    /// the store's refusal of the write.
+    pub(crate) fn confirmed(&self) -> Option<String> {
+        let stale = self.term.saturating_mul(2) / 3;
+        let deadline = Instant::now() + self.term.saturating_mul(2);
+        loop {
+            {
+                let renewal = self.shared.lock().unwrap_or_else(PoisonError::into_inner);
+                if renewal.lost.is_some() {
+                    return renewal.lost.clone();
+                }
+                if renewal.renewed.elapsed() < stale || Instant::now() >= deadline {
+                    return None;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// The first component, in name order, whose lease this run took at a token above the
+    /// first, with that token: a lease another process held before.
+    pub(crate) fn taken_again(&self) -> Option<(&str, u64)> {
+        self.tokens
+            .iter()
+            .find(|(_, token)| **token > 1)
+            .map(|(component, token)| (component.as_str(), *token))
     }
 }
 
