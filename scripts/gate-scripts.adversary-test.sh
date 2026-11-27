@@ -158,6 +158,46 @@ grep -q '^err$' "$work/within.err" || fail "within does not pass the child's std
 cases=$((cases + 1))
 grep -Eq '^within: [0-9]+\.[0-9]{3} s of 5 s: ' "$work/within.out" || fail "within does not print its wall time against the bound: $(cat "$work/within.out")"
 
+# --- check:postgres and CI's PostgreSQL job (story:postgres-lane-kills-slow-tests) -------------
+
+ci=${CI_YML:-$root/.github/workflows/ci.yml}
+taskfile=${TASKFILE:-$root/Taskfile.yml}
+nextest_toml=${NEXTEST_TOML:-$root/.config/nextest.toml}
+
+# Every job pins one cargo-nextest: one version and one digest, in the Gate and the PostgreSQL job.
+cases=$((cases + 1))
+versions=$(sed -n "s/^ *NEXTEST_VERSION: *'\{0,1\}\([^']*\)'\{0,1\} *$/\1/p" "$ci" | sort -u)
+pins=$(grep -c '^ *NEXTEST_VERSION:' "$ci" || true)
+[ "$pins" -ge 2 ] && [ "$(printf '%s\n' "$versions" | wc -l)" -eq 1 ] ||
+    fail "ci.yml pins cargo-nextest $pins time(s) with the version(s) [$(echo $versions)], want one version in the Gate and the PostgreSQL job"
+cases=$((cases + 1))
+[ "$(sed -n 's/^ *NEXTEST_SHA256: *//p' "$ci" | sort -u | wc -l)" -eq 1 ] ||
+    fail "ci.yml pins cargo-nextest with more than one digest"
+
+# The PostgreSQL job installs cargo-nextest before it runs the lane.
+postgres_job=$(awk '/^  postgres:/{on=1; next} on && /^  [a-z]/{on=0} on' "$ci")
+cases=$((cases + 1))
+printf '%s\n' "$postgres_job" | awk '/Install cargo-nextest/{seen=1} /run: task check:postgres/{if (seen) ok=1} END{exit !ok}' ||
+    fail "ci.yml's postgres job does not install cargo-nextest before it runs task check:postgres"
+
+# check:postgres builds first, then runs its tests under nextest's postgres profile within 120 s.
+lane=$(awk '/^  check:postgres:/{on=1; next} on && /^  [a-z]/{on=0} on' "$taskfile")
+cases=$((cases + 1))
+printf '%s\n' "$lane" | grep -q 'NEXTEST: cargo nextest run .*--profile postgres' ||
+    fail "check:postgres does not run cargo nextest under the postgres profile"
+cases=$((cases + 1))
+printf '%s\n' "$lane" | awk '/--no-run/{built=1} /sh scripts\/within.sh 120 \{\{\.NEXTEST\}\}/{if (built) ok=1} END{exit !ok}' ||
+    fail "check:postgres does not build with --no-run before its run under within.sh 120"
+cases=$((cases + 1))
+printf '%s\n' "$lane" | grep -q 'test:slowest, vars: { NEXTEST_PROFILE: postgres }' ||
+    fail "check:postgres does not print the ten slowest tests of its own profile"
+
+# The postgres profile kills a test at 60 s as the default does: it sets no timeout of its own.
+cases=$((cases + 1))
+awk '/^\[/{section=$0} /slow-timeout/{print section " " $0}' "$nextest_toml" >"$work/timeouts"
+[ "$(cat "$work/timeouts")" = '[profile.default] slow-timeout = { period = "30s", terminate-after = 2 }' ] ||
+    fail "nextest.toml's slow-timeout is not the default profile's 30 s x 2 alone: $(cat "$work/timeouts")"
+
 rm -rf "$work"
 if [ "$failures" -ne 0 ]; then
     echo "gate-scripts-adversary: $failures of $cases case(s) failed" >&2
