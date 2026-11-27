@@ -23,12 +23,25 @@ fn root() -> PathBuf {
 /// answer.
 #[test]
 fn conform_hands_the_kernels_response_to_the_suite() {
+    every_executed_scenario_passes(SPEC);
+}
+
+/// `conform` on a specification whose external cause returns a one-time response
+/// (`story:one-time-response-admission`): ESS synthesises scenarios that force the cause and carry
+/// the one-time trace, and every one executed passes on the in-process target.
+#[test]
+fn conform_runs_a_one_time_external_cause() {
+    every_executed_scenario_passes("crates/spindle-cli/tests/fixtures/one-time-replay");
+}
+
+/// Runs `conform` on `spec` and asserts it executed a scenario and every executed one passed.
+fn every_executed_scenario_passes(spec: &str) {
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a scratch directory");
     let results = dir.path().join("results.json");
     let report = dir.path().join("report.json");
     let output = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
         .current_dir(root())
-        .args(["conform", SPEC, "--environment", LAPTOP, "--results"])
+        .args(["conform", spec, "--environment", LAPTOP, "--results"])
         .arg(&results)
         .arg("--report")
         .arg(&report)

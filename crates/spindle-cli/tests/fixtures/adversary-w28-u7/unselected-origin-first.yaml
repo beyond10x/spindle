@@ -1,0 +1,22 @@
+type: ess-scenario/1
+domain: vault.key
+scenario: a-held-key-precedes-an-issued-one
+summary: A first issue states no outcome and is held, a second is issued, and its revocation is wrongly expected to find no such key.
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: vault.key.IssueKey
+    input:
+      key_id: k0
+      label: back door
+  - at: 2026-01-05T09:01:00Z
+    command: vault.key.IssueKey
+    input:
+      key_id: k1
+      label: front door
+    outcome: issued
+  - at: 2026-01-05T09:02:00Z
+    command: vault.key.RevokeKey
+    input:
+      key_id: k1
+    outcome: no-such-key
+    error: {name: vault.key.NoSuchKey}

@@ -16,8 +16,8 @@ use serde_json::{Map, Value, json};
 
 use crate::Event;
 use crate::store::{
-    Change, Committed, EVERY_INSTANCE, Origin, Removal, Row, Scan, Scanned, Store, StoreError,
-    Stored, Write,
+    Change, Committed, EVERY_INSTANCE, Origin, Provenance, Removal, Row, Scan, Scanned, Sender,
+    Store, StoreError, Stored, Write,
 };
 
 /// The entity most cases write.
@@ -128,6 +128,14 @@ pub const CASES: &[Case] = &[
     Case {
         name: "a_position_scans_and_loads_one_state_of_the_store",
         run: a_position_scans_and_loads_one_state_of_the_store,
+    },
+    Case {
+        name: "an_event_records_the_caller_of_its_request",
+        run: an_event_records_the_caller_of_its_request,
+    },
+    Case {
+        name: "the_store_names_the_instances_each_write_wrote",
+        run: the_store_names_the_instances_each_write_wrote,
     },
 ];
 
@@ -1052,7 +1060,204 @@ fn origin(command: &str, sequence: u64) -> Option<Origin> {
     Some(Origin {
         command: format!("contract.tasks.{command}"),
         sequence,
+        cause: None,
     })
+}
+
+/// [`origin`], caused by `cause`.
+fn caused(command: &str, sequence: u64, cause: Provenance) -> Option<Origin> {
+    origin(command, sequence).map(|origin| Origin {
+        cause: Some(cause),
+        ..origin
+    })
+}
+
+/// A request sent as the actor `contract.tasks.Owner` with one attribute and the id `request`.
+fn requested(request: &str) -> Sender {
+    Sender {
+        actor: Some("contract.tasks.Owner".to_owned()),
+        attributes: Map::from_iter([("team".to_owned(), json!("blue"))]),
+        request: Some(request.to_owned()),
+    }
+}
+
+/// Each event a store commits reads back with the instances its write wrote, each once, ordered
+/// by entity and identity text ([`Committed::instances`]): a change's or a removal's one
+/// instance, every instance of a group of writes, none for events no row carries; attributed or
+/// not. It reads back with the outcome named to the store before its write
+/// ([`Store::outcome`]), until the store is attributed again. Where the store gives a reading
+/// handle, it reads them alike.
+fn the_store_names_the_instances_each_write_wrote(store: &mut dyn Store) {
+    let case = "the_store_names_the_instances_each_write_wrote";
+    let (first, second, other) = (json!("t1"), json!("t2"), json!("o1"));
+    store.attribute(origin("Open", 1));
+    store.outcome("opened");
+    let mut opened = change(TASK, &first, None, row("Open", "1"));
+    opened.events = vec![named("A")];
+    commit(case, store, &opened);
+    store.attribute(origin("Pair", 2));
+    store.outcome("paired");
+    let mut paired = change(TASK, &second, None, row("Open", "2"));
+    paired.events = Vec::new();
+    let mut beside = change(OTHER, &other, None, row("Open", "o"));
+    beside.events = vec![named("B")];
+    let one = held(case, store, &first);
+    let mut moved = change(TASK, &first, Some(one.version), row("Done", "1"));
+    moved.events = vec![named("C")];
+    store
+        .commit_all(&[
+            Write::Commit(paired),
+            Write::Commit(beside),
+            Write::Commit(moved),
+        ])
+        .unwrap_or_else(|error| panic!("{case}: the group commits: {error}"));
+    store.attribute(origin("Ping", 3));
+    store
+        .commit_events(&[named("D")], &[])
+        .unwrap_or_else(|error| panic!("{case}: the events commit: {error}"));
+    store.attribute(None);
+    let two = held(case, store, &second);
+    let mut closing = removal(&second, two.version);
+    closing.events = vec![named("E")];
+    commit_removal(case, store, &closing);
+
+    let every = after(case, store, 0);
+    assert_eq!(names(&every).join(""), "ABCDE", "{case}: in commit order");
+    let written = |pairs: &[(&str, &Value)]| -> Vec<(String, Value)> {
+        pairs
+            .iter()
+            .map(|(entity, identity)| ((*entity).to_owned(), (*identity).clone()))
+            .collect()
+    };
+    let instances = every
+        .iter()
+        .map(|committed| committed.instances.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        instances,
+        [
+            written(&[(TASK, &first)]),
+            written(&[(OTHER, &other), (TASK, &first), (TASK, &second)]),
+            written(&[(OTHER, &other), (TASK, &first), (TASK, &second)]),
+            Vec::new(),
+            written(&[(TASK, &second)]),
+        ],
+        "{case}: each with the instances its write wrote"
+    );
+    let outcomes = every
+        .iter()
+        .map(|committed| committed.outcome.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        outcomes,
+        [Some("opened"), Some("paired"), Some("paired"), None, None],
+        "{case}: each with the outcome named before its write"
+    );
+    if let Some(reading) = store.reading() {
+        let read = reading
+            .events_after(0, usize::MAX)
+            .unwrap_or_else(|error| panic!("{case}: the handle reads the events: {error}"));
+        assert_eq!(read, every, "{case}: the handle reads them as the store");
+    }
+}
+
+/// Each event a store commits reads back with the cause its write was attributed to
+/// ([`Origin::cause`]): a request's caller (its actor, its attributes and the request's id), a
+/// seed entry's, a tick's binding, and a binding with the cause of the command whose event it
+/// carried or with none known, whether the write is a change, a group of writes or events no row
+/// carries. Two writes attributed to one request are still two writes, each at a position of its
+/// own. Where the store gives a reading handle, it reads them alike.
+fn an_event_records_the_caller_of_its_request(store: &mut dyn Store) {
+    let case = "an_event_records_the_caller_of_its_request";
+    let request = Provenance::Request(requested("req-1"));
+    let seed = Provenance::Seed {
+        digest: "sha256:5eed".to_owned(),
+        sender: Sender {
+            actor: None,
+            attributes: Map::new(),
+            request: Some("seed-entry-1".to_owned()),
+        },
+    };
+    let bound = Provenance::Binding {
+        binding: "contract-follow".to_owned(),
+        trigger: Some(Box::new(request.clone())),
+    };
+    let unknown = Provenance::Binding {
+        binding: "contract-follow".to_owned(),
+        trigger: None,
+    };
+    let tick = Provenance::Tick {
+        binding: "contract-every-minute".to_owned(),
+    };
+    let (first, second, other) = (json!("t1"), json!("t2"), json!("o1"));
+    store.attribute(caused("Open", 1, request.clone()));
+    let mut opened = change(TASK, &first, None, row("Open", "1"));
+    opened.events = vec![named("A")];
+    commit(case, store, &opened);
+    let mut again = change(TASK, &second, None, row("Open", "2"));
+    again.events = vec![named("B")];
+    commit(case, store, &again);
+    store.attribute(caused("Pair", 2, seed.clone()));
+    let one = held(case, store, &first);
+    let mut paired = change(TASK, &first, Some(one.version), row("Open", "3"));
+    paired.events = vec![named("C")];
+    let mut beside = change(OTHER, &other, None, row("Open", "o"));
+    beside.events = vec![named("D")];
+    store
+        .commit_all(&[Write::Commit(paired), Write::Commit(beside)])
+        .unwrap_or_else(|error| panic!("{case}: the pair commits: {error}"));
+    store.attribute(caused("Ping", 3, bound.clone()));
+    store
+        .commit_events(&[named("E")], &[])
+        .unwrap_or_else(|error| panic!("{case}: the events commit: {error}"));
+    store.attribute(caused("Ping", 4, unknown.clone()));
+    store
+        .commit_events(&[named("F")], &[])
+        .unwrap_or_else(|error| panic!("{case}: the events commit: {error}"));
+    store.attribute(caused("Ping", 5, tick.clone()));
+    store
+        .commit_events(&[named("G")], &[])
+        .unwrap_or_else(|error| panic!("{case}: the events commit: {error}"));
+    store.attribute(None);
+
+    let every = after(case, store, 0);
+    assert_eq!(names(&every).join(""), "ABCDEFG", "{case}: in commit order");
+    let causes = every
+        .iter()
+        .map(|committed| {
+            committed
+                .origin
+                .as_ref()
+                .and_then(|origin| origin.cause.clone())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        causes,
+        [
+            Some(request.clone()),
+            Some(request),
+            Some(seed.clone()),
+            Some(seed),
+            Some(bound),
+            Some(unknown),
+            Some(tick),
+        ],
+        "{case}: each with the cause its write was attributed to"
+    );
+    assert!(
+        every[0].position < every[1].position,
+        "{case}: two writes of one request are two writes: {:?}",
+        every
+            .iter()
+            .map(|committed| committed.position)
+            .collect::<Vec<_>>()
+    );
+    if let Some(reading) = store.reading() {
+        let read = reading
+            .events_after(0, usize::MAX)
+            .unwrap_or_else(|error| panic!("{case}: the handle reads the events: {error}"));
+        assert_eq!(read, every, "{case}: the handle reads them as the store");
+    }
 }
 
 fn after(case: &str, store: &mut dyn Store, position: u64) -> Vec<Committed> {

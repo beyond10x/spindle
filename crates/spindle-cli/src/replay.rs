@@ -9,7 +9,9 @@
 //! stores for every replay, whatever `store.durable` is bound to, so a replay writes nothing to
 //! disk. Spindle compares nothing itself; what holds is the runner's answer. Each act's line also
 //! names what its command answered ([`HostTarget::answered`]): an act that states no outcome
-//! compiles to no outcome check, so the runner passes it refused, and the line says so.
+//! compiles to no outcome check, so the runner passes it refused, and the line says so. An
+//! external cause the scenario does not force is answered by `--decisions`
+//! ([`HostTarget::answering`]).
 //!
 //! The runner reports a scenario as a whole and goes on past a failed expectation. To name the
 //! first step that diverges, the compiled steps are cut into the document's own steps (what is
@@ -17,7 +19,8 @@
 //! does not pass, the first divergent step is found by bisection over prefixes, each replayed
 //! from an empty system: a prefix that does not pass stays failing when it grows, so about
 //! `log2(steps)` replays find the shortest one. The divergence reported is the replay of that
-//! shortest prefix, which runs no step after the divergent one.
+//! shortest prefix, which runs no step after the divergent one. A prefix keeps the scenario's
+//! one-time trace only as far as its own steps reach ([`prefix`]), so ESS admits it.
 
 use std::collections::BTreeSet;
 use std::io::Write;
@@ -29,13 +32,14 @@ use std::time::SystemTime;
 use anyhow::{Context, Result, bail};
 use ess_compiler::EssIr;
 use ess_conformance::authored::{self, Source};
+use ess_conformance::one_time_response::Trace;
 use ess_conformance::{
     AdmittedSuite, AdvancingClock, ConformanceScenario, ConformanceSuite, Ids, Runner,
     RunnerConfig, ScenarioId, ScenarioResult, ScenarioStep, Status, SuiteProvenance,
 };
 use spindle_capability::{Admission, Environment};
 use spindle_conformance::{Answered, HostTarget, in_memory};
-use spindle_host::{Clock, HostError, ManualClock, Refusal, SystemClock};
+use spindle_host::{Answers, Clock, HostError, ManualClock, Refusal, SystemClock};
 
 /// Exit status of a replay the environment refused.
 const REFUSED: u8 = 3;
@@ -45,21 +49,31 @@ pub(crate) const MOST_STEPS: usize = 1000;
 
 /// Replays the scenario in `scenario` against `spec` admitted on `environment`.
 ///
+/// An external cause the scenario does not force is answered by `decisions`, a decisions file
+/// ([`crate::decisions::load`]); one neither forces nor answers does not hold.
+///
 /// Exits 0 when every step holds, 1 at the first step that does not, when ESS refuses the
-/// document or when it has more than [`MOST_STEPS`] steps, and 3, running nothing, when admission
-/// is refused.
+/// document, when it has more than [`MOST_STEPS`] steps or when the decisions file is refused,
+/// and 3, running nothing, when admission is refused.
 pub(crate) fn replay(
     spec: &Path,
     environment: &Path,
     scenario: &Path,
+    decisions: Option<&Path>,
     clock: Option<SystemTime>,
     mint: Option<u64>,
 ) -> Result<ExitCode> {
     let loaded = spindle_spec::load_with_implied_component(spec)?;
+    let answers = decisions
+        .map(|path| {
+            crate::decisions::load(&loaded.ir, Some(path), false).map(|run| run.answers().clone())
+        })
+        .transpose()?;
     let text = std::fs::read_to_string(environment)
         .with_context(|| format!("reading {}", environment.display()))?;
     let parsed =
         Environment::parse(&text).with_context(|| format!("in {}", environment.display()))?;
+    crate::refuse_decisions(&parsed, environment, "run --scenario")?;
     let document = std::fs::read_to_string(scenario)
         .with_context(|| format!("reading {}", scenario.display()))?;
 
@@ -103,6 +117,7 @@ pub(crate) fn replay(
         id: &id,
         scenario: &compiled,
         origin: scenario,
+        answers: answers.as_ref(),
         clock,
         mint,
     };
@@ -199,6 +214,8 @@ struct Replays<'a> {
     id: &'a ScenarioId,
     scenario: &'a ConformanceScenario,
     origin: &'a Path,
+    /// `--decisions`: each replay's host answers a cause the scenario does not force from it.
+    answers: Option<&'a Answers>,
     /// `--clock`: each replay's host decides `now` on a manual clock standing at this instant.
     clock: Option<SystemTime>,
     /// `--mint-seed`: each replay's host mints from this seed.
@@ -239,15 +256,7 @@ impl Replayed {
 impl Replays<'_> {
     /// Replays the first `end` compiled steps from an empty system.
     fn run(&self, end: usize) -> Result<Replayed> {
-        let prefix = ConformanceScenario {
-            steps: self.scenario.steps[..end].to_vec(),
-            ..self.scenario.clone()
-        };
-        let mut suite = ConformanceSuite::new(SuiteProvenance::of(self.ir));
-        if let Err(id) = suite.insert(self.id.clone(), prefix) {
-            bail!("`{id}` is already in the suite");
-        }
-        suite.select_fresh_format_for(self.ir);
+        let suite = suite(self.ir, self.id, prefix(self.scenario, end))?;
         let admitted = AdmittedSuite::from_suite(&suite)
             .with_context(|| format!("admitting {}", self.origin.display()))?;
         let clock: Arc<dyn Clock> = match self.clock {
@@ -256,6 +265,10 @@ impl Replays<'_> {
         };
         let target =
             HostTarget::clocked(self.ir.clone(), self.environment.clone(), clock, self.mint);
+        let target = match self.answers {
+            Some(answers) => target.answering(answers.clone()),
+            None => target,
+        };
         let report = Runner::new(
             RunnerConfig::default(),
             AdvancingClock::default(),
@@ -274,6 +287,78 @@ impl Replays<'_> {
             answered: target.answered(),
             unarranged: target.unarranged(),
         })
+    }
+}
+
+/// The suite of `scenario` alone, under `id`, in the format `ir` needs.
+fn suite(ir: &EssIr, id: &ScenarioId, scenario: ConformanceScenario) -> Result<ConformanceSuite> {
+    let mut suite = ConformanceSuite::new(SuiteProvenance::of(ir));
+    if let Err(id) = suite.insert(id.clone(), scenario) {
+        bail!("`{id}` is already in the suite");
+    }
+    suite.select_fresh_format_for(ir);
+    Ok(suite)
+}
+
+/// The first `end` compiled steps of `scenario`, its one-time trace restricted to them.
+///
+/// ESS attaches a trace to the whole scenario: every window is anchored to one of its operations
+/// and every origin is invoked by one of its sends, so a prefix that keeps the whole trace is
+/// refused (`InvalidOneTimeResponse`). The prefix keeps the windows anchored to its own steps, the
+/// origins whose command it invokes and the required origins whose outcome it selects; with no
+/// required origin left it carries no trace, as ESS attaches none. Each kept window and the event
+/// catalog keep the whole scenario's `within_ms`, not the longest wait of the prefix's own steps
+/// that ESS would take attaching a trace to the prefix alone: every replay of the bisection then
+/// observes events under one bound, the one the whole scenario is replayed under.
+fn prefix(scenario: &ConformanceScenario, end: usize) -> ConformanceScenario {
+    let steps = scenario.steps[..end].to_vec();
+    let one_time_response = scenario.one_time_response.as_ref().and_then(|trace| {
+        let invoked = steps
+            .iter()
+            .filter_map(|step| match step {
+                ScenarioStep::ExecuteCommand { command, .. }
+                | ScenarioStep::ExecuteCommandWithoutInput { command, .. } => Some(command),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        let selected = steps
+            .iter()
+            .filter_map(|step| match step {
+                ScenarioStep::ExpectOutcome { outcome } => Some(outcome),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        let origins = trace
+            .origins
+            .iter()
+            .filter(|origin| invoked.contains(&origin.command))
+            .cloned()
+            .collect::<Vec<_>>();
+        let required_origins = trace
+            .required_origins
+            .iter()
+            .filter(|required| {
+                selected.contains(required)
+                    && origins.iter().any(|origin| &origin.outcome == *required)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        (!required_origins.is_empty()).then(|| Trace {
+            origins,
+            required_origins,
+            events: trace.events.clone(),
+            event_windows: trace
+                .event_windows
+                .iter()
+                .filter(|window| window.after_step < end)
+                .cloned()
+                .collect(),
+        })
+    });
+    ConformanceScenario {
+        steps,
+        one_time_response,
+        ..scenario.clone()
     }
 }
 
@@ -410,6 +495,41 @@ mod tests {
                 },
             ]
         );
+    }
+
+    /// Every prefix of a compiled scenario whose external cause returns a one-time response is
+    /// admitted by ESS (`story:one-time-response-admission`): it keeps only the windows anchored
+    /// to its own steps and the origins it invokes.
+    #[test]
+    fn a_prefix_keeps_only_its_own_one_time_windows() {
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let ir = spindle_spec::load_with_implied_component(&fixtures.join("one-time-replay"))
+            .expect("the specification compiles")
+            .ir;
+        let mut admitted = 0;
+        for name in ["holds.yaml", "diverges.yaml"] {
+            let path = fixtures.join("one-time-replay-scenarios").join(name);
+            let document = std::fs::read_to_string(&path).expect("the scenario reads");
+            let authoring = authored::compile(&ir, &[Source::new(name.to_owned(), document)]);
+            assert!(authoring.is_complete(), "{:?}", authoring.refusals);
+            let (id, compiled) = authoring
+                .scenarios
+                .into_iter()
+                .next()
+                .expect("one scenario");
+            assert!(
+                compiled.one_time_response.is_some(),
+                "{name} carries a one-time trace"
+            );
+            for step in steps(&compiled.steps) {
+                let suite = suite(&ir, &id, prefix(&compiled, step.end)).expect("a suite");
+                if let Err(error) = AdmittedSuite::from_suite(&suite) {
+                    panic!("{name} up to {}: {error:?}", step.label);
+                }
+                admitted += 1;
+            }
+        }
+        assert_eq!(admitted, 5, "every document step's prefix is replayed");
     }
 
     #[test]

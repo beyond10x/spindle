@@ -1,0 +1,22 @@
+type: ess-scenario/1
+domain: vault.key
+scenario: an-issued-key-is-wrongly-expected-missing
+summary: The custodian issues a key, and its revocation is expected to find no such key, which it does not.
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: vault.key.IssueKey
+    input:
+      key_id: k1
+      label: front door
+    outcome: issued
+  - at: 2026-01-05T09:01:00Z
+    command: vault.key.RevokeKey
+    input:
+      key_id: k1
+    outcome: no-such-key
+    error: {name: vault.key.NoSuchKey}
+  - at: 2026-01-05T09:02:00Z
+    command: vault.key.RevokeKey
+    input:
+      key_id: k1
+    outcome: revoked

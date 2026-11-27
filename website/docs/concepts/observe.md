@@ -45,7 +45,8 @@ prints the table's non-zero counters under the grid
 keeps, from 1 to 10000.
 
 A scrape writes a series only once something was counted in it, and keeps writing it after that.
-So a model of hundreds of commands that has run none writes one series, `spindle_resets_total`:
+So a model of hundreds of commands that has run none writes two series, `spindle_resets_total`
+and `spindle_metrics_series_mode`:
 
 | Family | Written from |
 |---|---|
@@ -57,17 +58,30 @@ So a model of hundreds of commands that has run none writes one series, `spindle
 | `spindle_http_requests_total`, `spindle_http_request_duration_seconds`, `spindle_external_causes_total` | the first request or cause counted with those labels |
 | `spindle_bound_refusals_total` | the first refused bound command a request record listed with that binding, command and refusal |
 | `spindle_metrics_scrape_duration_seconds` | the second scrape; it reports how long the scrape before it took |
-| `spindle_resets_total` | the first scrape |
+| `spindle_resets_total`, `spindle_metrics_series_mode` | the first scrape |
 | `spindle_seed_commands_total` | the first scrape of a run given a [seed](environment-and-admission.md#a-seed-submitted-at-start), each of `sent`, `applied`, `already_there` and `refused`; a run without one never writes it |
 
 `spindle_http_request_duration_seconds` is labelled by `method` and `route`, the route template,
 so a slow route shows in its own series. An unrouted request has an empty `route`.
 
+[`--observe-series`](../reference/cli.md#run--observe-series) sets how a scrape writes the labels
+whose values come from the specification: `route`, `operation`, `command`, `outcome`, `event`,
+`binding` and `entity`, and the `refusal` of a bound command where it names an outcome the
+specification declares. The scrape names the mode in `spindle_metrics_series_mode{mode}`, at 1.
+
+| Mode | Series a scrape writes |
+|---|---|
+| `per-command`, the default | one for each value counted, so the series grow with the specification: a generated model whose commands were each answered once writes about 33 sample lines per command |
+| `aggregated` | each of those labels empty, and the series that then share every label summed. The number of series does not grow with the number of commands or outcomes, nor with the events, bindings or entities the specification declares. It is bounded by the labels kept: a request's method, kind, class and status class, a failure kind, what a binding carried, retried or timed, a cause's source, a seed entry's count, the kernel's error kind of a rejected bound command, and `component`, which keeps one value per declared component. Generated models of 30 and of 300 commands, each answered once, write the same series |
+
+The mode changes the scrape only. The request log and the topology keep every route and operation,
+in either mode.
+
 | Request log field | Holds | At most |
 |---|---|---|
 | `path` | the route template the request resolved to, `/loans/{id}` for a request to `/loans/abc-123`. Of a request no route serves, the first segment, `/loans/…` | 2,048 bytes |
 | `reason` | the refusal text, with every value and every map key, struct member or input field name the caller sent written `…`. A refused field is named with the type it expected | 512 bytes |
-| `query` | the query string of a console request (`/api/model`, `/api/events`, `/api/reset`): `after` with the cursor only where the read was answered, `limit` with its value only where it is digits, every other name and value written `…` | 2,048 bytes |
+| `query` | the query string of a console request (`/api/model`, `/api/events`, `/api/history`, `/api/reset`): `after` with the cursor only where the read was answered, `limit` with its value only where it is digits, every other name and value written `…` | 2,048 bytes |
 
 A longer field is cut with `…`. So the log holds no identifier a caller put in a path, and the
 record of a refused request holds its method, its path and the names of its route, and under
@@ -86,6 +100,51 @@ error's fields. `GET /api/events` lists only the events the run committed, so a 
 shows there by its absence alone. `spindle_bound_refusals_total{binding, command, refusal}`
 counts the entries, `refusal` being the outcome or the kind. A command a timer fired, and one
 refused in another process of a run split over processes, is in no record.
+
+## A served run's seed, readiness and liveness
+
+Every served `run` answers three routes of its own, with or without `--observe`, so a container
+healthcheck or an orchestrator's probes need no view row:
+
+| Route | Answers |
+|---|---|
+| `GET /__spindle/seed` | the state of the run's [seed](environment-and-admission.md#a-seed-submitted-at-start), `{"state": "none"}` on a run without one; otherwise `{"state", "entries", "left", "sent", "applied", "already_there", "refused", "rejected"}`, `state` being `running` or `ended` |
+| `GET /__spindle/ready` | `200` where the run has no seed or its seed has ended, and no signal has arrived; `503` otherwise. The body is `{"ready", "seed", "stopping"}`, `seed` being the `state` above |
+| `GET /__spindle/live` | `200` while the run's thread answers a request it took, however long that takes (a reset seeding again, a delivery retried), or has asked for one within the last 60 s; `503` once it holds none and has asked for none for 60 s. The body is `{"live", "idle_ms", "bound_ms"}`, `idle_ms` counting from its last ask |
+
+```console
+$ curl -s http://127.0.0.1:8080/__spindle/seed
+{"already_there":0,"applied":1,"entries":3,"left":2,"refused":0,"rejected":0,"sent":1,"state":"running"}
+```
+
+The counts are those of the seed run under way, as the seed's end line prints them, not summed
+over resets as `spindle_seed_commands_total` is. The seed reads `ended` only once the last entry's
+command has returned, so a probe that reads `200` reads every view holding what that entry wrote. A
+declared refusal among the entries leaves the run ready; a rejected one stops the run with exit 1.
+On a `--state` whose `seed.json` records every entry done, the seed reads `ended` from the first
+request. A `POST /api/reset` with no world reads `running` and `503` from before it empties the
+stores until its seed run ends, with that run's counts.
+
+All three are answered by the listener's own threads, never waiting for a command, a seed entry or
+an external call. On a run with `--trusted-caller-header` they require the proxy's secret, as every
+`/__spindle/` route does: a probe sends the `Spindle-Proxy-Secret` header, such as Kubernetes'
+`httpGet.httpHeaders`. The answers are declared by `spindle.observe.SeedState`,
+`spindle.observe.Readiness` and `spindle.observe.Liveness` in `ess/domains/observe.yaml`.
+
+### Draining on SIGTERM
+
+When SIGTERM or SIGINT arrives, `GET /__spindle/ready` answers `503` at once, even while a command
+holds the run, and every request that arrives from then on is answered `503` at once; the three
+routes above still answer. The command under way finishes. The requests already waiting are then
+answered with their outcomes, in arrival order, for up to
+[`--drain`](../reference/cli.md#run--drain) seconds, 20 by default, counted from when the command
+under way finished; one taken within that bound finishes even past it. A `POST /api/reset` taken
+in the drain is answered `503` and empties nothing. A bound too large for the clock sets no
+deadline: the drain ends once no request is waiting. Each request still waiting
+once the bound has passed is answered `503`, every answer is written, and the run exits 143 for
+SIGTERM or 130 for SIGINT. `--drain 0` answers none of the waiting requests. So a rolling restart
+fails no request already accepted, provided the orchestrator's grace period covers the external
+call under way and the drain bound.
 
 ## Resources
 

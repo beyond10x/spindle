@@ -192,6 +192,7 @@ fn counted(events: usize) -> (Host, Arc<AtomicUsize>) {
         board.attribute(Some(Origin {
             command: "tasks.board.OpenTask".to_owned(),
             sequence,
+            cause: None,
         }));
         board
             .commit_events(
@@ -249,6 +250,7 @@ fn counted_apart(events: usize) -> (Host, [Arc<AtomicUsize>; 2]) {
         store.attribute(Some(Origin {
             command: "tasks.board.OpenTask".to_owned(),
             sequence,
+            cause: None,
         }));
         store
             .commit_events(
@@ -642,6 +644,7 @@ pub(crate) fn the_head_reads_no_event_of_a_long_log_on(
         board.attribute(Some(Origin {
             command: "tasks.board.OpenTask".to_owned(),
             sequence,
+            cause: None,
         }));
         let events = (0..WRITE)
             .map(|index| Event {

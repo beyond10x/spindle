@@ -69,6 +69,12 @@ run exit 1 after the last line. A stdin line `{"arrange": [<row>]}` writes rows 
 and a command's input may name what an earlier line answered, such as the identity line 1 minted,
 with `{"$line": 1, "pointer": "/events/0/payload/<field>"}`.
 
+Where `run` serves HTTP, it also serves the console routes `POST /api/reset`, `GET /api/events`,
+`GET /api/model` and `GET /api/served`. `--console off` (or `SPINDLE_SETTING_CONSOLE=off`)
+turns them off: each answers `404` as an unrouted path does, whatever secret the request carries.
+A run whose `--address` is off loopback serves them only with `--console on`. A route the
+specification publishes at a console path exits 1 before listening, the console on or off.
+
 Where `run` serves HTTP, `--seed <file>` (or `[seed] file` in the environment document) submits a
 JSON array of commands, each with its input, actor, caller and request id, on every start: checked
 before listening, then one at a time in order beside the listener. An outcome declared
@@ -110,8 +116,13 @@ the attempts, never a value of the error's fields.
 requests by method, route template, operation, kind, class and status class, their durations,
 commands by outcome and failure, events appended, bindings, timer ticks, store writes, the rows
 each entity holds, the resets, the external causes answered, by command, outcome and source, the
-refused bound commands, by binding, command and refusal, and, in a run given a seed, its entries
-sent, applied, already there and refused.
+refused bound commands, by binding, command and refusal, in a run given a seed, its entries
+sent, applied, already there and refused, and the series mode. `--observe-series aggregated`
+writes every route, operation, command, outcome, event, binding and entity label empty, and every
+refusal that names a declared outcome, and sums the series that then match: the series count does
+not grow with the number of commands or outcomes, and `component` keeps one value per declared
+component. A scrape writes as many series for a specification of 300 commands as for one of 30;
+the default, `per-command`, writes each value as its own series.
 
 `GET /__spindle/topology` answers the graph of what the run serves (`spindle-topology/1`), derived
 from the specification. It holds the ingress, the specification, its domains, their commands,

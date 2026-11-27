@@ -31,6 +31,8 @@ mod adversary_w26_u1;
 mod adversary_w26_u2;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_w27_u8;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod adversary_w28_u5;
 mod adversary_wasm;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_world_integers;
@@ -49,6 +51,8 @@ mod console;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod cross_component_reads;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod event_caller;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod events_range;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod filter_through;
@@ -58,6 +62,8 @@ mod frame;
 mod generated;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod grants;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod instance_history;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod list_append;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]

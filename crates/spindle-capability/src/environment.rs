@@ -54,6 +54,17 @@ pub const FORMAT: &str = "spindle-environment/1";
 /// [seed]
 /// file = "seed/roles.json"
 /// ```
+///
+/// `[decisions]` names the decisions file `run` answers the external causes bound to
+/// [`DECISIONS_FILE`] from, where an `external.` key lists it first and `--decisions` names none:
+///
+/// ```toml
+/// [provides]
+/// "external.*" = ["decisions-file"]
+///
+/// [decisions]
+/// file = "decisions/answers.toml"
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Environment {
@@ -74,13 +85,28 @@ pub struct Environment {
     /// `[seed]`: the seed file a served `run` submits at every start, where `--seed` names none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<SeedFile>,
+    /// `[decisions]`: the decisions file external causes bound to [`DECISIONS_FILE`] are answered
+    /// from, where `--decisions` names none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decisions: Option<DecisionsFile>,
 }
+
+/// The implementation that answers an external cause from a decisions file.
+pub const DECISIONS_FILE: &str = "decisions-file";
 
 /// The seed file of an environment: `[seed]` with `file`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SeedFile {
     /// The JSON array of commands, a path relative to where the runtime starts.
+    pub file: String,
+}
+
+/// The decisions file of an environment: `[decisions]` with `file`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionsFile {
+    /// The TOML file of answers, a path relative to where the runtime starts.
     pub file: String,
 }
 
@@ -131,6 +157,16 @@ pub enum EnvironmentError {
     HttpUnused {
         /// The call.
         name: String,
+    },
+    /// A `[decisions]` table no `external.` key binds to [`DECISIONS_FILE`]: none lists it first,
+    /// the implementation admission binds.
+    #[error(
+        "[decisions] names the file {file}, but no `external.` key of provides lists \
+         `decisions-file` first, the implementation admission binds, so it would never be read"
+    )]
+    DecisionsUnbound {
+        /// The file the table names.
+        file: String,
     },
     /// An HTTP call named by a key that is not `external.`.
     #[error("{capability} names the HTTP call `{name}`; an HTTP call answers external causes only")]
@@ -212,6 +248,21 @@ impl Environment {
             });
         }
         environment.check_http()?;
+        if let Some(decisions) = &environment.decisions
+            && !environment
+                .provides
+                .iter()
+                .any(|(capability, implementations)| {
+                    capability.starts_with(Capability::EXTERNAL_PREFIX)
+                        && implementations
+                            .first()
+                            .is_some_and(|name| name == DECISIONS_FILE)
+                })
+        {
+            return Err(EnvironmentError::DecisionsUnbound {
+                file: decisions.file.clone(),
+            });
+        }
         Ok(environment)
     }
 
@@ -441,6 +492,83 @@ mod tests {
             parse("[seed]\nfile = \"a.json\"\nfatal = true\n"),
             Err(EnvironmentError::Parse(_))
         ));
+    }
+
+    #[test]
+    fn a_decisions_table_names_its_file() {
+        let bound = parse(
+            "[provides]\n\"external.*\" = [\"decisions-file\"]\n\n\
+             [decisions]\nfile = \"decisions/answers.toml\"\n",
+        )
+        .expect("it parses");
+        assert_eq!(
+            bound.decisions,
+            Some(super::DecisionsFile {
+                file: "decisions/answers.toml".to_owned()
+            })
+        );
+        let written = toml::to_string(&bound).expect("it serialises");
+        assert_eq!(
+            Environment::parse(&written).expect("it reads back"),
+            bound,
+            "{written}"
+        );
+        let plain = parse("").expect("it parses");
+        assert!(plain.decisions.is_none());
+        let written = toml::to_string(&plain).expect("it serialises");
+        assert!(!written.contains("decisions"), "{written}");
+        assert!(matches!(
+            parse(
+                "[provides]\n\"external.*\" = [\"decisions-file\"]\n\n\
+                 [decisions]\nfile = \"a.toml\"\nfatal = true\n"
+            ),
+            Err(EnvironmentError::Parse(_))
+        ));
+    }
+
+    #[test]
+    fn a_decisions_table_no_external_key_binds_is_refused() {
+        for provides in [
+            "",
+            "[provides]\n\"external.*\" = [\"operator-prompt\"]\n",
+            "[provides]\nchannel = [\"decisions-file\"]\n\"external.*\" = [\"operator-prompt\"]\n",
+        ] {
+            let refused = parse(&format!(
+                "{provides}\n[decisions]\nfile = \"answers.toml\"\n"
+            ));
+            let Err(error) = refused else {
+                panic!("{provides}: a table nothing binds is refused: {refused:?}");
+            };
+            assert!(
+                matches!(error, EnvironmentError::DecisionsUnbound { ref file } if file == "answers.toml"),
+                "{provides}: {error:?}"
+            );
+            assert!(
+                error.to_string().contains("decisions-file"),
+                "{provides}: the refusal names the implementation: {error}"
+            );
+        }
+        let exact = parse(
+            "[provides]\n\"external.*\" = [\"operator-prompt\"]\n\
+             \"external.shop.Place.approved\" = [\"decisions-file\"]\n\n\
+             [decisions]\nfile = \"answers.toml\"\n",
+        );
+        assert!(exact.is_ok(), "an exact external key binds it: {exact:?}");
+        let unbound = parse("[provides]\n\"external.*\" = [\"decisions-file\"]\n")
+            .expect("a binding with no table parses: --decisions names the file");
+        assert!(unbound.decisions.is_none());
+    }
+
+    #[test]
+    fn a_decisions_table_whose_file_is_only_a_later_preference_is_refused() {
+        let refused = parse(
+            "[provides]\n\"external.*\" = [\"operator-prompt\", \"decisions-file\"]\n\n\
+             [decisions]\nfile = \"answers.toml\"\n",
+        );
+        assert!(
+            matches!(refused, Err(EnvironmentError::DecisionsUnbound { ref file }) if file == "answers.toml"),
+            "admission binds the first name, so the file would never be read: {refused:?}"
+        );
     }
 
     #[test]

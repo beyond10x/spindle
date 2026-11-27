@@ -1,0 +1,15 @@
+type: ess-scenario/1
+domain: probe.review
+scenario: two-submissions-answered-by-input
+summary: Two submissions whose acts state no outcome, so a rule on the input answers the first and not the second.
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: probe.review.Submit
+    input:
+      submission_id: s1
+      amount: 5
+  - at: 2026-01-05T09:01:00Z
+    command: probe.review.Submit
+    input:
+      submission_id: s2
+      amount: 5

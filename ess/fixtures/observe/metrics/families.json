@@ -101,6 +101,12 @@
       "kind": "gauge",
       "labels": [],
       "summary": "How long the last GET /__spindle/metrics before this one took to read the counts and write them; absent until one was answered."
+    },
+    {
+      "name": "spindle_metrics_series_mode",
+      "kind": "gauge",
+      "labels": ["mode"],
+      "summary": "1, labelled with how the run writes the labels whose values come from the specification: per-command, each value its own series, or aggregated, every route, operation, command, outcome, event, binding and entity, and each refusal that names a declared outcome, written empty and the series that then share their labels summed."
     }
   ]
 }

@@ -1,0 +1,16 @@
+type: ess-scenario/1
+domain: vault.key
+scenario: an-issued-key-is-revoked
+summary: The custodian issues a key, disclosing its secret once, and the key is revoked.
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: vault.key.IssueKey
+    input:
+      key_id: k1
+      label: front door
+    outcome: issued
+  - at: 2026-01-05T09:01:00Z
+    command: vault.key.RevokeKey
+    input:
+      key_id: k1
+    outcome: revoked
