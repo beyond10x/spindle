@@ -107,6 +107,9 @@ pub(crate) struct Serving<'a> {
     /// `GET /__spindle/metrics`, beside this thread as every read is, and
     /// `GET /__spindle/ui` with the panel this build embeds ([`PANEL`]).
     pub observe: Option<usize>,
+    /// `--observe-series`: how `GET /__spindle/metrics` writes the labels whose values come from
+    /// the specification ([`Surface::observing_series`]).
+    pub observe_series: spindle_ingress::SeriesMode,
     /// `--trusted-caller-header`: each request proves its caller in this header, which a proxy in
     /// front of the listener sets ([`Surface::proving_callers`]); never with `callers`.
     pub caller_header: Option<&'a str>,
@@ -365,8 +368,10 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         );
     }
     let surface = match (serving.observe, PANEL) {
-        (Some(capacity), Some(page)) => surface.observing(capacity).with_panel(page),
-        (Some(capacity), None) => surface.observing(capacity),
+        (Some(capacity), Some(page)) => surface
+            .observing_series(capacity, serving.observe_series)
+            .with_panel(page),
+        (Some(capacity), None) => surface.observing_series(capacity, serving.observe_series),
         (None, _) => surface,
     };
     for line in surface.report() {

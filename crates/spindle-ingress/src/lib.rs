@@ -81,7 +81,7 @@ pub use answer::{Answer, answer, answered};
 pub use console::Console;
 #[cfg(feature = "listener")]
 pub use listener::{BODY_READ, Exchange, HEADER_READ, Listener, exposed};
-pub use observe::metrics::METRICS_MEDIA;
+pub use observe::metrics::{METRICS_MEDIA, SeriesMode};
 pub use observe::{
     AnswerSource, By, Class, ExternalAnswer, PANEL_MEDIA, PANEL_POLICY, REQUESTS_DEFAULT,
     REQUESTS_MOST, RESERVED_SEGMENT, Recorder, Reserved, SeedCounts,

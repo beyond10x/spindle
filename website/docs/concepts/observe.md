@@ -45,7 +45,8 @@ prints the table's non-zero counters under the grid
 keeps, from 1 to 10000.
 
 A scrape writes a series only once something was counted in it, and keeps writing it after that.
-So a model of hundreds of commands that has run none writes one series, `spindle_resets_total`:
+So a model of hundreds of commands that has run none writes two series, `spindle_resets_total`
+and `spindle_metrics_series_mode`:
 
 | Family | Written from |
 |---|---|
@@ -57,11 +58,24 @@ So a model of hundreds of commands that has run none writes one series, `spindle
 | `spindle_http_requests_total`, `spindle_http_request_duration_seconds`, `spindle_external_causes_total` | the first request or cause counted with those labels |
 | `spindle_bound_refusals_total` | the first refused bound command a request record listed with that binding, command and refusal |
 | `spindle_metrics_scrape_duration_seconds` | the second scrape; it reports how long the scrape before it took |
-| `spindle_resets_total` | the first scrape |
+| `spindle_resets_total`, `spindle_metrics_series_mode` | the first scrape |
 | `spindle_seed_commands_total` | the first scrape of a run given a [seed](environment-and-admission.md#a-seed-submitted-at-start), each of `sent`, `applied`, `already_there` and `refused`; a run without one never writes it |
 
 `spindle_http_request_duration_seconds` is labelled by `method` and `route`, the route template,
 so a slow route shows in its own series. An unrouted request has an empty `route`.
+
+[`--observe-series`](../reference/cli.md#run--observe-series) sets how a scrape writes the labels
+whose values come from the specification: `route`, `operation`, `command`, `outcome`, `event`,
+`binding` and `entity`, and the `refusal` of a bound command where it names an outcome the
+specification declares. The scrape names the mode in `spindle_metrics_series_mode{mode}`, at 1.
+
+| Mode | Series a scrape writes |
+|---|---|
+| `per-command`, the default | one for each value counted, so the series grow with the specification: a generated model whose commands were each answered once writes about 33 sample lines per command |
+| `aggregated` | each of those labels empty, and the series that then share every label summed. The number of series does not grow with the number of commands or outcomes, nor with the events, bindings or entities the specification declares. It is bounded by the labels kept: a request's method, kind, class and status class, a failure kind, what a binding carried, retried or timed, a cause's source, a seed entry's count, the kernel's error kind of a rejected bound command, and `component`, which keeps one value per declared component. Generated models of 30 and of 300 commands, each answered once, write the same series |
+
+The mode changes the scrape only. The request log and the topology keep every route and operation,
+in either mode.
 
 | Request log field | Holds | At most |
 |---|---|---|

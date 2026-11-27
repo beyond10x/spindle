@@ -14,6 +14,7 @@ use ess_http::{
 use serde_json::{Map, Value};
 
 use crate::console::Console;
+use crate::observe::metrics::SeriesMode;
 use crate::observe::topology::Routed;
 use crate::observe::{Recorder, Reserved};
 use crate::router::BODY_LIMIT;
@@ -1465,7 +1466,17 @@ impl Surface {
     /// the one recorder. The recorder holds every route, each a `routes` edge of
     /// `GET /__spindle/topology`, also one answered `501`.
     #[must_use]
-    pub fn observing(mut self, capacity: usize) -> Self {
+    pub fn observing(self, capacity: usize) -> Self {
+        self.observing_series(capacity, SeriesMode::PerCommand)
+    }
+
+    /// This surface [`Surface::observing`] the last `capacity` requests, its metrics written as
+    /// `series` says: each label whose value comes from the specification its own series
+    /// ([`SeriesMode::PerCommand`]), or every one of them written empty and the series summed
+    /// ([`SeriesMode::Aggregated`]). The request log and the topology are the same in either
+    /// mode.
+    #[must_use]
+    pub fn observing_series(mut self, capacity: usize, series: SeriesMode) -> Self {
         let routes = self
             .routes
             .iter()
@@ -1479,7 +1490,7 @@ impl Surface {
                 },
             })
             .collect();
-        self.recorder = Some(Recorder::new(capacity).routing(routes));
+        self.recorder = Some(Recorder::new(capacity).routing(routes).with_series(series));
         self
     }
 

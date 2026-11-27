@@ -605,6 +605,9 @@ struct Ring {
     answers: Vec<ExternalAnswer>,
     /// The routes of the surface it records for, each a `routes` edge of the topology.
     routes: Vec<topology::Routed>,
+    /// How a scrape writes the labels whose values come from the specification; the counts
+    /// above keep every label, as the topology reads them.
+    series: metrics::SeriesMode,
 }
 
 /// The labels a request is counted by: method, route template, operation, kind, class and status
@@ -672,7 +675,22 @@ impl Recorder {
             serving: false,
             answers: Vec::new(),
             routes: Vec::new(),
+            series: metrics::SeriesMode::PerCommand,
         })))
+    }
+
+    /// This recorder written by a scrape as `series` says ([`metrics::SeriesMode`]); what it
+    /// counts is the same in every mode.
+    #[must_use]
+    pub(crate) fn with_series(self, series: metrics::SeriesMode) -> Self {
+        self.ring(|ring| ring.series = series);
+        self
+    }
+
+    /// How a scrape writes the labels whose values come from the specification
+    /// ([`Recorder::with_series`]).
+    pub(crate) fn series_mode(&self) -> metrics::SeriesMode {
+        self.ring(|ring| ring.series)
     }
 
     /// This recorder recording for the surface whose routes are `routes`.
