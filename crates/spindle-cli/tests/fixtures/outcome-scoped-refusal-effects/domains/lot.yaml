@@ -1,5 +1,5 @@
 domain: bay.lot
-summary: Lots and their tags; closing a lot may sweep its tags.
+summary: Lots and their tags; closing a lot may sweep its tags, and a jammed sweeper refuses the close and jams the lot.
 types:
   - name: bay.lot.LotId
     kind: newtype
@@ -19,12 +19,15 @@ entities:
       type: bay.lot.LotId
     lifecycle:
       initial: Open
-      states: [Open, Closed]
-      terminal: [Closed]
+      states: [Open, Closed, Jammed]
+      terminal: [Closed, Jammed]
       transitions:
         - name: close
           from: [Open]
           to: Closed
+        - name: jam
+          from: [Open]
+          to: Jammed
   - name: bay.lot.Tag
     identity:
       name: tag_id
@@ -43,6 +46,12 @@ entities:
 errors:
   - name: bay.lot.LotClosedAlready
     summary: The lot is not open.
+    fields: []
+  - name: bay.lot.SweeperJammed
+    summary: The sweeper jammed, and the lot is jammed with it.
+    fields: []
+  - name: bay.lot.TagSweptAlready
+    summary: The tag is swept already.
     fields: []
 commands:
   - name: bay.lot.OpenLot
@@ -82,6 +91,13 @@ commands:
       - name: tags
         type: List<bay.lot.Swept>
     outcomes:
+      - name: jammed
+        external: the sweeper jams
+        error: bay.lot.SweeperJammed
+        compensates: true
+        moves: bay.lot.Lot.jam
+        instance: lot_id
+        summary: The sweeper jams and refuses the close, and the lot is jammed, a compensating refusal the runtime does not run.
       - name: swept
         when:
           all:
@@ -97,7 +113,7 @@ commands:
             each: {in: input.tags, as: swept}
             instance: swept.tag_id
             moves: bay.lot.Tag.sweep
-        summary: The lot is closed and the tags listed swept, a secondary effect over an input list the runtime does not run.
+        summary: The lot is closed and every held tag listed swept, a secondary effect over an input list.
       - name: closed
         moves: bay.lot.Lot.close
         instance: lot_id
@@ -109,6 +125,22 @@ commands:
         wrong_state: true
         error: bay.lot.LotClosedAlready
         summary: Only an open lot is closed.
+  - name: bay.lot.SweepTag
+    input:
+      - name: tag_id
+        type: bay.lot.TagId
+    outcomes:
+      - name: swept
+        moves: bay.lot.Tag.sweep
+        instance: tag_id
+        emits: [bay.lot.TagSwept]
+        payload:
+          bay.lot.TagSwept: {tag_id: input.tag_id}
+        summary: The tag is swept.
+      - name: wrong-state
+        wrong_state: true
+        error: bay.lot.TagSweptAlready
+        summary: Only a live tag is swept.
 events:
   - name: bay.lot.LotOpened
     fields:
@@ -122,3 +154,7 @@ events:
     fields:
       - name: lot_id
         type: bay.lot.LotId
+  - name: bay.lot.TagSwept
+    fields:
+      - name: tag_id
+        type: bay.lot.TagId

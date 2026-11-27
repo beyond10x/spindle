@@ -40,7 +40,9 @@ pinned to a released tag in the workspace `Cargo.toml`.
 3. It applies the outcome's effect (`creates:`, `moves:`, `updates:`, `deletes:`), then its
    secondary effects (`affects:`): each entry moves, updates or removes the rows of its entity its
    filter selects in the store as it was before the outcome, the subject excepted, in the order
-   written. It checks every written value against its declared type and every row left in place
+   written. An entry over an input list (`each:`) acts on the row each element names instead, in
+   list order: it updates a held row or creates one in the entity's `initial` state, and moves or
+   removes only a held row. It checks every written value against its declared type and every row left in place
    against its entity's invariants, and commits every row in one write, or none.
 4. It returns the events the outcome emits, or the error it declares.
 
@@ -121,9 +123,9 @@ message.
 - A construct that decides which outcome a request selects, a condition or an outcome's shape,
   refuses the whole command before it reads anything.
 - A construct only the selected outcome reads refuses that outcome alone, such as a generated
-  value of a type the runtime does not mint, or a secondary effect over an input list, an
-  `affects:` entry with `each:`. A request that selects the outcome is refused with the outcome in
-  the message, and every other outcome of the command runs.
+  value of a type the runtime does not mint, or a compensating refusal (`compensates: true`). A
+  request that selects the outcome is refused with the outcome in the message, and every other
+  outcome of the command runs.
 
 `admit` and `run` print each such outcome on stderr. A command none of whose outcomes runs is
 printed once instead, as not served.

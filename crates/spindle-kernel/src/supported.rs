@@ -16,7 +16,7 @@
 //! understanding one of them would be a guess.
 //!
 //! A construct only the taken outcome reads refuses that outcome alone ([`takes`]): an effect
-//! beyond its subject (a compensating refusal, an `affects:` entry over an input list, `sets:`
+//! beyond its subject (a compensating refusal, a rows quantifier in an `affects:` filter, `sets:`
 //! without a subject), a write of an entity another component owns (a subject, `instances:` or
 //! an `affects:` entry), a value it
 //! writes, publishes or answers, the identity it mints, an error field it fills, or a value read
@@ -617,10 +617,10 @@ fn effect(outcome: &ResolvedOutcome) -> Option<&'static str> {
 }
 
 /// The secondary effect (`affects:`), named, when the kernel does not run it. The kernel runs an
-/// entry that selects its rows by a filter beside a subject the input names and that moves,
-/// updates or removes it ([`crate::execute`]). An entry naming its rows by the elements of an
-/// input list (`each:`), a filter that walks the rows of an entity, and an entry beside any other
-/// subject stay refused.
+/// entry beside a subject the input names and that moves, updates or removes it, whether the
+/// entry selects its rows by a filter or names them by the elements of an input list (`each:`)
+/// ([`crate::execute`]). A filter that walks the rows of an entity, and an entry beside any other
+/// subject, stay refused.
 fn affects(outcome: &ResolvedOutcome) -> Option<&'static str> {
     if outcome.affects.is_empty() {
         return None;
@@ -641,15 +641,12 @@ fn affects(outcome: &ResolvedOutcome) -> Option<&'static str> {
              updates or removes",
         );
     }
-    for affect in &outcome.affects {
-        let Some(filter) = &affect.filter else {
-            return Some("an `affects:` entry over an input list (`each:`)");
-        };
-        if !ess_domain::command::related_rows::walked(filter).is_empty() {
-            return Some("a rows quantifier in an `affects:` filter");
-        }
-    }
-    None
+    let walks = outcome
+        .affects
+        .iter()
+        .filter_map(|affect| affect.filter.as_ref())
+        .any(|filter| !ess_domain::command::related_rows::walked(filter).is_empty());
+    walks.then_some("a rows quantifier in an `affects:` filter")
 }
 
 /// The outcome's shape, named, when the kernel does not run it: what selection reads of the rows

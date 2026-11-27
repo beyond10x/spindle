@@ -11,9 +11,14 @@
 //!
 //! `tests/fixtures/outcome-scoped-refusal-effects` declares one component reached in process, so
 //! `run` reads stdin. `CloseLot` closes a lot (`closed`), or, where the request sets `sweep`,
-//! closes it and sweeps the tags the request lists (`swept`), a secondary effect over an input list
-//! (`affects:` with `each:`) the runtime does not run. ESS refuses `sets:` without a subject
-//! (`ESS-COMMAND-003`), so no fixture declares one.
+//! closes it and sweeps every held tag the request lists (`swept`), a secondary effect over an
+//! input list (`affects:` with `each:`) the runtime runs (`story:affects-over-input-list`); where
+//! the sweeper jams, an external cause, it refuses the close and jams the lot (`jammed`), a
+//! compensating refusal (`compensates: true`) the runtime does not run. `SweepTag` sweeps one live
+//! tag. ESS refuses `sets:` without a subject (`ESS-COMMAND-003`), so no fixture declares one.
+//!
+//! `tests/fixtures/affects-each-network` declares one component reached over the network, whose
+//! `Publish` records one row per contract it lists.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -53,12 +58,17 @@ struct Contract(Value);
 
 impl Contract {
     fn load(binding: Option<&str>) -> Self {
-        let loaded = spindle_spec::load(&root().join(FIXTURE)).expect("the fixture compiles");
+        Self::load_spec(FIXTURE, COMPONENT, binding)
+    }
+
+    /// The document of `component` of the specification `spec`, with the binding where given.
+    fn load_spec(spec: &str, component: &str, binding: Option<&str>) -> Self {
+        let loaded = spindle_spec::load(&root().join(spec)).expect("the fixture compiles");
         let component = loaded
             .ir
             .components()
             .values()
-            .find(|component| component.name.as_str() == COMPONENT)
+            .find(|declared| declared.name.as_str() == component)
             .expect("the fixture declares the component");
         let binding = binding.map(|binding| {
             let text = std::fs::read_to_string(root().join(binding)).expect("the binding is read");
@@ -152,12 +162,17 @@ impl Drop for Served {
 /// scratch directory, once it prints where it listens. Everything it prints on stderr before that
 /// line is read by then.
 fn serve(arguments: &[&str]) -> Served {
+    serve_spec(FIXTURE, arguments)
+}
+
+/// [`serve`], serving the specification `spec`.
+fn serve_spec(spec: &str, arguments: &[&str]) -> Served {
     let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
     let file = state.path().join("state");
     let mut child = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
         .current_dir(root())
         .env("TMPDIR", state.path())
-        .args(["run", FIXTURE, "--environment", LAPTOP, "--state"])
+        .args(["run", spec, "--environment", LAPTOP, "--state"])
         .arg(&file)
         .args(arguments)
         .stdin(Stdio::null())
@@ -519,9 +534,20 @@ fn an_outcome_the_ingress_does_not_answer_refuses_only_when_chosen() {
 
 const EFFECTS: &str = "crates/spindle-cli/tests/fixtures/outcome-scoped-refusal-effects";
 const CLOSE_LOT: &str = "bay.lot.CloseLot";
+const SWEEP_TAG: &str = "bay.lot.SweepTag";
 /// The outcome of `CloseLot` whose secondary effect over an input list (`affects:` with `each:`)
-/// the runtime does not run.
+/// the runtime runs.
 const SWEPT: &str = "bay.lot.CloseLot/swept";
+/// The outcome of `CloseLot` that is a compensating refusal (`compensates: true`), which the
+/// runtime does not run.
+const JAMMED: &str = "bay.lot.CloseLot/jammed";
+
+const NETWORK: &str = "crates/spindle-cli/tests/fixtures/affects-each-network";
+const LEDGER: &str = "ledger";
+const OPEN_RELEASE: &str = "ledger.release.OpenRelease";
+const ADD_RECORD: &str = "ledger.release.AddRecord";
+const PUBLISH: &str = "ledger.release.Publish";
+const RECORD: &str = "ledger.release.Record";
 
 /// `b10x-spindle run <spec> --environment laptop` with `requests` on stdin, one per line: the
 /// result lines, parsed, and stderr.
@@ -559,11 +585,11 @@ fn run_reading(spec: &str, requests: &[Value]) -> (Vec<Value>, String) {
     (results, stderr)
 }
 
-/// An outcome with a secondary effect the runtime does not run (`affects:` with `each:`) refuses
-/// only the request that selects it: selection reads no `affects:`, so `CloseLot` stays served, a
-/// request selecting `swept` is refused naming the outcome and its effect with nothing written,
-/// and the same lot then closes through `closed`. `run` reading stdin names the outcome at
-/// startup.
+/// An outcome the runtime does not run, here a compensating refusal (`compensates: true`), refuses
+/// only the request that selects it: selection reads no `compensates`, so `CloseLot` stays
+/// served, a request selecting `jammed` is refused naming the outcome and what it lacks with
+/// nothing written, and the same lot then closes through `closed`. `run` reading stdin names the
+/// outcome at startup.
 #[test]
 fn an_outcome_with_secondary_effects_refuses_only_the_request_that_selects_it() {
     let (results, stderr) = run_reading(
@@ -571,8 +597,16 @@ fn an_outcome_with_secondary_effects_refuses_only_the_request_that_selects_it() 
         &[
             json!({"command": "bay.lot.OpenLot", "input": {"lot_id": "l1"}}),
             json!({"command": "bay.lot.TagLot", "input": {"tag_id": "t1", "lot_id": "l1"}}),
-            json!({"command": CLOSE_LOT, "input": {"lot_id": "l1", "sweep": true, "tags": [{"tag_id": "t1"}]}}),
-            json!({"command": CLOSE_LOT, "input": {"lot_id": "l1", "sweep": false, "tags": []}}),
+            json!({
+                "command": CLOSE_LOT,
+                "input": {"lot_id": "l1", "sweep": false, "tags": []},
+                "external": {"jammed": true},
+            }),
+            json!({
+                "command": CLOSE_LOT,
+                "input": {"lot_id": "l1", "sweep": false, "tags": []},
+                "external": {"jammed": false},
+            }),
         ],
     );
     assert_eq!(results.len(), 4, "{results:#?}");
@@ -583,8 +617,8 @@ fn an_outcome_with_secondary_effects_refuses_only_the_request_that_selects_it() 
         .as_str()
         .expect("a refusal in words");
     assert!(
-        message.contains(SWEPT) && message.contains("`affects:`"),
-        "the refusal names the outcome and its secondary effect: {message}"
+        message.contains(JAMMED) && message.contains("`compensates: true`"),
+        "the refusal names the outcome and what it lacks: {message}"
     );
     assert_eq!(
         results[3]["outcome"], "closed",
@@ -597,7 +631,7 @@ fn an_outcome_with_secondary_effects_refuses_only_the_request_that_selects_it() 
     let listed = unsupported_outcomes(&lines);
     assert_eq!(listed.len(), 1, "run lists the one outcome: {stderr}");
     assert!(
-        listed[0].contains(&format!("`{SWEPT}`")) && listed[0].contains("`affects:`"),
+        listed[0].contains(&format!("`{JAMMED}`")) && listed[0].contains("`compensates: true`"),
         "run names the outcome and what it lacks: {listed:#?}"
     );
     assert!(
@@ -606,6 +640,151 @@ fn an_outcome_with_secondary_effects_refuses_only_the_request_that_selects_it() 
             .any(|line| line.contains(CLOSE_LOT)),
         "run names the outcome, not the command, as unsupported: {stderr}"
     );
+}
+
+/// `admit` lists no refusal for `swept`, whose secondary effect walks an input list
+/// (`story:affects-over-input-list`): the one outcome it lists is the compensating refusal.
+#[test]
+fn admit_lists_no_refusal_for_an_affects_entry_over_an_input_list() {
+    let admitted = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+        .current_dir(root())
+        .args(["admit", EFFECTS, "--environment", LAPTOP])
+        .output()
+        .expect("b10x-spindle runs");
+    let stdout = String::from_utf8_lossy(&admitted.stdout);
+    let stderr = String::from_utf8_lossy(&admitted.stderr);
+    assert_eq!(admitted.status.code(), Some(0), "{stdout}{stderr}");
+    let lines = stderr.lines().map(str::to_owned).collect::<Vec<_>>();
+    assert!(
+        !lines.iter().any(|line| line.contains(SWEPT)),
+        "admit names no refusal of `swept`: {stderr}"
+    );
+    assert!(
+        !lines.iter().any(|line| line.contains("`each:`")),
+        "admit refuses no `affects:` entry over an input list: {stderr}"
+    );
+    let listed = unsupported_outcomes(&lines);
+    assert_eq!(
+        listed.len(),
+        1,
+        "admit lists the compensating refusal alone: {stderr}"
+    );
+    assert!(listed[0].contains(&format!("`{JAMMED}`")), "{listed:#?}");
+}
+
+/// A stdin line selecting `swept` answers `swept`: the lot is closed and every held tag the input
+/// lists is swept, a tag listed but not held is not created, and a held tag not listed stays
+/// `Live`. `SweepTag` then tells them apart: a swept tag answers `wrong-state`, a live one
+/// `swept`, and `TagLot` creates the tag no one held.
+#[test]
+fn stdin_runs_an_affects_entry_over_an_input_list() {
+    let tag =
+        |tag: &str| json!({"command": "bay.lot.TagLot", "input": {"tag_id": tag, "lot_id": "l1"}});
+    let sweep = |tag: &str| json!({"command": SWEEP_TAG, "input": {"tag_id": tag}});
+    let (results, stderr) = run_reading(
+        EFFECTS,
+        &[
+            json!({"command": "bay.lot.OpenLot", "input": {"lot_id": "l1"}}),
+            tag("t1"),
+            tag("t2"),
+            tag("t3"),
+            json!({
+                "command": CLOSE_LOT,
+                "input": {
+                    "lot_id": "l1",
+                    "sweep": true,
+                    "tags": [{"tag_id": "t1"}, {"tag_id": "t9"}, {"tag_id": "t3"}],
+                },
+                "external": {"jammed": false},
+            }),
+            sweep("t1"),
+            sweep("t3"),
+            sweep("t2"),
+            tag("t9"),
+        ],
+    );
+    let outcomes = results
+        .iter()
+        .map(|result| result["outcome"].as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        outcomes,
+        [
+            "opened",
+            "tagged",
+            "tagged",
+            "tagged",
+            "swept",
+            "wrong-state",
+            "wrong-state",
+            "swept",
+            "tagged",
+        ],
+        "the close sweeps the held tags listed, t1 and t3, leaves t2 live and creates no t9: \
+         {results:#?}\n{stderr}"
+    );
+    assert_eq!(
+        results[4]["events"][0]["event"], "bay.lot.LotClosed",
+        "{results:#?}"
+    );
+}
+
+/// One HTTP request selecting an outcome whose `affects:` entry walks an input list answers it,
+/// and `GET /api/history` answers its event for every row an element wrote: a record created and
+/// a record updated alike (`Committed::instances`).
+#[test]
+fn http_serves_an_affects_entry_over_an_input_list() {
+    let contract = Contract::load_spec(NETWORK, LEDGER, None);
+    let served = serve_spec(NETWORK, &[]);
+    let call = |id: &str, release: &str, body: &Value| {
+        let (method, path) = contract.route(id);
+        served.exchange(&method, &path.replace("{release_id}", release), Some(body))
+    };
+
+    let (status, answer) = call(OPEN_RELEASE, "r1", &json!({"release_id": "r1"}));
+    assert!((200..300).contains(&status), "{status} {answer}");
+    let (status, answer) = call(
+        ADD_RECORD,
+        "r1",
+        &json!({"record_id": "k1", "release_id": "r1", "version": "v1"}),
+    );
+    assert!((200..300).contains(&status), "{status} {answer}");
+
+    let (status, answer) = call(
+        PUBLISH,
+        "r1",
+        &json!({"release_id": "r1", "contracts": [
+            {"record_id": "n1", "version": "a"},
+            {"record_id": "k1", "version": "v2"},
+            {"record_id": "n2", "version": "b"},
+        ]}),
+    );
+    assert!(
+        (200..300).contains(&status),
+        "the outcome is served, not refused: {status} {answer}"
+    );
+    assert_eq!(answer["outcome"], "published", "{answer}");
+    contract.validate(PUBLISH, status, &answer);
+
+    for record in ["n1", "k1", "n2"] {
+        let (status, history) = served.exchange(
+            "GET",
+            &format!("/api/history?entity={RECORD}&identity={record}"),
+            None,
+        );
+        assert_eq!(status, 200, "{history}");
+        let events = history["events"]
+            .as_array()
+            .unwrap_or_else(|| panic!("the console answers a history: {history}"))
+            .iter()
+            .map(|event| event["event"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            events.last(),
+            Some(&"ledger.release.Published"),
+            "the history of {record} answers the outcome's event: {history}"
+        );
+    }
 }
 
 /// The not-served report the Node export answers (`notServed()`,
