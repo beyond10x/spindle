@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:view-filter-map-value-order
 kind: story
-status: active
+status: implemented
 title: A view filter orders a Map value by its declared type
 relations:
 - serves: vision:spindle
@@ -19,10 +19,11 @@ scope:
   path: crates/spindle-host/tests/spindle-host/main.rs
 - confidence: inferred
   path: crates/spindle-host/tests/spindle-host/view_filter_map.rs
-revision: 8
+revision: 9
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T09:51:58Z", actor: "human:operator", revision: 7, decided_on: {"recorded":{"review_outcome":8}}}
 - {from: "proposed", to: "active", at: "2026-11-27T09:51:59Z", actor: "human:operator", revision: 8, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "active", to: "implemented", at: "2026-11-27T17:04:21Z", actor: "human:operator", revision: 9, decided_on: {"recorded":{"test_result":1,"review_outcome":9}}}
 ---
 ## Outcome
 

@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:look-ahead-asks-only-where-it-matters
 kind: story
-status: active
+status: implemented
 title: The kernel asks a decider only where the answer changes the outcome
 relations:
 - informed_by: review-result:w17-u2-adversary-2
@@ -14,10 +14,11 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/adversary_look_ahead.rs
 - confidence: inferred
   path: crates/spindle-kernel/tests/spindle-kernel/deployment.rs
-revision: 9
+revision: 10
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T09:52:00Z", actor: "human:operator", revision: 8, decided_on: {"recorded":{"review_outcome":8}}}
 - {from: "proposed", to: "active", at: "2026-11-27T09:52:00Z", actor: "human:operator", revision: 9, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "active", to: "implemented", at: "2026-11-27T17:04:22Z", actor: "human:operator", revision: 10, decided_on: {"recorded":{"test_result":1,"review_outcome":9}}}
 ---
 ## Outcome
 

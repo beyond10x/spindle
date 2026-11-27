@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:related-via-nested-input
 kind: story
-status: active
+status: implemented
 title: A related row named through a nested input member is read
 relations:
 - decomposes: epic:downstream-kernel-constructs
@@ -10,10 +10,11 @@ relations:
 scope:
 - confidence: inferred
   path: crates/spindle-spec/tests/spindle-spec/load.rs
-revision: 12
+revision: 13
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T09:52:00Z", actor: "human:operator", revision: 11, decided_on: {"recorded":{"review_outcome":8}}}
 - {from: "proposed", to: "active", at: "2026-11-27T09:52:00Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "active", to: "implemented", at: "2026-11-27T17:04:23Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"test_result":1,"review_outcome":9}}}
 ---
 # A related row named through a nested input member is read
 

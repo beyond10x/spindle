@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:served-clock-steps
 kind: story
-status: active
+status: implemented
 title: A served run steps its clock
 relations:
 - serves: vision:spindle
@@ -61,10 +61,11 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: cited
   path: website/docs/status.md
-revision: 19
+revision: 20
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T10:45:05Z", actor: "human:operator", revision: 18, decided_on: {"recorded":{"review_outcome":7}}}
 - {from: "proposed", to: "active", at: "2026-11-27T10:45:05Z", actor: "human:operator", revision: 19, decided_on: {"recorded":{"review_outcome":7}}}
+- {from: "active", to: "implemented", at: "2026-11-27T17:04:24Z", actor: "human:operator", revision: 20, decided_on: {"recorded":{"test_result":1,"review_outcome":8}}}
 ---
 # A served run steps its clock
 
