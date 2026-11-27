@@ -143,8 +143,8 @@ pub enum Command {
     /// waiting are answered in arrival order for up to `--drain` seconds. Then, as when the seed
     /// stops it, it takes no further request, writes every answer it has given, answers each
     /// request still waiting `503`, and exits. `GET /__spindle/live` answers `200` while the
-    /// run's thread takes requests, `503` once it has taken none for 60 s, with or without
-    /// `--observe`. Routes are where `ess generate --kind
+    /// run's thread answers a request it took or has asked for one within 60 s, `503` once it
+    /// has done neither, with or without `--observe`. Routes are where `ess generate --kind
     /// openapi` publishes them:
     /// ESS's derived routes, or with `--http` the `ess-http/1` binding's, read and checked by ESS
     /// (methods, paths, path variables and per-outcome statuses), an operation it does not name
@@ -382,9 +382,11 @@ pub enum Command {
         /// already waiting for it, in arrival order, counted from when the request under way, if
         /// any, has finished; `0` answers none of them. From the signal on, `GET
         /// /__spindle/ready` answers `503` and every request that arrives is answered `503` at
-        /// once; the request under way always finishes, and so does one taken within the bound.
-        /// Each request still waiting once the bound has passed is answered `503`, then the run
-        /// exits 130 or 143. Only where `run` serves HTTP.
+        /// once; the request under way always finishes, and so does one taken within the bound,
+        /// but a `POST /api/reset`, answered `503` with nothing emptied. A bound too large for the
+        /// clock sets none: the drain ends once no request is waiting. Each request still waiting
+        /// once the bound has passed is answered `503`, then the run exits 130 or 143. Only where
+        /// `run` serves HTTP.
         #[arg(
             long,
             value_name = "SECONDS",

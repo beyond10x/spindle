@@ -444,6 +444,10 @@ pub(crate) struct Seeding {
     /// Where the state of the seed run under way is published, which `GET /__spindle/seed` and
     /// `GET /__spindle/ready` read beside this thread (`story:seed-readiness`).
     published: SeedState,
+    /// Whether a reset with no world is under way ([`Seeding::resetting`]): nothing is published
+    /// until [`Seeding::restart`] or [`Seeding::unreset`], so the run reads running from the reset
+    /// until its seed ends again.
+    holding: bool,
     ended: bool,
     /// How many entries of the seed run under way did not run: a host or execute error, never a
     /// declared outcome (`story:run-fails-on-rejected-line`).
@@ -500,6 +504,7 @@ impl Seeding {
             earlier: SeedCounts::default(),
             recorder,
             published,
+            holding: false,
             rejected: 0,
             failed: false,
             marker,
@@ -590,21 +595,25 @@ impl Seeding {
         self.marked();
         self.submitted.clear();
         self.ended = false;
+        self.holding = false;
         self.publish();
     }
 
     /// Publishes the seed as running from its first entry, none sent, before a reset with no world
     /// empties the stores, so no request reads the run ready while its stores are empty
-    /// (`story:seed-readiness`). [`Seeding::restart`] then counts the run; a reset that fails
-    /// publishes the run as it stood again ([`Seeding::unreset`]).
-    pub(crate) fn resetting(&self) {
+    /// (`story:seed-readiness`). Until [`Seeding::restart`] counts the new run, nothing else is
+    /// published: the run cut inside the reset ([`Seeding::cut`]) never reads ended. A reset that
+    /// fails publishes the run as it stood again ([`Seeding::unreset`]).
+    pub(crate) fn resetting(&mut self) {
         self.published
             .publish(SeedProgress::starting(count(self.seed.entries.len())));
+        self.holding = true;
     }
 
     /// Publishes the seed run as it stands, after a reset that [`Seeding::resetting`] announced
     /// failed and emptied nothing.
-    pub(crate) fn unreset(&self) {
+    pub(crate) fn unreset(&mut self) {
+        self.holding = false;
         self.publish();
     }
 
@@ -647,8 +656,12 @@ impl Seeding {
 
     /// Publishes the state of the seed run under way, read beside this thread by
     /// `GET /__spindle/seed` and `GET /__spindle/ready`: ended only once its last entry's
-    /// submission has returned, so whatever that entry wrote is in place.
+    /// submission has returned, so whatever that entry wrote is in place. Inside a reset with no
+    /// world it publishes nothing ([`Seeding::resetting`]).
     fn publish(&self) {
+        if self.holding {
+            return;
+        }
         let left = self.retry.len() + self.seed.entries.len().saturating_sub(self.next);
         self.published.publish(SeedProgress {
             phase: if self.ended {

@@ -259,13 +259,12 @@ fn a_plain_reset_never_reads_ready_before_its_seed_runs_again() {
 }
 
 /// A command is held at the desk, and a reset with no world queued behind it, when SIGTERM
-/// arrives; the default drain takes the reset once the command is answered. The reset answers
-/// with the seed's effects in place (`story:reset-reapplies-seed`), so it either reads `503`,
-/// never taken, or a restart on the state without `--seed` holds the seed's row. Before this unit
-/// the queued reset read `503` (`signal_exit::a_request_queued_at_the_signal_reads_503`, now run
-/// with `--drain 0`).
+/// arrives; the default drain answers the command, and the reset it takes reads `503` and leaves
+/// the stores as they were, so a restart on the state without `--seed` holds the seed's row
+/// (`story:health-and-graceful-drain`: a reset taken during the drain is not run, as before this
+/// unit; ordinary commands are still answered).
 #[test]
-fn a_reset_taken_in_the_drain_answers_with_its_seed_in_place() {
+fn a_reset_taken_in_the_drain_reads_503_and_keeps_the_state() {
     let directory = scratch();
     let state = directory.path().join("state");
     let state = state.to_str().expect("a UTF-8 path");
@@ -309,16 +308,16 @@ fn a_reset_taken_in_the_drain_answers_with_its_seed_in_place() {
         "the command in flight: {status:?}"
     );
     let reset = reset.join().expect("the reset's client ends");
+    assert_eq!(reset, Some(503), "the reset taken during the drain");
     let exited = exited_within(&mut served, ANSWER).expect("the run exits on SIGTERM");
     assert_eq!(exited.code(), Some(143));
     served.stop();
 
     let restarted = serve(&["--environment", &document, "--state", state]);
-    let held = role_ids(&restarted);
-    assert!(
-        reset == Some(503) || held == ["admin"],
-        "the reset queued at SIGTERM answered {reset:?} and left the state holding {held:?}: \
-         its stores emptied and its seed never sent again"
+    assert_eq!(
+        role_ids(&restarted),
+        ["admin"],
+        "the reset queued at SIGTERM left the state as the seed left it"
     );
 }
 

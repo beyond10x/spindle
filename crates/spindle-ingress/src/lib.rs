@@ -68,8 +68,9 @@
 //! of the run's seed ([`Surface::with_seed`], [`SeedState`]: `none`, `running` or `ended`, with its
 //! counts), `GET /__spindle/ready` answers `200` once the seed has ended and until the run stops
 //! taking work (`Listener::stopping`), `503` otherwise, so a readiness probe needs no view row, and
-//! `GET /__spindle/live` answers `200` while the host's thread asks for requests within
-//! [`LIVENESS`] (`Listener::live_within`), `503` once it has not; each is answered without the
+//! `GET /__spindle/live` answers `200` while the host's thread holds a request it took or asks for
+//! requests within [`LIVENESS`] (`Listener::live_within`), `503` once it has done neither; each is
+//! answered without the
 //! host's thread. Once the run stops taking work, every other request that arrives is answered
 //! `503` at once, while those already handed over still arrive on `Listener::next`.
 

@@ -473,7 +473,7 @@
     },
     "spindle.observe.Liveness": {
       "additionalProperties": false,
-      "description": "The answer of `GET /__spindle/live`, with or without `--observe` and without the host's thread, beside its status: `200` while the run's thread asked the listener for a request within the bound, `503` once it has not. The bound of a served run is 60 s, above the 30 s an external call may take, so a command held by one does not read as a run that stopped.",
+      "description": "The answer of `GET /__spindle/live`, with or without `--observe` and without the host's thread, beside its status: `200` while the run's thread answers a request it took from the listener, however long that takes, or asked for one within the bound; `503` once it holds none and has asked for none within the bound. The bound of a served run is 60 s.",
       "properties": {
         "bound_ms": {
           "description": "The bound, in milliseconds.",
@@ -1501,8 +1501,8 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-ess-provenance": {
-    "contract_digest": "slice-sha256/2:8644c9014863232901b32953b7cef820ad7d91cbd81cb031d94e4d1f5cdf216b",
-    "source_digest": "24d07beb2987a158fd335d3da5c8be000dcc7c2f56c702a3e490e4b43378dbe9",
+    "contract_digest": "slice-sha256/2:dfd57cafce9ad023cf97863b8387fe1ef736fff4ae84ba68f2d87201f1dc511a",
+    "source_digest": "34f1b99e766308c0164f95a4000ac33bc1b6bd55e75bed5e577ca42c637c9e7a",
     "specification_version": "v1",
     "system": "spindle"
   }

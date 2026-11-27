@@ -5,13 +5,13 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:1df18a040828d286c1b2e0cfbdb3b540def92d79bea2afb5ea41eee2839e7ddd",
+    "contract_digest": "slice-sha256/2:0d107085b3572e28a8c0327f03d3684a36be46e1264df85066aeea5dd747d23e",
     "regenerate": "ess generate"
   },
   "$defs": {
     "spindle.observe.Liveness": {
       "title": "Liveness",
-      "description": "The answer of `GET /__spindle/live`, with or without `--observe` and without the host's thread, beside its status: `200` while the run's thread asked the listener for a request within the bound, `503` once it has not. The bound of a served run is 60 s, above the 30 s an external call may take, so a command held by one does not read as a run that stopped.",
+      "description": "The answer of `GET /__spindle/live`, with or without `--observe` and without the host's thread, beside its status: `200` while the run's thread answers a request it took from the listener, however long that takes, or asked for one within the bound; `503` once it holds none and has asked for none within the bound. The bound of a served run is 60 s.",
       "x-ess-name": "spindle.observe.Liveness",
       "x-ess-kind": "struct",
       "type": "object",

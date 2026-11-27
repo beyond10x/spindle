@@ -86,8 +86,9 @@ pub enum Reserved {
     /// `/__spindle/ready`: `200` once the run's seed has ended and until the run stops, `503`
     /// otherwise, a `spindle.observe.Readiness`, answered with or without a recorder.
     Ready,
-    /// `/__spindle/live`: `200` while the host's thread asks for requests within the listener's
-    /// bound, `503` once it has not, a `spindle.observe.Liveness`, answered with or without a
+    /// `/__spindle/live`: `200` while the host's thread holds a request it took or asks for
+    /// requests within the listener's bound, `503` once it has done neither, a
+    /// `spindle.observe.Liveness`, answered with or without a
     /// recorder ([`crate::Listener::live_within`]).
     Live,
     /// `/__spindle/requests`: the request log.
@@ -1241,8 +1242,8 @@ fn starts_word(kept: &str) -> bool {
 /// With a recorder or without, the health routes answer what `probed` reads, any other method
 /// `405`: `GET /__spindle/seed` the state of the run's seed ([`crate::health::seed`]),
 /// `GET /__spindle/ready` whether it has ended and the run is not stopping
-/// ([`crate::health::ready`]), and `GET /__spindle/live` whether the host's thread asked for a
-/// request within its bound ([`crate::health::live`]).
+/// ([`crate::health::ready`]), and `GET /__spindle/live` whether the host's thread holds a request
+/// it took or asked for one within its bound ([`crate::health::live`]).
 pub(crate) fn reserved(
     recorder: Option<&Recorder>,
     panel: Option<&'static str>,

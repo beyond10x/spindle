@@ -1,6 +1,7 @@
 //! A listener's liveness route (`story:health-and-graceful-drain`): `GET /__spindle/live` answers
-//! `200` while the caller's thread asks for requests ([`Listener::next`]) within the listener's
-//! bound and `503` once it has not, with or without a recorder, on the listener's own thread; on a
+//! `200` while the caller's thread holds a request it took or asks for requests
+//! ([`Listener::next`]) within the listener's bound and `503` once it has done neither, with or
+//! without a recorder, on the listener's own thread; on a
 //! surface whose requests prove their caller it requires the proxy's secret, as every
 //! `/__spindle/` route does.
 
@@ -99,6 +100,47 @@ fn liveness_answers_200_while_the_host_answers() {
     assert!(listener.next(Duration::from_millis(10)).is_none());
     let (status, body) = live(address, &[]);
     assert_eq!(status, 200, "the caller asks again: {body}");
+}
+
+/// While the caller holds a request it took from [`Listener::next`], answering it past the bound,
+/// the route answers `200`, as a command held by an external call or a reset seeding again does;
+/// once the caller has asked again, holding none, and then stays silent past the bound, `503`.
+#[test]
+fn liveness_holds_while_a_taken_request_is_answered() {
+    let listener = Listener::bind(0, surface())
+        .expect("the listener binds")
+        .live_within(BOUND);
+    let address = listener.local_addr();
+    let client = std::thread::spawn(move || {
+        let mut stream =
+            TcpStream::connect_timeout(&address, ANSWER).expect("the listener accepts");
+        stream
+            .set_read_timeout(Some(ANSWER))
+            .expect("a read timeout");
+        write!(
+            stream,
+            "POST /api/reset HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\
+             Content-Length: 0\r\n\r\n"
+        )
+        .expect("the reset is written");
+        let mut answer = Vec::new();
+        let _ = stream.read_to_end(&mut answer);
+    });
+    let exchange = listener.next(ANSWER).expect("the reset is handed over");
+    std::thread::sleep(BOUND * 2);
+    let (status, body) = live(address, &[]);
+    assert_eq!(status, 200, "a request held past the bound: {body}");
+    assert_eq!(body["live"], true, "{body}");
+    exchange.respond(spindle_ingress::Answer::refusal(
+        400,
+        "answered by the test",
+    ));
+    client.join().expect("the client ends");
+
+    assert!(listener.next(Duration::ZERO).is_none());
+    std::thread::sleep(BOUND * 2);
+    let (status, body) = live(address, &[]);
+    assert_eq!(status, 503, "idle and silent past the bound: {body}");
 }
 
 /// The route answers on a surface that records nothing, whose other `/__spindle/` paths answer

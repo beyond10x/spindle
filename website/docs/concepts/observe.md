@@ -96,7 +96,7 @@ healthcheck or an orchestrator's probes need no view row:
 |---|---|
 | `GET /__spindle/seed` | the state of the run's [seed](environment-and-admission.md#a-seed-submitted-at-start), `{"state": "none"}` on a run without one; otherwise `{"state", "entries", "left", "sent", "applied", "already_there", "refused", "rejected"}`, `state` being `running` or `ended` |
 | `GET /__spindle/ready` | `200` where the run has no seed or its seed has ended, and no signal has arrived; `503` otherwise. The body is `{"ready", "seed", "stopping"}`, `seed` being the `state` above |
-| `GET /__spindle/live` | `200` while the run's thread takes requests, `503` once it has taken none for 60 s, above the 30 s an external call may take. The body is `{"live", "idle_ms", "bound_ms"}` |
+| `GET /__spindle/live` | `200` while the run's thread answers a request it took, however long that takes (a reset seeding again, a delivery retried), or has asked for one within the last 60 s; `503` once it holds none and has asked for none for 60 s. The body is `{"live", "idle_ms", "bound_ms"}`, `idle_ms` counting from its last ask |
 
 ```console
 $ curl -s http://127.0.0.1:8080/__spindle/seed
@@ -124,7 +124,9 @@ holds the run, and every request that arrives from then on is answered `503` at 
 routes above still answer. The command under way finishes. The requests already waiting are then
 answered with their outcomes, in arrival order, for up to
 [`--drain`](../reference/cli.md#run--drain) seconds, 20 by default, counted from when the command
-under way finished; one taken within that bound finishes even past it. Each request still waiting
+under way finished; one taken within that bound finishes even past it. A `POST /api/reset` taken
+in the drain is answered `503` and empties nothing. A bound too large for the clock sets no
+deadline: the drain ends once no request is waiting. Each request still waiting
 once the bound has passed is answered `503`, every answer is written, and the run exits 143 for
 SIGTERM or 130 for SIGINT. `--drain 0` answers none of the waiting requests. So a rolling restart
 fails no request already accepted, provided the orchestrator's grace period covers the external

@@ -950,9 +950,9 @@ types:
     naming:
       summary: >-
         The answer of `GET /__spindle/live`, with or without `--observe` and without the host's
-        thread, beside its status: `200` while the run's thread asked the listener for a request
-        within the bound, `503` once it has not. The bound of a served run is 60 s, above the 30 s
-        an external call may take, so a command held by one does not read as a run that stopped.
+        thread, beside its status: `200` while the run's thread answers a request it took from the
+        listener, however long that takes, or asked for one within the bound; `503` once it holds
+        none and has asked for none within the bound. The bound of a served run is 60 s.
     fields:
       - name: live
         type: Boolean

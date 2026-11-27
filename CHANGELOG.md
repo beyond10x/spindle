@@ -16,11 +16,12 @@ are Spindle's releases.
   from the first request where `--state` records every entry done, and `running` again while a
   reset's seed runs. On a `--trusted-caller-header` run both require the proxy's secret, as every
   `/__spindle/` route does (`story:seed-readiness`).
-- A served `run` answers `GET /__spindle/live` `200` while its thread takes requests and `503`
-  once it has taken none for 60 s, and drains on SIGTERM or SIGINT: `GET /__spindle/ready` reads
-  `503` as the signal arrives, each request arriving from then on is answered `503` at once, the
-  command under way finishes, and the requests already waiting are answered with their outcomes
-  for up to `run --drain <seconds>`, 20 by default, before the run exits 143 or 130. Before, every
+- A served `run` answers `GET /__spindle/live` `200` while its thread answers a request it took
+  or has asked for one within 60 s, and `503` once it has done neither, and drains on SIGTERM or
+  SIGINT: `GET /__spindle/ready` reads `503` as the signal arrives, each request arriving from then
+  on is answered `503` at once, the command under way finishes, and the requests already waiting
+  are answered with their outcomes for up to `run --drain <seconds>`, 20 by default, before the run
+  exits 143 or 130; a reset among them is answered `503` and empties nothing. Before, every
   request still waiting at the signal was answered `503`; `--drain 0` keeps that
   (`story:health-and-graceful-drain`).
 

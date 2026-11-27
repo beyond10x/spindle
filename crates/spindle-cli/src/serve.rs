@@ -14,7 +14,9 @@ use ess_gen::http::Binding;
 use spindle_capability::{Capability, Environment};
 use spindle_host::{Cause, Clock, Host, HostError, ManualClock, Retries, SystemClock};
 use spindle_ingress::console::{self, Worlds};
-use spindle_ingress::{Caller, Console, Exchange, Listener, Recorder, SeedState, Surface, Unfixed};
+use spindle_ingress::{
+    Answer, Caller, Console, Exchange, Listener, Recorder, SeedState, Surface, Unfixed,
+};
 use spindle_spec::EssIr;
 
 use crate::decisions::{self, Run};
@@ -272,12 +274,13 @@ fn carried(caller: &Caller) -> String {
 /// stopping flag is set by the signal itself ([`Listener::stopping`]), so `GET /__spindle/ready`
 /// answers `503` and every request that arrives from then on is answered `503` at once, while this
 /// thread finishes the exchange it is answering; it then answers the exchanges already queued, in
-/// arrival order, until none is left or `serving.drain` has passed since it finished. Once that
-/// is done, or a seed that rejected an entry ends, the loop takes no further exchange: every answer
-/// handed back is written, each request still queued is answered `503`, and only then does the run
-/// exit ([`Listener::close`], `story:serve-loop-signal-exit-answers`). `GET /__spindle/live`
-/// answers `200` while this thread asks the listener for exchanges within
-/// [`spindle_ingress::LIVENESS`].
+/// arrival order, until none is left or `serving.drain` has passed since it finished (a bound past
+/// what the clock can name sets no deadline). A reset it takes in the drain is answered `503`, the
+/// stores left as they are. Once that is done, or a seed that rejected an entry ends, the loop
+/// takes no further exchange: every answer handed back is written, each request still queued is
+/// answered `503`, and only then does the run exit ([`Listener::close`],
+/// `story:serve-loop-signal-exit-answers`). `GET /__spindle/live` answers `200` while this thread
+/// answers an exchange it took or asks the listener for one within [`spindle_ingress::LIVENESS`].
 pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     for caller in &serving.callers {
         fixed(&ir, caller)?;
@@ -488,19 +491,20 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         })
     };
     // Once a signal arrived: the exit status it asks for, and until when the exchanges already
-    // queued are taken (`story:health-and-graceful-drain`).
-    let mut draining: Option<(ExitCode, Instant)> = None;
+    // queued are taken (`story:health-and-graceful-drain`). A bound past what the clock can name
+    // sets no deadline: the drain then ends once no exchange is queued.
+    let mut draining: Option<(ExitCode, Option<Instant>)> = None;
     // The signal is checked wherever the loop would otherwise take more work: before a seed
     // entry, and before the wait for an exchange. From then on the loop takes only the exchanges
     // already queued, none once the drain bound has passed, and sends no seed entry.
     let code = loop {
         match draining {
-            Some((code, until)) if Instant::now() >= until => break code,
+            Some((code, Some(until))) if Instant::now() >= until => break code,
             Some(_) => {}
             None => {
                 if let Some(code) = signal_exit() {
                     stopping.store(true, Ordering::SeqCst);
-                    draining = Some((code, Instant::now() + serving.drain));
+                    draining = Some((code, Instant::now().checked_add(serving.drain)));
                     continue;
                 }
             }
@@ -531,6 +535,15 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
                 None => continue,
             }
         };
+        if exchange.console() == Some(Console::Reset)
+            && (draining.is_some() || stopping.load(Ordering::SeqCst))
+        {
+            // A reset is no command the drain finishes: it would empty the stores of a run that is
+            // stopping, so it is refused as a request queued past the drain is, the stores left as
+            // they are (`story:health-and-graceful-drain`).
+            exchange.respond(Answer::refusal(503, "the run is stopping on a signal"));
+            continue;
+        }
         if exchange.console() == Some(Console::Reset)
             && let Some(seeding) = seeding.as_mut()
         {

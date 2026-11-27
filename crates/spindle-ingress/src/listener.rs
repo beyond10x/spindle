@@ -137,13 +137,17 @@ struct Served {
 
 /// What `GET /__spindle/live` and `GET /__spindle/ready` read beside the caller's thread
 /// (`story:health-and-graceful-drain`): when the caller last asked for a request
-/// ([`Listener::next`]), how long it may go without asking, and whether the run is stopping.
+/// ([`Listener::next`]), whether it holds a request it took, how long it may go without asking,
+/// and whether the run is stopping.
 #[derive(Debug)]
 struct Health {
     /// When the listener was bound; the instants below are counted from it.
     since: Instant,
     /// Milliseconds from `since` to the caller's last ask.
     asked: AtomicU64,
+    /// Whether the caller holds a request [`Listener::next`] handed it: set when it hands one,
+    /// cleared at the caller's next ask.
+    holding: AtomicBool,
     /// The liveness bound, in milliseconds ([`Listener::live_within`]).
     bound: AtomicU64,
     /// Set once the run stops taking work ([`Listener::stopping`]).
@@ -155,6 +159,7 @@ impl Health {
         Self {
             since: Instant::now(),
             asked: AtomicU64::new(0),
+            holding: AtomicBool::new(false),
             bound: AtomicU64::new(millis(LIVENESS)),
             stopping: Arc::new(AtomicBool::new(false)),
         }
@@ -176,6 +181,7 @@ impl Health {
         Probed {
             seed,
             stopping: self.stopping(),
+            holding: self.holding.load(Ordering::SeqCst),
             idle: self.since.elapsed().saturating_sub(asked),
             bound: Duration::from_millis(self.bound.load(Ordering::SeqCst)),
         }
@@ -273,9 +279,9 @@ fn same(left: &str, right: &str) -> bool {
 /// not written. [`Listener::close`] answers every request it holds before the thread ends.
 ///
 /// Beside every route it answers the run's health on its own threads, with or without a recorder
-/// (`story:health-and-graceful-drain`): `GET /__spindle/live` `200` while the caller asked for a
-/// request ([`Listener::next`]) within [`LIVENESS`], or the bound given
-/// ([`Listener::live_within`]), and `503` once it has not; `GET /__spindle/ready` `503` once the
+/// (`story:health-and-graceful-drain`): `GET /__spindle/live` `200` while the caller holds a
+/// request it took or asked for one ([`Listener::next`]) within [`LIVENESS`], or the bound given
+/// ([`Listener::live_within`]), and `503` once it has done neither; `GET /__spindle/ready` `503` once the
 /// run stops taking work ([`Listener::stopping`]).
 #[derive(Debug)]
 pub struct Listener {
@@ -460,17 +466,20 @@ impl Listener {
 
     /// The next request for a route, waiting at most `timeout`; `None` when none arrived. Each
     /// call counts as the caller's thread answering for `GET /__spindle/live`, as it starts and as
-    /// it returns.
+    /// it returns; from a request it hands until the next call, the caller holds that request and
+    /// reads live however long it takes to answer it.
     pub fn next(&self, timeout: Duration) -> Option<Exchange> {
+        self.health.holding.store(false, Ordering::SeqCst);
         self.health.beat();
         let next = self.exchanges.as_ref()?.recv_timeout(timeout).ok();
         self.health.beat();
+        self.health.holding.store(next.is_some(), Ordering::SeqCst);
         next
     }
 
-    /// This listener answering `GET /__spindle/live` `503` once the caller has not asked for a
-    /// request ([`Listener::next`]) for longer than `bound`, in place of [`LIVENESS`]. A served
-    /// run keeps [`LIVENESS`], above the 30 s an external call may take.
+    /// This listener answering `GET /__spindle/live` `503` once the caller, holding no request,
+    /// has not asked for one ([`Listener::next`]) for longer than `bound`, in place of
+    /// [`LIVENESS`]. A served run keeps [`LIVENESS`].
     #[must_use]
     pub fn live_within(self, bound: Duration) -> Self {
         self.health.bound.store(millis(bound), Ordering::SeqCst);
