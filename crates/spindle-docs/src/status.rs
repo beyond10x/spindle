@@ -534,7 +534,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "Several processes on one PostgreSQL store",
-        "Several run processes of one specification may start on one PostgreSQL store: one leads under a lease of each component's tables, renewed every third of database_lease, and is the one writer; the others answer /__spindle/live 200, /__spindle/ready 503 with standby: true and every other request 503, and write nothing. A standby takes over once the leader's lease ends or its database session does, as a killed leader's does, and every write runs a check of its lease's token, so a leader paused past its lease lands nothing once it resumes and exits 1.",
+        "Several run processes of one specification given database_lease may start on one PostgreSQL store: one leads under a lease of each component's tables, renewed every third of database_lease, and is the one writer; the others answer /__spindle/live 200, /__spindle/ready 503 with standby: true and every other request 503, and write nothing. A standby takes over once the leader's lease ends or its database session does, as a killed leader's does, and every write runs a check of its lease's token, so a leader paused past its lease lands nothing once it resumes and exits 1. Without database_lease a run takes no lease and two processes on one store both write, so replicas must set it; the lease takes one connection of the serving role beyond components x database_pool, so the role's limit must leave room for it.",
         "/docs/concepts/environment-and-admission",
         "crates/spindle-cli/tests/spindle-cli/postgres/replicas.rs::a_killed_leader_leaves_the_standby_serving",
     ),

@@ -307,9 +307,11 @@ only where every entry is a create whose command declares `existing_instance:`.
 
 ### What a seed does not do
 
-- Of several `run` processes on one store kept in PostgreSQL, only the one that leads from its
-  start submits the seed. One that stood by and then takes over the leases skips it, logs that it
-  did, and reads ready at once ([several processes on one store](#several-processes-on-one-store)).
+- Two `run` processes on one store kept in PostgreSQL without `database_lease` each submit the
+  whole file; only `existing_instance:` outcomes keep that from writing twice. Of several given
+  `database_lease`, only the one that leads from its start submits the seed. One that stood by
+  and then takes over the leases skips it, logs that it did, and reads ready at once
+  ([several processes on one store](#several-processes-on-one-store)).
   A leader killed before its seed ended leaves the rest unsent until a process leads from its
   start again.
 - `POST /api/reset` drops the seed's entries not yet sent, so a reset that arrives while the seed
@@ -438,7 +440,7 @@ The environment document holds only the implementation. The database comes from 
 | `database_schema` | the schema holding the tables; `public` by default |
 | `database_pool` | connections per component; 4 by default. Reads run at most `database_pool` - 1 at a time (1 with a pool of 1), so one connection is always left for writes; a read over that waits its turn |
 | `database_connections` | the database's connection budget available to this deployment: at least components x `database_pool` + 1. Not the serving role's `CONNECTION LIMIT`. Required with `database_ca` |
-| `database_lease` | how long, in whole seconds, a process holds the lease of each component's tables from its last renewal; 10 by default. A process standing by asks for the leases every third of it |
+| `database_lease` | how long, in whole seconds, a process holds the lease of each component's tables from its last renewal; not given by default. Only with it does a run take the leases, lead or stand by ([several processes on one store](#several-processes-on-one-store)): two processes on one store without it both write, so replicas must set it. The lease takes one connection of the serving role beyond components x `database_pool`. A process standing by asks for the leases every third of it |
 
 Without `database_ca`, a loopback or Unix-socket database is opened isolated, over plaintext, and
 its tables are created when `run` opens it: for tests and a local database. With `database_ca` the
@@ -472,10 +474,15 @@ database is hosted, and two roles take part:
 
 The serving role's `CONNECTION LIMIT` is from 1 to components x `database_pool`, by eventlog's
 rule: a serving role may open no more connections than its pools admit. `database_connections`
-holds every component's pool and one reserved connection, the one each process holds for its
-leases, so it is above the role's limit. That connection is the serving role's too: with `n`
-processes on one store, `n` of the role's connections hold leases, and the leader's pools have the
-rest.
+holds every component's pool and one reserved connection, so it is above the role's limit.
+
+With `database_lease` each process also holds one connection of the serving role for its leases,
+beyond components x `database_pool`, so a role limit must leave room for it: the pools and the
+lease connection together need components x `database_pool` + 1 of the role's connections, and
+each process standing by needs one more. A role limited to exactly components x `database_pool`,
+the most eventlog admits, leaves the pools one connection short once they are all in use; at
+`database_pool` 1 the run cannot open its last store. Without `database_lease` a run opens no lease
+connection.
 
 Reads served beside the commands take no connection of their own: each takes one from the
 component's pool for a statement and gives it back, so a pool of 4 is shared by the writer and
@@ -511,9 +518,9 @@ It exits 1 the same way for a serving role that would not be admitted:
 - a role whose `CONNECTION LIMIT` is not between 1 and components x `database_pool`
 - a role that can write `spindle_<component>_schema_version`, `_projection_registry` or
   `_settlement_floor`
-- tables an earlier release's `store migrate` created, until `store migrate` runs again; that
-  includes tables without the lease table `spindle_<component>_p_lease`, which a release before
-  leases did not create
+- tables an earlier release's `store migrate` created, until `store migrate` runs again; with
+  `database_lease` that includes tables without the lease table `spindle_<component>_p_lease`,
+  which a release before leases did not create
 
 Percent-encode an `@` in the user name, the password or the query string as `%40`. A role limited
 to 8 connections, the same number as `database_connections`, is refused at the default pool of 4:
@@ -547,13 +554,16 @@ one command writing 20,000 instances lands.
 ### Several processes on one store
 
 Two or more `run` processes of one specification may start on one PostgreSQL store, as replicas of
-a service do. One leads and is the store's one writer; the others stand by.
+a service do, when each is given `database_lease`. One leads and is the store's one writer; the
+others stand by. Leases, fencing and standing by apply only with `database_lease`: two processes
+on one store without it both write, as before leases, so replicas must set it.
 
 Each component's tables hold a lease, one row of `spindle_<component>_p_lease`, which `store
 migrate` creates beside the other tables (a database opened isolated creates it too). The row
 names a token, the database session of the process that holds it, and when it ends, by the
 database's clock. Each process takes the lease of every component in name order through one
-connection of its own, and leads once it holds them all. The leader renews them every third of
+connection of its own, one of the serving role's beyond its pools
+([the role's limit](#state-in-postgresql)), and leads once it holds them all. The leader renews them every third of
 `database_lease`; a clean exit, on SIGINT or SIGTERM, releases them.
 
 A process that finds a lease held stands by. It binds its listener and prints its listening line,

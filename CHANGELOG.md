@@ -154,18 +154,22 @@ are Spindle's releases.
   identity written `1.0` names the row held as `1`. `admit`, `run` on stdin and the HTTP ingress
   answer such a command, where the kernel refused the outcome as `unsupported` before it ran
   (`story:affects-over-input-list`).
-- Several served `run` processes of one specification may start on one PostgreSQL store. Each
-  component's tables hold a lease, a row of `spindle_<component>_p_lease` that `store migrate`
-  creates; the process that takes every lease, in component name order, leads and is the one
-  writer, renewing them every third of the new setting `database_lease` (whole seconds, 10 by
-  default). The others stand by: they print the listening line, answer `/__spindle/live` `200`,
-  `/__spindle/ready` `503` with `"standby": true` and every other request `503`, open no store,
-  write nothing, post no event to a webhook and keep no dead letter. A standby takes over once the
-  leader's lease ends or its database session does, as a killed leader's does (measured 0.7 s after
-  a SIGKILL), and skips the seed. Every write checks its lease's token in its own transaction, so a
-  leader paused past its lease lands nothing once it resumes, and exits 1 naming the lease. A
-  `database_lease` that is not a whole number above 0 exits 1 before connecting, and tables a
-  release before leases migrated are refused until `store migrate` runs again
+- Several served `run` processes of one specification given the new setting `database_lease`
+  (whole seconds) may start on one PostgreSQL store. Each component's tables hold a lease, a row
+  of `spindle_<component>_p_lease` that `store migrate` creates; the process that takes every
+  lease, in component name order, leads and is the one writer, renewing them every third of
+  `database_lease`. Leases apply only where `database_lease` is set: without it a run takes no
+  lease and behaves as before, so two processes on one store both write, and replicas must set
+  it. The lease takes one connection of the serving role beyond components x `database_pool`, so
+  the role's `CONNECTION LIMIT` must leave room for it. The others stand by: they print the
+  listening line, answer `/__spindle/live` `200`, `/__spindle/ready` `503` with
+  `"standby": true` and every other request `503`, open no store, write nothing, post no event to
+  a webhook and keep no dead letter. A standby takes over once the leader's lease ends or its
+  database session does, as a killed leader's does (measured 0.7 s after a SIGKILL), and skips
+  the seed. Every write checks its lease's token in its own transaction, so a leader paused past
+  its lease lands nothing once it resumes, and exits 1 naming the lease. A `database_lease` that
+  is not a whole number above 0 exits 1 before connecting, and with it tables a release before
+  leases migrated are refused until `store migrate` runs again
   (`story:several-writers-one-postgres`).
 
 ### Fixed

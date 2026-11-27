@@ -5,15 +5,16 @@
 //! Settings are read as every setting is, `SPINDLE_SETTING_<NAME>`: `database_url` (required),
 //! `database_ca`, `database_schema` (`public`), `database_pool` (4), `database_connections`
 //! (required with `database_ca`: the database's connection budget available to this deployment,
-//! not the serving role's `CONNECTION LIMIT`) and `database_lease` (10: the seconds a lease is
-//! held from its last renewal). A URL is never printed: it holds a password.
+//! not the serving role's `CONNECTION LIMIT`) and `database_lease` (not given by default: the
+//! seconds a lease is held from its last renewal). A URL is never printed: it holds a password.
 //!
-//! Several `run` processes of one specification may share one database
+//! Several `run` processes of one specification given `database_lease` may share one database
 //! (`story:several-writers-one-postgres`): each takes the lease of every component's tables in
 //! name order ([`Leases`]), and the one that holds them all leads, the one writer of those tables;
 //! the others stand by until the leader is gone. Each writes only under its lease: a store it
 //! opens refuses a write once another process took the lease
-//! ([`spindle_kernel::PostgresStore::open`]).
+//! ([`spindle_kernel::PostgresStore::open`]). Without `database_lease` a run takes no lease and
+//! opens no connection for one, so two such processes on one store both write.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -242,14 +243,11 @@ fn budgeted(database: &Database, components: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// How long a lease is held from its last renewal when `database_lease` is not given.
-const LEASE: Duration = Duration::from_secs(10);
-
-/// `database_lease`: how long a lease is held from its last renewal, in whole seconds above 0.
-fn lease_term() -> Result<Duration> {
-    Ok(count("database_lease")?.map_or(LEASE, |seconds| {
-        Duration::from_secs(u64::try_from(seconds).unwrap_or(u64::MAX))
-    }))
+/// `database_lease`: how long a lease is held from its last renewal, in whole seconds above 0;
+/// `None` where it is not given, and the run takes no lease (D9 C).
+fn lease_term() -> Result<Option<Duration>> {
+    Ok(count("database_lease")?
+        .map(|seconds| Duration::from_secs(u64::try_from(seconds).unwrap_or(u64::MAX))))
 }
 
 /// The leases of every component of a served run bound to `postgres`, taken in name order through
@@ -264,23 +262,26 @@ pub(crate) struct Leases {
 
 impl Leases {
     /// Checks the settings and the connection budget, then connects for the leases of every
-    /// component of `ir` bound to `postgres` on `environment`.
+    /// component of `ir` bound to `postgres` on `environment`; `None`, connecting to nothing,
+    /// where `database_lease` is not given.
     ///
     /// # Errors
     /// A setting missing or malformed, a budget too small, or a database that cannot be reached.
-    pub(crate) fn connect(ir: &EssIr, environment: &Environment) -> Result<Self> {
+    pub(crate) fn connect(ir: &EssIr, environment: &Environment) -> Result<Option<Self>> {
         let database = database()?;
-        let term = lease_term()?;
+        let Some(term) = lease_term()? else {
+            return Ok(None);
+        };
         let mut components =
             components(ir, environment).map_err(|refusal| anyhow::anyhow!("{refusal}"))?;
         components.sort();
         budgeted(&database, &components)?;
         let lease = Lease::connect(&database, term).context("connecting for the leases")?;
-        Ok(Self {
+        Ok(Some(Self {
             lease,
             components,
             held: BTreeMap::new(),
-        })
+        }))
     }
 
     /// How often a standby asks for the leases: a third of the lease.

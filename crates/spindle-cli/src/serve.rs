@@ -342,25 +342,32 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         }
         (Some(other), _) => bail!("this build has no `{other}` store for store.durable"),
     };
-    // On PostgreSQL the run leads only under the lease of every component's tables
-    // (`story:several-writers-one-postgres`): it opens the stores once it holds them all, here
-    // where it took them at once, or later, standing by, where another process holds one.
+    // On PostgreSQL with `database_lease` the run leads only under the lease of every component's
+    // tables (`story:several-writers-one-postgres`): it opens the stores once it holds them all,
+    // here where it took them at once, or later, standing by, where another process holds one.
+    // Without `database_lease` it takes no lease and opens them as before (D9 C).
     let mut standby = None;
     let mut kept = None;
     let stores = match serving.durable {
         Some(crate::database::POSTGRES) => {
-            let mut leases = crate::database::Leases::connect(&ir, environment)?;
-            match leases.take()? {
-                None => {
-                    kept = Some(leases.keep()?);
-                    match crate::database::stores(&ir, environment) {
-                        Ok(stores) => stores,
-                        Err(error) => return crate::database::misfit_refused(error),
+            let leases = crate::database::Leases::connect(&ir, environment)?;
+            let held = match leases {
+                Some(mut leases) => match leases.take()? {
+                    None => {
+                        kept = Some(leases.keep()?);
+                        None
                     }
-                }
-                Some(held) => {
-                    standby = Some((leases, held));
-                    spindle_host::Stores::new()
+                    Some(held) => Some((leases, held)),
+                },
+                None => None,
+            };
+            if held.is_some() {
+                standby = held;
+                spindle_host::Stores::new()
+            } else {
+                match crate::database::stores(&ir, environment) {
+                    Ok(stores) => stores,
+                    Err(error) => return crate::database::misfit_refused(error),
                 }
             }
         }
