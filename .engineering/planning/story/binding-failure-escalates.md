@@ -48,7 +48,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: cited
   path: website/docs/status.md
-revision: 28
+revision: 30
 ---
 ## Outcome
 
@@ -92,6 +92,10 @@ served. With the escalation removed from a scratch copy, the same run listens an
   the field, and the failure is not reported as `unmet`.
 - `an_escalation_event_reaches_a_binding_subscribed_to_it`: a second binding that listens for the
   escalation event invokes its command once, as ESS's interpreter dispatches it.
+- `the_docs_say_an_escalation_is_not_stored`: a test reads `docs/design/spindle.md` (beside the
+  failure policy, `:435`) and the `run` reference in `website/docs/reference/cli.md`, and finds in
+  each that an escalation event goes to the outbox, is not in the event history, and is lost if the
+  process stops before it is delivered.
 
 ## Scope
 
@@ -108,7 +112,7 @@ Derived 2026-11-27 by `story-scoper`. Every line is **cited** (read from the sto
 - **Parity reference:** ESS 0.99.1 (rev d7833ee) `crates/verify/ess-conformance/src/interpret/bindings.rs:224-230` (universal), `:273-281` (per refusal), `:420-446` (`escalate`: payload = placeholder values overwritten by input fields of the same name; then dispatched further) — cited
 - **Fixture:** new neutral fixture `crates/spindle-host/tests/fixtures/escalation/` (one binding: drop one refusal, escalate two, retry the rest; every escalation-event field is a command-input field) — inferred, placed like `fixtures/refusal`
 - **Tests added:** `crates/spindle-conformance/tests/spindle-conformance/escalation.rs` (`an_escalated_refusal_emits_the_named_event_and_invokes_nothing`, `a_dropped_refusal_is_still_dropped`, `a_universal_escalation_runs`, `an_escalation_event_field_the_input_lacks_is_reported_unmet`, `an_optional_escalation_event_field_the_input_lacks_is_left_out`, `an_escalation_event_reaches_a_binding_subscribed_to_it`, host against `Interpreted` as `refusal.rs` does) — inferred
-- **Tests added:** `crates/spindle-cli/tests/spindle-cli/escalation.rs` (`a_served_run_with_an_escalating_binding_listens`, `a_stdin_line_escalates_a_refusal`, `drop_retries_keeps_escalations`, `a_binding_escalating_to_an_event_the_component_does_not_publish_is_refused_at_start`, `conform_runs_an_escalating_binding`) — inferred; each expected well under 60 s and unmeasured, step budget 120 s
+- **Tests added:** `crates/spindle-cli/tests/spindle-cli/escalation.rs` (`a_served_run_with_an_escalating_binding_listens`, `a_stdin_line_escalates_a_refusal`, `drop_retries_keeps_escalations`, `a_binding_escalating_to_an_event_the_component_does_not_publish_is_refused_at_start`, `conform_runs_an_escalating_binding`, `the_docs_say_an_escalation_is_not_stored`) — inferred; each expected well under 60 s and unmeasured, step budget 120 s
 - **Tests changed:** `crates/spindle-cli/tests/spindle-cli/stdin_bindings.rs:190` (`a_binding_the_router_refuses_stops_the_run_before_stdin` uses `escalate.yaml`; point it at a construct still refused, such as a bounded retry), `crates/spindle-cli/tests/spindle-cli/unserved.rs:495`, `crates/spindle-cli/tests/spindle-cli/adversary_unserved.rs:416`, `crates/spindle-host/tests/spindle-host/retries.rs:62` — cited (tree), under D1-A
 - **Test registries:** `crates/spindle-cli/tests/spindle-cli/main.rs`, `crates/spindle-conformance/tests/spindle-conformance/main.rs` — inferred
 - **Documents:** `crates/spindle-cli/src/cli.rs:108,221` (doc comments say escalate exits 1), `website/docs/reference/cli.md:99,119`, `docs/design/spindle.md:435`, `crates/spindle-docs/src/status.rs:170-183` with generated `website/data/status.json` and `website/docs/status.md`, `CHANGELOG.md` — cited (tree)
