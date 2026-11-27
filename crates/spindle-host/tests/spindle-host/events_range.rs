@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, SystemTime};
 
 use serde_json::{Map, Value, json};
 use spindle_capability::Environment;
@@ -156,6 +157,10 @@ impl<S: Store> Store for Counting<S> {
     fn events_head(&mut self) -> Result<u64, StoreError> {
         self.store.events_head()
     }
+
+    fn events_id(&mut self) -> Result<u64, StoreError> {
+        self.store.events_id()
+    }
 }
 
 impl Reading for CountingReading {
@@ -175,6 +180,10 @@ impl Reading for CountingReading {
 
     fn events_head(&self) -> Result<u64, StoreError> {
         self.reading.events_head()
+    }
+
+    fn events_id(&self) -> Result<u64, StoreError> {
+        self.reading.events_id()
     }
 
     fn at(&self, entities: &[String]) -> Result<Box<dyn Position + '_>, StoreError> {
@@ -500,6 +509,349 @@ fn a_cursor_resumes_after_a_restart() {
         .published_after(&cursor, 10)
         .expect("the cursor from before the restart still reads");
     assert_eq!(stale.events, page.events);
+}
+
+/// A fixed civil time, as `run --clock <at>` gives every process: the commands of a restarted
+/// host take the sequences the commands before the restart took.
+fn fixed() -> SystemTime {
+    SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000)
+}
+
+/// A host of the console fixture on SQLite under `state`, on a clock fixed at [`fixed`].
+fn fixed_sqlite(state: &Path) -> Host {
+    Host::new(
+        tasks(),
+        &laptop(),
+        Arc::new(ManualClock::at(fixed())),
+        state,
+    )
+    .expect("the SQLite host opens")
+}
+
+/// `whole` without the events of `answered`, each taken out once.
+fn without(whole: &[Published], answered: &[Published]) -> Vec<Published> {
+    let mut left = whole.to_vec();
+    for event in answered {
+        let at = left
+            .iter()
+            .position(|held| held == event)
+            .unwrap_or_else(|| panic!("{event:?} is in the whole list"));
+        left.remove(at);
+    }
+    left
+}
+
+/// `story:events-cursor-across-restart` acceptance 1: on SQLite with a fixed clock, a cursor
+/// taken before a restart reads, after it, every event the restarted host commits, once each and
+/// in the order of the whole list; so does every cursor taken part of the way, which also reads
+/// the events before the restart it did not answer. A command after that read is answered once
+/// more, by the cursor that read answered.
+#[test]
+fn an_events_cursor_from_before_a_restart_reads_the_events_after_it() {
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
+    let mut host = fixed_sqlite(state.path());
+    script(&mut host);
+    let before = host.published().expect("the whole list reads");
+    assert_eq!(before.len(), 4, "{before:?}");
+    let cursors = (1..=4)
+        .map(|taken| {
+            let page = host
+                .published_after(&Cursor::start(), taken)
+                .expect("a page reads");
+            assert_eq!(page.events, before[..taken]);
+            (taken, page.next.to_string())
+        })
+        .collect::<Vec<_>>();
+    drop(host);
+
+    let mut again = fixed_sqlite(state.path());
+    submit(
+        &mut again,
+        "tasks.board.CloseTask",
+        json!({"task_id": "t2"}),
+    );
+    let whole = again
+        .published()
+        .expect("the whole list reads after the restart");
+    let since = without(&whole, &before);
+    assert_eq!(
+        since
+            .iter()
+            .map(|event| event.component.as_str())
+            .collect::<Vec<_>>(),
+        ["board", "ledger"],
+        "the command after the restart published on both components: {since:?}"
+    );
+    let reader = again.reader();
+    for (taken, text) in &cursors {
+        let cursor = Cursor::parse(text).expect("the cursor reads after the restart");
+        let expected = without(&whole, &before[..*taken]);
+        for limit in [1, 2, 100] {
+            let (events, _) = paged(&mut again, &cursor, limit);
+            assert_eq!(
+                events, expected,
+                "the cursor after {taken} events, limit {limit}"
+            );
+            let (beside, _) = paged_beside(&reader, &cursor, limit);
+            assert_eq!(
+                beside, expected,
+                "the cursor after {taken} events, limit {limit}, beside the host's thread"
+            );
+        }
+    }
+
+    let end = Cursor::parse(&cursors[3].1).expect("the cursor reads");
+    let (events, next) = paged(&mut again, &end, 1);
+    assert_eq!(events, since);
+    submit(
+        &mut again,
+        "tasks.board.OpenTask",
+        json!({"task_id": "t3", "title": "Third"}),
+    );
+    let (later, _) = paged(&mut again, &next, 1);
+    let ids = later
+        .iter()
+        .map(|published| published.event.payload["task_id"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, [json!("t3")], "the command after the read: {later:?}");
+}
+
+/// `cursor` as an earlier release wrote it: each mark without the id of its store's log.
+fn without_logs(cursor: &Cursor) -> String {
+    use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let bytes = URL_SAFE_NO_PAD
+        .decode(cursor.to_string())
+        .expect("a cursor is base64");
+    let mut value = serde_json::from_slice::<Value>(&bytes).expect("a cursor is JSON");
+    let marks = value[3].as_array_mut().expect("the marks are a list");
+    for mark in marks {
+        let fields = mark.as_array_mut().expect("a mark is a list");
+        assert_eq!(fields.len(), 6, "a mark names its log: {fields:?}");
+        fields.truncate(5);
+    }
+    URL_SAFE_NO_PAD.encode(value.to_string())
+}
+
+/// A cursor an earlier release wrote, whose marks name no log, is read as that release read it
+/// after a restart on SQLite, on a clock that moved forward between the runs: every store from
+/// its start, the events it answered skipped by their sequences, and nothing else.
+#[test]
+fn a_cursor_of_an_earlier_release_reads_on_after_a_restart() {
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
+    let mut host = fixed_sqlite(state.path());
+    script(&mut host);
+    let before = host.published().expect("the whole list reads");
+    let (_, end) = paged(&mut host, &Cursor::start(), 100);
+    let text = without_logs(&end);
+    drop(host);
+
+    let mut again = Host::new(
+        tasks(),
+        &laptop(),
+        Arc::new(ManualClock::at(fixed() + Duration::from_secs(3_600))),
+        state.path(),
+    )
+    .expect("the SQLite host opens an hour later");
+    submit(
+        &mut again,
+        "tasks.board.CloseTask",
+        json!({"task_id": "t2"}),
+    );
+    let whole = again
+        .published()
+        .expect("the whole list reads after the restart");
+    let cursor = Cursor::parse(&text).expect("a cursor of an earlier release reads");
+    assert_eq!(cursor.to_string(), text, "it reads back as itself");
+    for limit in [1, 100] {
+        let (events, _) = paged(&mut again, &cursor, limit);
+        assert_eq!(events, without(&whole, &before), "limit {limit}");
+    }
+}
+
+/// `story:events-cursor-across-restart` acceptance 2: on memory stores with a fixed clock, the
+/// cursor of the first host reads every event of the second host, whose stores start empty, each
+/// with a log of its own.
+#[test]
+fn a_cursor_from_another_run_reads_a_new_memory_store_from_its_start() {
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
+    let open = || {
+        Host::new(
+            tasks(),
+            &bound("memory"),
+            Arc::new(ManualClock::at(fixed())),
+            state.path(),
+        )
+        .expect("the memory host opens")
+    };
+    let mut first = open();
+    script(&mut first);
+    let (before, cursor) = paged(&mut first, &Cursor::start(), 100);
+    assert_eq!(before.len(), 4, "{before:?}");
+    let text = cursor.to_string();
+    drop(first);
+
+    let mut second = open();
+    for (task, title) in [("t3", "Third"), ("t4", "Fourth")] {
+        submit(
+            &mut second,
+            "tasks.board.OpenTask",
+            json!({"task_id": task, "title": title}),
+        );
+    }
+    let whole = second.published().expect("the second host's list reads");
+    assert_eq!(whole.len(), 2, "{whole:?}");
+    let cursor = Cursor::parse(&text).expect("the cursor reads in the second host");
+    for limit in [1, 100] {
+        let (events, _) = paged(&mut second, &cursor, limit);
+        assert_eq!(events, whole, "limit {limit}");
+        let reader = second.reader();
+        let (beside, _) = paged_beside(&reader, &cursor, limit);
+        assert_eq!(beside, whole, "limit {limit}, beside the host's thread");
+    }
+}
+
+/// `story:events-cursor-across-restart` acceptance 3: on SQLite with a fixed clock, the cursor
+/// [`Host::published_head`] gives before a restart reads, after it, every event the restarted host
+/// commits, once each and in order, and none from before the restart.
+#[test]
+fn a_head_cursor_from_before_a_restart_reads_the_events_after_it() {
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
+    let mut host = fixed_sqlite(state.path());
+    script(&mut host);
+    let before = host.published().expect("the whole list reads");
+    let head = host.published_head().expect("the head reads").to_string();
+    let beside = host
+        .reader()
+        .published_head()
+        .expect("the head reads beside")
+        .to_string();
+    drop(host);
+
+    let mut again = fixed_sqlite(state.path());
+    submit(
+        &mut again,
+        "tasks.board.CloseTask",
+        json!({"task_id": "t2"}),
+    );
+    let whole = again
+        .published()
+        .expect("the whole list reads after the restart");
+    let since = without(&whole, &before);
+    assert_eq!(since.len(), 2, "{since:?}");
+    let reader = again.reader();
+    for (side, text) in [("on the host's thread", &head), ("beside it", &beside)] {
+        let cursor = Cursor::parse(text).expect("the head reads after the restart");
+        for limit in [1, 100] {
+            let (events, _) = paged(&mut again, &cursor, limit);
+            assert_eq!(events, since, "the head taken {side}, limit {limit}");
+            let (read_beside, _) = paged_beside(&reader, &cursor, limit);
+            assert_eq!(
+                read_beside, since,
+                "the head taken {side}, limit {limit}, read beside the host's thread"
+            );
+        }
+    }
+}
+
+/// A board store at `path` whose one write, of `events` events and one command at the fixed
+/// clock's sequence, opened `w1-0` to `w1-<events - 1>`.
+fn board_with_one_write(path: &Path, events: usize) -> SqliteStore {
+    let mut board = SqliteStore::open(path).expect("SQLite opens");
+    let sequence = u64::try_from(
+        fixed()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("after the epoch")
+            .as_micros(),
+    )
+    .expect("the time fits");
+    board.attribute(Some(Origin {
+        command: "tasks.board.OpenTask".to_owned(),
+        sequence,
+        cause: None,
+    }));
+    let written = (0..events)
+        .map(|index| Event {
+            name: "tasks.board.TaskOpened".to_owned(),
+            payload: object(json!({"task_id": format!("w1-{index}"), "title": "Old"})),
+        })
+        .collect::<Vec<_>>();
+    board
+        .commit_events(&written, &[])
+        .expect("the board records the write");
+    board.attribute(None);
+    board
+}
+
+/// A host on the SQLite stores under `state`, `board` the board's, on a clock fixed at
+/// [`fixed`].
+fn supplied_sqlite(state: &Path, board: SqliteStore) -> Host {
+    let ledger = SqliteStore::open(&state.join("ledger.sqlite")).expect("SQLite opens");
+    let given: Stores = [
+        ("board".to_owned(), Box::new(board) as Box<dyn Store>),
+        ("ledger".to_owned(), Box::new(ledger) as Box<dyn Store>),
+    ]
+    .into_iter()
+    .collect();
+    Host::supplied(
+        tasks(),
+        &bound("elsewhere"),
+        Arc::new(ManualClock::at(fixed())),
+        None,
+        given,
+    )
+    .expect("the host on SQLite stores opens")
+}
+
+/// A cursor taken in the middle of a write, before a restart on a fixed clock, reads the rest of
+/// that write once, and then what the restarted host committed, at every limit.
+#[test]
+fn a_cursor_from_before_a_restart_reads_the_rest_of_a_write_it_answered_in_part() {
+    const EVENTS: usize = 4;
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
+    let path = state.path().join("board.sqlite");
+    let mut host = supplied_sqlite(state.path(), board_with_one_write(&path, EVENTS));
+    let before = host.published().expect("the whole list reads");
+    assert_eq!(before.len(), EVENTS, "{before:?}");
+    let cursors = (1..EVENTS)
+        .map(|taken| {
+            let page = host
+                .published_after(&Cursor::start(), taken)
+                .expect("a page reads");
+            assert_eq!(page.events, before[..taken]);
+            (taken, page.next.to_string())
+        })
+        .collect::<Vec<_>>();
+    drop(host);
+
+    let board = SqliteStore::open(&path).expect("SQLite opens again");
+    let mut again = supplied_sqlite(state.path(), board);
+    submit(
+        &mut again,
+        "tasks.board.OpenTask",
+        json!({"task_id": "t9", "title": "After"}),
+    );
+    let whole = again
+        .published()
+        .expect("the whole list reads after the restart");
+    assert_eq!(whole.len(), EVENTS + 1, "{whole:?}");
+    let reader = again.reader();
+    for (taken, text) in &cursors {
+        let cursor = Cursor::parse(text).expect("the cursor reads after the restart");
+        let expected = without(&whole, &before[..*taken]);
+        for limit in 1..=EVENTS + 1 {
+            let (events, _) = paged(&mut again, &cursor, limit);
+            assert_eq!(
+                events, expected,
+                "the cursor after {taken} events, limit {limit}"
+            );
+            let (beside, _) = paged_beside(&reader, &cursor, limit);
+            assert_eq!(
+                beside, expected,
+                "the cursor after {taken} events, limit {limit}, beside the host's thread"
+            );
+        }
+    }
 }
 
 /// A reset replaces a memory or SQLite store with an empty one, whose positions start over: a

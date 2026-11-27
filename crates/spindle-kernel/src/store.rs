@@ -479,6 +479,18 @@ pub trait Store {
     fn events_head(&mut self) -> Result<u64, StoreError> {
         Err(no_events())
     }
+
+    /// The id of the log of events this store keeps, never `0`, as long as the positions
+    /// [`Store::events_after`] reads go on from one another: the same for every process that
+    /// opens the same log, a different one for a store that starts its positions over (a new
+    /// memory store, a SQLite file created again). `0` where the store names none: this
+    /// default, and a log that holds no event yet.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read.
+    fn events_id(&mut self) -> Result<u64, StoreError> {
+        Ok(0)
+    }
 }
 
 /// A read-only handle on what a store committed, read from any thread beside the store's one
@@ -527,6 +539,16 @@ pub trait Reading: Send + Sync {
     fn events_head(&self) -> Result<u64, StoreError> {
         Err(no_events())
     }
+
+    /// The id of the log of events the store keeps, as [`Store::events_id`] answers it; `0`
+    /// where it names none, as this default does.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read.
+    fn events_id(&self) -> Result<u64, StoreError> {
+        Ok(0)
+    }
+
     /// One position of the store for reads of `entities` together ([`Position`]): a scan of
     /// one of them and loads of instances of the others, by identity, answer the store as one
     /// write left it, so a group of writes is seen whole by all of them or by none.
@@ -806,6 +828,18 @@ pub struct MemoryStore {
 struct Held {
     entities: BTreeMap<String, Arc<Instances>>,
     events: Events,
+    /// The id of its log of events ([`Store::events_id`]).
+    log: LogId,
+}
+
+/// The id of a [`MemoryStore`]'s log of events: random, never `0`, drawn when the store is made.
+#[derive(Debug, Clone, Copy)]
+struct LogId(u64);
+
+impl Default for LogId {
+    fn default() -> Self {
+        Self(uuid::Uuid::new_v4().as_u64_pair().0.max(1))
+    }
 }
 
 /// How many events one chunk of [`Events`] holds before it is sealed.
@@ -1213,6 +1247,17 @@ impl Store for MemoryStore {
     fn events_head(&mut self) -> Result<u64, StoreError> {
         Ok(events_head(&self.held))
     }
+
+    /// Drawn at random when the store was made, and kept past a reset that forgot its events,
+    /// whose positions go on.
+    fn events_id(&mut self) -> Result<u64, StoreError> {
+        Ok(events_id(&self.held))
+    }
+}
+
+/// The id of the log of events `held` keeps ([`Store::events_id`]).
+fn events_id(held: &RwLock<Held>) -> u64 {
+    held.read().unwrap_or_else(PoisonError::into_inner).log.0
 }
 
 /// The reading handle of a [`MemoryStore`]: what it holds, read as it stands.
@@ -1229,6 +1274,10 @@ impl Reading for MemoryReading {
 
     fn events_head(&self) -> Result<u64, StoreError> {
         Ok(events_head(&self.0))
+    }
+
+    fn events_id(&self) -> Result<u64, StoreError> {
+        Ok(events_id(&self.0))
     }
 
     /// Every entity's count as one write left them all: taken under one lock.
