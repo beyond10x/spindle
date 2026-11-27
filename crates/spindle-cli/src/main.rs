@@ -15,7 +15,7 @@ mod state;
 mod state_lock;
 mod world;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -482,9 +482,9 @@ fn wait_until(deadline: Instant, clock: &scaled::Scaled, signalled: &AtomicUsize
 /// or `--answer-default` does.
 const OPERATOR_PROMPT: &str = "operator-prompt";
 
-/// The decisions file `run` answers external causes from: `flag` (`--decisions`), or else the
-/// environment's `[decisions]` file where `bindings` bind an external cause to
-/// [`DECISIONS_FILE`].
+/// The decisions file `run` answers external causes from: `flag` (`--decisions`), for every
+/// cause, or else the environment's `[decisions]` file, for the causes `bindings` bind to
+/// [`DECISIONS_FILE`] alone.
 ///
 /// # Errors
 /// An external cause bound to an implementation `run` does not provide (one other than
@@ -495,7 +495,7 @@ fn decisions_file(
     environment: &Environment,
     bindings: &[Binding],
     flag: Option<&Path>,
-) -> Result<Option<PathBuf>> {
+) -> Result<Option<DecisionsFile>> {
     let external = bindings.iter().filter(|binding| {
         binding
             .capability
@@ -515,23 +515,41 @@ fn decisions_file(
         );
     }
     if let Some(path) = flag {
-        return Ok(Some(path.to_owned()));
+        return Ok(Some(DecisionsFile {
+            path: path.to_owned(),
+            only: None,
+        }));
     }
-    let Some(from_file) = external.clone().find(|binding| {
-        binding.implementation.as_str() == DECISIONS_FILE
-            && !environment.http.contains_key(DECISIONS_FILE)
-    }) else {
+    let from_file: BTreeSet<String> = external
+        .filter(|binding| {
+            binding.implementation.as_str() == DECISIONS_FILE
+                && !environment.http.contains_key(DECISIONS_FILE)
+        })
+        .map(|binding| binding.capability.as_str().to_owned())
+        .collect();
+    let Some(first) = from_file.first() else {
         return Ok(None);
     };
     match &environment.decisions {
-        Some(named) => Ok(Some(PathBuf::from(&named.file))),
+        Some(named) => Ok(Some(DecisionsFile {
+            path: PathBuf::from(&named.file),
+            only: Some(from_file),
+        })),
         None => bail!(
-            "{} is bound to {DECISIONS_FILE} on {}, but no decisions file is named: give \
+            "{first} is bound to {DECISIONS_FILE} on {}, but no decisions file is named: give \
              --decisions <FILE>, or name it in the environment's [decisions] table",
-            from_file.capability,
             environment.name
         ),
     }
+}
+
+/// The decisions file of a `run`, and the causes it answers.
+struct DecisionsFile {
+    /// `--decisions`, or the environment's `[decisions]` file.
+    path: PathBuf,
+    /// For the environment's file, the capabilities bound to [`DECISIONS_FILE`]: it answers no
+    /// other cause. `None` for `--decisions`, which answers every cause.
+    only: Option<BTreeSet<String>>,
 }
 
 /// The arguments of `run` without `--scenario`.
@@ -637,7 +655,14 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         );
     }
     let decisions = decisions_file(&parsed, bindings, decisions)?;
-    let answers = decisions::load(&loaded.ir, decisions.as_deref(), answer_default)?;
+    let mut answers = decisions::load(
+        &loaded.ir,
+        decisions.as_ref().map(|file| file.path.as_path()),
+        answer_default,
+    )?;
+    if let Some(only) = decisions.as_ref().and_then(|file| file.only.as_ref()) {
+        answers = answers.answering_only(only);
+    }
     let calls = calls::Calls::bind(&parsed, bindings)
         .with_context(|| format!("in {}", environment.display()))?;
     let seed_path = seed.map(Path::to_owned).or_else(|| {

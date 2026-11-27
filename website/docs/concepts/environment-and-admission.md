@@ -286,8 +286,10 @@ file = "decisions/answers.toml"
 [`run --decisions`](../reference/cli.md#run) reads. `run`, on stdin or serving HTTP,
 answers each cause bound to `decisions-file` from it as it answers from `--decisions`: a request
 line's own `external` object first, then the file, then `--answer-default`. A cause bound to an
-`[http.<name>]` call is still answered by its call first. `--decisions` wins over the table: the
-environment's file is then not read.
+`[http.<name>]` call is still answered by its call first. The file answers no other cause: one
+bound to `operator-prompt` is answered from the line, then `--answer-default`, even where the file
+answers it (served, a request nothing answers is refused `501`). `--decisions` wins over the
+table: the environment's file is then not read, and `--decisions` answers every cause.
 
 `run` stops with exit 1 before anything runs, naming the capability:
 
@@ -296,10 +298,10 @@ environment's file is then not read.
   `operator-prompt` (the request line, `--decisions` and `--answer-default` answer the cause),
   `decisions-file` and each `[http.<name>]` call the environment declares
 
-An environment document with a `[decisions]` table that no `external.` key lists
-`decisions-file` for is refused when it is read. `play`, `play --component` and `deploy` stop with
-exit 1 on a document with a `[decisions]` table, naming the table and its file: they answer no
-external cause from a file.
+An environment document with a `[decisions]` table is refused when it is read unless an
+`external.` key lists `decisions-file` first, the implementation admission binds. `play`,
+`play --component` and `deploy` stop with exit 1 on a document with a `[decisions]` table, naming
+the table and its file: they answer no external cause from a file.
 
 ## The Node export
 

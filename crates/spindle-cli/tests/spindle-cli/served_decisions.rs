@@ -277,6 +277,52 @@ fn a_served_run_answers_from_the_environment_s_decisions_file() {
     assert_eq!(answer["outcome"], "approved", "{answer}");
 }
 
+/// The environment's file answers only the causes bound to `decisions-file`: served, a cause left
+/// to `operator-prompt` is not answered from it, even where the file answers it, and its request
+/// is refused `501` naming the outcome.
+#[test]
+fn a_served_cause_left_to_operator_prompt_is_not_answered_from_the_environment_s_file() {
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");
+    let file = decisions(
+        &state,
+        "escalated = false\n\n[\"probe.review.Submit\"]\nflagged = true\n\n\
+         [probe.review.Decide]\nvetoed = false\n",
+    );
+    let laptop = std::fs::read_to_string(root().join(LAPTOP)).expect("the laptop environment");
+    let environment = state.path().join("environment.toml");
+    std::fs::write(
+        &environment,
+        format!(
+            "{}\n\"external.probe.review.Decide.vetoed\" = [\"decisions-file\"]\n\n\
+             [decisions]\nfile = {file:?}\n",
+            laptop.trim_end()
+        ),
+    )
+    .expect("the environment is written");
+    let served = serve_on(environment.to_str().expect("a UTF-8 path"), &state, &[]);
+
+    let (status, answer) = call(
+        &served,
+        DECIDE,
+        &json!({"decision_id": "d1", "approve": true}),
+    );
+    assert!((200..300).contains(&status), "{status} {answer}");
+    assert_eq!(answer["outcome"], "approved", "{answer}");
+
+    let (status, answer) = call(
+        &served,
+        SUBMIT,
+        &json!({"submission_id": "s1", "amount": 5}),
+    );
+    assert_eq!(status, 501, "{answer}");
+    assert_eq!(answer["committed"], false, "{answer}");
+    let refused = answer["refused"].as_str().unwrap_or_default();
+    assert!(
+        refused.contains("external.probe.review.Submit."),
+        "Submit's cause is left unanswered, naming it: {answer}"
+    );
+}
+
 #[test]
 fn a_served_command_takes_the_default_with_answer_default() {
     let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("temporary directory");

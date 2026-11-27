@@ -55,8 +55,8 @@ pub const FORMAT: &str = "spindle-environment/1";
 /// file = "seed/roles.json"
 /// ```
 ///
-/// `[decisions]` names the decisions file `run` answers external causes from, where an
-/// `external.` key lists [`DECISIONS_FILE`] and `--decisions` names none:
+/// `[decisions]` names the decisions file `run` answers the external causes bound to
+/// [`DECISIONS_FILE`] from, where an `external.` key lists it first and `--decisions` names none:
 ///
 /// ```toml
 /// [provides]
@@ -158,10 +158,11 @@ pub enum EnvironmentError {
         /// The call.
         name: String,
     },
-    /// A `[decisions]` table no `external.` key binds to [`DECISIONS_FILE`].
+    /// A `[decisions]` table no `external.` key binds to [`DECISIONS_FILE`]: none lists it first,
+    /// the implementation admission binds.
     #[error(
         "[decisions] names the file {file}, but no `external.` key of provides lists \
-         `decisions-file`, so it would never be read"
+         `decisions-file` first, the implementation admission binds, so it would never be read"
     )]
     DecisionsUnbound {
         /// The file the table names.
@@ -253,7 +254,9 @@ impl Environment {
                 .iter()
                 .any(|(capability, implementations)| {
                     capability.starts_with(Capability::EXTERNAL_PREFIX)
-                        && implementations.iter().any(|name| name == DECISIONS_FILE)
+                        && implementations
+                            .first()
+                            .is_some_and(|name| name == DECISIONS_FILE)
                 })
         {
             return Err(EnvironmentError::DecisionsUnbound {
@@ -554,6 +557,18 @@ mod tests {
         let unbound = parse("[provides]\n\"external.*\" = [\"decisions-file\"]\n")
             .expect("a binding with no table parses: --decisions names the file");
         assert!(unbound.decisions.is_none());
+    }
+
+    #[test]
+    fn a_decisions_table_whose_file_is_only_a_later_preference_is_refused() {
+        let refused = parse(
+            "[provides]\n\"external.*\" = [\"operator-prompt\", \"decisions-file\"]\n\n\
+             [decisions]\nfile = \"answers.toml\"\n",
+        );
+        assert!(
+            matches!(refused, Err(EnvironmentError::DecisionsUnbound { ref file }) if file == "answers.toml"),
+            "admission binds the first name, so the file would never be read: {refused:?}"
+        );
     }
 
     #[test]
