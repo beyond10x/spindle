@@ -266,7 +266,18 @@ fn object(line: &str) -> serde_json::Map<String, Value> {
 /// A run sent a command, a refused command and SIGTERM writes only JSON objects on stderr.
 #[test]
 fn every_stderr_line_is_one_json_object() {
-    let mut served = serve(RETRIED, &["--environment", LAPTOP, "--log-format", "json"]);
+    // SIGTERM drains the run (`--drain`, `story:health-and-graceful-drain`) before it exits 143.
+    let mut served = serve(
+        RETRIED,
+        &[
+            "--environment",
+            LAPTOP,
+            "--log-format",
+            "json",
+            "--drain",
+            "1",
+        ],
+    );
     assert_eq!(write_note(&served, "n1"), 202);
     served.stderr.until(INDEX_NOTE);
     let refused = send_note(&served, &json!({"note_id": "n2"}));
