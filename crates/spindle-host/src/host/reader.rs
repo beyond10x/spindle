@@ -168,7 +168,7 @@ impl Reader {
             let reading = reading.ok_or_else(|| {
                 HostError::Unsupported(format!("{name} is read on the host's thread only"))
             })?;
-            stores.push((name.clone(), generation));
+            stores.push((name.clone(), generation, reading.events_id()?));
             handles.insert(name.as_str(), reading);
         }
         let handle = |name: &str| {
@@ -204,7 +204,12 @@ impl Reader {
             let reading = reading.ok_or_else(|| {
                 HostError::Unsupported(format!("{name} is read on the host's thread only"))
             })?;
-            stores.push((name.clone(), generation, reading.events_head()?));
+            stores.push((
+                name.clone(),
+                generation,
+                reading.events_id()?,
+                reading.events_head()?,
+            ));
         }
         Ok(super::range::head(self.run, &stores, sequence))
     }

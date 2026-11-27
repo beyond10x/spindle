@@ -30,10 +30,11 @@ const VERSION: u64 = 1;
 /// reset opens an empty memory or SQLite store), the store is read from its start once and its
 /// events up to the last one answered are skipped, by the sequences, which grow within a run.
 /// Where the host was opened again (a restart), each store is read after the position marked for
-/// it, whatever sequences the new run's commands take, so on a fixed clock too: a store that kept
-/// its writes (SQLite, PostgreSQL) goes on from them, and a store whose head is before that
-/// position (a memory store, empty at the restart) is read from its start. The cursor answered
-/// then marks the stores as they are now.
+/// it, whatever sequences the new run's commands take, so on a fixed clock too, where the store
+/// keeps the log of events the mark names ([`spindle_kernel::Store::events_id`]): a store that
+/// kept its writes (SQLite, PostgreSQL) goes on from them, and a store of another log (a new
+/// memory store, a SQLite file a reset created again) is read from its start. The cursor
+/// answered then marks the stores as they are now.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cursor {
     /// The host run the marks were taken in; `0` for none.
@@ -56,23 +57,27 @@ struct Key {
 
 /// How far one component's store is answered: every event of a write up to `position`, in the
 /// store the host held as its `generation`, the last of them at `sequence` and `ordinal` as its
-/// [`Key`] counts them.
+/// [`Key`] counts them; and the id of the store's log of events
+/// ([`spindle_kernel::Store::events_id`]), `0` for none (a store that names none, or a cursor of
+/// an earlier release, which encodes none).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Mark {
     generation: u64,
     position: u64,
     sequence: u64,
     ordinal: u64,
+    log: u64,
 }
 
 impl Mark {
-    /// A store's start, as a store of `generation`.
-    fn start(generation: u64) -> Self {
+    /// A store's start, as a store of `generation` whose log is `log`.
+    fn start(generation: u64, log: u64) -> Self {
         Self {
             generation,
             position: 0,
             sequence: 0,
             ordinal: 0,
+            log,
         }
     }
 }
@@ -120,13 +125,18 @@ impl Cursor {
             .marks
             .iter()
             .map(|(component, mark)| {
-                json!([
+                let mut encoded = json!([
                     component,
                     mark.generation,
                     mark.position,
                     mark.sequence,
                     mark.ordinal
-                ])
+                ]);
+                // A mark with no log id is written as an earlier release wrote it.
+                if let (Value::Array(items), true) = (&mut encoded, mark.log != 0) {
+                    items.push(json!(mark.log));
+                }
+                encoded
             })
             .collect::<Vec<_>>();
         json!([VERSION, self.run, last, marks])
@@ -167,10 +177,21 @@ fn read(value: &Value) -> Option<Cursor> {
     };
     let mut read = BTreeMap::new();
     for mark in marks.as_array()? {
-        let [component, generation, position, sequence, ordinal] = mark.as_array()?.as_slice()
-        else {
-            return None;
-        };
+        let (component, generation, position, sequence, ordinal, log) =
+            match mark.as_array()?.as_slice() {
+                [component, generation, position, sequence, ordinal] => {
+                    (component, generation, position, sequence, ordinal, 0)
+                }
+                [component, generation, position, sequence, ordinal, log] => (
+                    component,
+                    generation,
+                    position,
+                    sequence,
+                    ordinal,
+                    log.as_u64()?,
+                ),
+                _ => return None,
+            };
         read.insert(
             named(component)?,
             Mark {
@@ -178,6 +199,7 @@ fn read(value: &Value) -> Option<Cursor> {
                 position: position.as_u64()?,
                 sequence: sequence.as_u64()?,
                 ordinal: ordinal.as_u64()?,
+                log,
             },
         );
     }
@@ -246,29 +268,36 @@ enum Resumed {
 }
 
 /// Where a read in `run` resumes `after`, a cursor of another run (taken before a restart, or
-/// [`Cursor::start`]), from the stores `stores` names, each by its component and generation:
-/// `read` answers a component's events as [`range`]'s does, and `head` a component's head
+/// [`Cursor::start`]), from the stores `stores` names, each by its component, generation and log
+/// id: `read` answers a component's events as [`range`]'s does, and `head` a component's head
 /// ([`spindle_kernel::Store::events_head`]).
 ///
-/// Each store is read on after the position the cursor marks for it, whatever sequences this
-/// run's commands take: a store that keeps its writes across a restart (SQLite, PostgreSQL) goes
-/// on from the positions it kept. A store whose head is before that position holds no write
-/// there (a memory store, empty at the restart) and is read from its start. Every event after
+/// Each store whose log is the one the cursor marks ([`spindle_kernel::Store::events_id`]) is
+/// read on after the position the cursor marks for it, whatever sequences this run's commands
+/// take: a store that keeps its writes across a restart (SQLite, PostgreSQL) goes on from the
+/// positions it kept. A store of another log (a new memory store, a SQLite file a reset created
+/// again) started its positions over and is read from its start. Where the mark or the store
+/// names no log (a cursor of an earlier release), a store whose head is before the position is
+/// read from its start, and any other after the position. Every event after
 /// those positions is after the cursor, but for the write the cursor answered in part: it is read
 /// again, its events keyed as the cursor's run keyed them, and those up to the cursor's last are
 /// skipped. The cursor of this run starts after that write, with no event answered in this run.
 fn resumed(
     (run, limit): (u64, usize),
-    stores: &[(String, u64)],
+    stores: &[(String, u64, u64)],
     after: &Cursor,
     read: &mut impl FnMut(&str, u64, usize) -> Result<Vec<Committed>, HostError>,
     head: &mut impl FnMut(&str) -> Result<u64, HostError>,
 ) -> Result<Resumed, HostError> {
     let mut rest = Vec::new();
     let mut marks = BTreeMap::new();
-    for (component, generation) in stores {
+    for (component, generation, log) in stores {
         let kept = match after.marks.get(component) {
-            Some(mark) if mark.position == 0 || head(component)? >= mark.position => Some(*mark),
+            Some(mark) if mark.position == 0 => Some(*mark),
+            // The same log goes on from the positions it kept; another started them over.
+            Some(mark) if mark.log != 0 && *log != 0 => (mark.log == *log).then_some(*mark),
+            // A mark of an earlier release, or a store that names no log, or none yet.
+            Some(mark) if head(component)? >= mark.position => Some(*mark),
             _ => None,
         };
         let mut position = kept.map_or(0, |mark| mark.position);
@@ -311,7 +340,7 @@ fn resumed(
             component.clone(),
             Mark {
                 position,
-                ..Mark::start(*generation)
+                ..Mark::start(*generation, *log)
             },
         );
     }
@@ -336,10 +365,10 @@ fn resumed(
 /// store after its head ([`range`]).
 ///
 /// [`Store::events_head`]: spindle_kernel::Store::events_head
-pub(super) fn head(run: u64, stores: &[(String, u64, u64)], sequence: u64) -> Cursor {
+pub(super) fn head(run: u64, stores: &[(String, u64, u64, u64)], sequence: u64) -> Cursor {
     let marks = stores
         .iter()
-        .map(|(component, generation, position)| {
+        .map(|(component, generation, log, position)| {
             (
                 component.clone(),
                 Mark {
@@ -347,6 +376,7 @@ pub(super) fn head(run: u64, stores: &[(String, u64, u64)], sequence: u64) -> Cu
                     position: *position,
                     sequence,
                     ordinal: 0,
+                    log: *log,
                 },
             )
         })
@@ -354,7 +384,7 @@ pub(super) fn head(run: u64, stores: &[(String, u64, u64)], sequence: u64) -> Cu
     // After every event of a sequence below `sequence`, before every event of it and later.
     let last = stores
         .iter()
-        .map(|(component, _, _)| component)
+        .map(|(component, _, _, _)| component)
         .max()
         .map(|component| Key {
             sequence: sequence.saturating_sub(1),
@@ -385,13 +415,13 @@ pub(super) fn head(run: u64, stores: &[(String, u64, u64)], sequence: u64) -> Cu
 /// read; any error of `read` or `head`.
 pub(super) fn range(
     run: u64,
-    stores: &[(String, u64)],
+    stores: &[(String, u64, u64)],
     after: &Cursor,
     limit: usize,
     mut read: impl FnMut(&str, u64, usize) -> Result<Vec<Committed>, HostError>,
     mut head: impl FnMut(&str) -> Result<u64, HostError>,
 ) -> Result<Page, HostError> {
-    let runs = |name: &str| stores.iter().any(|(component, _)| component == name);
+    let runs = |name: &str| stores.iter().any(|(component, _, _)| component == name);
     if after
         .marks
         .keys()
@@ -419,19 +449,19 @@ pub(super) fn range(
 /// [`range`] for `after`, a cursor of this run, `run`.
 fn within(
     run: u64,
-    stores: &[(String, u64)],
+    stores: &[(String, u64, u64)],
     after: &Cursor,
     limit: usize,
     read: &mut impl FnMut(&str, u64, usize) -> Result<Vec<Committed>, HostError>,
 ) -> Result<Page, HostError> {
     let mut read_from = Vec::with_capacity(stores.len());
-    for (component, generation) in stores {
+    for (component, generation, log) in stores {
         let start = after
             .marks
             .get(component)
             .filter(|mark| mark.generation == *generation)
             .copied()
-            .unwrap_or_else(|| Mark::start(*generation));
+            .unwrap_or_else(|| Mark::start(*generation, *log));
         let mut sequence = start.sequence;
         let mut ordinal = start.ordinal;
         let mut keyed: Vec<Keyed> = Vec::new();
@@ -473,7 +503,7 @@ fn within(
     let marks = stores
         .iter()
         .zip(&read_from)
-        .map(|((component, _), (start, keyed))| {
+        .map(|((component, _, log), (start, keyed))| {
             let done = keyed
                 .iter()
                 .take_while(|keyed| answered(keyed, last.as_ref()))
@@ -487,15 +517,22 @@ fn within(
                     .rposition(|keyed| keyed.position < open.position)
                     .map_or(0, |index| index + 1),
             };
-            let mark = whole.checked_sub(1).map_or(*start, |index| {
-                let keyed = &keyed[index];
+            let mark = whole.checked_sub(1).map_or(
                 Mark {
-                    generation: start.generation,
-                    position: keyed.position,
-                    sequence: keyed.key.sequence,
-                    ordinal: keyed.key.ordinal,
-                }
-            });
+                    log: *log,
+                    ..*start
+                },
+                |index| {
+                    let keyed = &keyed[index];
+                    Mark {
+                        generation: start.generation,
+                        position: keyed.position,
+                        sequence: keyed.key.sequence,
+                        ordinal: keyed.key.ordinal,
+                        log: *log,
+                    }
+                },
+            );
             (component.clone(), mark)
         })
         .collect();

@@ -329,10 +329,13 @@ fn a_cursor_from_two_runs_back_reads_both_runs_events_on_a_fixed_clock() {
 }
 
 /// `website/docs/reference/cli.md` (`GET /api/events`): "with it at the end the answer is no
-/// event and the same cursor", next to "still resumes after a restart". A cursor at the end,
-/// read after a restart with nothing new, answers no event and a cursor of the new run.
+/// event and the same cursor, or, for a cursor taken before a restart, a cursor of the new run
+/// that reads on from the same place". A cursor at the end, read after a restart with nothing
+/// new, answers no event and a cursor of the new run, which answers itself when read again and
+/// reads the next command once. (Correction round 1, F3: this case asserted the same cursor; the
+/// behaviour stays and the reference text changed.)
 #[test]
-fn a_cursor_at_the_end_answers_the_same_cursor_after_a_restart() {
+fn a_cursor_at_the_end_answers_a_cursor_of_the_new_run_after_a_restart() {
     let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
     let sqlite = laptop();
     let mut first = open(state.path(), &sqlite, first_run());
@@ -347,11 +350,21 @@ fn a_cursor_at_the_end_answers_the_same_cursor_after_a_restart() {
         .published_after(&cursor, 100)
         .expect("the idle page reads");
     assert_eq!(ids(&page.events), Vec::<Value>::new());
+    let again = second
+        .published_after(&page.next, 100)
+        .expect("the idle page reads again");
+    assert_eq!(ids(&again.events), Vec::<Value>::new());
     assert_eq!(
-        page.next.to_string(),
-        text,
-        "at the end, the answer is the same cursor"
+        again.next, page.next,
+        "the cursor of the new run at the end answers itself"
     );
+    submit(
+        &mut second,
+        "tasks.board.OpenTask",
+        json!({"task_id": "t3", "title": "Third"}),
+    );
+    let (events, _) = paged(&mut second, &page.next, 1);
+    assert_eq!(ids(&events), [json!("t3")], "{events:?}");
 }
 
 /// [`paged`] through the host's reader, beside its thread.

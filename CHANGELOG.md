@@ -64,11 +64,18 @@ are Spindle's releases.
 - A `GET /api/events` cursor taken before a restart reads every event the restarted host
   commits, once each, where on a fixed clock (`run --clock <at>` with `--state`) it skipped those
   whose command took a sequence the cursor had passed, without an error; a cursor from
-  `published_head` read the events before the restart again. A cursor from another run reads each
-  store after the position it marks, as the history cursor does: a store that kept its writes
-  (SQLite, PostgreSQL) goes on from them, a store whose head is before that position (a memory
-  store) is read from its start, and the rest of a write the cursor answered in part is read once
-  first. A cursor from the same run reads as before (`story:events-cursor-across-restart`).
+  `published_head` read the events before the restart again. Each mark of a cursor now names the
+  log of events its store keeps (`spindle_kernel::Store::events_id` and `Reading::events_id`, `0`
+  by default: a memory store draws one at random when it is made, a SQLite or PostgreSQL store
+  reads it from the first event of its log, so nothing is written for it and a file of any
+  release has one). A cursor from another run reads each store of the log it marks after the
+  position it marks, as the history cursor does, so a store that kept its writes goes on from
+  them; a store of another log (a new memory store, a SQLite file a reset created again) is read
+  from its start; the rest of a write the cursor answered in part is read once first. A cursor of
+  an earlier release names no log and reads on after each position its store's head reached, and
+  from the start of any other store. At the end, a cursor taken before a restart answers a cursor
+  of the new run at the same place, where the CLI reference said the same cursor. A cursor from
+  the same run reads as before (`story:events-cursor-across-restart`).
 
 ## [0.23.0] - 2026-11-27
 

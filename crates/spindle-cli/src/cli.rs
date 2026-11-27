@@ -181,7 +181,9 @@ pub enum Command {
     /// either parameter optional: no `after` reads from the first event, `limit` is 100 by
     /// default and 1,000 at most, a larger one answered with 1,000, and a malformed `after` or
     /// `limit` refused `400`; the cursor is opaque, still resumes after a restart or a reset, and
-    /// with it at the end the answer is no event and the same cursor), `GET /api/served`
+    /// with it at the end the answer is no event and the same cursor, or, for a cursor taken
+    /// before a restart, a cursor of the new run that reads on from the same place),
+    /// `GET /api/served`
     /// (`{"operations": [...]}`, one row per command and view routed, `served` true or false and,
     /// for one not served, the `reason` the startup line below prints) and `POST /api/reset`
     /// (empties every store, `{"emptied": [...]}`); a
