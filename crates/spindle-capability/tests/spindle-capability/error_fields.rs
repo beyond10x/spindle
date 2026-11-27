@@ -42,7 +42,8 @@ fn a_default_refusal_read_from_the_row_and_an_unknown_instance_refusal_mint_noth
     assert_eq!(
         requirements.get(&Capability::new(Capability::IDENTITY_MINT)),
         None,
-        "`Unavailable.keeper` is read from the addressed book and `NoSuchBook.book_id` is left \
-         out for a book that does not exist"
+        "`Unavailable.keeper` is read from the addressed book, and `NoSuchBook.book_id` has no \
+         row to be read from and is not minted: its outcome is refused by name \
+         (story:unknown-instance-unsourced-unserved)"
     );
 }

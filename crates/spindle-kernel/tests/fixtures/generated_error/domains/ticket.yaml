@@ -1,0 +1,68 @@
+domain: kiosk.ticket
+summary: Tickets issued under a minted identity; a blocked request is refused under a generated incident, a quiet one under a reference nothing gives.
+types:
+  - name: kiosk.ticket.TicketId
+    kind: newtype
+    of: Uuid
+entities:
+  - name: kiosk.ticket.Ticket
+    identity:
+      name: ticket_id
+      type: kiosk.ticket.TicketId
+    fields:
+      - name: title
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+errors:
+  - name: kiosk.ticket.Blocked
+    summary: The request is blocked, under an incident the runtime generates.
+    fields:
+      - name: incident
+        type: Uuid
+  - name: kiosk.ticket.Quiet
+    summary: The kiosk is quiet, under a reference the outcome gives no source.
+    fields:
+      - name: reference
+        type: Uuid
+commands:
+  - name: kiosk.ticket.IssueTicket
+    input:
+      - name: title
+        type: String
+      - name: blocked
+        type: Boolean
+      - name: quiet
+        type: Boolean
+    outcomes:
+      - name: blocked
+        when: blocked
+        error: kiosk.ticket.Blocked
+        payload:
+          kiosk.ticket.Blocked:
+            incident: {generated: true}
+        summary: A blocked request is refused under a generated incident.
+      - name: quiet
+        when: quiet
+        error: kiosk.ticket.Quiet
+        summary: A request while the kiosk is quiet is refused under a reference nothing gives.
+      - name: issued
+        creates: kiosk.ticket.Ticket
+        instance: ticket_id
+        sets:
+          title: input.title
+        emits: [kiosk.ticket.TicketIssued]
+        payload:
+          kiosk.ticket.TicketIssued:
+            ticket_id: {generated: true}
+            title: input.title
+        summary: The ticket is issued under an identity the runtime mints.
+events:
+  - name: kiosk.ticket.TicketIssued
+    fields:
+      - name: ticket_id
+        type: kiosk.ticket.TicketId
+      - name: title
+        type: String

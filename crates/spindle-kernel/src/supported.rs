@@ -516,19 +516,25 @@ fn unsupported(command: &ResolvedCommand, outcome: &ResolvedOutcome, what: &str)
     }
 }
 
-/// The error field, named, that `outcome` gives no source, that no row it is answered for holds
-/// and whose type the runtime does not mint: a refusal would answer without a field its
-/// published schema requires ([`spindle_capability::mint::unsourced`]).
+/// The error field, named, that `outcome` gives no source and that nothing fills: no row it is
+/// answered for holds it and the runtime does not mint its type, or it is a required field of an
+/// `unknown_instance:` refusal, which has no row to read it from and which ESS's served
+/// application does not serve. A refusal would answer without a field its published schema
+/// requires ([`spindle_capability::mint::unsourced`]).
 fn unfilled_error_field(
     ir: &EssIr,
     command: &ResolvedCommand,
     outcome: &ResolvedOutcome,
 ) -> Option<String> {
+    use spindle_capability::mint::Unsourced;
     let error = outcome.error.as_ref()?.name().to_string();
     spindle_capability::mint::unsourced(ir, command, outcome)
         .into_iter()
-        .find(|(_, fill)| *fill == spindle_capability::mint::Unsourced::Unfilled)
-        .map(|(field, _)| crate::mint::unfilled(&error, field))
+        .find_map(|(field, fill)| match fill {
+            Unsourced::Unfilled => Some(crate::mint::unfilled(&error, field)),
+            Unsourced::Unanswered => Some(crate::mint::unanswered(&error, field)),
+            _ => None,
+        })
 }
 
 /// The condition, named, when the kernel does not run it.

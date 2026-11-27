@@ -1,0 +1,240 @@
+domain: bay.yard
+summary: Crates under a minted Uuid, slots under a minted Integer, tags under a minted String; a jammed request is refused under generated values of every minted type, a stalled one under the same fields with no source.
+types:
+  - name: bay.yard.Badge
+    kind: struct
+    fields:
+      - name: serial
+        type: Uuid
+      - name: rank
+        type: Integer
+entities:
+  - name: bay.yard.Crate
+    identity:
+      name: crate_id
+      type: Uuid
+    fields:
+      - name: label
+        type: String
+    lifecycle:
+      initial: Open
+      states: [Open, Sealed]
+      terminal: [Sealed]
+      transitions:
+        - name: seal
+          from: [Open]
+          to: Sealed
+  - name: bay.yard.Slot
+    identity:
+      name: slot_id
+      type: Integer
+    fields:
+      - name: label
+        type: String
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+  - name: bay.yard.Tag
+    identity:
+      name: tag_id
+      type: String
+    fields:
+      - name: label
+        type: String
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+errors:
+  - name: bay.yard.Jammed
+    summary: The bay is jammed, under values the runtime generates.
+    fields:
+      - name: code
+        type: Integer
+      - name: note
+        type: String
+      - name: seen
+        type: Timestamp
+      - name: loud
+        type: Boolean
+      - name: ticket
+        type: Uuid
+      - name: badge
+        type: bay.yard.Badge
+      - name: marks
+        type: Map<String, Uuid>
+  - name: bay.yard.Missing
+    summary: No crate carries the id; a hint may say why.
+    fields:
+      - name: hint
+        type: Optional<String>
+      - name: crate_id
+        type: Uuid
+  - name: bay.yard.Stalled
+    summary: The bay is stalled, under fields its outcome gives no source.
+    fields:
+      - name: code
+        type: Integer
+      - name: note
+        type: String
+      - name: seen
+        type: Timestamp
+      - name: loud
+        type: Boolean
+      - name: ticket
+        type: Uuid
+      - name: badge
+        type: bay.yard.Badge
+      - name: marks
+        type: Map<String, Uuid>
+commands:
+  - name: bay.yard.MakeCrate
+    input:
+      - name: label
+        type: String
+      - name: jam
+        type: Boolean
+      - name: stall
+        type: Boolean
+    outcomes:
+      - name: jammed
+        when: jam
+        error: bay.yard.Jammed
+        payload:
+          bay.yard.Jammed:
+            code: {generated: true}
+            note: {generated: true}
+            seen: {generated: true}
+            loud: {generated: true}
+            ticket: {generated: true}
+            badge: {generated: true}
+            marks: {generated: true}
+        summary: A jammed request is refused under generated values.
+      - name: stalled
+        when: stall
+        error: bay.yard.Stalled
+        summary: A stalled request is refused under values nothing gives.
+      - name: made
+        creates: bay.yard.Crate
+        instance: crate_id
+        sets:
+          label: input.label
+        emits: [bay.yard.CrateMade]
+        payload:
+          bay.yard.CrateMade:
+            crate_id: {generated: true}
+            lit: {generated: true}
+        summary: The crate is made under a minted identity, lit or not as the runtime draws.
+  - name: bay.yard.SealCrate
+    input:
+      - name: crate_id
+        type: Uuid
+    outcomes:
+      - name: sealed
+        moves: bay.yard.Crate.seal
+        instance: crate_id
+        emits: [bay.yard.CrateSealed]
+        payload:
+          bay.yard.CrateSealed:
+            crate_id: input.crate_id
+        summary: An open crate is sealed.
+      - name: wrong-state
+        wrong_state: true
+        error: bay.yard.Stalled
+        summary: A sealed or unknown crate is refused under values nothing gives.
+  - name: bay.yard.TapCrate
+    input:
+      - name: crate_id
+        type: Uuid
+      - name: label
+        type: String
+    outcomes:
+      - name: no-crate
+        unknown_instance: true
+        error: bay.yard.Missing
+        summary: No crate carries the id; its required id has no source.
+      - name: tapped
+        updates: bay.yard.Crate
+        instance: crate_id
+        sets:
+          label: input.label
+        emits: [bay.yard.CrateTapped]
+        payload:
+          bay.yard.CrateTapped:
+            crate_id: input.crate_id
+        summary: A crate is relabelled.
+  - name: bay.yard.MakeSlot
+    input:
+      - name: label
+        type: String
+      - name: jam
+        type: Boolean
+    outcomes:
+      - name: jammed
+        when: jam
+        error: bay.yard.Jammed
+        payload:
+          bay.yard.Jammed:
+            code: {generated: true}
+            note: {generated: true}
+            seen: {generated: true}
+            loud: {generated: true}
+            ticket: {generated: true}
+            badge: {generated: true}
+            marks: {generated: true}
+        summary: A jammed request is refused under generated values.
+      - name: made
+        creates: bay.yard.Slot
+        instance: slot_id
+        sets:
+          label: input.label
+        emits: [bay.yard.SlotMade]
+        payload:
+          bay.yard.SlotMade:
+            slot_id: {generated: true}
+        summary: The slot is made under a minted Integer identity.
+  - name: bay.yard.MakeTag
+    input:
+      - name: label
+        type: String
+      - name: stall
+        type: Boolean
+    outcomes:
+      - name: stalled
+        when: stall
+        error: bay.yard.Stalled
+        summary: A stalled request is refused under values nothing gives.
+      - name: made
+        creates: bay.yard.Tag
+        instance: tag_id
+        sets:
+          label: input.label
+        emits: [bay.yard.TagMade]
+        payload:
+          bay.yard.TagMade:
+            tag_id: {generated: true}
+        summary: The tag is made under a minted String identity.
+events:
+  - name: bay.yard.CrateMade
+    fields:
+      - name: crate_id
+        type: Uuid
+      - name: lit
+        type: Boolean
+  - name: bay.yard.CrateSealed
+    fields:
+      - name: crate_id
+        type: Uuid
+  - name: bay.yard.CrateTapped
+    fields:
+      - name: crate_id
+        type: Uuid
+  - name: bay.yard.SlotMade
+    fields:
+      - name: slot_id
+        type: Integer
+  - name: bay.yard.TagMade
+    fields:
+      - name: tag_id
+        type: String

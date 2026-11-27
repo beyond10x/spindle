@@ -1,0 +1,19 @@
+format: ess/34
+system: kiosk
+version: v1
+summary: A kiosk that issues tickets under identities the runtime mints, refusing some with errors whose fields the runtime fills.
+domains:
+  - kiosk.ticket
+components:
+  - component: kiosk
+    summary: Issues tickets.
+    owns:
+      domains:
+        - kiosk.ticket
+    accepts:
+      commands:
+        - kiosk.ticket.IssueTicket
+    publishes:
+      events:
+        - kiosk.ticket.TicketIssued
+    reached_by: in_process
