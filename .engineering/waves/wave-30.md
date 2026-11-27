@@ -30,6 +30,8 @@ this list on 2026-11-27 (D-W30 A):
 - `story:rally-example-reads-stdin`: the rally example runs as its page says.
 - `story:affects-over-input-list`: a consumer's gap reported on 2026-11-27, an `affects:` entry
   over an input list; added as U11 by the host operator (D-AFFECTS A) before the wave started.
+- `story:served-clock-steps`: a consumer's gap reported on 2026-11-27, a served run that steps its
+  clock; added as U12 on the coordinator's default (D-CLOCK A) before the wave started.
 
 None changes the architecture under the options taken. Each story's `## Scope` was derived against
 `plan/wave-30` (main at 0.22.0 plus wave 28); its `## Decided when scoped` records the options
@@ -50,6 +52,7 @@ taken; its `## Outcome` and `## Acceptance` were amended where the scoper found 
 | U9 | `story:rally-example-reads-stdin` | `unit/w30-rally` | `spindle-w30-rally` |
 | U10 | `story:related-via-nested-input` | `unit/w30-via` | `spindle-w30-via` |
 | U11 | `story:affects-over-input-list` | `unit/w30-affects-each` | `spindle-w30-affects-each` |
+| U12 | `story:served-clock-steps` | `unit/w30-clock` | `spindle-w30-clock` |
 
 U1's two stories rewrite the same `Exists`/`Forall` arm of `Scope::admits` and U3's two stories the
 same `unsourced_error_fields`; each pair runs one after the other in one unit, and the second story
@@ -79,27 +82,33 @@ by the coordinator at merge:
 - `website/docs/concepts/specification.md`: U1 (`:168-173`), U11 (`:124-125`).
 - `crates/spindle-host/src/view.rs`: U1 the filter admission; U2 at most a doc comment of
   `project`.
-- `crates/spindle-host/src/host.rs`: U1 the doc comment of the host's read method (`:1974-1977`);
+- `crates/spindle-host/src/host.rs`: U12 `Published`, `merged`, `World`, `reset_to` and a stepping
+  handle beside `clock`; U1 the doc comment of the host's read method (`:1974-1977`);
   U6 `Host::establish` (`:1271-1281`); U7 the doc comments of `published_after` and
   `published_head` (`:1338-1368`).
 - `crates/spindle-host/src/host/component.rs`: U8 only (`Host::connect`).
+- `crates/spindle-host/src/host/range.rs`: U7 the events cursor in `range`; U12 the `at` of the
+  `Published` it builds (`:316-320`), after U7.
+- `crates/spindle-cli/src/cli.rs` and the generated `website/docs/reference/cli.md`: U12 the docs of
+  `--clock`, the reset world and the console routes, besides U9.
 - `crates/spindle-cli/src/main.rs`, `crates/spindle-cli/src/cli.rs` with the generated
   `website/docs/reference/cli.md`: U9 only (`--stdin`).
 - `crates/spindle-cli/src/replay.rs`: U5 only (`, unavailable`).
 - The test `main.rs` module lists of `spindle-kernel` (U3, U6, U11), `spindle-conformance` (U2),
   `spindle-ingress` (U3), `spindle-cli` (U9), `spindle-host` (U1, U8); `README.md` (U3);
-  `CHANGELOG.md` `[Unreleased]` (every unit).
+  `CHANGELOG.md` `[Unreleased]` (every unit); `README.md` also U12 (the console route list).
 
 Wave 29 changes `spindle-host`, `spindle-cli` `cli.rs` and `lines.rs`, `spindle-conformance`
 `target.rs`, and `spindle-kernel` `supported.rs` and `values.rs`. Wave 30 forks after wave 29
 merges, so the line numbers above, taken before wave 29, may move.
 
-Merge order: U10, U8, U7, U1, U2, U4, U3, U5, U6, U11, U9. The `execute.rs` units merge U4, U3, U5, U6:
+Merge order: U10, U8, U7, U1, U2, U4, U3, U5, U6, U11, U9, U12. The `execute.rs` units merge U4, U3, U5, U6:
 U5 after U4 because of the shared line in `Run::select`, and U6 last, as its wrapper sits at the
 entry of every command. U11 merges after U5, whose `Undeclared` field its constructors set, and
 after U6, whose one spelling of an identity its list elements
 read (`depends_on`); the coordinator merges `wave/30` holding U5 and U6 into U11's branch before
-U11's last run.
+U11's last run. U12 merges after U7, whose rewrite of `range` it builds on (`depends_on`), and
+last, after U9, which also changes `cli.rs`.
 
 ## Exit
 
