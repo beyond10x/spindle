@@ -200,7 +200,13 @@ fn console_answers(served: &Served) -> Vec<(Console, u16, Value)> {
         .into_iter()
         .map(|console| {
             let world = json!({"rows": []});
-            let body = (console == Console::Reset).then_some(&world);
+            // A replay names a dead letter no run keeps (story:dead-letters-kept-and-replayed).
+            let letter = json!({"component": "none", "id": 1});
+            let body = match console {
+                Console::Reset => Some(&world),
+                Console::Replay => Some(&letter),
+                _ => None,
+            };
             let method = console.method().as_str().to_uppercase();
             let path = match console {
                 Console::History => format!(
@@ -213,6 +219,20 @@ fn console_answers(served: &Served) -> Vec<(Console, u16, Value)> {
             (console, status, answer)
         })
         .collect()
+}
+
+/// Whether `console` answered as a route the run serves: `200`, or, for the replay of a dead
+/// letter no run keeps, `404` naming the letter, not the path (story:dead-letters-kept-and-replayed).
+fn served_answer(console: Console, status: u16, answer: &Value) -> bool {
+    match console {
+        Console::Replay => {
+            status == 404
+                && answer["refused"]
+                    .as_str()
+                    .is_some_and(|why| why.starts_with("no dead letter 1 of none"))
+        }
+        _ => status == 200,
+    }
 }
 
 /// The answer an unrouted `path` gets.
@@ -266,12 +286,18 @@ fn console_routes_on_by_default_on_loopback() {
     let served = serve(&[], None);
     record(&served);
     for (console, status, answer) in console_answers(&served) {
-        assert_eq!(status, 200, "{console}: {answer}");
+        assert!(
+            served_answer(console, status, &answer),
+            "{console}: {status} {answer}"
+        );
     }
     assert_eq!(log(&served), json!([]), "the reset ran");
     let served = serve(&["--console", "on"], None);
     for (console, status, answer) in console_answers(&served) {
-        assert_eq!(status, 200, "--console on, {console}: {answer}");
+        assert!(
+            served_answer(console, status, &answer),
+            "--console on, {console}: {status} {answer}"
+        );
     }
 }
 

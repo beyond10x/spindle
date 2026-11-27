@@ -16,9 +16,9 @@ use spindle_channel::{
     in_process,
 };
 use spindle_kernel::{
-    Change, Committed, Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, Mint,
-    NoExternals, Origin, Provenance, Reading, Row, Scanned, Seeded, Store, StoreError, Stored,
-    Uuid, UuidV4,
+    Change, Committed, DeadLetter, Decider, DeclaredError, Event, ExecuteError, Executed,
+    MemoryStore, Mint, NoExternals, Origin, Provenance, Reading, Row, Scanned, Seeded, Store,
+    StoreError, Stored, Uuid, UuidV4,
 };
 use spindle_telemetry::{Counters, CountingStore, Retried, Sink};
 use spindle_timer::{BindingName, Clock, CompleteError, Instant, LifetimeError, Timer};
@@ -72,7 +72,8 @@ pub struct Ran {
 
 /// One command a tick or a binding invoked that did not execute. Nothing was written, and the
 /// host does not run it again: a binding's command is given up after its last attempt
-/// (at most [`RETRY_ATTEMPTS`] for a binding that retries, else 1).
+/// (at most [`RETRY_ATTEMPTS`] for a binding that retries, else 1), and kept as a dead letter
+/// where its binding did not escalate it ([`Failed::dead_letter`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Failed {
     /// The component that was to run it.
@@ -94,10 +95,16 @@ pub struct Failed {
     /// How many times it was run: 0 for a binding whose input was unmet, so its command was
     /// never sent.
     pub attempts: u32,
+    /// The id of the dead letter its component's store keeps it as ([`Host::dead_letters`]):
+    /// `None` for a command [`Host::submit`] was asked to run, one whose binding escalated it,
+    /// one whose input was unmet, and one whose store keeps no dead letters or could not keep
+    /// this one.
+    pub dead_letter: Option<u64>,
 }
 
 /// One command a tick or a binding invoked that the model refused: its outcome declares an error.
-/// Nothing was written, and the host does not run it again, as for [`Failed`].
+/// Nothing was written, and the host does not run it again, as for [`Failed`]; it is kept as a
+/// dead letter alike ([`RefusedCommand::dead_letter`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefusedCommand {
     /// The component that ran it.
@@ -115,6 +122,21 @@ pub struct RefusedCommand {
     pub error: DeclaredError,
     /// How many times it was run.
     pub attempts: u32,
+    /// The id of the dead letter its component's store keeps it as, as [`Failed::dead_letter`].
+    pub dead_letter: Option<u64>,
+}
+
+/// A dead letter a component's store keeps ([`Host::dead_letters`]): a command a binding or a
+/// tick invoked whose last attempt was refused or did not execute, and that its binding did not
+/// escalate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Undelivered {
+    /// The component that accepts the command, whose store keeps the dead letter.
+    pub component: String,
+    /// Its id in that store, which [`Host::replay`] names.
+    pub id: u64,
+    /// What was kept.
+    pub letter: DeadLetter,
 }
 
 /// One command a binding invoked whose last attempt did not take effect and whose failure policy
@@ -782,6 +804,18 @@ impl Store for Supplied {
     fn events_id(&mut self) -> Result<u64, StoreError> {
         self.0.events_id()
     }
+
+    fn keep_dead_letter(&mut self, letter: &DeadLetter) -> Result<u64, StoreError> {
+        self.0.keep_dead_letter(letter)
+    }
+
+    fn dead_letters(&mut self) -> Result<Vec<(u64, DeadLetter)>, StoreError> {
+        self.0.dead_letters()
+    }
+
+    fn take_dead_letter(&mut self, id: u64) -> Result<Option<DeadLetter>, StoreError> {
+        self.0.take_dead_letter(id)
+    }
 }
 
 struct Component {
@@ -1366,6 +1400,74 @@ impl Host {
     /// of the call that made it too; this is for a caller handed only part of that report.
     pub fn take_escalated(&mut self) -> Vec<Escalated> {
         std::mem::take(&mut self.escalations)
+    }
+
+    /// Every dead letter the components' stores keep and no replay took ([`Undelivered`]),
+    /// component by component in name order, each component's by id: each command a binding or a
+    /// tick invoked whose last attempt was refused or did not execute, and that its binding did
+    /// not escalate (`--drop-retries`'s drops included; a binding whose input was unmet ran no
+    /// attempt and keeps none). Read from the stores, so a store in SQLite or PostgreSQL answers
+    /// those of an earlier process too; a reset forgets them with the events. A store that keeps
+    /// no dead letters answers none.
+    ///
+    /// # Errors
+    /// [`HostError::Store`] when a store cannot be read.
+    pub fn dead_letters(&mut self) -> Result<Vec<Undelivered>, HostError> {
+        let mut letters = Vec::new();
+        for (name, component) in &mut self.components {
+            letters.extend(
+                component
+                    .store
+                    .dead_letters()?
+                    .into_iter()
+                    .map(|(id, letter)| Undelivered {
+                        component: name.clone(),
+                        id,
+                        letter,
+                    }),
+            );
+        }
+        Ok(letters)
+    }
+
+    /// Runs the dead letter `id` of `component` once more and everything its events lead to, and
+    /// answers what ran ([`Report`]): its own run is the report's first entry of `ran`, else of
+    /// `refused`, else of `failed`. The store records the letter taken before the command runs
+    /// ([`Store::take_dead_letter`]), so it is replayed at most once, after a restart too. The
+    /// command runs with the input it was kept with, once, without its binding's retries or
+    /// escalation, attributed to its binding as its first run was ([`Provenance::Binding`] with no
+    /// trigger, or [`Provenance::Tick`] for a periodic binding's); a replay that is refused or
+    /// does not execute is kept as a new dead letter. `None`, and nothing runs, where no dead
+    /// letter with this id waits in that component: never kept, replayed already, forgotten by a
+    /// reset, or no component of that name.
+    ///
+    /// # Errors
+    /// [`HostError::Store`] when the store cannot be read or record the take, and as
+    /// [`Host::submit`] for what the command leads to.
+    pub fn replay(&mut self, component: &str, id: u64) -> Result<Option<Report>, HostError> {
+        let Some(held) = self.components.get_mut(component) else {
+            return Ok(None);
+        };
+        let Some(letter) = held.store.take_dead_letter(id)? else {
+            return Ok(None);
+        };
+        let binding = letter.binding;
+        let cause = match letter.event {
+            Some(_) => Cause::Delivered { binding },
+            None => Cause::Tick { binding },
+        };
+        let mut report = Report::default();
+        self.attempt(
+            component,
+            &letter.command,
+            &letter.input,
+            cause,
+            None,
+            None,
+            &mut report,
+        )?;
+        self.settle(&mut report, &mut Deliveries::default())?;
+        Ok(Some(report))
     }
 
     /// Every event a command committed since its component's store was last
@@ -2354,20 +2456,44 @@ impl Host {
                 let escalation = route.escalate(&self.ir, refusal, input)?;
                 Some((route, refusal.map(str::to_owned), escalation))
             });
+            // The last attempt of a bound command that did not take effect and that its binding
+            // did not escalate: kept as a dead letter (story:dead-letters-kept-and-replayed).
+            let lettered = |outcome: Option<&str>, error: String| {
+                let binding = match &cause {
+                    Cause::Tick { binding } | Cause::Delivered { binding } => binding,
+                    Cause::Submitted => return None,
+                };
+                escalation.is_none().then(|| DeadLetter {
+                    binding: binding.clone(),
+                    event: matches!(cause, Cause::Delivered { .. })
+                        .then(|| bound_event(&self.ir, binding))
+                        .flatten(),
+                    command: command.to_owned(),
+                    input: input.clone(),
+                    outcome: outcome.map(str::to_owned),
+                    error,
+                    attempts,
+                })
+            };
             match result {
                 Ok(Executed {
                     outcome,
                     error: Some(error),
                     ..
-                }) => report.refused.push(RefusedCommand {
-                    component: component.to_owned(),
-                    command: command.to_owned(),
-                    cause,
-                    caused_by,
-                    outcome,
-                    error,
-                    attempts,
-                }),
+                }) => {
+                    let letter = lettered(Some(&outcome), error.name.clone());
+                    let dead_letter = letter.and_then(|letter| self.keep(component, &letter));
+                    report.refused.push(RefusedCommand {
+                        component: component.to_owned(),
+                        command: command.to_owned(),
+                        cause,
+                        caused_by,
+                        outcome,
+                        error,
+                        attempts,
+                        dead_letter,
+                    });
+                }
                 Ok(executed) => report.ran.push(Ran {
                     component: component.to_owned(),
                     command: command.to_owned(),
@@ -2375,15 +2501,20 @@ impl Host {
                     executed,
                     attempts,
                 }),
-                Err(error) => report.failed.push(Failed {
-                    component: component.to_owned(),
-                    command: command.to_owned(),
-                    cause,
-                    caused_by,
-                    error: error.to_string(),
-                    kind: Some(error.kind()),
-                    attempts,
-                }),
+                Err(error) => {
+                    let letter = lettered(None, error.kind().to_owned());
+                    let dead_letter = letter.and_then(|letter| self.keep(component, &letter));
+                    report.failed.push(Failed {
+                        component: component.to_owned(),
+                        command: command.to_owned(),
+                        cause,
+                        caused_by,
+                        error: error.to_string(),
+                        kind: Some(error.kind()),
+                        attempts,
+                        dead_letter,
+                    });
+                }
             }
             if let Some((route, outcome, escalation)) = escalation {
                 let (event, escalation) = match escalation {
@@ -2417,6 +2548,14 @@ impl Host {
             self.unmet(component, command, report);
             return Ok(());
         }
+    }
+
+    /// Keeps `letter` in the store of `component` ([`Store::keep_dead_letter`]) and answers its
+    /// id; `None` where the store keeps no dead letters or could not keep this one, which the
+    /// command's report then names no dead letter of.
+    fn keep(&mut self, component: &str, letter: &DeadLetter) -> Option<u64> {
+        let held = self.components.get_mut(component)?;
+        held.store.keep_dead_letter(letter).ok()
     }
 
     /// Publishes `event`, which `command` did not emit, from `component` through its sender, as
@@ -2470,6 +2609,7 @@ impl Host {
                 error: unmet.error.to_string(),
                 kind: None,
                 attempts: 0,
+                dead_letter: None,
             }));
     }
 
@@ -2654,6 +2794,18 @@ impl Store for Lost {
     fn scan(&mut self, _: &str) -> Result<spindle_kernel::Scan, StoreError> {
         Err(StoreError::Backend(self.0.clone()))
     }
+
+    fn keep_dead_letter(&mut self, _: &DeadLetter) -> Result<u64, StoreError> {
+        Err(StoreError::Backend(self.0.clone()))
+    }
+
+    fn dead_letters(&mut self) -> Result<Vec<(u64, DeadLetter)>, StoreError> {
+        Err(StoreError::Backend(self.0.clone()))
+    }
+
+    fn take_dead_letter(&mut self, _: u64) -> Result<Option<DeadLetter>, StoreError> {
+        Err(StoreError::Backend(self.0.clone()))
+    }
 }
 
 /// The SQLite files a store at `file` keeps: the database and its side files.
@@ -2723,6 +2875,16 @@ fn emptied_file(file: &Path, sink: &Sink) -> Result<Box<dyn Store>, String> {
             ))
         }
     }
+}
+
+/// The qualified event the event binding `binding` is caused by; `None` for a periodic binding
+/// and one `ir` does not declare.
+fn bound_event(ir: &EssIr, binding: &str) -> Option<String> {
+    ir.bindings()
+        .values()
+        .find(|bound| bound.name.as_str() == binding)
+        .and_then(|bound| bound.cause.event())
+        .map(ToString::to_string)
 }
 
 /// Whether any component lists `event` under `publishes:`. An event no component publishes is

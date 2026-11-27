@@ -47,6 +47,23 @@ another:
 
 A binding inside one component needs no channel: the runtime dispatches it in process.
 
+### Dead letters
+
+A command a binding invokes may be refused by its model or rejected by the kernel. The binding's
+`on_failure` decides what happens next: `retry` runs it again, at most five times in all, and
+`escalate` publishes the binding's escalation event. A command whose last attempt still did not
+take effect, and that the binding did not escalate, is kept as a **dead letter** in the store of
+the component that accepts it, with its binding, event, command, input, error and attempts. A
+command a periodic binding invoked is kept the same way, without an event.
+
+A served run lists them at `GET /api/dead-letters`, a console route, by component and id, and
+never shows a value of the command's input. A dead letter survives a restart on the same
+`--state`, and it is no event: `GET /api/events` never lists it. `POST /api/dead-letters/replay`
+with `{"component": "shipping", "id": 7}` runs the command once more with the input it was kept
+with, without the binding's retries, and answers what it did. A letter is replayed at most once;
+a replay that is refused or fails again is kept as a new dead letter. A reset forgets every dead
+letter with the events.
+
 ## One process
 
 `spindle-host` runs every component of a system in one process: per-component admission and store,

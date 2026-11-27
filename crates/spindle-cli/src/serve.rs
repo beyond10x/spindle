@@ -632,9 +632,12 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
                         && escalated.command == failed.command
                 })
                 .map(|at| escalations.remove(at));
-            let fate = match &escalated {
-                Some(escalated) => escalation(escalated),
-                None => "dropped".to_owned(),
+            // Kept as a dead letter where its binding did not escalate it and its store keeps one
+            // (story:dead-letters-kept-and-replayed); dropped otherwise.
+            let fate = match (&escalated, failed.dead_letter) {
+                (Some(escalated), _) => escalation(escalated),
+                (None, Some(id)) => format!("kept as dead letter {id}"),
+                (None, None) => "dropped".to_owned(),
             };
             let mut line = log::warn(format!(
                 "{} did not run {} ({binding}), {fate}{attempts}: {}",
@@ -644,6 +647,9 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             .field("command", failed.command.as_str());
             if let Some(binding) = bound {
                 line = line.field("binding", binding);
+            }
+            if let Some(id) = failed.dead_letter {
+                line = line.field("dead_letter", id);
             }
             line.field("attempts", failed.attempts)
                 .field("error", failed.error.as_str())

@@ -57,6 +57,7 @@ mod concurrent_reads;
 mod conform;
 mod console;
 mod console_off;
+mod dead_letters;
 mod decisions;
 mod deletes;
 mod deploy;

@@ -76,6 +76,7 @@ mod guards;
 mod held_null;
 mod integer_identity;
 mod list_append;
+mod log_streams;
 mod map_input_guard;
 mod mint;
 mod placement;

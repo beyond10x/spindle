@@ -158,6 +158,21 @@ impl<S: Store> Store for CountingStore<S> {
     fn events_id(&mut self) -> Result<u64, StoreError> {
         self.inner.events_id()
     }
+
+    fn keep_dead_letter(&mut self, letter: &spindle_kernel::DeadLetter) -> Result<u64, StoreError> {
+        self.inner.keep_dead_letter(letter)
+    }
+
+    fn dead_letters(&mut self) -> Result<Vec<(u64, spindle_kernel::DeadLetter)>, StoreError> {
+        self.inner.dead_letters()
+    }
+
+    fn take_dead_letter(
+        &mut self,
+        id: u64,
+    ) -> Result<Option<spindle_kernel::DeadLetter>, StoreError> {
+        self.inner.take_dead_letter(id)
+    }
 }
 
 impl<S: Store> CountingStore<S> {

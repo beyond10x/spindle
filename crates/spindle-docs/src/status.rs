@@ -189,6 +189,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "crates/spindle-conformance/tests/spindle-conformance/escalation.rs::an_escalated_refusal_emits_the_named_event_and_invokes_nothing",
     ),
     shipped(
+        "Bindings",
+        "Dead letters",
+        "A command a binding or a tick invoked whose last attempt was refused or did not run, and that its binding did not escalate, is kept as a dead letter in its component's store with its input: a served run lists it at GET /api/dead-letters without a value of the input and replays it once at POST /api/dead-letters/replay, without the binding's retries. It survives a restart on SQLite and PostgreSQL, is no published event, and a reset forgets it.",
+        "/docs/concepts/components-and-bindings",
+        "crates/spindle-cli/tests/spindle-cli/dead_letters.rs::an_exhausted_command_is_kept_as_a_dead_letter",
+    ),
+    shipped(
         "Rally",
         "Every component in one process",
         "b10x-spindle play runs the three rally components in one process with in-process channels until a side wins.",

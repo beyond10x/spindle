@@ -396,4 +396,19 @@ impl Store for Counted {
     fn events_id(&mut self) -> Result<u64, StoreError> {
         self.store.events_id()
     }
+
+    fn keep_dead_letter(&mut self, letter: &spindle_kernel::DeadLetter) -> Result<u64, StoreError> {
+        self.store.keep_dead_letter(letter)
+    }
+
+    fn dead_letters(&mut self) -> Result<Vec<(u64, spindle_kernel::DeadLetter)>, StoreError> {
+        self.store.dead_letters()
+    }
+
+    fn take_dead_letter(
+        &mut self,
+        id: u64,
+    ) -> Result<Option<spindle_kernel::DeadLetter>, StoreError> {
+        self.store.take_dead_letter(id)
+    }
 }

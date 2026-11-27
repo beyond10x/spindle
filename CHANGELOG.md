@@ -8,6 +8,20 @@ are Spindle's releases.
 
 ### Added
 
+- A command a binding or a tick invoked whose last attempt was refused or did not run, and that
+  its binding did not escalate, is kept as a dead letter in the store of the component that
+  accepts it, where a served run printed it on stderr as `dropped` (a refused one not at all) and
+  lost it. `GET /api/dead-letters` lists each with its id, component, binding, event, command,
+  outcome, error and attempts, never a value of its input (`spindle.observe.DeadLetters`), and
+  `POST /api/dead-letters/replay` with `{"component", "id"}` runs it once more, without the
+  binding's retries, a refused or failed replay kept as a new dead letter
+  (`spindle.console.ReplayAnswer`); both are console routes, off with `--console off`. A dead
+  letter survives a restart on SQLite and PostgreSQL, is no event of `GET /api/events`, is
+  replayed at most once, and is forgotten by a reset. stderr says `kept as dead letter <id>` where
+  it said `dropped`. `spindle_kernel::Store` gains `keep_dead_letter`, `dead_letters` and
+  `take_dead_letter`; `spindle_host::Failed` and `RefusedCommand` gain `dead_letter`, and
+  `Host::dead_letters` and `Host::replay` list and replay them
+  (`story:dead-letters-kept-and-replayed`).
 - `run --stdin` reads JSON lines on stdin where a component is `reached_by: network`, instead of
   serving HTTP: every component runs in the one process on one store and the event bindings fire
   as on any other stdin run. Given with a flag only a served run reads (`--http`, `--port`,

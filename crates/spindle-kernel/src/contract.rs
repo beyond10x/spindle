@@ -16,8 +16,8 @@ use serde_json::{Map, Value, json};
 
 use crate::Event;
 use crate::store::{
-    Change, Committed, EVERY_INSTANCE, Origin, Provenance, Removal, Row, Scan, Scanned, Sender,
-    Store, StoreError, Stored, Write,
+    Change, Committed, DeadLetter, EVERY_INSTANCE, Origin, Provenance, Removal, Row, Scan, Scanned,
+    Sender, Store, StoreError, Stored, Write,
 };
 
 /// The entity most cases write.
@@ -138,6 +138,152 @@ pub const CASES: &[Case] = &[
         run: the_store_names_the_instances_each_write_wrote,
     },
 ];
+
+/// The cases of a store that keeps dead letters ([`Store::keep_dead_letter`]): the memory, SQLite
+/// and PostgreSQL stores (`story:dead-letters-kept-and-replayed`). A store that keeps none, the
+/// IndexedDB one, runs [`CASES`] alone.
+pub const DEAD_LETTER_CASES: &[Case] = &[
+    Case {
+        name: "a_kept_dead_letter_is_listed_with_its_input",
+        run: a_kept_dead_letter_is_listed_with_its_input,
+    },
+    Case {
+        name: "a_dead_letter_is_taken_once",
+        run: a_dead_letter_is_taken_once,
+    },
+    Case {
+        name: "a_dead_letter_is_no_event",
+        run: a_dead_letter_is_no_event,
+    },
+    Case {
+        name: "forgotten_events_forget_the_dead_letters",
+        run: forgotten_events_forget_the_dead_letters,
+    },
+];
+
+/// A dead letter of the command `command`, its input naming `order`.
+fn letter(command: &str, order: &str) -> DeadLetter {
+    DeadLetter {
+        binding: "contract-binding".to_owned(),
+        event: Some("contract.tasks.Opened".to_owned()),
+        command: command.to_owned(),
+        input: Map::from_iter([("order".to_owned(), json!(order))]),
+        outcome: Some("refused".to_owned()),
+        error: "contract.tasks.Refused".to_owned(),
+        attempts: 5,
+    }
+}
+
+fn keep(case: &str, store: &mut dyn Store, letter: &DeadLetter) -> u64 {
+    store
+        .keep_dead_letter(letter)
+        .unwrap_or_else(|error| panic!("{case}: the dead letter is kept: {error}"))
+}
+
+fn letters(case: &str, store: &mut dyn Store) -> Vec<(u64, DeadLetter)> {
+    store
+        .dead_letters()
+        .unwrap_or_else(|error| panic!("{case}: the dead letters read: {error}"))
+}
+
+/// Each dead letter kept is listed with all it was kept with, its input included, by id; each id
+/// is greater than the one before, and none is `0`.
+fn a_kept_dead_letter_is_listed_with_its_input(store: &mut dyn Store) {
+    let case = "a_kept_dead_letter_is_listed_with_its_input";
+    assert_eq!(
+        letters(case, store),
+        [],
+        "{case}: an empty store keeps none"
+    );
+    let (first, second) = (
+        letter("contract.tasks.Do", "a"),
+        letter("contract.tasks.Do", "b"),
+    );
+    let one = keep(case, store, &first);
+    let two = keep(case, store, &second);
+    assert!(one > 0 && two > one, "{case}: ids {one}, {two}");
+    assert_eq!(
+        letters(case, store),
+        [(one, first), (two, second)],
+        "{case}"
+    );
+}
+
+/// A dead letter is answered once by [`Store::take_dead_letter`], and then neither listed nor
+/// answered again; an id no dead letter has answers `None`.
+fn a_dead_letter_is_taken_once(store: &mut dyn Store) {
+    let case = "a_dead_letter_is_taken_once";
+    let (first, second) = (
+        letter("contract.tasks.Do", "a"),
+        letter("contract.tasks.Do", "b"),
+    );
+    let one = keep(case, store, &first);
+    let two = keep(case, store, &second);
+    let take = |store: &mut dyn Store, id: u64| {
+        store
+            .take_dead_letter(id)
+            .unwrap_or_else(|error| panic!("{case}: dead letter {id} is taken: {error}"))
+    };
+    assert_eq!(take(store, one), Some(first), "{case}: the first take");
+    assert_eq!(take(store, one), None, "{case}: the second take");
+    assert_eq!(take(store, two + 100), None, "{case}: an id never kept");
+    assert_eq!(
+        letters(case, store),
+        [(two, second)],
+        "{case}: the other waits"
+    );
+}
+
+/// A dead letter is no event: neither the store nor its reading handle reads it back, and a read
+/// after the head taken before it answers nothing.
+fn a_dead_letter_is_no_event(store: &mut dyn Store) {
+    let case = "a_dead_letter_is_no_event";
+    store
+        .commit_events(&[named("P")], &[])
+        .unwrap_or_else(|error| panic!("{case}: the events commit: {error}"));
+    let head = store
+        .events_head()
+        .unwrap_or_else(|error| panic!("{case}: the head reads: {error}"));
+    let id = keep(case, store, &letter("contract.tasks.Do", "a"));
+    assert_eq!(names(&after(case, store, 0)), ["P"], "{case}");
+    assert_eq!(after(case, store, head), [], "{case}: after the head");
+    if let Some(reading) = store.reading() {
+        let read = reading
+            .events_after(0, usize::MAX)
+            .unwrap_or_else(|error| panic!("{case}: the handle reads the events: {error}"));
+        assert_eq!(names(&read), ["P"], "{case}: the handle reads it alike");
+    }
+    store
+        .take_dead_letter(id)
+        .unwrap_or_else(|error| panic!("{case}: the dead letter is taken: {error}"));
+    assert_eq!(
+        names(&after(case, store, 0)),
+        ["P"],
+        "{case}: a take is none"
+    );
+}
+
+/// Once a store forgets its events, it forgets its dead letters too; one kept after has an id
+/// greater than every forgotten one's.
+fn forgotten_events_forget_the_dead_letters(store: &mut dyn Store) {
+    let case = "forgotten_events_forget_the_dead_letters";
+    let forgotten = keep(case, store, &letter("contract.tasks.Do", "a"));
+    store
+        .forget_events()
+        .unwrap_or_else(|error| panic!("{case}: the events are forgotten: {error}"));
+    assert_eq!(letters(case, store), [], "{case}: none is kept");
+    assert_eq!(
+        store
+            .take_dead_letter(forgotten)
+            .unwrap_or_else(|error| panic!("{case}: the take is answered: {error}")),
+        None,
+        "{case}: a forgotten one is not taken"
+    );
+    let later = letter("contract.tasks.Do", "b");
+    let id = keep(case, store, &later);
+    assert!(id > forgotten, "{case}: {id} after {forgotten}");
+    assert_eq!(letters(case, store), [(id, later)], "{case}");
+}
 
 fn row(state: &str, title: &str) -> Row {
     Row {

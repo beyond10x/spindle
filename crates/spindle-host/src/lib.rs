@@ -31,7 +31,8 @@ pub use decisions::Answers;
 pub use host::{
     Cause, Cursor, DELIVERY_LIMIT, ESCALATIONS_KEPT, Escalated, Escalation, Failed, History,
     HistoryCursor, Host, HostError, Invoked, Listed, Page, Published, RETRY_ATTEMPTS, Ran, Reader,
-    RefusedCommand, Report, Retries, Revision, Seed, Stores, World, reads, retried,
+    RefusedCommand, Report, Retries, Revision, Seed, Stores, Undelivered, World, reads, retried,
 };
+pub use spindle_kernel::DeadLetter;
 pub use spindle_timer::{Clock, ManualClock, SystemClock};
 pub use world::read_world;

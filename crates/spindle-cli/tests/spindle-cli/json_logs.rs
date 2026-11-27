@@ -25,9 +25,11 @@ const INDEX_NOTE: &str = "notes.index.IndexNote";
 const RETIRE: &str = "vault.access.RetireRole";
 const OPERATOR: &str = "vault.access.Operator";
 
-/// The drop line `run` prints without `--log-format`, as it printed it before the flag existed.
+/// The line `run` prints without `--log-format` for a bound command that did not run, as it
+/// printed it before the flag existed, but for its fate: kept as a dead letter where it was dropped
+/// (story:dead-letters-kept-and-replayed).
 const DROP_LINE: &str = "b10x-spindle: index did not run notes.index.IndexNote (index-note), \
-                         dropped after 5 attempts: unsupported: `input_absent:`, in \
+                         kept as dead letter 1 after 5 attempts: unsupported: `input_absent:`, in \
                          `notes.index.IndexNote/body-missing`";
 
 /// How long `run` may take to admit, open its state and print where it listens.
@@ -307,6 +309,7 @@ fn a_dropped_binding_command_names_its_fields() {
     assert_eq!(line["command"], INDEX_NOTE, "{line:?}");
     assert_eq!(line["binding"], "index-note", "{line:?}");
     assert_eq!(line["attempts"], 5, "{line:?}");
+    assert_eq!(line["dead_letter"], 1, "{line:?}");
     assert!(
         line["error"]
             .as_str()

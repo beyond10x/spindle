@@ -588,3 +588,50 @@ fn a_database_url_holding_an_unencoded_at_or_no_host_is_refused() {
         );
     }
 }
+
+/// A dead letter kept in a PostgreSQL store is read back by a store opened again on the same
+/// tables, is no event, and is taken for its replay once (story:dead-letters-kept-and-replayed).
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_dead_letter_survives_on_postgres() {
+    let database = database();
+    for case in contract::DEAD_LETTER_CASES {
+        let mut store = open(&database, &fresh("letters"));
+        (case.run)(&mut store);
+    }
+    let component = fresh("letters");
+    let letter = spindle_kernel::DeadLetter {
+        binding: "ship-on-order".to_owned(),
+        event: Some("depot.orders.OrderPlaced".to_owned()),
+        command: "depot.shipping.Ship".to_owned(),
+        input: serde_json::Map::from_iter([("order_id".to_owned(), json!("o-1"))]),
+        outcome: None,
+        error: "undecided".to_owned(),
+        attempts: 5,
+    };
+    let id = open(&database, &component)
+        .keep_dead_letter(&letter)
+        .expect("the letter is kept");
+    let mut reopened = open(&database, &component);
+    assert_eq!(
+        reopened.dead_letters().expect("the letters read"),
+        vec![(id, letter.clone())]
+    );
+    assert!(
+        reopened
+            .events_after(0, usize::MAX)
+            .expect("the events read")
+            .is_empty(),
+        "a dead letter is no event"
+    );
+    assert_eq!(
+        reopened.take_dead_letter(id).expect("the letter is taken"),
+        Some(letter)
+    );
+    assert_eq!(
+        open(&database, &component)
+            .take_dead_letter(id)
+            .expect("a second take is answered"),
+        None
+    );
+}
