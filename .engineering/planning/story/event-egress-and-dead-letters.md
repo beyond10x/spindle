@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:event-egress-and-dead-letters
 kind: story
-status: draft
+status: proposed
 title: Committed events leave to a broker or webhook, and exhausted commands land as dead letters
 summary: Events bound by the environment are delivered at least once to a broker or webhook; a binding command that exhausts its retries is kept and replayable.
 tags:
@@ -11,7 +11,9 @@ relations:
 - serves: vision:spindle
 - decomposes: epic:production-service
 - informed_by: story:committed-events-survive-restart
-revision: 1
+revision: 3
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-27T09:56:32Z", actor: "human:operator", revision: 3}
 ---
 # Committed events leave to a broker or webhook, and exhausted commands land as dead letters
 
@@ -53,3 +55,15 @@ environment names the broker or webhook; a specification names neither (AGENTS.m
 ## Needs the owner's acceptance
 
 The delivery is an outbound connection a run makes on its own.
+
+## Architecture decision
+
+Option A, picked by the operator on 2026-11-27: webhook delivery of published events plus stored
+dead letters, with verbs to list and replay them. It reuses the TLS client already in
+`spindle-cli` and adds an outbox cursor and a dead-letter table in the SQLite and PostgreSQL
+stores; no broker client and no new dependency. A broker can sit behind a webhook relay. The pick
+accepts the outbound connection a run makes on its own. It builds on
+`story:committed-events-survive-restart`.
+
+Not taken: B (A plus a broker client, a new dependency), C (dead letters only, no egress), D
+(defer).

@@ -2,13 +2,15 @@
 format: aep.planning-md/3
 id: story:spec-change-over-stored-rows
 kind: story
-status: draft
+status: proposed
 title: A specification change over a durable store is refused or migrated
 summary: A run on a store an earlier specification wrote starts when its rows stay readable and otherwise exits 3 naming each entity and field.
 relations:
 - serves: vision:spindle
 - decomposes: epic:production-service
-revision: 1
+revision: 3
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-27T09:56:32Z", actor: "human:operator", revision: 3}
 ---
 # A specification change over a durable store is refused or migrated
 
@@ -41,3 +43,12 @@ new types, with nothing to say a field was removed or retyped.
 
 - What counts as compatible (as ESS classifies a specification change, not a second rule here),
   and the shape of a migration: a command, a mapping in the environment, or refusal only.
+
+## Architecture decision
+
+Option A, picked by the operator on 2026-11-27: a store records the model's digest and the shapes
+of its entities; `run` refuses to start on a store whose shapes do not fit the specification and
+exits 3, naming each incompatible entity and field. No migration.
+
+Not taken: B (A plus a migration mapping in the environment document), C (A plus a `state migrate`
+verb), D (defer).

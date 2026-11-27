@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:verified-caller-token
 kind: story
-status: draft
+status: proposed
 title: A served run verifies a signed caller token itself
 summary: Each request's OIDC/JWT token is verified against the issuer's JWKS and its claims mapped to the actor and caller attributes.
 tags:
@@ -12,7 +12,9 @@ relations:
 - decomposes: epic:production-service
 - informed_by: architecture-decision-record:http-caller-proof
 - informed_by: story:http-caller-proves-actor
-revision: 1
+revision: 3
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-27T09:56:32Z", actor: "human:operator", revision: 3}
 ---
 # A served run verifies a signed caller token itself
 
@@ -52,3 +54,13 @@ as any actor. `architecture-decision-record:http-caller-proof` chose the proxy h
 ## Needs the owner's acceptance
 
 The JWKS fetch is an outbound connection a run makes on its own.
+
+## Architecture decision
+
+Option A, picked by the operator on 2026-11-27: a JWT checked against a JWKS beside
+`--trusted-caller-header`, which keeps working. New dependency `jsonwebtoken`, a claim-mapping
+file, and a periodic JWKS fetch. The pick accepts the JWKS fetch as an outbound connection a run
+makes on its own.
+
+Not taken: B (the token replaces the header flag), C (no change; the docs tell the proxy what to
+strip), D (defer).
