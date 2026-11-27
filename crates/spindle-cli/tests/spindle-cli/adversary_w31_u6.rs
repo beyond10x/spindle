@@ -1560,6 +1560,508 @@ mod postgres {
         );
     }
 
+    /// [`run`] with a pool of two connections for each component: the round-6 cases start up to
+    /// three processes beside the lane's other cases, on one server's connection limit.
+    fn lean(environment: &Path, schema: &str, lease: &str) -> Command {
+        let mut command = run(environment, schema, lease);
+        command.env("SPINDLE_SETTING_DATABASE_POOL", "2");
+        command
+    }
+
+    /// What a standby prints once it ended sessions holding a lease row past the lease's end.
+    const RAN_OUT: &str = "ran out while a process still held its row";
+
+    /// A database session of the test's own, as the owner, inside a transaction that ran
+    /// `statement` and holds what it locked until [`Holder::end`]; the server never ends it for
+    /// idling.
+    struct Holder {
+        pid: i32,
+        end: mpsc::Sender<()>,
+        thread: std::thread::JoinHandle<Result<(), String>>,
+    }
+
+    impl Holder {
+        fn start(statement: String) -> Self {
+            let (started, starting) = mpsc::channel();
+            let (end, ending) = mpsc::channel::<()>();
+            let thread = std::thread::spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("a runtime");
+                runtime.block_on(async {
+                    let (client, connection) =
+                        tokio_postgres::connect(&owner_url(), tokio_postgres::NoTls)
+                            .await
+                            .expect("the test database accepts its owner");
+                    let driver = tokio::spawn(connection);
+                    client
+                        .batch_execute("SET idle_in_transaction_session_timeout = 0; BEGIN")
+                        .await
+                        .expect("a transaction begins");
+                    client
+                        .batch_execute(&statement)
+                        .await
+                        .unwrap_or_else(|error| panic!("{statement}: {error}"));
+                    let pid: i32 = client
+                        .query_one("SELECT pg_backend_pid()", &[])
+                        .await
+                        .expect("the session's pid")
+                        .get(0);
+                    started.send(pid).expect("the test waits for the session");
+                    let _ = ending.recv();
+                    let committed = client
+                        .batch_execute("COMMIT")
+                        .await
+                        .map_err(|error| error.to_string());
+                    drop(client);
+                    let _ = driver.await;
+                    committed
+                })
+            });
+            let pid = starting
+                .recv_timeout(ANSWER)
+                .expect("the session holds its locks within 10 s");
+            Self { pid, end, thread }
+        }
+
+        /// Whether the session is still open on the server.
+        fn alive(&self) -> bool {
+            sql_value(&format!(
+                "SELECT count(*) FROM pg_stat_activity WHERE pid = {}",
+                self.pid
+            ))
+            .as_deref()
+                == Some("1")
+        }
+
+        /// Commits the transaction: an error where the server ended the session.
+        fn end(self) -> Result<(), String> {
+            let _ = self.end.send(());
+            self.thread.join().expect("the session's thread ends")
+        }
+    }
+
+    /// The leases of `components` in `schema`, taken by the test for `term` on a connection of
+    /// its own, never renewed.
+    fn held_by_the_test(
+        schema: &str,
+        components: &[&str],
+        term: Duration,
+    ) -> spindle_kernel::Lease {
+        let mut database = spindle_kernel::Database::new(owner_url());
+        database.schema = schema.to_owned();
+        let mut lease =
+            spindle_kernel::Lease::connect(&database, term).expect("the lease connects");
+        for component in components {
+            lease
+                .take(component)
+                .expect("the lease is read")
+                .expect("the lease is free");
+        }
+        lease
+    }
+
+    /// Whether the leader process `pid` has a database session inside a transaction that was
+    /// given a transaction id over 150 ms ago, found by the client ports of its sockets.
+    fn inside_a_write(pid: u32) -> bool {
+        let mut inodes = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(format!("/proc/{pid}/fd")) {
+            for entry in entries.flatten() {
+                if let Ok(target) = std::fs::read_link(entry.path())
+                    && let Some(inode) = target
+                        .to_str()
+                        .and_then(|target| target.strip_prefix("socket:["))
+                        .and_then(|rest| rest.strip_suffix(']'))
+                {
+                    inodes.push(inode.to_owned());
+                }
+            }
+        }
+        let mut ports = Vec::new();
+        for table in ["/proc/net/tcp", "/proc/net/tcp6"] {
+            let Ok(text) = std::fs::read_to_string(table) else {
+                continue;
+            };
+            for line in text.lines().skip(1) {
+                let fields: Vec<&str> = line.split_whitespace().collect();
+                if fields.len() > 9 && inodes.iter().any(|inode| inode == fields[9]) {
+                    ports.extend(
+                        fields[1]
+                            .rsplit(':')
+                            .next()
+                            .and_then(|port| u16::from_str_radix(port, 16).ok()),
+                    );
+                }
+            }
+        }
+        if ports.is_empty() {
+            return false;
+        }
+        let list = ports
+            .iter()
+            .map(u16::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        sql_value(&format!(
+            "SELECT count(*) FROM pg_stat_activity WHERE client_port IN ({list}) \
+             AND state = 'idle in transaction' AND backend_xid IS NOT NULL \
+             AND xact_start < now() - interval '150 ms'"
+        ))
+        .as_deref()
+            != Some("0")
+    }
+
+    /// Round 6, the ending against a live leader. On a 1 s lease board's event table is locked
+    /// against inserts for 1.5 s while the leader writes a command. The leader is not paused: its
+    /// renewals wait behind its own write's hold on the lease row, so the lease runs out by its
+    /// committed row while the leader runs. The documents scope the ending to a write paused past
+    /// the lease; this write lands once the lock ends, as it did before the ending. The standby
+    /// ends no session of the leader, the command is answered `201`, and the leader leads on.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_live_leaders_write_held_up_past_a_short_lease_is_not_ended() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = environment(directory.path());
+        let schema = schema();
+        let mut leader = Replica::start(lean(&environment, &schema, "1"));
+        leader.ready_by(Instant::now() + ANSWER);
+        let standby = Replica::start(lean(&environment, &schema, "1"));
+        let (status, body) = standby.ready();
+        assert_eq!(status, 503, "{body}");
+        let (status, answer) = leader.open("t1");
+        assert_eq!(status, 201, "{answer}");
+        let lock = locked(format!("{schema}.spindle_board_events"), "SHARE", 1.5);
+        let sent = Instant::now();
+        let (status, body) = leader.open("t2");
+        let took = sent.elapsed();
+        lock.join().expect("the lock ends");
+        let (old_leads, leads) = settled_leader(&mut leader, &standby);
+        let held = task_ids(leads);
+        let report = format!(
+            "t2 answered {status} after {took:?}: {body}; the old leader {}; held {held:?}\n\
+             standby:\n{}\nleader:\n{}",
+            if old_leads {
+                "leads on"
+            } else {
+                "lost the lease"
+            },
+            standby.printed(),
+            leader.printed()
+        );
+        eprintln!("{report}");
+        assert!(
+            !standby.has_line(RAN_OUT),
+            "a standby ended the write of a live leader, which was not paused: {report}"
+        );
+        assert_eq!(status, 201, "{report}");
+        assert!(old_leads, "{report}");
+    }
+
+    /// Round 6, the in-flight command of a live leader whose write a standby ended, and what
+    /// follows. Set up as above (a 1 s lease, inserts on board's events held up 1.5 s). The
+    /// command is whole: answered `201` it is held, else not. Where the old leader lost the lease
+    /// it is answered `503`, as a leader that lost its lease answers. Whoever leads once things
+    /// settle writes the next three commands (`201`): no ended session is handed out again.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_leader_whose_write_a_standby_ended_answers_consistently_and_writes_on() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = environment(directory.path());
+        let schema = schema();
+        let mut leader = Replica::start(lean(&environment, &schema, "1"));
+        leader.ready_by(Instant::now() + ANSWER);
+        let standby = Replica::start(lean(&environment, &schema, "1"));
+        let (status, body) = standby.ready();
+        assert_eq!(status, 503, "{body}");
+        let (status, answer) = leader.open("t1");
+        assert_eq!(status, 201, "{answer}");
+        let lock = locked(format!("{schema}.spindle_board_events"), "SHARE", 1.5);
+        let (status, body) = leader.open("t2");
+        lock.join().expect("the lock ends");
+        let (old_leads, leads) = settled_leader(&mut leader, &standby);
+        let held = task_ids(leads);
+        let printed = format!(
+            "t2 answered {status}: {body}; the old leader {}; held {held:?}\nstandby:\n{}\n\
+             leader:\n{}",
+            if old_leads {
+                "leads on"
+            } else {
+                "lost the lease"
+            },
+            standby.printed(),
+            leader.printed()
+        );
+        eprintln!("{printed}");
+        assert_eq!(status == 201, held.contains(&"t2".to_owned()), "{printed}");
+        if !old_leads {
+            assert_eq!(status, 503, "{printed}");
+        }
+        for id in ["n1", "n2", "n3"] {
+            let (status, body) = call(
+                leads,
+                "PUT",
+                &format!("/tasks/{id}"),
+                Some(&json!({"title": format!("task {id}")})),
+            );
+            assert_eq!(status, 201, "{id}: {body}\n{printed}");
+        }
+    }
+
+    /// Round 6, the paused leader's in-flight command. Commands flow to the leader one after
+    /// another; it is paused until a pause lands inside one of its writes. The standby ends that
+    /// write's session and takes over. Once the old leader resumes, the command it was writing is
+    /// answered `503` (it lost the lease) and is not held; every command it answered `201` is held
+    /// at the new leader and none it answered otherwise; the old leader exits 1.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_leader_paused_inside_a_write_answers_that_command_503_and_lands_nothing() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = environment(directory.path());
+        let schema = schema();
+        let mut leader = Replica::start(lean(&environment, &schema, LEASE));
+        leader.ready_by(Instant::now() + ANSWER);
+        let standby = Replica::start(lean(&environment, &schema, LEASE));
+        assert_eq!(standby.ready().0, 503);
+        let (status, answer) = leader.open("t1");
+        assert_eq!(status, 201, "{answer}");
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let firing = fire(leader.address, "f", Arc::clone(&stop));
+        let pid = leader.child.id();
+        let mut inside = false;
+        for attempt in 0..80_u64 {
+            leader.signal(rustix::process::Signal::STOP);
+            std::thread::sleep(Duration::from_millis(200));
+            if inside_a_write(pid) {
+                inside = true;
+                break;
+            }
+            leader.signal(rustix::process::Signal::CONT);
+            // A pause after a varying run, so it does not fall in step with the caller.
+            std::thread::sleep(Duration::from_millis(1 + attempt * 7 % 37));
+        }
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        if !inside {
+            leader.signal(rustix::process::Signal::CONT);
+            let answers = firing.join().expect("the commands were sent");
+            panic!("no pause landed inside a write of the leader: {answers:?}");
+        }
+        let took = standby.line_by(TOOK, Instant::now() + Duration::from_secs(6));
+        assert!(took, "{}", standby.printed());
+        standby.ready_by(Instant::now() + ANSWER);
+        leader.signal(rustix::process::Signal::CONT);
+        let answers = firing.join().expect("the commands were sent");
+        let code = leader.exit_within(ANSWER);
+        let held = task_ids(standby.address);
+        let printed = format!(
+            "answers {answers:?}; held {held:?}; old leader exited {code:?}\nstandby:\n{}\n\
+             leader:\n{}",
+            standby.printed(),
+            leader.printed()
+        );
+        eprintln!("{printed}");
+        for (id, status) in &answers {
+            assert_eq!(
+                *status == 201,
+                held.contains(id),
+                "{id} answered {status}: {printed}"
+            );
+        }
+        let (id, status) = answers.last().expect("a command was in flight");
+        assert_eq!(
+            *status, 503,
+            "the command {id} the paused leader was writing: {printed}"
+        );
+        assert_eq!(code, Some(1), "{printed}");
+    }
+
+    /// Round 6, a multixact `xmax`. A lease of board taken by the test for 2 s, never renewed, and
+    /// its row held by two sessions `FOR SHARE`, so the row's `xmax` is a multixact no
+    /// transaction-id lock names; a third session holds a lock on the lease table and a
+    /// transaction id of its own but not the row. Past the lease's end the standby misfires on
+    /// none: the third session is not ended. Within 4 s of the lease's end the standby either
+    /// takes the lease, ending the two holders, or names the lease of board in a line, as it warns
+    /// where the server refuses to end a holder; it does not stand by in silence. Once the
+    /// holders commit it takes the lease within 4 s.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_lease_row_two_sessions_share_past_its_end_is_not_waited_on_in_silence() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = environment(directory.path());
+        let schema = schema();
+        let taken = Instant::now();
+        let _lease = held_by_the_test(&schema, &["board", "ledger"], Duration::from_secs(2));
+        let table = format!("{schema}.spindle_board_p_lease");
+        let first = Holder::start(format!("SELECT body FROM {table} FOR SHARE"));
+        let second = Holder::start(format!("SELECT body FROM {table} FOR SHARE"));
+        let bystander = Holder::start(format!(
+            "LOCK TABLE {table} IN ACCESS SHARE MODE; CREATE TABLE {schema}.bystander (x int); \
+             INSERT INTO {schema}.bystander VALUES (1)"
+        ));
+        let xmax = sql_value(&format!(
+            "SELECT xmax::text || ' multi ' || (xmax::text::bigint NOT IN (SELECT \
+             backend_xid::text::bigint FROM pg_stat_activity WHERE backend_xid IS NOT NULL))::text \
+             FROM {table}"
+        ));
+        eprintln!("the lease row's xmax: {xmax:?}");
+        let mut standby = Replica::start(lean(&environment, &schema, LEASE));
+        let (status, body) = standby.ready();
+        assert_eq!(status, 503, "{body}");
+
+        let deadline = taken + Duration::from_secs(6);
+        let named = |standby: &Replica| {
+            standby
+                .printed()
+                .lines()
+                .any(|line| line.contains("lease of board") && !line.contains("standing by"))
+        };
+        while !named(&standby) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let told = named(&standby);
+        let holders = (first.alive(), second.alive());
+        assert!(
+            bystander.alive(),
+            "a session holding no lock on the lease row was ended: {}",
+            standby.printed()
+        );
+        assert!(standby.running(), "{}", standby.printed());
+        let first_ended = first.end().is_err();
+        let second_ended = second.end().is_err();
+        bystander
+            .end()
+            .expect("the session not holding the row commits");
+        assert!(
+            standby.line_by(TOOK, Instant::now() + Duration::from_secs(4)),
+            "the standby did not take the lease within 4 s of the holders' commit: {}",
+            standby.printed()
+        );
+        eprintln!(
+            "the holders alive at 4 s past the lease's end: {holders:?}; ended: \
+             {first_ended} {second_ended}"
+        );
+        assert!(
+            told,
+            "4 s past the lease's end, its row held by two sessions FOR SHARE (holders alive: \
+             {holders:?}), the standby stood by naming nothing but standing by: {}",
+            standby.printed()
+        );
+    }
+
+    /// Round 6, another component's lease. Board's lease is taken by the test for 2 s and its row
+    /// held `FOR UPDATE` by one session; ledger's lease is taken for 60 s and its row held
+    /// `FOR UPDATE` by a second session which also reads board's lease table, so it holds a lock
+    /// on that table. Past board's end the standby ends the first session and takes board's
+    /// lease; it ends neither the second session, which holds no row of board and whose ledger
+    /// lease runs, nor names ledger's lease as run out.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_standby_ends_no_session_holding_another_components_running_lease() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = environment(directory.path());
+        let schema = schema();
+        let taken = Instant::now();
+        let _board = held_by_the_test(&schema, &["board"], Duration::from_secs(2));
+        let _ledger = held_by_the_test(&schema, &["ledger"], Duration::from_secs(60));
+        let board = Holder::start(format!(
+            "SELECT body FROM {schema}.spindle_board_p_lease FOR UPDATE"
+        ));
+        let ledger = Holder::start(format!(
+            "SELECT body FROM {schema}.spindle_ledger_p_lease FOR UPDATE; \
+             SELECT count(*) FROM {schema}.spindle_board_p_lease"
+        ));
+        let standby = Replica::start(lean(&environment, &schema, LEASE));
+        let (status, body) = standby.ready();
+        assert_eq!(status, 503, "{body}");
+        // A standby takes board's lease and keeps it while it stands by for ledger's; it prints
+        // its takes once it holds them all, so the row's token tells.
+        let token = || {
+            sql_value(&format!(
+                "SELECT body->>'token' FROM {schema}.spindle_board_p_lease"
+            ))
+        };
+        let deadline = taken + Duration::from_secs(6);
+        while token().as_deref() != Some("2") {
+            assert!(
+                Instant::now() < deadline,
+                "the standby did not take board's lease within 4 s of its end: {}",
+                standby.printed()
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        std::thread::sleep(Duration::from_secs(1));
+        assert!(standby.has_line(RAN_OUT), "{}", standby.printed());
+        assert!(
+            ledger.alive(),
+            "a session holding the row of ledger's running lease was ended: {}",
+            standby.printed()
+        );
+        assert!(
+            !standby.has_line("lease of ledger ran out"),
+            "{}",
+            standby.printed()
+        );
+        assert!(
+            board.end().is_err(),
+            "the session holding board's row past its end was not ended: {}",
+            standby.printed()
+        );
+        ledger
+            .end()
+            .expect("the session holding ledger's row commits");
+    }
+
+    /// Round 6, the new leader after a failover. On a 1 s lease a leader and two standbys run;
+    /// the leader is killed. One standby takes over and commands flow to it for 4 s while the
+    /// other stands by: the one standing by ends no session of the new leader, which answers
+    /// every command `201`.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn after_a_failover_the_standby_left_ends_no_session_of_the_new_leader() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = environment(directory.path());
+        let schema = schema();
+        let leader = Replica::start(lean(&environment, &schema, "1"));
+        leader.ready_by(Instant::now() + ANSWER);
+        let first = Replica::start(lean(&environment, &schema, "1"));
+        let second = Replica::start(lean(&environment, &schema, "1"));
+        assert_eq!(first.ready().0, 503);
+        assert_eq!(second.ready().0, 503);
+        leader.signal(rustix::process::Signal::KILL);
+        let deadline = Instant::now() + Duration::from_secs(6);
+        while !first.has_line(TOOK) && !second.has_line(TOOK) {
+            assert!(
+                Instant::now() < deadline,
+                "no standby took over: {}\n{}",
+                first.printed(),
+                second.printed()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let (new, other) = if first.has_line(TOOK) {
+            (&first, &second)
+        } else {
+            (&second, &first)
+        };
+        new.ready_by(Instant::now() + ANSWER);
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let firing = fire(new.address, "f", Arc::clone(&stop));
+        std::thread::sleep(Duration::from_secs(4));
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        let answers = firing.join().expect("the commands were sent");
+        let printed = format!(
+            "answers {answers:?}\nnew leader:\n{}\nstanding by:\n{}",
+            new.printed(),
+            other.printed()
+        );
+        assert!(!other.has_line(RAN_OUT), "{printed}");
+        assert!(!new.has_line(RAN_OUT), "{printed}");
+        assert!(
+            answers.len() > 3 && answers.iter().all(|(_, status)| *status == 201),
+            "{printed}"
+        );
+    }
+
     /// Waits until `webhook` accepted `count` bodies, at most 30 s.
     fn accepted(webhook: &Webhook, count: usize) {
         let deadline = Instant::now() + Duration::from_secs(30);
