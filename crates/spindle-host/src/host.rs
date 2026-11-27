@@ -3030,6 +3030,7 @@ impl Files {
     /// [`HostError::Misfit`] for the first store holding a row the specification cannot read,
     /// nothing recorded; [`HostError::Store`] where a store cannot be opened, read or written.
     fn checked(ir: &EssIr, state: &Path, placements: &Placements) -> Result<Self, HostError> {
+        #[cfg_attr(not(feature = "sqlite"), allow(unused_mut))]
         let mut files = Self::default();
         #[cfg(feature = "sqlite")]
         {
