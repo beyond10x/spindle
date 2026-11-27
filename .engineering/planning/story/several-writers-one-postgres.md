@@ -63,7 +63,7 @@ scope:
   path: website/docs/concepts/observe.md
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 9
+revision: 10
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T09:56:32Z", actor: "human:operator", revision: 3}
 ---
@@ -133,7 +133,7 @@ Taken 2026-11-27 on the scoper's recommended option, each reversible.
 - D7 A: a `database_lease` setting in seconds, default 10, renewed at a third of that, expiry
   judged by the database's clock.
 - D8 A: `a_retried_request_lands_once` moves to `story:request-id-idempotency`, and the edge to
-  that story becomes `informed_by`; put to the operator, and this default stands until answered.
+  that story becomes `informed_by`; answered A by the host operator on 2026-11-27.
 
 ## Architecture decision
 

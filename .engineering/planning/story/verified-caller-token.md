@@ -57,7 +57,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 8
+revision: 9
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T09:56:32Z", actor: "human:operator", revision: 3}
 ---
@@ -110,8 +110,8 @@ The process tests are in `crates/spindle-cli/tests/spindle-cli/caller_token.rs`,
 Taken 2026-11-27 on the scoper's recommended option, each reversible.
 
 - D1 A: `jsonwebtoken` 9.3.1 with `default-features = false`, on the `ring` 0.17 and `base64` 0.22
-  already in the lock, so `jsonwebtoken` is the only new crate; put to the operator, and this
-  default stands until answered. Not taken: 10.4.0 on `rust_crypto` (`rsa` 0.9 carries
+  already in the lock, so `jsonwebtoken` is the only new crate; answered A by the host operator on 2026-11-27, and this
+  default stands. Not taken: 10.4.0 on `rust_crypto` (`rsa` 0.9 carries
   RUSTSEC-2023-0071), on `aws_lc_rs` (a C build on all five release targets), or on a ring provider
   written in Spindle.
 - D2 A: one caller source per run: the token flag given with `--trusted-caller-header` exits 1; the

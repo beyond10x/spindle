@@ -49,7 +49,7 @@ scope:
   path: website/docs/concepts/environment-and-admission.md
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 9
+revision: 11
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T09:56:32Z", actor: "human:operator", revision: 3}
 ---
@@ -112,7 +112,7 @@ Taken 2026-11-27 on the scoper's recommended option, each reversible.
 - D1 A: a misfit is Spindle's own rule over the recorded shapes, counted only for entities that
   hold rows (field removed, field retyped by structure, non-optional field added, entity removed),
   and an ESS gap asks `ess-diff` to classify entity field changes for history so the rule can move
-  there; put to the operator, and this default stands until answered. Not taken: B, `ess-diff`
+  there; answered A by the host operator on 2026-11-27. Not taken: B, `ess-diff`
   0.99.2's history dimension, which answers `unknown` for every entity field change and fails
   acceptance 1 or 2; C, B after an ESS release that classifies them.
 - D2 A: a store with rows and no record starts, records the current model and prints one line
@@ -120,6 +120,11 @@ Taken 2026-11-27 on the scoper's recommended option, each reversible.
 - D3 A: the record is written at open, after the check passes, and only when the stored digest
   differs from the current one.
 - D4 A: a lifecycle state removed while rows rest in it is a misfit, named by entity and state.
+
+
+The ESS gap is filed in the ESS repository as a section of
+`story:verify-diff-decides-what-the-model-settles` (draft, test `entity_stored_history` planned);
+this rule moves to `ess-diff` once a release classifies entity field changes for history.
 
 ## Architecture decision
 

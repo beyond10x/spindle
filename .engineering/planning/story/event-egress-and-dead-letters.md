@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:event-egress-and-dead-letters
 kind: story
-status: proposed
+status: rejected
 title: Committed events leave to a broker or webhook, and exhausted commands land as dead letters
 summary: Events bound by the environment are delivered at least once to a broker or webhook; a binding command that exhausts its retries is kept and replayable.
 tags:
@@ -11,9 +11,10 @@ relations:
 - serves: vision:spindle
 - decomposes: epic:production-service
 - informed_by: story:committed-events-survive-restart
-revision: 6
+revision: 8
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T09:56:32Z", actor: "human:operator", revision: 3}
+- {from: "proposed", to: "rejected", at: "2026-11-27T11:32:43Z", actor: "human:operator", revision: 8}
 ---
 # Committed events leave to a broker or webhook, and exhausted commands land as dead letters
 
@@ -53,8 +54,8 @@ Taken 2026-11-27 on the scoper's recommended option, each reversible.
 
 - D1 A: split into `story:event-egress-webhook` (the scoper's D2, D3, D4, D7) and
   `story:dead-letters-kept-and-replayed` (D3, D5, D6, D8); each holds its own Outcome, Acceptance,
-  Scope and decisions, and the scope entries are recorded there, not here. Put to the operator,
-  and this default stands until answered. Not taken: B, one story. This story is to be retired;
+  Scope and decisions, and the scope entries are recorded there, not here. answered A by the host operator on 2026-11-27,
+  and this default stands. Not taken: B, one story. This story is to be retired;
   the store refuses `proposed -> archived`, so it stays `proposed` until the coordinator moves it.
 
 ## Needs the owner's acceptance

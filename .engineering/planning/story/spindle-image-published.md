@@ -28,7 +28,7 @@ scope:
   path: scripts/release-linux-binary.sh
 - confidence: cited
   path: website/docs/getting-started.md
-revision: 13
+revision: 14
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T09:56:33Z", actor: "human:operator", revision: 6}
 ---
@@ -140,8 +140,8 @@ image only), D (defer).
 Taken 2026-11-27 on the scoper's recommended option, each reversible.
 
 - D1 A: the digest is shown in the `IMAGES` asset and the job summary; the workflow still never
-  edits the release page, and `AGENTS.md` step 7 verifies the asset; put to the operator, and this
-  default stands until answered. Not taken: B, `publish` edits the notes with `gh release edit`; C,
+  edits the release page, and `AGENTS.md` step 7 verifies the asset; answered A by the host operator on 2026-11-27, and this
+  default stands. Not taken: B, `publish` edits the notes with `gh release edit`; C,
   a manual bot step after the run.
 - D2 A: one image job per architecture on native runners builds, loads and checks version, user
   and answer before it pushes; a merge job makes the manifest list `<version>` and confirms both
