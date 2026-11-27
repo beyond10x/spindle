@@ -163,14 +163,17 @@ fn the_rally_example_reads_stdin_as_its_page_says() {
 }
 
 /// Every flag only a served run reads, with a value it would take; `--port` is the story's own.
-const SERVED_ONLY: [&[&str]; 10] = [
+const SERVED_ONLY: [&[&str]; 13] = [
     &["--port", "0"],
     &["--http", "binding.yaml"],
     &["--address", "127.0.0.1"],
     &["--fixed-actor", "rally.Player"],
+    &["--fixed-caller", "{}"],
     &["--trusted-caller-header", "X-Caller"],
     &["--trusted-caller-secret", "secret"],
     &["--observe"],
+    &["--observe-requests", "5"],
+    &["--observe-series", "aggregated"],
     &["--seed", "seed.json"],
     &["--drain", "1"],
     &["--log-format", "json"],

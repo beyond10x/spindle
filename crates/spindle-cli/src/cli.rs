@@ -271,9 +271,10 @@ pub enum Command {
         /// network`), instead of serving HTTP: every component runs in this process on one store
         /// and its event bindings fire as on any other stdin run; no periodic binding fires. Given
         /// with a flag only a served run reads (`--http`, `--port`, `--address`, `--fixed-actor`,
-        /// `--trusted-caller-header`, `--trusted-caller-secret`, `--observe`, `--seed`, `--drain`
-        /// or `--log-format json`), exits 2 before running anything. Where no component requires
-        /// `ingress.network`, `run` reads stdin with or without it.
+        /// `--fixed-caller`, `--trusted-caller-header`, `--trusted-caller-secret`, `--observe`,
+        /// `--observe-requests`, `--observe-series`, `--seed`, `--drain` or `--log-format json`),
+        /// exits 2 before anything is loaded. Where no component requires `ingress.network`, `run`
+        /// reads stdin with or without it.
         #[arg(
             long,
             conflicts_with_all = [
@@ -282,9 +283,12 @@ pub enum Command {
                 "port",
                 "address",
                 "fixed_actor",
+                "fixed_caller",
                 "trusted_caller_header",
                 "trusted_caller_secret",
                 "observe",
+                "observe_requests",
+                "observe_series",
                 "seed",
                 "drain",
             ]

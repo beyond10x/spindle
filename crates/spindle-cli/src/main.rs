@@ -65,6 +65,23 @@ struct Request {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    // `--log-format json` is read only by a served run, as the flags `--stdin` conflicts with in
+    // clap are; `text` is its default, so clap cannot refuse it there and it is refused here, as
+    // clap refuses a conflict.
+    if let Command::Run {
+        stdin: true,
+        log_format: LogFormat::Json,
+        ..
+    } = &cli.command
+    {
+        <Cli as clap::CommandFactory>::command()
+            .error(
+                clap::error::ErrorKind::ArgumentConflict,
+                "the argument '--stdin' cannot be used with '--log-format json': only a run \
+                 serving HTTP writes its log as JSON lines",
+            )
+            .exit();
+    }
     if let Command::Run { log_format, .. } = &cli.command {
         log::set(*log_format);
     }
@@ -808,15 +825,6 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         bail!("{unserved}, so --observe would be ignored");
     }
     if log_format == LogFormat::Json {
-        // Like every other flag only a served run reads, refused beside `--stdin` as clap refuses
-        // a conflict; `--log-format text` is its default, so clap cannot tell the two apart.
-        if networked.is_some() {
-            log::error(format!(
-                "{unserved}, so --log-format json would not be kept: give one or the other"
-            ))
-            .write();
-            return Ok(ExitCode::from(USAGE));
-        }
         bail!(
             "{unserved}, so --log-format json would not be kept: only a run serving HTTP \
              writes its log as JSON lines"
