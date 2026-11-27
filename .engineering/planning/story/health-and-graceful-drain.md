@@ -49,7 +49,7 @@ scope:
   path: website/docs/concepts/observe.md
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 25
+revision: 26
 ---
 # A served run answers liveness and readiness, and drains on SIGTERM
 
@@ -114,7 +114,7 @@ Derived 2026-11-27 by `story-scoper`. Every line is **cited** (read from the sto
 - **Files:** `crates/spindle-cli/src/main.rs` — `signals` `:316-324` (signal_hook flag, set without the host thread, so readiness can read it at once), `SIGNAL_POLL` `:438`, `serve::Serving` construction `:604` — cited
 - **Files:** `crates/spindle-cli/src/cli.rs:136-142` — `run` help on SIGINT/SIGTERM ("answers each request still waiting 503"), wrong under D4 A; a drain flag under D5 A — cited
 - **Symbols:** new liveness heartbeat on `Listener` (instant of the last `next`), a shared readiness/draining state read on the listener thread, a drain step before `Listener::close` — inferred
-- **Tests:** new `crates/spindle-ingress/tests/spindle-ingress/health.rs` + `mod health;` in `main.rs`: `liveness_answers_200_while_the_host_answers` (short bound passed to the listener; stop calling `next` reads 503), `the_liveness_route_needs_no_observe` (`/__spindle/live` only; the ready route is `story:seed-readiness`'s), `readiness_reads_503_once_draining` — inferred
+- **Tests:** new `crates/spindle-ingress/tests/spindle-ingress/health.rs` + `mod health;` in `main.rs`: `liveness_answers_200_while_the_host_answers` (short bound passed to the listener; stop calling `next` reads 503), `the_liveness_route_needs_no_observe` (`/__spindle/live` only; the ready route is `story:seed-readiness`'s), `readiness_reads_503_once_sigterm_arrives` — inferred
 - **Tests:** new `crates/spindle-cli/tests/spindle-cli/seed/health.rs` + `mod health;` at `seed.rs:1225-1230`, using `holding_desk` (`seed.rs:971`) and `serve`: `sigterm_answers_the_requests_in_flight` (one command held, one queued, SIGTERM: both answered with their outcomes under D4 A, a request after the signal refused, exit 143 within the bound), `readiness_reads_503_once_sigterm_arrives` — inferred
 - **Tests:** `crates/spindle-cli/tests/spindle-cli/seed/signal_exit.rs:141-187` `a_request_queued_at_the_signal_reads_503` rewritten under D4 A — cited
 - **Also likely:** `crates/spindle-ingress/src/surface.rs` (where seed-readiness puts its readiness state), `crates/spindle-ingress/tests/spindle-ingress/close.rs` — inferred

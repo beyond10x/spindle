@@ -34,7 +34,7 @@ scope:
   path: website/docs/concepts/observe.md
 - confidence: cited
   path: website/docs/reference/cli.md
-revision: 7
+revision: 8
 ---
 ## Outcome
 
@@ -94,8 +94,8 @@ Derived 2026-11-27 by `story-scoper`. Every line is **cited** (read from the sto
 - **Tests:** `crates/spindle-ingress/src/observe/metrics.rs` unit tests:
   `an_aggregated_scrape_drops_the_specified_labels` (pure label mapping, well under 1 s) — inferred
 - **Tests:** `crates/spindle-cli/tests/spindle-cli/observe.rs` (helpers `serve`, `scrape`,
-  `families`): `an_aggregated_scrape_of_300_commands_writes_at_most_n_series` (states N; spec
-  generated in the test into a temp dir; compile and serve time unmeasured, must be timed before it
+  `families`): `an_aggregated_scrape_does_not_grow_with_the_specification` (30 and 300 commands; specs
+  generated once per test run, a fixture cached under `target/` by the digest of its generator; compile and serve time unmeasured, must be timed before it
   is added, 60 s bound), `a_scrape_names_its_series_mode`, `observe_series_requires_observe` — inferred
 - **Tests:** existing guards stay green unchanged: `observe.rs:843-1043` and
   `adversary_prometheus.rs:185-235` (default series), `metrics.rs:543`
