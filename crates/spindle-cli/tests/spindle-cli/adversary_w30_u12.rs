@@ -2,16 +2,16 @@
 //! clock at `GET /api/clock`, steps it forward with `POST /api/clock` and a reset world's
 //! `"clock"`, and every record of `GET /api/events` carries the instant its command ran.
 //!
-//! Red cases are findings. The clock holds an instant to the nanosecond while `GET /api/clock` and
-//! the step's answer spell it to the millisecond, so a step to the instant the run itself answered
-//! is refused `409` as a step back. A command on a clock before 1970 publishes events whose `at`
-//! reads 1970-01-01T00:00:00Z, not the clock's instant: an event's `at` is its command's sequence,
-//! the clock's microseconds since the epoch, which is 0 before it.
+//! Six cases. The clock holds its instant to the millisecond, as `GET /api/clock` and a step's
+//! answer spell it, so after a step to a sub-millisecond instant a step to the instant the run
+//! answered is a step to where the clock stands and is answered `200`. A clock before 1970 is
+//! refused wherever an instant sets it: `--clock` exits 2, and `POST /api/clock` and a reset
+//! world's `"clock"` answer `400` and move nothing.
 //!
-//! The green cases are kept probes: a step to where the clock stands and a reset world at that
-//! instant move nothing and are answered `200`; a malformed step, a leap second included, is
-//! refused `400` and moves nothing; an offset and a fraction of a second are read; and a reset
-//! world whose rows are refused leaves the clock where it stood.
+//! The other four are probes: a step to where the clock stands and a reset world at that instant
+//! move nothing and are answered `200`; a malformed step, a leap second included, is refused `400`
+//! and moves nothing; an offset and a fraction of a second are read; and a reset world whose rows
+//! are refused leaves the clock where it stood.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -190,9 +190,9 @@ fn events(served: &Served) -> Vec<Value> {
         .clone()
 }
 
-/// Red. `GET /api/clock` answers the instant to the millisecond while the clock holds the
-/// sub-millisecond instant a step named; a step to the instant the run just answered is then
-/// refused `409` as a step back, though it names where the run says its clock stands.
+/// A step to a sub-millisecond instant sets the clock to that instant's millisecond, as
+/// `GET /api/clock` answers it; a step to the instant the run just answered is then a step to where
+/// the clock stands and is answered `200`.
 #[test]
 fn a_step_to_the_instant_get_answered_moves_nothing_and_is_answered() {
     let served = serve(FEBRUARY);
