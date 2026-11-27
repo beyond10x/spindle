@@ -33,6 +33,27 @@ are Spindle's releases.
   `spindle_metrics_series_mode{mode}`, at 1, also listed in
   `ess/fixtures/observe/metrics/families.json`. The request log and the topology keep every label.
   `--observe-series` without `--observe` exits 2 (`story:metrics-series-bounded`).
+- Every event a store commits records what caused its command, read back with it
+  (`Store::events_after`, `Origin::cause`, `spindle_kernel::Provenance`): a request's caller,
+  its actor, its attributes and the request id the ingress mints for each HTTP request; the
+  seed's digest, never its path, with a seed entry's actor, caller and `request_id`; a tick's
+  binding; or the binding that ran it with what caused the command whose event it carried,
+  recorded as not known in a run split over processes. The memory, SQLite, PostgreSQL and IndexedDB stores keep it, SQLite and PostgreSQL
+  in each write's `spindle.written` origin and as the append's actor; an origin written before
+  this release reads back with no cause, without a migration. `Host::submit_caused` sends a
+  command with its cause (`story:events-record-their-caller`).
+- `GET /api/history?entity=<Entity>&identity=<id>` on the console reads the events of one
+  instance, oldest first, a page at a time with an opaque `after` cursor and `limit`: each with
+  its store position, its civil time, the command and outcome that committed it, its caller and
+  cause, its event type and payload. A command's write names every instance it wrote, an
+  `affects:` group included, and the events it published are that instance's (`Host::history`,
+  `Reader::history`, `Committed::instances`); the request log keeps the cursor and elides the
+  entity and identity. A write stored before this release names no instance, so its events are in
+  no history; an instance no command changed reads an empty page. The identity is read as the
+  entity's identity field is: `identity=42` names the text `"42"` of a `String` identity and the
+  number `42` of an `Integer` one, and a quoted `identity=%2242%22` the text. A cursor taken
+  before a restart reads on after its store position, whatever sequences the restarted run's
+  commands take (`story:entity-event-history`).
 
 ### Changed
 
@@ -45,6 +66,10 @@ are Spindle's releases.
   listening on loopback serves the console as before, and a run whose `--address` is off
   loopback no longer serves it, where it answered every request carrying the proxy's secret
   (`story:console-routes-off`).
+- `spindle_kernel::Origin` has a new public field `cause`, and `spindle_kernel::Committed` the
+  new public fields `outcome` and `instances`: a crate that builds either as a struct literal
+  now names them (`cause: None`, `outcome: None`, `instances: Vec::new()` for what it built
+  before) (`story:events-record-their-caller`, `story:entity-event-history`).
 
 ### Fixed
 

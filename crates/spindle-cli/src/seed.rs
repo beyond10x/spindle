@@ -641,7 +641,7 @@ impl Seeding {
         let became = if self.submitted.contains(&entry.request_id) {
             Became::AlreadyThere
         } else {
-            let became = submitted(host, entry);
+            let became = submitted(host, entry, &self.seed.digest);
             // Only an entry that left its effect in place answers for a later one with its id: a
             // refused or rejected entry left nothing, so a repeat of it is submitted again.
             if !matches!(became, Became::Refused(_) | Became::Rejected(_)) {
@@ -711,13 +711,24 @@ fn summed(one: SeedCounts, other: SeedCounts) -> SeedCounts {
     }
 }
 
-/// Submits `entry` to `host` as its actor and caller: what became of it.
-fn submitted(host: &mut Host, entry: &Entry) -> Became {
-    let submitted = host.submit_as(
+/// Submits `entry` of the seed with `digest` to `host` as its actor and caller, each event it
+/// commits recording the seed by that digest, that caller and the entry's `request_id` as its
+/// cause: what became of it.
+fn submitted(host: &mut Host, entry: &Entry, digest: &str) -> Became {
+    let submitted = host.submit_caused(
         &entry.command,
         entry.input.clone(),
         entry.actor.as_deref(),
         entry.caller.as_ref(),
+        &BTreeMap::new(),
+        spindle_kernel::Provenance::Seed {
+            digest: digest.to_owned(),
+            sender: spindle_kernel::Sender {
+                actor: entry.actor.clone(),
+                attributes: entry.caller.clone().unwrap_or_default(),
+                request: Some(entry.request_id.clone()),
+            },
+        },
     );
     match submitted {
         Ok(report) => {

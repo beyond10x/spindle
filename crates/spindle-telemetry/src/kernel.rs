@@ -126,6 +126,10 @@ impl<S: Store> Store for CountingStore<S> {
         self.inner.attribute(origin);
     }
 
+    fn outcome(&mut self, outcome: &str) {
+        self.inner.outcome(outcome);
+    }
+
     /// Not counted: an event no write of a row carries counts nothing appended.
     fn commit_events(
         &mut self,

@@ -161,7 +161,14 @@ fn console_answers(served: &Served) -> Vec<(Console, u16, Value)> {
             let world = json!({"rows": []});
             let body = (console == Console::Reset).then_some(&world);
             let method = console.method().as_str().to_uppercase();
-            let (status, answer) = exchange(served, &method, console.path(), body);
+            let path = match console {
+                Console::History => format!(
+                    "{}?entity=porch.visit.Visit&identity=5b2d8f14-3c6a-4e7b-9d1f-2a3b4c5d6e7f",
+                    console.path()
+                ),
+                _ => console.path().to_owned(),
+            };
+            let (status, answer) = exchange(served, &method, &path, body);
             (console, status, answer)
         })
         .collect()
