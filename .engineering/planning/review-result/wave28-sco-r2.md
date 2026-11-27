@@ -15,7 +15,7 @@ relations:
 - reviews: story:environment-binds-external-decisions
 - reviews: story:replay-with-decisions
 - reviews: story:one-time-response-admission
-revision: 1
+revision: 2
 ---
 needs-revision
 
@@ -27,7 +27,7 @@ Round-1 findings in my lane:
 - **`story:console-routes-off`, routes fixed at four:** resolved. Outcome and Acceptance now speak over `Console::ALL`, iterated in the test, and name `/api/history` as an example of a later route.
 - **`story:health-and-graceful-drain`, the same outcome as `story:seed-readiness`:** partly resolved. See the finding above.
 
-I read no person, organisation, host or home path in the ten story bodies or the wave page. A grep for `/home/` and `spindle-plan` found nothing.
+I read no person, organisation, host or home path in the ten story bodies or the wave page. A grep for a home path and the worktree name found nothing.
 
 **What you read:**
 - 21 artifacts: the ten stories, `epic:production-service`, `review-result:wave28-sco-r1`, and the seven held-out stories plus `story:listener-limits` and `story:release-artifacts-signed`. I read those nine by header only.

@@ -1,0 +1,15 @@
+{
+  "at": "2026-11-27T07:24:07Z",
+  "actor": "human:operator",
+  "artifact": "review-result:wave28-sco-r2",
+  "kind": "review-result",
+  "revision": 2,
+  "change": {
+    "change": "redaction",
+    "literal_sha256": "ee3b8c4cea45455e210ce57fa77cfab75a022d9f4f21b7526b464e7cca49635c",
+    "literal_chars": 53,
+    "replacement": "A grep for a home path and the worktree name found nothing.",
+    "count": 1,
+    "reason": "keep the leak grep of the public repository clean"
+  }
+}
