@@ -15,8 +15,9 @@
 #       read-only root; the image's libc line goes to stderr
 #   release-linux-binary.sh containerfile <file>
 #       the image's recipe holds only FROM (one, pinned by digest, no stage name), LABEL, COPY
-#       (not --from), USER (one, numeric, neither UID nor GID 0) and ENTRYPOINT ["/b10x-spindle"]:
-#       nothing runs while the image is built, and no parser directive or continuation line
+#       (not --from; one --chmod whose mode sets no setuid, setgid or sticky bit), USER (one, numeric,
+#       neither UID nor GID 0) and ENTRYPOINT ["/b10x-spindle"]: nothing runs while the image is
+#       built, and no parser directive or continuation line (a backslash before trailing blanks too)
 #   release-linux-binary.sh image-version <image> <first line>
 #       the image's entrypoint answers --version with <first line>, with no network and a
 #       read-only root; the image has no shell, so nothing but its entrypoint runs
@@ -27,16 +28,19 @@
 #       --trusted-caller-secret, answers GET /__spindle/live on the port published on the host's
 #       127.0.0.1 with 200 when the request carries the secret and 403 when it does not; tried
 #       RELEASE_IMAGE_ATTEMPTS times (30), a second apart, until it answers 200
-#   release-linux-binary.sh manifest-list <image@sha256:digest>
-#       the digest resolves to a manifest list of exactly linux/amd64 and linux/arm64
+#   release-linux-binary.sh manifest-list <image@sha256:digest> [<amd64 digest> <arm64 digest>]
+#       the digest resolves to a manifest list of exactly linux/amd64 and linux/arm64, each entry
+#       naming a platform; given the two digests, the linux/amd64 entry names the first and the
+#       linux/arm64 entry the second
 #   release-linux-binary.sh images-line <file> <repository> <version>
-#       the file holds one line, <repository>:<version>@sha256:<64 lowercase hex digits>
+#       the file holds one line, <repository>:<version>@sha256:<64 lowercase hex digits>, and
+#       <version> is <major>.<minor>.<patch>
 set -eu
 
 usage() {
     echo "usage: $0 glibc-floor <binary> <floor> | static <binary> | runs-in <image@sha256:digest> <binary> <first line>" \
         "| containerfile <file> | image-version <image> <first line> | image-user <image>" \
-        "| image-answers <image> <specification> <environment> | manifest-list <image@sha256:digest>" \
+        "| image-answers <image> <specification> <environment> | manifest-list <image@sha256:digest> [<amd64 digest> <arm64 digest>]" \
         "| images-line <file> <repository> <version>" >&2
     exit 2
 }
@@ -161,6 +165,36 @@ runs_in() {
     echo "$bin answers '$first' in $image"
 }
 
+# Refuses a COPY whose files could carry a setuid, setgid or sticky bit: a root-owned setuid
+# entrypoint runs as UID 0 whatever USER says. Each COPY sets the mode itself with one --chmod,
+# since without it the file keeps the mode it has in the build context; an octal mode has no digit
+# above the permission bits, and a symbolic one names only u, g, o, a, +, -, =, r, w, x, X and ",".
+copy_mode() {
+    file=$1
+    line=$2
+    argument=$3
+    case $argument in
+        *--chmod=*--chmod*) refuse "$file: COPY sets --chmod twice: $line" ;;
+        *--chmod=*) ;;
+        *) refuse "$file: COPY sets no --chmod, so the file keeps the build context's mode: $line" ;;
+    esac
+    mode=${argument#*--chmod=}
+    mode=${mode%% *}
+    case $mode in
+        '') refuse "$file: COPY --chmod has no mode: $line" ;;
+        *[!0-7]*)
+            case $mode in
+                *[!ugoa+=,rwxX-]*) refuse "$file: COPY --chmod=$mode names more than read, write and execute bits: $line" ;;
+            esac
+            ;;
+        ????*)
+            case $mode in
+                ?????* | [1-7]*) refuse "$file: COPY --chmod=$mode sets a setuid, setgid or sticky bit: $line" ;;
+            esac
+            ;;
+    esac
+}
+
 containerfile() {
     file=$1
     [ -f "$file" ] || refuse "$file is not a file"
@@ -171,6 +205,9 @@ containerfile() {
     # Tabs read as spaces, so one space-separated reading covers both.
     lines=$(tr '\t' ' ' <"$file") || refuse "could not read $file"
     while IFS= read -r line; do
+        # Trailing blanks dropped first: BuildKit reads a backslash followed by blanks as a
+        # continuation too.
+        line=${line%"${line##*[! ]}"}
         case $line in
             '') continue ;;
             *\\) refuse "$file: a continuation line: $line" ;;
@@ -208,6 +245,7 @@ containerfile() {
                 case $argument in
                     *--from*) refuse "$file: COPY from another image or stage: $line" ;;
                 esac
+                copy_mode "$file" "$line" "$argument"
                 ;;
             USER)
                 users=$((users + 1))
@@ -329,18 +367,39 @@ manifest_list() {
         *'"manifests":['*) ;;
         *) refuse "$ref is not a manifest list" ;;
     esac
-    # Each entry of the list names its manifest's digest and its platform; a list whose entries
-    # are not exactly one linux/amd64 and one linux/arm64 is refused, an entry without a platform
-    # included.
-    entries=$(printf '%s\n' "$compact" | grep -o '"digest":"sha256:[0-9a-f]*"' | grep -c '') || true
+    # Every entry of the list names its manifest's digest, whatever the algorithm, and must name a
+    # platform; a list whose entries are not exactly one linux/amd64 and one linux/arm64 is
+    # refused, an entry without a platform included.
+    entries=$(printf '%s\n' "$compact" | grep -o '"digest":"[^"]*"' | grep -c '') || true
     platforms=$(printf '%s\n' "$compact" | grep -o '"platform":{[^}]*}' | while IFS= read -r block; do
         os=$(printf '%s\n' "$block" | sed -n 's/.*[{,]"os":"\([^"]*\)".*/\1/p')
         arch=$(printf '%s\n' "$block" | sed -n 's/.*[{,]"architecture":"\([^"]*\)".*/\1/p')
         printf '%s/%s\n' "$os" "$arch"
     done | sort)
+    named=$(printf '%s\n' "$compact" | grep -o '"platform":{' | grep -c '') || true
     found=$(printf '%s' "$platforms" | tr '\n' ' ')
+    [ "$entries" -eq "$named" ] || refuse "$ref lists $entries manifests and names $named platforms"
     [ "$entries" -eq 2 ] && [ "$found" = "linux/amd64 linux/arm64" ] ||
         refuse "$ref lists $entries manifests for '$found', not one for linux/amd64 and one for linux/arm64"
+    if [ "$#" -eq 3 ]; then
+        for digest in "$2" "$3"; do
+            case $digest in
+                sha256:*) sha256_hex "${digest#sha256:}" || refuse "'$digest' is not a sha256 digest" ;;
+                *) refuse "'$digest' is not a sha256 digest" ;;
+            esac
+        done
+        # One entry per line: entries are the only objects in an array of the list, so `},{`
+        # separates them and nothing else.
+        held=$(printf '%s\n' "$compact" | sed 's/},{/}\n{/g' | while IFS= read -r entry; do
+            digest=$(printf '%s\n' "$entry" | sed -n 's/.*"digest":"\([^"]*\)".*/\1/p')
+            arch=$(printf '%s\n' "$entry" | sed -n 's/.*"platform":{[^}]*"architecture":"\([^"]*\)".*/\1/p')
+            [ -z "$digest" ] || printf '%s=%s\n' "$arch" "$digest"
+        done | sort | tr '\n' ' ')
+        [ "$held" = "amd64=$2 arm64=$3 " ] ||
+            refuse "$ref holds '$held', not linux/amd64 $2 and linux/arm64 $3"
+        echo "$ref: a manifest list of linux/amd64 $2 and linux/arm64 $3"
+        return
+    fi
     echo "$ref: a manifest list of linux/amd64 and linux/arm64"
 }
 
@@ -348,6 +407,12 @@ images_line() {
     file=$1
     repository=$2
     version=$3
+    # A release version is three dot-separated numbers; an empty one names no tag.
+    case $version in
+        *[!0-9.]* | .* | *. | *..* | *.*.*.*) refuse "the version '$version' is not <major>.<minor>.<patch>" ;;
+        *.*.*) ;;
+        *) refuse "the version '$version' is not <major>.<minor>.<patch>" ;;
+    esac
     [ -f "$file" ] || refuse "$file is not a file"
     [ "$(grep -c '' "$file")" -eq 1 ] || refuse "$file does not hold exactly one line"
     line=$(cat "$file")
@@ -393,8 +458,8 @@ case $mode in
         image_answers "$1" "$2" "$3"
         ;;
     manifest-list)
-        [ "$#" -eq 1 ] || usage
-        manifest_list "$1"
+        [ "$#" -eq 1 ] || [ "$#" -eq 3 ] || usage
+        manifest_list "$@"
         ;;
     images-line)
         [ "$#" -eq 3 ] || usage

@@ -537,6 +537,20 @@ for unpinned in ghcr.io/beyond10x/spindle:0.26.0 "ghcr.io/beyond10x/spindle@sha2
     [ ! -e "$work/rec/docker-log" ] || fail "manifest-list: docker read $unpinned, which is not pinned"
 done
 
+# Given the two checked images' digests, each platform's entry must name its own.
+d1=sha256:$(printf '%064d' 1)
+d2=sha256:$(printf '%064d' 2)
+d3=sha256:$(printf '%064d' 3)
+printf '{"schemaVersion":2,"mediaType":"%s","manifests":[{"mediaType":"m","digest":"%s","size":1,"platform":{"os":"linux","architecture":"amd64"}},{"mediaType":"m","digest":"%s","size":1,"annotations":{"a":"b"},"platform":{"architecture":"arm64","os":"linux","variant":"v8"}}],"annotations":{"c":"d"}}' \
+    "$oci" "$d1" "$d2" >"$work/rec/raw"
+expect pass "adversary_manifest_list_needs_both_architectures: each platform names its checked image" \
+    manifest-list "$listed" "$d1" "$d2"
+for pair in "$d2 $d1" "$d1 $d3" "$d3 $d2" "$d1 $d1" "$d1 ${d2%?}" "$d1 sha512:${d2#sha256:}"; do
+    # shellcheck disable=SC2086
+    expect refuse "adversary_manifest_list_needs_both_architectures: the checked images are '$pair'" \
+        manifest-list "$listed" $pair
+done
+
 # --- images-line -----------------------------------------------------------------------------
 # adversary_images_line_is_pinned: IMAGES holds one line, the release's image by tag and digest.
 
@@ -586,54 +600,232 @@ grep -Fq 'name: b10x-spindle-${{ needs.provenance.outputs.version }}-${{ matrix.
 
 # --- the workflow's image jobs ---------------------------------------------------------------
 
-# The image job builds one image per gnu row of the build matrix, on that row's platform.
+# The image and image-push jobs build one image per gnu row of the build matrix, on that row's
+# platform.
 gnu=$(printf '%s\n' "$matrix" | grep -- '-unknown-linux-gnu$' || true)
-image_rows=$(job image | sed -n 's/^ *- target: *//p' | sort)
-cases=$((cases + 1))
-[ -n "$gnu" ] && [ "$image_rows" = "$gnu" ] ||
-    fail "release.yml: the image job's rows ($(printf '%s' "$image_rows" | tr '\n' ' ')) are not the build matrix's gnu rows ($(printf '%s' "$gnu" | tr '\n' ' '))"
-cases=$((cases + 1))
-pairs=$(job image | sed -n 's/^ *- target: *//p; s/^ *platform: *//p' | paste - - | sort)
-[ "$pairs" = "$(printf 'aarch64-unknown-linux-gnu\tlinux/arm64\nx86_64-unknown-linux-gnu\tlinux/amd64')" ] ||
-    fail "release.yml: the image job's platforms do not match its targets: $pairs"
-
-# adversary_no_push_from_a_pull_request: every step of the image job that logs in or pushes is
-# skipped on a pull request, and the job that tags the list runs on no pull request.
-guard="if: \${{ github.event_name != 'pull_request' }}"
-unguarded=$(job image | awk -v guard="$guard" '
-    function flush() { if (step != "" && step ~ /(docker login|push=true|--push|imagetools create)/ && index(step, guard) == 0) print name }
-    /^      - / { flush(); step = ""; name = $0 }
-    { step = step "\n" $0 }
-    END { flush() }
-')
-cases=$((cases + 1))
-[ -z "$unguarded" ] || fail "release.yml: an image step pushes on a pull request: $unguarded"
-cases=$((cases + 1))
-job image | grep -Eq 'docker login|push=true' || fail "release.yml: the image job pushes nothing"
-cases=$((cases + 1))
-job image-manifest | grep -Fqx "    $guard" ||
-    fail "release.yml: the image-manifest job runs on a pull request"
-for name in image image-manifest; do
+for name in image image-push; do
+    rows=$(job "$name" | sed -n 's/^ *- target: *//p' | sort)
     cases=$((cases + 1))
-    job "$name" | grep -q '^    needs: \[.*\bgate\b.*\]$' || fail "release.yml: the $name job does not wait for the gate"
+    [ -n "$gnu" ] && [ "$rows" = "$gnu" ] ||
+        fail "release.yml: the $name job's rows ($(printf '%s' "$rows" | tr '\n' ' ')) are not the build matrix's gnu rows ($(printf '%s' "$gnu" | tr '\n' ' '))"
+    cases=$((cases + 1))
+    pairs=$(job "$name" | sed -n 's/^ *- target: *//p; s/^ *platform: *//p' | paste - - | sort)
+    [ "$pairs" = "$(printf 'aarch64-unknown-linux-gnu\tlinux/arm64\nx86_64-unknown-linux-gnu\tlinux/amd64')" ] ||
+        fail "release.yml: the $name job's platforms do not match its targets: $pairs"
+done
+
+# adversary_no_push_from_a_pull_request: the image job, which runs on a pull request, holds no
+# package scope and neither logs in nor pushes; image-push and image-manifest, the two jobs that
+# hold packages: write, run on no pull request.
+cases=$((cases + 1))
+! job image | grep -Eq 'packages:|docker login|push=true|--push|imagetools create' ||
+    fail "release.yml: the image job, which runs on a pull request, holds package scope, logs in or pushes"
+for name in image-push image-manifest; do
+    cases=$((cases + 1))
+    job "$name" | grep -Eq "^    if: \\$\\{\\{ github.event_name != 'pull_request'( && [^|]*)? \\}\\}$" ||
+        fail "release.yml: the $name job runs on a pull request"
 done
 cases=$((cases + 1))
-job image-manifest | grep -q '^    needs: \[.*\bimage\b.*\]$' || fail "release.yml: image-manifest does not wait for the image job"
+job image-push | grep -Eq 'docker login' && job image-push | grep -Fq 'push=true' ||
+    fail "release.yml: the image-push job pushes nothing"
 cases=$((cases + 1))
-[ "$(grep -c 'packages: write' "$workflow")" -eq 2 ] && job image | grep -Fq 'packages: write' &&
+[ "$(grep -c 'packages: write' "$workflow")" -eq 2 ] && job image-push | grep -Fq 'packages: write' &&
     job image-manifest | grep -Fq 'packages: write' ||
-    fail "release.yml: packages: write is not on the image and image-manifest jobs alone"
-
-# IMAGES is listed in SHA256SUMS and uploaded beside it.
+    fail "release.yml: packages: write is not on the image-push and image-manifest jobs alone"
+for pair in "image gate" "image-push gate" "image-push image" "image-manifest gate" "image-manifest image-push" \
+    "publish image-manifest"; do
+    name=${pair% *}
+    need=${pair#* }
+    cases=$((cases + 1))
+    job "$name" | grep -Eq "^    needs: \\[(.*, )?$need(, .*)?\\]$" || fail "release.yml: the $name job does not wait for $need"
+done
+# image-push pushes the image the image job checked: it reads the ID the image job recorded and
+# refuses a rebuild with another before it logs in.
 cases=$((cases + 1))
-job publish | grep -q '^    needs: \[.*\bimage-manifest\b.*\]$' || fail "release.yml: publish does not wait for image-manifest"
-cases=$((cases + 1))
-job publish | grep -Fq '"IMAGES")' || fail "release.yml: publish does not list IMAGES in SHA256SUMS"
-cases=$((cases + 1))
-job publish | grep -q 'gh release upload "\$TAG" .*IMAGES SHA256SUMS$' || fail "release.yml: publish does not upload IMAGES"
+job image | grep -Fq 'name: image-checked-${{ matrix.target }}' && job image-push | grep -Fq 'name: image-checked-${{ matrix.target }}' &&
+    job image-push | grep -Fq 'if [ "$rebuilt" != "$checked" ]; then' ||
+    fail "release.yml: image-push does not compare its rebuild with the image the image job checked"
 cases=$((cases + 1))
 sed -n '/^  pull_request:$/,/^[a-z]/p' "$workflow" | grep -Fqx '      - Containerfile' ||
     fail "release.yml: a pull request that changes the Containerfile does not run the image jobs"
+
+# A step's run block, by the job and the start of the step's name.
+step_script() {
+    job "$1" | awk -v want="name: $2" '
+        (index($0, "      - " want) == 1 || index($0, "        " want) == 1) { found = 1; next }
+        found && /^        run: \|$/ { body = 1; next }
+        body && /^          / { print substr($0, 11); next }
+        body && /^$/ { print ""; next }
+        body { exit }
+    ' >"$3"
+    [ -s "$3" ] || fail "release.yml: the $1 job has no step '$2' with a run block"
+}
+
+# --- a tag whose commit has no Containerfile -------------------------------------------------
+# adversary_backfill_without_containerfile: a backfilled tag cut before the image existed builds
+# no image and publishes the rest without IMAGES; a tag with one carries IMAGES.
+
+for name in image image-push image-manifest; do
+    cases=$((cases + 1))
+    job "$name" | grep -Eq "^    if: .*needs\\.provenance\\.outputs\\.containerfile == 'true'" ||
+        fail "release.yml: the $name job runs for a commit without a Containerfile"
+done
+publish_if=$(job publish | sed -n 's/^    if: //p')
+cases=$((cases + 1))
+case $publish_if in
+    *"needs.image-manifest.result == 'success' || (needs.provenance.outputs.containerfile == 'false' && needs.image-manifest.result == 'skipped')"*) ;;
+    *) fail "release.yml: publish does not run once image-manifest is skipped for a commit without a Containerfile: $publish_if" ;;
+esac
+cases=$((cases + 1))
+[ "$(printf '%s' "$publish_if" | grep -o "result == 'skipped'" | grep -c '' || true)" -eq 1 ] ||
+    fail "release.yml: publish runs on another skipped job: $publish_if"
+cases=$((cases + 1))
+job publish | grep -Eq "^    if: .*needs\\.gate\\.result == 'success' && needs\\.build\\.result == 'success' && needs\\.sbom\\.result == 'success'" ||
+    fail "release.yml: publish does not need a green gate, build and sbom: $publish_if"
+
+mkdir -p "$work/steps"
+step_script provenance "Whether the commit builds an image" "$work/steps/containerfile.sh"
+for has in true false; do
+    rm -rf "$work/commit"
+    mkdir -p "$work/commit"
+    [ "$has" = false ] || cp "$containerfile" "$work/commit/Containerfile"
+    : >"$work/commit/output"
+    cases=$((cases + 1))
+    (cd "$work/commit" && GITHUB_OUTPUT=$work/commit/output GITHUB_STEP_SUMMARY=$work/commit/summary \
+        bash "$work/steps/containerfile.sh" >/dev/null 2>&1) &&
+        [ "$(cat "$work/commit/output")" = "containerfile=$has" ] ||
+        fail "release.yml: provenance does not answer containerfile=$has: $(cat "$work/commit/output")"
+done
+
+# publish's checksum step on the downloaded artifacts, with and without IMAGES.
+step_script publish "Check each artifact against the hash its job wrote" "$work/steps/sums.sh"
+sums() {
+    expected=$1
+    with=$2
+    rm -rf "$work/dist"
+    mkdir -p "$work/dist"
+    for file in b10x-spindle-0.26.0-x86_64-unknown-linux-gnu.tar.gz b10x-spindle-0.26.0-aarch64-unknown-linux-gnu.tar.gz \
+        b10x-spindle-0.26.0-x86_64-unknown-linux-musl.tar.gz b10x-spindle-0.26.0-aarch64-apple-darwin.tar.gz \
+        b10x-spindle-0.26.0-x86_64-apple-darwin.tar.gz b10x-spindle-0.26.0.cdx.json $with; do
+        printf '%s\n' "$file" >"$work/dist/$file"
+        (cd "$work/dist" && sha256sum "$file" >"$file.sha256")
+    done
+    (cd "$work/dist" && VERSION=0.26.0 IMAGES_EXPECTED=$expected bash "$work/steps/sums.sh" >"$work/sums.out" 2>&1)
+}
+cases=$((cases + 1))
+sums false "" && [ "$(grep -c '' "$work/dist/SHA256SUMS")" -eq 6 ] && ! grep -q IMAGES "$work/dist/SHA256SUMS" ||
+    fail "release.yml: publish does not sum the six assets of a commit without a Containerfile: $(cat "$work/sums.out")"
+cases=$((cases + 1))
+sums true IMAGES && [ "$(grep -c '' "$work/dist/SHA256SUMS")" -eq 7 ] && grep -q ' IMAGES$' "$work/dist/SHA256SUMS" ||
+    fail "release.yml: publish does not list IMAGES in SHA256SUMS: $(cat "$work/sums.out")"
+cases=$((cases + 1))
+! sums true "" || fail "release.yml: publish passes a release with an image but no IMAGES"
+cases=$((cases + 1))
+! sums false IMAGES || fail "release.yml: publish passes an IMAGES nobody expected"
+cases=$((cases + 1))
+! sums "" IMAGES || fail "release.yml: publish passes when it does not know whether the commit has an image"
+
+# publish's upload step with a gh stub: IMAGES goes up beside SHA256SUMS only where expected.
+step_script publish "Upload the archives" "$work/steps/upload.sh"
+mkdir -p "$work/ghtools"
+printf '#!%s\nrec=%s\n' "$shell" "$work/rec" >"$work/ghtools/gh"
+cat >>"$work/ghtools/gh" <<'STUB'
+case "$1 $2" in
+    "release upload") printf '%s\n' "$*" >>"$rec/gh-upload" ;;
+esac
+exit 0
+STUB
+chmod 755 "$work/ghtools/gh"
+for expected in true false; do
+    sums "$expected" "$([ "$expected" = false ] || echo IMAGES)" >/dev/null 2>&1 || true
+    rm -f "$work/rec/gh-upload"
+    cases=$((cases + 1))
+    (cd "$work/dist" && PATH="$work/ghtools:$PATH" TAG=0.26.0 IMAGES_EXPECTED=$expected \
+        GITHUB_STEP_SUMMARY=$work/upload.summary bash "$work/steps/upload.sh" >/dev/null 2>&1) ||
+        fail "release.yml: publish's upload step fails with IMAGES_EXPECTED=$expected"
+    uploaded=$(cat "$work/rec/gh-upload" 2>/dev/null || true)
+    case "$expected $uploaded" in
+        "true release upload 0.26.0 "*" IMAGES SHA256SUMS") ;;
+        "false release upload 0.26.0 "*" b10x-spindle-0.26.0.cdx.json SHA256SUMS") ;;
+        *) fail "release.yml: publish uploads '$uploaded' with IMAGES_EXPECTED=$expected" ;;
+    esac
+done
+
+# --- a tag already in ghcr.io ----------------------------------------------------------------
+# adversary_existing_tag_is_done_or_refused: image-manifest leaves a tag that lists exactly the
+# two checked images as it is and writes IMAGES for it, refuses one that lists other images, and
+# tags a version ghcr.io does not hold. The docker stub answers --raw with the list it holds and
+# resolves a pinned reference only to the list whose bytes hash to its digest.
+
+step_script image-manifest "Tag the manifest list" "$work/steps/tag.sh"
+mkdir -p "$work/mytools"
+printf '#!%s\ndir=%s\n' "$shell" "$work/mytag" >"$work/mytools/docker"
+cat >>"$work/mytools/docker" <<'STUB'
+printf '%s\n' "$*" >>"$dir/docker-log"
+case "$*" in
+    "buildx imagetools create"*) cp "$dir/created" "$dir/held"; exit 0 ;;
+    "buildx imagetools inspect --raw "*)
+        [ -f "$dir/held" ] || exit 1
+        case $5 in
+            *@sha256:*) [ "${5##*@sha256:}" = "$(sha256sum <"$dir/held" | cut -d ' ' -f 1)" ] || exit 1 ;;
+        esac
+        cat "$dir/held"
+        ;;
+    "buildx imagetools inspect "*)
+        [ -f "$dir/held" ] || { echo "ERROR: $4: not found" >&2; exit 1; }
+        echo "Name: $4"
+        ;;
+    *) exit 1 ;;
+esac
+STUB
+chmod 755 "$work/mytools/docker"
+list() {
+    printf '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"sha256:%064d","size":1,"platform":{"architecture":"amd64","os":"linux"}},{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"sha256:%064d","size":1,"platform":{"architecture":"arm64","os":"linux"}}]}' "$1" "$2"
+}
+mytag() {
+    rm -rf "$work/mytag"
+    mkdir -p "$work/mytag/digests" "$work/mytag/scripts"
+    ln -s "$subject" "$work/mytag/scripts/release-linux-binary.sh"
+    printf 'sha256:%064d\n' 1 >"$work/mytag/digests/x86_64-unknown-linux-gnu"
+    printf 'sha256:%064d\n' 2 >"$work/mytag/digests/aarch64-unknown-linux-gnu"
+    list 1 2 >"$work/mytag/created"
+    [ -z "$1" ] || list $1 >"$work/mytag/held"
+    : >"$work/mytag/docker-log"
+    (cd "$work/mytag" && PATH="$work/mytools:$PATH" IMAGE=ghcr.io/beyond10x/spindle VERSION=0.26.0 \
+        GITHUB_STEP_SUMMARY="$work/mytag/summary" GITHUB_REPOSITORY=beyond10x/spindle \
+        bash "$work/steps/tag.sh" >"$work/mytag/out" 2>&1)
+}
+held_digest() {
+    list 1 2 | sha256sum | cut -d ' ' -f 1
+}
+
+cases=$((cases + 1))
+mytag "" || fail "adversary_existing_tag_is_done_or_refused: a new version is not tagged: $(cat "$work/mytag/out")"
+cases=$((cases + 1))
+[ "$(grep -c 'imagetools create --tag ghcr.io/beyond10x/spindle:0.26.0 ' "$work/mytag/docker-log")" -eq 1 ] ||
+    fail "adversary_existing_tag_is_done_or_refused: a new version is not tagged once: $(cat "$work/mytag/docker-log")"
+cases=$((cases + 1))
+[ "$(cat "$work/mytag/images/IMAGES" 2>/dev/null)" = "ghcr.io/beyond10x/spindle:0.26.0@sha256:$(held_digest)" ] &&
+    [ -s "$work/mytag/images/IMAGES.sha256" ] ||
+    fail "adversary_existing_tag_is_done_or_refused: IMAGES of a new tag is not the list's digest: $(cat "$work/mytag/images/IMAGES" 2>/dev/null)"
+
+cases=$((cases + 1))
+mytag "1 2" || fail "adversary_existing_tag_is_done_or_refused: a tag that lists the two checked images fails: $(cat "$work/mytag/out")"
+cases=$((cases + 1))
+! grep -q 'imagetools create' "$work/mytag/docker-log" ||
+    fail "adversary_existing_tag_is_done_or_refused: a tag that lists the two checked images is tagged again"
+cases=$((cases + 1))
+[ "$(cat "$work/mytag/images/IMAGES" 2>/dev/null)" = "ghcr.io/beyond10x/spindle:0.26.0@sha256:$(held_digest)" ] ||
+    fail "adversary_existing_tag_is_done_or_refused: IMAGES of a tag already done is not its list's digest: $(cat "$work/mytag/images/IMAGES" 2>/dev/null)"
+
+for held in "3 4" "1 3" "2 1"; do
+    cases=$((cases + 1))
+    ! mytag "$held" || fail "adversary_existing_tag_is_done_or_refused: a tag that lists the images '$held' passes"
+    cases=$((cases + 1))
+    ! grep -q 'imagetools create' "$work/mytag/docker-log" && [ ! -e "$work/mytag/images/IMAGES" ] ||
+        fail "adversary_existing_tag_is_done_or_refused: a tag that lists the images '$held' is moved or written to IMAGES"
+done
+
 
 # --- adversary_w31_U2 ------------------------------------------------------------------------
 # Cases of wave 31's adversary on story:spindle-image-published.

@@ -214,22 +214,33 @@ cut from `main`:
    job's count of targets. It never creates or edits the page and never replaces an asset. The
    `image` job, one row per gnu target on a runner of its architecture (`linux/amd64`,
    `linux/arm64`), builds [`Containerfile`](Containerfile) from the archive the `build` job checked:
-   `gcr.io/distroless/cc-debian12:nonroot` pinned by digest, the binary copied in, `USER 65532:65532`,
-   `ENTRYPOINT ["/b10x-spindle"]`, no `RUN`. `scripts/release-linux-binary.sh` refuses the
-   Containerfile otherwise (`containerfile`), and, on the image loaded into the runner's Docker,
+   `gcr.io/distroless/cc-debian12:nonroot` pinned by digest, the binary copied in with
+   `--chmod=0555` (no setuid, setgid or sticky bit), `USER 65532:65532`, `ENTRYPOINT
+   ["/b10x-spindle"]`, no `RUN`. `scripts/release-linux-binary.sh` refuses the Containerfile
+   otherwise (`containerfile`), and, on the image loaded into the runner's Docker,
    refuses a `--version` other than the release's (`image-version`), a configured user that is not a
    numeric UID other than 0 (`image-user`) and a `run` on `0.0.0.0` with a trusted caller header and
    secret that does not answer `GET /__spindle/live` 200 with the secret and 403 without it from the
-   host through the published port (`image-answers`, on `examples/rally`). Only then, and only
-   once the `gate` job is green, it pushes the same build by digest, untagged, with
-   `packages: write`. `image-manifest` refuses a `<version>` tag already in `ghcr.io`, tags the
-   manifest list of both digests `ghcr.io/beyond10x/spindle:<version>`, writes its digest to `IMAGES`
-   (`images-line`) and to its summary, and refuses a list that is not exactly `linux/amd64` and
-   `linux/arm64` (`manifest-list`); `publish` lists `IMAGES` in `SHA256SUMS` and uploads it. The
-   stub cases of `task check:the_release_binary_checks_refuse_what_they_must` test every mode. A
-   pull request that changes the workflow, the script or the Containerfile runs the builds, builds
-   and checks both images, and publishes and pushes nothing; `workflow_dispatch` with `tag`
-   backfills an existing tag.
+   host through the published port (`image-answers`, on `examples/rally`). The `image` job holds no
+   package scope and records the checked image's ID. On a tag run only, once the `gate` job is
+   green, `image-push` (one row per architecture, the only job besides `image-manifest` with
+   `packages: write`) rebuilds the image reproducibly (the commit's time as `SOURCE_DATE_EPOCH`,
+   file times rewritten), refuses a rebuild whose ID is not the checked one, and pushes that build
+   by digest, untagged. `image-manifest` tags the manifest list of both digests
+   `ghcr.io/beyond10x/spindle:<version>` when `ghcr.io` answers that the tag is not found; a tag
+   that already lists exactly the two checked images (a re-run or a re-dispatch) is left as it is;
+   a tag listing anything else is refused and never moved, and so is any other answer of the
+   registry. It writes the list's digest to `IMAGES` (`images-line`) and to its summary, and refuses
+   a list that is not exactly `linux/amd64` and `linux/arm64` with each checked image on its own
+   platform (`manifest-list`); `publish` lists `IMAGES` in `SHA256SUMS` and uploads it. The stub
+   cases of `task check:the_release_binary_checks_refuse_what_they_must` test every mode and run
+   the workflow's tag, checksum and upload steps on stub tools. A pull request that changes the
+   workflow, the script or the Containerfile runs the builds, builds and checks both images, and
+   publishes and pushes nothing. `workflow_dispatch` with `tag` backfills an existing tag whose
+   page lacks the assets: a commit without a `Containerfile` (a tag cut before 0.26.0) builds no
+   image, and `publish` uploads the archives, the SBOM and `SHA256SUMS` without `IMAGES`; a commit
+   with one rebuilds the images, and their tag is left as it is only where the rebuilt images
+   have the digests it lists, since a rebuilt binary that differs gives other images.
 7. Verify: the `Release` run for the tag succeeded; the page is authored by `b10x-bot[bot]`, is
    Latest and resolves to the tag's commit; it carries one archive per target, `IMAGES` and
    `SHA256SUMS`, and `sha256sum --check SHA256SUMS` passes on the downloaded assets. The line in

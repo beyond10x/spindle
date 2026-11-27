@@ -37,6 +37,7 @@ jobs:
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
       commit: ${{ steps.release.outputs.commit }}
+      containerfile: ${{ steps.image.outputs.containerfile }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -72,6 +73,19 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # A tag cut before the image existed has no Containerfile: its backfill builds no image and
+      # publishes the rest without IMAGES.
+      - id: image
+        name: Whether the commit builds an image
+        run: |
+          set -euo pipefail
+          if [ -f Containerfile ]; then
+            echo "containerfile=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "containerfile=false" >> "$GITHUB_OUTPUT"
+            echo "The commit has no Containerfile: no image is built and the release carries no IMAGES." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
 
   gate:
     name: Gate green on the tagged commit
@@ -452,17 +466,14 @@ jobs:
           retention-days: 7
 
   # One image per gnu build row, on a runner of its architecture: built from the binary the build
-  # job checked, then checked (version, user, an answer from outside the container) before it is
-  # pushed by digest, untagged. A pull request builds and checks both and pushes nothing.
+  # job checked, then checked (version, user, an answer from outside the container). This job
+  # holds no package scope; a pull request builds and checks both images and pushes nothing.
   image:
     name: Image ${{ matrix.platform }}
-    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.gate.result == 'success' || (github.event_name == 'pull_request' && needs.gate.result == 'skipped')) }}
+    if: ${{ !cancelled() && needs.provenance.outputs.containerfile == 'true' && needs.build.result == 'success' && (needs.gate.result == 'success' || (github.event_name == 'pull_request' && needs.gate.result == 'skipped')) }}
     needs: [provenance, gate, build]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -498,7 +509,7 @@ jobs:
           (cd dist && sha256sum --check --strict "${name}.tar.gz.sha256")
           tar -xzf "dist/${name}.tar.gz" -C "$RUNNER_TEMP" "${name}/b10x-spindle"
           mkdir -p "$RUNNER_TEMP/context"
-          install -m 755 "$RUNNER_TEMP/${name}/b10x-spindle" "$RUNNER_TEMP/context/b10x-spindle"
+          mv "$RUNNER_TEMP/${name}/b10x-spindle" "$RUNNER_TEMP/context/b10x-spindle"
           test "$("$RUNNER_TEMP/context/b10x-spindle" --version)" = "b10x-spindle ${VERSION}"
 
       - name: The Containerfile pins its base, copies only and runs as a numeric user other than 0
@@ -506,15 +517,16 @@ jobs:
           set -euo pipefail
           sh scripts/release-linux-binary.sh containerfile Containerfile | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # Reproducible: the commit's time as SOURCE_DATE_EPOCH and every file time rewritten to it, so
+      # image-push can rebuild this image byte for byte and prove it did.
       - name: Build the image and load it
         run: |
           set -euo pipefail
           SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
           export SOURCE_DATE_EPOCH
-          echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" >> "$GITHUB_ENV"
           docker buildx create --name spindle-image --driver docker-container --driver-opt "image=${BUILDKIT_IMAGE}"
           docker buildx build --builder spindle-image --platform "$PLATFORM" --provenance=false --sbom=false \
-            --file Containerfile --tag "$CHECKED" --load "$RUNNER_TEMP/context"
+            --file Containerfile --output "type=docker,name=${CHECKED},rewrite-timestamp=true" "$RUNNER_TEMP/context"
 
       # Debian answers no --version and runs as root, so each check must refuse it before its pass
       # on the image counts.
@@ -539,6 +551,93 @@ jobs:
           sh scripts/release-linux-binary.sh image-answers "$CHECKED" examples/rally/ess examples/environments/laptop.toml \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
+      - name: Record the checked image's ID
+        if: ${{ github.event_name != 'pull_request' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/checked"
+          docker image inspect --format '{{.Id}}' "$CHECKED" > "$RUNNER_TEMP/checked/${TARGET}"
+          echo "${PLATFORM}: checked image $(cat "$RUNNER_TEMP/checked/${TARGET}")." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ github.event_name != 'pull_request' }}
+        with:
+          name: image-checked-${{ matrix.target }}
+          path: ${{ runner.temp }}/checked/${{ matrix.target }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # With image-manifest, the only job that may write packages, and it runs on no pull request. It
+  # rebuilds the image the image job checked, refuses a rebuild whose ID differs, and pushes that
+  # build by digest, untagged.
+  image-push:
+    name: Push image ${{ matrix.platform }} by digest
+    if: ${{ github.event_name != 'pull_request' && needs.provenance.outputs.containerfile == 'true' }}
+    needs: [provenance, gate, image]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+            platform: linux/amd64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            platform: linux/arm64
+    env:
+      TARGET: ${{ matrix.target }}
+      PLATFORM: ${{ matrix.platform }}
+      VERSION: ${{ needs.provenance.outputs.version }}
+      REBUILT: spindle-push:${{ matrix.target }}
+      BUILDKIT_IMAGE: moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ needs.provenance.outputs.commit }}
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: b10x-spindle-${{ needs.provenance.outputs.version }}-${{ matrix.target }}.tar.gz
+          path: dist
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: image-checked-${{ matrix.target }}
+          path: checked
+
+      - name: Unpack the binary the build job checked
+        run: |
+          set -euo pipefail
+          name="b10x-spindle-${VERSION}-${TARGET}"
+          (cd dist && sha256sum --check --strict "${name}.tar.gz.sha256")
+          tar -xzf "dist/${name}.tar.gz" -C "$RUNNER_TEMP" "${name}/b10x-spindle"
+          mkdir -p "$RUNNER_TEMP/context"
+          mv "$RUNNER_TEMP/${name}/b10x-spindle" "$RUNNER_TEMP/context/b10x-spindle"
+
+      - name: Rebuild the image and refuse it unless it is the checked one
+        run: |
+          set -euo pipefail
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          export SOURCE_DATE_EPOCH
+          echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" >> "$GITHUB_ENV"
+          docker buildx create --name spindle-image --driver docker-container --driver-opt "image=${BUILDKIT_IMAGE}"
+          docker buildx build --builder spindle-image --platform "$PLATFORM" --provenance=false --sbom=false \
+            --file Containerfile --output "type=docker,name=${REBUILT},rewrite-timestamp=true" "$RUNNER_TEMP/context"
+          checked="$(cat "checked/${TARGET}")"
+          rebuilt="$(docker image inspect --format '{{.Id}}' "$REBUILT")"
+          [[ "$checked" =~ ^sha256:[0-9a-f]{64}$ ]]
+          if [ "$rebuilt" != "$checked" ]; then
+            echo "${PLATFORM}: the rebuilt image ${rebuilt} is not the checked image ${checked}; nothing pushed." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "checked=$checked" >> "$GITHUB_ENV"
+
       - name: Log in to ghcr.io
         if: ${{ github.event_name != 'pull_request' }}
         env:
@@ -546,18 +645,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
 
-      # The same build again, from the builder's cache and at the same SOURCE_DATE_EPOCH, pushed by
-      # digest with no tag; it must be the image checked above.
+      # The same build again, from this builder's cache at the same SOURCE_DATE_EPOCH, pushed by
+      # digest with no tag; it must still be the checked image.
       - name: Push the checked image by digest
         if: ${{ github.event_name != 'pull_request' }}
         run: |
           set -euo pipefail
           docker buildx build --builder spindle-image --platform "$PLATFORM" --provenance=false --sbom=false \
             --file Containerfile --metadata-file "$RUNNER_TEMP/pushed.json" \
-            --output "type=image,name=${IMAGE},push-by-digest=true,name-canonical=true,push=true" "$RUNNER_TEMP/context"
+            --output "type=image,name=${IMAGE},push-by-digest=true,name-canonical=true,push=true,rewrite-timestamp=true" \
+            "$RUNNER_TEMP/context"
           pushed="$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/pushed.json")"
           config="$(jq -r '."containerimage.config.digest"' "$RUNNER_TEMP/pushed.json")"
-          checked="$(docker image inspect --format '{{.Id}}' "$CHECKED")"
           [[ "$pushed" =~ ^sha256:[0-9a-f]{64}$ ]]
           if [ "$checked" != "$config" ] && [ "$checked" != "$pushed" ]; then
             echo "The pushed image ${IMAGE}@${pushed} (config ${config}) is not the checked image ${checked}." | tee -a "$GITHUB_STEP_SUMMARY"
@@ -565,7 +664,7 @@ jobs:
           fi
           mkdir -p "$RUNNER_TEMP/digests"
           printf '%s\n' "$pushed" > "$RUNNER_TEMP/digests/${TARGET}"
-          echo "${PLATFORM}: pushed ${IMAGE}@${pushed}, the image checked above, untagged." | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "${PLATFORM}: pushed ${IMAGE}@${pushed}, the checked image, untagged." | tee -a "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ github.event_name != 'pull_request' }}
@@ -575,12 +674,14 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # The manifest list of the two checked images, tagged <version> once; a tag already in ghcr.io is
-  # refused, never moved. Its digest becomes the IMAGES asset.
+  # The manifest list of the two checked images, tagged <version> once. A tag already in ghcr.io
+  # that lists exactly these two images is a re-run or backfill and is left as it is; one listing
+  # anything else is refused, never moved, and so is a tag ghcr.io cannot say it lacks. The list's
+  # digest becomes the IMAGES asset.
   image-manifest:
     name: Tag the image's manifest list
-    if: ${{ github.event_name != 'pull_request' }}
-    needs: [provenance, gate, image]
+    if: ${{ github.event_name != 'pull_request' && needs.provenance.outputs.containerfile == 'true' }}
+    needs: [provenance, gate, image-push]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -612,31 +713,35 @@ jobs:
           set -euo pipefail
           found=(digests/*)
           test "${#found[@]}" -eq 2
-          refs=()
-          digests=()
-          for file in "${found[@]}"; do
-            digest="$(cat "$file")"
-            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-            digests+=("$digest")
-            refs+=("${IMAGE}@${digest}")
-          done
-          if docker buildx imagetools inspect "${IMAGE}:${VERSION}" > /dev/null 2>&1; then
-            echo "${IMAGE}:${VERSION} is already in ghcr.io; a released tag is never moved. Nothing tagged." | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 1
+          amd64="$(cat digests/x86_64-unknown-linux-gnu)"
+          arm64="$(cat digests/aarch64-unknown-linux-gnu)"
+          [[ "$amd64" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$arm64" =~ ^sha256:[0-9a-f]{64}$ ]]
+          if inspected="$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" 2>&1)"; then
+            held="sha256:$(docker buildx imagetools inspect --raw "${IMAGE}:${VERSION}" | sha256sum | cut -d ' ' -f 1)"
+            if ! sh scripts/release-linux-binary.sh manifest-list "${IMAGE}:${VERSION}@${held}" "$amd64" "$arm64"; then
+              echo "${IMAGE}:${VERSION} is already in ghcr.io and is not the list of the two checked images; a released tag is never moved. Nothing tagged." | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+            echo "${IMAGE}:${VERSION} already lists the two checked images (${held}); left as it is." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            case "$inspected" in
+              *"not found"*) ;;
+              *)
+                echo "ghcr.io could not say whether it holds ${IMAGE}:${VERSION}; nothing tagged: ${inspected}" | tee -a "$GITHUB_STEP_SUMMARY"
+                exit 1
+                ;;
+            esac
+            docker buildx imagetools create --tag "${IMAGE}:${VERSION}" \
+              --annotation "index:org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+              --annotation "index:org.opencontainers.image.version=${VERSION}" \
+              "${IMAGE}@${amd64}" "${IMAGE}@${arm64}"
           fi
-          docker buildx imagetools create --tag "${IMAGE}:${VERSION}" \
-            --annotation "index:org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
-            --annotation "index:org.opencontainers.image.version=${VERSION}" \
-            "${refs[@]}"
-          digest="$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{json .Manifest}}' | jq -r .digest)"
+          digest="sha256:$(docker buildx imagetools inspect --raw "${IMAGE}:${VERSION}" | sha256sum | cut -d ' ' -f 1)"
           mkdir -p images
           printf '%s:%s@%s\n' "$IMAGE" "$VERSION" "$digest" > images/IMAGES
           sh scripts/release-linux-binary.sh images-line images/IMAGES "$IMAGE" "$VERSION" | tee -a "$GITHUB_STEP_SUMMARY"
-          sh scripts/release-linux-binary.sh manifest-list "$(cat images/IMAGES)" | tee -a "$GITHUB_STEP_SUMMARY"
-          raw="$(docker buildx imagetools inspect --raw "$(cat images/IMAGES)")"
-          for pushed in "${digests[@]}"; do
-            grep -Fq "\"${pushed}\"" <<< "$raw" || { echo "The list does not hold the checked image ${pushed}." >&2; exit 1; }
-          done
+          sh scripts/release-linux-binary.sh manifest-list "$(cat images/IMAGES)" "$amd64" "$arm64" | tee -a "$GITHUB_STEP_SUMMARY"
           (cd images && sha256sum IMAGES > IMAGES.sha256)
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -650,7 +755,7 @@ jobs:
 
   publish:
     name: Upload binaries to the release page
-    if: ${{ github.event_name != 'pull_request' }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.gate.result == 'success' && needs.build.result == 'success' && needs.sbom.result == 'success' && (needs.image-manifest.result == 'success' || (needs.provenance.outputs.containerfile == 'false' && needs.image-manifest.result == 'skipped')) }}
     needs: [provenance, gate, build, sbom, image-manifest]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -661,6 +766,7 @@ jobs:
       GH_REPO: ${{ github.repository }}
       TAG: ${{ needs.provenance.outputs.tag }}
       VERSION: ${{ needs.provenance.outputs.version }}
+      IMAGES_EXPECTED: ${{ needs.provenance.outputs.containerfile }}
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -674,10 +780,13 @@ jobs:
           path: dist
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: ${{ needs.provenance.outputs.containerfile == 'true' }}
         with:
           name: images
           path: dist
 
+      # A commit without a Containerfile (a backfilled tag cut before the image existed) carries no
+      # IMAGES; any other carries it.
       - name: Check each artifact against the hash its job wrote, then create the checksum manifest
         working-directory: dist
         run: |
@@ -687,7 +796,12 @@ jobs:
           for target in $targets; do
             files+=("b10x-spindle-${VERSION}-${target}.tar.gz")
           done
-          files+=("b10x-spindle-${VERSION}.cdx.json" "IMAGES")
+          files+=("b10x-spindle-${VERSION}.cdx.json")
+          case "$IMAGES_EXPECTED" in
+            true) files+=("IMAGES") ;;
+            false) ;;
+            *) echo "Whether the commit has an image is unknown ('$IMAGES_EXPECTED'); nothing checked." >&2; exit 1 ;;
+          esac
           test "$(ls | wc -l)" -eq "$(( 2 * ${#files[@]} ))"
           for file in "${files[@]}"; do
             test -s "$file"
@@ -718,15 +832,22 @@ jobs:
         working-directory: dist
         run: |
           set -euo pipefail
+          assets=(*.tar.gz *.cdx.json)
+          if [ "$IMAGES_EXPECTED" = true ]; then
+            assets+=(IMAGES)
+          fi
+          assets+=(SHA256SUMS)
           existing="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
           conflict=0
-          for file in *.tar.gz *.cdx.json IMAGES SHA256SUMS; do
+          for file in "${assets[@]}"; do
             if printf '%s\n' "$existing" | grep -Fxq "$file"; then
               echo "Asset $file is already on the release page of $TAG; refusing to replace it." | tee -a "$GITHUB_STEP_SUMMARY"
               conflict=1
             fi
           done
           test "$conflict" -eq 0
-          gh release upload "$TAG" *.tar.gz *.cdx.json IMAGES SHA256SUMS
-          echo "Image: $(cat IMAGES)" | tee -a "$GITHUB_STEP_SUMMARY"
+          gh release upload "$TAG" "${assets[@]}"
+          if [ "$IMAGES_EXPECTED" = true ]; then
+            echo "Image: $(cat IMAGES)" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
           gh release view "$TAG" --json assets --jq '.assets[].name' | tee -a "$GITHUB_STEP_SUMMARY"

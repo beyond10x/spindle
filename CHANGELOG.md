@@ -68,10 +68,12 @@ are Spindle's releases.
   `Containerfile`. On a runner of each architecture the release workflow refuses the image unless
   it answers the release's `--version`, runs as a numeric user other than root, and answers a
   request sent with the trusted caller secret from outside the container to a `run` on `0.0.0.0`,
-  before it pushes the image by digest; it refuses a version tag already in `ghcr.io`. The
+  before a job of its own pushes that same image by digest; a version tag already in `ghcr.io` is
+  left as it is where it lists the two checked images and refused, never moved, otherwise. The
   release's `IMAGES` asset, listed in `SHA256SUMS`, names the manifest list by digest, and the job
   summary prints it. A pull request that changes the workflow builds and checks both images and
-  pushes nothing (`story:spindle-image-published`).
+  pushes nothing; a backfilled tag cut before the image existed publishes its assets without
+  `IMAGES` (`story:spindle-image-published`).
 
 ### Changed
 
