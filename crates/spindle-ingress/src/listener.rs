@@ -10,7 +10,7 @@ use std::convert::Infallible;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, OnceLock, mpsc};
 use std::time::{Duration, Instant, SystemTime};
 
 use ess_http::Operation;
@@ -131,8 +131,8 @@ struct Served {
     exchanges: mpsc::Sender<Exchange>,
     guard: Option<Guard>,
     /// The host's reader, where the listener answers reads beside the host's thread
-    /// ([`Listener::bind_reading`]).
-    reader: Option<Reader>,
+    /// ([`Listener::bind_reading`]); set once a listener standing by leads ([`Listener::lead`]).
+    reader: Arc<OnceLock<Reader>>,
     /// What the health routes read beside the caller's thread.
     health: Arc<Health>,
     /// The TLS each connection is served over, where the listener serves TLS
@@ -157,6 +157,9 @@ struct Health {
     bound: AtomicU64,
     /// Set once the run stops taking work ([`Listener::stopping`]).
     stopping: Arc<AtomicBool>,
+    /// Set while the run stands by for another process's lease, until it leads
+    /// ([`Listener::bind_standing_by_on`], [`Listener::lead`]).
+    standby: AtomicBool,
 }
 
 impl Health {
@@ -167,7 +170,12 @@ impl Health {
             holding: AtomicBool::new(false),
             bound: AtomicU64::new(millis(LIVENESS)),
             stopping: Arc::new(AtomicBool::new(false)),
+            standby: AtomicBool::new(false),
         }
+    }
+
+    fn standby(&self) -> bool {
+        self.standby.load(Ordering::SeqCst)
     }
 
     /// The caller asks for a request now.
@@ -186,6 +194,7 @@ impl Health {
         Probed {
             seed,
             stopping: self.stopping(),
+            standby: self.standby(),
             holding: self.holding.load(Ordering::SeqCst),
             idle: self.since.elapsed().saturating_sub(asked),
             bound: Duration::from_millis(self.bound.load(Ordering::SeqCst)),
@@ -295,6 +304,8 @@ pub struct Listener {
     shutdown: Option<oneshot::Sender<Stop>>,
     server: Option<std::thread::JoinHandle<io::Result<()>>>,
     health: Arc<Health>,
+    /// The host's reader the server answers reads through, once it has one ([`Listener::lead`]).
+    reader: Arc<OnceLock<Reader>>,
 }
 
 /// How the server thread stops.
@@ -413,6 +424,45 @@ impl Listener {
         )
     }
 
+    /// As [`Listener::bind_reading_on`], over TLS where `tls` is given
+    /// ([`Listener::bind_reading_on_tls`]), bound before the host exists, for a run standing by
+    /// for another process's lease (`story:several-writers-one-postgres`): `GET /__spindle/live`
+    /// answers as on any listener, `GET /__spindle/ready` `503` with `standby: true`, and every
+    /// other request `503` at once, none handed to [`Listener::next`], until the run leads
+    /// ([`Listener::lead`]).
+    ///
+    /// # Errors
+    /// As [`Listener::bind_reading_on`].
+    pub fn bind_standing_by_on(
+        ip: IpAddr,
+        port: u16,
+        surface: Surface,
+        tls: Option<Arc<rustls::ServerConfig>>,
+    ) -> io::Result<Self> {
+        let surface = if exposed(ip) {
+            surface.requiring_secret()
+        } else {
+            surface
+        };
+        let listener = Self::serve_over(
+            SocketAddr::new(ip, port),
+            surface,
+            None,
+            None,
+            tls.map(tokio_rustls::TlsAcceptor::from),
+        )?;
+        listener.health.standby.store(true, Ordering::SeqCst);
+        Ok(listener)
+    }
+
+    /// A listener standing by ([`Listener::bind_standing_by_on`]) leads: from now on it answers
+    /// every read through the host's `reader`, hands every other request to [`Listener::next`],
+    /// and reads ready as any listener does. A listener that has its reader keeps it.
+    pub fn lead(&self, reader: Reader) {
+        let _ = self.reader.set(reader);
+        self.health.standby.store(false, Ordering::SeqCst);
+    }
+
     fn serve(
         address: SocketAddr,
         surface: Surface,
@@ -453,11 +503,12 @@ impl Listener {
         let (sender, exchanges) = mpsc::channel();
         let (shutdown, mut stopped) = oneshot::channel::<Stop>();
         let health = Arc::new(Health::new());
+        let reader = Arc::new(reader.map(OnceLock::from).unwrap_or_default());
         let served = Arc::new(Served {
             surface,
             exchanges: sender,
             guard,
-            reader,
+            reader: Arc::clone(&reader),
             health: Arc::clone(&health),
             tls,
         });
@@ -504,6 +555,7 @@ impl Listener {
             shutdown: Some(shutdown),
             server: Some(server),
             health,
+            reader,
         })
     }
 
@@ -679,6 +731,11 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
     if reserved.is_none() && served.health.stopping() {
         return (stopping().into(), None);
     }
+    // A run standing by for another process's lease answers every request but its own routes
+    // `503` at once (`story:several-writers-one-postgres`).
+    if reserved.is_none() && served.health.standby() {
+        return (standing_by().into(), None);
+    }
     if let Some(reserved) = reserved {
         let query = request.uri().query().unwrap_or_default();
         let query = match &served.guard {
@@ -848,7 +905,7 @@ fn once<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a HeaderValue> {
 /// handed to the host's thread as an [`Exchange`]. The `503` refusal where the listener is
 /// stopping or stopped before answering, and `500` where a read stopped without an answer.
 async fn handed(served: &Served, pending: Pending) -> Result<(Reply, Answered), Answer> {
-    let pending = match &served.reader {
+    let pending = match served.reader.get() {
         Some(reader) if pending.reads(reader) => {
             let reader = reader.clone();
             match tokio::task::spawn_blocking(move || pending.read(&reader)).await {
@@ -863,6 +920,10 @@ async fn handed(served: &Served, pending: Pending) -> Result<(Reply, Answered), 
     if served.health.stopping() && !matches!(pending.asked, Asked::Hosted(_)) {
         return Err(stopping());
     }
+    // A standby has no host to answer the metrics or the topology.
+    if served.health.standby() {
+        return Err(standing_by());
+    }
     let (reply, replying) = oneshot::channel();
     if served.exchanges.send(Exchange { pending, reply }).is_err() {
         return Err(Answer::refusal(503, "the listener is stopping"));
@@ -875,6 +936,14 @@ async fn handed(served: &Served, pending: Pending) -> Result<(Reply, Answered), 
 /// The refusal of a request that arrives once the run stops taking work.
 fn stopping() -> Answer {
     Answer::refusal(503, "the run is stopping")
+}
+
+/// The refusal of a request to a run standing by for another process's lease.
+fn standing_by() -> Answer {
+    Answer::refusal(
+        503,
+        "the run is on standby: another process holds the lease of its store",
+    )
 }
 
 /// What a record notes of a request for `asked`, answered as `answered` says: the route

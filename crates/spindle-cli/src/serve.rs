@@ -18,7 +18,8 @@ use spindle_host::{
 };
 use spindle_ingress::console::{self, Worlds};
 use spindle_ingress::{
-    Answer, Caller, Console, Exchange, Listener, Recorder, SeedState, Surface, Unfixed,
+    Answer, Caller, Console, Exchange, Listener, Recorder, SeedPhase, SeedProgress, SeedState,
+    Surface, Unfixed,
 };
 use spindle_spec::EssIr;
 
@@ -341,11 +342,28 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         }
         (Some(other), _) => bail!("this build has no `{other}` store for store.durable"),
     };
+    // On PostgreSQL the run leads only under the lease of every component's tables
+    // (`story:several-writers-one-postgres`): it opens the stores once it holds them all, here
+    // where it took them at once, or later, standing by, where another process holds one.
+    let mut standby = None;
+    let mut kept = None;
     let stores = match serving.durable {
-        Some(crate::database::POSTGRES) => match crate::database::stores(&ir, environment) {
-            Ok(stores) => stores,
-            Err(error) => return crate::database::misfit_refused(error),
-        },
+        Some(crate::database::POSTGRES) => {
+            let mut leases = crate::database::Leases::connect(&ir, environment)?;
+            match leases.take()? {
+                None => {
+                    kept = Some(leases.keep()?);
+                    match crate::database::stores(&ir, environment) {
+                        Ok(stores) => stores,
+                        Err(error) => return crate::database::misfit_refused(error),
+                    }
+                }
+                Some(held) => {
+                    standby = Some((leases, held));
+                    spindle_host::Stores::new()
+                }
+            }
+        }
         _ => spindle_host::Stores::new(),
     };
     match serving.callers.as_slice() {
@@ -471,6 +489,39 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         Some(at) => Arc::new(ManualClock::at(at)),
         None => Arc::new(SystemClock),
     };
+    // Standing by, the run listens before any host exists, and opens the stores once it holds
+    // every lease (`story:several-writers-one-postgres`).
+    let mut stores = stores;
+    let mut surface = Some(surface);
+    let mut standing = None;
+    if let Some((leases, held)) = standby {
+        let waiting = Listener::bind_standing_by_on(
+            serving.address,
+            serving.port,
+            surface.take().context("the surface")?,
+            serving.tls.clone(),
+        )
+        .context("binding the HTTP listener")?;
+        stopping_on(&waiting.stopping())?;
+        listening(&waiting, &serving.components)?;
+        match stand_by(&waiting, leases, &held, &signalled)? {
+            Ok(leading) => {
+                kept = Some(leading);
+                stores = match crate::database::stores(&ir, environment) {
+                    Ok(stores) => stores,
+                    Err(error) => {
+                        waiting.close(CLOSE_GRACE);
+                        return crate::database::misfit_refused(error);
+                    }
+                };
+                standing = Some(waiting);
+            }
+            Err(code) => {
+                waiting.close(CLOSE_GRACE);
+                return Ok(code);
+            }
+        }
+    }
     let opened = Host::with_stores(ir, environment, clock, directory, decider, retries, stores)
         .and_then(|host| match serving.mint_seed {
             Some(seed) => host.seeded(seed),
@@ -510,6 +561,22 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     // Where a `--state` records the seed applied to it (`seed.json`), a seed it does not record
     // stops the run here, before listening.
     let mut seeding = match (serving.seed, published) {
+        // A run that took over the leases from another process skips the seed, which ran under
+        // the first leader (`story:several-writers-one-postgres`, D5).
+        (Some(seed), Some(published)) if standing.is_some() => {
+            log::info(format!(
+                "seed {} is not submitted: this run took over the leases of its stores from \
+                 another process, which submitted it",
+                seed.path().display()
+            ))
+            .write();
+            published.publish(SeedProgress {
+                phase: SeedPhase::Ended,
+                left: 0,
+                ..SeedProgress::starting(published.read().entries)
+            });
+            None
+        }
         (Some(seed), Some(published)) => Some(crate::seed::begin(
             seed,
             serving.state,
@@ -519,37 +586,41 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         )?),
         _ => None,
     };
-    let listener = match serving.tls {
-        Some(tls) => Listener::bind_reading_on_tls(
-            serving.address,
-            serving.port,
-            surface,
-            host.reader(),
-            tls,
-        ),
-        None => Listener::bind_reading_on(serving.address, serving.port, surface, host.reader()),
-    }
-    .context("binding the HTTP listener")?;
-    // The signal itself stops the listener taking work, while a command may hold this thread.
+    let listener = match (standing, surface) {
+        (Some(standing), _) => {
+            // The listener standing by leads: it reads through the host from now on.
+            standing.lead(host.reader());
+            standing
+        }
+        (None, surface) => {
+            let surface = surface.context("the surface")?;
+            let listener = match serving.tls {
+                Some(tls) => Listener::bind_reading_on_tls(
+                    serving.address,
+                    serving.port,
+                    surface,
+                    host.reader(),
+                    tls,
+                ),
+                None => {
+                    Listener::bind_reading_on(serving.address, serving.port, surface, host.reader())
+                }
+            }
+            .context("binding the HTTP listener")?;
+            // The signal itself stops the listener taking work, while a command may hold this
+            // thread.
+            stopping_on(&listener.stopping())?;
+            listening(&listener, &serving.components)?;
+            listener
+        }
+    };
     let stopping = listener.stopping();
-    stopping_on(&stopping)?;
     let worlds = |ir: &EssIr, body: &serde_json::Value| {
         crate::world::read(ir, body, |table| {
             decisions::deciding(&answers, Some(table), recorder.as_ref()).boxed()
         })
         .map_err(|error| format!("{error:#}"))
     };
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
-    writeln!(
-        out,
-        "{}",
-        serde_json::json!({
-            "listening": listener.local_addr().to_string(),
-            "components": serving.components,
-        })
-    )?;
-    out.flush()?;
     // The exit status a signal asks for, once one arrived.
     let signal_exit = || {
         let signal = signalled.load(Ordering::SeqCst);
@@ -568,6 +639,13 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     let code = loop {
         if let Some(egress) = egress.as_mut() {
             egress.tend();
+        }
+        // A leader that lost a lease writes nothing more: every request still queued is answered
+        // `503` below and the run exits 1, for its supervisor to start it again
+        // (`story:several-writers-one-postgres`, D4).
+        if let Some(lost) = kept.as_ref().and_then(crate::database::Kept::lost) {
+            log::error(lost).write();
+            break ExitCode::FAILURE;
         }
         match draining {
             Some((code, Some(until))) if Instant::now() >= until => break code,
@@ -729,6 +807,77 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     // The lanes stop, each after its post under way, and the cursors they handed back are saved.
     drop(egress);
     Ok(code)
+}
+
+/// Prints the line a served run prints once it listens:
+/// `{"listening": "<address>", "components": [...]}`.
+fn listening(listener: &Listener, components: &[String]) -> Result<()> {
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    writeln!(
+        out,
+        "{}",
+        serde_json::json!({
+            "listening": listener.local_addr().to_string(),
+            "components": components,
+        })
+    )?;
+    out.flush()?;
+    Ok(())
+}
+
+/// Stands by on `listener` until this run holds every lease of `leases`
+/// (`story:several-writers-one-postgres`): it asks for them every [`crate::database::Leases::poll`],
+/// a third of the lease, answering each request handed to it meanwhile `503`, and prints one line
+/// per component once it took them all. Answers the leases kept from then on, or the exit status a
+/// signal asks for, which stops the standby.
+///
+/// # Errors
+/// A lease that cannot be read or written, or the lease thread that cannot start.
+fn stand_by(
+    listener: &Listener,
+    mut leases: crate::database::Leases,
+    held: &str,
+    signalled: &std::sync::atomic::AtomicUsize,
+) -> Result<std::result::Result<crate::database::Kept, ExitCode>> {
+    log::info(format!(
+        "standing by: another process holds the lease of {held}, so this run serves nothing \
+         until it takes the leases of {}",
+        leases.components().join(", ")
+    ))
+    .field("component", held)
+    .write();
+    let mut asked = Instant::now();
+    loop {
+        let signal = signalled.load(Ordering::SeqCst);
+        if signal != 0 {
+            let signal = u8::try_from(signal).unwrap_or(u8::MAX - SIGNALLED);
+            return Ok(Err(ExitCode::from(SIGNALLED.saturating_add(signal))));
+        }
+        let wait = leases
+            .poll()
+            .saturating_sub(asked.elapsed())
+            .min(SIGNAL_POLL);
+        if let Some(exchange) = listener.next(wait) {
+            exchange.respond(Answer::refusal(
+                503,
+                "the run is on standby: another process holds the lease of its store",
+            ));
+            continue;
+        }
+        if asked.elapsed() < leases.poll() {
+            continue;
+        }
+        asked = Instant::now();
+        if leases.take()?.is_none() {
+            for component in leases.components() {
+                log::info(format!("took the lease of {component}"))
+                    .field("component", component.as_str())
+                    .write();
+            }
+            return Ok(Ok(leases.keep()?));
+        }
+    }
 }
 
 /// Each line of [`Surface::report`], as it is written, with the operation it names: the route of

@@ -598,8 +598,11 @@ impl Store for Tallied<'_> {
 /// component owns is checked against its owner's version, then left out of what the running
 /// component's store checks, which holds no row of it. The check and the commit are two steps,
 /// which no other write comes between while this host is the one writer of the owner's store: a
-/// memory store, or a SQLite state directory, which `run` locks. Two processes writing one
-/// PostgreSQL owner store can keep a stale decision (`docs/design/spindle.md` § 11).
+/// memory store, a SQLite state directory, which `run` locks, or PostgreSQL tables, which `run`
+/// writes only under their lease: a second `run` stands by, and a write of one that lost the
+/// lease is refused inside its own transaction (`story:several-writers-one-postgres`). Two hosts
+/// writing one supplied store outside `run` can keep a stale decision
+/// (`docs/design/spindle.md` § 11).
 struct Routed<'a> {
     ir: &'a EssIr,
     running: Tallied<'a>,
@@ -1942,9 +1945,10 @@ impl Host {
     /// ([`Store::counts`]). Only where that count failed are they counted again when read.
     ///
     /// They see only the writes this host lands: a store has one writer, as a state directory has
-    /// one Spindle process. A second writer on the same store, another host on the same SQLite
-    /// files or on a shared supplied store, moves its rows without moving these, until the store is
-    /// next opened.
+    /// one Spindle process and PostgreSQL tables the one `run` that holds their lease
+    /// (`story:several-writers-one-postgres`). A second writer on the same store, another host on
+    /// the same SQLite files or on a shared supplied store, moves its rows without moving these,
+    /// until the store is next opened.
     ///
     /// # Errors
     /// [`HostError::Store`] when the rows had to be counted and a store could not be read, as a

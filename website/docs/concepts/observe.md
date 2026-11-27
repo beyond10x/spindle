@@ -109,7 +109,7 @@ healthcheck or an orchestrator's probes need no view row:
 | Route | Answers |
 |---|---|
 | `GET /__spindle/seed` | the state of the run's [seed](environment-and-admission.md#a-seed-submitted-at-start), `{"state": "none"}` on a run without one; otherwise `{"state", "entries", "left", "sent", "applied", "already_there", "refused", "rejected"}`, `state` being `running` or `ended` |
-| `GET /__spindle/ready` | `200` where the run has no seed or its seed has ended, and no signal has arrived; `503` otherwise. The body is `{"ready", "seed", "stopping"}`, `seed` being the `state` above |
+| `GET /__spindle/ready` | `200` where the run has no seed or its seed has ended, no signal has arrived and the run is not standing by; `503` otherwise. The body is `{"ready", "seed", "stopping"}`, `seed` being the `state` above, with `"standby": true` added while the run stands by for another process's lease of a PostgreSQL store ([several processes on one store](environment-and-admission.md#several-processes-on-one-store)) |
 | `GET /__spindle/live` | `200` while the run's thread answers a request it took, however long that takes (a reset seeding again, a delivery retried), or has asked for one within the last 60 s; `503` once it holds none and has asked for none for 60 s. The body is `{"live", "idle_ms", "bound_ms"}`, `idle_ms` counting from its last ask |
 
 ```console

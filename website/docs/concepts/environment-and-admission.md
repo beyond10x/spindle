@@ -307,8 +307,11 @@ only where every entry is a create whose command declares `existing_instance:`.
 
 ### What a seed does not do
 
-- Two replicas starting at once on a store kept in PostgreSQL each submit the whole file; only
-  `existing_instance:` outcomes keep that from writing twice.
+- Of several `run` processes on one store kept in PostgreSQL, only the one that leads from its
+  start submits the seed. One that stood by and then takes over the leases skips it, logs that it
+  did, and reads ready at once ([several processes on one store](#several-processes-on-one-store)).
+  A leader killed before its seed ended leaves the rest unsent until a process leads from its
+  start again.
 - `POST /api/reset` drops the seed's entries not yet sent, so a reset that arrives while the seed
   runs ends that run with the counts it reached. With no world it then empties every store,
   records 0 entries done in `seed.json`, and submits the seed again, from its first entry to its
@@ -435,6 +438,7 @@ The environment document holds only the implementation. The database comes from 
 | `database_schema` | the schema holding the tables; `public` by default |
 | `database_pool` | connections per component; 4 by default. Reads run at most `database_pool` - 1 at a time (1 with a pool of 1), so one connection is always left for writes; a read over that waits its turn |
 | `database_connections` | the database's connection budget available to this deployment: at least components x `database_pool` + 1. Not the serving role's `CONNECTION LIMIT`. Required with `database_ca` |
+| `database_lease` | how long, in whole seconds, a process holds the lease of each component's tables from its last renewal; 10 by default. A process standing by asks for the leases every third of it |
 
 Without `database_ca`, a loopback or Unix-socket database is opened isolated, over plaintext, and
 its tables are created when `run` opens it: for tests and a local database. With `database_ca` the
@@ -468,7 +472,10 @@ database is hosted, and two roles take part:
 
 The serving role's `CONNECTION LIMIT` is from 1 to components x `database_pool`, by eventlog's
 rule: a serving role may open no more connections than its pools admit. `database_connections`
-holds every component's pool and one reserved connection, so it is above the role's limit.
+holds every component's pool and one reserved connection, the one each process holds for its
+leases, so it is above the role's limit. That connection is the serving role's too: with `n`
+processes on one store, `n` of the role's connections hold leases, and the leader's pools have the
+rest.
 
 Reads served beside the commands take no connection of their own: each takes one from the
 component's pool for a statement and gives it back, so a pool of 4 is shared by the writer and
@@ -494,6 +501,7 @@ $ SPINDLE_SETTING_DATABASE_URL=postgres://serving:...@db.internal:5432/app \
   a digit
 - a host off loopback without `database_ca`
 - `database_connections` below components x `database_pool` + 1
+- `database_lease` that is not a whole number of seconds above 0
 
 It exits 1 the same way for a serving role that would not be admitted:
 
@@ -503,7 +511,9 @@ It exits 1 the same way for a serving role that would not be admitted:
 - a role whose `CONNECTION LIMIT` is not between 1 and components x `database_pool`
 - a role that can write `spindle_<component>_schema_version`, `_projection_registry` or
   `_settlement_floor`
-- tables an earlier release's `store migrate` created, until `store migrate` runs again
+- tables an earlier release's `store migrate` created, until `store migrate` runs again; that
+  includes tables without the lease table `spindle_<component>_p_lease`, which a release before
+  leases did not create
 
 Percent-encode an `@` in the user name, the password or the query string as `%40`. A role limited
 to 8 connections, the same number as `database_connections`, is refused at the default pool of 4:
@@ -533,6 +543,50 @@ default) times `max_connections` (100). With those defaults a command that write
 
 Raise `max_locks_per_transaction` on the server for such commands, which takes a restart. At 256,
 one command writing 20,000 instances lands.
+
+### Several processes on one store
+
+Two or more `run` processes of one specification may start on one PostgreSQL store, as replicas of
+a service do. One leads and is the store's one writer; the others stand by.
+
+Each component's tables hold a lease, one row of `spindle_<component>_p_lease`, which `store
+migrate` creates beside the other tables (a database opened isolated creates it too). The row
+names a token, the database session of the process that holds it, and when it ends, by the
+database's clock. Each process takes the lease of every component in name order through one
+connection of its own, and leads once it holds them all. The leader renews them every third of
+`database_lease`; a clean exit, on SIGINT or SIGTERM, releases them.
+
+A process that finds a lease held stands by. It binds its listener and prints its listening line,
+answers `GET /__spindle/live` `200`, `GET /__spindle/ready` `503` with `standby: true`, and every
+other request `503`. It opens no store, writes nothing, posts no event to a webhook and keeps no
+dead letter. Every third of `database_lease` it asks for the leases again. A lease is free once
+its end has passed, or once the database session that holds it has ended, as a killed process's
+does. On taking them all the process opens the stores, builds its host and serves; it skips the
+seed, which the first leader submitted. Its stderr shows the takeover:
+
+```text
+b10x-spindle: standing by: another process holds the lease of board, so this run serves nothing until it takes the leases of board, ledger
+b10x-spindle: took the lease of board
+b10x-spindle: took the lease of ledger
+```
+
+Taking a lease moves its token on. Every write of a process runs, inside its own transaction, a
+check that the lease row still names the token that process took. So a leader that was paused past
+its lease, while another process took over, lands nothing once it resumes: the write is refused,
+naming the lease, and the rows stay as the new leader left them. A leader that finds its lease
+taken answers the requests already queued `503`, prints the line below on stderr and exits 1, for
+its supervisor to start it again as a standby:
+
+```text
+b10x-spindle: another process took the lease of board, so this one writes nothing more and exits
+```
+
+A leader whose renewals all fail for a whole `database_lease`, as when the database is unreachable,
+exits 1 the same way, since another process may hold the lease by then.
+
+The lease covers a store kept in PostgreSQL only. A `--state` directory stays locked to one
+process, and a connection pooler that hands one database session to several clients in turn is not
+supported for the lease's connection.
 
 ### A specification change over stored rows
 

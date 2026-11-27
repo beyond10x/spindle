@@ -143,6 +143,55 @@ fn liveness_holds_while_a_taken_request_is_answered() {
     assert_eq!(status, 503, "idle and silent past the bound: {body}");
 }
 
+/// A listener standing by for another process's lease (`story:several-writers-one-postgres`),
+/// bound before any host exists: `GET /__spindle/live` answers `200` while its caller polls,
+/// `GET /__spindle/ready` `503` with `standby: true`, and every other request `503` at once,
+/// none of them handed to the caller.
+#[test]
+fn a_standby_reads_not_ready() {
+    let listener =
+        Listener::bind_standing_by_on(std::net::Ipv4Addr::LOCALHOST.into(), 0, surface(), None)
+            .expect("the listener binds")
+            .live_within(BOUND);
+    let address = listener.local_addr();
+    assert!(listener.next(Duration::ZERO).is_none());
+    let (status, body) = live(address, &[]);
+    assert_eq!(status, 200, "a standby polling is live: {body}");
+    let (status, body) = get(address, "/__spindle/ready", &[]);
+    let body: Value = serde_json::from_str(&body).unwrap_or_else(|error| panic!("{error}: {body}"));
+    assert_eq!(status, 503, "a standby is not ready: {body}");
+    assert_eq!(
+        body,
+        serde_json::json!({"ready": false, "seed": "none", "stopping": false, "standby": true})
+    );
+    for (method, path) in [("GET", "/api/model"), ("POST", "/api/reset")] {
+        let mut stream =
+            TcpStream::connect_timeout(&address, ANSWER).expect("the listener accepts");
+        stream
+            .set_read_timeout(Some(ANSWER))
+            .expect("a read timeout");
+        write!(
+            stream,
+            "{method} {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\
+             Content-Length: 0\r\n\r\n"
+        )
+        .expect("the request is written");
+        let mut answer = String::new();
+        stream
+            .read_to_string(&mut answer)
+            .expect("the answer is read before the timeout");
+        assert!(
+            answer.starts_with("HTTP/1.1 503"),
+            "{method} {path} on a standby: {answer}"
+        );
+        assert!(answer.contains("standby"), "{method} {path}: {answer}");
+    }
+    assert!(
+        listener.next(Duration::ZERO).is_none(),
+        "no request reaches the standby's caller"
+    );
+}
+
 /// The route answers on a surface that records nothing, whose other `/__spindle/` paths answer
 /// `404`; on one whose requests prove their caller it answers `403` without the proxy's secret
 /// and `200` with it.

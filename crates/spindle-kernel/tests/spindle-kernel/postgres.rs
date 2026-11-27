@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use spindle_kernel::{
-    Change, Database, Fit, Misfit, PostgresStore, Removal, Row, Scan, Shape, Shapes, Store, Stored,
-    Write, contract, postgres_prefix,
+    Change, Database, Fit, Lease, Misfit, PostgresStore, Removal, Row, Scan, Shape, Shapes, Store,
+    Stored, Write, contract, postgres_prefix,
 };
 
 const NEEDS: &str = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres";
@@ -732,4 +732,66 @@ fn a_dead_letter_survives_on_postgres() {
             .expect("a second take is answered"),
         None
     );
+}
+
+/// `story:several-writers-one-postgres`: handle A writes under the lease of its component's
+/// tables; once that lease ran out and handle B took it, A's commit is refused by name, inside
+/// the append's own transaction, and the rows stay as they were.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_commit_under_a_taken_lease_is_refused() {
+    let database = database();
+    let component = fresh("leased");
+    let term = Duration::from_secs(1);
+    let mut first = Lease::connect(&database, term).expect("A connects for the lease");
+    let token = first
+        .take(&component)
+        .expect("the lease is read")
+        .expect("no process holds the lease: A takes it");
+    let mut a = open(&database, &component);
+    a.commit(&created("west"))
+        .expect("A writes while it holds the lease");
+    let mut second = Lease::connect(&database, term).expect("B connects for the lease");
+    assert_eq!(
+        second.take(&component).expect("the lease is read"),
+        None,
+        "A's lease runs, and A's session is open: B does not take it"
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let taken = loop {
+        if let Some(taken) = second.take(&component).expect("the lease is read") {
+            break taken;
+        }
+        assert!(Instant::now() < deadline, "B never took the lease");
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    assert!(taken > token, "B's token {taken} follows A's {token}");
+    let mut moved = created("east");
+    moved.expected = Some(1);
+    let refused = a
+        .commit(&moved)
+        .expect_err("A's commit is refused once B holds the lease");
+    let refused = refused.to_string();
+    assert!(
+        refused.contains("lease") && refused.contains(&component),
+        "the refusal names the lease and the component: {refused}"
+    );
+    assert!(
+        !first
+            .renew(&component, token)
+            .expect("A's renewal is answered"),
+        "A's lease is gone"
+    );
+    let mut reader = open(&database, &component);
+    let loaded = reader
+        .load("apart.match.Match", &json!("one"))
+        .expect("the store reads")
+        .expect("A's first write is held");
+    assert_eq!(
+        side(&loaded),
+        &json!("west"),
+        "A's refused write left nothing"
+    );
+    assert_eq!(loaded.version, 1);
+    drop(second);
 }

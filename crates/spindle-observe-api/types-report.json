@@ -1,12 +1,12 @@
 {
   "format": "ess-types-report/3",
-  "source_digest": "88bcbc977a2ce8a3fee2620d14ba44c695e574db4f4ea8004dd455ffbef05936",
+  "source_digest": "b6f0694e443b747d92db8242928bd4e79f4d3dd633544c41b9a5db337c14ad11",
   "input": {
     "kind": "model",
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:ad38b534d4b1c965fcd4a66c2432a29a8d329a20ed1315b4712290b65d3e88cc",
-    "projection_digest": "17f92253c8675bc769dae4934f89006f86453693fc53c2832f844c845fe39c9e"
+    "contract_digest": "slice-sha256/2:b981cfadfb7a79fa6d778afc0a36cc1c97e4d0037a83d7beec80f632b5cf837e",
+    "projection_digest": "6dd0e456722feb0495bb014cc9ed47248f95b9757dd0ad0e56c51801aad1587e"
   },
   "generator_version": "0.99.2",
   "target": "rust",
@@ -793,6 +793,11 @@
     },
     {
       "pointer": "/$defs/spindle.observe.Readiness/properties/seed/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Readiness/properties/standby/description",
       "rule": "description",
       "detail": "retained in source.schema.json; no decoder behavior inferred"
     },

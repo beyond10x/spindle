@@ -23,12 +23,14 @@
 //! instances is read whole, at one snapshot: those of a SQLite file written before 0.7.0, which
 //! `state move` marks when it copies them in (it copies those of 0.7.0 to 0.10.0 naming theirs).
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use eventlog_core::{
-    CaptureError, CaptureLimits, ConsistentTenantCapture, EventLogError, EventStore, TenantId,
+    BoxFuture, CaptureError, CaptureLimits, ConsistentTenantCapture, EventLogError, EventStore,
+    Guard, ProjectionSpec, ProjectionStore, Projector, RecordedEvent, TenantId,
     validate_identifier,
 };
 use eventlog_postgres::{PoolOptions, PostgresConfig, PostgresEventStore};
@@ -156,7 +158,7 @@ impl LogStore<PostgresEventStore> {
             ..PoolOptions::default()
         };
         runtime()?
-            .block_on(PostgresEventStore::migrate(config, options, &[]))
+            .block_on(PostgresEventStore::migrate(config, options, LEASES))
             .map_err(|error| unreachable_hint(error, database))
     }
 
@@ -201,13 +203,355 @@ impl LogStore<PostgresEventStore> {
                 .block_on(PostgresEventStore::local(config, options))
                 .map_err(|error| unreachable_hint(error, database))?
         };
-        LogStore::on(log, Arc::new(runtime), None)
+        let mut store = LogStore::on(log, Arc::new(runtime), None)?;
+        let token = held().get(&place(database, &prefix)).copied();
+        if let Some(token) = token {
+            store.fenced(component, token)?;
+        }
+        Ok(store)
+    }
+
+    /// Every write of this store from now on lands only while `token` is the token of
+    /// `component`'s lease ([`Fence`]), checked in the write's own transaction: what
+    /// [`PostgresStore::open`] does where this process took that lease ([`Lease::take`]).
+    fn fenced(&mut self, component: &str, token: u64) -> Result<(), StoreError> {
+        let leased: Arc<dyn Projector> = Arc::new(Leased);
+        self.call(self.log().register_inline(leased))
+            .map_err(|error| {
+                StoreError::Backend(format!(
+                    "the lease of {component} cannot fence its writes: {error}; run `store \
+                     migrate` of this release with the role that owns the schema"
+                ))
+            })?;
+        let fence = Fence {
+            component: component.to_owned(),
+            token,
+            tenant: self.tenant().clone(),
+        };
+        self.fence(Arc::new(fence));
+        Ok(())
     }
 }
 
 /// How long `store migrate` waits for another migration of the same tables, and for each of its
 /// statements.
 const MIGRATION_WAIT: Duration = Duration::from_secs(60);
+
+/// The read model a component's lease is kept in, `<prefix>_p_lease`: one row, its body
+/// `{"token": <n>, "pid": <the holder's session>, "until": <seconds since 1970>}`, which
+/// [`Lease`] takes, renews and releases on a connection of its own, and which every write of a
+/// store opened under it reads, locked, inside its own append transaction ([`Fence`]).
+/// `store migrate` creates it beside the component's other tables.
+const LEASE: ProjectionSpec = ProjectionSpec {
+    name: "lease",
+    indexed: &[],
+};
+
+/// Every read model a component's tables hold.
+const LEASES: &[ProjectionSpec] = &[LEASE];
+
+/// The key of the one row of [`LEASE`].
+const LEASE_ROW: &str = "lease";
+
+/// Drives [`LEASE`] inline, so a write's fence may read it locked in the write's transaction. No
+/// event moves it: only [`Lease`] writes it.
+struct Leased;
+
+impl Projector for Leased {
+    fn name(&self) -> &'static str {
+        "spindle_lease"
+    }
+
+    fn projections(&self) -> &'static [ProjectionSpec] {
+        LEASES
+    }
+
+    fn apply<'a>(
+        &'a self,
+        _event: &'a RecordedEvent,
+        _store: &'a mut dyn ProjectionStore,
+    ) -> BoxFuture<'a, Result<(), EventLogError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn fingerprint(&self) -> Option<String> {
+        Some("spindle-lease/1".to_owned())
+    }
+}
+
+/// The check every write of a store opened under its component's lease runs inside its own
+/// append transaction: it reads the lease row locked, and admits the write only while the row
+/// still names the token this process took. A process that took the lease after this one moved
+/// the token, so a write of this one, paused past its lease or not, lands nothing.
+struct Fence {
+    component: String,
+    token: u64,
+    tenant: TenantId,
+}
+
+impl Guard for Fence {
+    fn check<'a>(
+        &'a self,
+        store: &'a mut dyn ProjectionStore,
+    ) -> BoxFuture<'a, Result<(), EventLogError>> {
+        Box::pin(async move {
+            let row = store
+                .get_for_update(&LEASE, &self.tenant, LEASE_ROW)
+                .await?;
+            let held = row
+                .as_ref()
+                .and_then(|body| body.get("token"))
+                .and_then(serde_json::Value::as_u64);
+            if held == Some(self.token) {
+                return Ok(());
+            }
+            let now = held.map_or_else(|| "no token".to_owned(), |held| format!("token {held}"));
+            Err(EventLogError::GuardRefused {
+                code: format!(
+                    "fenced: the lease of {} was taken by another process ({now}, this process \
+                     took token {}), so this process writes nothing more to its tables",
+                    self.component, self.token
+                ),
+            })
+        })
+    }
+}
+
+/// Where a component's tables are: the database's hosts and name, the schema and the prefix.
+fn place(database: &Database, prefix: &str) -> String {
+    let name = admitted(&database.url)
+        .ok()
+        .and_then(|config| config.get_dbname().map(str::to_owned))
+        .unwrap_or_default();
+    format!("{}/{name}/{}/{prefix}", hosts(database), database.schema)
+}
+
+/// The token of each lease this process took ([`Lease::take`]), by [`place`]: every store this
+/// process opens on those tables afterwards writes under it ([`PostgresStore::open`]).
+static HELD: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
+
+fn held() -> std::sync::MutexGuard<'static, BTreeMap<String, u64>> {
+    HELD.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// A process's hold on the leases of its components' tables (`story:several-writers-one-postgres`):
+/// one connection of its own to the database, which reads and writes only the lease rows
+/// ([`LEASE`]) and opens no store. A lease is free once its time ran out by the database's clock,
+/// or once the session of the process that holds it has ended (a process killed); taking it moves
+/// its token on, so each holder's token is greater than every earlier one. Every store this
+/// process opens on a component's tables after taking its lease is fenced by that token
+/// ([`PostgresStore::open`]).
+pub struct Lease {
+    database: Database,
+    term: Duration,
+    runtime: tokio::runtime::Runtime,
+    client: Option<tokio_postgres::Client>,
+    /// The components whose tables an isolated database was given ([`PostgresStore::migrate`]).
+    prepared: BTreeSet<String>,
+}
+
+impl std::fmt::Debug for Lease {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Lease")
+            .field("database", &self.database)
+            .field("term", &self.term)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Lease {
+    /// Connects to `database` for the leases of its components' tables, each held for `term`
+    /// from its last renewal.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] naming the setting refused, or the server that cannot be reached
+    /// or refused the connection.
+    pub fn connect(database: &Database, term: Duration) -> Result<Self, StoreError> {
+        let mut lease = Self {
+            database: database.clone(),
+            term,
+            runtime: runtime()?,
+            client: None,
+            prepared: BTreeSet::new(),
+        };
+        lease.connected()?;
+        Ok(lease)
+    }
+
+    /// How long a lease is held from its last renewal.
+    #[must_use]
+    pub fn term(&self) -> Duration {
+        self.term
+    }
+
+    /// Makes the connection again where the last one was closed.
+    fn connected(&mut self) -> Result<(), StoreError> {
+        if self
+            .client
+            .as_ref()
+            .is_none_or(tokio_postgres::Client::is_closed)
+        {
+            let client = session(&self.database, &self.runtime)?;
+            // A statement waits for a write holding the lease row no longer than a third of the
+            // term, so a renewal is tried again before the term runs out.
+            let wait = (self.term / 3).max(Duration::from_millis(200)).as_millis();
+            self.runtime
+                .block_on(client.batch_execute(&format!(
+                    "SET statement_timeout = {wait}; SET lock_timeout = {wait}"
+                )))
+                .map_err(|error| self.failed(&error, "the lease"))?;
+            self.client = Some(client);
+        }
+        Ok(())
+    }
+
+    /// `error` of a statement on the lease of `component`'s tables.
+    fn failed(&self, error: &tokio_postgres::Error, component: &str) -> StoreError {
+        match error.as_db_error() {
+            Some(refused)
+                if refused.code() == &tokio_postgres::error::SqlState::UNDEFINED_TABLE =>
+            {
+                StoreError::Backend(format!(
+                    "the lease of {component} has no table in the schema {}: run `store migrate` \
+                     of this release with the role that owns the schema",
+                    self.database.schema
+                ))
+            }
+            Some(refused) => StoreError::Backend(format!(
+                "PostgreSQL refused a statement on the lease of {component}: {} (SQLSTATE {})",
+                refused.message(),
+                refused.code().code()
+            )),
+            None => StoreError::Backend(format!(
+                "the lease of {component} was not read or written: {error}"
+            )),
+        }
+    }
+
+    /// The lease table of `component`, created first on an isolated database.
+    fn table(&mut self, component: &str) -> Result<String, StoreError> {
+        if self.database.ca.is_none() && !self.prepared.contains(component) {
+            PostgresStore::migrate(&self.database, component)?;
+            self.prepared.insert(component.to_owned());
+        }
+        Ok(format!(
+            "{}.{}_p_{}",
+            self.database.schema,
+            prefix(component),
+            LEASE.name
+        ))
+    }
+
+    /// Runs `step` on the lease of `component`'s tables, and answers the token its statement
+    /// returned.
+    fn run(&mut self, component: &str, step: Step) -> Result<Option<u64>, StoreError> {
+        let table = self.table(component)?;
+        let term = self.term.as_secs_f64();
+        let (statement, token) = match step {
+            Step::Take => (TAKE, None),
+            Step::Renew(token) => (RENEW, Some(token)),
+            Step::Release(token) => (RELEASE, Some(token)),
+        };
+        let statement = statement.replace("{table}", &table);
+        let token = token.map(|token| i64::try_from(token).unwrap_or(i64::MAX));
+        let tenant = crate::sqlite::TENANT;
+        let parameters: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = match (&step, &token) {
+            (Step::Take, _) => vec![&tenant, &LEASE_ROW, &term],
+            (Step::Renew(_), Some(token)) => vec![&tenant, &LEASE_ROW, &term, token],
+            (_, Some(token)) => vec![&tenant, &LEASE_ROW, token],
+            (_, None) => vec![&tenant, &LEASE_ROW],
+        };
+        self.connected()?;
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| StoreError::Backend("no connection for the lease".to_owned()))?;
+        let answered = self
+            .runtime
+            .block_on(client.query_opt(&statement, &parameters));
+        match answered {
+            Ok(row) => Ok(row
+                .and_then(|row| row.try_get::<_, i64>(0).ok())
+                .and_then(|token| u64::try_from(token).ok())),
+            Err(error) => {
+                let failed = self.failed(&error, component);
+                if self
+                    .client
+                    .as_ref()
+                    .is_some_and(tokio_postgres::Client::is_closed)
+                {
+                    self.client = None;
+                }
+                Err(failed)
+            }
+        }
+    }
+
+    /// Takes the lease of `component`'s tables where it is free: answers its new token, or
+    /// `None` while another process holds it.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] where the lease cannot be read or written.
+    pub fn take(&mut self, component: &str) -> Result<Option<u64>, StoreError> {
+        let taken = self.run(component, Step::Take)?;
+        if let Some(token) = taken {
+            held().insert(place(&self.database, &prefix(component)), token);
+        }
+        Ok(taken)
+    }
+
+    /// Renews the lease of `component`'s tables held under `token` for another term: `false`
+    /// once another process took it.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] where the lease cannot be read or written.
+    pub fn renew(&mut self, component: &str, token: u64) -> Result<bool, StoreError> {
+        Ok(self.run(component, Step::Renew(token))?.is_some())
+    }
+
+    /// Ends the lease of `component`'s tables held under `token` now, so a process standing by
+    /// takes it at its next poll; nothing where another process took it.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] where the lease cannot be written.
+    pub fn release(&mut self, component: &str, token: u64) -> Result<(), StoreError> {
+        held().remove(&place(&self.database, &prefix(component)));
+        self.run(component, Step::Release(token)).map(drop)
+    }
+}
+
+/// What [`Lease::run`] does to a lease row.
+enum Step {
+    Take,
+    Renew(u64),
+    Release(u64),
+}
+
+/// Takes the lease row where it is absent, its time ran out by the database's clock, or the
+/// session that holds it has ended; answers the new token. `$1` the tenant, `$2` the row's key,
+/// `$3` the term in seconds.
+const TAKE: &str = "INSERT INTO {table} AS lease (tenant_id, row_key, body) \
+     VALUES ($1, $2, jsonb_build_object('token', 1, 'pid', pg_backend_pid(), \
+     'until', extract(epoch FROM clock_timestamp())::float8 + $3::float8)) \
+     ON CONFLICT (tenant_id, row_key) DO UPDATE SET body = jsonb_build_object( \
+     'token', (lease.body->>'token')::bigint + 1, 'pid', pg_backend_pid(), \
+     'until', extract(epoch FROM clock_timestamp())::float8 + $3::float8) \
+     WHERE (lease.body->>'until')::float8 <= extract(epoch FROM clock_timestamp())::float8 \
+     OR NOT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = (lease.body->>'pid')::int) \
+     RETURNING (body->>'token')::bigint";
+
+/// Moves the lease's end a term past now where it still names the token. `$3` the term in
+/// seconds, `$4` the token.
+const RENEW: &str = "UPDATE {table} SET body = jsonb_build_object('token', $4::bigint, \
+     'pid', pg_backend_pid(), 'until', extract(epoch FROM clock_timestamp())::float8 + $3::float8) \
+     WHERE tenant_id = $1 AND row_key = $2 AND (body->>'token')::bigint = $4::bigint \
+     RETURNING (body->>'token')::bigint";
+
+/// Ends the lease now where it still names the token, `$3`.
+const RELEASE: &str = "UPDATE {table} SET body = jsonb_set(body, '{until}', '0') \
+     WHERE tenant_id = $1 AND row_key = $2 AND (body->>'token')::bigint = $3::bigint \
+     RETURNING (body->>'token')::bigint";
 
 /// The whole log, read only to scan a log holding writes that name no instances (marked so, or
 /// found in the entity's stream), at one snapshot taken once this component's appends in flight
@@ -278,7 +622,6 @@ impl Log for PostgresEventStore {
 /// # Errors
 /// [`StoreError::Backend`] naming the setting refused, or the server that cannot be reached or
 /// refused the connection.
-#[cfg(feature = "sqlite")]
 pub(crate) fn session(
     database: &Database,
     runtime: &tokio::runtime::Runtime,
