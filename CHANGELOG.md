@@ -108,6 +108,18 @@ are Spindle's releases.
   and answered the cause as `operator-prompt`. `run` provides `operator-prompt`, `decisions-file`
   and each `[http.<name>]` call the environment declares
   (`story:environment-binds-external-decisions`).
+- ESS moves on to 0.99.2 (the crates, `ess/ess-inputs.yaml`, `ESS_TOOLCHAIN`, and the `ess` CLI
+  CI installs and its checksum). Its synthesis fix reaches `conform` without `--suite` and
+  `spindle_conformance::synthesize`: for a refusal that quantifies over an input list of a struct,
+  the accepting scenario now sends a list of several elements none of which meets the quantifier,
+  where it sent only an empty list, and the refusal's `trimmed` witness (the literal between `\v\f`
+  and `\r\n`) lands on the element that decides it, where it landed on a filler beside it. Spindle
+  passes both, as ESS's interpreter does
+  (`the_accepting_scenario_of_an_input_list_quantifier_sends_several_elements_and_passes`,
+  `a_trimmed_witness_on_the_deciding_element_is_answered_as_ess_answers_it`). The suite ESS
+  synthesises from `ess/` is byte for byte the one 0.99.1 synthesised, and the observe types
+  differ only in their header. Its UI change (an overlay reading its opener's params) does not
+  reach Spindle, which builds none of ESS's UI crates (`story:ess-pin-0-99-2`).
 
 ## [0.22.0] - 2026-11-27
 

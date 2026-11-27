@@ -1,7 +1,7 @@
 version: '3'
 
 env:
-  ESS_TOOLCHAIN: '0.99.1'
+  ESS_TOOLCHAIN: '0.99.2'
 
 vars:
   OBSERVE_ROOTS: --root spindle.observe.Deployment --root spindle.observe.Catalogue --root spindle.observe.Sample --root spindle.observe.StateChange --root spindle.observe.RequestLog --root spindle.observe.MetricFamilies --root spindle.observe.Topology --root spindle.observe.ServedOperations --root spindle.observe.SeedState --root spindle.observe.Readiness --root spindle.observe.Liveness
