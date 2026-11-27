@@ -177,7 +177,8 @@ are Spindle's releases.
   leases and the connection error. A standby that finds a lease run out by its
   committed row while a paused write still holds the row ends exactly the sessions holding it,
   naming the lease and the number ended, or warns once where the server refuses and waits for the
-  transaction to end. A
+  transaction to end. A leader paused between eventlog's identity lock and its row lock can hold
+  up the new leader's writes until the store's 10 s idle timeout. A
   `database_lease` that is not a whole number from 1 to 86400 exits 1 before connecting, and with it tables a release
   before leases migrated are refused until `store migrate` runs again
   (`story:several-writers-one-postgres`).
