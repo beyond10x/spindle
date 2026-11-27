@@ -237,8 +237,10 @@ pub enum Command {
     /// A served run posts each published event the environment's `[egress]` table binds to an
     /// `[http.<name>]` call (`"<qualified event>" = "<name>"`, the call's method `POST`) to that
     /// call, beside the run's thread: one `spindle-egress/1` JSON body per event (`format`,
-    /// `event`, `component`, `position`, the event's store position, rising from one event to the
-    /// next, and `fields`, as published), with the call's URL, timeout, secret and `ca_file` as
+    /// `event`, `component`, `log`, the id of the component's event log, another once a reset
+    /// created the store's file again, `position`, the event's store position, rising from one
+    /// event to the next, and `fields`, as published; `component`, `log` and `position` name one
+    /// event), with the call's URL, timeout, secret and `ca_file` as
     /// above. Each component's events are posted in commit order, at least once: a post that
     /// fails or is answered anything but `2xx` is sent again after a pause that doubles up to 5 s,
     /// without end, and the component's later events to that call wait for it; a `2xx` is decided

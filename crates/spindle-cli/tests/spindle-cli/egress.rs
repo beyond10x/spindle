@@ -371,12 +371,17 @@ fn a_committed_event_reaches_the_webhook() {
         .as_u64()
         .unwrap_or_else(|| panic!("the body names the event's store position as a number: {body}"));
     assert!(position > 0, "{body}");
+    let log = body["log"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("the body names the store's log as a number: {body}"));
+    assert!(log > 0, "{body}");
     assert_eq!(
         body,
         &json!({
             "format": "spindle-egress/1",
             "event": OPENED,
             "component": "board",
+            "log": log,
             "position": position,
             "fields": {"task_id": "t1", "title": "task t1"},
         })
@@ -524,13 +529,25 @@ fn an_event_committed_after_a_reset_is_posted() {
     served.open("t2");
     webhook.wait_for(2);
     std::thread::sleep(Duration::from_millis(500));
+    let accepted = webhook.accepted();
     assert_eq!(
-        named(&webhook.accepted()),
+        named(&accepted),
         [
             (OPENED.to_owned(), "t1".to_owned()),
             (OPENED.to_owned(), "t2".to_owned()),
         ]
     );
+    // The reset created the store's file again, whose positions start over: its log is another,
+    // so component, log and position name t2 apart from t1.
+    let named_at = |body: &Value| {
+        (
+            body["component"].clone(),
+            body["log"].clone(),
+            body["position"].clone(),
+        )
+    };
+    assert_ne!(accepted[0]["log"], accepted[1]["log"], "{accepted:#?}");
+    assert_ne!(named_at(&accepted[0]), named_at(&accepted[1]));
 }
 
 #[test]

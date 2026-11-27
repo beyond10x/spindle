@@ -3,12 +3,14 @@
 //! resumes after a restart (`story:event-egress-webhook`).
 //!
 //! Each POST carries one event as a `spindle-egress/1` JSON object ([`FORMAT`]): `format`,
-//! `event` (the qualified name), `component`, `position` (the event's store position, its own
-//! place in the component's log, rising strictly from one event to the next, the events of one
-//! write included: [`spindle_kernel::Reading::events_placed_after`]) and `fields` (the event's
-//! fields as published). The call is made as an external cause's is ([`Call`]): its URL, timeout,
-//! secret and `ca_file`, over verified TLS or `http://` on loopback only, a post decided on the
-//! status alone ([`Call::post`]).
+//! `event` (the qualified name), `component`, `log` (the id of the component's log of events,
+//! [`spindle_kernel::Reading::events_id`]: another one once a reset created the store's file
+//! again, whose positions start over), `position` (the event's store position, its own place in
+//! that log, rising strictly from one event to the next, the events of one write included:
+//! [`spindle_kernel::Reading::events_placed_after`]) and `fields` (the event's fields as
+//! published). `component`, `log` and `position` together name one event. The call is made as
+//! an external cause's is ([`Call`]): its URL, timeout, secret and `ca_file`, over verified TLS
+//! or `http://` on loopback only, a post decided on the status alone ([`Call::post`]).
 //!
 //! One lane per component and call reads the component's committed events through a reading
 //! handle of its own ([`spindle_kernel::Reading::events_placed_after`]), on a thread of its
@@ -398,10 +400,24 @@ impl Delivery {
         };
         let mut unread = false;
         while !self.stop.load(Ordering::SeqCst) {
-            let page = match self.reading.events_placed_after(cursor, PAGE) {
-                Ok(page) => {
+            // The log's id is read once the page holds an event, so it names the log the
+            // page's events were read from: a reset stops the lane before it creates the log
+            // again ([`Egress::pause`]).
+            let read = self
+                .reading
+                .events_placed_after(cursor, PAGE)
+                .and_then(|page| {
+                    let log = if page.is_empty() {
+                        0
+                    } else {
+                        self.reading.events_id()?
+                    };
+                    Ok((log, page))
+                });
+            let (log, page) = match read {
+                Ok(read) => {
                     unread = false;
-                    page
+                    read
                 }
                 Err(error) => {
                     if !unread {
@@ -430,7 +446,8 @@ impl Delivery {
                 if self.events.contains(&committed.event.name) {
                     // A stopped lane leaves its page after the post under way: the rest is
                     // posted after the next start, from the cursor saved.
-                    if self.stop.load(Ordering::SeqCst) || !self.post(&runtime, *placed, committed)
+                    if self.stop.load(Ordering::SeqCst)
+                        || !self.post(&runtime, log, *placed, committed)
                     {
                         return;
                     }
@@ -454,13 +471,20 @@ impl Delivery {
         }
     }
 
-    /// Posts `committed`, at its own store position `placed`, until the call answers `2xx`;
-    /// `false` where the lane was stopped first.
-    fn post(&self, runtime: &tokio::runtime::Runtime, placed: u64, committed: &Committed) -> bool {
+    /// Posts `committed`, at its own store position `placed` in the log whose id is `log`, until
+    /// the call answers `2xx`; `false` where the lane was stopped first.
+    fn post(
+        &self,
+        runtime: &tokio::runtime::Runtime,
+        log: u64,
+        placed: u64,
+        committed: &Committed,
+    ) -> bool {
         let body = serde_json::json!({
             "format": FORMAT,
             "event": committed.event.name,
             "component": self.component,
+            "log": log,
             "position": placed,
             "fields": committed.event.payload,
         })

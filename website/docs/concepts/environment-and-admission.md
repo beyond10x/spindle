@@ -171,11 +171,13 @@ Each request carries one event as `spindle-egress/1` JSON:
 
 ```json
 {"format": "spindle-egress/1", "event": "shop.order.OrderPlaced", "component": "shop",
- "position": 42, "fields": {"order_id": "o-1"}}
+ "log": 7311250318264215037, "position": 42, "fields": {"order_id": "o-1"}}
 ```
 
 `position` is the event's store position, its own place in the component's log; it rises with
-each event, the events of one write included. `fields` are the event's fields as published.
+each event, the events of one write included. `log` is the id of that log: a reset that creates
+the store's SQLite file again starts a new log, whose positions start over, so `component`,
+`log` and `position` together name one event. `fields` are the event's fields as published.
 
 | Case | What happens |
 |---|---|
@@ -183,6 +185,7 @@ each event, the events of one write included. `fields` are the event's fields as
 | a failure | a timeout, a failure or a status other than `2xx` is sent again after a pause that doubles up to 5 s, without end; the component's later events to that call wait for it. A `2xx` is decided on its status: its body is not read |
 | a restart | the position up to which the call answered `2xx` is kept in the component's store, and `run` on the same state posts the events after it |
 | at least once | an event answered just before the process is killed may be posted again |
+| a reset | `POST /api/reset` stops the posting while it empties the stores; the events after it are posted, from a SQLite store under a new `log` |
 
 The events are posted beside the thread that runs commands, so a slow webhook holds no request
 back. The kept position is no published event: `GET /api/events` does not list it.

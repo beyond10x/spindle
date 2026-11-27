@@ -10,18 +10,19 @@ are Spindle's releases.
 
 - An environment's `[egress]` table binds a published event to an `[http.<name>]` call
   (`"<qualified event>" = "<name>"`, method `POST`), and a served `run` posts each such event
-  there: one `spindle-egress/1` JSON body per event (`format`, `event`, `component`, `position`,
-  `fields`), at least once, in commit order per component store, beside the thread that runs
-  commands. A failed or non-`2xx` post is sent again after a pause that doubles up to 5 s, the
-  component's later events waiting for it. The position up to which the call answered `2xx` is
+  there: one `spindle-egress/1` JSON body per event (`format`, `event`, `component`, `log`,
+  `position`, `fields`; `log` is the store's event log id, a new one once a reset recreated the
+  file, so `component`, `log` and `position` name one event), at least once, in commit order
+  per component store, beside the thread that runs commands. A failed or non-`2xx` post is sent
+  again after a pause that doubles up to 5 s, the component's later events waiting for it. The position up to which the call answered `2xx` is
   kept in a reserved `spindle:log` stream of the component's own log, SQLite or PostgreSQL, which
   `GET /api/events` and `Store::events_after` do not list, and a restart posts the events after
   it. An egress naming an event no component publishes, or one of a component kept in `memory`,
   exits 3 before listening; a call named only by an egress is no longer refused as unused.
   `spindle_capability::Environment` gains `egress` and `egress_of`, `spindle_kernel::Store` gains
   `egress_position` and `egress_posted`, and `spindle_kernel::Reading` gains
-  `events_placed_after`, each event with its own store position, which an egress posts
-  (`story:event-egress-webhook`).
+  `events_placed_after`, each event with its own store position, which an egress posts; the
+  host's reading handle answers it as the store does (`story:event-egress-webhook`).
 
 - `run --stdin` reads JSON lines on stdin where a component is `reached_by: network`, instead of
   serving HTTP: every component runs in the one process on one store and the event bindings fire
