@@ -63,6 +63,7 @@ are Spindle's releases.
   check disagreed with ESS on the same state. A served view still leaves such a field out, as
   ESS's published contract declares it optional and not nullable
   (`story:view-rows-absent-optional-fields`).
+- `play --component` no longer links a peer to itself: a connect to a peer's port that nothing
   listens on yet can leave from that same port and reach itself, and the process then failed on
   its own `hello`. `spindle_host::Host::connect` refuses such a connection, naming the address,
   and closes it with a reset, so the peer can listen on that port at once; the caller tries again
