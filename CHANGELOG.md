@@ -65,9 +65,13 @@ are Spindle's releases.
   holds, established by a scenario or created by an earlier command, is answered in `conform`, `run
   --scenario` and `spindle_conformance::HostTarget` as ESS's interpreter answers it: unavailable,
   a request no branch of the model describes, in ESS's words, where it was answered as reaching no
-  declared outcome. `run --scenario` prints `, unavailable` on such an act's line.
-  `spindle_kernel::ExecuteError::Undeclared` gains `held`, the creating outcome and the entity
-  (`spindle_kernel::HeldIdentity`); its kind and message do not change
+  declared outcome. `run --scenario` prints `, unavailable` on such an act's line. In `conform`
+  and `run --scenario` a scenario whose create meets a held identity now ends `error`, as ESS's
+  runner counts an unavailable answer a `target_failure`, so a known-failures file that names such
+  a scenario no longer lets `spindle_conformance::Run::passed_with` pass.
+  `spindle_kernel::ExecuteError::Undeclared` gains the public field `held`, the creating outcome
+  and the entity (`spindle_kernel::HeldIdentity`), which breaks code that builds that variant or
+  destructures it without `..`; its kind and message do not change
   (`story:create-on-held-identity-unavailable`).
 
 ## [0.23.0] - 2026-11-27
