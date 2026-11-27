@@ -87,15 +87,16 @@ shows there by its absence alone. `spindle_bound_refusals_total{binding, command
 counts the entries, `refusal` being the outcome or the kind. A command a timer fired, and one
 refused in another process of a run split over processes, is in no record.
 
-## A served run's seed and readiness
+## A served run's seed, readiness and liveness
 
-Every served `run` answers two routes of its own, with or without `--observe`, so a container
-healthcheck or an orchestrator's readiness probe needs no view row:
+Every served `run` answers three routes of its own, with or without `--observe`, so a container
+healthcheck or an orchestrator's probes need no view row:
 
 | Route | Answers |
 |---|---|
 | `GET /__spindle/seed` | the state of the run's [seed](environment-and-admission.md#a-seed-submitted-at-start), `{"state": "none"}` on a run without one; otherwise `{"state", "entries", "left", "sent", "applied", "already_there", "refused", "rejected"}`, `state` being `running` or `ended` |
-| `GET /__spindle/ready` | `200` where the run has no seed or its seed has ended, `503` while it runs; the body is `{"ready", "seed"}`, `seed` being the `state` above |
+| `GET /__spindle/ready` | `200` where the run has no seed or its seed has ended, and no signal has arrived; `503` otherwise. The body is `{"ready", "seed", "stopping"}`, `seed` being the `state` above |
+| `GET /__spindle/live` | `200` while the run's thread takes requests, `503` once it has taken none for 60 s, above the 30 s an external call may take. The body is `{"live", "idle_ms", "bound_ms"}` |
 
 ```console
 $ curl -s http://127.0.0.1:8080/__spindle/seed
@@ -110,11 +111,24 @@ On a `--state` whose `seed.json` records every entry done, the seed reads `ended
 request. A `POST /api/reset` with no world reads `running` and `503` from before it empties the
 stores until its seed run ends, with that run's counts.
 
-Both are answered by the listener's own threads, never waiting for a command, a seed entry or an
-external call. On a run with `--trusted-caller-header` they require the proxy's secret, as every
+All three are answered by the listener's own threads, never waiting for a command, a seed entry or
+an external call. On a run with `--trusted-caller-header` they require the proxy's secret, as every
 `/__spindle/` route does: a probe sends the `Spindle-Proxy-Secret` header, such as Kubernetes'
-`httpGet.httpHeaders`. The answers are declared by `spindle.observe.SeedState` and
-`spindle.observe.Readiness` in `ess/domains/observe.yaml`.
+`httpGet.httpHeaders`. The answers are declared by `spindle.observe.SeedState`,
+`spindle.observe.Readiness` and `spindle.observe.Liveness` in `ess/domains/observe.yaml`.
+
+### Draining on SIGTERM
+
+When SIGTERM or SIGINT arrives, `GET /__spindle/ready` answers `503` at once, even while a command
+holds the run, and every request that arrives from then on is answered `503` at once; the three
+routes above still answer. The command under way finishes. The requests already waiting are then
+answered with their outcomes, in arrival order, for up to
+[`--drain`](../reference/cli.md#run--drain) seconds, 20 by default, counted from when the command
+under way finished; one taken within that bound finishes even past it. Each request still waiting
+once the bound has passed is answered `503`, every answer is written, and the run exits 143 for
+SIGTERM or 130 for SIGINT. `--drain 0` answers none of the waiting requests. So a rolling restart
+fails no request already accepted, provided the orchestrator's grace period covers the external
+call under way and the drain bound.
 
 ## Resources
 

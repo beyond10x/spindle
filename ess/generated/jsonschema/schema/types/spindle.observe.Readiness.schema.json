@@ -5,13 +5,13 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:3091bb278309caf63e1d0bdb1503b03d4d3e5cda91d229e1ba05bccacbaea9a2",
+    "contract_digest": "slice-sha256/2:3fc9c43bfb1fd718afd1057729160e3af61127a51f370229f84f81e3aa09d640",
     "regenerate": "ess generate"
   },
   "$defs": {
     "spindle.observe.Readiness": {
       "title": "Readiness",
-      "description": "The answer of `GET /__spindle/ready`, with or without `--observe` and without the host's thread, beside its status: `200` where the run has no seed or its seed run has ended, a declared refusal among its entries included; `503` while it runs. A probe reading `200` reads every view holding what the seed's last entry wrote.",
+      "description": "The answer of `GET /__spindle/ready`, with or without `--observe` and without the host's thread, beside its status: `200` where the run has no seed or its seed run has ended, a declared refusal among its entries included, and the run is not stopping; `503` while the seed runs and from the moment SIGINT or SIGTERM arrives. A probe reading `200` reads every view holding what the seed's last entry wrote.",
       "x-ess-name": "spindle.observe.Readiness",
       "x-ess-kind": "struct",
       "type": "object",
@@ -23,11 +23,16 @@
         "seed": {
           "$ref": "#/$defs/spindle.observe.SeedStateKind",
           "description": "The `state` `GET /__spindle/seed` answers."
+        },
+        "stopping": {
+          "description": "Whether the run is stopping on a signal: it answers each request that arrives `503` at once, and the requests already waiting for up to `--drain` seconds.",
+          "type": "boolean"
         }
       },
       "required": [
         "ready",
-        "seed"
+        "seed",
+        "stopping"
       ],
       "additionalProperties": false
     },

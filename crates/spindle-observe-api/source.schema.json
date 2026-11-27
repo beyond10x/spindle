@@ -471,6 +471,39 @@
       "x-ess-kind": "struct",
       "x-ess-name": "spindle.observe.Histogram"
     },
+    "spindle.observe.Liveness": {
+      "additionalProperties": false,
+      "description": "The answer of `GET /__spindle/live`, with or without `--observe` and without the host's thread, beside its status: `200` while the run's thread asked the listener for a request within the bound, `503` once it has not. The bound of a served run is 60 s, above the 30 s an external call may take, so a command held by one does not read as a run that stopped.",
+      "properties": {
+        "bound_ms": {
+          "description": "The bound, in milliseconds.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "idle_ms": {
+          "description": "Milliseconds since the run's thread last asked for a request.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "live": {
+          "description": "Whether the status is `200`.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "live",
+        "idle_ms",
+        "bound_ms"
+      ],
+      "title": "Liveness",
+      "type": "object",
+      "x-ess-invariants": [
+        "idle_ms >= 0",
+        "bound_ms >= 0"
+      ],
+      "x-ess-kind": "struct",
+      "x-ess-name": "spindle.observe.Liveness"
+    },
     "spindle.observe.MetricFamilies": {
       "additionalProperties": false,
       "description": "Every metric family a served run exposes when it observes its ingress.",
@@ -575,7 +608,7 @@
     },
     "spindle.observe.Readiness": {
       "additionalProperties": false,
-      "description": "The answer of `GET /__spindle/ready`, with or without `--observe` and without the host's thread, beside its status: `200` where the run has no seed or its seed run has ended, a declared refusal among its entries included; `503` while it runs. A probe reading `200` reads every view holding what the seed's last entry wrote.",
+      "description": "The answer of `GET /__spindle/ready`, with or without `--observe` and without the host's thread, beside its status: `200` where the run has no seed or its seed run has ended, a declared refusal among its entries included, and the run is not stopping; `503` while the seed runs and from the moment SIGINT or SIGTERM arrives. A probe reading `200` reads every view holding what the seed's last entry wrote.",
       "properties": {
         "ready": {
           "description": "Whether the status is `200`.",
@@ -584,11 +617,16 @@
         "seed": {
           "$ref": "#/$defs/spindle.observe.SeedStateKind",
           "description": "The `state` `GET /__spindle/seed` answers."
+        },
+        "stopping": {
+          "description": "Whether the run is stopping on a signal: it answers each request that arrives `503` at once, and the requests already waiting for up to `--drain` seconds.",
+          "type": "boolean"
         }
       },
       "required": [
         "ready",
-        "seed"
+        "seed",
+        "stopping"
       ],
       "title": "Readiness",
       "type": "object",
@@ -1463,8 +1501,8 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-ess-provenance": {
-    "contract_digest": "slice-sha256/2:920293aea53a7ad4f12b02c5df715249fd69ff0d3dac932643638f6b9ebe8017",
-    "source_digest": "be4dd819b6792da90c06f6204de8aafced70cd4626dcd01d497d2e3af35bceb2",
+    "contract_digest": "slice-sha256/2:8644c9014863232901b32953b7cef820ad7d91cbd81cb031d94e4d1f5cdf216b",
+    "source_digest": "24d07beb2987a158fd335d3da5c8be000dcc7c2f56c702a3e490e4b43378dbe9",
     "specification_version": "v1",
     "system": "spindle"
   }

@@ -1,11 +1,19 @@
 //! A served run's own health answers under `/__spindle/`, each answered without the host's thread
 //! and without a recorder: `GET /__spindle/seed`, the seed's state and counts
-//! (`spindle.observe.SeedState`), and `GET /__spindle/ready`, `200` once the seed has ended, `503`
-//! before (`spindle.observe.Readiness`, `story:seed-readiness`).
+//! (`spindle.observe.SeedState`), and `GET /__spindle/ready`, `200` once the seed has ended and
+//! until the run stops, `503` otherwise (`spindle.observe.Readiness`, `story:seed-readiness`); and
+//! `GET /__spindle/live`, `200` while the host's thread asks for requests within a bound
+//! (`spindle.observe.Liveness`, `story:health-and-graceful-drain`).
 
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use serde_json::{Value, json};
+
+/// How long the host's thread may go without asking the listener for a request before
+/// `GET /__spindle/live` answers `503`, unless the listener is given another bound: above the 30 s
+/// an external call may take, so a command held by one does not read as a host that stopped.
+pub const LIVENESS: Duration = Duration::from_secs(60);
 
 /// Where a seed run is (`spindle.observe.SeedStateKind`, but for `none`, which is a run without a
 /// seed).
@@ -96,6 +104,29 @@ impl PartialEq for SeedState {
 
 impl Eq for SeedState {}
 
+/// What the health routes read for one request: the run's seed, whether the run is stopping, and
+/// how long the host's thread has gone without asking for a request, against its bound.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Probed<'a> {
+    pub seed: Option<&'a SeedState>,
+    pub stopping: bool,
+    pub idle: Duration,
+    pub bound: Duration,
+}
+
+impl Probed<'_> {
+    /// What a request answered on the host's thread reads ([`crate::route`]): that thread is
+    /// answering it, and nothing stops the run.
+    pub(crate) fn hosted(seed: Option<&SeedState>) -> Probed<'_> {
+        Probed {
+            seed,
+            stopping: false,
+            idle: Duration::ZERO,
+            bound: LIVENESS,
+        }
+    }
+}
+
 /// `GET /__spindle/seed`: `{"state": "none"}` without a seed; otherwise its state and counts.
 pub(crate) fn seed(seed: Option<&SeedState>) -> Value {
     let Some(seed) = seed else {
@@ -114,13 +145,24 @@ pub(crate) fn seed(seed: Option<&SeedState>) -> Value {
     })
 }
 
-/// `GET /__spindle/ready`: `200` where the run has no seed or its seed has ended, `503` while it
-/// runs. Its body says which.
-pub(crate) fn ready(seed: Option<&SeedState>) -> (u16, Value) {
-    let state = seed.map_or("none", |seed| seed.read().phase.name());
-    let ready = state != SeedPhase::Running.name();
+/// `GET /__spindle/ready`: `200` where the run has no seed or its seed has ended, and it is not
+/// stopping; `503` while the seed runs and once the run stops. Its body says which.
+pub(crate) fn ready(probed: &Probed<'_>) -> (u16, Value) {
+    let state = probed.seed.map_or("none", |seed| seed.read().phase.name());
+    let ready = state != SeedPhase::Running.name() && !probed.stopping;
     (
         if ready { 200 } else { 503 },
-        json!({"ready": ready, "seed": state}),
+        json!({"ready": ready, "seed": state, "stopping": probed.stopping}),
+    )
+}
+
+/// `GET /__spindle/live`: `200` while the host's thread asked for a request within the bound,
+/// `503` once it has not. Its body gives both, in milliseconds.
+pub(crate) fn live(probed: &Probed<'_>) -> (u16, Value) {
+    let live = probed.idle <= probed.bound;
+    let millis = |duration: Duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
+    (
+        if live { 200 } else { 503 },
+        json!({"live": live, "idle_ms": millis(probed.idle), "bound_ms": millis(probed.bound)}),
     )
 }

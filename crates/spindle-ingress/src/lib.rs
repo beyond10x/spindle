@@ -64,10 +64,14 @@
 //! with its [`AnswerSource`]); the
 //! record of a request lists every one asked while it was answered, with the command that
 //! asked. A reset clears no count and no record. Without a recorder every path under the prefix
-//! answers `404`, but two: with a recorder or without, `GET /__spindle/seed` answers the state of
-//! the run's seed ([`Surface::with_seed`], [`SeedState`]: `none`, `running` or `ended`, with its
-//! counts), and `GET /__spindle/ready` answers `200` once the seed has ended and `503` before, so a
-//! readiness probe needs no view row; both are answered without the host's thread.
+//! answers `404`, but three: with a recorder or without, `GET /__spindle/seed` answers the state
+//! of the run's seed ([`Surface::with_seed`], [`SeedState`]: `none`, `running` or `ended`, with its
+//! counts), `GET /__spindle/ready` answers `200` once the seed has ended and until the run stops
+//! taking work (`Listener::stopping`), `503` otherwise, so a readiness probe needs no view row, and
+//! `GET /__spindle/live` answers `200` while the host's thread asks for requests within
+//! [`LIVENESS`] (`Listener::live_within`), `503` once it has not; each is answered without the
+//! host's thread. Once the run stops taking work, every other request that arrives is answered
+//! `503` at once, while those already handed over still arrive on `Listener::next`.
 
 mod answer;
 pub mod console;
@@ -83,7 +87,7 @@ mod wire;
 
 pub use answer::{Answer, answer, answered};
 pub use console::Console;
-pub use health::{SeedPhase, SeedProgress, SeedState};
+pub use health::{LIVENESS, SeedPhase, SeedProgress, SeedState};
 #[cfg(feature = "listener")]
 pub use listener::{BODY_READ, Exchange, HEADER_READ, Listener, exposed};
 pub use observe::metrics::METRICS_MEDIA;

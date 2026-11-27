@@ -1,12 +1,12 @@
 {
   "format": "ess-types-report/3",
-  "source_digest": "be4dd819b6792da90c06f6204de8aafced70cd4626dcd01d497d2e3af35bceb2",
+  "source_digest": "24d07beb2987a158fd335d3da5c8be000dcc7c2f56c702a3e490e4b43378dbe9",
   "input": {
     "kind": "model",
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:920293aea53a7ad4f12b02c5df715249fd69ff0d3dac932643638f6b9ebe8017",
-    "projection_digest": "6fa0eeee2ecc91d87c83a2a70cbf22e0c45658113ece9b9d26ffd3aa7c7b510d"
+    "contract_digest": "slice-sha256/2:8644c9014863232901b32953b7cef820ad7d91cbd81cb031d94e4d1f5cdf216b",
+    "projection_digest": "1eb461a2dd147e47b4793a147e2007e4ada9a30c620ded6937d2bbb85090a41e"
   },
   "generator_version": "0.99.1",
   "target": "rust",
@@ -17,6 +17,7 @@
   "roots": [
     "spindle.observe.Catalogue",
     "spindle.observe.Deployment",
+    "spindle.observe.Liveness",
     "spindle.observe.MetricFamilies",
     "spindle.observe.Readiness",
     "spindle.observe.RequestLog",
@@ -44,6 +45,7 @@
     "spindle.observe.EdgeTraffic": "EdgeTraffic",
     "spindle.observe.ExternalAnswer": "ExternalAnswer",
     "spindle.observe.Histogram": "Histogram",
+    "spindle.observe.Liveness": "Liveness",
     "spindle.observe.MetricFamilies": "MetricFamilies",
     "spindle.observe.MetricFamily": "MetricFamily",
     "spindle.observe.MetricKind": "MetricKind",
@@ -537,6 +539,41 @@
       "detail": "model identity and wire mapping retained in source.schema.json"
     },
     {
+      "pointer": "/$defs/spindle.observe.Liveness/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/properties/bound_ms/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/properties/idle_ms/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/properties/live/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/title",
+      "rule": "title",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/x-ess-kind",
+      "rule": "x-ess-kind",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/x-ess-name",
+      "rule": "x-ess-name",
+      "detail": "model identity and wire mapping retained in source.schema.json"
+    },
+    {
       "pointer": "/$defs/spindle.observe.MetricFamilies/description",
       "rule": "description",
       "detail": "retained in source.schema.json; no decoder behavior inferred"
@@ -673,6 +710,11 @@
     },
     {
       "pointer": "/$defs/spindle.observe.Readiness/properties/seed/description",
+      "rule": "description",
+      "detail": "retained in source.schema.json; no decoder behavior inferred"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Readiness/properties/stopping/description",
       "rule": "description",
       "detail": "retained in source.schema.json; no decoder behavior inferred"
     },
@@ -1627,6 +1669,41 @@
       "pointer": "/$defs/spindle.observe.Histogram/properties/sum_us",
       "rule": "rust_exact_numbers",
       "detail": "this value holds JSON numbers in serde_json; the generated crate's default-on `exact-numbers` feature enables serde_json/arbitrary_precision, and a consumer that turns default features off gets these numbers as binary64"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/properties/bound_ms",
+      "rule": "integer",
+      "detail": "serde_json::Number holds exact JSON numbers with the default `exact-numbers` feature and binary64 without it, and does not enforce integrality; validate the source constraint"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/properties/bound_ms",
+      "rule": "rust_exact_numbers",
+      "detail": "this value holds JSON numbers in serde_json; the generated crate's default-on `exact-numbers` feature enables serde_json/arbitrary_precision, and a consumer that turns default features off gets these numbers as binary64"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/properties/bound_ms/minimum",
+      "rule": "minimum",
+      "detail": "validate this constraint against the source schema at runtime"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/properties/idle_ms",
+      "rule": "integer",
+      "detail": "serde_json::Number holds exact JSON numbers with the default `exact-numbers` feature and binary64 without it, and does not enforce integrality; validate the source constraint"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/properties/idle_ms",
+      "rule": "rust_exact_numbers",
+      "detail": "this value holds JSON numbers in serde_json; the generated crate's default-on `exact-numbers` feature enables serde_json/arbitrary_precision, and a consumer that turns default features off gets these numbers as binary64"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/properties/idle_ms/minimum",
+      "rule": "minimum",
+      "detail": "validate this constraint against the source schema at runtime"
+    },
+    {
+      "pointer": "/$defs/spindle.observe.Liveness/x-ess-invariants",
+      "rule": "model_invariants",
+      "detail": "enforce the retained model invariant statements; structural codecs do not evaluate predicates"
     },
     {
       "pointer": "/$defs/spindle.observe.Payload/x-ess-invariants",

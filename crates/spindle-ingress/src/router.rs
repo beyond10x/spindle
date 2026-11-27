@@ -127,7 +127,7 @@ fn routing(
         let answered = crate::observe::reserved(
             surface.recorder(),
             surface.panel(),
-            surface.seed(),
+            &crate::health::Probed::hosted(surface.seed()),
             reserved,
             &request.method,
             &request.path,

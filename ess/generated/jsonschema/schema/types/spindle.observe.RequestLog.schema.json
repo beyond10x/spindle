@@ -5,7 +5,7 @@
   "x-ess-provenance": {
     "system": "spindle",
     "specification_version": "v1",
-    "contract_digest": "slice-sha256/2:630256dcac186a4f9ac8025cc63d7b2b598eb85ac08c6d78e31e46db54b5964d",
+    "contract_digest": "slice-sha256/2:21e849ced9d8d980e8f83c4b4642246fda847ce5e086a18e5c965eae29452cfd",
     "regenerate": "ess generate"
   },
   "$defs": {

@@ -138,8 +138,13 @@ pub enum Command {
     /// stdin; only `http-loopback` is served, and any other binding exits 1 before listening. Prints
     /// `{"listening": "<address>", "components": [...]}` once listening and serves until SIGINT
     /// or SIGTERM (exit 130 or 143), or until a seed that rejected an entry ends (exit 1,
-    /// `--seed`); then it takes no further request, writes every answer it has given, answers
-    /// each request still waiting `503`, and exits. Routes are where `ess generate --kind
+    /// `--seed`). On the signal `GET /__spindle/ready` answers `503` and every request that
+    /// arrives is answered `503` at once; the request under way finishes, and those already
+    /// waiting are answered in arrival order for up to `--drain` seconds. Then, as when the seed
+    /// stops it, it takes no further request, writes every answer it has given, answers each
+    /// request still waiting `503`, and exits. `GET /__spindle/live` answers `200` while the
+    /// run's thread takes requests, `503` once it has taken none for 60 s, with or without
+    /// `--observe`. Routes are where `ess generate --kind
     /// openapi` publishes them:
     /// ESS's derived routes, or with `--http` the `ess-http/1` binding's, read and checked by ESS
     /// (methods, paths, path variables and per-outcome statuses), an operation it does not name
@@ -321,9 +326,10 @@ pub enum Command {
         /// `GET /__spindle/topology` with a `spindle-topology/1` graph derived from the
         /// specification, each edge but `contains` with live numbers from the same counters and
         /// log; a `POST /api/reset` keeps every count and the log. Without it every path under
-        /// `/__spindle/` answers `404` but `GET /__spindle/seed` and `GET /__spindle/ready`, which
-        /// every served run answers (`--seed`); with it or without, a binding route under that
-        /// prefix exits 1 before listening. The listening line is the same either way. Only where `run`
+        /// `/__spindle/` answers `404` but `GET /__spindle/seed`, `GET /__spindle/ready` and
+        /// `GET /__spindle/live`, which every served run answers (`--seed`, `--drain`); with it or
+        /// without, a binding route under that prefix exits 1 before listening. The listening line
+        /// is the same either way. Only where `run`
         /// serves HTTP.
         #[arg(long, conflicts_with = "scenario")]
         observe: bool,
@@ -372,6 +378,20 @@ pub enum Command {
         /// and with a world it loads that world alone and records every entry done.
         #[arg(long, value_name = "FILE", conflicts_with = "scenario")]
         seed: Option<PathBuf>,
+        /// How many seconds a served run goes on answering, after SIGINT or SIGTERM, the requests
+        /// already waiting for it, in arrival order, counted from when the request under way, if
+        /// any, has finished; `0` answers none of them. From the signal on, `GET
+        /// /__spindle/ready` answers `503` and every request that arrives is answered `503` at
+        /// once; the request under way always finishes, and so does one taken within the bound.
+        /// Each request still waiting once the bound has passed is answered `503`, then the run
+        /// exits 130 or 143. Only where `run` serves HTTP.
+        #[arg(
+            long,
+            value_name = "SECONDS",
+            default_value_t = 20,
+            conflicts_with = "scenario"
+        )]
+        drain: u64,
         /// Start the run on a manual clock standing at this RFC 3339 instant
         /// (`2026-02-01T00:00:00Z`, a fraction of a second and an offset read as given) instead of
         /// the system clock: every guard and view that reads `now`, and every generated

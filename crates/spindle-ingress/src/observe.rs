@@ -76,16 +76,20 @@ pub const PANEL_POLICY: &str = "default-src 'none'; script-src 'unsafe-inline'; 
 /// Where the observe panel's page is built, as a `503` without it names it.
 const PANEL_BUILT: &str = "ui/dist-panel/panel.html";
 
-/// A route under the reserved prefix: the epic lays out four, and a served run's health adds two;
-/// every other path under it is [`Reserved::Other`].
+/// A route under the reserved prefix: the epic lays out four, and a served run's health adds
+/// three; every other path under it is [`Reserved::Other`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reserved {
     /// `/__spindle/seed`: the state of the run's seed, a `spindle.observe.SeedState`, answered
     /// with or without a recorder ([`crate::SeedState`]).
     Seed,
-    /// `/__spindle/ready`: `200` once the run's seed has ended, `503` before, a
-    /// `spindle.observe.Readiness`, answered with or without a recorder.
+    /// `/__spindle/ready`: `200` once the run's seed has ended and until the run stops, `503`
+    /// otherwise, a `spindle.observe.Readiness`, answered with or without a recorder.
     Ready,
+    /// `/__spindle/live`: `200` while the host's thread asks for requests within the listener's
+    /// bound, `503` once it has not, a `spindle.observe.Liveness`, answered with or without a
+    /// recorder ([`crate::Listener::live_within`]).
+    Live,
     /// `/__spindle/requests`: the request log.
     Requests,
     /// `/__spindle/metrics`: the metrics, as the Prometheus text format ([`metrics`]).
@@ -115,6 +119,7 @@ impl Reserved {
             ["topology"] => Self::Topology,
             ["seed"] => Self::Seed,
             ["ready"] => Self::Ready,
+            ["live"] => Self::Live,
             ["ui", ..] => Self::Ui,
             _ => Self::Other,
         })
@@ -1223,24 +1228,25 @@ fn starts_word(kept: &str) -> bool {
 }
 
 /// Answers a request for the reserved route `reserved` with `method`, `path` and `query` (after
-/// the `?`, still percent-encoded): without a recorder every path under the prefix but the seed
-/// and readiness routes answers `404`;
-/// with one, `GET /__spindle/requests` answers the request log, each `class=<class>` pair of the
-/// query keeping only that class, and any other method `405`; `GET /__spindle/ui` answers the
-/// panel's page `panel`, `503` naming it without one; `GET /__spindle/metrics` and
-/// `GET /__spindle/topology` read the host's counters and kept rows, beside its thread through
-/// its reader ([`read_hosted`]) or on it ([`hosted`]), so they answer `None` here, and any other
-/// method `405`.
+/// the `?`, still percent-encoded): without a recorder every path under the prefix but the three
+/// health routes answers `404`; with one, `GET /__spindle/requests` answers the request log, each
+/// `class=<class>` pair of the query keeping only that class, and any other method `405`;
+/// `GET /__spindle/ui` answers the panel's page `panel`, `503` naming it without one;
+/// `GET /__spindle/metrics` and `GET /__spindle/topology` read the host's counters and kept rows,
+/// beside its thread through its reader ([`read_hosted`]) or on it ([`hosted`]), so they answer
+/// `None` here, and any other method `405`.
 /// Every other reserved path answers `404`. A query pair other than a known `class` is refused
 /// `400`.
 ///
-/// With a recorder or without, `GET /__spindle/seed` answers the state of the run's `seed`
-/// ([`crate::health::seed`]) and `GET /__spindle/ready` whether it has ended
-/// ([`crate::health::ready`]), any other method `405`.
+/// With a recorder or without, the health routes answer what `probed` reads, any other method
+/// `405`: `GET /__spindle/seed` the state of the run's seed ([`crate::health::seed`]),
+/// `GET /__spindle/ready` whether it has ended and the run is not stopping
+/// ([`crate::health::ready`]), and `GET /__spindle/live` whether the host's thread asked for a
+/// request within its bound ([`crate::health::live`]).
 pub(crate) fn reserved(
     recorder: Option<&Recorder>,
     panel: Option<&'static str>,
-    seed: Option<&crate::SeedState>,
+    probed: &crate::health::Probed<'_>,
     reserved: Reserved,
     method: &str,
     path: &str,
@@ -1261,9 +1267,12 @@ pub(crate) fn reserved(
         .into()
     };
     match reserved {
-        Reserved::Seed | Reserved::Ready if method != "GET" => return Some(only_get()),
-        Reserved::Seed => return Some(health((200, crate::health::seed(seed)))),
-        Reserved::Ready => return Some(health(crate::health::ready(seed))),
+        Reserved::Seed | Reserved::Ready | Reserved::Live if method != "GET" => {
+            return Some(only_get());
+        }
+        Reserved::Seed => return Some(health((200, crate::health::seed(probed.seed)))),
+        Reserved::Ready => return Some(health(crate::health::ready(probed))),
+        Reserved::Live => return Some(health(crate::health::live(probed))),
         _ => {}
     }
     let Some(recorder) = recorder else {
@@ -1286,7 +1295,11 @@ pub(crate) fn reserved(
         }
         Reserved::Metrics | Reserved::Topology => return None,
         Reserved::Ui => self::panel(panel, method, path).unwrap_or_else(not_found),
-        Reserved::Requests | Reserved::Seed | Reserved::Ready | Reserved::Other => not_found(),
+        Reserved::Requests
+        | Reserved::Seed
+        | Reserved::Ready
+        | Reserved::Live
+        | Reserved::Other => not_found(),
     })
 }
 

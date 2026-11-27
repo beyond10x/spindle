@@ -1226,6 +1226,7 @@ mod adversary_w25_reseed;
 mod adversary_w25_reseed_r2;
 mod adversary_w27_u2;
 mod durable;
+mod health;
 mod readiness;
 mod rejected;
 mod signal_exit;

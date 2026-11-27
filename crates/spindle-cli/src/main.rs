@@ -20,7 +20,7 @@ use std::io::{BufRead, Write};
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
@@ -212,6 +212,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             observe,
             observe_requests,
             seed,
+            drain,
             clock,
             mint_seed,
             scenario: None,
@@ -230,6 +231,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             caller_header: trusted_caller_header.as_deref(),
             caller_secret: trusted_caller_secret.as_deref(),
             seed: seed.as_deref(),
+            drain: Duration::from_secs(drain),
             clock,
             mint_seed,
         }),
@@ -321,6 +323,17 @@ fn signals() -> Result<Arc<AtomicUsize>> {
             .context("handling SIGINT and SIGTERM")?;
     }
     Ok(signalled)
+}
+
+/// Sets `flag` on SIGINT and SIGTERM, beside [`signals`]: a served run's listener reads it on its
+/// own threads, so readiness reads `503` and a request arriving is refused `503` as the signal
+/// arrives, while a command still holds the run's thread (`story:health-and-graceful-drain`).
+fn stopping_on(flag: &Arc<AtomicBool>) -> Result<()> {
+    for signal in [SIGINT, SIGTERM] {
+        signal_hook::flag::register(signal, Arc::clone(flag))
+            .context("handling SIGINT and SIGTERM")?;
+    }
+    Ok(())
 }
 
 fn play(
@@ -474,6 +487,8 @@ struct Execute<'a> {
     caller_secret: Option<&'a Path>,
     /// `--seed`: the seed file to submit at every start, in place of the environment's.
     seed: Option<&'a Path>,
+    /// `--drain`: how long a served run answers the requests waiting when a signal arrives.
+    drain: Duration,
     /// `--clock`: the instant the run's manual clock starts at, the system clock without it.
     clock: Option<std::time::SystemTime>,
     /// `--mint-seed`: the seed every identity and generated value is minted from.
@@ -496,6 +511,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         caller_header,
         caller_secret,
         seed,
+        drain,
         clock,
         mint_seed,
     } = *arguments;
@@ -618,6 +634,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 caller_header,
                 proxy_secret,
                 seed,
+                drain,
                 clock,
                 mint_seed,
             },

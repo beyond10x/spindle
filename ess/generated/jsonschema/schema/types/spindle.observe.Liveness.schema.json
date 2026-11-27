@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.Liveness.schema.json",
+  "$ref": "#/$defs/spindle.observe.Liveness",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "contract_digest": "slice-sha256/2:1df18a040828d286c1b2e0cfbdb3b540def92d79bea2afb5ea41eee2839e7ddd",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.Liveness": {
+      "title": "Liveness",
+      "description": "The answer of `GET /__spindle/live`, with or without `--observe` and without the host's thread, beside its status: `200` while the run's thread asked the listener for a request within the bound, `503` once it has not. The bound of a served run is 60 s, above the 30 s an external call may take, so a command held by one does not read as a run that stopped.",
+      "x-ess-name": "spindle.observe.Liveness",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "live": {
+          "description": "Whether the status is `200`.",
+          "type": "boolean"
+        },
+        "idle_ms": {
+          "description": "Milliseconds since the run's thread last asked for a request.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "bound_ms": {
+          "description": "The bound, in milliseconds.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "live",
+        "idle_ms",
+        "bound_ms"
+      ],
+      "additionalProperties": false,
+      "x-ess-invariants": [
+        "idle_ms >= 0",
+        "bound_ms >= 0"
+      ]
+    }
+  }
+}

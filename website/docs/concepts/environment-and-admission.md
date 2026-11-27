@@ -229,7 +229,7 @@ rejected entry under `refused`.
 With or without `--observe`, `GET /__spindle/seed` answers whether the seed is `running` or has
 `ended`, with the entries left and the counts of the end line, and `GET /__spindle/ready` answers
 `503` until the seed has ended and `200` from then on, so a readiness probe waits for the seed
-without counting view rows ([the seed and readiness routes](observe.md#a-served-runs-seed-and-readiness)).
+without counting view rows ([the seed and readiness routes](observe.md#a-served-runs-seed-readiness-and-liveness)).
 
 ### A seed on a kept state
 
@@ -270,7 +270,8 @@ only where every entry is a create whose command declares `existing_instance:`.
   and records every entry done, so a restart sends none; put the seeded rows into the world to
   keep them. SIGINT or SIGTERM during a reset's seed stops the seed between two entries: the reset
   answers `200` once the entry under way is done, `seed.json` counts the entries done, and the run
-  exits. A request still waiting for the run when the signal arrives is answered `503`.
+  exits once the requests already waiting are answered, for up to `--drain` seconds, each still
+  waiting then answered `503` ([draining on SIGTERM](observe.md#draining-on-sigterm)).
 - Only a served `run` submits a seed. `play` and `deploy` stop with exit 1 on an environment
   document with a `[seed]` table, as `run` does where nothing requires `ingress.network`.
 

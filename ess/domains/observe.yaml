@@ -929,8 +929,9 @@ types:
       summary: >-
         The answer of `GET /__spindle/ready`, with or without `--observe` and without the host's
         thread, beside its status: `200` where the run has no seed or its seed run has ended, a
-        declared refusal among its entries included; `503` while it runs. A probe reading `200`
-        reads every view holding what the seed's last entry wrote.
+        declared refusal among its entries included, and the run is not stopping; `503` while the
+        seed runs and from the moment SIGINT or SIGTERM arrives. A probe reading `200` reads every
+        view holding what the seed's last entry wrote.
     fields:
       - name: ready
         type: Boolean
@@ -938,3 +939,30 @@ types:
       - name: seed
         type: spindle.observe.SeedStateKind
         summary: The `state` `GET /__spindle/seed` answers.
+      - name: stopping
+        type: Boolean
+        summary: >-
+          Whether the run is stopping on a signal: it answers each request that arrives `503` at
+          once, and the requests already waiting for up to `--drain` seconds.
+
+  - name: spindle.observe.Liveness
+    kind: struct
+    naming:
+      summary: >-
+        The answer of `GET /__spindle/live`, with or without `--observe` and without the host's
+        thread, beside its status: `200` while the run's thread asked the listener for a request
+        within the bound, `503` once it has not. The bound of a served run is 60 s, above the 30 s
+        an external call may take, so a command held by one does not read as a run that stopped.
+    fields:
+      - name: live
+        type: Boolean
+        summary: Whether the status is `200`.
+      - name: idle_ms
+        type: Integer
+        summary: Milliseconds since the run's thread last asked for a request.
+      - name: bound_ms
+        type: Integer
+        summary: The bound, in milliseconds.
+    invariants:
+      - idle_ms >= 0
+      - bound_ms >= 0
