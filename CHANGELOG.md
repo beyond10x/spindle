@@ -59,6 +59,17 @@ are Spindle's releases.
   differ only in their header. Its UI change (an overlay reading its opener's params) does not
   reach Spindle, which builds none of ESS's UI crates (`story:ess-pin-0-99-2`).
 
+### Fixed
+
+- A command that creates an instance under an identity it was supplied and an instance already
+  holds, established by a scenario or created by an earlier command, is answered in `conform`, `run
+  --scenario` and `spindle_conformance::HostTarget` as ESS's interpreter answers it: unavailable,
+  a request no branch of the model describes, in ESS's words, where it was answered as reaching no
+  declared outcome. `run --scenario` prints `, unavailable` on such an act's line.
+  `spindle_kernel::ExecuteError::Undeclared` gains `held`, the creating outcome and the entity
+  (`spindle_kernel::HeldIdentity`); its kind and message do not change
+  (`story:create-on-held-identity-unavailable`).
+
 ## [0.23.0] - 2026-11-27
 
 ### Added

@@ -508,17 +508,7 @@ fn w26_u4_an_outcome_less_act_on_a_returning_command_diverges_as_ess_fails_it() 
          \x20   input:\n\
          \x20     locker_id: l1\n\
          \x20     label: again\n";
-    let source = root().join("crates/spindle-cli/tests/fixtures/adversary-outcome-bodies");
-    let spec = directory.path().join("spec");
-    let system = std::fs::read_to_string(source.join("system.yaml")).expect("system");
-    let in_process = system.replacen("reached_by: network", "reached_by: in_process", 1);
-    assert_ne!(in_process, system, "the component is reached in process");
-    write(&spec, "system.yaml", &in_process);
-    write(
-        &spec,
-        "domains/locker.yaml",
-        &std::fs::read_to_string(source.join("domains/locker.yaml")).expect("locker"),
-    );
+    let spec = locker(directory.path());
     let status = ess_runner_status(&spec, document);
     let scenario = write(directory.path(), "twice.yaml", document);
     let output = replay(&spec, &laptop(), &scenario);
@@ -529,7 +519,65 @@ fn w26_u4_an_outcome_less_act_on_a_returning_command_diverges_as_ess_fails_it() 
         &printed,
         &[
             "timeline[0] vault.locker.NumberLocker: holds, outcome numbered\n",
-            "timeline[1] vault.locker.NumberLocker: diverges, undeclared\n",
+            "timeline[1] vault.locker.NumberLocker: diverges, unavailable\n",
+        ],
+    );
+}
+
+/// The locker domain of the outcome-bodies fixture, its component reached in process, written
+/// under `directory`; the path of the specification.
+fn locker(directory: &Path) -> PathBuf {
+    let source = root().join("crates/spindle-cli/tests/fixtures/adversary-outcome-bodies");
+    let spec = directory.join("spec");
+    let system = std::fs::read_to_string(source.join("system.yaml")).expect("system");
+    let in_process = system.replacen("reached_by: network", "reached_by: in_process", 1);
+    assert_ne!(in_process, system, "the component is reached in process");
+    write(&spec, "system.yaml", &in_process);
+    write(
+        &spec,
+        "domains/locker.yaml",
+        &std::fs::read_to_string(source.join("domains/locker.yaml")).expect("locker"),
+    );
+    spec
+}
+
+/// story:create-on-held-identity-unavailable: a create whose identity an earlier create holds,
+/// in an act that states the outcome it expects, is refused as unavailable on the host as on
+/// ESS's interpreter, and the replay prints that answer on the divergent line.
+#[test]
+fn a_replay_that_diverges_on_a_held_identity_prints_unavailable() {
+    let directory = scratch();
+    let document = "type: ess-scenario/1\n\
+         domain: vault.locker\n\
+         scenario: a-locker-opened-twice\n\
+         summary: A locker is opened twice; the second open expects an outcome it cannot take.\n\
+         timeline:\n\
+         \x20 - at: 2026-01-05T09:00:00Z\n\
+         \x20   command: vault.locker.PriceLocker\n\
+         \x20   input:\n\
+         \x20     locker_id: l1\n\
+         \x20     label: first\n\
+         \x20     price: false\n\
+         \x20   outcome: noted\n\
+         \x20 - at: 2026-01-05T09:01:00Z\n\
+         \x20   command: vault.locker.PriceLocker\n\
+         \x20   input:\n\
+         \x20     locker_id: l1\n\
+         \x20     label: again\n\
+         \x20     price: false\n\
+         \x20   outcome: noted\n";
+    let spec = locker(directory.path());
+    let status = ess_runner_status(&spec, document);
+    let scenario = write(directory.path(), "held.yaml", document);
+    let output = replay(&spec, &laptop(), &scenario);
+    let printed = stdout(&output);
+    assert_ne!(status, Status::Passed, "{printed}");
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert_lines(
+        &printed,
+        &[
+            "timeline[0] vault.locker.PriceLocker: holds, outcome noted\n",
+            "timeline[1] vault.locker.PriceLocker: diverges, unavailable\n",
         ],
     );
 }

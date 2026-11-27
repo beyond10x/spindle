@@ -826,6 +826,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
         Err(ExecuteError::Undeclared {
             command: self.command.to_owned(),
             reason: "no outcome's condition holds and the command declares no default".to_owned(),
+            held: None,
         })
     }
 
@@ -1837,6 +1838,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
             return Err(ExecuteError::Undeclared {
                 command: self.command.to_owned(),
                 reason,
+                held: None,
             });
         };
         self.refusal(outcome)
@@ -2105,12 +2107,19 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 return Ok(identity);
             }
             if !(redraws && minted) {
+                // A supplied identity, not one this draw minted, is the held identity ESS's
+                // interpreter refuses as a request no branch describes (`interpret::execute::create`).
+                let held = (!minted).then(|| crate::HeldIdentity {
+                    outcome: outcome.name.to_string(),
+                    entity: entity_name.clone(),
+                });
                 return Err(ExecuteError::Undeclared {
                     command: self.command.to_owned(),
                     reason: format!(
                         "a `{entity_name}` already has the identity {identity}, and `creates:` \
                          never replaces an instance"
                     ),
+                    held,
                 });
             }
             let held = match occupied {
@@ -2130,6 +2139,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                          `{entity_name}`, one more than the {held} it holds, is already held by \
                          one, and `creates:` never replaces an instance"
                     ),
+                    held: None,
                 });
             }
             self.generator.rewind(mark);
