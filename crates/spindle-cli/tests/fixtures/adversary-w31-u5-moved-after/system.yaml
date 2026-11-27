@@ -1,0 +1,32 @@
+format: ess/34
+system: archive
+version: v2
+summary: The books moved to the component that kept the coins, and the coins to the one that shelved the books.
+domains:
+  - archive.shelf
+  - archive.vault
+components:
+  - component: archive
+    summary: Keeps coins for callers outside the process.
+    owns:
+      domains:
+        - archive.vault
+    accepts:
+      commands:
+        - archive.vault.KeepCoin
+    publishes:
+      events:
+        - archive.vault.CoinKept
+    reached_by: network
+  - component: vault
+    summary: Shelves books for callers outside the process.
+    owns:
+      domains:
+        - archive.shelf
+    accepts:
+      commands:
+        - archive.shelf.ShelveBook
+    publishes:
+      events:
+        - archive.shelf.BookShelved
+    reached_by: network

@@ -486,6 +486,53 @@ default) times `max_connections` (100). With those defaults a command that write
 Raise `max_locks_per_transaction` on the server for such commands, which takes a restart. At 256,
 one command writing 20,000 instances lands.
 
+### A specification change over stored rows
+
+Each durable store records the specification it was last written under: the model's digest (the
+`spec_digest` of a conformance suite's provenance) and, for each entity the component owns, every
+field's type and every lifecycle state. A PostgreSQL store, the SQLite file of each component of a
+served run and the one SQLite file of `run` reading stdin all keep it, as one event of the stream
+`spindle:log`/`specification`, so it needs no table of its own and `state move` carries it. It is
+no published event: `GET /api/events` never answers it.
+
+`run` opens a store under a specification with another digest, such as a new version of the
+consumer's service, only where every stored row stays readable. It compares the recorded shapes
+with the new ones, for the entities that hold rows only. A change fits when every stored value
+reads under the new shape: types are compared by structure first, and where the structure alone
+would refuse, each stored value is read under the new type as `run` admits a command's value. A
+row does not fit when:
+
+- its entity is removed
+- its entity's domain moved to another component, whose store does not hold the row; the line
+  names that component
+- a field it holds a value of is removed (a field held only as `null` is not)
+- a field it holds a value of changed type so that the stored value no longer reads: an enum value
+  removed that a row holds, a struct member made required that a value lacks, a newtype prefix or
+  alphabet a value breaks, or a newtype or struct invariant a value breaks. Every row holding the
+  field is counted
+- a non-optional field is added, or a field is made required, that it lacks
+- the lifecycle state it rests in is removed
+
+Otherwise `run` records the new specification and starts. Examples are an optional field added, a
+field made optional, or made required where every row holds it, an enum value added, a struct
+member added as optional, a newtype prefix, alphabet or invariant every stored value meets, a new
+entity or state, and any change to an entity that holds no row. A store with the same digest
+starts without a check. An invariant added to the entity itself is not checked against the rows.
+
+Where a row does not fit, `run` exits 3 before listening, or before reading a stdin line, and
+prints on stdout the store and each entity and field (or state) that does not fit, with how many
+rows hold it. Nothing is written, so the rows and the record stay as they were, and every store of
+the run is checked before any records. No migration is offered: serve the earlier specification,
+or move the rows by hand.
+
+```text
+refused: the store of archive holds rows this specification cannot read
+  archive.shelf.Card.code: the field is removed; stored rows holding it: 1
+```
+
+A store an earlier release wrote holds rows and no record. `run` records the specification it
+serves without a check and logs one line saying so; from then on each start is checked.
+
 ### Moving a state directory into PostgreSQL
 
 `b10x-spindle state move --from <dir> <spec> --environment <env>` moves a `run --state` directory

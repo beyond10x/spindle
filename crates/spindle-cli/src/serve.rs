@@ -338,7 +338,10 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         (Some(other), _) => bail!("this build has no `{other}` store for store.durable"),
     };
     let stores = match serving.durable {
-        Some(crate::database::POSTGRES) => crate::database::stores(&ir, environment)?,
+        Some(crate::database::POSTGRES) => match crate::database::stores(&ir, environment) {
+            Ok(stores) => stores,
+            Err(error) => return crate::database::misfit_refused(error),
+        },
         _ => spindle_host::Stores::new(),
     };
     match serving.callers.as_slice() {
@@ -475,8 +478,15 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             println!("{refusal}");
             return Ok(ExitCode::from(REFUSED));
         }
+        Err(misfit @ HostError::Misfit { .. }) => {
+            println!("{misfit}");
+            return Ok(ExitCode::from(REFUSED));
+        }
         Err(error) => return Err(error.into()),
     };
+    for component in host.unrecorded() {
+        log::info(crate::database::unrecorded(component)).write();
+    }
     if serving.drop_retries {
         for binding in &retried {
             log::info(format!(

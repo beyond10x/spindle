@@ -512,3 +512,80 @@ fn run_with_a_serving_role_limit_above_components_times_pool_exits_1_naming_it()
     ]));
     exits_1_naming(&refused, &["CONNECTION LIMIT from 1 to 12"]);
 }
+
+const SPEC_CHANGE_BEFORE: &str = "crates/spindle-cli/tests/fixtures/spec-change-before";
+const SPEC_CHANGE_AFTER: &str = "crates/spindle-cli/tests/fixtures/spec-change-after";
+
+/// `story:spec-change-over-stored-rows` on PostgreSQL: a card filed under `spec-change-before`,
+/// whose code `spec-change-after` removes, refuses the run under `spec-change-after` with exit 3
+/// before listening, naming the entity and the field on stdout, the row and the record left as
+/// they were.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn an_incompatible_change_exits_before_listening_on_postgres() {
+    let schema = schema();
+    let url = owner_url();
+    let settings = [("database_url", url.as_str()), ("database_schema", &schema)];
+    let before = spindle_spec::load(&root().join(SPEC_CHANGE_BEFORE))
+        .expect("the fixture compiles")
+        .ir;
+    let first = listening(spindle(
+        &["run", SPEC_CHANGE_BEFORE, "--environment", POSTGRES],
+        &settings,
+    ));
+    let surface = spindle_ingress::Surface::new(&before, &["archive".to_owned()], None)
+        .expect("the fixture's surface is routed");
+    let route = surface
+        .routes()
+        .iter()
+        .find(|route| route.operation.name() == "archive.shelf.FileCard")
+        .expect("a route for FileCard");
+    let (status, answer) = call(
+        first.address,
+        &route.method.as_str().to_uppercase(),
+        &route.path,
+        Some(&json!({"id": "c1", "code": "X1"})),
+    );
+    assert!((200..300).contains(&status), "{status} {answer}");
+    drop(first);
+    let mut child = spindle(
+        &["run", SPEC_CHANGE_AFTER, "--environment", POSTGRES],
+        &settings,
+    )
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::inherit())
+    .spawn()
+    .expect("b10x-spindle starts");
+    // Within the 60 s a test may run: a run that is not refused listens and never exits.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while child.try_wait().expect("the run is waited on").is_none() {
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("the run under spec-change-after did not exit within 20 s: it was not refused");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let output = child.wait_with_output().expect("the output is read");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(3), "{stdout}");
+    assert!(
+        stdout.contains("archive.shelf.Card.code") && !stdout.contains("listening"),
+        "stdout names the entity and the field, and no listening line: {stdout}"
+    );
+    let mut database = spindle_kernel::Database::new(url.clone());
+    database.schema = schema;
+    let mut store =
+        spindle_kernel::PostgresStore::open(&database, "archive", 1).expect("the store opens");
+    assert_eq!(
+        store.recorded().expect("the record reads"),
+        Some(spindle_kernel::Shapes::owned(&before, "archive")),
+        "the record is unchanged"
+    );
+    let cards: Vec<(Value, Value)> = spindle_kernel::Store::scan(&mut store, "archive.shelf.Card")
+        .expect("the cards are read")
+        .into_iter()
+        .map(|(identity, stored)| (identity, json!(stored.row.fields)))
+        .collect();
+    assert_eq!(cards, vec![(json!("c1"), json!({"code": "X1"}))]);
+}

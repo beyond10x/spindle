@@ -897,7 +897,13 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         ),
         (Some("sqlite"), Some(path)) => {
             _lock = state_lock::file(path)?;
-            Box::new(SqliteStore::open(path)?)
+            let mut store = SqliteStore::open(path)?;
+            let named = format!("the state file {}", path.display());
+            let fit = store.fit(&spindle_kernel::Shapes::of(&loaded.ir))?;
+            if let Err(error) = database::fitting(fit, &named, &path.display().to_string()) {
+                return database::misfit_refused(error);
+            }
+            Box::new(store)
         }
         (Some("sqlite"), None) => {
             scratch = tempfile::tempdir().context("creating a temporary state directory")?;

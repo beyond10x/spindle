@@ -257,6 +257,16 @@ pub enum Command {
     /// process stops before it is delivered. A binding that escalates into an event the component
     /// running its command does not publish exits 1 before listening or reading stdin, naming the
     /// binding, the event and the component.
+    ///
+    /// Each durable store (the `--state` file, each component's file in a served `--state`
+    /// directory, each component's PostgreSQL tables) records the specification it was last
+    /// written under. Under another one, `run` starts only where every stored row stays readable:
+    /// otherwise it exits 3 before listening or reading stdin, writing nothing, and prints on
+    /// stdout each entity and field (or state) whose stored rows the specification cannot read: a
+    /// field removed or retyped while rows hold it, a non-optional field added that rows lack, a
+    /// state removed while rows rest in it, an entity removed while it holds rows. A store with
+    /// rows and no record, as an earlier release wrote it, records the specification unchecked and
+    /// logs one line saying so.
     Run {
         /// The specification directory.
         spec: PathBuf,

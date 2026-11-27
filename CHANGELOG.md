@@ -15,6 +15,22 @@ are Spindle's releases.
   that does not match the certificate exits 2 before listening, naming the flag and the file. The
   listening line is unchanged, and a renewed certificate is read by a restart
   (`story:listener-tls`).
+- `run` on a durable store an earlier specification wrote starts only where every stored row stays
+  readable, and otherwise exits 3 before listening or reading stdin, naming on stdout each entity
+  and field (or state) the new specification cannot read: a field removed while rows hold a value
+  of it, a field retyped so that a stored value no longer reads (compared by structure, then each
+  stored value read under the new type as a command's value is admitted: an enum value added, a
+  struct member added as optional, or a newtype prefix, alphabet or invariant every value meets
+  fits), a non-optional field added, or made required, that rows lack, a state removed while rows
+  rest in it, or an entity removed, or moved to another component's store (named), while it holds
+  rows.
+  Each PostgreSQL store, each served component's SQLite file and the SQLite file of `run` reading
+  stdin records the model's digest and its entities' shapes, as one event of the stream
+  `spindle:log`/`specification` that `GET /api/events` never answers; every store is checked
+  before any records. A store with rows and no record records the specification unchecked, with
+  one line saying so. No migration is offered. `spindle_kernel` gains `Shapes`, `Model`, `Fit`,
+  `Misfit` and `LogStore::{recorded, check, record, fit}`; `spindle_host` gains `HostError::Misfit` and
+  `Host::unrecorded` (`story:spec-change-over-stored-rows`).
 - `run --stdin` reads JSON lines on stdin where a component is `reached_by: network`, instead of
   serving HTTP: every component runs in the one process on one store and the event bindings fire
   as on any other stdin run. Given with a flag only a served run reads (`--http`, `--port`,

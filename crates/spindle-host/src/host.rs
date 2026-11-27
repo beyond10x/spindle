@@ -258,6 +258,18 @@ pub enum HostError {
     /// The environment cannot run every component.
     #[error("{0}")]
     Refused(Refusal),
+    /// A component's durable store holds rows the specification cannot read: it was last written
+    /// under another specification (`story:spec-change-over-stored-rows`). Nothing was written.
+    #[error(
+        "refused: the store of {component} holds rows this specification cannot read{}",
+        misfits.iter().map(|misfit| format!("\n  {misfit}")).collect::<String>()
+    )]
+    Misfit {
+        /// The component.
+        component: String,
+        /// Every row the specification cannot read, by entity and field or state.
+        misfits: Vec<spindle_kernel::Misfit>,
+    },
     /// The specification, or a binding of the environment, uses something this host does not
     /// run.
     #[error("unsupported: {0}")]
@@ -856,6 +868,9 @@ pub struct Host {
     /// Every escalation since the last [`Host::take_escalated`], at most [`ESCALATIONS_KEPT`],
     /// the oldest forgotten first: what a caller that sees only part of a [`Report`] reports.
     escalations: Vec<Escalated>,
+    /// The components whose SQLite store held rows and recorded no specification when it opened
+    /// ([`Host::unrecorded`]).
+    unrecorded: Vec<String>,
 }
 
 impl std::fmt::Debug for Host {
@@ -1089,6 +1104,7 @@ impl Host {
             .map(|route| (route.binding.clone(), Arc::new(route.clone())))
             .collect();
         let mut components = BTreeMap::new();
+        let mut files: Option<Files> = None;
         for (name, bindings) in placements.iter() {
             for binding in bindings {
                 let capability = binding.capability.as_str();
@@ -1135,7 +1151,14 @@ impl Host {
                     None | Some("memory") => (opened(None, &sink)?, Kept::Memory),
                     Some("sqlite") if cfg!(feature = "sqlite") => {
                         let file = state.join(format!("{name}.sqlite"));
-                        (opened(Some(&file), &sink)?, Kept::File(file))
+                        // Every component's file is checked before any records, at the first.
+                        let mut checked = match files.take() {
+                            Some(checked) => checked,
+                            None => Files::checked(&ir, state, &placements)?,
+                        };
+                        let store = checked.take(name, &file, &sink)?;
+                        files = Some(checked);
+                        (store, Kept::File(file))
                     }
                     Some(other) => match stores.remove(name) {
                         Some(store) => (
@@ -1264,6 +1287,7 @@ impl Host {
             answering,
             staged_by: BTreeMap::new(),
             escalations: Vec::new(),
+            unrecorded: files.map(|files| files.unrecorded).unwrap_or_default(),
         };
         if seeded { host.seeded(0) } else { Ok(host) }
     }
@@ -1660,7 +1684,7 @@ impl Host {
                     .store
                     .replace(Box::new(Lost(format!("{name}'s store is being reset"))));
                 drop(closed);
-                match emptied_file(&file, &component.sink) {
+                match emptied_file(&file, &self.ir, name, &component.sink) {
                     Ok(store) => {
                         component.store.replace(store);
                     }
@@ -1697,6 +1721,13 @@ impl Host {
     /// What admission bound for each component.
     pub fn placements(&self) -> &Placements {
         &self.placements
+    }
+
+    /// The components whose SQLite store held rows and recorded no specification when the host
+    /// opened it, as a store an earlier release wrote: each now records this specification,
+    /// recorded without a check (`story:spec-change-over-stored-rows`, D2).
+    pub fn unrecorded(&self) -> &[String] {
+        &self.unrecorded
     }
 
     /// The counters of `component`, laid out by its catalogue; `None` when no such component
@@ -2634,6 +2665,115 @@ fn opened(file: Option<&Path>, sink: &Sink) -> Result<Box<dyn Store>, HostError>
     })
 }
 
+/// The SQLite stores of a host's components that keep their state in a file, each opened and its
+/// rows checked against the specification the host serves before any records it
+/// (`story:spec-change-over-stored-rows`): a misfit in one leaves every record as it was.
+#[derive(Default)]
+struct Files {
+    /// Each checked store, by component, recorded.
+    #[cfg(feature = "sqlite")]
+    checked: BTreeMap<String, spindle_kernel::SqliteStore>,
+    /// The components whose store held rows and recorded no specification ([`Host::unrecorded`]).
+    unrecorded: Vec<String>,
+}
+
+impl Files {
+    /// The store of each component of `placements` whose state is bound to `sqlite`, in its file
+    /// under `state`, checked against the entities of `ir` the component owns
+    /// ([`spindle_kernel::LogStore::check`]); once every one fits, each whose record differs
+    /// records the specification ([`spindle_kernel::LogStore::record`]).
+    ///
+    /// # Errors
+    /// [`HostError::Misfit`] for the first store holding a row the specification cannot read,
+    /// nothing recorded; [`HostError::Store`] where a store cannot be opened, read or written.
+    fn checked(ir: &EssIr, state: &Path, placements: &Placements) -> Result<Self, HostError> {
+        let mut files = Self::default();
+        #[cfg(feature = "sqlite")]
+        {
+            let mut fitting = Vec::new();
+            for (name, bindings) in placements.iter() {
+                let bound = |capability: &str| {
+                    bindings
+                        .iter()
+                        .find(|binding| binding.capability.as_str() == capability)
+                        .map(|binding| binding.implementation.as_str())
+                };
+                if bound(Capability::STORE_DURABLE).or_else(|| bound("store.ephemeral"))
+                    != Some("sqlite")
+                {
+                    continue;
+                }
+                let mut store =
+                    spindle_kernel::SqliteStore::open(&state.join(format!("{name}.sqlite")))?;
+                let shapes = spindle_kernel::Shapes::owned(ir, name);
+                match store.check(&shapes)? {
+                    spindle_kernel::Fit::Same => {}
+                    spindle_kernel::Fit::Fits { unrecorded } => {
+                        if unrecorded {
+                            files.unrecorded.push(name.clone());
+                        }
+                        fitting.push((name.clone(), shapes));
+                    }
+                    spindle_kernel::Fit::Misfits(misfits) => {
+                        return Err(HostError::Misfit {
+                            component: name.clone(),
+                            misfits,
+                        });
+                    }
+                }
+                files.checked.insert(name.clone(), store);
+            }
+            for (name, shapes) in fitting {
+                if let Some(store) = files.checked.get_mut(&name) {
+                    store.record(&shapes)?;
+                }
+            }
+        }
+        #[cfg(not(feature = "sqlite"))]
+        let _ = (ir, state, placements);
+        Ok(files)
+    }
+
+    /// The checked store of the component `name`, counted into `sink`; one opened at `file`
+    /// where none was checked.
+    fn take(&mut self, name: &str, file: &Path, sink: &Sink) -> Result<Box<dyn Store>, HostError> {
+        #[cfg(feature = "sqlite")]
+        if let Some(store) = self.checked.remove(name) {
+            return Ok(Box::new(CountingStore::new(store, sink.clone())));
+        }
+        let _ = name;
+        opened(Some(file), sink)
+    }
+}
+
+/// The empty SQLite store a reset opens at `file` for the component `name`, counted into `sink`,
+/// recording the specification of `ir` ([`spindle_kernel::LogStore::fit`]).
+fn recorded_empty(
+    file: &Path,
+    ir: &EssIr,
+    name: &str,
+    sink: &Sink,
+) -> Result<Box<dyn Store>, HostError> {
+    #[cfg(feature = "sqlite")]
+    {
+        let mut store = spindle_kernel::SqliteStore::open(file)?;
+        if let spindle_kernel::Fit::Misfits(misfits) =
+            store.fit(&spindle_kernel::Shapes::owned(ir, name))?
+        {
+            return Err(HostError::Misfit {
+                component: name.to_owned(),
+                misfits,
+            });
+        }
+        Ok(Box::new(CountingStore::new(store, sink.clone())))
+    }
+    #[cfg(not(feature = "sqlite"))]
+    {
+        let _ = (ir, name);
+        opened(Some(file), sink)
+    }
+}
+
 /// The store of a component whose store is closed: every read and write fails, naming why, so
 /// the component never answers from a store its binding does not name.
 struct Lost(String);
@@ -2676,10 +2816,15 @@ fn aside(path: &Path) -> PathBuf {
 }
 
 /// An empty SQLite store at `file`, whose store is closed: its files are moved aside, an empty
-/// one is opened, and only then are the moved files removed. On failure every file is where it
-/// was and the error names what failed; a file that could not be moved back is named with where
-/// it is.
-fn emptied_file(file: &Path, sink: &Sink) -> Result<Box<dyn Store>, String> {
+/// one is opened, recording the specification of `ir` for the component `name`, and only then are
+/// the moved files removed. On failure every file is where it was and the error names what
+/// failed; a file that could not be moved back is named with where it is.
+fn emptied_file(
+    file: &Path,
+    ir: &EssIr,
+    name: &str,
+    sink: &Sink,
+) -> Result<Box<dyn Store>, String> {
     let mut moved = Vec::new();
     let restore = |moved: &[PathBuf], why: String| {
         let mut why = why;
@@ -2706,7 +2851,7 @@ fn emptied_file(file: &Path, sink: &Sink) -> Result<Box<dyn Store>, String> {
             }
         }
     }
-    match opened(Some(file), sink) {
+    match recorded_empty(file, ir, name, sink) {
         Ok(store) => {
             for path in &moved {
                 let _ = std::fs::remove_file(aside(path));

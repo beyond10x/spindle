@@ -106,6 +106,13 @@ pub(crate) const ENTITY: &str = "spindle:entity";
 /// it before it copies such a write into a PostgreSQL store. A scan of a marked log reads the
 /// whole log.
 pub(crate) const MARKS: (&str, &str) = ("spindle:log", "unnamed-writes");
+/// The stream recording the specification the store was last written under
+/// ([`LogStore::fit`]): each event one [`crate::Shapes`], the last the one in force. Of the
+/// stream type [`MARKS`] is of, which a scan and a state move count as no entity's, and left out
+/// of the events read back ([`LogStore::groups_after`]).
+pub(crate) const SPECIFICATION: (&str, &str) = ("spindle:log", "specification");
+/// The event of [`SPECIFICATION`].
+const SPECIFIED: &str = "spindle.specified";
 /// Who records the change: the runtime itself, the actor of an append whose cause names no actor
 /// ([`LogStore::attributed`]).
 const ACTOR: &str = "spindle-kernel";
@@ -1378,7 +1385,11 @@ impl<L: Log> LogStore<L> {
                     }
                     continue;
                 }
-                if stream == MARKS || event.name == ROW || event.name == REMOVED {
+                if stream == MARKS
+                    || stream == SPECIFICATION
+                    || event.name == ROW
+                    || event.name == REMOVED
+                {
                     continue;
                 }
                 let Value::Object(payload) = event.data else {
@@ -1490,6 +1501,85 @@ impl<L: Log> LogStore<L> {
             counts.extend(self.count_log(&unnamed)?);
         }
         Ok(counts)
+    }
+}
+
+impl<L: Log> LogStore<L> {
+    /// The specification the store was last written under ([`SPECIFICATION`]), or `None` for a
+    /// store that records none: an empty one, or one a release before this one wrote.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the log cannot be read or its record does not read.
+    pub fn recorded(&self) -> Result<Option<crate::Shapes>, StoreError> {
+        let (kind, id) = SPECIFICATION;
+        let stream = StreamId::new(self.tenant.clone(), kind, id).map_err(backend)?;
+        self.last(&stream)?
+            .map(|(_, event)| {
+                serde_json::from_value(event.data).map_err(|error| {
+                    StoreError::Backend(format!("the recorded specification: {error}"))
+                })
+            })
+            .transpose()
+    }
+
+    /// Checks the rows the store holds against `current`, the specification a run is about to
+    /// serve them under (`story:spec-change-over-stored-rows`), writing nothing:
+    /// [`crate::Fit::Same`] where the store was last written under `current` (the same digest),
+    /// [`crate::Fit::Misfits`] naming every row the specification cannot read
+    /// ([`crate::Shapes::misfits`]), and otherwise [`crate::Fit::Fits`]. A store that records no
+    /// specification fits unchecked, saying whether it held rows.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read.
+    pub fn check(&mut self, current: &crate::Shapes) -> Result<crate::Fit, StoreError> {
+        Ok(match self.recorded()? {
+            Some(recorded) if recorded.digest == current.digest => crate::Fit::Same,
+            Some(recorded) => {
+                let misfits = current.misfits(&recorded, self)?;
+                if misfits.is_empty() {
+                    crate::Fit::Fits { unrecorded: false }
+                } else {
+                    crate::Fit::Misfits(misfits)
+                }
+            }
+            None => crate::Fit::Fits {
+                unrecorded: current.held(self)?,
+            },
+        })
+    }
+
+    /// Appends one event recording `current` as the specification the store is written under
+    /// from now on ([`SPECIFICATION`]).
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be written.
+    pub fn record(&mut self, current: &crate::Shapes) -> Result<(), StoreError> {
+        let body = serde_json::to_value(current).map_err(|error| {
+            StoreError::Backend(format!("recording the specification: {error}"))
+        })?;
+        let event = NewEvent::new(SPECIFIED, SCHEMA, body).map_err(backend)?;
+        let (kind, id) = SPECIFICATION;
+        self.append(vec![StreamAppend {
+            stream: StreamId::new(self.tenant.clone(), kind, id).map_err(backend)?,
+            expected: Expected::Any,
+            events: vec![event],
+        }])
+        .map_err(backend)
+    }
+
+    /// [`LogStore::check`], then, where the rows fit a specification the store does not record
+    /// yet ([`crate::Fit::Fits`]), [`LogStore::record`]: what a run that opens one store does
+    /// before it serves (D3: the record is written at open, after the check passes, and only
+    /// where the recorded digest differs).
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read or written.
+    pub fn fit(&mut self, current: &crate::Shapes) -> Result<crate::Fit, StoreError> {
+        let fit = self.check(current)?;
+        if let crate::Fit::Fits { .. } = fit {
+            self.record(current)?;
+        }
+        Ok(fit)
     }
 }
 
