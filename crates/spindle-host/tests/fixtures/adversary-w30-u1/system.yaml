@@ -1,0 +1,19 @@
+format: ess/34
+system: org
+version: v1
+summary: Items a probe keeps, read by views whose filters nest quantifiers over list members of list elements and quantify over the values of maps.
+domains:
+  - org.probe
+components:
+  - component: probe
+    summary: Adds items.
+    owns:
+      domains:
+        - org.probe
+    accepts:
+      commands:
+        - org.probe.AddItem
+    publishes:
+      events:
+        - org.probe.ItemAdded
+    reached_by: in_process

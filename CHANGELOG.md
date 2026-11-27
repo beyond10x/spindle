@@ -16,6 +16,11 @@ are Spindle's releases.
   `--drain`, `--log-format json`), it exits 2 before anything is loaded. The rally page's "Drive it
   by hand" now runs as written, where its command served HTTP and never read its lines; its output
   shows the `ObserveBall` commands each `BallMoved` invokes (`story:rally-example-reads-stdin`).
+- A view filter that quantifies over a list member of an outer list field's element
+  (`exists g in slots: (exists w in g.words: w == "x")`) is answered with the rows ESS's
+  interpreter answers, each inner element read at the outer element's path
+  (`slots.<n>.words.<m>`). Before, the host refused the view whole as `unsupported`
+  (`story:view-filter-nested-element-quantifier`).
 - An event binding whose `on_failure` escalates runs, where `run` exited 1 before listening or
   reading stdin: universal (`on_failure: {escalate: {emits: <event>}}`) or chosen per refusal
   (`escalate: {emits: <event>, outcomes: [...]}` beside `drop:` and `retry:`). An attempt the
@@ -82,6 +87,13 @@ are Spindle's releases.
   `DecideAdmission` answers `not-provided` for a refusing decision that binds an implementation
   the environment does not provide, where it errored on a host decider with no answer for
   `refused` (`story:look-ahead-asks-only-where-it-matters`).
+- A view filter that quantifies over a `Map` field of the row with `exists` or `forall`
+  (`exists v in stamps: v > "2026-01-01T09:00:00Z"`) is answered with the rows ESS's interpreter
+  answers, where the host refused the view whole as `unsupported`. The values are walked in key
+  order and each is typed by the map's value type, so a `Timestamp` value, or a newtype over one,
+  is ordered by the instant it names, not by its text: `2026-01-01T10:00:00+02:00` is before
+  `09:00Z`. A quantifier over a `Map` parameter stays refused
+  (`story:view-filter-map-value-order`).
 
 ## [0.23.0] - 2026-11-27
 

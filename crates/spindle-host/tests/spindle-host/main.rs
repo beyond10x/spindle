@@ -33,6 +33,8 @@ mod adversary_w26_u2;
 mod adversary_w27_u8;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_w28_u5;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod adversary_w30_u1;
 mod adversary_wasm;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_world_integers;
@@ -94,6 +96,8 @@ mod supplied;
 mod telemetry;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod text_filters;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod view_filter_map;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod views;
 mod wasm;

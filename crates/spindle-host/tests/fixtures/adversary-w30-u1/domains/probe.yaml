@@ -1,0 +1,311 @@
+domain: org.probe
+summary: Items, each with groups of words and slots, stamps, amounts, counts, texts, spans and infos by name.
+types:
+  - name: org.probe.ItemId
+    kind: newtype
+    of: String
+  - name: org.probe.Stamp
+    kind: newtype
+    of: Timestamp
+  - name: org.probe.Slot
+    kind: struct
+    fields:
+      - name: words
+        type: List<String>
+      - name: codes
+        type: List<String>
+  - name: org.probe.Group
+    kind: struct
+    fields:
+      - name: name
+        type: String
+      - name: words
+        type: List<String>
+      - name: codes
+        type: List<Integer>
+      - name: slots
+        type: List<org.probe.Slot>
+      - name: maybe
+        type: Optional<List<String>>
+      - name: stamps
+        type: Map<String, org.probe.Stamp>
+  - name: org.probe.Info
+    kind: struct
+    fields:
+      - name: at
+        type: Timestamp
+      - name: words
+        type: List<String>
+entities:
+  - name: org.probe.Item
+    identity:
+      name: item_id
+      type: org.probe.ItemId
+    fields:
+      - name: at
+        type: Timestamp
+      - name: groups
+        type: List<org.probe.Group>
+      - name: stamps
+        type: Map<String, org.probe.Stamp>
+      - name: opt_stamps
+        type: Optional<Map<String, Timestamp>>
+      - name: amounts
+        type: Map<String, Decimal>
+      - name: counts
+        type: Map<String, Integer>
+      - name: texts
+        type: Map<String, String>
+      - name: spans
+        type: Map<String, Duration>
+      - name: info
+        type: Map<String, org.probe.Info>
+      - name: tags
+        type: Optional<List<String>>
+    lifecycle:
+      initial: Open
+      states: [Open]
+      terminal: [Open]
+commands:
+  - name: org.probe.AddItem
+    input:
+      - name: item_id
+        type: org.probe.ItemId
+      - name: at
+        type: Timestamp
+      - name: groups
+        type: List<org.probe.Group>
+      - name: stamps
+        type: Map<String, org.probe.Stamp>
+      - name: opt_stamps
+        type: Optional<Map<String, Timestamp>>
+      - name: amounts
+        type: Map<String, Decimal>
+      - name: counts
+        type: Map<String, Integer>
+      - name: texts
+        type: Map<String, String>
+      - name: spans
+        type: Map<String, Duration>
+      - name: info
+        type: Map<String, org.probe.Info>
+      - name: tags
+        type: Optional<List<String>>
+    outcomes:
+      - name: added
+        creates: org.probe.Item
+        instance: item_id
+        sets:
+          at: input.at
+          groups: input.groups
+          stamps: input.stamps
+          opt_stamps: input.opt_stamps
+          amounts: input.amounts
+          counts: input.counts
+          texts: input.texts
+          spans: input.spans
+          info: input.info
+          tags: input.tags
+        emits: [org.probe.ItemAdded]
+        payload:
+          org.probe.ItemAdded: {item_id: input.item_id}
+        summary: The item is kept.
+events:
+  - name: org.probe.ItemAdded
+    fields:
+      - name: item_id
+        type: org.probe.ItemId
+views:
+  - name: org.probe.ThreeDeep
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter:
+      exists:
+        in: groups
+        as: g
+        that:
+          exists:
+            in: g.slots
+            as: s
+            that: {exists: {in: s.words, as: w, that: w == "x"}}
+    fields: &fields
+      - name: item_id
+        type: org.probe.ItemId
+  - name: org.probe.ForallInExists
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter:
+      exists:
+        in: groups
+        as: g
+        that: {forall: {in: g.words, as: w, that: w == "x"}}
+    fields: *fields
+  - name: org.probe.ExistsInForall
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter:
+      forall:
+        in: groups
+        as: g
+        that: {exists: {in: g.words, as: w, that: w == "x"}}
+    fields: *fields
+  - name: org.probe.ForallThree
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter:
+      forall:
+        in: groups
+        as: g
+        that:
+          forall:
+            in: g.slots
+            as: s
+            that: {forall: {in: s.words, as: w, that: w != "y"}}
+    fields: *fields
+  - name: org.probe.WordIsName
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter:
+      exists:
+        in: groups
+        as: g
+        that: {exists: {in: g.words, as: w, that: w == g.name}}
+    fields: *fields
+  - name: org.probe.Shadowed
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter:
+      exists:
+        in: groups
+        as: g
+        that:
+          exists:
+            in: g.slots
+            as: g
+            that: {exists: {in: g.codes, as: c, that: c == "x"}}
+    fields: *fields
+  - name: org.probe.MaybeWords
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter:
+      exists:
+        in: groups
+        as: g
+        that: {exists: {in: g.maybe, as: w, that: w == "x"}}
+    fields: *fields
+  - name: org.probe.TagsOpt
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter: {exists: {in: tags, as: t, that: t == "x"}}
+    fields: *fields
+  - name: org.probe.GroupStamps
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter:
+      exists:
+        in: groups
+        as: g
+        that: {exists: {in: g.stamps, as: v, that: v > "2026-01-01T09:00:00Z"}}
+    fields: *fields
+  - name: org.probe.StampEq
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter: {exists: {in: stamps, as: v, that: v == "2026-01-01T09:00:00Z"}}
+    fields: *fields
+  - name: org.probe.StampNe
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter: {forall: {in: stamps, as: v, that: v != "2026-01-01T09:00:00Z"}}
+    fields: *fields
+  - name: org.probe.StampFraction
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter: {exists: {in: stamps, as: v, that: v > "2026-01-01T09:00:00.5Z"}}
+    fields: *fields
+  - name: org.probe.StampOffsetLiteral
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter: {exists: {in: stamps, as: v, that: v >= "2026-01-01T10:00:00+01:00"}}
+    fields: *fields
+  - name: org.probe.StampVsField
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter: {exists: {in: stamps, as: v, that: v > at}}
+    fields: *fields
+  - name: org.probe.NoneEarly
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter: {not: {exists: {in: stamps, as: v, that: v < "2026-01-01T09:00:00Z"}}}
+    fields: *fields
+  - name: org.probe.OptStamps
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter: {exists: {in: opt_stamps, as: v, that: v > "2026-01-01T09:00:00Z"}}
+    fields: *fields
+  - name: org.probe.OptStampsGuarded
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter:
+      any:
+        - {not: defined(opt_stamps)}
+        - {exists: {in: opt_stamps, as: v, that: v > "2026-01-01T09:00:00Z"}}
+    fields: *fields
+  - name: org.probe.Amounts
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter: {exists: {in: amounts, as: v, that: v > 1.5}}
+    fields: *fields
+  - name: org.probe.Counts
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter: {exists: {in: counts, as: v, that: v > 9}}
+    fields: *fields
+  - name: org.probe.Texts
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter: {exists: {in: texts, as: v, that: v > "9"}}
+    fields: *fields
+  - name: org.probe.Spans
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter: {exists: {in: spans, as: v, that: v == "PT1H"}}
+    fields: *fields
+  - name: org.probe.InfoAt
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter: {exists: {in: info, as: i, that: i.at > "2026-01-01T09:00:00Z"}}
+    fields: *fields
+  - name: org.probe.InfoWords
+    source: org.probe.Item
+    consistency: read_your_writes
+    filter:
+      exists:
+        in: info
+        as: i
+        that: {exists: {in: i.words, as: w, that: w == "x"}}
+    fields: *fields
+  - name: org.probe.LateCount
+    source: org.probe.Item
+    consistency: read_your_writes
+    fields:
+      - name: late
+        type: Integer
+        aggregate:
+          count: {}
+          where: {exists: {in: stamps, as: v, that: v > "2026-01-01T09:00:00Z"}}
+      - name: nested
+        type: Integer
+        aggregate:
+          count: {}
+          where:
+            exists:
+              in: groups
+              as: g
+              that: {exists: {in: g.words, as: w, that: w == "x"}}
+  - name: org.probe.MapParam
+    source: org.probe.Item
+    consistency: read_your_writes
+    params:
+      - {name: ps, type: "Optional<Map<String, Timestamp>>"}
+    filter: {exists: {in: param.ps, as: p, that: p > "2026-01-01T09:00:00Z"}}
+    fields: *fields

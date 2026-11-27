@@ -472,3 +472,17 @@ fn a_quantifier_nested_over_an_element_member_is_read_or_refused_whole() {
         }
     }
 }
+
+/// A quantifier over a list member of an outer list field's element
+/// (`exists g in slots: (exists w in g.words: w == "x")`) is served with the interpreter's rows on
+/// the memory and the SQLite store, `story:view-filter-nested-element-quantifier`: the inner
+/// binder walks the outer element's own list (`slots.<n>.words.<m>`).
+#[test]
+fn a_quantifier_over_an_outer_elements_list_member_agrees() {
+    agree(&["org.bench.SlotWords"], &[]);
+    let mut host = host(Box::new(MemoryStore::default()));
+    assert_eq!(
+        ids(&mut host, "org.bench.SlotWords", &json!({})),
+        ["c1", "c4"]
+    );
+}

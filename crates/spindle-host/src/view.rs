@@ -62,12 +62,17 @@ const STATE: &str = "state";
 ///   `equals_ignore_case` or `in_ignore_case` against text literals, which ESS folds ASCII
 ///   only (`FoldOp::holds`), alone or under `trimmed`, which trims only the tested text;
 ///
-/// leaves combined by `any`, `all` and `not`, or under `exists` or `forall` over a list parameter
-/// or a list field of the row. A list parameter's element is read as a parameter is; a list
-/// field's element as a field is, a member of it among them (`g.id == param.group`,
-/// `defined(g.name)`), and is also compared with `==` or `!=` to an outer binder. Any other filter
-/// is named with its text and refused whole, since evaluating part of it would answer a subset of
-/// its rows.
+/// leaves combined by `any`, `all` and `not`, or under `exists` or `forall` over a list parameter,
+/// a list field of the row, or a list member of an outer list field's element (`exists w in
+/// g.words` inside `exists g in slots`, read at `slots.<n>.words.<m>`,
+/// `story:view-filter-nested-element-quantifier`), or a map field of the row, whose values are
+/// walked in key order and each typed by the map's value type, a `Timestamp` ordered by its
+/// instant (`exists v in stamps: v > "2026-01-01T09:00:00Z"`,
+/// `story:view-filter-map-value-order`). A list parameter's element is read as a
+/// parameter is; a list or map field's element as a field is, a member of it among them
+/// (`g.id == param.group`, `defined(g.name)`), and is also compared with `==` or `!=` to an outer
+/// binder. Any other filter is named with its text and refused whole, since evaluating part of it
+/// would answer a subset of its rows.
 ///
 /// An aggregation (`group_by:` and fields with `aggregate:`) is answered ([`aggregate`]) where
 /// each measure's `where:` is a filter read here, and no field of the view is read through a
@@ -94,8 +99,8 @@ pub(crate) fn unsupported(ir: &EssIr, view: &ResolvedView) -> Option<String> {
                  against a text literal or parameter, a text field or parameter tested by \
                  `equals_ignore_case` or `in_ignore_case` against text literals, alone or under \
                  `trimmed`, and `always` and `never`, combined by `any`, `all` and `not` or \
-                 quantified over a list parameter or a list field by `exists` or `forall`, are \
-                 read"
+                 quantified over a list parameter, a list or map field or a list member of its \
+                 element by `exists` or `forall`, are read"
             )),
             _ => None,
         }
@@ -135,8 +140,12 @@ fn unread_aggregation(
 /// it ([`ess_compiler::expression::resolve_path`]): a field against the source's observable
 /// fields, a field read through a reference (`<via>.<field>`) against the observable fields of the
 /// entity it names, a parameter against the view's, and a binder as the element (`<list>.0`) of
-/// the list it walks. ESS evaluates a quantifier over the elements a list publishes
-/// (`<name>.count`, `<name>.<index>`). The parser bounds the nesting at `MAX_PREDICATE_DEPTH`.
+/// the list it walks, at the outer element's path where that list is a member of an outer binder's
+/// element (`slots.0.words.0` for `w` in `exists w in g.words`), or as the value (`<map>.0`) of
+/// the map field it walks, typed by the map's value type ([`resolved`]). ESS evaluates a quantifier
+/// over the elements a list publishes (`<name>.count`, `<name>.<index>`), and a map publishes its
+/// values the same way, in key order (`input::bind`). The parser bounds the nesting at
+/// `MAX_PREDICATE_DEPTH`.
 fn reads(ir: &EssIr, view: &ResolvedView, filter: &Predicate) -> bool {
     let fields = ir.entity(&view.source).observable_fields();
     let scope = Scope {
@@ -180,13 +189,14 @@ struct Typed {
 }
 
 impl<'a> Scope<'a> {
-    /// The type of `path` resolved over `fields`, as ESS resolves a fact path.
+    /// The type of `path` resolved over `fields`, as ESS resolves a fact path, a map's value at an
+    /// ordinal among them ([`resolved`]).
     fn resolve(
         &self,
         fields: &[ResolvedField],
         path: &FactPath,
     ) -> Option<Resolution<ResolvedTypeRef>> {
-        ess_compiler::expression::resolve_path(self.ir, fields, path, "a view filter").ok()
+        resolved(self.ir, fields, path, 0)
     }
 
     /// What `path` names here, or `None` where it is no field of the source, none of a row a
@@ -346,6 +356,34 @@ impl<'a> Scope<'a> {
         })
     }
 
+    /// The segments of the list `over`, a quantifier's target, as the row holds it: where `over`
+    /// is a member of an outer binder's element (`g.words` for `exists g in slots`), the outer
+    /// element's own path and the members (`slots.0.words`), as ESS reads it through the outer
+    /// binder (`Element::rebind`), `story:view-filter-nested-element-quantifier`; otherwise
+    /// `over` as written.
+    fn walked(&self, over: &FactPath) -> Vec<String> {
+        match over.segments() {
+            [root, members @ ..] if !members.is_empty() => self
+                .binders
+                .iter()
+                .rev()
+                .find(|binder| binder.name == root)
+                .map_or_else(
+                    || over.segments().to_vec(),
+                    |binder| {
+                        binder
+                            .element
+                            .segments()
+                            .iter()
+                            .chain(members)
+                            .cloned()
+                            .collect()
+                    },
+                ),
+            _ => over.segments().to_vec(),
+        }
+    }
+
     fn admits(&self, filter: &Predicate) -> bool {
         match filter {
             Predicate::Compare {
@@ -426,16 +464,17 @@ impl<'a> Scope<'a> {
                     return false;
                 }
                 let element = FactPath::from_segments(
-                    over.segments()
-                        .iter()
-                        .cloned()
+                    self.walked(over)
+                        .into_iter()
                         .chain(std::iter::once("0".to_owned()))
                         .collect::<Vec<_>>(),
                 );
                 let (fields, at) = self.source(&element);
-                if !matches!(typed.resolution.terminal, ResolvedTypeRef::List { .. })
-                    || self.resolve(fields, &at).is_none()
-                {
+                // A map field of the row is walked as ESS binds it, its values at an ordinal in
+                // key order (`story:view-filter-map-value-order`); a map parameter is not read.
+                let walks = matches!(typed.resolution.terminal, ResolvedTypeRef::List { .. })
+                    || (typed.row && map_value(self.ir, &typed.resolution.terminal, 0).is_some());
+                if !walks || self.resolve(fields, &at).is_none() {
                     return false;
                 }
                 let mut binders = self.binders.clone();
@@ -460,6 +499,70 @@ impl<'a> Scope<'a> {
             Predicate::Always | Predicate::Never => true,
             _ => false,
         }
+    }
+}
+
+/// The type of `path` over `fields`, as ESS resolves a fact path
+/// ([`ess_compiler::expression::resolve_path`]), and, where that names nothing, through a map's
+/// value at an ordinal (`stamps.0`), as ESS's interpreter types the value a quantifier over a map
+/// reads (`ess-conformance` `src/input.rs` at ESS 0.99.2, `declared_primitive` and
+/// `map_value`): the path before the ordinal resolved, the value type of the map it names taken,
+/// and the rest resolved over one field `value` of that type
+/// (`story:view-filter-map-value-order`). `None` where neither names anything; `depth` bounds the
+/// walk at [`MAX_TYPE_DEPTH`] maps, as ESS's does.
+fn resolved(
+    ir: &EssIr,
+    fields: &[ResolvedField],
+    path: &FactPath,
+    depth: usize,
+) -> Option<Resolution<ResolvedTypeRef>> {
+    if let Ok(resolution) =
+        ess_compiler::expression::resolve_path(ir, fields, path, "a view filter")
+    {
+        return Some(resolution);
+    }
+    if depth >= MAX_TYPE_DEPTH {
+        return None;
+    }
+    let segments = path.segments();
+    (1..segments.len()).find_map(|at| {
+        let ordinal = &segments[at];
+        if ordinal.parse::<usize>().ok()?.to_string() != *ordinal {
+            return None;
+        }
+        let prefix = ess_compiler::expression::resolve_path(
+            ir,
+            fields,
+            &FactPath::from_segments(&segments[..at]),
+            "a view filter",
+        )
+        .ok()?;
+        let element = [ResolvedField {
+            name: "value".to_owned(),
+            type_ref: map_value(ir, &prefix.terminal, 0)?,
+            naming: ess_domain::Naming::default(),
+        }];
+        let rest = std::iter::once("value".to_owned())
+            .chain(segments[at + 1..].iter().cloned())
+            .collect::<Vec<_>>();
+        resolved(ir, &element, &FactPath::from_segments(rest), depth + 1)
+    })
+}
+
+/// The value type of the map `held` is, through every newtype and `Optional` over one, as ESS's
+/// `map_value` takes it; `None` where it is no map.
+fn map_value(ir: &EssIr, held: &ResolvedTypeRef, depth: usize) -> Option<ResolvedTypeRef> {
+    if depth > MAX_TYPE_DEPTH {
+        return None;
+    }
+    match held {
+        ResolvedTypeRef::Map { value, .. } => Some((**value).clone()),
+        ResolvedTypeRef::Optional { of } => map_value(ir, of, depth + 1),
+        ResolvedTypeRef::Declared { name } => match &ir.named_type(name).body {
+            ResolvedBody::Newtype { of, .. } => map_value(ir, of, depth + 1),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -680,15 +783,13 @@ impl Read<'_> {
     }
 
     /// The primitive `path` is declared as, through every newtype and `Optional`, and through a
-    /// list to its element at an ordinal; `None` for anything else, `state` included. The outer
-    /// `None` where `path` reads through a reference that names no row.
+    /// list or a map to its element or value at an ordinal ([`resolved`]); `None` for anything
+    /// else, `state` included. The outer `None` where `path` reads through a reference that names
+    /// no row.
     fn declared(&self, path: &FactPath) -> Option<Option<Primitive>> {
         let (_, fields, path) = self.source(path)?;
         Some(
-            match ess_compiler::expression::resolve_path(self.ir, fields, &path, "a view filter")
-                .ok()
-                .map(|resolved| resolved.terminal)
-            {
+            match resolved(self.ir, fields, &path, 0).map(|resolved| resolved.terminal) {
                 Some(ResolvedTypeRef::Primitive { name }) => Some(name),
                 _ => None,
             },
