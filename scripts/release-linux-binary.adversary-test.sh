@@ -941,5 +941,104 @@ else
         fail "adversary_w31_U2: image-manifest tags the version when ghcr.io cannot say whether it holds it (inspect failed with a timeout, not 'not found'): $(tr '\n' ';' <"$work/tagstep/docker-log")"
 fi
 
+# --- adversary_w31_U2, round 2 ---------------------------------------------------------------
+
+# BuildKit drops a line's trailing "\r\n" before it looks for the escape (trimNewline), so a
+# backslash before a carriage return is a continuation line too.
+good_recipe
+printf 'LABEL a=b \\\r\n' >>"$work/Containerfile"
+expect refuse "adversary_w31_U2: a continuation line whose backslash is followed by a carriage return" \
+    containerfile "$work/Containerfile"
+
+# A tag pushed for a new release whose commit has no Containerfile at the root (moved or renamed)
+# is no tag cut before the image existed: provenance must not answer containerfile=false for it,
+# or the release publishes green without IMAGES and without an image.
+r2=$work/r2
+rm -rf "$r2"
+mkdir -p "$r2/commit/deploy"
+cp "$containerfile" "$r2/commit/deploy/Containerfile"
+: >"$r2/commit/output"
+cases=$((cases + 1))
+if [ ! -s "$work/steps/containerfile.sh" ]; then
+    fail "adversary_w31_U2: provenance has no step 'Whether the commit builds an image'"
+else
+    (cd "$r2/commit" && GITHUB_OUTPUT=$r2/commit/output GITHUB_STEP_SUMMARY=$r2/commit/summary \
+        GITHUB_EVENT_NAME=push GITHUB_REF_TYPE=tag GITHUB_REF_NAME=0.26.0 EVENT=push TAG=0.26.0 VERSION=0.26.0 \
+        bash "$work/steps/containerfile.sh" >/dev/null 2>&1) || true
+    ! grep -Fqx 'containerfile=false' "$r2/commit/output" ||
+        fail "adversary_w31_U2: a tag push of 0.26.0 whose Containerfile moved to deploy/ answers containerfile=false, so the release publishes without IMAGES"
+fi
+
+# image-push and image-manifest carry no status function in their `if`, so success() is implied
+# and a failed or skipped gate, image or image-push keeps them from running.
+for name in image-push image-manifest; do
+    cases=$((cases + 1))
+    if job "$name" | grep '^    if: ' | grep -Eq 'always\(\)|cancelled\(\)|failure\(\)'; then
+        fail "adversary_w31_U2: the $name job's if holds a status function, so it runs past a failed need: $(job "$name" | grep '^    if: ')"
+    fi
+done
+
+# image-manifest's tag step: an inspect error that only contains the words "not found" (here a
+# credential helper missing from PATH) is no answer that the tag is absent.
+mkdir -p "$r2/tools"
+printf '#!%s\ndir=%s\n' "$shell" "$r2/tag" >"$r2/tools/docker"
+cat >>"$r2/tools/docker" <<'STUB'
+printf '%s\n' "$*" >>"$dir/docker-log"
+case "$*" in
+    "buildx imagetools create"*) exit 1 ;;
+    "buildx imagetools inspect --raw "*) exit 1 ;;
+    "buildx imagetools inspect "*)
+        echo 'ERROR: error getting credentials - err: exec: "docker-credential-ghcr": executable file not found in $PATH, out: ``' >&2
+        exit 1
+        ;;
+esac
+exit 1
+STUB
+chmod 755 "$r2/tools/docker"
+r2_tag() {
+    tools=$1
+    rm -rf "$r2/tag"
+    mkdir -p "$r2/tag/digests" "$r2/tag/scripts"
+    ln -s "$subject" "$r2/tag/scripts/release-linux-binary.sh"
+    printf 'sha256:%064d\n' 1 >"$r2/tag/digests/x86_64-unknown-linux-gnu"
+    printf 'sha256:%064d\n' 2 >"$r2/tag/digests/aarch64-unknown-linux-gnu"
+    : >"$r2/tag/docker-log"
+    (cd "$r2/tag" && PATH="$tools:$PATH" IMAGE=ghcr.io/beyond10x/spindle VERSION=0.26.0 \
+        GITHUB_STEP_SUMMARY="$r2/tag/summary" GITHUB_REPOSITORY=beyond10x/spindle \
+        bash "$work/steps/tag.sh" >"$r2/tag/out" 2>&1)
+}
+cases=$((cases + 1))
+r2_tag "$r2/tools" || true
+! grep -q 'imagetools create' "$r2/tag/docker-log" ||
+    fail "adversary_w31_U2: image-manifest tags the version on an inspect error that only contains 'not found': $(tr '\n' ';' <"$r2/tag/docker-log")"
+
+# An existing tag that lists the two checked images on their platforms and a third entry, with or
+# without a platform, is not the list of the two checked images.
+for third in '{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"sha256:0000000000000000000000000000000000000000000000000000000000000003","size":1}' \
+    '{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"sha256:0000000000000000000000000000000000000000000000000000000000000003","size":1,"platform":{"architecture":"unknown","os":"unknown"}}' \
+    '{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"sha256:0000000000000000000000000000000000000000000000000000000000000001","size":1,"platform":{"architecture":"amd64","os":"linux"}}'; do
+    # mytag's setup, with ghcr.io holding the two checked images and the third entry.
+    rm -rf "$work/mytag"
+    mkdir -p "$work/mytag/digests" "$work/mytag/scripts"
+    ln -s "$subject" "$work/mytag/scripts/release-linux-binary.sh"
+    printf 'sha256:%064d\n' 1 >"$work/mytag/digests/x86_64-unknown-linux-gnu"
+    printf 'sha256:%064d\n' 2 >"$work/mytag/digests/aarch64-unknown-linux-gnu"
+    list 1 2 >"$work/mytag/created"
+    printf '%s]}' "$(list 1 2 | sed 's|]}$||'),$third" >"$work/mytag/held"
+    : >"$work/mytag/docker-log"
+    cases=$((cases + 1))
+    [ "$(grep -o '"digest":' "$work/mytag/held" | grep -c '')" -eq 3 ] ||
+        fail "adversary_w31_U2: the probe list holds no third entry: $(cat "$work/mytag/held")"
+    cases=$((cases + 1))
+    if (cd "$work/mytag" && PATH="$work/mytools:$PATH" IMAGE=ghcr.io/beyond10x/spindle VERSION=0.26.0 \
+        GITHUB_STEP_SUMMARY="$work/mytag/summary" GITHUB_REPOSITORY=beyond10x/spindle \
+        bash "$work/steps/tag.sh" >"$work/mytag/out" 2>&1); then
+        fail "adversary_w31_U2: an existing tag that lists a third entry passes: $third"
+    fi
+    cases=$((cases + 1))
+    ! grep -q 'imagetools create' "$work/mytag/docker-log" && [ ! -e "$work/mytag/images/IMAGES" ] ||
+        fail "adversary_w31_U2: an existing tag with a third entry is moved or written to IMAGES"
+done
+
 echo "release-linux-binary-adversary: $cases cases, $failures failed"
 [ "$failures" -eq 0 ]
