@@ -91,6 +91,12 @@ the run exits 1. `POST /api/reset` drops the entries not yet sent; with no
 world it then submits the seed again, from its first entry, before it answers, and with a world it
 loads that world alone and records every entry done. `play` and `deploy` refuse an environment with a `[seed]` table.
 
+Where `run` serves HTTP, `--log-format json` writes each line on stderr as one JSON object with
+`time` (RFC 3339 in UTC), `level` (`info`, `warn`, `error`), `message` and the fields the line
+names (`component`, `command`, `binding`, `attempts`, `error`, `request_id`; an operation a line
+before listening names as `command`, or `view` for a view); `text`, the default, writes each line
+as before. On a run that reads stdin, `--log-format json` exits 1.
+
 Where `run` serves HTTP, `--observe` records every request it answers. `GET /__spindle/requests`
 lists the last 256 (`--observe-requests <N>`, 1 to 10000), newest first, with totals per class
 since start. `?class=not-served` keeps only the requests answered `501`.

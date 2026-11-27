@@ -20,6 +20,7 @@ use spindle_ingress::{
 use spindle_spec::EssIr;
 
 use crate::decisions::{self, Run};
+use crate::log;
 use crate::seed::Seeding;
 use crate::{REFUSED, SIGNAL_POLL, SIGNALLED, signals, stopping_on};
 
@@ -57,14 +58,18 @@ pub(crate) fn binding(path: &Path, ir: &EssIr) -> Result<Option<Binding>> {
     let compiled = match ess_http::compile(&spec, ir, &ess_gen::http::derived(ir)) {
         Ok(compiled) => compiled,
         Err(diagnostics) => {
-            eprintln!("{} was refused:\n{diagnostics}", path.display());
+            log::error(format!("{} was refused:\n{diagnostics}", path.display()))
+                .bare()
+                .write();
             return Ok(None);
         }
     };
     match Binding::new(compiled) {
         Ok(binding) => Ok(Some(binding)),
         Err(open) => {
-            eprintln!("{} cannot be served:\n{open}", path.display());
+            log::error(format!("{} cannot be served:\n{open}", path.display()))
+                .bare()
+                .write();
             Ok(None)
         }
     }
@@ -308,10 +313,11 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         }
         (Some("sqlite"), None) => {
             scratch = tempfile::tempdir().context("creating a temporary state directory")?;
-            eprintln!(
-                "b10x-spindle: state is kept in {}, removed when the run ends",
+            log::info(format!(
+                "state is kept in {}, removed when the run ends",
                 scratch.path().display()
-            );
+            ))
+            .write();
             scratch.path()
         }
         (None | Some("memory" | "postgres"), Some(path)) => bail!(
@@ -331,23 +337,25 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     };
     match serving.callers.as_slice() {
         [] => {}
-        [caller] => eprintln!(
-            "b10x-spindle: every command is sent as {} with {} (--fixed-actor, \
-             --fixed-caller): a test backend, not authentication",
+        [caller] => log::warn(format!(
+            "every command is sent as {} with {} (--fixed-actor, --fixed-caller): a test \
+             backend, not authentication",
             caller.actor,
             carried(caller)
-        ),
+        ))
+        .write(),
         callers => {
             for (position, caller) in callers.iter().enumerate() {
-                eprintln!(
-                    "b10x-spindle: fixed actor {} of {}: {} with {}; an operation is \
-                     sent as the first fixed actor its grant names (--fixed-actor, \
-                     --fixed-caller): a test backend, not authentication",
+                log::warn(format!(
+                    "fixed actor {} of {}: {} with {}; an operation is sent as the first fixed \
+                     actor its grant names (--fixed-actor, --fixed-caller): a test backend, not \
+                     authentication",
                     position + 1,
                     callers.len(),
                     caller.actor,
                     carried(caller)
-                );
+                ))
+                .write();
             }
         }
     }
@@ -383,15 +391,16 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     let consoled = surface.clone().with_console(serving.ingress)?;
     let surface = if serving.console { consoled } else { surface };
     if let (Some(header), Some((path, _))) = (serving.caller_header, &serving.proxy_secret) {
-        eprintln!(
-            "b10x-spindle: each request's caller is read from its {header} header \
-             (--trusted-caller-header) where it carries the proxy's secret, read from {} \
-             (--trusted-caller-secret), in its {} header; both are trusted only because a proxy \
-             in front of this listener sets them: nothing may reach the listener but that proxy, \
-             and the proxy must remove both headers from every client request",
+        log::info(format!(
+            "each request's caller is read from its {header} header (--trusted-caller-header) \
+             where it carries the proxy's secret, read from {} (--trusted-caller-secret), in its \
+             {} header; both are trusted only because a proxy in front of this listener sets \
+             them: nothing may reach the listener but that proxy, and the proxy must remove both \
+             headers from every client request",
             path.display(),
             Surface::SECRET_HEADER
-        );
+        ))
+        .write();
     }
     let surface = match (serving.observe, PANEL) {
         (Some(capacity), Some(page)) => surface
@@ -410,20 +419,26 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         Some(published) => surface.with_seed(published.clone()),
         None => surface,
     };
-    for line in surface.report() {
-        eprintln!("b10x-spindle: {line}");
+    for (line, operation) in reported(&surface) {
+        let line = log::warn(line);
+        match operation {
+            Some(operation) => line.field(operation.kind(), operation.name()),
+            None => line,
+        }
+        .write();
     }
     if surface
         .unserved()
         .iter()
         .any(|route| !route.reads_caller().is_empty())
     {
-        eprintln!(
-            "b10x-spindle: a command that reads caller attributes is served where the run fixes \
-             its caller (--fixed-actor with --fixed-caller), a test backend, or where each \
-             request proves its caller through a trusted proxy (--trusted-caller-header with \
-             --trusted-caller-secret)"
-        );
+        log::info(
+            "a command that reads caller attributes is served where the run fixes its caller \
+             (--fixed-actor with --fixed-caller), a test backend, or where each request proves \
+             its caller through a trusted proxy (--trusted-caller-header with \
+             --trusted-caller-secret)",
+        )
+        .write();
     }
     if surface.serves_nothing() {
         bail!(Surface::serves_nothing_reason(&serving.components));
@@ -458,10 +473,12 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     };
     if serving.drop_retries {
         for binding in &retried {
-            eprintln!(
-                "b10x-spindle: binding {binding} retries on failure; --drop-retries: a failed \
-                 invocation is dropped, not retried"
-            );
+            log::info(format!(
+                "binding {binding} retries on failure; --drop-retries: a failed invocation is \
+                 dropped, not retried"
+            ))
+            .field("binding", binding.to_string())
+            .write();
         }
     }
     // Where a `--state` records the seed applied to it (`seed.json`), a seed it does not record
@@ -530,10 +547,11 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         {
             seeding.step(&mut host);
             if seeding.failed() {
-                eprintln!(
-                    "b10x-spindle: seed {} rejected an entry, so the run exits 1",
+                log::error(format!(
+                    "seed {} rejected an entry, so the run exits 1",
                     seeding.path().display()
-                );
+                ))
+                .write();
                 break ExitCode::FAILURE;
             }
             if signal_exit().is_some() {
@@ -590,19 +608,28 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             continue;
         }
         for failed in exchange.serve_with(&mut host, &worlds) {
-            let binding = match &failed.cause {
-                Cause::Delivered { binding } | Cause::Tick { binding } => binding.as_str(),
-                Cause::Submitted => "the request",
+            let bound = match &failed.cause {
+                Cause::Delivered { binding } | Cause::Tick { binding } => Some(binding.as_str()),
+                Cause::Submitted => None,
             };
+            let binding = bound.unwrap_or("the request");
             let attempts = if failed.attempts > 1 {
                 format!(" after {} attempts", failed.attempts)
             } else {
                 String::new()
             };
-            eprintln!(
-                "b10x-spindle: {} did not run {} ({binding}), dropped{attempts}: {}",
+            let mut line = log::warn(format!(
+                "{} did not run {} ({binding}), dropped{attempts}: {}",
                 failed.component, failed.command, failed.error
-            );
+            ))
+            .field("component", failed.component.as_str())
+            .field("command", failed.command.as_str());
+            if let Some(binding) = bound {
+                line = line.field("binding", binding);
+            }
+            line.field("attempts", failed.attempts)
+                .field("error", failed.error.as_str())
+                .write();
         }
     };
     // Every answer handed back is written, and each request still queued is answered 503, before
@@ -610,6 +637,35 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     stopping.store(true, Ordering::SeqCst);
     listener.close(CLOSE_GRACE);
     Ok(code)
+}
+
+/// Each line of [`Surface::report`], as it is written, with the operation it names: the route of
+/// each operation not served ([`Route::not_served`](spindle_ingress::Route::not_served)), in the
+/// order of [`Surface::unserved`], then the route of each outcome refused
+/// ([`Route::refused`](spindle_ingress::Route::refused)), route by route, the order `report`
+/// writes them in. A line gets its operation only where it names it, in backticks, so a line
+/// `report` adds or reorders is still written, without one.
+fn reported(surface: &Surface) -> Vec<(String, Option<&ess_http::Operation>)> {
+    let unserved = surface
+        .unserved()
+        .into_iter()
+        .filter(|route| route.not_served().is_some())
+        .map(|route| &route.operation);
+    let refused = surface
+        .routes()
+        .iter()
+        .flat_map(|route| route.refused().iter().map(move |_| &route.operation));
+    let mut operations = unserved.chain(refused);
+    surface
+        .report()
+        .into_iter()
+        .map(|line| {
+            let operation = operations
+                .next()
+                .filter(|operation| line.contains(&format!("`{}", operation.name())));
+            (line, operation)
+        })
+        .collect()
 }
 
 /// How long the run waits, once it stops, for the answers it handed back to be written.

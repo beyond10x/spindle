@@ -8,6 +8,14 @@ are Spindle's releases.
 
 ### Added
 
+- `run --log-format json` writes every line a served run prints on stderr as one JSON object:
+  `time` (RFC 3339 in UTC), `level` (`info`, `warn`, `error`), `message` (the text line's words)
+  and, where the line names them, `component`, `command`, `binding`, `attempts`, `error` and
+  `request_id` at the top level, so a log collector reads a dropped bound command or a refused
+  seed entry without matching its wording; a line before listening that names an operation not
+  served, or an outcome answered `501`, carries it as `command`, or `view` for a view. The error a
+  run exits with and a panic are a line too. `text`, the default, writes each line as before.
+  `json` on a run that reads stdin exits 1 before reading a line (`story:structured-json-logs`).
 - `run --scenario` takes `--decisions`, where clap refused the pair (exit 2): an external cause
   the scenario does not force is answered by the decisions file, and one neither forces nor
   answers does not hold, as before. An act that names an outcome forces it for every cause of its

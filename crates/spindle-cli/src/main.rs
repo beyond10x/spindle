@@ -7,6 +7,7 @@ mod database;
 mod decisions;
 mod deploy;
 mod lines;
+mod log;
 mod replay;
 mod scaled;
 mod seed;
@@ -29,7 +30,7 @@ use signal_hook::consts::{SIGINT, SIGTERM};
 use spindle_capability::{
     Admission, Binding, Capability, DECISIONS_FILE, Environment, Requirements,
 };
-use spindle_cli::cli::{Cli, Command, StateCommand, StoreCommand};
+use spindle_cli::cli::{Cli, Command, LogFormat, StateCommand, StoreCommand};
 use spindle_host::{Host, HostError, rally};
 use spindle_kernel::{MemoryStore, SqliteStore, Store};
 
@@ -63,10 +64,14 @@ struct Request {
 }
 
 fn main() -> ExitCode {
-    match run(Cli::parse()) {
+    let cli = Cli::parse();
+    if let Command::Run { log_format, .. } = &cli.command {
+        log::set(*log_format);
+    }
+    match run(cli) {
         Ok(code) => code,
         Err(error) => {
-            eprintln!("b10x-spindle: {error:#}");
+            log::error(format!("{error:#}")).write();
             ExitCode::FAILURE
         }
     }
@@ -227,6 +232,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             drain,
             clock,
             mint_seed,
+            log_format,
             scenario: None,
         } => execute(&Execute {
             spec: &spec,
@@ -248,6 +254,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             drain: Duration::from_secs(drain),
             clock,
             mint_seed,
+            log_format,
         }),
         Command::Play {
             spec,
@@ -609,6 +616,9 @@ struct Execute<'a> {
     clock: Option<std::time::SystemTime>,
     /// `--mint-seed`: the seed every identity and generated value is minted from.
     mint_seed: Option<u64>,
+    /// `--log-format`: how the lines on stderr are written ([`log`]), set in `main`; JSON only
+    /// where the run serves HTTP.
+    log_format: LogFormat,
 }
 
 fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
@@ -632,15 +642,17 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         drain,
         clock,
         mint_seed,
+        log_format,
     } = *arguments;
     if let Some(address) = address.filter(|address| spindle_ingress::exposed(*address))
         && (caller_header.is_none() || caller_secret.is_none())
     {
-        eprintln!(
-            "b10x-spindle: --address {address} is not loopback, so every request must come \
-             through an authenticating proxy: give --trusted-caller-header <NAME> with \
+        log::error(format!(
+            "--address {address} is not loopback, so every request must come through an \
+             authenticating proxy: give --trusted-caller-header <NAME> with \
              --trusted-caller-secret <FILE> (--fixed-actor proves nobody)"
-        );
+        ))
+        .write();
         return Ok(ExitCode::from(USAGE));
     }
     if let (Some(header), Some(caller)) = (caller_header, callers.first()) {
@@ -785,6 +797,13 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
     if observe.is_some() {
         bail!(
             "nothing in {} requires ingress.network, so --observe would be ignored",
+            spec.display()
+        );
+    }
+    if log_format == LogFormat::Json {
+        bail!(
+            "nothing in {} requires ingress.network, so --log-format json would not be kept: \
+             only a run serving HTTP writes its log as JSON lines",
             spec.display()
         );
     }
