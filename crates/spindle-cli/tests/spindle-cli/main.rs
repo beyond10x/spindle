@@ -41,6 +41,7 @@ mod adversary_w26_u4;
 mod adversary_w27_u1;
 mod adversary_w27_u3;
 mod adversary_w28_u7;
+mod adversary_w28_u6;
 mod adversary_world;
 mod adversary_world_spec;
 mod binding_shapes;

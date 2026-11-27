@@ -73,6 +73,7 @@ pub(crate) fn replay(
         .with_context(|| format!("reading {}", environment.display()))?;
     let parsed =
         Environment::parse(&text).with_context(|| format!("in {}", environment.display()))?;
+    crate::refuse_decisions(&parsed, environment, "run --scenario")?;
     let document = std::fs::read_to_string(scenario)
         .with_context(|| format!("reading {}", scenario.display()))?;
 

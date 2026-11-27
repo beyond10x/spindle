@@ -15,9 +15,9 @@ mod state;
 mod state_lock;
 mod world;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -26,7 +26,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use signal_hook::consts::{SIGINT, SIGTERM};
-use spindle_capability::{Admission, Capability, Environment, Requirements};
+use spindle_capability::{
+    Admission, Binding, Capability, DECISIONS_FILE, Environment, Requirements,
+};
 use spindle_cli::cli::{Cli, Command, StateCommand, StoreCommand};
 use spindle_host::{Host, HostError, rally};
 use spindle_kernel::{MemoryStore, SqliteStore, Store};
@@ -345,6 +347,7 @@ fn play(
     let parsed =
         Environment::parse(&text).with_context(|| format!("in {}", environment.display()))?;
     refuse_seed(&parsed, environment, "play")?;
+    refuse_decisions(&parsed, environment, "play")?;
     let state = tempfile::tempdir().context("creating the state directory")?;
     let clock = scaled::Scaled::new(speed);
     let mut host = match Host::new(loaded.ir, &parsed, Arc::new(clock), state.path()) {
@@ -429,6 +432,28 @@ pub(crate) fn refuse_seed(environment: &Environment, path: &Path, command: &str)
     Ok(())
 }
 
+/// Refuses `environment`, read from `path`, where it names a decisions file in a `[decisions]`
+/// table: `command` answers no external cause from a file, as only `run` does ([`execute`]).
+///
+/// # Errors
+/// Naming the document, the table, its file and `command`.
+pub(crate) fn refuse_decisions(
+    environment: &Environment,
+    path: &Path,
+    command: &str,
+) -> Result<()> {
+    if let Some(decisions) = &environment.decisions {
+        bail!(
+            "{} names the decisions file {} in its [decisions] table, which {command} would \
+             never read: external causes are answered from it by run; remove the table for \
+             {command}",
+            path.display(),
+            decisions.file
+        );
+    }
+    Ok(())
+}
+
 /// Every counter of `counters` that is not zero, one per line.
 fn counted(counters: &spindle_telemetry::Counters) -> String {
     counters
@@ -459,6 +484,80 @@ fn wait_until(deadline: Instant, clock: &scaled::Scaled, signalled: &AtomicUsize
         }
         std::thread::sleep(left.min(SIGNAL_POLL));
     }
+}
+
+/// The implementation `run` answers an external cause as when the request line, `--decisions`
+/// or `--answer-default` does.
+const OPERATOR_PROMPT: &str = "operator-prompt";
+
+/// The decisions file `run` answers external causes from: `flag` (`--decisions`), for every
+/// cause, or else the environment's `[decisions]` file, for the causes `bindings` bind to
+/// [`DECISIONS_FILE`] alone.
+///
+/// # Errors
+/// An external cause bound to an implementation `run` does not provide (one other than
+/// [`OPERATOR_PROMPT`], [`DECISIONS_FILE`] and an `[http.<name>]` call `environment` declares),
+/// naming the capability and the name; or one bound to [`DECISIONS_FILE`] where neither the flag
+/// nor the environment names a file.
+fn decisions_file(
+    environment: &Environment,
+    bindings: &[Binding],
+    flag: Option<&Path>,
+) -> Result<Option<DecisionsFile>> {
+    let external = bindings.iter().filter(|binding| {
+        binding
+            .capability
+            .as_str()
+            .starts_with(Capability::EXTERNAL_PREFIX)
+    });
+    if let Some(unprovided) = external.clone().find(|binding| {
+        let name = binding.implementation.as_str();
+        ![OPERATOR_PROMPT, DECISIONS_FILE].contains(&name) && !environment.http.contains_key(name)
+    }) {
+        bail!(
+            "{} is bound to `{}` on {}; run answers an external cause as {OPERATOR_PROMPT}, \
+             {DECISIONS_FILE} or an [http.<name>] call the environment declares",
+            unprovided.capability,
+            unprovided.implementation,
+            environment.name
+        );
+    }
+    if let Some(path) = flag {
+        return Ok(Some(DecisionsFile {
+            path: path.to_owned(),
+            only: None,
+        }));
+    }
+    let from_file: BTreeSet<String> = external
+        .filter(|binding| {
+            binding.implementation.as_str() == DECISIONS_FILE
+                && !environment.http.contains_key(DECISIONS_FILE)
+        })
+        .map(|binding| binding.capability.as_str().to_owned())
+        .collect();
+    let Some(first) = from_file.first() else {
+        return Ok(None);
+    };
+    match &environment.decisions {
+        Some(named) => Ok(Some(DecisionsFile {
+            path: PathBuf::from(&named.file),
+            only: Some(from_file),
+        })),
+        None => bail!(
+            "{first} is bound to {DECISIONS_FILE} on {}, but no decisions file is named: give \
+             --decisions <FILE>, or name it in the environment's [decisions] table",
+            environment.name
+        ),
+    }
+}
+
+/// The decisions file of a `run`, and the causes it answers.
+struct DecisionsFile {
+    /// `--decisions`, or the environment's `[decisions]` file.
+    path: PathBuf,
+    /// For the environment's file, the capabilities bound to [`DECISIONS_FILE`]: it answers no
+    /// other cause. `None` for `--decisions`, which answers every cause.
+    only: Option<BTreeSet<String>>,
 }
 
 /// The arguments of `run` without `--scenario`.
@@ -538,7 +637,6 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         (None, None) => None,
     };
     let loaded = spindle_spec::load(spec)?;
-    let answers = decisions::load(&loaded.ir, decisions, answer_default)?;
     let requirements = spindle_capability::derive(&loaded.ir, None)
         .with_context(|| format!("deriving the capabilities of {}", spec.display()))?;
     let text = std::fs::read_to_string(environment)
@@ -563,6 +661,15 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
             parsed.name,
             spindle_kernel::UuidV4::IMPLEMENTATION
         );
+    }
+    let decisions = decisions_file(&parsed, bindings, decisions)?;
+    let mut answers = decisions::load(
+        &loaded.ir,
+        decisions.as_ref().map(|file| file.path.as_path()),
+        answer_default,
+    )?;
+    if let Some(only) = decisions.as_ref().and_then(|file| file.only.as_ref()) {
+        answers = answers.answering_only(only);
     }
     let calls = calls::Calls::bind(&parsed, bindings)
         .with_context(|| format!("in {}", environment.display()))?;

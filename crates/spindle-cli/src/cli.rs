@@ -192,7 +192,8 @@ pub enum Command {
     /// input, any other answer of the file per command and outcome. A request nothing answers is
     /// refused `501`, naming the outcome. A reset keeps the decisions file. Without either
     /// flag, a specification that declares an external outcome exits 1 before listening, unless
-    /// the environment binds every one of them to an HTTP call.
+    /// the environment binds every one of them to an HTTP call, or binds them to
+    /// `decisions-file` and names the file in its `[decisions]` table.
     ///
     /// An external cause whose capability the environment binds to an `[http.<name>]` table
     /// (`method`, `url`, `timeout_ms`, `secret_env`, `ca_file`) is answered, on a stdin line or a
@@ -264,6 +265,13 @@ pub enum Command {
         /// `answer`, `when = { "input.<field>" = <value> }`) for the requests whose input holds
         /// every value; the first rule that matches wins, then a command's table, then the top
         /// level. With `--scenario`, it answers each external cause the scenario does not force.
+        ///
+        /// Without this flag, an environment that binds an external cause to `decisions-file`
+        /// answers it from the file its `[decisions]` table names (`file`, relative to where
+        /// `run` starts); this flag wins over that file, which is then not read. A cause bound to
+        /// `decisions-file` with neither exits 1 before running, and so does one bound to an
+        /// implementation `run` does not provide: `operator-prompt`, `decisions-file` and an
+        /// `[http.<name>]` call the environment declares are the ones it does.
         #[arg(long)]
         decisions: Option<PathBuf>,
         /// Answer every remaining external cause "does not hold" on a command that declares a
@@ -427,8 +435,9 @@ pub enum Command {
     /// token in the setting `ingress_token` (as `?t=` or `Authorization: Bearer`) or whose `Host` is
     /// not `127.0.0.1:<port>` or `localhost:<port>`; `ingress` without `ingress_token` exits 1.
     ///
-    /// Play submits no seed: an environment document with a `[seed]` table exits 1, with or
-    /// without `--component`, before anything runs.
+    /// Play submits no seed and answers no external cause from a file: an environment document
+    /// with a `[seed]` or a `[decisions]` table exits 1, with or without `--component`, before
+    /// anything runs.
     Play {
         /// The rally specification directory.
         spec: PathBuf,
@@ -476,8 +485,8 @@ pub enum Command {
     /// ingress of a running instance; `GET /` the observe UI, built into this binary. SIGINT,
     /// SIGTERM or SIGHUP stops every instance and exits 130, 143 or 129. Each instance is also
     /// sent SIGTERM by the system should `deploy` end without stopping it. An environment
-    /// document with a `[seed]` table exits 1 before anything is launched: no instance submits a
-    /// seed.
+    /// document with a `[seed]` or a `[decisions]` table exits 1 before anything is launched: no
+    /// instance submits a seed or answers an external cause from a file.
     Deploy {
         /// The specification directory.
         spec: PathBuf,
