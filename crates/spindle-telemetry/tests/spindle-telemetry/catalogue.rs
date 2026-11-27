@@ -186,6 +186,7 @@ fn every_kernel_failure_is_named_as_the_kernel_names_it() {
         ExecuteError::Undeclared {
             command: "c".to_owned(),
             reason: "r".to_owned(),
+            held: None,
         },
         ExecuteError::Store(StoreError::Backend("b".to_owned())),
         ExecuteError::NotGranted {

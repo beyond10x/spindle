@@ -240,6 +240,7 @@ impl<'ir> Run<'_, 'ir> {
         ExecuteError::Undeclared {
             command: self.command.to_owned(),
             reason: reason.to_owned(),
+            held: None,
         }
     }
 

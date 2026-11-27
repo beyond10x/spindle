@@ -94,6 +94,18 @@ are Spindle's releases.
   is ordered by the instant it names, not by its text: `2026-01-01T10:00:00+02:00` is before
   `09:00Z`. A quantifier over a `Map` parameter stays refused
   (`story:view-filter-map-value-order`).
+- A command that creates an instance under an identity it was supplied and an instance already
+  holds, established by a scenario or created by an earlier command, is answered in `conform`, `run
+  --scenario` and `spindle_conformance::HostTarget` as ESS's interpreter answers it: unavailable,
+  a request no branch of the model describes, in ESS's words, where it was answered as reaching no
+  declared outcome. `run --scenario` prints `, unavailable` on such an act's line. In `conform`
+  and `run --scenario` a scenario whose create meets a held identity now ends `error`, as ESS's
+  runner counts an unavailable answer a `target_failure`, so a known-failures file that names such
+  a scenario no longer lets `spindle_conformance::Run::passed_with` pass.
+  `spindle_kernel::ExecuteError::Undeclared` gains the public field `held`, the creating outcome
+  and the entity (`spindle_kernel::HeldIdentity`), which breaks code that builds that variant or
+  destructures it without `..`; its kind and message do not change
+  (`story:create-on-held-identity-unavailable`).
 
 ## [0.23.0] - 2026-11-27
 
