@@ -585,10 +585,12 @@ fn a_cursor_taken_on_a_file_a_reset_emptied_reads_on_after_a_restart() {
 /// (`state_move.rs`: "actor, subject, request, trace, cause and `occurred_at` are kept"), so the
 /// copy names another log. Stood in for here by a second SQLite file holding the same write at
 /// the same command sequence: a cursor at the end of the first, read on the copy by a later run
-/// on a clock that moved forward, has answered every event the copy holds, and answers none of
-/// them again; the next command's events are answered once.
+/// on a clock that moved forward, reads every event the copy holds again, once each and in
+/// order, and loses none: the next command's events are answered after them, and once to the
+/// cursor that read the copy. (Correction round 2, F1 decided C: a cursor of another log reads
+/// its events again; this case asserted none was answered again.)
 #[test]
-fn a_cursor_from_before_a_state_move_answers_no_moved_event_again() {
+fn a_cursor_from_another_log_reads_every_event_again_and_loses_none() {
     const EVENTS: usize = 3;
     let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
     let (from, to) = (state.path().join("from"), state.path().join("to"));
@@ -613,21 +615,30 @@ fn a_cursor_from_before_a_state_move_answers_no_moved_event_again() {
         "the copy holds the same events"
     );
     let cursor = Cursor::parse(&text).expect("the cursor reads on the copy");
-    let page = second
-        .published_after(&cursor, 100)
-        .expect("the idle page reads");
-    assert_eq!(
-        ids(&page.events),
-        Vec::<Value>::new(),
-        "every event the copy holds was answered before the move"
-    );
+    let mut read_on = None;
+    for limit in [1, 2, 100] {
+        let (events, next) = paged(&mut second, &cursor, limit);
+        assert_eq!(
+            events, before,
+            "every event the copy holds, once each and in order, limit {limit}"
+        );
+        let (beside, _) = paged_beside(&second, &cursor, limit);
+        assert_eq!(beside, before, "limit {limit}, beside the host's thread");
+        read_on = Some(next);
+    }
+    let read_on = read_on.expect("a cursor was answered");
     submit(
         &mut second,
         "tasks.board.OpenTask",
         json!({"task_id": "t9", "title": "After"}),
     );
-    let (events, _) = paged(&mut second, &cursor, 100);
-    assert_eq!(ids(&events), [json!("t9")], "{events:?}");
+    let whole = second.published().expect("the copy reads");
+    for limit in [1, 100] {
+        let (events, _) = paged(&mut second, &cursor, limit);
+        assert_eq!(ids(&events), ids(&whole), "none is lost, limit {limit}");
+        let (later, _) = paged(&mut second, &read_on, limit);
+        assert_eq!(ids(&later), [json!("t9")], "limit {limit}: {later:?}");
+    }
 }
 
 /// `cursor` as 0.23.0 wrote it: each mark without the id of its store's log.
