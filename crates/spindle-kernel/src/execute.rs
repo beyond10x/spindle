@@ -2352,12 +2352,13 @@ impl<'a, 'ir> Run<'a, 'ir> {
     /// Fills each field of `outcome`'s error that `outcome` gives no source, after the sourced
     /// ones, as [`spindle_capability::mint::unsourced`] says: from the row the refusal is
     /// answered for (`before`), as ESS's served application reads it, else minted from its type,
-    /// as ESS's interpreter leaves it to the implementation; an `Optional` one no row fills stays
-    /// absent. Without a row (the unknown-instance arm of `wrong_state:`) a field the row would
-    /// fill is left out: an instance that does not exist has nothing to describe. With `mint`
-    /// false a field that would be minted is left out too. A required field of an
-    /// `unknown_instance:` refusal ([`Unsourced::Unanswered`]) is not reached: the outcome is
-    /// refused by name before it runs ([`Self::runs`]).
+    /// as ESS's interpreter leaves it to the implementation, apart from the run's sequence
+    /// ([`crate::Mint::error_uuid`]: the interpreter draws no tick for it); an `Optional` one no
+    /// row fills stays absent. Without a row (the unknown-instance arm of `wrong_state:`) a
+    /// field the row would fill is left out: an instance that does not exist has nothing to
+    /// describe. With `mint` false a field that would be minted is left out too. A required field
+    /// of an `unknown_instance:` refusal ([`Unsourced::Unanswered`]) is not reached: the outcome
+    /// is refused by name before it runs ([`Self::runs`]).
     fn unsourced_error_fields(
         &self,
         outcome: &ResolvedOutcome,
@@ -2385,7 +2386,7 @@ impl<'a, 'ir> Run<'a, 'ir> {
                 (Unsourced::Minted(choice), _) => {
                     let minted = self
                         .generator
-                        .choose(
+                        .choose_error(
                             &choice,
                             &Identity {
                                 capability: IDENTITY_MINT,

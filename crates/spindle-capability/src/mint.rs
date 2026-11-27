@@ -214,8 +214,9 @@ pub enum Unsourced<'ir> {
 /// subject of its own except an input guard (`when:`, answered before the row is read) and
 /// `unknown_instance:` (no row): the instance the command's first supplied subject addresses
 /// (`ess-synth` `determined::outcome`, `reads_held`). ESS's interpreter leaves every other field
-/// to the implementation (`interpret::execute::declared_error`, a generated value of its type),
-/// so it is minted by the rule for generated fields, an `Optional` one left absent. An
+/// to the implementation (`interpret::execute::declared_error`, a generated value of its type,
+/// which it neither carries nor draws a tick for), so it is minted by the rule for generated
+/// fields, apart from the sequence identities are minted from, an `Optional` one left absent. An
 /// `unknown_instance:` refusal leaves an `Optional` one absent and fills no required one
 /// ([`Unsourced::Unanswered`]). Empty for an outcome that reports no error.
 pub fn unsourced<'ir>(

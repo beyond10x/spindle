@@ -67,6 +67,13 @@ are Spindle's releases.
   the outcome as answered `501`; the command's other outcomes run. It answered the refusal
   without that field, a body the published schema refuses. An `Optional` such field is still left
   out (`story:unknown-instance-unsourced-unserved`).
+- A value the runtime mints for a declared error's field, `{generated: true}` or one its outcome
+  gives no source, no longer takes a draw from the sequence identities and other generated values
+  are minted from, as ESS's interpreter draws no tick for it: under a mint that answers ESS's
+  ticks, every value minted after such a refusal is the one ESS mints, where it ran one tick
+  ahead. `spindle_kernel::Mint` gains `error_uuid`, by default a random version 4 UUID; a seeded
+  mint (`run --mint-seed`, `Host::seeded`) answers it from a second sequence of its seed, so a
+  refusal no longer moves the identities minted after it (`story:error-payload-generated-fields`).
 
 ## [0.23.0] - 2026-11-27
 
