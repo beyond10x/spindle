@@ -7,9 +7,12 @@ title: A value source read through two related rows runs
 relations:
 - serves: vision:spindle
 - informed_by: story:related-row-selected-by-predicate
+- depends_on: story:payload-field-through-conversion
 scope:
 - confidence: inferred
   path: CHANGELOG.md
+- confidence: inferred
+  path: crates/spindle-cli/tests/spindle-cli/conform.rs
 - confidence: inferred
   path: crates/spindle-docs/src/status.rs
 - confidence: cited
@@ -26,7 +29,7 @@ scope:
   path: website/data/status.json
 - confidence: inferred
   path: website/docs/status.md
-revision: 6
+revision: 10
 ---
 ## Outcome
 
@@ -45,7 +48,7 @@ row, not a chain of two.
 ## Acceptance
 
 - `a_value_source_through_two_rows_reads_the_far_row`: a neutral fixture with three entities, where
-  an outcome copies a field and a state of the row two hops from the input; the command answers,
+  an outcome copies a `List<String>` field and a state of the row two hops from the input; the command answers,
   the row holds the far row's values, and ESS's interpreter gives the same row. It is refused on
   0.22.0.
 - `a_missing_row_in_the_chain_is_answered_as_ess_answers_it`: with the first row absent, with the
@@ -54,6 +57,12 @@ row, not a chain of two.
 - `a_chain_through_another_component_s_row_is_checked_at_every_hop`: where the middle row's entity
   belongs to another component, the read is refused or answered as the one-hop read of that entity
   is.
+- `a_chained_read_through_a_conversion_is_checked_as_a_one_hop_read`: a far-row field filled
+  through a conversion into a target whose constraint its value breaks is refused as the one-hop
+  read of the same field is, and nothing is written.
+- `conform_runs_a_value_source_through_two_rows`: `conform` on the fixture executes every scenario
+  that selects the chained outcome (none is skipped as `unsupported`; on 0.22.0 each is), and every
+  executed scenario passes.
 
 ## Scope
 
@@ -78,10 +87,14 @@ Derived 2026-11-27 by `story-scoper`. Every line is **cited** (read from the sto
   reference that names no row gives `Undetermined::NoValue` (a capability gap, which ESS reports
   as `unsupported`); a hop field that is the identity field reads the address itself — cited
 - **Tests:** new module `crates/spindle-kernel/tests/spindle-kernel/related_chain_values.rs` with
-  `a_value_source_through_two_rows_reads_the_far_row` and
-  `a_missing_middle_row_is_refused_as_ess_refuses_it` (kernel `no_value` against the interpreter
-  determining nothing, the `interpreter_determines` pattern of `where_selected_values.rs:93`); one
-  `mod` line in `tests/spindle-kernel/main.rs` — inferred (module name)
+  `a_value_source_through_two_rows_reads_the_far_row`,
+  `a_missing_row_in_the_chain_is_answered_as_ess_answers_it` (kernel `no_value` against the
+  interpreter determining nothing, the `interpreter_determines` pattern of
+  `where_selected_values.rs:93`), `a_chain_through_another_component_s_row_is_checked_at_every_hop`
+  and `a_chained_read_through_a_conversion_is_checked_as_a_one_hop_read`; one `mod` line in
+  `tests/spindle-kernel/main.rs` — inferred (module name)
+- **Tests:** `crates/spindle-cli/tests/spindle-cli/conform.rs`,
+  `conform_runs_a_value_source_through_two_rows`, reads the fixture below — inferred
 - **Fixture:** new `crates/spindle-kernel/tests/fixtures/<three-entity fixture>/` (`system.yaml`,
   `domains/*.yaml`) — inferred
 - **Also likely:** `crates/spindle-kernel/src/execute.rs:363` stays unchanged if `values::related`
@@ -108,3 +121,6 @@ Taken 2026-11-27 on the scoper's recommended option, each reversible.
 - D2 A: a `CHANGELOG.md` line and a status row, regenerated.
 - D3 A: the missing-row test covers an absent first row, an absent far row and an absent
   `Optional` hop, each answered as ESS's interpreter answers it.
+- D4 A: a chained read whose far field carries a conversion gets the same source and
+  target check as a one-hop row read (ESS `determined::checked_read` on every row read); it builds
+  on the check `story:payload-field-through-conversion` adds, which merges first in U2.

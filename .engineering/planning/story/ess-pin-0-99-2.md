@@ -6,6 +6,9 @@ status: draft
 title: The ESS pin moves to the release a consumer's specification requires
 relations:
 - serves: vision:spindle
+- depends_on: story:binding-failure-escalates
+- depends_on: story:payload-field-through-conversion
+- depends_on: story:value-source-through-two-rows
 scope:
 - confidence: cited
   path: .cargo/config.toml
@@ -53,7 +56,7 @@ scope:
   path: ui/src/api/generated/types-report.json
 - confidence: cited
   path: ui/src/api/generated/types.ts
-revision: 28
+revision: 30
 ---
 ## Outcome
 
@@ -71,7 +74,10 @@ Reported by a consumer on 2026-11-27: its specification requires ESS 0.99.2 whil
 - The ESS pin names 0.99.2 in every file that names it (`Cargo.toml`, the two crate manifests with
   `schema-contract`, `ess/ess-inputs.yaml`, `Taskfile.yml`, `.cargo/config.toml`, the CI workflow
   with the archive's checksum), `check:the_ess_pin_is_one_release` passes, the generated observe
-  types are regenerated, and the tests of the crates that use ESS and `check:conformance` are green
+  types are regenerated, and the tests of the crates that use ESS (`spindle-kernel`, `spindle-host`,
+  `spindle-conformance`, `spindle-cli`, including wave 29's `conform_runs_an_escalating_binding`,
+  `conform_runs_an_outcome_with_a_conversion` and `conform_runs_a_value_source_through_two_rows`) and
+  `check:conformance` are green
   on it.
 - `the_accepting_scenario_of_an_input_list_quantifier_sends_several_elements_and_passes`: a neutral
   fixture with a refusal that quantifies over a `List<String>` input; the synthesised accepting step
@@ -154,3 +160,6 @@ Taken 2026-11-27 on the scoper's recommended option, each reversible.
 
 - D1 A: the pin moves to 0.99.2 exactly, the release the consumer requires; 0.99.3 to
   0.99.7 are later synthesis fixes and wait for a story of their own.
+- D2 A: "the tests of the crates that use ESS" are the test steps of `spindle-kernel`,
+  `spindle-host`, `spindle-conformance` and `spindle-cli`, run after U1 and U2 merge; a
+  whole-workspace run is not started on the shared machine.

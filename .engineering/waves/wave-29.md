@@ -64,8 +64,11 @@ by the coordinator at merge:
   `website/docs/reference/cli.md`, `docs/design/spindle.md`: U1 only.
 - `crates/spindle-kernel/src`: U2 only.
 
-Merge order: U1, U2, U3. U3 merges last so that its regenerated suite and generated types cover
-the tree the other units leave.
+Merge order: U1, U2, U3. `story:ess-pin-0-99-2` `depends_on` the other three stories: its
+acceptance runs their `conform_runs_*` tests on suites synthesised by 0.99.2, so U3 merges `wave/29`
+after U1 and U2 merge, runs those tests before it reports green, and merges last.
+`story:value-source-through-two-rows` `depends_on` `story:payload-field-through-conversion`: its
+chained read reuses the conversion check the first adds.
 
 ## Exit
 

@@ -22,7 +22,7 @@ scope:
   path: crates/spindle-kernel/src/supported.rs
 - confidence: inferred
   path: crates/spindle-kernel/src/values.rs
-revision: 7
+revision: 8
 ---
 ## Outcome
 
@@ -52,8 +52,9 @@ covers binding mappings only.
   it, and nothing is written.
 - `a_response_field_through_a_conversion_stays_unsupported`: a `{response: ...}` field with a
   conversion is still refused by name, as ESS does not interpret it.
-- `conform_runs_an_outcome_with_a_conversion`: `conform` on the fixture; every executed scenario
-  passes.
+- `conform_runs_an_outcome_with_a_conversion`: `conform` on the fixture executes every scenario
+  that selects the outcome with the conversion (none is skipped as `unsupported`; on 0.22.0 each
+  is), and every executed scenario passes.
 
 ## Scope
 
