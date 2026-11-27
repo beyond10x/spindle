@@ -1558,30 +1558,39 @@ impl<'a, 'ir> Run<'a, 'ir> {
     /// are the external ones passed and the one the first walk selects. Where they all give the
     /// same answer (none, or the same held-state answer), that answer stands and nothing is
     /// asked, so a request the model turns away never reaches the decider. The walk that asks
-    /// decides where they differ, and where a guard read past an external branch is unknown.
+    /// decides where they differ, and where a read past an external branch fails or leaves a
+    /// guard unknown, as a decider that takes that branch stops the reading before it.
+    ///
+    /// The row sets the first walk scans condition the commit only where its held-state answer
+    /// answers the request. Otherwise they are dropped: selection, or the walk that asks, scans
+    /// what it reads itself, and a branch a decider takes reads nothing past it.
     fn look_ahead(
         &mut self,
         plan: &PrecedencePlan<'ir>,
         subjects: bool,
     ) -> Result<Option<Executed>, ExecuteError> {
+        let scanned = self.scanned.len();
         let mut passed = Vec::new();
-        match self.select_ahead(plan, subjects, Some(&mut passed)) {
+        let stands = match self.select_ahead(plan, subjects, Some(&mut passed)) {
             Ok(selected) => {
                 let answer = selected.and_then(|outcome| self.ahead_answer(outcome));
-                if passed
+                let alike = passed
                     .iter()
-                    .all(|outcome| self.ahead_answer(outcome) == answer)
+                    .all(|outcome| self.ahead_answer(outcome) == answer);
+                if alike
+                    && answer.is_some()
+                    && let Some(outcome) = selected
                 {
-                    return match selected {
-                        Some(outcome) => self.answer_ahead(outcome),
-                        None => Ok(None),
-                    };
+                    return self.answer_ahead(outcome);
                 }
+                alike
             }
-            // A guard read past an external branch is unknown: a decider that takes that
-            // branch stops the reading before it, so the walk that asks decides.
-            Err(ExecuteError::Undecidable { .. }) if !passed.is_empty() => {}
+            Err(_) if !passed.is_empty() => false,
             Err(error) => return Err(error),
+        };
+        self.scanned.truncate(scanned);
+        if stands {
+            return Ok(None);
         }
         match self.select_ahead(plan, subjects, None)? {
             Some(outcome) => self.answer_ahead(outcome),
@@ -1680,19 +1689,13 @@ impl<'a, 'ir> Run<'a, 'ir> {
         let absent = self.held.as_ref().is_some_and(|held| held.stored.is_none());
         // The branch selected acts on the absent row without creating it: the row's existence
         // answers before any present-related refusal, outside row sets, where the creation
-        // answers after the row sets instead (ESS `selected_subject_refusal`). The
-        // `unknown_instance:` branch itself is answered as the wrong state
-        // ([`Self::unknown_instance`]).
+        // answers after the row sets instead (ESS `selected_subject_refusal`).
         if absent
             && subject.effect != ResolvedEffect::Creates
             && matches!(subject.instance, ResolvedInstance::Supplied { .. })
             && !uses_row_sets(self.spec)
         {
-            return Some(if outcome.condition == ResolvedCondition::UnknownInstance {
-                Ahead::WrongState
-            } else {
-                Ahead::Unknown
-            });
+            return Some(Ahead::Unknown);
         }
         let (ResolvedEffect::Moves { transition }, ResolvedInstance::Supplied { .. }) =
             (&subject.effect, &subject.instance)
