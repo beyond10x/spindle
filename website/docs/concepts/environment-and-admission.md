@@ -579,11 +579,8 @@ its third of the lease, as behind a leader's write that holds the lease row for 
 lease as held, and the process stands by on. So does an ask whose connection was closed or
 refused: the process connects again for its next ask, and prints a warning naming the leases and
 the connection error, once each time the error changes, and a line once it connects again; its
-readiness reads as any standby's. A lease is free once it was released, once its end has passed
-while its holder is not live, or once the database session that holds it has ended, as a killed
-process's does. A holder is live while the session the lease row names, its lease connection, runs
-a statement, as a renewal waiting for the row behind the holder's own write, or ran one within the
-last half of `database_lease`: a leader held up keeps its lease, a paused one does not. On taking them all the
+readiness reads as any standby's. A lease is free once its end has passed, or once the database
+session that holds it has ended, as a killed process's does. On taking them all the
 process opens the stores, builds its host and serves; it skips the seed, which runs only under
 the leases' first token. Its stderr shows the takeover:
 
@@ -596,25 +593,17 @@ b10x-spindle: took the lease of ledger
 Taking a lease moves its token on. Every write of a process runs, inside its own transaction, a
 check that the lease row still names the token that process took. So a leader that was paused past
 its lease, while another process took over, lands nothing once it resumes: the write is refused,
-naming the lease, and the rows stay as the new leader left them. A process paused inside a write keeps its
-lease row locked until its transaction ends. A standby whose ask finds the row locked once the
-lease has run out by the committed row ends exactly the database sessions holding that row lock
-(`pg_terminate_backend`): those whose transaction the row's `xmax` names, or a member of that
-multixact where several share the row, and that hold a row lock's lock on the lease table, and with them their transactions and every lock they hold, prints a line
-naming the lease and the number of sessions ended, and takes the lease at its next ask; while the
-lease runs, or its holder is live, it ends nothing. Where it finds no session it can show holds the
-row, it ends none, prints one warning naming the lease, and waits until the row is let go. Where the server refuses that, as to a role that is not a member of the
-holder's, the standby prints one warning naming the lease and waits until the server ends the
-transaction itself (after 10 s idle in it). A store's operations keep their own 10 s deadline
-whatever the lease. A leader paused between eventlog's identity lock and its row lock holds no
-lock on the lease row, so a standby takes the lease and ends nothing: that leader can hold up the
-new leader's writes until the store's 10 s idle timeout ends its transaction. Before it runs a
-request, a
+naming the lease, and the rows stay as the new leader left them. A leader paused inside a write holds its
+lease row, which the write locked, until the store's idle timeout of 10 s ends its transaction:
+the takeover comes at most one `database_lease` plus 10 s after the pause, and one ask of the
+standby. Until then the locks it holds may also hold up the new leader's writes, as where it was
+paused before it locked the row. A store's operations keep their own 10 s deadline whatever the
+lease. Before it runs a request, a
 leader whose last renewal began two thirds of the lease ago or longer, as after a pause, waits
 until it has renewed its leases or found one taken. A write the check refuses counts as a lease
 found taken, as when the session holding the lease ended and another process took it before the
-leader's next renewal; so does a write that failed committing nothing, as one whose database
-session a process taking over ended, where the leader then finds a lease taken. A leader that finds its lease taken answers the request it took and those
+leader's next renewal; so does a write that failed committing nothing where the leader then finds
+a lease taken. A leader that finds its lease taken answers the request it took and those
 already queued `503`, prints a line naming the lease on stderr, as below, and exits 1, for its
 supervisor to start it again as a standby. While its lease is not known still held, its egress
 posts nothing. The process that takes over posts from the last position the old leader saved, so
@@ -626,9 +615,10 @@ b10x-spindle: the lease of board was taken by another process, or its session en
 ```
 
 A leader whose renewals all fail for a whole `database_lease`, as when the database is unreachable,
-exits 1 the same way, since another process may hold the lease by then. Renewals that wait out the
-lease row's lock, as behind the leader's own write held up past the lease, do not count: the leader
-renews on, live, and leads on once the write ends.
+exits 1 the same way, since another process may hold the lease by then. A session outside Spindle
+that locks a lease row stops the takeover while it holds it: a standby's ask waits out its lock and
+reads the lease as held, and the leader, whose renewals wait out the same lock, exits 1 once one
+`database_lease` passed without a renewal.
 
 The lease covers a store kept in PostgreSQL only. A `--state` directory stays locked to one
 process, and a connection pooler that hands one database session to several clients in turn is not

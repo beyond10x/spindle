@@ -604,9 +604,14 @@ fn inside_a_transaction(pid: u32) -> bool {
         != "0"
 }
 
+/// A leader paused inside a write keeps its lease row locked until the store's idle timeout of
+/// 10 s ends its transaction, so the standby takes over by the lease's end, those 10 s and one
+/// ask of the standby (an ask waits up to a third of the lease, and the next comes a third later).
+const PAUSED_TAKEOVER: Duration = Duration::from_millis(2_000 + 10_000 + 1_334);
+
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
-fn a_leader_paused_inside_a_write_holds_up_no_takeover() {
+fn a_leader_paused_inside_a_write_is_taken_over_whole_within_the_lease_and_the_idle_timeout() {
     let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
     let environment = environment(directory.path());
     let schema = schema();
@@ -615,18 +620,20 @@ fn a_leader_paused_inside_a_write_holds_up_no_takeover() {
     assert_eq!(status, 201, "{answer}");
 
     // Commands reach the leader one after another, so it is inside a write most of the time; it is
-    // paused until a pause lands inside one, between two of its statements.
+    // paused until a pause lands inside one, between two of its statements. Each command waits
+    // for its answer, also across the pause, so every answer is the one the leader gave.
     let address = leader.address;
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stopped = Arc::clone(&stop);
     let firing = std::thread::spawn(move || {
+        let mut answers = Vec::new();
         let mut index = 0;
         while !stopped.load(std::sync::atomic::Ordering::SeqCst) {
             index += 1;
             let Ok(mut stream) = TcpStream::connect_timeout(&address, ANSWER) else {
                 break;
             };
-            let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
             let body = json!({"title": "fired"}).to_string();
             let _ = write!(
                 stream,
@@ -636,7 +643,14 @@ fn a_leader_paused_inside_a_write_holds_up_no_takeover() {
             );
             let mut answer = String::new();
             let _ = stream.read_to_string(&mut answer);
+            let status = answer
+                .split_whitespace()
+                .nth(1)
+                .and_then(|status| status.parse::<u16>().ok())
+                .unwrap_or(0);
+            answers.push((format!("f{index}"), status));
         }
+        answers
     });
     let pid = leader.child.id();
     let mut inside = false;
@@ -651,253 +665,63 @@ fn a_leader_paused_inside_a_write_holds_up_no_takeover() {
         std::thread::sleep(Duration::from_millis(20));
     }
     stop.store(true, std::sync::atomic::Ordering::SeqCst);
-    assert!(inside, "no pause landed inside a write of the leader");
+    if !inside {
+        leader.signal(rustix::process::Signal::CONT);
+        let _ = firing.join();
+        panic!("no pause landed inside a write of the leader");
+    }
     let paused = Instant::now() - Duration::from_millis(200);
 
-    // The paused leader's transaction ends within the lease, so the standby takes over and
-    // writes as it would after any pause: by the lease's end and three polls, 4 s.
     let took = standby
-        .line_by(TOOK, paused + Duration::from_secs(4))
+        .line_by(TOOK, paused + PAUSED_TAKEOVER)
         .unwrap_or_else(|| {
             panic!(
-                "the standby did not take over within 4 s of a pause inside a write: {}",
+                "the standby did not take over within {PAUSED_TAKEOVER:?} of a pause inside a \
+                 write: {}",
                 standby.printed()
             )
         });
     eprintln!("took over {:?} after the pause", took - paused);
-    standby.ready_by(paused + Duration::from_secs(6));
+    standby.ready_by(Instant::now() + ANSWER);
     let (status, answer) = standby.open("t2");
-    assert_eq!(
-        status, 201,
-        "the new leader writes past the paused leader's transaction: {answer}"
-    );
-    assert!(
-        paused.elapsed() < Duration::from_secs(8),
-        "t2 landed {:?} after the pause",
-        paused.elapsed()
-    );
+    assert_eq!(status, 201, "the new leader writes: {answer}");
+
+    // Once resumed the old leader lands nothing more and exits 1; every command it answered `201`
+    // is held, none it answered otherwise, and none is written twice.
     leader.signal(rustix::process::Signal::CONT);
-    let _ = leader.exit_within(Duration::from_secs(10));
-    let _ = firing.join();
-}
-
-/// A database session of the test's own, as the owner, inside a transaction that ran a statement
-/// and holds what that statement locked until [`Holding::end`]; the server never ends it for
-/// idling.
-struct Holding {
-    pid: i32,
-    end: mpsc::Sender<()>,
-    thread: std::thread::JoinHandle<Result<(), String>>,
-}
-
-impl Holding {
-    /// Opens the session, begins a transaction and runs `statement` in it.
-    fn start(statement: String) -> Self {
-        let (started, starting) = mpsc::channel();
-        let (end, ending) = mpsc::channel::<()>();
-        let thread = std::thread::spawn(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("a runtime");
-            runtime.block_on(async {
-                let (client, connection) =
-                    tokio_postgres::connect(&owner_url(), tokio_postgres::NoTls)
-                        .await
-                        .expect("the test database accepts its owner");
-                let driver = tokio::spawn(connection);
-                client
-                    .batch_execute("SET idle_in_transaction_session_timeout = 0; BEGIN")
-                    .await
-                    .expect("a transaction begins");
-                client
-                    .batch_execute(&statement)
-                    .await
-                    .unwrap_or_else(|error| panic!("{statement}: {error}"));
-                let pid: i32 = client
-                    .query_one("SELECT pg_backend_pid()", &[])
-                    .await
-                    .expect("the session's pid")
-                    .get(0);
-                started.send(pid).expect("the test waits for the session");
-                let _ = ending.recv();
-                let committed = client
-                    .batch_execute("COMMIT")
-                    .await
-                    .map_err(|error| error.to_string());
-                drop(client);
-                let _ = driver.await;
-                committed
-            })
-        });
-        let pid = starting.recv().expect("the session holds its lock");
-        Self { pid, end, thread }
+    let code = leader.exit_within(ANSWER).code();
+    let answers = firing.join().expect("the commands were sent");
+    let tasks = standby.tasks();
+    let held: Vec<String> = tasks["rows"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .filter_map(|row| row["task_id"].as_str().map(str::to_owned))
+        .collect();
+    let printed = format!(
+        "answers {answers:?}; held {held:?}; old leader exited {code:?}\nleader:\n{}",
+        leader.printed()
+    );
+    assert_eq!(code, Some(1), "{printed}");
+    for (id, status) in &answers {
+        assert_eq!(
+            *status == 201,
+            held.contains(id),
+            "{id} answered {status}: {printed}"
+        );
     }
-
-    /// Whether the session is still open on the server.
-    fn alive(&self) -> bool {
-        super::sql(&[format!(
-            "SELECT count(*) FROM pg_stat_activity WHERE pid = {}",
-            self.pid
-        )])[0]
-            == "1"
-    }
-
-    /// Commits the transaction: an error where the server ended the session.
-    fn end(self) -> Result<(), String> {
-        let _ = self.end.send(());
-        self.thread.join().expect("the session's thread ends")
-    }
-}
-
-/// The lease of board in `schema`, taken by the test for `term` through a connection of its own:
-/// the lease and its token.
-fn taken_by_the_test(schema: &str, term: Duration) -> (spindle_kernel::Lease, u64) {
-    let mut database = spindle_kernel::Database::new(owner_url());
-    database.schema = schema.to_owned();
-    let mut lease = spindle_kernel::Lease::connect(&database, term).expect("the lease connects");
-    let token = lease
-        .take("board")
-        .expect("the lease is read")
-        .expect("the lease is free");
-    lease.take("ledger").expect("the ledger's lease is read");
-    (lease, token)
-}
-
-/// What a standby prints once it ended the sessions holding the lease row of board.
-const ENDED: &str = "the lease of board ran out while a process still held its row: ended 1 of";
-
-#[test]
-#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
-fn a_standby_ends_only_the_sessions_holding_a_lease_row_past_its_end() {
-    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
-    let environment = environment(directory.path());
-    let schema = schema();
-    let term = Duration::from_secs(6);
-    let taken = Instant::now();
-    let (mut lease, token) = taken_by_the_test(&schema, term);
-    let holding = Holding::start(format!(
-        "SELECT body FROM {schema}.spindle_board_p_lease FOR UPDATE"
-    ));
-    let unrelated = Holding::start(format!(
-        "CREATE TABLE {schema}.unrelated (x int); INSERT INTO {schema}.unrelated VALUES (1); \
-         SELECT x FROM {schema}.unrelated FOR UPDATE"
-    ));
-    let standby = Replica::start(run(&environment, &schema));
-    let (status, body) = standby.ready();
-    assert_eq!(status, 503, "{body}");
     assert!(
-        taken.elapsed() + Duration::from_millis(2700) < term,
-        "the standby stood by {:?} after the lease was taken, too late to ask twice within it",
-        taken.elapsed()
+        held.contains(&"t1".to_owned()) && held.contains(&"t2".to_owned()),
+        "{printed}"
     );
-
-    // While the lease runs, the session holding its row is a leader's write: it is not ended.
-    std::thread::sleep(
-        (taken + term - Duration::from_millis(600)).saturating_duration_since(Instant::now()),
-    );
-    assert!(
-        holding.alive(),
-        "a session holding a running lease's row was ended: {}",
-        standby.printed()
-    );
-    assert!(
-        !standby.printed().contains("ran out"),
-        "{}",
-        standby.printed()
-    );
-
-    // Past its end, the standby ends exactly the session holding the row and takes the lease.
-    standby
-        .line_by(TOOK, taken + term + Duration::from_secs(4))
-        .unwrap_or_else(|| {
-            panic!(
-                "the standby did not take the lease within 4 s of its end: {}",
-                standby.printed()
-            )
-        });
-    assert!(
-        standby.printed().contains(ENDED),
-        "no line naming the lease and the sessions ended: {}",
-        standby.printed()
-    );
-    assert!(
-        holding.end().is_err(),
-        "the session holding the row past the lease's end was not ended"
-    );
-    unrelated
-        .end()
-        .expect("a session holding an unrelated table's row is not ended");
-    // The session the lease row names, which holds no lock on it, is not ended either.
-    assert!(
-        !lease
-            .renew("board", token)
-            .expect("the test's lease connection was not ended"),
-        "the standby took the lease"
-    );
-}
-
-#[test]
-#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
-fn a_standby_refused_ending_a_holder_warns_once_and_waits() {
-    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
-    let environment = environment(directory.path());
-    let schema = schema();
-    let term = Duration::from_secs(2);
-    let taken = Instant::now();
-    let (_lease, _) = taken_by_the_test(&schema, term);
-    let holding = Holding::start(format!(
-        "SELECT body FROM {schema}.spindle_board_p_lease FOR UPDATE"
-    ));
-    // A standby whose role may not end the owner's sessions.
-    let role = super::serving_role(&schema, 100);
-    let mut command = run(&environment, &schema);
-    command
-        .env(
-            "SPINDLE_SETTING_DATABASE_URL",
-            super::as_role(&owner_url(), &role, super::PASSWORD),
-        )
-        .env("SPINDLE_SETTING_DATABASE_CA", super::ca())
-        .env("SPINDLE_SETTING_DATABASE_CONNECTIONS", "100");
-    let mut standby = Replica::start(command);
-    let (status, body) = standby.ready();
-    assert_eq!(status, 503, "{body}");
-
-    std::thread::sleep(
-        (taken + term + Duration::from_secs(3)).saturating_duration_since(Instant::now()),
-    );
-    let warned = standby
-        .printed()
-        .lines()
-        .filter(|line| line.contains("PostgreSQL refused to end") && line.contains("board"))
-        .count();
+    let opened = super::sql(&[format!(
+        "SELECT count(*) FROM {schema}.spindle_board_events WHERE event_name = \
+         'tasks.board.TaskOpened'"
+    )])[0]
+        .clone();
     assert_eq!(
-        warned,
-        1,
-        "one warning naming the lease where the server refuses to end its holder: {}",
-        standby.printed()
-    );
-    assert!(
-        standby
-            .child
-            .try_wait()
-            .expect("the standby's status")
-            .is_none(),
-        "the standby exited: {}",
-        standby.printed()
-    );
-    assert!(holding.alive(), "{}", standby.printed());
-    let (status, body) = standby.ready();
-    assert_eq!(status, 503, "{body}");
-
-    // Once the holder's transaction ends, the standby takes the lease at its next ask.
-    holding.end().expect("the holder commits");
-    let ended = Instant::now();
-    assert!(
-        standby
-            .line_by(TOOK, ended + Duration::from_secs(3))
-            .is_some(),
-        "the standby did not take the lease within 3 s of the holder's end: {}",
-        standby.printed()
+        opened,
+        held.len().to_string(),
+        "one TaskOpened for each task held, none written twice: {printed}"
     );
 }

@@ -16,7 +16,7 @@
 //! ([`spindle_kernel::PostgresStore::open`]). Without `database_lease` a run takes no lease and
 //! opens no connection for one, so two such processes on one store both write.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, PoisonError, mpsc};
@@ -25,9 +25,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use spindle_capability::{Capability, Environment};
 use spindle_host::Stores;
-use spindle_kernel::{
-    Database, Ending, Fit, Lease, Misfit, PostgresStore, Shapes, postgres_prefix,
-};
+use spindle_kernel::{Database, Fit, Lease, Misfit, PostgresStore, Shapes, postgres_prefix};
 use spindle_spec::EssIr;
 use spindle_target::{ENV_SETTING_PREFIX, env_name};
 
@@ -277,11 +275,6 @@ pub(crate) struct Leases {
     held: BTreeMap<String, u64>,
     /// The trouble of the lease connection last told on stderr ([`Leases::told`]).
     told: Option<String>,
-    /// The leases whose holder the server refused to end, warned of once ([`Leases::ended`]).
-    refused: BTreeSet<String>,
-    /// The leases whose row is held past their end by sessions this run cannot identify, warned
-    /// of once ([`Leases::ended`]).
-    unidentified: BTreeSet<String>,
 }
 
 impl Leases {
@@ -306,8 +299,6 @@ impl Leases {
             components,
             held: BTreeMap::new(),
             told: None,
-            refused: BTreeSet::new(),
-            unidentified: BTreeSet::new(),
         }))
     }
 
@@ -331,59 +322,7 @@ impl Leases {
     pub(crate) fn take(&mut self) -> Result<Option<String>> {
         let taken = self.asked();
         self.told();
-        self.ended();
         taken
-    }
-
-    /// Prints a line naming the lease and the number of sessions ended where a take ended the
-    /// sessions of a process holding a lease row past the lease's end, and a warning naming the
-    /// lease, once until a take ends them, where the server refused to end them or this run cannot
-    /// identify them: the run then stands by until they let the row go.
-    fn ended(&mut self) {
-        let held = &self.held;
-        self.refused
-            .retain(|component| !held.contains_key(component));
-        self.unidentified
-            .retain(|component| !held.contains_key(component));
-        for ending in self.lease.endings() {
-            match ending {
-                Ending::Ended {
-                    component,
-                    sessions,
-                } => {
-                    self.refused.remove(&component);
-                    self.unidentified.remove(&component);
-                    crate::log::info(format!(
-                        "the lease of {component} ran out while a process still held its row: \
-                         ended {sessions} of its database sessions, so this run takes the lease \
-                         at its next ask"
-                    ))
-                    .field("sessions", sessions)
-                    .write();
-                }
-                Ending::Refused { component, why } => {
-                    if self.refused.insert(component.clone()) {
-                        crate::log::warn(format!(
-                            "the lease of {component} ran out while a process still holds its \
-                             row, and PostgreSQL refused to end that process's sessions, so this \
-                             run waits until the server ends their transaction: {why}"
-                        ))
-                        .field("error", why.as_str())
-                        .write();
-                    }
-                }
-                Ending::Unidentified { component } => {
-                    if self.unidentified.insert(component.clone()) {
-                        crate::log::warn(format!(
-                            "the lease of {component} ran out while its row is still held, by \
-                             sessions this run cannot identify, so it ends none and waits until \
-                             the row is let go"
-                        ))
-                        .write();
-                    }
-                }
-            }
-        }
     }
 
     /// Prints a warning naming the leases and the connection error when the lease connection
@@ -492,10 +431,6 @@ impl Leases {
         {
             let began = Instant::now();
             let mut failed = None;
-            // Whether every renewal that did not land waited out the lease row's lock: the row is
-            // held, as by this run's own write held up past the lease, and this run renews on, so
-            // a process standing by reads it as live and takes nothing from it.
-            let mut waited = true;
             for (component, &token) in &self.held {
                 match self.lease.renew(component, token) {
                     Ok(true) => {}
@@ -506,10 +441,7 @@ impl Leases {
                         ));
                         return;
                     }
-                    Err(error) => {
-                        waited &= self.lease.waited();
-                        failed = Some(format!("{component}: {error}"));
-                    }
+                    Err(error) => failed = Some(format!("{component}: {error}")),
                 }
             }
             match failed {
@@ -522,7 +454,7 @@ impl Leases {
                         .unwrap_or_else(PoisonError::into_inner)
                         .renewed = began;
                 }
-                Some(why) if !waited && renewed.elapsed() >= term => {
+                Some(why) if renewed.elapsed() >= term => {
                     lose(format!(
                         "no renewal of the lease of {} landed for {term:?}, so another process may \
                          hold it, and this one exits: {why}",

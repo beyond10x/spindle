@@ -174,16 +174,11 @@ are Spindle's releases.
   over posts from the last position the old leader saved, so a failover may post an event again,
   with the same `component`, `log` and `position`, for a consumer to de-duplicate on. A standby
   whose lease connection is closed or refused stands by on, connects again, and warns naming the
-  leases and the connection error. A standby that finds a lease run out by its
-  committed row while a paused write still holds the row ends exactly the sessions holding it,
-  naming the lease and the number ended, or warns once where the server refuses and waits for the
-  transaction to end; it ends nothing while the holder is live (its lease connection running a
-  statement, as a renewal behind its own write, or having run one within half a lease), and takes
-  no lease from a live holder; a leader whose renewals only wait out the row's lock renews on. A
-  row a multixact holds is matched by its members; where no holder can be shown, the standby warns
-  once naming the lease and waits. A write that failed committing nothing, where the lease is then
-  found lost, answers `503`. A leader paused between eventlog's identity lock and its row lock can hold
-  up the new leader's writes until the store's 10 s idle timeout. A
+  leases and the connection error. A leader paused inside a write holds its lease row
+  until the store's 10 s idle timeout ends its transaction, so the takeover comes at most one
+  lease plus 10 s after the pause; a session outside Spindle that locks a lease row stops the
+  takeover while it holds it, and the leader exits 1 after one lease without a renewal. A write
+  that failed committing nothing, where the lease is then found lost, answers `503`. A
   `database_lease` that is not a whole number from 1 to 86400 exits 1 before connecting, and with it tables a release
   before leases migrated are refused until `store migrate` runs again
   (`story:several-writers-one-postgres`).

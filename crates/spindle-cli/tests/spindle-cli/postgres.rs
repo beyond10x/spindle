@@ -636,12 +636,12 @@ fn an_egress_cursor_survives_on_postgres() {
     };
     let first = listening(command());
     first.open("t1");
-    webhook.wait_for(1);
+    webhook.wait_within(1, Duration::from_secs(30));
     assert_eq!(first.terminate().code(), Some(143));
 
     let second = listening(command());
     second.open("t2");
-    webhook.wait_for(2);
+    webhook.wait_within(2, Duration::from_secs(30));
     std::thread::sleep(Duration::from_millis(500));
     assert_eq!(
         named(&webhook.accepted()),
