@@ -25,6 +25,8 @@ scope:
   path: crates/spindle-embed/src/lib.rs
 - confidence: inferred
   path: crates/spindle-embed/tests
+- confidence: inferred
+  path: crates/spindle-embed/tests/main.rs
 - confidence: cited
   path: crates/spindle-host/src/host.rs
 - confidence: cited
@@ -59,7 +61,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: cited
   path: website/docs/status.md
-revision: 14
+revision: 17
 ---
 # A served run steps its clock
 
@@ -87,7 +89,8 @@ published format that this story does not make (decision D4 A).
 
 - `a_served_clock_moves_forward_and_a_guard_reads_it` (`clock_and_mint.rs`, fixture
   `clock-served`): on a served run with `--clock 2026-02-01T00:00:00Z` a booking answers `early`;
-  `POST /api/clock` to 2026-07-01 answers `{"at"}`, and the next booking answers `late`.
+  `POST /api/clock` to 2026-07-01 answers `{"at": "2026-07-01T00:00:00Z"}`, and the next booking
+  answers `late`.
 - `a_served_clock_refuses_to_move_back`: a later `POST /api/clock` to an earlier instant answers
   `409`, and `GET /api/clock` answers the instant before it.
 - `a_served_run_without_clock_refuses_to_step`: without `--clock`, `POST /api/clock` and
@@ -133,7 +136,7 @@ Derived 2026-11-27 by `story-scoper`, against `plan/wave-30` at c65b744e. Every 
 - **Files:** `crates/spindle-cli/src/serve.rs` (`Serving::clock` doc :139-141 "never moved"; clock opened :457-465, where the `ManualClock` is handed to the host as its stepping handle) — cited
 - **Files:** `crates/spindle-cli/src/cli.rs` (`--clock` doc :453-464 "stands at the instant for the whole run"; reset world doc :231-238; console route list :281) and the generated `website/docs/reference/cli.md` (:117, :134, :146) — cited
 - **Symbols:** `Console`, `Console::ALL`, `Surface::resolve`, `Resolved::WrongMethod`, `Pending::answer`, `Published`, `merged`, `civil`, `following`, `World`, `read_world`, `Host::reset_to`, `ManualClock::advance`, `Serving::clock` — cited
-- **Tests:** in `crates/spindle-cli/tests/spindle-cli/clock_and_mint.rs`, on fixture `clock-served`, no new module: `a_served_clock_moves_forward_and_a_guard_reads_it` (`--clock 2026-02-01`: `early`; `POST /api/clock` 2026-07-01 answers `{"at"}`; the next booking is `late`), `a_served_clock_refuses_to_move_back` (409, `GET /api/clock` unchanged), `a_served_run_without_clock_refuses_to_step` (409), `a_reset_world_moves_the_clock` (forward accepted; earlier refused 400, nothing emptied), `every_event_record_carries_at` (unpaged and `after=` page), `the_clock_route_needs_the_proxy_secret` (403, clock unchanged; setup as `adversary_trusted_caller.rs:75`). Each starts one or two `run` processes; each must stay under 60 s and the test step under 120 s; the implementor times each and names any over 5 s — inferred
+- **Tests:** in `crates/spindle-cli/tests/spindle-cli/clock_and_mint.rs`, on fixture `clock-served`, no new module: `a_served_clock_moves_forward_and_a_guard_reads_it` (`--clock 2026-02-01`: `early`; `POST /api/clock` 2026-07-01 answers `{"at"}`; the next booking is `late`), `a_served_clock_refuses_to_move_back` (409, `GET /api/clock` unchanged), `a_served_run_without_clock_refuses_to_step` (409 for both methods and for a reset world carrying `clock`), `a_reset_world_moves_the_clock` (forward accepted; earlier refused 400, nothing emptied), `every_event_record_carries_at` (unpaged and `after=` page), `the_clock_route_needs_the_proxy_secret` (403, clock unchanged; setup as `adversary_trusted_caller.rs:75`). Each starts one or two `run` processes; each must stay under 60 s and the test step under 120 s; the implementor times each and names any over 5 s — inferred
 - **Tests:** `crates/spindle-ingress/tests/spindle-ingress/router.rs` `get_and_post_share_the_clock_path` (both methods resolve; PUT answers 405 with `Allow: GET, POST`; a spec route at `/api/clock` is refused as shadowed) — inferred
 - **Tests:** `crates/spindle-host/tests/spindle-host/console.rs` `a_published_event_carries_its_command_time` (`ManualClock::at`, one command, `published()[0].at`) — inferred
 - **Documents:** `README.md` :72 (console route list), `crates/spindle-ingress/src/lib.rs` :43-50 (module doc), `website/docs/concepts/capabilities.md` :123, `crates/spindle-docs/src/status.rs` :473-476 (the generated status pages follow), `CHANGELOG.md` `[Unreleased]` — inferred
@@ -150,6 +153,7 @@ Derived 2026-11-27 by `story-scoper`, against `plan/wave-30` at c65b744e. Every 
   `concurrent_reads.rs:132`, `rows.rs:246`, `adversary_rows.rs:276` and
   `adversary_concurrent_reads.rs:78` gain `clock`; the generated `website/docs/status.md` and
   `website/data/status.json` follow `status.rs` — cited
+- **Tests (embed, new):** `crates/spindle-embed/tests/main.rs`, the crate's first and only integration-test binary, with `an_embedded_host_refuses_a_reset_world_carrying_clock` — inferred
 
 ## Decided when scoped
 
