@@ -229,3 +229,95 @@ fn adv_w31_u8_a_refused_tick_is_kept_without_an_event_and_replayed_as_a_tick() {
     assert_ne!(again[0].id, kept[0].id);
     assert_eq!(again[0].letter.event, None);
 }
+
+/// The one dead letter `host` lists now.
+fn only(host: &mut Host) -> u64 {
+    let kept = letters(host);
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    kept[0].id
+}
+
+/// Round 2: ids grow across resets in a row, one with no dead letter, and across a restart on
+/// the files a reset left; no forgotten id is replayed, and the one waiting is.
+#[test]
+fn adv_w31_u8_r2_ids_grow_across_resets_in_a_row_and_a_restart() {
+    let directory = state();
+    let carrier = Carrier::new("busy");
+    let mut forgotten = Vec::new();
+    let mut host = host(&carrier, directory.path());
+    place(&mut host, "o-1");
+    forgotten.push(only(&mut host));
+    host.reset().expect("the first reset");
+    host.reset().expect("a reset with no dead letter");
+    place(&mut host, "o-2");
+    let second = only(&mut host);
+    assert!(second > forgotten[0], "{second} after {forgotten:?}");
+    forgotten.push(second);
+    host.reset().expect("the third reset");
+    host.reset().expect("the fourth reset");
+    drop(host);
+    let mut reopened = self::host(&carrier, directory.path());
+    assert!(letters(&mut reopened).is_empty());
+    place(&mut reopened, "o-3");
+    let third = only(&mut reopened);
+    assert!(third > second, "{third} after {forgotten:?}");
+    for id in &forgotten {
+        assert!(
+            reopened
+                .replay("shipping", *id)
+                .expect("the replay is answered")
+                .is_none(),
+            "forgotten id {id} is not replayed"
+        );
+    }
+    drop(reopened);
+    let mut again = self::host(&carrier, directory.path());
+    carrier.answers("shipped");
+    let replayed = again
+        .replayed("shipping", third)
+        .expect("the replay runs")
+        .expect("the letter waits after a restart");
+    assert!(
+        matches!(&replayed.own, spindle_host::Attempted::Ran(ran) if ran.command == SHIP),
+        "{replayed:?}"
+    );
+    carrier.answers("busy");
+    place(&mut again, "o-4");
+    let fourth = only(&mut again);
+    assert!(fourth > third, "{fourth} after {third}");
+}
+
+/// Round 2: a reset that cannot move a component's file aside (a read-only state directory)
+/// reopens the file as it was (`restored: true`): its dead letter still waits under its id, and
+/// a later reset, the directory writable again, forgets it and continues the ids past it.
+#[cfg(unix)]
+#[test]
+fn adv_w31_u8_r2_a_failed_reset_keeps_the_letters_and_the_next_continues_past_them() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = state();
+    let carrier = Carrier::new("busy");
+    let mut host = host(&carrier, directory.path());
+    place(&mut host, "o-1");
+    let kept = only(&mut host);
+    let mode = |bits: u32| {
+        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(bits))
+            .expect("the state directory's mode is set");
+    };
+    mode(0o555);
+    let failed = host.reset();
+    mode(0o755);
+    assert!(
+        matches!(
+            &failed,
+            Err(spindle_host::HostError::Reset { restored: true, .. })
+        ),
+        "{failed:?}"
+    );
+    assert_eq!(only(&mut host), kept, "the failed reset kept the letter");
+    host.reset()
+        .expect("the reset, the directory writable again");
+    place(&mut host, "o-2");
+    let later = only(&mut host);
+    assert!(later > kept, "{later} after {kept}");
+}

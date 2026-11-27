@@ -318,3 +318,124 @@ fn adv_w31_u8_tables_holding_only_dead_letters_are_not_empty_on_postgres() {
         "tables holding a dead letter are not empty"
     );
 }
+
+/// The ids of the store's dead letters, by id.
+fn ids(store: &mut dyn Store) -> Vec<u64> {
+    store
+        .dead_letters()
+        .expect("the letters read")
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect()
+}
+
+/// Round 2: two handles on one file. One keeps a letter, the other continues the ids past 41 and
+/// keeps one, then the first keeps another: each handle answers the id both list, the ids grow,
+/// and a file opened again lists the same ids and keeps past them.
+#[test]
+fn adv_w31_u8_r2_two_handles_and_a_reopened_file_agree_on_continued_ids() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let path = directory.path().join("shared.sqlite");
+    let mut first = SqliteStore::open(&path).expect("SQLite opens");
+    let mut second = SqliteStore::open(&path).expect("SQLite opens beside it");
+    let one = first.keep_dead_letter(&letter("one")).expect("a letter");
+    second
+        .continue_dead_letter_ids(41)
+        .expect("the ids continue");
+    let two = second.keep_dead_letter(&letter("two")).expect("a letter");
+    let three = first.keep_dead_letter(&letter("three")).expect("a letter");
+    assert!(one < 41 && two > 41 && three > two, "{one} {two} {three}");
+    assert_eq!(ids(&mut first), [one, two, three]);
+    assert_eq!(ids(&mut second), [one, two, three]);
+    assert!(first.last_dead_letter_id().expect("the last id") >= three);
+    assert_eq!(
+        second.take_dead_letter(three).expect("the take"),
+        Some(letter("three"))
+    );
+    drop((first, second));
+    let mut reopened = SqliteStore::open(&path).expect("SQLite opens again");
+    assert_eq!(ids(&mut reopened), [one, two]);
+    let four = reopened
+        .keep_dead_letter(&letter("four"))
+        .expect("a letter");
+    assert!(four > three, "{four} after {three}");
+    assert_eq!(ids(&mut reopened), [one, two, four]);
+}
+
+/// Round 2: a file whose first event continues the ids, as a reset leaves it, reads no event,
+/// row or count of that event; its log has an id; reopened, it scans the same.
+#[test]
+fn adv_w31_u8_r2_the_continue_event_is_no_event_row_or_count() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let path = directory.path().join("continued.sqlite");
+    let mut plain = MemoryStore::default();
+    written_alone(&mut plain);
+    let expected = plain.scan(TASK).expect("the plain scan");
+    {
+        let mut store = SqliteStore::open(&path).expect("SQLite opens");
+        store.continue_dead_letter_ids(9).expect("the ids continue");
+        assert_ne!(store.events_id().expect("the log's id"), 0);
+        assert_eq!(store.events_after(0, usize::MAX).expect("the events"), []);
+        written_alone(&mut store);
+        store
+            .commit_events(&[named("After")], &[])
+            .expect("an event");
+        let read = store.events_after(0, usize::MAX).expect("the events");
+        assert_eq!(read.len(), 1, "{read:?}");
+        assert_eq!(read[0].event.name, "After");
+        assert_eq!(store.scan(TASK).expect("the scan"), expected);
+    }
+    let mut reopened = SqliteStore::open(&path).expect("SQLite opens again");
+    assert_eq!(reopened.scan(TASK).expect("the reopened scan"), expected);
+    assert_eq!(
+        reopened
+            .counts(&[TASK.to_owned()])
+            .expect("the reopened counts"),
+        BTreeMap::from([(TASK.to_owned(), 2)])
+    );
+    let id = reopened.keep_dead_letter(&letter("a")).expect("a letter");
+    assert!(id > 9, "{id}");
+}
+
+/// Round 2: a file a reset left, its ids continued and letters kept past them, moves into
+/// PostgreSQL with those ids; tables holding only a continue event are not empty to a move.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn adv_w31_u8_r2_continued_ids_move_and_hold_their_tables_on_postgres() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let path = directory.path().join("continued.sqlite");
+    let listed = {
+        let mut file = SqliteStore::open(&path).expect("the file opens");
+        file.continue_dead_letter_ids(30).expect("the ids continue");
+        file.commit(&task("a", None, "open")).expect("row a");
+        file.keep_dead_letter(&letter("x")).expect("a letter");
+        file.keep_dead_letter(&letter("y")).expect("a letter");
+        file.dead_letters().expect("the file's letters")
+    };
+    assert!(listed.iter().all(|(id, _)| *id > 30), "{listed:?}");
+    let database = database();
+    let component = format!("continued-{}", letters());
+    let source = StateSource::open(&path).expect("the file opens");
+    let checked = source.check().expect("the file can move");
+    let lock = StateLock::take(&database).expect("the schema's lock is taken");
+    let target = StateTarget::open(&database, &component, 1).expect("the tables open");
+    assert_eq!(target.copy(&source).expect("the file is copied"), checked);
+    lock.release().expect("the lock is released");
+    let mut moved = PostgresStore::open(&database, &component, 1).expect("the tables open");
+    assert_eq!(moved.dead_letters().expect("the moved letters"), listed);
+    let next = moved.keep_dead_letter(&letter("z")).expect("a letter");
+    assert!(next > listed[1].0, "{next} after {listed:?}");
+
+    let bare = format!("bare-{}", letters());
+    PostgresStore::open(&database, &bare, 1)
+        .expect("the tables open")
+        .continue_dead_letter_ids(41)
+        .expect("the ids continue on PostgreSQL");
+    let target = StateTarget::open(&database, &bare, 1).expect("the tables open");
+    assert!(
+        !target
+            .is_empty(&[TASK.to_owned()], &source)
+            .expect("the tables are read"),
+        "tables holding only a continue event are not empty"
+    );
+}
