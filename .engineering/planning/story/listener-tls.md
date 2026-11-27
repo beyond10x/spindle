@@ -2,14 +2,16 @@
 format: aep.planning-md/3
 id: story:listener-tls
 kind: story
-status: draft
+status: proposed
 title: The ingress listener serves TLS, and may require a client certificate
 summary: A served run serves HTTPS with a given certificate and, with a CA file, requires a client certificate (mTLS).
 relations:
 - serves: vision:spindle
 - decomposes: epic:production-service
 - informed_by: story:decision-calls-tls
-revision: 1
+revision: 3
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-27T09:56:32Z", actor: "human:operator", revision: 3}
 ---
 # The ingress listener serves TLS, and may require a client certificate
 
@@ -37,3 +39,10 @@ already use rustls on `ring` (`story:decision-calls-tls`); the listener does not
 ## Decided when scoped
 
 - Reload of a renewed certificate without a restart, and the minimum TLS version.
+
+## Architecture decision
+
+Option A, picked by the operator on 2026-11-27: server TLS with optional client certificates, on
+`rustls` and `tokio-rustls`, which the workspace already holds, and three new flags.
+
+Not taken: B (server TLS only), C (no change, TLS in a sidecar), D (defer).

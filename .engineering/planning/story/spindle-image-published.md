@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:spindle-image-published
 kind: story
-status: draft
+status: proposed
 title: The release publishes a Spindle image with its digest
 relations:
 - serves: vision:spindle
@@ -18,7 +18,9 @@ scope:
   path: README.md
 - confidence: cited
   path: website/docs
-revision: 4
+revision: 6
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-27T09:56:33Z", actor: "human:operator", revision: 6}
 ---
 # The release publishes a Spindle image with its digest
 
@@ -62,3 +64,13 @@ with its digest in the release notes.
 The image's base must run the binary the release builds: today the Linux binaries need
 `GLIBC_2.39` (built on `ubuntu-24.04`), so a Debian bookworm or distroless base (glibc 2.36)
 fails. A static base is open only after `story:release-binary-portable-libc`.
+
+## Architecture decision
+
+Option A, picked by the operator on 2026-11-27: a distroless image with glibc
+(`distroless/cc`) built from the gnu binaries for `linux/amd64` and `linux/arm64`, a new
+Containerfile, and a release job that pushes to `ghcr.io` (`packages: write`). The operator
+approved the first push.
+
+Not taken: B (a static image from musl, which needs a new aarch64 musl target), C (a static amd64
+image only), D (defer).

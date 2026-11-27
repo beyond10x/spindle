@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:several-writers-one-postgres
 kind: story
-status: draft
+status: proposed
 title: Several processes of one component serve on one PostgreSQL store
 summary: Two or more run processes on one PostgreSQL store lose no write, apply none twice, and keep serving when one is killed.
 relations:
@@ -11,7 +11,9 @@ relations:
 - depends_on: story:request-id-idempotency
 - informed_by: epic:split-run
 - informed_by: story:kernel-row-set-commit-conflict
-revision: 1
+revision: 3
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-27T09:56:32Z", actor: "human:operator", revision: 3}
 ---
 # Several processes of one component serve on one PostgreSQL store
 
@@ -47,3 +49,12 @@ answering.
 
 - Every replica writing, or one leader holding a lease with the others standing by; and what each
   replica's views, counters and published events read.
+
+## Architecture decision
+
+Option A, picked by the operator on 2026-11-27: one leader holds a lease with a fencing token in a
+new lease table; standbys answer 503 on `/__spindle/ready`. Replicas serve failover; the rule of
+one writer per store stays.
+
+Not taken: B (every replica writes, with guards across processes, optimistic streams and request-id
+records), C (defer).
