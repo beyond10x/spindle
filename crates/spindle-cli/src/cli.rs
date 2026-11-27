@@ -131,7 +131,10 @@ pub enum Command {
     /// command is refused, as ESS's runner passes it. At the first step that does not hold,
     /// prints it with what was expected and what was observed and exits 1; that replay runs
     /// nothing after it. A document ESS refuses, or one of more than 1000 steps, exits 1 before any
-    /// step runs.
+    /// step runs. An external cause is answered as the act forces it, for every cause of the
+    /// forced command; one the scenario does not force is answered by `--decisions`, and one
+    /// neither answers does not hold. A decisions file the model refuses exits 1 before any step
+    /// runs.
     ///
     /// Where a component requires `ingress.network` (`reached_by: network`), runs every component
     /// in one process and serves those over HTTP on 127.0.0.1, or `--address`, instead of reading
@@ -260,7 +263,7 @@ pub enum Command {
         /// or under a `["<command>"]` table for one, and `[[rules]]` (`command`, `outcome`,
         /// `answer`, `when = { "input.<field>" = <value> }`) for the requests whose input holds
         /// every value; the first rule that matches wins, then a command's table, then the top
-        /// level.
+        /// level. With `--scenario`, it answers each external cause the scenario does not force.
         #[arg(long)]
         decisions: Option<PathBuf>,
         /// Answer every remaining external cause "does not hold" on a command that declares a
@@ -389,7 +392,7 @@ pub enum Command {
         #[arg(long, value_name = "N")]
         mint_seed: Option<u64>,
         /// The `ess-scenario` document to replay.
-        #[arg(long, conflicts_with_all = ["state", "decisions", "answer_default"])]
+        #[arg(long, conflicts_with_all = ["state", "answer_default"])]
         scenario: Option<PathBuf>,
     },
     /// Play the rally example in this terminal: every component in one process, one tick per

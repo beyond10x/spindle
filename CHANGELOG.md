@@ -6,6 +6,25 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- `run --scenario` takes `--decisions`, where clap refused the pair (exit 2): an external cause
+  the scenario does not force is answered by the decisions file, and one neither forces nor
+  answers does not hold, as before. An act that names an outcome forces it for every cause of its
+  command, the file's answers included, until the forcing is consumed or lapses. A decisions file
+  the model refuses exits 1 before any step runs; `--answer-default` stays refused with
+  `--scenario`. `spindle_conformance::HostTarget::answering` gives a target the same answers
+  (`story:replay-with-decisions`).
+
+### Fixed
+
+- `run --scenario` names the divergent step of a scenario whose command returns a one-time
+  response (`one_time_response:`), where it ended in an error: each prefix the bisection replays
+  keeps only the one-time event windows anchored to its own steps, the origins it invokes and the
+  required origins it selects, and carries no trace where none is required, so ESS 0.99.1 admits
+  it instead of refusing it with `InvalidOneTimeResponse`
+  (`story:one-time-response-admission`).
+
 ## [0.22.0] - 2026-11-27
 
 ### Added

@@ -1,0 +1,10 @@
+type: ess-scenario/1
+domain: probe.review
+scenario: a-submission-is-answered-by-the-decisions-file
+summary: A submission whose act states no outcome, so the run's decisions answer its external causes.
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: probe.review.Submit
+    input:
+      submission_id: s1
+      amount: 5

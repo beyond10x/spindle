@@ -14,6 +14,7 @@ use ess_primitives::node::Node;
 use ess_primitives::time::Timestamp;
 use spindle_capability::Environment;
 use spindle_conformance::HostTarget;
+use spindle_host::Answers;
 
 const FORCING: &str = "crates/spindle-conformance/tests/fixtures/forcing";
 
@@ -131,6 +132,81 @@ fn a_forcing_lapses_at_an_invocation_that_does_not_ask_it() {
     );
     assert_eq!(send(&target, &scenario, CLOSE, &case("c-2")), "closed");
     target.end_scenario(&scenario).expect("the scenario closes");
+}
+
+/// The fixture whose `probe.review.Submit` has two external causes, `flagged` then `escalated`,
+/// beside a default branch.
+const REVIEW: &str = "crates/spindle-cli/tests/fixtures/review";
+
+/// A target running [`REVIEW`], answering what nothing forces from the decisions file `decisions`
+/// where one is given.
+fn review(decisions: Option<&str>) -> HostTarget {
+    let text = std::fs::read_to_string(root().join("examples/environments/laptop.toml"))
+        .expect("the laptop environment reads");
+    let environment = Environment::parse(&text).expect("it parses");
+    let ir = spindle_spec::load(&root().join(REVIEW))
+        .expect("the review fixture loads")
+        .ir;
+    let answers = decisions.map(|text| Answers::parse(&ir, text).expect("the decisions parse"));
+    let target = HostTarget::new(ir, spindle_conformance::in_memory(&environment));
+    match answers {
+        Some(answers) => target.answering(answers),
+        None => target,
+    }
+}
+
+/// A cause nothing forces is answered by the decisions file; the scenario's forcing answers every
+/// cause of its command first, until it is consumed (`story:replay-with-decisions`). Without a
+/// file every cause nothing forces does not hold, as before.
+#[test]
+fn a_decided_cause_answers_where_nothing_is_forced() {
+    const SUBMIT: &str = "probe.review.Submit";
+    let send_submit = |target: &HostTarget, scenario: &ScenarioContext, id: &str| {
+        let input = BTreeMap::from([
+            ("submission_id".to_owned(), Node::Text(id.to_owned())),
+            (
+                "amount".to_owned(),
+                serde_json::from_value::<Node>(serde_json::json!(5)).expect("an integer"),
+            ),
+        ]);
+        target
+            .execute_command(SemanticCommandRequest {
+                command: SUBMIT.parse::<CommandRef>().expect("a command"),
+                actor: None,
+                caller: None,
+                input,
+                correlation: scenario.correlation.clone(),
+            })
+            .unwrap_or_else(|error| panic!("{SUBMIT} runs: {error:?}"))
+            .outcome
+            .map(|outcome| outcome.outcome.as_str().to_owned())
+            .unwrap_or_else(|| "<undeclared>".to_owned())
+    };
+
+    let decided = review(Some("[\"probe.review.Submit\"]\nflagged = true\n"));
+    let scenario = open(&decided, SUBMIT, "flagged");
+    assert_eq!(send_submit(&decided, &scenario, "s-1"), "flagged");
+    force(&decided, &scenario, SUBMIT, "escalated");
+    assert_eq!(
+        send_submit(&decided, &scenario, "s-2"),
+        "escalated",
+        "the forcing answers `flagged` before the file does"
+    );
+    assert_eq!(
+        send_submit(&decided, &scenario, "s-3"),
+        "flagged",
+        "the consumed forcing leaves the file to answer"
+    );
+    decided
+        .end_scenario(&scenario)
+        .expect("the scenario closes");
+
+    let undecided = review(None);
+    let scenario = open(&undecided, SUBMIT, "submitted");
+    assert_eq!(send_submit(&undecided, &scenario, "s-1"), "submitted");
+    undecided
+        .end_scenario(&scenario)
+        .expect("the scenario closes");
 }
 
 /// A forcing lapses at an invocation a binding makes that never asks its cause: the request's
